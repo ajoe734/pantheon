@@ -1,0 +1,311 @@
+{
+  "task_id": "SOURCE-EVIDENCE-DEDUPE-LOOKUP-INDEXED-20261120",
+  "title": "Ingest dedupe lookups use an index instead of walking the whole source_evidence table for every record",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "problem_register_ref": {
+    "domain": "market_data",
+    "class_id": "RC2",
+    "row": "per-profile post-ingest cost (about 4m50s after an ingest of under 1 s)",
+    "commit_ref": "cb4f6795",
+    "incidents_covered": [
+      "Taiwan refresh run 44481377958 chip 300 s timeout",
+      "Taiwan refresh run 44509299247 chip 300 s timeout",
+      "Taiwan refresh run 44594831526 FinMind fundamentals 15 minute step timeout"
+    ]
+  },
+  "acceptance_1_reproduction_and_coordinator_hosted_numbers": {
+    "coordinator_hosted_evidence": {
+      "captured_at": "2026-11-20T00:3xZ (from refresh run 44638166258 at 2026-11-19T23:30Z)",
+      "mode": "read-only",
+      "evidence_path_on_dev_host": "~/pantheon-market-data-acceptance/hosted_refresh_profile_cost_20261119T2330Z_b.txt",
+      "table": "source_ingest.source_evidence",
+      "total_rows": 81505,
+      "total_size_mb": 203,
+      "table_counts_by_record_type": {
+        "evidence_item": 27231,
+        "knowledge_object": 27231,
+        "source_record": 20972,
+        "evidence_bundle": 6071
+      },
+      "pre_change_indexes": [
+        "source_evidence_pkey (PRIMARY KEY on append_id)",
+        "source_evidence_record_type_record_id_key (UNIQUE on record_type, record_id)",
+        "source_evidence_summary_idx (partial on evidence_item)",
+        "source_evidence_linked_types_idx (partial GIN on evidence_item)"
+      ],
+      "pg_stat_user_tables": {
+        "seq_scan": 502530,
+        "seq_tup_read": 4296260372
+      },
+      "hosted_explain_analyze_absent_key": {
+        "query": "SELECT payload FROM source_ingest.source_evidence WHERE record_type = %s AND payload->'metadata'->>%s = %s ORDER BY append_id DESC LIMIT 1",
+        "plan": "Index Scan Backward using source_evidence_pkey on source_evidence",
+        "filter": "Filter on record_type and payload->'metadata'->>'source_dedupe_key'",
+        "rows_removed_by_filter": 81505,
+        "execution_time_ms": 662,
+        "buffers": "shared hit 66486 read 12559"
+      },
+      "profile_timing_breakdown": {
+        "profile": "tw-official-twse-margin-balances",
+        "bounded_source_ingest_started_at": "2026-11-19T23:50:06Z",
+        "reconcile_answered_at": "2026-11-19T23:51:40Z",
+        "run_scheduled_open_window": "2026-11-19T23:51:42Z to 2026-11-19T23:53:57Z (2 min 15 s / 135 s)",
+        "thread_state_during_run_scheduled": "handling thread sat in poll_schedule_timeout with a second connection to pantheon-postgres-1:5432 and no other peer except one short call to search-svc:8098 at 23:53:55Z while ingesting 500 records (500 x 0.27-0.66 s = 2-5 min per profile; fetch itself under 1 s)"
+      }
+    },
+    "local_postgres_hosted_shape_reproduction": {
+      "postgres_instance": "postgres:16-alpine (127.0.0.1:26432)",
+      "total_rows": 81505,
+      "table_counts_by_record_type": {
+        "evidence_item": 27231,
+        "knowledge_object": 27231,
+        "source_record": 20972,
+        "evidence_bundle": 6071
+      },
+      "total_relation_bytes_before_index": 203243520,
+      "total_relation_mb_before_index": 193.83,
+      "total_relation_decimal_mb_before_index": 203.24,
+      "pre_change_per_lookup_cost_ms": {
+        "unscoped_absent_median_ms": 356.16,
+        "unscoped_absent_mean_ms": 355.93,
+        "scoped_absent_median_ms": 347.48,
+        "scoped_absent_mean_ms": 346.67,
+        "read_one_unscoped_absent_ms": 360.91
+      },
+      "pre_change_explain_analyze": {
+        "get_source_record_by_dedupe_key_unscoped_absent": [
+          "Limit  (cost=0.29..109.07 rows=1 width=652) (actual time=418.768..418.769 rows=0 loops=1)",
+          "  Buffers: shared hit=67416 read=7870 written=6653",
+          "  ->  Index Scan Backward using source_evidence_pkey on source_evidence  (cost=0.29..11313.37 rows=104 width=652) (actual time=418.766..418.767 rows=0 loops=1)",
+          "        Filter: ((record_type = 'source_record'::text) AND (((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) = 'url:https://absent.example.com/1'::text))",
+          "        Rows Removed by Filter: 81505",
+          "        Buffers: shared hit=67416 read=7870 written=6653",
+          "Planning:",
+          "  Buffers: shared hit=10",
+          "Planning Time: 0.219 ms",
+          "Execution Time: 418.796 ms"
+        ],
+        "get_source_record_by_dedupe_key_scoped_absent": [
+          "Limit  (cost=9941.70..9941.71 rows=1 width=652) (actual time=347.946..347.948 rows=0 loops=1)",
+          "  Buffers: shared hit=62596 read=1013 written=139",
+          "  ->  Sort  (cost=9941.70..9941.71 rows=1 width=652) (actual time=347.944..347.946 rows=0 loops=1)",
+          "        Sort Key: append_id DESC",
+          "        Sort Method: quicksort  Memory: 25kB",
+          "        Buffers: shared hit=62596 read=1013 written=139",
+          "        ->  Bitmap Heap Scan on source_evidence  (cost=1232.91..9941.69 rows=1 width=652) (actual time=347.938..347.939 rows=0 loops=1)",
+          "              Recheck Cond: (record_type = 'source_record'::text)",
+          "              Filter: ((((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) = 'url:https://absent.example.com/1'::text) AND (((payload -> 'metadata'::text) ->> 'tenant_id'::text) = 'tenant-dev'::text))",
+          "              Rows Removed by Filter: 20972",
+          "              Heap Blocks: exact=446",
+          "              Buffers: shared hit=62596 read=1013 written=139",
+          "              ->  Bitmap Index Scan on source_evidence_record_type_record_id_key  (cost=0.00..1232.90 rows=20865 width=0) (actual time=3.393..3.394 rows=20972 loops=1)",
+          "                    Index Cond: (record_type = 'source_record'::text)",
+          "                    Buffers: shared hit=3 read=244 written=79",
+          "Planning Time: 0.120 ms",
+          "Execution Time: 348.016 ms"
+        ],
+        "read_one_unscoped_absent": [
+          "Limit  (cost=0.29..108.04 rows=1 width=652) (actual time=360.879..360.880 rows=0 loops=1)",
+          "  Buffers: shared hit=74434 read=852 written=748",
+          "  ->  Index Scan Backward using source_evidence_pkey on source_evidence  (cost=0.29..11313.37 rows=105 width=652) (actual time=360.877..360.878 rows=0 loops=1)",
+          "        Filter: ((record_type = 'source_record'::text) AND ((record_id = 'src-absent'::text) OR ((payload ->> 'source_id'::text) = 'src-absent'::text)))",
+          "        Rows Removed by Filter: 81505",
+          "        Buffers: shared hit=74434 read=852 written=748",
+          "Planning:",
+          "  Buffers: shared read=3 written=3",
+          "Planning Time: 0.272 ms",
+          "Execution Time: 360.907 ms"
+        ]
+      }
+    }
+  },
+  "acceptance_2_per_record_ingest_lookup_call_sites_and_indexes": {
+    "pipeline_call_sites": [
+      {
+        "call_site": "services/source_ingestion/pipeline.py:434 (persist_source_evidence_refs per-record loop)",
+        "repository_method": "PostgresSourceEvidenceRepository.get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=candidate_source.tenant_id)",
+        "pg_store_helper": "_read_by_dedupe('source_record', 'source_dedupe_key', source_dedupe_key, tenant_id)",
+        "answering_index": "source_evidence_dedupe_lookup_idx"
+      },
+      {
+        "call_site": "services/source_ingestion/pipeline.py:468 -> services/knowledge/evidence/bundle_builder.py:52 (EvidenceBundleBuilder.build_bundle per-source loop)",
+        "repository_method": "PostgresSourceEvidenceRepository.add_source_record(source) -> _upsert('source_record', ...)",
+        "answering_index": "source_evidence_record_type_record_id_key"
+      },
+      {
+        "call_site": "services/source_ingestion/pipeline.py:468 -> services/knowledge/evidence/bundle_builder.py:58 -> services/knowledge/evidence/repository.py:123 (EvidenceBundleBuilder.build_bundle per-item loop)",
+        "repository_method": "PostgresSourceEvidenceRepository.add_evidence_item(item) -> get_source_record(item.source_id, tenant_id=tenant_id) and _upsert('evidence_item', ...)",
+        "pg_store_helper": "_read_one('source_record', item.source_id, tenant_id)",
+        "answering_index": "source_evidence_record_type_record_id_key"
+      },
+      {
+        "call_site": "services/source_ingestion/pipeline.py:468 -> services/knowledge/evidence/bundle_builder.py:113 -> services/knowledge/evidence/repository.py:140,143 (EvidenceBundleBuilder.build_bundle bundle validation)",
+        "repository_method": "PostgresSourceEvidenceRepository.add_bundle(bundle) -> get_source_record(source_id, tenant_id=tenant_id) per source_id and get_evidence_item(item_id, tenant_id=tenant_id) per item_id",
+        "pg_store_helper": "_read_one('source_record', source_id, tenant_id) and _read_one('evidence_item', item_id, tenant_id)",
+        "answering_index": "source_evidence_record_type_record_id_key"
+      },
+      {
+        "call_site": "services/source_ingestion/pipeline.py:485 -> services/knowledge/evidence/bundle_builder.py:151 -> services/knowledge/evidence/repository.py:152,156 (EvidenceBundleBuilder.build_knowledge_object per-item loop)",
+        "repository_method": "PostgresSourceEvidenceRepository.add_knowledge_object(ko) -> get_bundle(ko.evidence_bundle_id, tenant_id=tenant_id) and get_evidence_item(ko.evidence_item_id, tenant_id=tenant_id) and _upsert('knowledge_object', ...)",
+        "pg_store_helper": "_read_one('evidence_bundle', ko.evidence_bundle_id, tenant_id) and _read_one('evidence_item', ko.evidence_item_id, tenant_id)",
+        "answering_index": "source_evidence_record_type_record_id_key"
+      },
+      {
+        "call_site": "services/source_ingestion/pg_store.py:445 (direct repository dedupe lookup)",
+        "repository_method": "PostgresSourceEvidenceRepository.get_evidence_item_by_dedupe_key(evidence_dedupe_key, tenant_id=tenant_id)",
+        "pg_store_helper": "_read_by_dedupe('evidence_item', 'evidence_dedupe_key', evidence_dedupe_key, tenant_id)",
+        "answering_index": "source_evidence_dedupe_lookup_idx"
+      },
+      {
+        "call_site": "services/source_ingestion/pg_store.py:397-408 (_read_one without a tenant / tenant_id=_UNSCOPED across get_source_record, get_evidence_item, get_bundle, get_knowledge_object)",
+        "repository_method": "PostgresSourceEvidenceRepository._read_one(r_type, r_id, tenant_id=_UNSCOPED)",
+        "answering_index": "source_evidence_record_type_record_id_key and source_evidence_object_id_lookup_idx"
+      }
+    ],
+    "post_change_explain_analyze": {
+      "get_source_record_by_dedupe_key_scoped_absent": [
+        "Limit  (cost=0.42..8.44 rows=1 width=650) (actual time=0.042..0.043 rows=0 loops=1)",
+        "  Buffers: shared read=3",
+        "  ->  Index Scan using source_evidence_dedupe_lookup_idx on source_evidence  (cost=0.42..8.44 rows=1 width=650) (actual time=0.041..0.041 rows=0 loops=1)",
+        "        Index Cond: ((record_type = 'source_record'::text) AND (CASE record_type WHEN 'source_record'::text THEN ((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) WHEN 'evidence_item'::text THEN ((payload -> 'metadata'::text) ->> 'evidence_dedupe_key'::text) ELSE NULL::text END = 'url:https://absent.example.com/1'::text) AND (COALESCE(((payload -> 'metadata'::text) ->> 'tenant_id'::text), ''::text) = 'tenant-dev'::text))",
+        "        Buffers: shared read=3",
+        "Planning Time: 0.258 ms",
+        "Execution Time: 0.068 ms"
+      ],
+      "get_source_record_by_dedupe_key_scoped_present": [
+        "Limit  (cost=0.42..8.44 rows=1 width=650) (actual time=0.042..0.043 rows=1 loops=1)",
+        "  Buffers: shared hit=3 read=1",
+        "  ->  Index Scan using source_evidence_dedupe_lookup_idx on source_evidence  (cost=0.42..8.44 rows=1 width=650) (actual time=0.042..0.042 rows=1 loops=1)",
+        "        Index Cond: ((record_type = 'source_record'::text) AND (CASE record_type WHEN 'source_record'::text THEN ((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) WHEN 'evidence_item'::text THEN ((payload -> 'metadata'::text) ->> 'evidence_dedupe_key'::text) ELSE NULL::text END = 'url:https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN?row=500'::text) AND (COALESCE(((payload -> 'metadata'::text) ->> 'tenant_id'::text), ''::text) = 'tenant-dev'::text))",
+        "        Buffers: shared hit=3 read=1",
+        "Planning Time: 0.083 ms",
+        "Execution Time: 0.058 ms"
+      ],
+      "get_source_record_by_dedupe_key_unscoped_absent": [
+        "Limit  (cost=0.42..8.44 rows=1 width=650) (actual time=0.025..0.025 rows=0 loops=1)",
+        "  Buffers: shared hit=3",
+        "  ->  Index Scan using source_evidence_dedupe_lookup_idx on source_evidence  (cost=0.42..8.44 rows=1 width=650) (actual time=0.024..0.024 rows=0 loops=1)",
+        "        Index Cond: ((record_type = 'source_record'::text) AND (CASE record_type WHEN 'source_record'::text THEN ((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) WHEN 'evidence_item'::text THEN ((payload -> 'metadata'::text) ->> 'evidence_dedupe_key'::text) ELSE NULL::text END = 'url:https://absent.example.com/1'::text))",
+        "        Buffers: shared hit=3",
+        "Planning Time: 0.081 ms",
+        "Execution Time: 0.043 ms"
+      ],
+      "get_evidence_item_by_dedupe_key_scoped_absent": [
+        "Limit  (cost=0.42..8.44 rows=1 width=650) (actual time=0.036..0.037 rows=0 loops=1)",
+        "  Buffers: shared hit=1 read=2",
+        "  ->  Index Scan using source_evidence_dedupe_lookup_idx on source_evidence  (cost=0.42..8.44 rows=1 width=650) (actual time=0.036..0.036 rows=0 loops=1)",
+        "        Index Cond: ((record_type = 'evidence_item'::text) AND (CASE record_type WHEN 'source_record'::text THEN ((payload -> 'metadata'::text) ->> 'source_dedupe_key'::text) WHEN 'evidence_item'::text THEN ((payload -> 'metadata'::text) ->> 'evidence_dedupe_key'::text) ELSE NULL::text END = 'url:https://absent.example.com/1#item'::text) AND (COALESCE(((payload -> 'metadata'::text) ->> 'tenant_id'::text), ''::text) = 'tenant-dev'::text))",
+        "        Buffers: shared hit=1 read=2",
+        "Planning Time: 0.180 ms",
+        "Execution Time: 0.056 ms"
+      ],
+      "read_one_unscoped_absent": [
+        "Limit  (cost=8.88..12.91 rows=1 width=650) (actual time=0.068..0.069 rows=0 loops=1)",
+        "  Buffers: shared hit=3 read=3",
+        "  ->  Merge Append  (cost=8.88..16.94 rows=2 width=650) (actual time=0.067..0.068 rows=0 loops=1)",
+        "        Sort Key: \"*SELECT* 1\".append_id DESC",
+        "        ->  Subquery Scan on \"*SELECT* 1\"  (cost=8.45..8.46 rows=1 width=650) (actual time=0.047..0.047 rows=0 loops=1)",
+        "              ->  Limit  (cost=8.45..8.45 rows=1 width=650) (actual time=0.046..0.046 rows=0 loops=1)",
+        "                    ->  Sort  (cost=8.45..8.45 rows=1 width=650) (actual time=0.046..0.046 rows=0 loops=1)",
+        "                          Sort Key: source_evidence.append_id DESC",
+        "                          ->  Index Scan using source_evidence_record_type_record_id_key on source_evidence  (cost=0.42..8.44 rows=1 width=650) (actual time=0.036..0.036 rows=0 loops=1)",
+        "                                Index Cond: ((record_type = 'source_record'::text) AND (record_id = 'src-absent'::text))",
+        "        ->  Subquery Scan on \"*SELECT* 2\"  (cost=0.42..8.45 rows=1 width=650) (actual time=0.020..0.020 rows=0 loops=1)",
+        "              ->  Limit  (cost=0.42..8.44 rows=1 width=650) (actual time=0.020..0.020 rows=0 loops=1)",
+        "                    ->  Index Scan using source_evidence_object_id_lookup_idx on source_evidence source_evidence_1  (cost=0.42..8.44 rows=1 width=650) (actual time=0.020..0.020 rows=0 loops=1)",
+        "                          Index Cond: ((record_type = 'source_record'::text) AND (CASE record_type WHEN 'source_record'::text THEN (payload ->> 'source_id'::text) WHEN 'evidence_item'::text THEN (payload ->> 'evidence_item_id'::text) WHEN 'evidence_bundle'::text THEN (payload ->> 'evidence_bundle_id'::text) WHEN 'knowledge_object'::text THEN (payload ->> 'knowledge_object_id'::text) ELSE NULL::text END = 'src-absent'::text))",
+        "Planning Time: 0.283 ms",
+        "Execution Time: 0.164 ms"
+      ]
+    }
+  },
+  "acceptance_3_real_postgres_tests": {
+    "test_file": "services/source_ingestion/tests/test_source_evidence_lookup_plans.py",
+    "fixture_used": "real_pg_tables (from services/source_ingestion/test_pg_store.py)",
+    "tests": [
+      "test_explain_all_per_record_lookups_use_index_without_whole_table_filter",
+      "test_identical_results_before_and_after_for_present_absent_duplicate_and_other_tenant_keys",
+      "test_startup_concurrent_index_ddl_and_rollback_reader_compatibility"
+    ],
+    "wall_clock_threshold_in_required_checks": false
+  },
+  "acceptance_4_safe_hosted_schema_change": {
+    "location": "services/source_ingestion/pg_store.py:_bootstrap (lines 252-264)",
+    "statements": [
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_dedupe_lookup_idx ON source_ingest.source_evidence (record_type, (CASE record_type WHEN 'source_record' THEN payload->'metadata'->>'source_dedupe_key' WHEN 'evidence_item' THEN payload->'metadata'->>'evidence_dedupe_key' END), append_id DESC, COALESCE(payload->'metadata'->>'tenant_id', ''))",
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_object_id_lookup_idx ON source_ingest.source_evidence (record_type, (CASE record_type WHEN 'source_record' THEN payload->>'source_id' WHEN 'evidence_item' THEN payload->>'evidence_item_id' WHEN 'evidence_bundle' THEN payload->>'evidence_bundle_id' WHEN 'knowledge_object' THEN payload->>'knowledge_object_id' END), append_id DESC)"
+    ],
+    "why_non_blocking": "CREATE INDEX CONCURRENTLY IF NOT EXISTS runs on the autocommit=True psycopg connection and acquires only a SHARE UPDATE EXCLUSIVE lock on source_ingest.source_evidence rather than SHARE (standard CREATE INDEX) or ACCESS EXCLUSIVE (ALTER TABLE ADD COLUMN ... STORED). SHARE UPDATE EXCLUSIVE does not conflict with ROW EXCLUSIVE locks taken by concurrent INSERT ... ON CONFLICT DO UPDATE writes or ACCESS SHARE locks taken by concurrent readers, so the service writer is not blocked during the index build on the 203 MB table.",
+    "measured_on_hosted_shaped_table": {
+      "table_rows": 81505,
+      "table_bytes_before": 203243520,
+      "source_evidence_dedupe_lookup_idx": {
+        "creation_time_seconds": 1.134,
+        "index_size_bytes": 11337728,
+        "index_size_mib": 10.81,
+        "index_size_decimal_mb": 11.34
+      },
+      "source_evidence_object_id_lookup_idx": {
+        "creation_time_seconds": 0.658,
+        "index_size_bytes": 4366336,
+        "index_size_mib": 4.16,
+        "index_size_decimal_mb": 4.37
+      },
+      "combined_creation_time_seconds": 1.792,
+      "combined_index_size_bytes": 15704064,
+      "combined_index_size_mib": 14.98
+    },
+    "rollback_reader_compatibility": "Verified in test_startup_concurrent_index_ddl_and_rollback_reader_compatibility: no table columns or constraints are removed or altered, and the previous release's SELECT and INSERT ... ON CONFLICT (record_type, record_id) DO UPDATE queries operate identically with the new expression indexes present."
+  },
+  "acceptance_5_measured_500_consecutive_dedupe_lookups_after_change": {
+    "table_shape": "81505 rows (20972 source_record, 27231 evidence_item, 27231 knowledge_object, 6071 evidence_bundle; 203.24 MB pre-index relation size)",
+    "absent_keys_500_consecutive": {
+      "count": 500,
+      "total_ms": 146.08,
+      "median_ms": 0.262,
+      "mean_ms": 0.292,
+      "p99_ms": 0.609
+    },
+    "present_keys_500_consecutive": {
+      "count": 500,
+      "total_ms": 206.14,
+      "median_ms": 0.373,
+      "mean_ms": 0.412,
+      "p99_ms": 0.936
+    }
+  },
+  "acceptance_6_post_deploy_hosted_measurement_plan": {
+    "actor": "Coordinator (read-only on hosted dev after deploy)",
+    "measurement": "Time inside POST /api/source-ingest/run-scheduled for the chip profiles and the FinMind fundamentals profiles of the next Taiwan refresh",
+    "expectation": "No chip profile reaches the 300 s limit and the FinMind fundamentals step finishes inside its 15 minute step limit (register residual from run 44594831526)"
+  },
+  "acceptance_7_runtime_budget": {
+    "writer_kind": "PostgreSQL B-tree expression indexes on source_ingest.source_evidence (source_evidence_dedupe_lookup_idx and source_evidence_object_id_lookup_idx)",
+    "cadence": "Created idempotently once at service startup via CREATE INDEX CONCURRENTLY IF NOT EXISTS; maintained synchronously by PostgreSQL on each source_evidence INSERT ... ON CONFLICT (record_type, record_id) DO UPDATE during ingest runs",
+    "size_and_count_at_hosted_scale_81505_rows": {
+      "row_count": 81505,
+      "source_evidence_dedupe_lookup_idx_bytes": 11337728,
+      "source_evidence_dedupe_lookup_idx_mib": 10.81,
+      "source_evidence_object_id_lookup_idx_bytes": 4366336,
+      "source_evidence_object_id_lookup_idx_mib": 4.16,
+      "total_new_index_bytes": 15704064,
+      "total_new_index_mib": 14.98,
+      "avg_bytes_per_row": 192.68
+    },
+    "growth_per_day_at_current_ingest_rate": "At the current hosted ingest rate (~1,500-4,000 net new source_evidence rows/day across scheduled non-collector profiles and collector bundle summaries; re-ingested existing dedupe keys update in place via ON CONFLICT DO UPDATE with 0 net row growth), combined index growth is approximately 0.28-0.75 MiB/day (~193 bytes/new row).",
+    "cap_and_cleanup": "Bounded by source_ingest.source_evidence table retention and in-place conflict upserts on (record_type, record_id); both indexes are table-owned PostgreSQL objects that are cleaned automatically on row deletion/vacuum and dropped automatically with the table (DROP TABLE / DROP SCHEMA CASCADE).",
+    "new_threads": 0
+  },
+  "acceptance_8_validation": {
+    "commands": [
+      "SOURCE_INGEST_TEST_POSTGRES_DSN='postgresql://postgres:postgres@127.0.0.1:26432/postgres' .venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/test_pg_store.py services/source_ingestion/tests/test_source_evidence_lookup_plans.py services/source_ingestion/test_postgres_store.py"
+    ],
+    "results": {
+      "services/source_ingestion/test_pg_store.py": "8 passed",
+      "services/source_ingestion/tests/test_source_evidence_lookup_plans.py": "3 passed",
+      "services/source_ingestion/test_postgres_store.py": "14 passed",
+      "total": "25 passed, 0 failed, 0 skipped"
+    }
+  }
+}
