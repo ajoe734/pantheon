@@ -394,6 +394,11 @@ def stack(
         },
     )
 
+    @adapter_app.get("/api/personas")
+    def _persona_directory_double():
+        # Persona owner stand-in: the directory is readable (and empty for these flows).
+        return []
+
     if not real_ensure:
         @adapter_app.post("/api/openclaw-adapter/consultation/agents/ensure")
         def _ensure_override(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1343,3 +1348,98 @@ def test_preread_memory_refusal_is_named_and_does_not_block(monkeypatch):
     assert refusals == {"persona-a": "memory_read_refused:HTTPError:http_403"}
     assert out[0]["entries"] and "memory_read_refusal" not in out[0]  # round proceeds; request content stable
     assert calls[0]["actor_id"] and calls[0]["actor_roles"]
+
+
+# --- CONSULTATION-WRITEBACK-PROBE-AND-PERSONA-DIRECTORY-20261120 ------------
+
+_DIR_SECRET = "directory-read-test-secret"
+
+
+def _persona_owner_over_urlopen(monkeypatch, tmp_path, *, token_file_roles):
+    """Real persona owner (strict auth) behind urllib.request.urlopen."""
+    import io
+    import urllib.error
+    from fastapi.testclient import TestClient
+    from services.persona.write_owner import (
+        CreatePersonaRequest, PersistentPersonaOwner, create_app)
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", _DIR_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _DIR_SECRET)
+    store = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    store.create(CreatePersonaRequest(
+        actor_id="operator-bff", persona_id="persona-2448c7053e33ea48da47", name="Trader",
+        mandate="m", strategy_family="f", tenant_id="tenant-dev", metadata={"trading": True}))
+    client = TestClient(create_app(store), raise_server_exceptions=False)
+    token = encode_jwt_hs256(
+        {"sub": "pantheon-dev-consultation-persona-directory-reader", "roles": token_file_roles,
+         "tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"], "exp": 4102444800},
+        secret=_DIR_SECRET)
+    token_file = tmp_path / "directory.token"
+    token_file.write_text(token + "\n")
+    monkeypatch.setenv("PANTHEON_PERSONA_API_URL", "http://persona:8002")
+    monkeypatch.setenv("CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE", str(token_file))
+    for name in ("PANTHEON_PERSONA_SERVICE_TOKEN", "PERSONA_SERVICE_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    requests = []
+
+    def urlopen(req, timeout=None):
+        path = req.full_url.split("persona:8002", 1)[1]
+        requests.append(path)
+        res = client.get(path, headers={k: v for k, v in req.header_items()})
+        if res.status_code >= 400:
+            raise urllib.error.HTTPError(req.full_url, res.status_code, "err", {}, io.BytesIO(b""))
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return res.content
+        return _Resp()
+
+    monkeypatch.setattr(meetings_mod.urllib.request, "urlopen", urlopen)
+    return token, requests
+
+
+@pytest.mark.parametrize("ref", ["persona-2448c7053e33ea48da47", "persona:persona-2448c7053e33ea48da47"])
+def test_operator_subject_ref_resolves_roster_with_issued_directory_credential(
+        monkeypatch, tmp_path, ref):
+    _, requests = _persona_owner_over_urlopen(monkeypatch, tmp_path, token_file_roles=["viewer"])
+    spec = meetings_mod.resolve_meeting_type_spec("MT-1")
+    roster, chair = meetings_mod.resolve_and_validate_roster(
+        spec=spec, convened_by={"kind": "operator", "id": "op-1"}, raw_participants=None,
+        subject_ref=ref, attribution_record=None, tenant_id="tenant-dev")
+    assert chair == "persona-2448c7053e33ea48da47" and requests == ["/api/personas"]
+    assert roster[0]["persona_id"] == chair
+
+
+@pytest.mark.parametrize("roles", [["persona_pool_reader"], ["consultation-svc"]])
+def test_unreadable_directory_is_refused_by_name_not_empty_or_not_found(monkeypatch, tmp_path, roles):
+    token, _ = _persona_owner_over_urlopen(monkeypatch, tmp_path, token_file_roles=roles)
+    spec = meetings_mod.resolve_meeting_type_spec("MT-1")
+    with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+        meetings_mod.resolve_and_validate_roster(
+            spec=spec, convened_by={"kind": "operator", "id": "op-1"}, raw_participants=None,
+            subject_ref="persona:persona-2448c7053e33ea48da47", attribution_record=None,
+            tenant_id="tenant-dev")
+    assert exc.value.reason == "persona_directory_unavailable"
+    assert exc.value.reason != "subject_persona_not_found"
+    assert token not in exc.value.detail and token not in str(exc.value)
+
+
+def test_directory_unconfigured_or_unreachable_is_refused_by_name(monkeypatch):
+    monkeypatch.delenv("PANTHEON_PERSONA_API_URL", raising=False)
+    monkeypatch.delenv("PERSONA_API_URL", raising=False)
+    spec = meetings_mod.resolve_meeting_type_spec("MT-1")
+    with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+        meetings_mod.resolve_and_validate_roster(
+            spec=spec, convened_by={"kind": "operator", "id": "op-1"}, raw_participants=None,
+            subject_ref="persona:persona-2448c7053e33ea48da47", attribution_record=None,
+            tenant_id="tenant-dev")
+    assert exc.value.reason == "persona_directory_unavailable" and exc.value.status_code == 503
+    monkeypatch.setenv("PANTHEON_PERSONA_API_URL", "http://persona:8002")
+    monkeypatch.setattr(meetings_mod.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
+    with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+        meetings_mod._fetch_persona_directory("tenant-dev")
+    assert exc.value.reason == "persona_directory_unavailable"
