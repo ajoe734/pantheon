@@ -14,13 +14,20 @@ from .incident import (
     IncidentStore,
     Postmortem,
     _serialized_store_write,
+    build_incident_timeline,
+    derive_incident_summary_fields,
     extract_infrastructure_incident_component,
     is_infrastructure_health_incident,
 )
 
 
 class PostgresIncidentStore(IncidentStore):
-    """Postgres owner store for IncidentCase and Postmortem records."""
+    """Postgres owner store for IncidentCase and Postmortem records.
+
+    Repeated reports for an open incident update occurrence_count, last_seen_at,
+    observed, and the single-report evidence_summary in place on the existing
+    incident.incident_cases row without growing row count per report.
+    """
 
     def __init__(
         self,

@@ -5,6 +5,7 @@ forward to the consultation service (`services/consultation`).
 """
 from __future__ import annotations
 
+import re
 import json
 import os
 import urllib.error
@@ -342,6 +343,43 @@ def _shape_proposal_item(raw: Mapping[str, Any], default_meeting_id: Optional[st
     return shaped
 
 
+_POOL_EVOLUTION_TOPIC_RE = re.compile(
+    r"^Pool evolution review for (?P<persona>persona-\S+?) \((?P<period>\d{4}-W\d{2})\)$"
+)
+_OPTIMISATION_TOPIC_RE = re.compile(
+    r"^Optimisation review for (?P<persona>persona-\S+?): lessons:(?P<lessons>\d+)$"
+)
+
+
+def parse_topic_summary(topic: Any) -> Optional[Dict[str, Any]]:
+    """Parse machine-generated topic templates; None when topic is free text."""
+    text = str(topic or "").strip()
+    m = _POOL_EVOLUTION_TOPIC_RE.match(text)
+    if m:
+        return {
+            "kind": "pool_evolution_review",
+            "subject_persona_id": m.group("persona"),
+            "period": m.group("period"),
+            "lesson_count": None,
+        }
+    m = _OPTIMISATION_TOPIC_RE.match(text)
+    if m:
+        return {
+            "kind": "optimisation_review",
+            "subject_persona_id": m.group("persona"),
+            "period": None,
+            "lesson_count": int(m.group("lessons")),
+        }
+    return None
+
+
+def _execution_fields(raw: Mapping[str, Any]) -> Dict[str, Any]:
+    es = raw.get("execution_state")
+    es_out = dict(es) if isinstance(es, Mapping) else None
+    effective = raw.get("effective_status") or raw.get("status")
+    return {"execution_state": es_out, "effective_status": effective}
+
+
 def shape_meeting_list_item(
     raw: Mapping[str, Any],
     *,
@@ -394,6 +432,8 @@ def shape_meeting_list_item(
         "round": raw.get("round"),
         "created_at": raw.get("created_at"),
         "closed_at": raw.get("closed_at"),
+        "topic_summary": parse_topic_summary(raw.get("topic")),
+        **_execution_fields(raw),
         "href": f"/management/meetings/{quote(meeting_id, safe='')}" if meeting_id else None,
     })
     return shaped
@@ -407,6 +447,11 @@ def shape_meeting_list(
     snapshot_at: str,
     limit: int = 50,
 ) -> Dict[str, Any]:
+    owner_summary = owner_payload.get("summary") if isinstance(owner_payload.get("summary"), Mapping) else {}
+    try:
+        dead_letter_count = int(owner_summary.get("dead_letter_count") or 0)
+    except (TypeError, ValueError):
+        dead_letter_count = 0
     raw_items = owner_payload.get("items") if isinstance(owner_payload.get("items"), list) else []
     next_cursor = owner_payload.get("next_cursor")
     items = [
@@ -417,8 +462,8 @@ def shape_meeting_list(
     open_count = sum(
         1
         for m in items
-        if str(m.get("status") or "").strip().lower()
-        not in {"closed", "completed", "refused", "cancelled", "canceled"}
+        if str(m.get("effective_status") or m.get("status") or "").strip().lower()
+        not in {"closed", "completed", "refused", "cancelled", "canceled", "execution_failed"}
     )
     closed_count = sum(
         1
@@ -452,6 +497,7 @@ def shape_meeting_list(
                 "open_count": open_count,
                 "closed_count": closed_count,
                 "review_count": review_count,
+                "dead_letter_count": dead_letter_count,
                 "status": "ok",
                 "source": "consultation",
             },
@@ -666,7 +712,9 @@ def shape_meeting_detail(
         "meeting_id": meeting_id,
         "meeting_type": raw.get("meeting_type") or raw.get("type"),
         "topic": raw.get("topic"),
+        "topic_summary": parse_topic_summary(raw.get("topic")),
         "status": raw.get("status"),
+        **_execution_fields(raw),
         "outcome": raw.get("outcome") or synthesis.get("outcome"),
         "chair_persona_id": raw.get("chair_persona_id"),
         "convened_by": _shape_convened_by(
@@ -1043,8 +1091,11 @@ class MeetingsOwnerClient:
         persona_id: Optional[str] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
+        include_failed: bool = False,
     ) -> Dict[str, Any]:
         query: Dict[str, str] = {}
+        if include_failed:
+            query["include_failed"] = "true"
         if status:
             query["status"] = status
         if meeting_type:
@@ -1062,8 +1113,11 @@ class MeetingsOwnerClient:
         elif isinstance(raw, Mapping) and isinstance(raw.get("items"), list):
             items = raw["items"]
             next_cursor = raw.get("next_cursor")
+            summary = raw.get("summary") if isinstance(raw.get("summary"), Mapping) else None
         else:
             raise MeetingsOwnerUnavailableError("invalid_meetings_list_response")
+        if isinstance(raw, list):
+            summary = None
 
         for item in items:
             if not isinstance(item, Mapping) or not (item.get("meeting_id") or item.get("id")):
@@ -1071,7 +1125,10 @@ class MeetingsOwnerClient:
             item_tenant = item.get("tenant_id")
             if item_tenant and self.tenant_id and str(item_tenant) != self.tenant_id:
                 raise MeetingsOwnerUnavailableError("meeting_tenant_mismatch")
-        return {"items": items, "next_cursor": next_cursor}
+        result: Dict[str, Any] = {"items": items, "next_cursor": next_cursor}
+        if summary is not None:
+            result["summary"] = dict(summary)
+        return result
 
     def get_meeting(self, meeting_id: str) -> Dict[str, Any]:
         clean_id = str(meeting_id or "").strip()

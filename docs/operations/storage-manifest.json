@@ -4997,19 +4997,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none in this task: existing incidents and postmortem drafts are not deleted or rewritten; an age or cap cleanup is still open (RC3)",
-   "growth_driver": "one case and one postmortem draft per resolved incident; BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap",
-   "growth_per_day": "hosted 2026-11-20 before: about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total); after: one per continuous outage, per target at most one per (recovery span + 600s) window, i.e. at most about 144 per target per day in the worst alternating case, expected single digits; not yet re-measured on hosted",
+   "bound_proof": {
+    "contains": "def _replace_single_report_summary(",
+    "file": "services/incident/incident.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per deduplicated open incident (by (binding_id, runtime_id, incident_cluster_id) for drift, canonical finding key for monitor-agent findings, and component for infrastructure health); repeated reports update occurrence_count, last_seen_at, and observed in place and replace evidence_summary with the latest single report summary (<= 4000 chars, typically ~450-550 chars vs 4000-char appended log before; row JSON size reduced from ~4,800 B to ~1,350 B on hosted drift shape while row count per report is unchanged at 0 net new rows per repeated report)",
+   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation",
+   "growth_driver": "deduplicated IncidentCase owner-store rows updated in place on repeated reports (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120); BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap (INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120)",
+   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted",
    "kind": "schema_table",
    "name": "incident.incident_cases",
    "owner": "schema:incident",
    "readers": [
     "services/incident/pg_store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC6",
+   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120"
   },
   {
    "bound_status": "unreviewed",
