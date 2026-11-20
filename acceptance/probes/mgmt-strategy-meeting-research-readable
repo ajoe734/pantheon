@@ -57,7 +57,7 @@ def _strategy_failures(fetch):
         name, sid = str(r.get("name") or ""), str(r.get("id") or "")
         if name.startswith("SIMULATION paper-only") or name.startswith("TW official ") or sid.startswith("strat-tw-official"):
             bad.append(sid)
-        elif name.startswith("Pantheon Dev Paper Release") and r.get("operationalStatus") in ("retired", "unbound"):
+        elif name.startswith("Pantheon Dev Paper Release"):
             bad.append(sid)
     if bad:
         failures.append("stub_or_probe_strategies_listed:" + ",".join(bad[:5]))

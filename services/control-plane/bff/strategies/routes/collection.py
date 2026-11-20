@@ -113,6 +113,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         persona_id: Optional[str] = None,
         hide_retired_personas: bool = False,
         include_test_personas: bool = False,
+        include_test: bool = False,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -152,6 +153,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         # and counted in meta; include_test_personas=true returns them. Only
         # needed when the one directory read found test-scoped personas.
         # Unbound synthetic / raw-seed stubs are hidden under the same switch.
+        include_test_personas = include_test_personas or include_test
         hide_test = not include_test_personas
         # Walking every owner page is only forced by hiding retired personas or
         # by test-scoped personas that exist in the directory. Stub-only hiding
@@ -421,10 +423,16 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             visible_basis = _hide_test_and_stubs(list(basis))
             hidden_here = len(basis) - len(visible_basis)
             if hidden_here:
-                page_summaries = [
-                    row for row in page_summaries if strategy_stub_reason(row, persona_lookup) is None
-                ]
-                total = max(0, total - hidden_here)
+                if candidates is not None and candidates is not page_summaries:
+                    page_summaries, next_page_token = ctx.page_slice(
+                        visible_basis, page_token, page_size
+                    )
+                    total = len(visible_basis)
+                else:
+                    page_summaries = [
+                        row for row in page_summaries if strategy_stub_reason(row, persona_lookup) is None
+                    ]
+                    total = max(0, total - hidden_here)
                 if candidates is not None:
                     candidates = visible_basis
         try:

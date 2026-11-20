@@ -38,7 +38,7 @@ def test_executable_with_owner_header():
 def test_passes_on_fixed_hosted_shapes():
     report = probe.check(fetcher("strategies_after_fix", "meetings_after_fix", "research_after_fix"))
     assert report["passed"], report
-    assert report["strategy_rows"] == 4
+    assert report["strategy_rows"] == 3
 
 
 def test_fails_on_recorded_pre_fix_hosted_shapes():
@@ -52,10 +52,17 @@ def test_fails_on_recorded_pre_fix_hosted_shapes():
     assert "strat-tw-official" in strategy_failure and "dev-product-20260913" in strategy_failure
 
 
-def test_live_probe_named_release_row_is_not_flagged():
-    # "Pantheon Dev Paper Release 43688794313" is bound to a running persona on hosted: allowed.
-    report = probe.check(fetcher("strategies_after_fix", "meetings_after_fix", "research_after_fix"))
-    assert not any("59b8a11bc277c249c89d" in f for f in report["failed"])
+def test_live_probe_named_release_row_is_flagged_even_when_running():
+    # The test-scoped deploy probe persona must never be listed, whatever its status.
+    body = json.loads(json.dumps(FX["strategies_after_fix"]))
+    body["items"].append(
+        {"id": "strategy-persona-59b8a11bc277c249c89d", "name": "Pantheon Dev Paper Release 43688794313 Attempt 1",
+         "operationalStatus": "running", "personaIds": ["persona-d64835a203ce276b8fbb"], "state": "approved"}
+    )
+    def fetch(path):
+        return body if path.startswith("/bff/strategies") else fetcher("x", "meetings_after_fix", "research_after_fix")(path)
+    report = probe.check(fetch)
+    assert any("59b8a11bc277c249c89d" in f for f in report["failed"])
 
 
 def test_exit_77_names_missing_variable_without_network():

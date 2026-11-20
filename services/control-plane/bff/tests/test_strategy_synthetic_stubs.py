@@ -176,3 +176,11 @@ def test_include_failed_forwarded_and_dead_letter_preserved() -> None:
     assert row["effective_status"] == "execution_failed"
     assert row["execution_state"]["last_error"] == "provider timeout"
     assert body["data"]["summary"]["dead_letter_count"] == 1
+
+
+def test_legacy_release_probe_title_is_classified_as_test_probe():
+    from services.control_plane.bff.strategies.routes import common
+    row = {"id": "s1", "title": "Pantheon Dev Paper Release 123 Attempt 2", "persona_ids": ["p1"]}
+    assert common.strategy_stub_reason(row, None) == common.STUB_TEST_PERSONA_PROBE
+    row2 = {"id": "s2", "title": "Pantheon Dev Paper Release 3", "persona_ids": ["p1"]}
+    assert common.strategy_stub_reason(row2, None) is None

@@ -73,15 +73,6 @@
  "strategies_after_fix": {
   "items": [
    {
-    "id": "strategy-persona-59b8a11bc277c249c89d",
-    "name": "Pantheon Dev Paper Release 43688794313 Attempt 1",
-    "operationalStatus": "running",
-    "personaIds": [
-     "persona-d64835a203ce276b8fbb"
-    ],
-    "state": "approved"
-   },
-   {
     "id": "strategy-persona-039ad01f8bcd2b4aa466",
     "name": "澄川｜2317 台股 Paper 學習 R2",
     "operationalStatus": "idle",
@@ -111,12 +102,12 @@
   ],
   "meta": {
    "hidden_unbound_stub_strategy_count": 2,
-   "hidden_test_persona_strategy_count": 0,
+   "hidden_test_persona_strategy_count": 166,
    "hidden_retired_persona_count": 165
   },
   "page_info": {
    "next_page_token": null,
-   "total": 4
+   "total": 3
   }
  },
  "meetings_before_fix": {

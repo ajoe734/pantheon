@@ -222,10 +222,13 @@ def strategy_stub_reason(
         return STUB_TEST_PERSONA_PROBE
     if persona_lookup is not None and persona_lookup.is_test_scoped(ids):
         return STUB_TEST_PERSONA_PROBE
-    if ids:
-        return None
     sid = _row_text(row, "strategy_id", "id")
     title = _row_text(row, "title", "name")
+    # Pre-2026-11-03 deploy probes lack data_scope=test; recognise them by name.
+    if title.startswith("Pantheon Dev Paper Release ") and " Attempt " in title:
+        return STUB_TEST_PERSONA_PROBE
+    if ids:
+        return None
     if sid.startswith("strat-tw-official") or title.startswith("TW official "):
         return STUB_RAW_MARKET_SEED
     if title.startswith("SIMULATION "):
