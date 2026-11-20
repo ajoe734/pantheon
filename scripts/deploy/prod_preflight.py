@@ -635,6 +635,10 @@ def _cli() -> int:
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
+    rb = sub.add_parser("rollback", help="rollback operation preflight: production config + genuine Environment approval (no manifest/evidence)")
+    rb.add_argument("--approvals", type=Path, required=True)
+    rb.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
+    rb.add_argument("--initiator", default="")
     vm = sub.add_parser("vm-size", help="read-only: fail closed if the control VM has fewer than 8 vCPUs")
     vm.add_argument("--vcpus", required=True, help="observed vCPU count (e.g. gcloud machineType guestCpus or nproc)")
     mg = sub.add_parser("migration", help="verify Stage-qualified versioned SQL / live catalog (VM-side)")
@@ -653,6 +657,16 @@ def _cli() -> int:
         if args.command == "config":
             check_config(os.environ)
             print(json.dumps({"status": "config_ok"}))
+            return 0
+        if args.command == "rollback":
+            check_config(os.environ)
+            try:
+                approvals = json.loads(args.approvals.read_text(encoding="utf-8"))
+                env_policy = json.loads(args.env_policy.read_text(encoding="utf-8")) if args.env_policy else None
+            except (OSError, json.JSONDecodeError) as exc:
+                raise PreflightError(f"cannot read approval record or environment policy: {exc}") from exc
+            print(json.dumps({"status": "rollback_preflight_passed",
+                              "approver": check_approval(approvals, args.initiator, env_policy)}, sort_keys=True))
             return 0
         result = run_all(
             env=os.environ,

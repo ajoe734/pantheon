@@ -104,6 +104,16 @@ The control compose packages the same existing product owners and Agora request 
 - Two non-capital production-shaped deploy/rollback drills, each with rollback under 120 s.
 - Protected exact-release publication, then a 30-minute observation window. Thresholds come from measured policy approved by the named owners; no green SLO is assumed here.
 
+## 5a. Protected drill rollback (`operation=rollback`) and per-dispatch journal
+
+Source-only contract; hosted execution still needs the genuine `production` Environment approval.
+
+**Journal per dispatch.** `prod_atomic_switch.sh` renames an existing `state/journal/<release_id>` to `<release_id>.archived-<UTC timestamp>` before any baseline check or marker write, so rollback reads only the current dispatch. A refusal before the new journal is written renames the archive back. The newest 10 archives per release id are kept (about 50 KB each).
+
+**Dispatch** (`Pantheon Production Release`): `operation=rollback`, `release_id` = the currently ACTIVE release; other release inputs are ignored. Still required: `PRODUCTION_RELEASE_ENABLED=true`, protected `production` Environment approval by a permitted reviewer (`prod_preflight.py rollback`), WIF auth and IAP transport. Skipped: FE retrieval, snapshot, bootstrap, pre-pull, migrate. This is application rollback, not data recovery.
+
+`scripts/deploy/prod_rollback.sh --protected` refuses without changing anything: exit 1 `MISSING_INPUT`; 10 `ROLLBACK_RELEASE_NOT_ACTIVE` (not the release in `state/active_manifest.json`); 11 `ROLLBACK_NO_JOURNAL`; 12 `ROLLBACK_BOOTSTRAP_JOURNAL` (would remove Production); 13 `ROLLBACK_NO_BASELINE` (no retained healthy baseline, or its FE dir/upstream is gone); 14 `ROLLBACK_NO_MANIFEST`. Otherwise it runs `prod_rollback.sh` (verifies via `baseline_health`), then `prod_ops.sh verify_rollback` (owners/singleton at baseline digest, paper-worker credential check) and prints one secret-free JSON line `{"status","from_release","to_release","elapsed_ms","rollback_budget_seconds","exit_code"}`. Exit: 0 ok, 3 restoration failed, 6 over the 120 s budget, 7 post-rollback verification failed.
+
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
 Published staging evidence: public-safe allowlisted `staging_verified` summaries for release `pantheon-20261028-102` (manifest `sha256:617e2936…bcf3`, runs 41579314601 and 41581135775 on control commit `9df41340`, rollback 107.727 s / 108.599 s, 4-resource cleanup with readback each) are the top-level fields of `docs/deployment/evidence/ENV-PROD-CONTROL-IMPL-001/evidence.json` (latest run 41581135775; both runs under `staging_verification_runs`) and pass `prod_preflight.check_staging_evidence`; usable as `staging_evidence_path`. Both runs skipped hosted QA (QA 0, step 9), so this is NOT complete acceptance and release 102 is infrastructure evidence only.
