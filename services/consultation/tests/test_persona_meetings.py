@@ -1181,3 +1181,165 @@ def test_detail_carries_execution_state():
     assert d["execution_state"]["status"] == "dead_letter"
     d3 = meetings_mod.get_meeting_detail_view(st, tenant_id="t1", meeting_id="m-3", workflow_state=wf)
     assert d3["execution_state"] is None
+
+
+def test_retry_after_blocked_writeback_reuses_recorded_memos_and_closes_mt1(
+    stack: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hosted sequence: memo 201 + publish 200, writeback 403, retry (memo text differs) -> closed."""
+    client: ConsultationServiceClient = stack["client"]
+    double: _AdapterModelDouble = stack["double"]
+    real_write = meetings_mod._write_meeting_memory
+    calls = {"n": 0}
+
+    def _write_once_refused(**kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            double.synthesis_mode = "normal"  # the retry synthesizes different memo text
+            raise urllib.error.HTTPError(
+                kwargs.get("memory_url") or "http://memory", 403, "Forbidden", {}, None
+            )
+        return real_write(**kwargs)
+
+    monkeypatch.setattr(meetings_mod, "_write_meeting_memory", _write_once_refused)
+    created = client.open_persona_meeting(
+        meeting_type="MT-1",
+        topic="Retry after blocked memory writeback",
+        convened_by={"kind": "persona", "id": "persona-alpha"},
+        participants=["persona-alpha", "persona-risk-officer"],
+        iso_week="2026-W52",
+    )
+    mid = created["meeting_id"]
+    double.synthesis_mode = "unreadable"  # first attempt's memo text differs from the retry's
+    second = _tick(stack)
+    assert second["blocked"] == 1 and second["completed"] == 1, second
+    assert all("http_error=403" in e for e in second["errors"]), second
+    detail = client.get_meeting(mid)
+    assert detail["status"] == "closed" and detail["closed_at"]
+    assert detail["round"] == 2
+    assert detail["writebacks"], detail
+    assert calls["n"] == 2
+    memos = [
+        m for m in _api_memos(stack, mid)
+        if m["memo_type"] in {"committee_summary", "dissent"}
+    ]
+    # Never a second memo of a kind for the same request: the 409 reused the recorded record.
+    kinds = [m["memo_type"] for m in memos]
+    assert sorted(kinds) == ["committee_summary", "dissent"], kinds
+    assert all(m["status"] == "published" for m in memos)
+
+
+def _api_memos(stack: dict[str, Any], request_id: str) -> list[dict[str, Any]]:
+    from services.consultation.workflow_executor import _api_get
+
+    return _api_get(stack["cfg"], f"/api/consult/memos?request_id={request_id}")
+
+
+def test_chair_declared_review_keeps_its_summary_and_empty_synthesis_keeps_the_unreadable_text() -> None:
+    def build(raw: Any) -> dict[str, Any]:
+        return meetings_mod.validate_and_build_synthesis(
+            meeting_id="mtg-x", meeting_code="MT-1", spec={}, chair_persona_id="persona-alpha",
+            convened_by={"kind": "persona", "id": "persona-alpha"},
+            participants=[{"persona_id": "persona-alpha", "role": "chair"}],
+            rounds=[{"positions": [
+                {"persona_id": "persona-alpha", "stance": "request_more_research", "confidence": 0.5},
+                {"persona_id": "persona-risk-officer", "stance": "request_more_research", "confidence": 0.5},
+            ]}],
+            raw_synthesis=raw, allowed_case_ids=set(), chair_preread_ids=set(),
+        )
+
+    declared = build({"outcome": "REVIEW", "summary": "Both stances request more research."})
+    assert declared["outcome"] == "REVIEW" and declared["summary"] == "Both stances request more research."
+    assert declared["proposals"] == [] and declared["tally"]["by_stance"] == {"request_more_research": 2}
+    for raw in (None, {}, {"unreadable": True}, {"outcome": "REVIEW"}):
+        assert "empty or unreadable" in build(raw)["summary"]
+
+
+# --- MEETING-OPERATOR-ROSTER-SUBJECT-REF-20261120 ---------------------------
+
+_ROSTER_DIR = {
+    "persona-2448c7053e33ea48da47": {"metadata": {"trading": True}},
+    "persona-alpha": {"metadata": {"trading": True}},
+}
+
+
+def _roster(subject_ref, *, convened_by=None, participants=None):
+    spec = meetings_mod.resolve_meeting_type_spec("MT-1")
+    return meetings_mod.resolve_and_validate_roster(
+        spec=spec,
+        convened_by=convened_by or {"kind": "operator", "id": "op-1"},
+        raw_participants=participants,
+        subject_ref=subject_ref,
+        attribution_record=None,
+        persona_directory=_ROSTER_DIR,
+    )
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["persona:persona-2448c7053e33ea48da47", "persona-2448c7053e33ea48da47"],
+)
+def test_operator_default_roster_chair_is_bare_persona_id(ref):
+    roster, chair = _roster(ref)
+    assert chair == "persona-2448c7053e33ea48da47"
+    assert roster[0]["persona_id"] == "persona-2448c7053e33ea48da47"
+    assert all(":" not in p["persona_id"] for p in roster)
+
+
+@pytest.mark.parametrize(
+    "ref,reason",
+    [
+        ("persona:persona-unknown", "subject_persona_not_found"),
+        ("persona:bad id:x", "invalid_subject_persona"),
+        ("persona:", "invalid_subject_persona"),
+    ],
+)
+def test_operator_default_roster_refuses_unknown_subject_persona(ref, reason):
+    with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+        _roster(ref)
+    assert exc.value.reason == reason
+    assert 400 <= exc.value.status_code < 500
+
+
+def test_persona_convened_and_explicit_participants_unchanged():
+    roster, chair = _roster(
+        "persona:persona-unknown",
+        convened_by={"kind": "persona", "id": "persona-alpha"},
+    )
+    assert chair == "persona-alpha"
+    roster, chair = _roster(
+        "persona:persona-unknown",
+        participants=[{"persona_id": "persona-alpha", "role": "chair"}],
+    )
+    assert chair == "persona-alpha"
+
+
+@pytest.mark.parametrize("ref", ["trader:t1", "agora_user:u1", "user:u1"])
+def test_other_subject_ref_kinds_unchanged(ref):
+    roster, chair = _roster(ref)
+    # directory-derived default roster (sorted), not the subject_ref path
+    assert chair == "persona-2448c7053e33ea48da47"
+
+
+def test_preread_memory_refusal_is_named_and_does_not_block(monkeypatch):
+    import urllib.error
+    import integrations.openclaw.persona_memory_bridge as bridge
+    from services.consultation.meetings import build_participant_pre_read
+
+    calls = []
+
+    def refuse(url, **kw):
+        calls.append(kw)
+        raise urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr(bridge, "fetch_canonical_memory", refuse)
+    monkeypatch.delenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "")
+    refusals: dict = {}
+    out = build_participant_pre_read(
+        refusals=refusals, meeting_id="m1", tenant_id=TENANT, topic="t", memory_url="http://memory.invalid",
+        participants=[{"persona_id": "persona-a", "role": "r", "style": "s", "origin": "o"}])
+    assert refusals == {"persona-a": "memory_read_refused:HTTPError:http_403"}
+    assert out[0]["entries"] and "memory_read_refusal" not in out[0]  # round proceeds; request content stable
+    assert calls[0]["actor_id"] and calls[0]["actor_roles"]

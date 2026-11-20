@@ -28,6 +28,10 @@ from .controller_state import (
     utc_now,
 )
 from .controller_auth import load_controller_token
+from .chip_publication_schedule import (
+    FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS,
+    finmind_fundamental_publication_fresh,
+)
 from .connectors.collector_bundle import (
     COLLECTOR_REQUEST_READ_BUDGET_SECONDS,
     LATEST_CLOSE_PERSISTED_ROWS_PER_PULL,
@@ -1351,6 +1355,19 @@ def _validate_terminal_readback(
                             tag_entry = f"{connector_id}:source_data_stale{reason_tag}"
                             if tag_entry not in invalid:
                                 invalid.append(tag_entry)
+                elif connector_id in FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS:
+                    # Slow FinMind fundamentals: age is decided by the statutory publication
+                    # schedule (same rule as runtime freshness), not the generic cadence limit.
+                    if (
+                        available_at is None
+                        or (available_at - now_dt).total_seconds() > 300
+                        or not finmind_fundamental_publication_fresh(
+                            FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS[connector_id],
+                            available_at,
+                            now_dt,
+                        )
+                    ):
+                        invalid.append(f"{connector_id}:source_data_stale")
                 else:
                     if (
                         available_at is None

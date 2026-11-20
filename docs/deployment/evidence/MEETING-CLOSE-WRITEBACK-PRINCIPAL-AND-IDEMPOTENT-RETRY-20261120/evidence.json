@@ -1,0 +1,36 @@
+{
+  "task_id": "MEETING-CLOSE-WRITEBACK-PRINCIPAL-AND-IDEMPOTENT-RETRY-20261120",
+  "acceptance_1_403_cause": {
+    "check": "services/memory/main.py writeback_learn_feedback: after the _MEMORY_WRITE_ROLES gate, requires one of {write_authority, operator, admin, system, memory-writer} in the verified caller roles; else 403 'Verified caller cannot represent this memory writer'.",
+    "hosted_cause": "consultation-svc sent PANTHEON_MEMORY_AUTH_TOKEN (the persona-svc memory writer: passes the write-role gate, holds none of the authority roles) with write_authority consultation-svc.",
+    "test": "scripts/test_issue_dev_paper_principals.py::test_consultation_memory_principal_writes_learn_feedback_as_consultation_svc_only_and_is_mounted (real memory route, strict JWT: persona-svc token 403, issued principal 2xx). No token printed."
+  },
+  "acceptance_2_principal": {
+    "variable": "CONSULTATION_MEMORY_WRITE_TOKEN",
+    "subject": "pantheon-dev-consultation-memory-writer",
+    "roles": ["consultation-svc"],
+    "scope": "learn-feedback as write_authority consultation-svc only; cannot write as telemetry-svc (403 in test); no operator/admin/system/memory-writer",
+    "delivery": "file in dev-paper-consultation-tokens volume, mounted :ro at /run/pantheon-principals; consultation-svc PANTHEON_MEMORY_AUTH_TOKEN_FILE points to it, read per request (file takes precedence over env token)",
+    "deploy_note": "The issuer must run once after deploy so the file exists; PANTHEON_MEMORY_AUTH_TOKEN_FILE override can be set to an empty value only if hosted uses a different secret store."
+  },
+  "acceptance_3_idempotent_retry": {
+    "cause": "Stable memo idempotency key (mem-summary-<meeting>) with re-synthesized different text on retry made POST /api/consult/memos return 409 (comparable payload differs).",
+    "fix": "_HttpMeetingStoreProxy.put_memo treats 409 as the existing record for that request, memo_type and author_ref (GET /api/consult/memos?request_id=), then publish (already idempotent). 409 without an existing record is still raised.",
+    "test": "services/consultation/tests/test_persona_meetings.py::test_retry_after_blocked_writeback_reuses_recorded_memos_and_closes_mt1 (fails without the fix, passes with it)"
+  },
+  "acceptance_4": "Same test: real executor, MT-1 chair persona-alpha + persona-risk-officer, two rounds, blocked 403 writeback then retry -> closed, closed_at set, writebacks recorded, exactly one committee_summary and one dissent memo, no dead_letter.",
+  "acceptance_5_synthesis_review": {
+    "finding": "Not a parse defect in stance handling: REVIEW is the expected outcome class when the chair returns REVIEW or nothing readable. But the code gave a chair-declared REVIEW with a readable summary the misleading text 'Synthesis empty or unreadable'.",
+    "fix": "validate_and_build_synthesis keeps the chair's own summary when it declares REVIEW with a summary; empty/unreadable keeps the old text.",
+    "test": "test_chair_declared_review_keeps_its_summary_and_empty_synthesis_keeps_the_unreadable_text",
+    "unverified": "Whether the hosted chair output on mtg-485f7ab2970844ae was explicit REVIEW or empty was not inspectable from code; operator can read its synthesis event."
+  },
+  "acceptance_6_budget": {
+    "per_meeting": "1 learn-feedback writeback (source_event_id consultation:meeting:<id>, replays instead of duplicating), 2 memos (summary + dissent), plus 1 participant-outcome memory per participant inside that single writeback",
+    "retries": "At most 3 attempts (CONSULTATION_WORKFLOW_MAX_BLOCKED_ATTEMPTS); retries add no memos (409 reuse) and the writeback is idempotent",
+    "per_day": "Bounded by the meeting cadence (weekly per persona/type via schedules); hosted scale of one operator-convened or cycle-convened meeting per trading persona per week is <=1 writeback and 2 memos per meeting per day per persona; no new writer"
+  },
+  "acceptance_7_tests": "services/consultation/test_workflow_executor.py + services/consultation/tests/test_persona_meetings.py + scripts/test_issue_dev_paper_principals.py: 118 passed",
+  "acceptance_8_hosted_proof": "pending: after deploy and issuer run, persona-loop owner records one meeting closed with a recorded writeback. Old dead letters are not redriven here.",
+  "review_independence": "Reviewer is another model family when capacity exists; otherwise record the exception at review."
+}

@@ -66,6 +66,7 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
     return normalized
 
 
+_POLICY_READ_ONLY_ROLES = ("reviewer", "auditor")
 _MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session", "persona_memory_reader", "persona_session")
 # Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
 _PERSONA_LIST_BROAD_ROLES = frozenset({"operator", "admin", "system", "researcher", "analyst", "persona_memory_reader"})
@@ -620,7 +621,9 @@ def _authorize_memory_read(
     scope: str, persona_id: Optional[str], session_persona_id: Optional[str],
 ):
     """Shared identity, tenant and governance check for retrieve and standing-question reads."""
-    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    # Governance (persona/institutional read roles) stays the final decision; reviewer and auditor
+    # are admitted here because that policy already allows them to read.
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES + _POLICY_READ_ONLY_ROLES)
     roles = _split_csv_values(actor_roles)
     effective_actor_id = actor_id
     effective_roles = roles

@@ -900,6 +900,20 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     # is in no current exchange listing (expired warrant, unknown code) are not turned into records; the count is
     # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
     listing_filter: Any | None = None
+    # Verification of an inferred (undated) margin session: lookup(connector_id, previous_session_date) returns
+    # {symbol: {"margin_balance", "short_balance"}} stored for that session, or None when it is not stored.
+    previous_session_lookup: Any | None = None
+    accept_first_load: bool = False
+
+    def __post_init__(self) -> None:
+        # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three full-market chip profiles hold the whole
+        # session in one run, whatever smaller budget the caller built the adapter with (profile budget 3000).
+        from ..connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+        profile = TW_CHIP_REFRESH_PROFILES.get(self.connector_id) or {}
+        budget = int(profile.get("max_records") or 0) if profile.get("full_market") else 0
+        if budget and self.max_records < budget:
+            object.__setattr__(self, "max_records", budget)
 
     def _resolve_bundle_transport(
         self,
@@ -1534,6 +1548,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         priority_symbols: Sequence[str] | str | None = None,
         max_records: int | None = None,
         trace_id: str = "",
+        fetch_time: datetime | None = None,
     ) -> tuple[SourceRecord, ...]:
         tier = _tier_name(universe_tier)
         if tier == "archive_universe" and dataset != "tw_price_daily":
@@ -1542,6 +1557,11 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         source_dataset = source_dataset or str(endpoint.get("source_dataset") or dataset)
         api_endpoint = api_endpoint or str(endpoint.get("endpoint") or "")
+        if self._is_full_market_chip(dataset):
+            # The caller's trade_date/run_date is the fetch date for scheduled jobs; it must never become a row
+            # session. Only a date the provider response itself carries (payload or row) is trusted; otherwise
+            # the published-session helper decides (see _stamp_full_market_sessions).
+            trade_date = None
         if trade_date is None and isinstance(payload, Mapping):
             trade_date = _roc_date_to_iso(payload.get("date") or payload.get("Date") or payload.get("資料日期"))
         normalized_rows = self.normalized_rows_from_payload(
@@ -1553,11 +1573,23 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             trade_date=trade_date,
             available_time=available_time,
         )
+        full_market = self._is_full_market_chip(dataset)
+        provider_listed_count = 0
+        if full_market:
+            normalized_rows = self._stamp_full_market_sessions(dataset, normalized_rows, fetch_time)
+            provider_listed_count = len(normalized_rows)
         normalized_rows = _prioritize_normalized_rows(
             normalized_rows,
             _priority_symbols_for_venue(priority_symbols, venue),
         )
-        return self._records_from_normalized_rows(
+        if full_market:
+            limit = max_records if max_records is not None else self.max_records
+            if limit and len(normalized_rows) > limit:
+                raise SourceEvidenceError(
+                    f"{self.connector_id} {dataset} {venue} returned {len(normalized_rows)} rows which exceed "
+                    f"max_records {limit}; refusing to truncate a full-market chip dataset"
+                )
+        records = self._records_from_normalized_rows(
             dataset=dataset,
             venue=venue,
             normalized_rows=normalized_rows,
@@ -1568,6 +1600,88 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             max_records=max_records,
             trace_id=trace_id,
         )
+        if full_market:
+            # The readback compares the stored count of the run with this provider listed count (partial/complete).
+            for record in records:
+                record.metadata["provider_listed_count"] = provider_listed_count
+        return records
+
+    def _is_full_market_chip(self, dataset: str) -> bool:
+        if dataset not in _GOVERNED_DAILY_FLOW_DATASETS:
+            return False
+        from ..chip_publication_schedule import is_full_market_chip_connector
+
+        return is_full_market_chip_connector(self.connector_id)
+
+    def _stamp_full_market_sessions(
+        self,
+        dataset: str,
+        normalized_rows: Sequence[Mapping[str, Any]],
+        fetch_time: datetime | None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Every stored row carries its session date; rows are only kept when they are listed shares/ETFs.
+
+        Rows with no provider date (TWSE MI_MARGN, TPEx margin) take the session from the shared
+        published-session helper applied to the fetch time. A row whose session cannot be decided fails the
+        run naming the profile; the fetch date is never used as a fallback.
+        """
+        from ..chip_publication_schedule import ChipSessionUndecidable, resolve_chip_row_session
+
+        listing_filter = self.listing_filter
+        if listing_filter is not None and getattr(listing_filter, "enabled", True):
+            normalized_rows = [
+                r for r in normalized_rows if listing_filter.admits(r.get("symbol_canonical") or r.get("symbol") or "")
+            ]
+
+        def _is_session_day(day: Any) -> bool:
+            calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+            return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
+
+        when = fetch_time or datetime.now(timezone.utc)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        out: list[dict[str, Any]] = []
+        session_cache: dict[str, str] = {}
+        inferred_rows: list[Mapping[str, Any]] = []
+        for row in normalized_rows:
+            provided = str(row.get("date") or "").strip()
+            if not provided:
+                inferred_rows.append(row)
+            if provided in session_cache:
+                session = session_cache[provided]
+            else:
+                try:
+                    session = resolve_chip_row_session(
+                        self.connector_id, provided, when, is_session_day=_is_session_day
+                    ).isoformat()
+                except ChipSessionUndecidable as exc:
+                    raise SourceEvidenceError(f"{self.connector_id} {dataset}: {exc}") from exc
+                session_cache[provided] = session
+            stamped = dict(row)
+            stamped["date"] = session
+            if not str(stamped.get("available_time") or "").strip() or stamped.get("available_time") == provided:
+                stamped["available_time"] = ""
+            out.append(stamped)
+        if inferred_rows and dataset == "tw_margin_short_balance" and self.previous_session_lookup is not None:
+            from ..chip_publication_schedule import previous_chip_session, verify_margin_session_chain
+
+            inferred = date.fromisoformat(session_cache[""])
+            try:
+                stored_previous = self.previous_session_lookup(
+                    self.connector_id, previous_chip_session(inferred, is_session_day=_is_session_day)
+                )
+                evidence = verify_margin_session_chain(
+                    self.connector_id,
+                    inferred,
+                    inferred_rows,
+                    stored_previous,
+                    accept_first_load=self.accept_first_load,
+                )
+            except ChipSessionUndecidable as exc:
+                raise SourceEvidenceError(f"{self.connector_id} {dataset}: {exc}") from exc
+            out = [{**r, "session_chain": evidence} if not str(orig.get("date") or "").strip() else r
+                   for r, orig in zip(out, normalized_rows)]
+        return tuple(out)
 
     def _records_from_normalized_rows(
         self,

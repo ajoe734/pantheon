@@ -490,7 +490,9 @@ def test_the_controller_calls_the_sweeper_once_per_day_and_a_failure_never_fails
     assert out["called"] is True and out["ok"] is False and "503" in out["reason"]
 
 
-def test_the_source_ingest_health_payload_carries_the_retention_fields(world):
+def test_the_source_ingest_health_payload_carries_the_retention_fields(world, monkeypatch):
+    # The router builds its own sweeper on the real Taipei date, and run_if_due skips weekends: pin a trading day.
+    monkeypatch.setattr(ret, "_taipei_today", lambda: TODAY)
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 

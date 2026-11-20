@@ -1866,7 +1866,7 @@ def _shared_tw_refresh_helpers_py(script: str | None = None) -> str:
     return text.split("<<'SHARED_TW_REFRESH_HELPERS_PY'\n", 1)[1].split("\nSHARED_TW_REFRESH_HELPERS_PY", 1)[0]
 
 
-def _run_real_taiwan_preflight(snapshot: dict[str, Any], calendar_valid: bool) -> tuple[dict[str, Any], str]:
+def _run_real_taiwan_preflight(snapshot: dict[str, Any], calendar_valid: bool, fail_first: int = 0) -> tuple[dict[str, Any], str]:
     """Run the heredoc python from check_taiwan_refresh_preflight against a stub snapshot API."""
     import http.server
     import os
@@ -1877,8 +1877,15 @@ def _run_real_taiwan_preflight(snapshot: dict[str, Any], calendar_valid: bool) -
     shared_helpers = _shared_tw_refresh_helpers_py(script)
     today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
 
+    seen = {"n": 0}
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            seen["n"] += 1
+            if seen["n"] <= fail_first:
+                # source-ingest is still warming up after its recreate: drop the connection.
+                self.connection.close()
+                return
             payload = json.dumps(snapshot).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(payload)))
@@ -1907,6 +1914,7 @@ def _run_real_taiwan_preflight(snapshot: dict[str, Any], calendar_valid: bool) -
                 "PYTHONPATH": str(ROOT),
                 "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
                 "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+                "PANTHEON_PREFLIGHT_API_PAUSE_SECONDS": "0.05",
             },
             capture_output=True,
             text=True,
@@ -5645,6 +5653,7 @@ def test_twse_margin_stored_empty_date_shape_shared_helper_and_missing_fields_er
                 },
                 "source_dataset": "MI_MARGN",
                 "symbol_canonical": "2330.TWSE",
+                "provider_listed_count": 1310,
                 "source_ingest_run_id": "ingest-2f56b4efe47f",
             },
             "provenance": {
@@ -5691,6 +5700,7 @@ def test_twse_margin_stored_empty_date_shape_shared_helper_and_missing_fields_er
             "finished_at": "2026-11-18T23:53:58Z",
             "created_at": "2026-11-18T23:57:32Z",
             "ingest_run_id": "ingest-2f56b4efe47f",
+            "normalized_count": 1310,
         }
     ]
     ok_dir = tmp_path / "twse-margin-ok"
@@ -6103,6 +6113,7 @@ def test_preflight_and_readback_take_shared_helpers_from_running_script_not_host
                     "dataset": "tw_margin_short_balance",
                     "available_time": "",
                 },
+                "provider_listed_count": 1310,
                 "source_ingest_run_id": twse_margin_run_id,
             },
             "provenance": {
@@ -6126,6 +6137,7 @@ def test_preflight_and_readback_take_shared_helpers_from_running_script_not_host
         "finished_at": "2026-11-18T23:53:58Z",
         "created_at": "2026-11-18T23:57:32Z",
         "ingest_run_id": twse_margin_run_id,
+        "normalized_count": 1310,
     }
 
     fm_run_id = "ingest-78b81ff0f04d"
@@ -6510,3 +6522,436 @@ def test_steady_check_removes_call_files_of_its_run_only_and_reports_count_and_s
     data = json.loads(own.read_text(encoding="utf-8"))
     assert data["cleanup"] == {"bytes": 8, "files": 2}, (data, proc.stdout, proc.stderr)
     assert (tmp_path / "pantheon-refresh-outcome-56-1-1-1.json").exists()
+
+
+# ---------------------------------------------------------------------------------------------
+# TW-REFRESH-ONE-BOUNDED-RUNTIME-PER-RUN-20261120: one bounded runtime per refresh run.
+# These tests run the real entrypoint / steady check functions once per profile call, as separate
+# processes that share only the host state directory, exactly like the hosted run does.
+# ---------------------------------------------------------------------------------------------
+_FULL_RUN_PROFILES: list[tuple[str, str, str]] = [
+    ("tw-taifex-futures-options-chip", "taifex_ssf_contracts", "openapi.taifex.com.tw,www.taifex.com.tw"),
+    ("tw-finmind-broker-daily-report", "tw_broker_top", "api.finmindtrade.com,storage.googleapis.com"),
+    ("tw-twse-tpex-official-market", "tw_price_daily", "openapi.twse.com.tw,www.tpex.org.tw"),
+    ("tw-official-twse-margin-balances", "tw_margin_short_balance", "openapi.twse.com.tw,www.tpex.org.tw"),
+    ("tw-official-tpex-margin-balances", "tw_margin_short_balance", "openapi.twse.com.tw,www.tpex.org.tw"),
+    ("tw-official-tpex-institutional-flow", "tw_institutional_flow", "openapi.twse.com.tw,www.tpex.org.tw"),
+    ("tw-taifex-institutional-positions", "taifex_futures_chip", "openapi.taifex.com.tw,www.taifex.com.tw"),
+    ("tw-taifex-put-call", "taifex_options_chip", "openapi.taifex.com.tw,www.taifex.com.tw"),
+    ("tw-taifex-tx-daily", "taifex_tx_daily", "openapi.taifex.com.tw,www.taifex.com.tw"),
+    ("tw-finmind-monthly-revenue", "tw_monthly_revenue", "api.finmindtrade.com"),
+    ("tw-finmind-quarterly-statements", "tw_financial_statement", "api.finmindtrade.com"),
+    ("tw-finmind-valuation", "tw_valuation_bwibbu", "api.finmindtrade.com"),
+]
+_RUN_FUNCTIONS = (
+    "source_ingest_family_services", "remove_source_ingest_compose_leftovers", "verify_source_ingest_container_counts",
+    "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans", "steady_check_cleanup_call_files",
+    "steady_check_health_bound_seconds", "bounded_runtime_state_dir", "bounded_runtime_list_state_dirs",
+    "bounded_runtime_state_set", "bounded_runtime_record_memory", "bounded_runtime_market_open_guard",
+    "bounded_runtime_validate_profile", "bounded_runtime_restore_from_state", "bounded_runtime_restore_all_states",
+    "execute_steady_posture_check", "execute_bounded_source_refresh_entrypoint",
+)
+
+
+class _BoundedRuntimeHost:
+    """A fake dev host: docker is stateful, every call is its own bash process, state lives in files."""
+
+    def __init__(self, tmp_path: Path, *, run_id: str = "9001", union: str | None = None, finmind: bool = True,
+                 now: str = "2026-11-18T10:30:00Z", peak: int = 3_000_000_000, oom: bool = False) -> None:
+        self.dir = tmp_path
+        self.state_root = tmp_path / "state"
+        self.state_root.mkdir()
+        self.tmp_files = tmp_path / "tmpfiles"
+        self.tmp_files.mkdir()
+        self.events = tmp_path / "events.log"   # one line per source-ingest recreate: "bounded ..." or "restore"
+        self.calls = tmp_path / "docker.calls"
+        self.mode_file = tmp_path / "mode"      # steady | bounded
+        self.mode_file.write_text("steady\n", encoding="utf-8")
+        self.created_file = tmp_path / "created"
+        self.created_file.write_text("", encoding="utf-8")
+        self.steady_running = tmp_path / "steady_running"
+        self.steady_running.write_text("yes\n", encoding="utf-8")
+        self.run_id = run_id
+        self.union = union if union is not None else "openapi.taifex.com.tw,www.taifex.com.tw,api.finmindtrade.com,storage.googleapis.com,openapi.twse.com.tw,www.tpex.org.tw"
+        self.finmind = finmind
+        self.now = now
+        self.peak = peak
+        self.oom = oom
+        self.counter = 0
+        self.fns = "\n".join(_prune_shell_function(n) for n in _RUN_FUNCTIONS)
+
+    # -- script pieces -------------------------------------------------------------------------
+    def _prelude(self, *, behavior: str = "ok", hang_enter: bool = False) -> str:
+        return f"""
+set -uo pipefail
+export PATH="{os.environ['PATH']}"
+CALLS="{self.calls}"; EVENTS="{self.events}"; MODE="{self.mode_file}"; CREATED="{self.created_file}"; STEADY="{self.steady_running}"
+info() {{ echo "[remote-deploy] $*"; }}
+error() {{ LAST_REMOTE_DEPLOY_ERROR="$*"; echo "[remote-deploy] ERROR: $*" >&2; exit 1; }}
+sleep() {{ command sleep "${{REAL_SLEEP:-0}}"; }}
+validate_source_refresh_profile() {{ :; }}
+curl_with_retry() {{ echo "readyz-wait" >> "$CALLS"; }}
+resolve_bounded_source_refresh_active_symbols() {{ SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS=2330.TW; }}
+check_taiwan_refresh_preflight() {{ echo '{{"status":"proceed"}}'; }}
+redact_bounded_refresh_log() {{ cat; }}
+recover_bounded_source_refresh_dlq() {{ :; }}
+prepare_bounded_source_refresh_dataset() {{ :; }}
+wait_for_bounded_source_refresh_service() {{ :; }}
+verify_bounded_source_refresh_readback() {{
+  echo "readback $SOURCE_INGEST_BOUNDED_CONNECTOR_ID" >> "$CALLS"
+  case "{behavior}" in
+    fail) return 1 ;;
+    hang) : > "{self.dir / 'hanging'}"; command sleep 120 >/dev/null 2>&1 & wait $! ;;
+  esac
+  return 0
+}}
+manage_source_ingest_refresh_runtime() {{
+  if [[ "$2" == bounded ]]; then
+    echo "bounded hosts=$PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS finmind_token=${{PANTHEON_BOUNDED_RUNTIME_FINMIND_TOKEN:-unset}} max_records=${{SOURCE_INGEST_MAX_RECORDS:-}}" >> "$EVENTS"
+    echo bounded > "$MODE"
+    {'command sleep 120 >/dev/null 2>&1 & wait $!' if hang_enter else ':'}
+  else
+    echo "restore controller_mode=${{SOURCE_INGEST_RESTORE_CONTROLLER_MODE:-}} env=$1" >> "$EVENTS"
+    echo steady > "$MODE"
+  fi
+}}
+docker() {{
+  echo "docker $*" >> "$CALLS"
+  case "$*" in
+    "compose -p pantheon -f docker-compose.yml ps -q source-ingest"|"compose -p pantheon -f docker-compose.yml ps -a -q source-ingest") echo cid-src ;;
+    "inspect --format {{{{.Image}}}} cid-src") echo {_SHA_A} ;;
+    "compose -p pantheon -f docker-compose.yml images -q source-ingest") echo {'a' * 64} ;;
+    "inspect --format {{{{json .Config.Env}}}} cid-src") echo '["A=1","FINMIND_API_TOKEN=steady-old"]' ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler") [[ "$(cat "$MODE")" == steady ]] && echo steady-sched ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-agora-projector") [[ "$(cat "$MODE")" == steady ]] && echo steady-proj ;;
+    "compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest") echo cid-src ;;
+    "inspect --format {{{{json .Config.Env}}}} steady-sched") echo '["PANTHEON_TENANT_ID=t","PANTHEON_ENV=dev","GIT_SHA=gitsha1","SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull"]' ;;
+    "inspect --format {{{{.Id}}}} pantheon-source-ingest-agora-projector:latest") echo img-proj ;;
+    "inspect --format "*image.revision*" img-proj") echo gitsha1 ;;
+    "inspect --format {{{{if .State.Health}}}}"*) echo healthy ;;
+    "inspect --format {{{{json .Config.Healthcheck}}}} "*) echo '{{"Interval":30000000000,"StartPeriod":90000000000}}' ;;
+    "inspect --format {{{{.HostConfig.Memory}}}} cid-src") echo 6442450944 ;;
+    "inspect --format {{{{.State.OOMKilled}}}} cid-src") echo {'true' if self.oom else 'false'} ;;
+    "exec cid-src cat /sys/fs/cgroup/memory.peak") echo {self.peak} ;;
+    "inspect --format {{{{json .Config.Env}}}} cid-src") echo '["A=1"]' ;;
+    "inspect --format {{{{.State.Status}}}} "*) echo exited ;;
+    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) : ;;
+    "ps -a -q --filter label=com.docker.compose.project=pantheon"*)
+      case "$*" in
+        *"status=created"*) cat "$CREATED" ;;
+        *"service=source-ingest "*|*"service=source-ingest") echo cid-src ;;
+        *) : ;;
+      esac ;;
+    "rm -f "*) : ;;
+    "start steady-sched steady-proj") echo yes > "$STEADY" ;;
+    "stop steady-sched steady-proj") : > "$STEADY" ;;
+  esac
+  return 0
+}}
+"""
+
+    def _env(self, connector: str, dataset: str, hosts: str, extra: dict[str, str] | None = None) -> dict[str, str]:
+        self.counter += 1
+        env = {
+            **os.environ,
+            "BOUNDED_RUNTIME_STATE_ROOT": str(self.state_root),
+            "STEADY_CHECK_TMP_DIR": str(self.tmp_files),
+            "PANTHEON_REFRESH_RUN_ID": self.run_id,
+            "PANTHEON_REFRESH_CALL_ID": f"{self.run_id}-call-{self.counter}",
+            "PANTHEON_DEPLOY_COMPONENT": "refresh-only",
+            "PANTHEON_BOUNDED_RUNTIME_RUN": "true",
+            "PANTHEON_BOUNDED_RUNTIME_HOSTS": self.union,
+            "PANTHEON_BOUNDED_RUNTIME_FINMIND": "true" if self.finmind else "false",
+            "PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS": "500",
+            "PANTHEON_REFRESH_NOW": self.now,
+            "PANTHEON_COLLECTOR_HOST": "collector.example.test",
+            "FINMIND_API_TOKEN": "run-finmind-token",
+            "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": connector,
+            "SOURCE_INGEST_BOUNDED_DATASET": dataset,
+            "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": hosts,
+            "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS": "300",
+            "PANTHEON_BOUNDED_REFRESH_RESTORE_LOG": str(self.dir / "restore.log"),
+        }
+        env.update(extra or {})
+        return env
+
+    # -- calls ---------------------------------------------------------------------------------
+    def profile_cmd(self, index: int, connector: str, dataset: str, hosts: str, *, behavior: str = "ok",
+                    hang_enter: bool = False, extra_env: dict[str, str] | None = None) -> tuple[list[str], dict[str, str], Path]:
+        out = self.dir / f"outcome-{index}-{connector}.json"
+        script = self._prelude(behavior=behavior, hang_enter=hang_enter) + self.fns + f"""
+execute_bounded_source_refresh_entrypoint false "{out}"
+echo "ENTRYPOINT_RC=$?"
+"""
+        return ["bash", "-c", script], self._env(connector, dataset, hosts, extra_env), out
+
+    def run_profile(self, index: int, connector: str, dataset: str, hosts: str, **kwargs: Any) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+        argv, env, out = self.profile_cmd(index, connector, dataset, hosts, **kwargs)
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=90, check=False)
+        return proc, (json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {})
+
+    def steady_check(self) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+        out = self.dir / "steady-check.json"
+        script = self._prelude() + self.fns + f"""
+STEADY_CHECK_GRACE_SECONDS=0
+execute_steady_posture_check "{out}"
+echo "STEADY_RC=$?"
+"""
+        env = self._env("", "", "", {"STEADY_CHECK": "true"})
+        proc = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=90, check=False)
+        return proc, (json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {})
+
+    # -- observations --------------------------------------------------------------------------
+    def event_lines(self) -> list[str]:
+        return self.events.read_text(encoding="utf-8").splitlines() if self.events.exists() else []
+
+    def recreates(self) -> tuple[int, int]:
+        lines = self.event_lines()
+        return sum(1 for e in lines if e.startswith("bounded")), sum(1 for e in lines if e.startswith("restore"))
+
+    def docker_calls(self) -> list[str]:
+        return self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
+
+
+def _run_all_profiles(host: _BoundedRuntimeHost, *, hang_at: int | None = None, fail_at: int | None = None,
+                      extra_env: dict[str, str] | None = None) -> dict[int, dict[str, Any]]:
+    """Run every profile of the run in order. ``hang_at`` is a profile whose runner step timed out: its remote
+    process is left running (as the runner leaves it) and the next profile call has to deal with it."""
+    outcomes: dict[int, dict[str, Any]] = {}
+    left_over: subprocess.Popen[str] | None = None
+    try:
+        for index, (connector, dataset, hosts) in enumerate(_FULL_RUN_PROFILES):
+            if index == hang_at:
+                argv, env, out = host.profile_cmd(index, connector, dataset, hosts, behavior="hang", extra_env=extra_env)
+                left_over = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                marker = host.dir / "hanging"
+                for _ in range(300):
+                    if marker.exists():
+                        break
+                    time.sleep(0.1)
+                assert marker.exists(), "the profile never reached its readback"
+                outcomes[index] = {"status": "timed_out_left_running"}
+                continue
+            env_extra = {"STEADY_CHECK_ORPHAN_WAIT_SECONDS": "1", "STEADY_CHECK_ORPHAN_STOP_SECONDS": "10",
+                         "STEADY_CHECK_ORPHAN_POLL_SECONDS": "1", "REAL_SLEEP": "1", **(extra_env or {})}
+            proc, outcome = host.run_profile(index, connector, dataset, hosts, behavior="fail" if index == fail_at else "ok", extra_env=env_extra)
+            outcome["_rc"] = proc.stdout.rsplit("ENTRYPOINT_RC=", 1)[-1].strip() if "ENTRYPOINT_RC=" in proc.stdout else f"no-rc:{proc.returncode}:{proc.stderr[-400:]}"
+            outcomes[index] = outcome
+    finally:
+        if left_over is not None:
+            try:
+                left_over.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                left_over.kill()
+    return outcomes
+
+
+def test_full_run_with_timed_out_and_failed_profile_recreates_source_ingest_twice(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    outcomes = _run_all_profiles(host, hang_at=2, fail_at=4)
+    # Never a recreate per profile: one into the bounded runtime, none in between, and nothing restored yet.
+    bounded, restored = host.recreates()
+    assert (bounded, restored) == (1, 0), host.event_lines()
+    steady_proc, steady = host.steady_check()
+    bounded, restored = host.recreates()
+    assert (bounded, restored) == (1, 1), (host.event_lines(), steady_proc.stdout, steady_proc.stderr)
+    assert bounded + restored == 2
+    # The single bounded recreate carries exactly the union of the hosts of the whole profile set and the token.
+    first = host.event_lines()[0]
+    assert first == (
+        "bounded hosts=openapi.taifex.com.tw,www.taifex.com.tw,api.finmindtrade.com,storage.googleapis.com,"
+        "openapi.twse.com.tw,www.tpex.org.tw finmind_token=true max_records=500"
+    )
+    # The restore comes from the recorded steady environment and mode, then the steady containers start again.
+    assert host.event_lines()[1].startswith("restore controller_mode=collector_steady_pull env=") and host.event_lines()[1].endswith("pre_env.json")
+    calls = host.docker_calls()
+    assert "docker start steady-sched steady-proj" in calls
+    assert sum(1 for c in calls if c == "docker stop steady-sched steady-proj") == 1
+    assert steady["status"] == "healthy" and steady["reason"] == "bounded_runtime_restored_once", steady
+    assert steady["bounded_runtime"]["enter_recreates"] == 1 and steady["bounded_runtime"]["restore_recreates"] == 1
+    assert not list(host.state_root.glob("pantheon-bounded-runtime-*")), "the state is removed after the restore"
+    # A failed or timed out profile does not skip later ones: every other profile completed.
+    assert outcomes[2]["status"] == "timed_out_left_running"
+    assert outcomes[4]["status"] == "failed", outcomes[4]
+    for index in set(range(len(_FULL_RUN_PROFILES))) - {2, 4}:
+        assert outcomes[index].get("status") == "completed", (index, outcomes[index])
+    # The profile after the timed out one waited for / stopped its left-over process and recorded which.
+    assert outcomes[3]["previous_profile_process"]["action"] == "stopped", outcomes[3]
+    assert "previous_profile_process" not in outcomes[5]
+    # The memory peak of the window is recorded against its 6 GiB limit and nothing was killed for memory.
+    assert steady["bounded_runtime"]["memory_peak_bytes"] == 3_000_000_000
+    assert steady["bounded_runtime"]["memory_limit_bytes"] == 6 * 1024**3 and steady["bounded_runtime"]["oom_killed"] is False
+    # Profiles wait for source-ingest health after the single warm-up instead of one short call.
+    assert calls.count("readyz-wait") >= len(_FULL_RUN_PROFILES)
+    # No profile leaves one-shot containers or created leftovers behind.
+    assert not any(c.startswith("docker rm -f") and ("steady-" in c or "cid-src" in c) for c in calls)
+
+
+@pytest.mark.parametrize("sig,rc", [("TERM", 143), ("HUP", 129)])
+@pytest.mark.parametrize("interrupted", [0, 1, 6, 11])
+def test_interrupt_at_any_profile_leaves_one_restore_for_the_steady_check(tmp_path: Path, interrupted: int, sig: str, rc: int) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    for index, (connector, dataset, hosts) in enumerate(_FULL_RUN_PROFILES):
+        if index != interrupted:
+            proc, outcome = host.run_profile(index, connector, dataset, hosts)
+            assert outcome.get("status") == "completed", (index, outcome, proc.stdout, proc.stderr[-500:])
+            continue
+        argv, env, out = host.profile_cmd(index, connector, dataset, hosts, behavior="hang")
+        child = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        marker = host.dir / "hanging"
+        for _ in range(300):
+            if marker.exists():
+                break
+            time.sleep(0.1)
+        assert marker.exists()
+        child.send_signal(getattr(__import__("signal"), f"SIG{sig}"))
+        text, _ = child.communicate(timeout=30)
+        try:
+            os.killpg(child.pid, 9)  # the stub's own sleeping helper process, not part of the product
+        except ProcessLookupError:
+            pass
+        assert child.returncode == rc, (child.returncode, text)
+        outcome = json.loads(out.read_text(encoding="utf-8"))
+        assert outcome["status"] == "failed", outcome
+        marker.unlink()
+        # The interrupt only ended this profile: the runtime was not restored in the middle of the run.
+        assert host.recreates()[1] == 0, host.event_lines()
+    steady_proc, steady = host.steady_check()
+    assert host.recreates() == (1, 1), (host.event_lines(), steady_proc.stdout, steady_proc.stderr)
+    assert steady["status"] == "healthy", steady
+    assert not any(c.startswith("docker rm -f") and ("steady-" in c or "cid-src" in c) for c in host.docker_calls())
+
+
+def test_interrupt_while_entering_is_retried_by_the_next_profile_and_still_restored_once(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    connector, dataset, hosts = _FULL_RUN_PROFILES[0]
+    argv, env, out = host.profile_cmd(0, connector, dataset, hosts, hang_enter=True)
+    child = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    for _ in range(300):
+        if host.event_lines():
+            break
+        time.sleep(0.1)
+    assert host.event_lines()
+    child.send_signal(__import__("signal").SIGTERM)
+    child.communicate(timeout=30)
+    try:
+        os.killpg(child.pid, 9)
+    except ProcessLookupError:
+        pass
+    # The record exists although the entry never finished, so a restore from it is possible at any time.
+    state_text = next(host.state_root.glob("pantheon-bounded-runtime-9001/state.env")).read_text(encoding="utf-8")
+    assert "BR_PHASE=captured" in state_text
+    assert (host.state_root / "pantheon-bounded-runtime-9001" / "pre_env.json").is_file()
+    assert stat_mode(host.state_root / "pantheon-bounded-runtime-9001" / "pre_env.json") == 0o600
+    connector, dataset, hosts = _FULL_RUN_PROFILES[1]
+    proc, outcome = host.run_profile(1, connector, dataset, hosts)
+    assert outcome["status"] == "completed", (outcome, proc.stdout, proc.stderr[-500:])
+    steady_proc, steady = host.steady_check()
+    bounded, restored = host.recreates()
+    assert restored == 1 and bounded == 2, host.event_lines()  # the interrupted entry is the only extra recreate
+    assert steady["status"] == "healthy"
+
+
+def stat_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+def test_trading_day_before_market_open_restores_steady_once_and_marks_remaining_profiles_not_run(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    outcomes: dict[int, dict[str, Any]] = {}
+    for index, (connector, dataset, hosts) in enumerate(_FULL_RUN_PROFILES):
+        # Wednesday 2026-11-18: profiles 0-3 start at 00:20Z, the rest only at 00:40Z (the Taiwan market opens 00:55Z).
+        now = "2026-11-18T00:20:00Z" if index < 4 else "2026-11-18T00:40:00Z"
+        proc, outcome = host.run_profile(index, connector, dataset, hosts, extra_env={"PANTHEON_REFRESH_NOW": now})
+        outcome["_returncode_text"] = proc.stdout
+        outcomes[index] = outcome
+    assert [outcomes[i]["status"] for i in range(4)] == ["completed"] * 4
+    for index in range(4, len(_FULL_RUN_PROFILES)):
+        assert outcomes[index]["status"] == "not_run", outcomes[index]
+        assert "market_open_0055z" in outcomes[index]["reason"] and "00:55Z" in outcomes[index]["reason"]
+        assert "ENTRYPOINT_RC=1" in outcomes[index]["_returncode_text"]
+    # The steady posture was restored exactly once, at the first profile that could no longer run.
+    assert host.recreates() == (1, 1), host.event_lines()
+    assert host.mode_file.read_text(encoding="utf-8").strip() == "steady"
+    steady_proc, steady = host.steady_check()
+    assert host.recreates() == (1, 1)
+    assert steady["status"] == "healthy"
+    # The run ends failed through the summary step.
+    from scripts import tw_refresh_outcome_summary as summary
+
+    out_dir = tmp_path / "summary"
+    out_dir.mkdir()
+    for index, (connector, _dataset, _hosts) in enumerate(_FULL_RUN_PROFILES):
+        data = {k: v for k, v in outcomes[index].items() if not k.startswith("_")}
+        (out_dir / f"{connector}-refresh-outcome.json").write_text(json.dumps(data), encoding="utf-8")
+    (out_dir / "taifex-ssf-refresh-outcome.json").write_text(json.dumps(outcomes[0]), encoding="utf-8")
+    (out_dir / "finmind-broker-refresh-outcome.json").write_text(json.dumps(outcomes[1]), encoding="utf-8")
+    (out_dir / "tw-refresh-outcome.json").write_text(json.dumps({**outcomes[2], "steady_restore_check": {"status": "healthy", "reason": ""}}), encoding="utf-8")
+    _rows, failures = summary.evaluate({"chip_refresh": "failure", "finmind_fundamentals_refresh": "failure", "steady_check": "success"}, out_dir)
+    assert any("tw-official-tpex-margin-balances" in f and "not_run" in f for f in failures), failures
+
+
+@pytest.mark.parametrize(
+    ("now", "blocked"),
+    [
+        ("2026-11-18T00:34:00Z", False),   # Wednesday, a profile still fits before 00:55Z
+        ("2026-11-18T00:35:00Z", True),    # last start: 00:55Z minus profile and restore budgets
+        ("2026-11-18T00:56:00Z", True),
+        ("2026-11-18T05:29:00Z", True),    # still inside the session
+        ("2026-11-18T07:00:00Z", False),   # after the close: the normal afternoon cron
+        ("2026-11-22T00:40:00Z", False),   # Sunday: no trading day
+        ("2026-11-21T00:40:00Z", False),   # Saturday
+    ],
+)
+def test_market_open_guard_window(now: str, blocked: bool) -> None:
+    script = _prune_shell_function("bounded_runtime_market_open_guard")
+    proc = subprocess.run(["bash", "-c", f'{script}\nbounded_runtime_market_open_guard; echo "GUARD=$?"'],
+                          env={**os.environ, "PANTHEON_REFRESH_NOW": now}, capture_output=True, text=True, check=False)
+    assert f"GUARD={0 if blocked else 1}" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, union="openapi.twse.com.tw,www.tpex.org.tw", finmind=False)
+    proc, outcome = host.run_profile(0, "tw-taifex-put-call", "taifex_options_chip", "openapi.taifex.com.tw,www.taifex.com.tw")
+    assert outcome["status"] == "failed" and "bounded_runtime_hosts_not_in_run_union" in outcome["reason"], (outcome, proc.stderr)
+    proc, outcome = host.run_profile(1, "tw-finmind-valuation", "tw_valuation_bwibbu", "api.finmindtrade.com",
+                                     extra_env={"PANTHEON_BOUNDED_RUNTIME_HOSTS": "api.finmindtrade.com"})
+    assert outcome["status"] == "failed" and "no_finmind_token" in outcome["reason"], (outcome, proc.stderr)
+    assert host.event_lines() == [] and not list(host.state_root.glob("pantheon-bounded-runtime-*"))
+
+
+def test_run_without_finmind_profile_carries_no_finmind_token_into_the_bounded_runtime(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, union="openapi.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw", finmind=False)
+    for index, (connector, dataset, hosts) in enumerate(c for c in _FULL_RUN_PROFILES if not c[0].startswith("tw-finmind-")):
+        proc, outcome = host.run_profile(index, connector, dataset, hosts)
+        assert outcome["status"] == "completed", (outcome, proc.stderr[-400:])
+    assert host.event_lines()[0] == "bounded hosts=openapi.twse.com.tw,www.tpex.org.tw,openapi.taifex.com.tw,www.taifex.com.tw finmind_token=false max_records=500"
+    host.steady_check()
+    assert host.recreates() == (1, 1)
+
+
+def test_steady_check_fails_when_source_ingest_was_killed_for_memory(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, oom=True, peak=6 * 1024**3)
+    connector, dataset, hosts = _FULL_RUN_PROFILES[0]
+    host.run_profile(0, connector, dataset, hosts)
+    proc, steady = host.steady_check()
+    assert steady["status"] == "failed" and steady["reason"] == "source_ingest_killed_for_memory", steady
+    assert steady["bounded_runtime"]["oom_killed"] is True and steady["bounded_runtime"]["memory_peak_bytes"] == 6 * 1024**3
+
+
+def test_next_run_restores_the_bounded_runtime_a_dead_run_left_before_recording_its_own(tmp_path: Path) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9001")
+    connector, dataset, hosts = _FULL_RUN_PROFILES[0]
+    host.run_profile(0, connector, dataset, hosts)           # run 9001 dies here: no steady check ever ran
+    host.run_id = "9002"
+    proc, outcome = host.run_profile(1, *_FULL_RUN_PROFILES[1])
+    assert outcome["status"] == "completed", (outcome, proc.stderr[-400:])
+    assert [e.split()[0] for e in host.event_lines()] == ["bounded", "restore", "bounded"], host.event_lines()
+    assert sorted(p.name for p in host.state_root.glob("pantheon-bounded-runtime-*")) == ["pantheon-bounded-runtime-9002"]
+
+
+def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call() -> None:
+    snapshot = {"snapshot_id": "s", "event_time": "2026-10-02T06:00:00Z", "calendar_evidence": {"market": "TWSE"}}
+    result, _ = _run_real_taiwan_preflight(snapshot, calendar_valid=True, fail_first=2)
+    assert (result["status"], result["reason"]) == ("skipped", "holiday")
+    assert "timeout=3" not in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8").split("<<'PREFLIGHT_PY'", 1)[1].split("PREFLIGHT_PY", 1)[0]
