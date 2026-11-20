@@ -1607,6 +1607,7 @@ def get_persona_meetings(
     persona_id: Optional[str] = None,
     cursor: Optional[str] = None,
     limit: int = 50,
+    include_failed: bool = False,
 ) -> Dict[str, Any]:
     identity = current_identity()
     return list_meetings_view(
@@ -1617,6 +1618,8 @@ def get_persona_meetings(
         persona_id=persona_id,
         cursor=cursor,
         limit=limit,
+        workflow_state=workflow_state,
+        include_failed=include_failed,
     )
 
 
@@ -1649,6 +1652,7 @@ def get_persona_meeting_detail(meeting_id: str) -> Dict[str, Any]:
         store,
         tenant_id=identity.tenant_id,
         meeting_id=meeting_id,
+        workflow_state=workflow_state,
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="Persona meeting not found")
@@ -1674,7 +1678,7 @@ def post_persona_meeting_evidence(
             raise HTTPException(status_code=404, detail="Persona meeting not found") from exc
         except MeetingRefusedError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
-    return get_meeting_detail_view(store, tenant_id=identity.tenant_id, meeting_id=updated["meeting_id"]) or updated
+    return get_meeting_detail_view(store, tenant_id=identity.tenant_id, meeting_id=updated["meeting_id"], workflow_state=workflow_state) or updated
 
 
 @app.post("/api/consult/meetings/{meeting_id}/sync")
