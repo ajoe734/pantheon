@@ -175,6 +175,14 @@ SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}"
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three TWSE/TPEx official chip profiles store the whole
+# session (~1310 rows) in one run; a smaller per-job cap would reject or cut it, so lift it to the profile budget.
+case "${SOURCE_REFRESH_CONNECTOR_ID}" in
+  tw-official-twse-margin-balances|tw-official-tpex-margin-balances|tw-official-tpex-institutional-flow)
+    if [[ "${SOURCE_REFRESH_MAX_RECORDS}" =~ ^[0-9]+$ ]] && (( SOURCE_REFRESH_MAX_RECORDS < 3000 )); then
+      SOURCE_REFRESH_MAX_RECORDS="3000"
+    fi ;;
+esac
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
@@ -1437,8 +1445,8 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
     || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
   [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
-    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
+    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 5000 )) \
+    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 5000"
   [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
     || error "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id"
   if [[ -n "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -2045,6 +2053,27 @@ if profile is not None:
             )
         if chip_verdict.is_failure:
             raise SystemExit(chip_verdict.detail)
+        from services.source_ingestion.chip_publication_schedule import (
+            FULL_MARKET_CHIP_CONNECTORS,
+            evaluate_chip_row_coverage,
+        )
+
+        if connector_id in FULL_MARKET_CHIP_CONNECTORS and chip_verdict.status == "published":
+            listed = record_metadata.get("provider_listed_count")
+            if not isinstance(listed, int) or isinstance(listed, bool) or listed < 1:
+                raise SystemExit(
+                    f"bounded chip coverage for {connector_id} is missing the provider listed count"
+                )
+            coverage = evaluate_chip_row_coverage(
+                connector_id,
+                provider_listed_count=listed,
+                stored_count=int(receipt.get("normalized_count") or 0),
+                stored_session=record_session_date,
+                expected_session=chip_verdict.expected_session,
+            )
+            print("chip_coverage " + json.dumps(coverage, sort_keys=True))
+            if coverage["is_failure"]:
+                raise SystemExit(f"{coverage['status']}: {coverage['detail']}")
     elif profile["base"] == "tw-finmind-fundamentals":
         from services.source_ingestion.connectors.finmind_taiwan import (
             latest_published_broker_session,

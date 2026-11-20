@@ -1,0 +1,54 @@
+{
+  "task_id": "TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120",
+  "owner": "Claude",
+  "reproduction": {
+    "source": "coordinator hosted read-only reads 2026-11-19/20, quoted from the task brief (not re-read by the worker)",
+    "findings": [
+      "tw-official-twse-margin-balances, tw-official-tpex-margin-balances, tw-official-tpex-institutional-flow stored exactly 500 rows per run (TWSE margin symbols 00400A..2330; TPEx institutional 00411A..5468)",
+      "TWSE margin rows carry metadata date '' and event_time ''; they were partitioned by fetch date (11/18 session stored under date=2026-11-19)",
+      "provider rows recorded in chip_publication_schedule.MEASURED_CHIP_PROVIDER_PROBES: TWSE MI_MARGN returned 1309-1310 rows (> 500)"
+    ],
+    "places_that_cut_rows": [
+      "connector_definitions.py TW_CHIP_REFRESH_PROFILES default_limits max_records 500",
+      "persona_source_reconciler.chip_profile_provider adapter max_records=500 -> fetch.max_records",
+      "taiwan_official.TaiwanOfficialMarketDatasetAdapter._records_from_normalized_rows normalized_rows[:limit]",
+      "provider_adapters.execute_provider_owned_adapter records[:max_records]",
+      "configured.py provider_owned_adapter fetch.max_records bound 1000",
+      "scripts/deploy_nonprod_vm.sh SOURCE_INGEST_MAX_RECORDS <= 500 check and SOURCE_REFRESH_MAX_RECORDS default 100 (runtime MAX_RECORDS_PER_JOB)",
+      "deploy_nonprod_vm.sh max_records=500 at ~3430 is the FinMind fundamentals adapter, not a TWSE/TPEx chip profile: unchanged"
+    ]
+  },
+  "changes": {
+    "full_market_budget": "3 TWSE/TPEx chip profiles: max_records 3000 (profile key full_market=true). configured.py bound 5000 (named PROVIDER_OWNED_ADAPTER_MAX_RECORDS); FinMind keeps its own 1000 per-job guard in the deploy script.",
+    "session_date": "taiwan_official._stamp_full_market_sessions: provider row date wins; a date-less row gets chip_publication_schedule.resolve_chip_row_session -> latest_published_chip_session(connector, fetch_time). Request run_date (fetch date) is no longer a row-date fallback for these profiles. Undecidable session raises SourceEvidenceError naming the profile; fetch date is never used.",
+    "listing": "existing ListingFilter (security_listing) now also applied to these chip rows when present; rows are never invented for symbols the provider did not return.",
+    "no_silent_truncation": "adapter and execute_provider_owned_adapter raise 'refusing to truncate' when a full-market chip response exceeds max_records.",
+    "batching": "single run, no cursor: one provider response is ~1310 rows (TWSE margin) / ~1000 (TPEx), budget 3000 holds the whole session in one refresh; batching not needed, over-budget fails closed.",
+    "coverage_readback": "records carry provider_listed_count; deploy readback calls chip_publication_schedule.evaluate_chip_row_coverage (complete | partial with missing_count | session_mismatch) against receipt.normalized_count and fails the refresh unless complete.",
+    "unchanged": "six chip publication schedules and TAIFEX schedule values; only chip profile entries/limits changed in connector_definitions.py (no INTRADAY-KBAR-CONNECTOR-20261111 areas touched)."
+  },
+  "dedupe_writer": {
+    "writer": "SOURCE-DATASETS-KEYED-WRITE-20261119 / PR 7509 (market_data_storage keyed store, daily_bars_store.KEYED_DATASETS)",
+    "declared_for_these_datasets": {
+      "tw_institutional_flow": "keys (symbol, trade_date, investor_class), budget 0.3 MB",
+      "tw_margin_short_balance": "keys (symbol, trade_date), budget 0.2 MB"
+    },
+    "note": "default PANTHEON_KEYED_DATASETS_WRITE=dual; hosted re-run behaviour (nothing new when unchanged, replace when changed) is the keyed store contract and still needs the coordinator's hosted measurement. tw_institutional_flow official rows are one wide row per symbol (foreign/trust/dealer columns), not three rows per class."
+  },
+  "rollback_reader": "same metadata keys, same schema_hash (v1), ISO string date; only the date value changes from '' to the session and partitions follow the session date. test_rollback_reader_reads_new_rows.",
+  "runtime_budget": {
+    "measured_locally_with_synthetic_rows": {"tw_margin_short_balance_1310_rows_normalized_row_json_MB": 1.05, "tw_institutional_flow_1000_rows_normalized_row_json_MB": 0.74},
+    "bounds_section_6A_columnar_MB": {"tw_institutional_flow": 0.3, "tw_margin_short_balance": 0.2},
+    "retention_days": 2555,
+    "caveat": "row JSON includes raw_row and is not the columnar size; the columnar per-day bytes and expired-partition deletion must be measured on hosted by the coordinator (acceptance 8/9). Not claimed as passed here."
+  },
+  "pending_hosted_verification": ["acceptance 9: coordinator measures one refresh after deploy (row counts = provider listed counts, session dates, each chip profile inside 300 s)", "acceptance 8 columnar size and partition deletion"],
+  "validation": {
+    "services/source_ingestion/tests/test_tw_official_chip_full_market.py": "12 passed",
+    "scripts/test_deploy_nonprod_vm.py": "211 passed, 2 skipped (python -m pytest, 257 s)",
+    "scripts/test_dev_tw_market_refresh.py": "132 passed (272 s)",
+    "services/source_ingestion/tests/test_chip_publication_schedule.py": "67 passed",
+    "services/source_ingestion/tests/test_taiwan_official_connectors.py": "58 passed, 1 skipped (one test expectation updated: date-less MI_MARGN rows now carry the published session)",
+    "services/source_ingestion/test_service.py": "42 passed"
+  }
+}

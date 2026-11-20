@@ -107,6 +107,12 @@ def _canonical_provider_adapter_token(token: str) -> str:
 EFFECTIVE_MAX_RECORDS_KEY = "_effective_max_records"
 
 
+def _full_market_chip_profile(connector_id: Any) -> bool:
+    from .connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    return bool((TW_CHIP_REFRESH_PROFILES.get(str(connector_id or "")) or {}).get("full_market"))
+
+
 def execute_provider_owned_adapter(
     *,
     connector: SourceConnector,
@@ -137,6 +143,13 @@ def execute_provider_owned_adapter(
     request[EFFECTIVE_MAX_RECORDS_KEY] = max_records
     result = spec.handler(adapter, request, trace_id)
     records = result.records if isinstance(result, CollectorPullResult) else result
+    full_market_profile = _full_market_chip_profile(getattr(adapter, "connector_id", ""))
+    if full_market_profile and len(records) > max_records:
+        # Operator decision 2026-11-19: every listed share/ETF is stored; never cut the tail silently.
+        raise SourceEvidenceError(
+            f"{adapter.connector_id} returned {len(records)} rows which exceed max_records {max_records}; "
+            "refusing to truncate a full-market chip dataset"
+        )
     records = tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
     if preserve_collector_outcome and isinstance(result, CollectorPullResult):
         return replace(result, records=records)
@@ -645,7 +658,13 @@ def _taiwan_official_records(
                 payload,
                 source_dataset=request.get("source_dataset"),
                 api_endpoint=request.get("api_endpoint"),
-                trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+                # Full-market chip profiles never take the job run_date (the fetch date) as a row session: a
+                # date-less row gets its session from the published-session helper inside the adapter.
+                trade_date=(
+                    request.get("trade_date") or request.get("date")
+                    if _full_market_chip_profile(adapter.connector_id)
+                    else request.get("trade_date") or request.get("date") or request.get("run_date")
+                ),
                 available_time=request.get("available_time"),
                 universe_tier=str(request.get("universe_tier") or "core_universe"),
                 priority_symbols=priority_symbols,

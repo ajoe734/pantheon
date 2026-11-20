@@ -664,3 +664,100 @@ __all__ = [
     "get_chip_publication_schedule",
     "latest_published_chip_session",
 ]
+
+
+# --- TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120 -------------------------------------------------
+# Full-market storage contract (operator decision 2026-11-19; SD_MARKET_DATA_ONE_WRITE_PER_DAY section 6A):
+# every listed TWSE/TPEx share and ETF of the session is stored once, keyed
+#   tw_margin_short_balance: (symbol, trade_date)
+#   tw_institutional_flow:   (symbol, trade_date, investor_class)
+# and every row carries its provider session date.
+
+FULL_MARKET_CHIP_CONNECTORS: frozenset[str] = frozenset(
+    connector_id
+    for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
+    if profile.get("full_market")
+)
+
+FULL_MARKET_CHIP_KEYS: dict[str, tuple[str, ...]] = {
+    "tw_margin_short_balance": ("symbol", "trade_date"),
+    "tw_institutional_flow": ("symbol", "trade_date", "investor_class"),
+}
+
+# Retention and size bounds of section 6A, used by the runtime-budget evidence.
+FULL_MARKET_CHIP_RETENTION_DAYS = 2555
+FULL_MARKET_CHIP_DAILY_MB_BOUND: dict[str, float] = {
+    "tw_institutional_flow": 0.3,
+    "tw_margin_short_balance": 0.2,
+}
+
+
+class ChipSessionUndecidable(ValueError):
+    """A stored chip row has no provider date and the published-session rule cannot decide one."""
+
+
+def is_full_market_chip_connector(connector_id: str) -> bool:
+    return str(connector_id or "").strip() in FULL_MARKET_CHIP_CONNECTORS
+
+
+def resolve_chip_row_session(
+    connector_id: str,
+    row_date: Any,
+    fetch_time: datetime,
+    *,
+    is_session_day: Callable[[date], bool] | None = None,
+) -> date:
+    """Session date of one chip row.
+
+    A provider-supplied row date wins. A row without one (TWSE ``MI_MARGN`` and TPEx margin carry none) gets
+    the latest session the profile's schedule has published at the fetch time - the same
+    ``latest_published_chip_session`` rule the refresh preflight and readback use. Raises
+    ``ChipSessionUndecidable`` naming the profile when no session can be decided; never falls back to the
+    fetch date.
+    """
+    text = str(row_date or "").strip()
+    if text:
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError as exc:
+            raise ChipSessionUndecidable(f"{connector_id}: invalid row date {text!r}") from exc
+    try:
+        return latest_published_chip_session(connector_id, fetch_time, is_session_day=is_session_day)
+    except (ValueError, KeyError) as exc:
+        raise ChipSessionUndecidable(f"{connector_id}: cannot decide session for a row without a date: {exc}") from exc
+
+
+def evaluate_chip_row_coverage(
+    connector_id: str,
+    *,
+    provider_listed_count: int,
+    stored_count: int,
+    stored_session: date | str | None,
+    expected_session: date | str,
+) -> dict[str, Any]:
+    """Compare stored rows of one session with the provider's listed count for that session.
+
+    ``complete`` only when the stored session equals the expected one and every provider row is stored;
+    ``partial`` (with ``missing_count``) when fewer are stored; ``session_mismatch`` when the stored rows carry
+    another session. Never passes a short or mis-dated run.
+    """
+    expected = str(expected_session)[:10]
+    stored = str(stored_session or "")[:10]
+    listed = int(provider_listed_count)
+    have = int(stored_count)
+    base = {
+        "connector_id": connector_id,
+        "expected_session": expected,
+        "stored_session": stored,
+        "provider_listed_count": listed,
+        "stored_count": have,
+    }
+    if stored != expected:
+        return {**base, "status": "session_mismatch", "is_failure": True, "missing_count": max(listed - have, 0),
+                "detail": f"{connector_id} stored session {stored!r} != expected {expected!r}"}
+    missing = max(listed - have, 0)
+    if missing:
+        return {**base, "status": "partial", "is_failure": True, "missing_count": missing,
+                "detail": f"{connector_id} stored {have} of {listed} provider rows; missing {missing}"}
+    return {**base, "status": "complete", "is_failure": False, "missing_count": 0,
+            "detail": f"{connector_id} stored all {listed} provider rows for {expected}"}

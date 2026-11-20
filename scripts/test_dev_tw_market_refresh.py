@@ -3420,11 +3420,13 @@ def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_sessio
         )
         record = {'source_id': f'{prefix}:{dataset}:recorded',
                   'metadata': {'dataset': dataset, 'schema_hash': profile['schema_hash'],
-                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0]},
+                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0],
+                               'provider_listed_count': 1000},
                   'provenance': {'dataset': dataset, 'source_ingest_run_id': 'chip-run'}}
         receipts = {'receipts': [{'connector_id': cid, 'status': 'completed', 'typed_failure': None,
                                  'source_timestamp': '2026-11-13T10:00:00Z', 'source_timestamp_status': 'valid',
-                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run'}]}
+                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run',
+                                 'normalized_count': 1000}]}
         (tmp_path / 'receipts.json').write_text(json.dumps(receipts))
         (tmp_path / 'projection.json').write_text('{}')
         cases = [({}, {}, True), ({'dataset': 'other'}, {}, False), ({'schema_hash': 'wrong'}, {}, False),
@@ -3570,6 +3572,7 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
                 "finished_at": "2026-11-18T23:53:58Z",
                 "created_at": "2026-11-18T23:57:32Z",
                 "ingest_run_id": "ingest-2f56b4efe47f",
+                "normalized_count": 1310,
             }
         ]
     }
@@ -3608,6 +3611,7 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
                             "dataset": "tw_margin_short_balance",
                             "available_time": "",
                         },
+                        "provider_listed_count": 1310,
                         "source_ingest_run_id": "ingest-2f56b4efe47f",
                     },
                     "provenance": {

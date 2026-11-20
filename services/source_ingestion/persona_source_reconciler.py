@@ -296,7 +296,8 @@ def chip_profile_provider(connector_id: str) -> SourceConnectorProvider:
     metadata = {"definition_id": connector_id, "refresh_profile": profile}
     if profile["base"] == TW_OFFICIAL_CONNECTOR_ID:
         return TaiwanOfficialMarketDatasetAdapter(
-            connector_id=connector_id, max_records=500, connector_metadata=metadata,
+            connector_id=connector_id, max_records=int(profile.get("max_records") or 500),
+            connector_metadata=metadata,
         )
     if profile["base"] == "tw-finmind-fundamentals":
         return FinMindTaiwanFundamentalsAdapter(

@@ -1263,21 +1263,30 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
 
 # Separate configured instances keep each daily requirement's watermark and schedule
 # independent; these reuse the existing adapters, never the TWSE collector flow path.
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three TWSE/TPEx official chip profiles store every
+# listed share and ETF of the session. One provider response holds ~1310 (TWSE margin) or ~1000 (TPEx) rows, so
+# the per-run budget is 3000 and a larger response FAILS the run instead of being cut (no silent truncation).
+TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS = 3000
+DEFAULT_CHIP_PROFILE_MAX_RECORDS = 500
+
 TW_CHIP_REFRESH_PROFILES = {
     "tw-official-twse-margin-balances": {
         "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
         "schema_hash": "tw_margin_short_balance.v1",
         "venues": ["TWSE"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
     },
     "tw-official-tpex-margin-balances": {
         "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
         "schema_hash": "tw_margin_short_balance.v1",
         "venues": ["TPEx"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
     },
     "tw-official-tpex-institutional-flow": {
         "base": "tw-twse-tpex-official-market", "dataset": "tw_institutional_flow",
         "schema_hash": "tw_institutional_flow.v1",
         "venues": ["TPEx"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
     },
     "tw-taifex-institutional-positions": {
         "base": "tw-taifex-futures-options-chip", "dataset": "taifex_futures_chip",
@@ -1311,7 +1320,8 @@ _BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
 _CANONICAL_DEFINITIONS += tuple(
     replace(_BASE_DEFINITIONS[profile["base"]], definition_id=connector_id,
             datasets=(profile["dataset"],),
-            default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits, "max_records": 500},
+            default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits,
+                            "max_records": int(profile.get("max_records") or DEFAULT_CHIP_PROFILE_MAX_RECORDS)},
             test_manifest_ref=(
                 "evidence://TW-FUNDAMENTAL-FEATURES-HOSTED-20261114" if profile["base"] == "tw-finmind-fundamentals"
                 else "evidence://REGIME-DATA-TAIFEX-TX-DAILY-20261114" if profile["dataset"] == "taifex_tx_daily"
