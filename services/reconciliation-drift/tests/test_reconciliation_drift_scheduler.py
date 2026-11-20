@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import uuid
@@ -4246,3 +4247,86 @@ def test_scheduled_tick_retirement_between_ticks_resolves_open_drift_incidents()
         assert third["incident_ids"] == []
         assert classify.call_count == 1  # nothing opened after retirement
         assert resolve.call_count == 2
+
+
+def _sweep_incident(binding_id: str, n: int) -> dict:
+    return {
+        "incident_id": f"inc-drift-sweep-{n}",
+        "binding_id": binding_id,
+        "incident_cluster_id": f"drift:{binding_id}",
+    }
+
+
+def _run_sweep(svc, incidents, lookup, *, resolve=None, env=None):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(svc.app)
+    summary = _healthy_runtime_summary()
+    resolve = resolve or mock.Mock(return_value={"resolved_incident_ids": ["x"]})
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_INCIDENTS_API_URL": "http://incidents",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://rm",
+                **(env or {}),
+            },
+        ),
+        mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+        mock.patch.object(svc, "_get_json", return_value=incidents),
+        mock.patch.object(svc, "_authoritative_runtime_binding", side_effect=lookup) as look,
+        mock.patch.object(svc, "_resolve_retired_binding_incidents", resolve),
+    ):
+        payload = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-sweep"}
+        ).json()
+    return payload, look, resolve, summary
+
+
+def test_sweep_resolves_incident_of_retired_binding_after_runtime_rebound() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        old = "rb-old-retired"
+        payload, look, resolve, summary = _run_sweep(
+            svc,
+            [_sweep_incident(old, 1), _sweep_incident(_healthy_runtime_summary()["binding_id"], 2)],
+            lambda bid, **kw: _retired_binding(bid, "2026-11-18T07:00:00Z"),
+        )
+        look.assert_called_once()
+        assert look.call_args.args[0] == old  # evaluated binding is not looked up
+        resolve.assert_called_once()
+        assert resolve.call_args.args[:2] == (old, "2026-11-18T07:00:00Z")
+        assert payload["retired_binding_sweep"]["retired_binding_ids"] == [old]
+        assert payload["retired_incident_resolutions"] == [{"resolved_incident_ids": ["x"]}]
+
+
+def test_sweep_lookup_failure_leaves_incident_open_and_continues() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+
+        def lookup(bid, **kw):
+            if bid == "rb-a":
+                raise RuntimeError("down")
+            return {"binding_id": bid, "status": "active"}
+
+        payload, look, resolve, _ = _run_sweep(
+            svc, [_sweep_incident("rb-a", 1), _sweep_incident("rb-b", 2)], lookup
+        )
+        resolve.assert_not_called()
+        assert payload["retired_binding_sweep"]["lookup_failures"] == 1
+        assert look.call_count == 2
+
+
+def test_sweep_lookups_are_bounded_per_pass() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        incidents = [_sweep_incident(f"rb-{i}", i) for i in range(5)]
+        payload, look, resolve, _ = _run_sweep(
+            svc,
+            incidents,
+            lambda bid, **kw: {"binding_id": bid, "status": "active"},
+            env={"PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS": "2"},
+        )
+        assert look.call_count == 2
+        assert payload["retired_binding_sweep"]["truncated"] is True
+        resolve.assert_not_called()
