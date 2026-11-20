@@ -1045,24 +1045,28 @@ class CollectorBundleAdapter:
             namespace = (id(transport),)
         return (str(self._raw_root().resolve()), self.source_id, namespace)
 
-    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any]) -> VerifiedBundle:
+    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any],
+                           source_id: str | None = None) -> VerifiedBundle:
         """Reuse only fully verified immutable metadata bound to the live index.
 
         Entries without a digest retain the full-read contract. HTTP authorization
         and local roots isolate cache populations; injected transports are held by
         reference so object-id reuse cannot alias an earlier reader.
         """
+        expected = source_id or self.source_id
         digest = str(entry.get("bundle_sha256") or "").lower()
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            return verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+            return verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
         scope = self._metadata_scope(transport)
+        if expected != self.source_id:
+            scope = (*scope[:1], expected, *scope[2:])
         key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
         with _METADATA_CACHE_LOCK:
             cached = _METADATA_CACHE.get(key)
             if cached is not None:
                 _METADATA_CACHE.move_to_end(key)
                 return cached[1]
-        bundle = verify_bundle(transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+        bundle = verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
         size = bundle.source_bytes
         if size <= VERIFIED_METADATA_CACHE_BYTES:
             with _METADATA_CACHE_LOCK:
@@ -1082,7 +1086,7 @@ class CollectorBundleAdapter:
         if not self._priority_latest_enabled():
             return verify_bundle(transport, expected_source_id=expected_source_id, entry=entry,
                                  item_window=item_window, deadline=deadline, raw_read_concurrency=raw_read_concurrency)
-        bundle = self._verified_metadata(transport, entry)
+        bundle = self._verified_metadata(transport, entry, expected_source_id)
         return _verify_raw_window(transport, bundle, item_window=item_window,
                                   deadline=deadline if deadline is not None else _OP_DEADLINE.get(),
                                   raw_read_concurrency=raw_read_concurrency)
@@ -1172,7 +1176,7 @@ class CollectorBundleAdapter:
                 if known_day is not None and known_day < best[0]:
                     continue  # proven earlier session for this exact bundle; not a candidate
             bundle = self._verified_metadata(transport, entry)
-            if not bundle.items:
+            if bundle.status != "complete" or not bundle.items:
                 continue
             trade_date = _bundle_trade_date(entry, bundle.items)
             if "trade_date" in bundle.manifest:
@@ -1388,6 +1392,18 @@ class CollectorBundleAdapter:
                         acknowledged_only_keys.add(key)
                         window_stops[key] = 0
                         continue
+                if self.source_id in _PRICE_HISTORY_PEERS and self.source_type == "market":
+                    # Resolve a producer-partial bundle from verified metadata before any raw read.
+                    metadata_bundle = metadata_bundle or self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "partial":
+                        early = self._resolve_partial_bundle(transport, metadata_bundle, source_entries, deadline)
+                        if early is not None:
+                            verified.append(replace(metadata_bundle, items=(), resolution=early[0]))
+                            acknowledged_only_keys.add(key)
+                            window_stops[key] = 0
+                            if early[1] is not None:
+                                closures.append(early[1])
+                            continue
                 with _METADATA_CACHE_LOCK:
                     # The bundle whose raw rows this pull windows is the one being backfilled.
                     reading_set = _HISTORY_READING.setdefault(self._metadata_scope(transport), set())
@@ -1419,6 +1435,7 @@ class CollectorBundleAdapter:
                     # Acknowledged without delivering its rows (traversal only, like a rejected bundle).
                     verified[-1] = replace(bundle, items=(), resolution=resolution[0])
                     window_stops[bundle.cursor] = 0
+                    acknowledged_only_keys.add(bundle.cursor)
                     if resolution[1] is not None:
                         closures.append(resolution[1])
                     continue

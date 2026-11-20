@@ -24,8 +24,13 @@
     "ingest_side_rule": "the runtime rule relies on both venues' collector-confirmed no_data plus the governed calendar, not on these web sources"
   },
   "validation": {
-    "python": "/tmp/ci-si-venv/bin/python -m pytest -q test_collector_partial_bundle_resolution.py test_collector_bundle_connector.py test_collector_outcome_truth.py test_collector_priority_metadata_reads.py",
-    "result": "234 passed, 1 skipped (new file: 12 passed)"
+    "python": ".venv-pantheon/bin/python -m pytest -q test_collector_partial_bundle_resolution.py test_collector_bundle_connector.py test_collector_outcome_truth.py test_collector_priority_metadata_reads.py",
+    "result": "see final run: 234 passed, 4 skipped (new file: 15 passed incl. cadence_seconds=600 cases)"
   },
-  "not_verified_here": "AC6 hosted post-deploy reads (cursor passes backfill-2026-07-10 / 10-23, no empty-outcome failures for 2h, TPEx partial close bundles) are for the coordinator after deploy"
+  "not_verified_here": "AC6 hosted post-deploy reads (cursor passes backfill-2026-07-10 / 10-23, no empty-outcome failures for 2h, TPEx partial close bundles) are for the coordinator after deploy",
+  "review_round_2_fixes": [
+    "peer bundle verified with the peer source_id (_verified_metadata(source_id=)), fixes closure under cadence_seconds=600",
+    "resolved partial bundles join acknowledged_only_keys so the 0-record boundary pull keeps no_new_data",
+    "_pull_priority_latest skips non-complete bundles; _pull_ordered resolves partial from metadata before any raw-window read"
+  ]
 }

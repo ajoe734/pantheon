@@ -52,7 +52,7 @@ def bundle(source, run_id, trade_date, *, finished, rows=2, status="complete", r
     return files, {"source_id": source, "date": date, "run_id": run_id, "finished_at": finished}
 
 
-def build(tmp_path, specs, *, source=TWSE, calendar=True):
+def build(tmp_path, specs, *, source=TWSE, calendar=True, cadence=None):
     files, entries = {}, []
     for spec in specs:
         f, e = bundle(*spec[:3], **spec[3])
@@ -63,6 +63,7 @@ def build(tmp_path, specs, *, source=TWSE, calendar=True):
         write_calendar(root, ["2026-01-01", "2026-02-17"])
     return CollectorBundleAdapter(connector_id=source, source_id=source, source_type="market",
                                   dataset="tw_price_daily", attribution_required=True, max_records=100,
+                                  **({"cadence_seconds": cadence} if cadence else {}),
                                   transport=FakeTransport(files), raw_root=str(root))
 
 
@@ -170,3 +171,37 @@ def test_partial_without_later_complete_stays_pending(tmp_path):
     result = adapter.pull(cursor="2026-11-13T06:00:00Z#close-2026-11-12-1530")
     assert not result.complete and result.next_cursor.endswith("|items=1")
     assert not any(r.metadata["normalized_row"]["trade_date"] == "2026-11-16" for r in result.records)
+
+
+def test_confirmed_closure_resolves_under_priority_cadence(tmp_path):
+    adapter = build(tmp_path, closure_specs(), cadence=600)
+    assert adapter._priority_latest_enabled()
+    result = adapter.pull(cursor="2026-11-11T09:00:00Z#backfill-2026-07-09")
+    assert not stalls(result)
+    assert result.next_cursor.endswith("#backfill-2026-07-13") and result.complete
+    [rec] = read_market_closures(tmp_path / "store" / "state")
+    assert rec["trade_date"] == "2026-07-10"
+
+
+def test_superseded_partial_resolves_under_priority_cadence(tmp_path):
+    day = "2026-11-13"
+    specs = [
+        (TPEX, f"close-{day}-1440", day, {"finished": "2026-11-13T06:40:00Z", "status": "partial", "reason": "late_data", "rows": 1}),
+        (TPEX, f"close-{day}-1530", day, {"finished": "2026-11-13T07:30:00Z", "rows": 3}),
+    ]
+    adapter = build(tmp_path, specs, source=TPEX, cadence=600)
+    result = adapter.pull(cursor="2026-11-13T06:00:00Z#close-2026-11-12-1530")
+    assert result.complete and result.next_cursor.endswith("#close-2026-11-13-1530")
+    assert len(result.records) == 3
+    assert any(x["resolution"].startswith("superseded:") for x in result.observed["resolved_partial_bundles"])
+
+
+def test_unconfirmed_partial_stops_under_priority_cadence(tmp_path):
+    specs = closure_specs()
+    specs.pop(1)
+    adapter = build(tmp_path, specs, cadence=600)
+    result = adapter.pull(cursor="2026-11-11T09:00:00Z#backfill-2026-07-09")
+    # Priority-latest may deliver the newest session; the partial day is never resolved or recorded.
+    assert "resolved_partial_bundles" not in result.observed
+    assert read_market_closures(tmp_path / "store" / "state") == []
+    assert not result.next_cursor.endswith("#backfill-2026-07-10")
