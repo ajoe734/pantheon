@@ -9,5 +9,12 @@
     "performance_attribution": "all four /bff/management/performance-attribution routes drop facts of test-scoped personas unless include_test_personas=true; summary and meta carry hidden_test_persona_count and hidden_test_strategy_count",
     "reads": "test persona ids come from the single persona directory read already made per request (PersonaStateLookup.test_persona_ids) and from sources.personas_by_id for attribution; no per-row owner call"
   },
-  "tests": "services/control-plane/bff/tests/test_strategy_list_test_scope.py"
+  "tests": "services/control-plane/bff/tests/test_strategy_list_test_scope.py",
+  "verification": "pytest tests/test_strategy_list_test_scope.py test_bff_performance_ranking_read_model_contract.py strategies/test_router_isolation.py: 25 passed, 1 failed (residual below)",
+  "residual_findings": [
+    {
+      "test_id": "services/control-plane/bff/strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies",
+      "note": "fails on the dev baseline; not introduced or addressed by this task"
+    }
+  ]
 }
