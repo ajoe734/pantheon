@@ -6,7 +6,7 @@
     "work_package": "WP6.3",
     "design_authority": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md § 10.1"
   },
-  "captured_at": "2026-11-20T04:12:00Z",
+  "captured_at": "2026-11-20T04:24:00Z",
   "agent": "Antigravity",
   "reviewer": "Claude2",
   "acceptance_1_hosted_reproduction_citation": {
@@ -29,10 +29,7 @@
       },
       "legacy_registry_endpoint": {
         "route": "GET /api/source-ingest/registry",
-        "observed_latencies_seconds": [
-          4.7,
-          5.9
-        ],
+        "observed_latencies_seconds": [4.7, 5.9],
         "observed_response_bytes": 751216
       },
       "bff_legacy_fallback_timeout": {
@@ -63,252 +60,45 @@
     "imported_count_second_run": 0,
     "idempotent_checksum_first_run": "35db8bcafc4b70d449ff75a7a6fce7bea639eb671430bd97a11681aae5aac9a3",
     "idempotent_checksum_second_run": "35db8bcafc4b70d449ff75a7a6fce7bea639eb671430bd97a11681aae5aac9a3",
-    "imported_ids": [
-      "agora-platform-source",
-      "collector-gdelt",
-      "collector-library-books",
-      "collector-macro-dbnomics",
-      "collector-news-rss",
-      "collector-paper-arxiv",
-      "collector-paper-nber-rss",
-      "collector-paper-openalex",
-      "collector-tw-cmoney-forum",
-      "collector-tw-instagram-popular",
-      "collector-tw-macro-cbc",
-      "collector-tw-macro-dgbas",
-      "collector-tw-macro-ndc",
-      "collector-tw-ptt-stock",
-      "collector-tw-threads",
-      "collector-tw-tpex-price-history",
-      "collector-tw-trading-holidays",
-      "collector-tw-trading-suspension",
-      "collector-tw-twse-index-breadth",
-      "collector-tw-twse-price-history",
-      "collector-tw-twse-t86",
-      "collector-tw-twse-taiex-history",
-      "collector-youtube-finance",
-      "conn-dev-product-20261110t102427z",
-      "conn-dev-product-20261110t105239z",
-      "dev-paper-us-equity-simulation",
-      "hosted-all12-20261108t034716z",
-      "hosted-all12-20261108t035428z",
-      "strategy-seed-paper-corpus",
-      "tw-finmind-monthly-revenue",
-      "tw-finmind-quarterly-statements",
-      "tw-finmind-valuation",
-      "tw-official-tpex-institutional-flow",
-      "tw-official-tpex-margin-balances",
-      "tw-official-twse-margin-balances",
-      "tw-taifex-institutional-positions",
-      "tw-taifex-put-call",
-      "tw-taifex-tx-daily",
-      "tw-twse-tpex-official-market"
-    ],
-    "imported_instance_ids": [
-      "src-agora-platform-source",
-      "src-collector-gdelt",
-      "src-collector-library-books",
-      "src-collector-macro-dbnomics",
-      "src-collector-news-rss",
-      "src-collector-paper-arxiv",
-      "src-collector-paper-nber-rss",
-      "src-collector-paper-openalex",
-      "src-collector-tw-cmoney-forum",
-      "src-collector-tw-instagram-popular",
-      "src-collector-tw-macro-cbc",
-      "src-collector-tw-macro-dgbas",
-      "src-collector-tw-macro-ndc",
-      "src-collector-tw-ptt-stock",
-      "src-collector-tw-threads",
-      "src-collector-tw-tpex-price-history",
-      "src-collector-tw-trading-holidays",
-      "src-collector-tw-trading-suspension",
-      "src-collector-tw-twse-index-breadth",
-      "src-collector-tw-twse-price-history",
-      "src-collector-tw-twse-t86",
-      "src-collector-tw-twse-taiex-history",
-      "src-collector-youtube-finance",
-      "src-conn-dev-product-20261110t102427z",
-      "src-conn-dev-product-20261110t105239z",
-      "src-dev-paper-us-equity-simulation",
-      "src-hosted-all12-20261108t034716z",
-      "src-hosted-all12-20261108t035428z",
-      "src-strategy-seed-paper-corpus",
-      "src-tw-finmind-monthly-revenue",
-      "src-tw-finmind-quarterly-statements",
-      "src-tw-finmind-valuation",
-      "src-tw-official-tpex-institutional-flow",
-      "src-tw-official-tpex-margin-balances",
-      "src-tw-official-twse-margin-balances",
-      "src-tw-taifex-institutional-positions",
-      "src-tw-taifex-put-call",
-      "src-tw-taifex-tx-daily",
-      "src-tw-twse-tpex-official-market"
-    ],
+    "imported_ids_sha256": "c2f8794d72651f23e6b58f3bf0b29eb6c79a6672b66b647d96eb3e8114dc07cf",
+    "imported_ids": ["agora-platform-source", "collector-gdelt", "collector-library-books", "collector-macro-dbnomics", "collector-news-rss", "collector-paper-arxiv", "collector-paper-nber-rss", "collector-paper-openalex", "collector-tw-cmoney-forum", "collector-tw-instagram-popular", "collector-tw-macro-cbc", "collector-tw-macro-dgbas", "collector-tw-macro-ndc", "collector-tw-ptt-stock", "collector-tw-threads", "collector-tw-tpex-price-history", "collector-tw-trading-holidays", "collector-tw-trading-suspension", "collector-tw-twse-index-breadth", "collector-tw-twse-price-history", "collector-tw-twse-t86", "collector-tw-twse-taiex-history", "collector-youtube-finance", "conn-dev-product-20261110t102427z", "conn-dev-product-20261110t105239z", "dev-paper-us-equity-simulation", "hosted-all12-20261108t034716z", "hosted-all12-20261108t035428z", "strategy-seed-paper-corpus", "tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation", "tw-official-tpex-institutional-flow", "tw-official-tpex-margin-balances", "tw-official-twse-margin-balances", "tw-taifex-institutional-positions", "tw-taifex-put-call", "tw-taifex-tx-daily", "tw-twse-tpex-official-market"],
+    "imported_instance_ids_convention": "src-<connector_id> for all 39 imported_ids",
+    "imported_instance_ids": ["src-agora-platform-source", "src-collector-gdelt", "src-collector-library-books", "src-collector-macro-dbnomics", "src-collector-news-rss", "src-collector-paper-arxiv", "src-collector-paper-nber-rss", "src-collector-paper-openalex", "src-collector-tw-cmoney-forum", "src-collector-tw-instagram-popular", "src-collector-tw-macro-cbc", "src-collector-tw-macro-dgbas", "src-collector-tw-macro-ndc", "src-collector-tw-ptt-stock", "src-collector-tw-threads", "src-collector-tw-tpex-price-history", "src-collector-tw-trading-holidays", "src-collector-tw-trading-suspension", "src-collector-tw-twse-index-breadth", "src-collector-tw-twse-price-history", "src-collector-tw-twse-t86", "src-collector-tw-twse-taiex-history", "src-collector-youtube-finance", "src-conn-dev-product-20261110t102427z", "src-conn-dev-product-20261110t105239z", "src-dev-paper-us-equity-simulation", "src-hosted-all12-20261108t034716z", "src-hosted-all12-20261108t035428z", "src-strategy-seed-paper-corpus", "src-tw-finmind-monthly-revenue", "src-tw-finmind-quarterly-statements", "src-tw-finmind-valuation", "src-tw-official-tpex-institutional-flow", "src-tw-official-tpex-margin-balances", "src-tw-official-twse-margin-balances", "src-tw-taifex-institutional-positions", "src-tw-taifex-put-call", "src-tw-taifex-tx-daily", "src-tw-twse-tpex-official-market"],
     "skipped_count": 25,
+    "skipped_entries_sha256": "548653c07d0a6f1d436522e5642264fc0b0d31e4c9c33c2e79277f95c1374d2c",
     "skipped_entries": [
-      {
-        "id": "alpha-db-vendor-signals",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "crypto-coingecko-spot",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "social-admitted-market-discussion",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "strategy-seed-allowlisted-repo",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-anue-news-rss",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "disabled_by_build"
-      },
-      {
-        "id": "tw-finmind-broker-bulk-parquet",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-finmind-broker-daily-report",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-finmind-datasets",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-finmind-fundamentals",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-finmind-kbar-1m",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-mops-official-disclosures",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-shioaji-broker-readback",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-taifex-futures-options-chip",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-tdcc-shareholding-distribution",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-tej-research-datasets",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "tw-yahoo-broker-top15",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "disabled_by_build"
-      },
-      {
-        "id": "tw-yahoo-stock-rss",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "disabled_by_build"
-      },
-      {
-        "id": "us-alpha-vantage-daily-ohlcv",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "disabled_by_build"
-      },
-      {
-        "id": "us-finra-short-sale",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "us-fred-macro",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "us-ibkr-broker-readback",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "us-polygon-daily-ohlcv",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "us-sec-edgar-filings",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "supported"
-      },
-      {
-        "id": "us-stooq-daily-ohlcv",
-        "entry_type": "connector_definition",
-        "reason": "catalog_only_not_configured",
-        "state": "disabled_by_build"
-      },
-      {
-        "id": "example-alpha-db",
-        "entry_type": "test_fixture",
-        "reason": "test_fixture_excluded",
-        "state": "unconfigured_fixture"
-      }
+      {"id": "alpha-db-vendor-signals", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "crypto-coingecko-spot", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "social-admitted-market-discussion", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "strategy-seed-allowlisted-repo", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-anue-news-rss", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "disabled_by_build"},
+      {"id": "tw-finmind-broker-bulk-parquet", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-finmind-broker-daily-report", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-finmind-datasets", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-finmind-fundamentals", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-finmind-kbar-1m", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-mops-official-disclosures", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-shioaji-broker-readback", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-taifex-futures-options-chip", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-tdcc-shareholding-distribution", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-tej-research-datasets", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "tw-yahoo-broker-top15", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "disabled_by_build"},
+      {"id": "tw-yahoo-stock-rss", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "disabled_by_build"},
+      {"id": "us-alpha-vantage-daily-ohlcv", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "disabled_by_build"},
+      {"id": "us-finra-short-sale", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "us-fred-macro", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "us-ibkr-broker-readback", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "us-polygon-daily-ohlcv", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "us-sec-edgar-filings", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "supported"},
+      {"id": "us-stooq-daily-ohlcv", "entry_type": "connector_definition", "reason": "catalog_only_not_configured", "state": "disabled_by_build"},
+      {"id": "example-alpha-db", "entry_type": "test_fixture", "reason": "test_fixture_excluded", "state": "unconfigured_fixture"}
     ],
     "redactions_on_clean_hosted_set": [],
     "conflicts_on_clean_hosted_set": [],
     "inline_secret_handling_verified": {
-      "redact_mode": {
-        "action": "Strips inline secret keys and values (Bearer, Basic, sk-*, ghp_*, AIza*, xox*, URL-embedded credentials) from public config, records field_path + value_length + 8-char SHA-256 prefix without raw secret, records conflict, and downgrades instance to configured_disabled with credential_unavailable",
-        "test": "services/source_ingestion/tests/test_source_management_import.py::test_inline_secret_redaction_and_rejection_modes"
-      },
-      "reject_mode": {
-        "action": "Rejects connector containing inline secret, records redaction + conflict + skipped entry (reason=inline_secret_rejected), and does not create instance",
-        "test": "services/source_ingestion/tests/test_source_management_import.py::test_inline_secret_redaction_and_rejection_modes"
-      }
+      "redact_mode": "Strips inline secret keys/values (Bearer, Basic, sk-*, ghp_*, AIza*, xox*, URL-embedded credentials) from public config, records field_path + value_length + 8-char SHA-256 prefix without raw secret, records conflict, and downgrades instance to configured_disabled with credential_unavailable",
+      "reject_mode": "Rejects connector containing inline secret, records redaction + conflict + skipped entry (reason=inline_secret_rejected), and does not create instance",
+      "test": "services/source_ingestion/tests/test_source_management_import.py::test_inline_secret_redaction_and_rejection_modes"
     }
   },
   "acceptance_3_no_ingestion_behaviour_change": {
@@ -327,121 +117,28 @@
   "acceptance_5_registry_read_fits_bff_budget": {
     "bff_timeout_budget_seconds": 2.0,
     "root_cause_of_4_7_to_5_9s_latency": {
-      "primary_cost_4_5_to_5_6s": {
-        "location": "services/source_ingestion/runtime.py:_source_connector_entries -> _latest_source_record_by_connector -> self.evidence_repository.list_source_records()",
-        "cause": "On hosted (SOURCE_INGEST_EVIDENCE_BACKEND=postgres), PostgresSourceEvidenceRepository.list_source_records() executed `SELECT payload FROM source_ingest.source_evidence WHERE record_type = 'source_record' ORDER BY append_id ASC` across the ~203 MB source_ingest.source_evidence table on EVERY GET /api/source-ingest/registry call, transferring ~100-140 MB of JSONB payloads over the socket and running json.loads + SourceRecord.from_dict() on ~15,000+ rows, even though _connector_freshness_summary_from_snapshot only reads latest_record for a single connector (tw-twse-tpex-official-market) and PostgresSourceEvidenceRepository already holds self._source_records in memory from startup reload()."
-      },
-      "secondary_cost_0_24s": {
-        "location": "services/source_ingestion/runtime.py:_source_connector_entries -> self.store.read_freshness_snapshot() -> _connector_freshness_summary_from_snapshot",
-        "cause": "On hosted 41 MB ingest_schedule.jsonl (~33,400 runs and ~33,400 receipts), every registry read sorted all 33,400 receipts three times, parsed 33,400 ISO timestamps via datetime.fromisoformat, and rebuilt static provider_examples and financial_data_source_catalog payloads."
-      }
+      "primary_cost_4_5_to_5_6s": "services/source_ingestion/runtime.py:_source_connector_entries -> _latest_source_record_by_connector -> self.evidence_repository.list_source_records(). On hosted (SOURCE_INGEST_EVIDENCE_BACKEND=postgres), PostgresSourceEvidenceRepository.list_source_records() executed `SELECT payload FROM source_ingest.source_evidence WHERE record_type = 'source_record' ORDER BY append_id ASC` across the ~203 MB source_ingest.source_evidence table on EVERY GET /api/source-ingest/registry call, transferring ~100-140 MB of JSONB payloads over the socket and running json.loads + SourceRecord.from_dict() on ~15,000+ rows, even though _connector_freshness_summary_from_snapshot only reads latest_record for tw-twse-tpex-official-market and PostgresSourceEvidenceRepository already holds self._source_records in memory from startup reload().",
+      "secondary_cost_0_24s": "services/source_ingestion/runtime.py:_source_connector_entries -> self.store.read_freshness_snapshot() -> _connector_freshness_summary_from_snapshot. On hosted 41 MB ingest_schedule.jsonl (~33,400 runs and ~33,400 receipts), every registry read sorted all 33,400 receipts three times, parsed 33,400 ISO timestamps via datetime.fromisoformat, and rebuilt static provider_examples and financial_data_source_catalog payloads."
     },
     "fix_summary": [
       "Added _sync_and_list_source_records() in SourceIngestionRuntime that syncs PostgresSourceEvidenceRepository._source_records incrementally via `SELECT COALESCE(MAX(append_id), 0), COUNT(*) FROM source_ingest.source_evidence WHERE record_type = 'source_record'` and fetches only delta rows with `append_id > last_append_id` (0 payload rows transferred on steady reads).",
-      "Scoped _latest_source_record_by_connector in _source_connector_entries and _connector_freshness_summary to connector_ids=('tw-twse-tpex-official-market',) (the only connector whose freshness evaluation reads latest_record) and cached the ranked record map when evidence state and latest completed run ID are unchanged.",
+      "Scoped _latest_source_record_by_connector in _source_connector_entries and _connector_freshness_summary to connector_ids=('tw-twse-tpex-official-market',) and cached the ranked record map when evidence state and latest completed run ID are unchanged.",
       "Added _grouped_freshness_snapshot() in SourceIngestionRuntime caching grouped runs, pre-ordered receipts, watermarks, and latest run per connector keyed by JsonlIngestScheduleStore journal state (_read_key, _read_offset, counts, and tail object identities).",
       "Cached static _provider_example_payloads() on SourceIngestionRuntime and unpatched financial_data_source_catalog_payload() in services/source_ingestion/routers/catalog_controller.py."
     ],
     "complete_consumer_inventory": [
-      {
-        "consumer": "services/control-plane/bff/ports/research_knowledge_source.py:4535 (get_source_connector_registry)",
-        "fields_read": [
-          "schema_version",
-          "connectors",
-          "provider_examples",
-          "policy_registry",
-          "financial_data_source_catalog",
-          "active_universe_policy"
-        ]
-      },
-      {
-        "consumer": "services/control-plane/bff/ports/research_knowledge_source.py:4625 (get_source_ops_snapshot)",
-        "fields_read": [
-          "connectors[*].connector_id",
-          "connectors[*].status",
-          "connectors[*].freshness",
-          "connectors[*].schedule",
-          "connectors[*].health_metrics",
-          "connectors[*].crawler_policy",
-          "policy_registry",
-          "financial_data_source_catalog",
-          "active_universe_policy"
-        ]
-      },
-      {
-        "consumer": "services/control-plane/bff/console_gap/datasources.py:367,543 (read_source_connector_registry & bff_management_data_sources)",
-        "fields_read": [
-          "connectors[*].connector_id",
-          "connectors[*].provider",
-          "connectors[*].source_type",
-          "connectors[*].status",
-          "connectors[*].supported_modes",
-          "connectors[*].policy",
-          "connectors[*].metadata",
-          "connectors[*].fetch_policy",
-          "connectors[*].schedule",
-          "connectors[*].freshness",
-          "connectors[*].health_metrics",
-          "connectors[*].state",
-          "connectors[*].crawler_policy",
-          "provider_examples",
-          "policy_registry",
-          "financial_data_source_catalog",
-          "active_universe_policy"
-        ]
-      },
-      {
-        "consumer": "services/control-plane/bff/personas/service.py:16155 (_read_source_ingest_truth_locked)",
-        "fields_read": [
-          "connectors[*].connector_id",
-          "connectors[*].status",
-          "connectors[*].provider",
-          "connectors[*].source_type",
-          "connectors[*].freshness",
-          "connectors[*].health_metrics",
-          "connectors[*].schedule",
-          "connectors[*].fetch_policy",
-          "connectors[*].policy",
-          "connectors[*].crawler_policy"
-        ]
-      },
-      {
-        "consumer": "services/control-plane/bff/research/service.py:3769 (get_source_connectors / GET /api/v1/research/source-connectors)",
-        "fields_read": [
-          "connectors",
-          "provider_examples",
-          "policy_registry"
-        ]
-      },
-      {
-        "consumer": "services/source_ingestion/controller_worker.py:523 (read_actual_state_with_fetch_bindings)",
-        "fields_read": [
-          "connectors[*].connector_id",
-          "connectors[*].fetch_policy.mode",
-          "connectors[*].fetch_policy.adapter"
-        ]
-      },
-      {
-        "consumer": "scripts/smoke_source_search_bounded.py:295 & scripts/run_dev_paired_readonly_qa.py:55",
-        "fields_read": [
-          "schema_version",
-          "connectors",
-          "policy_registry"
-        ]
-      }
+      {"consumer": "services/control-plane/bff/ports/research_knowledge_source.py:4535 (get_source_connector_registry)", "fields_read": ["schema_version", "connectors", "provider_examples", "policy_registry", "financial_data_source_catalog", "active_universe_policy"]},
+      {"consumer": "services/control-plane/bff/ports/research_knowledge_source.py:4625 (get_source_ops_snapshot)", "fields_read": ["connectors[*].connector_id", "connectors[*].status", "connectors[*].freshness", "connectors[*].schedule", "connectors[*].health_metrics", "connectors[*].crawler_policy", "policy_registry", "financial_data_source_catalog", "active_universe_policy"]},
+      {"consumer": "services/control-plane/bff/console_gap/datasources.py:367,543 (read_source_connector_registry & bff_management_data_sources)", "fields_read": ["connectors[*].connector_id", "connectors[*].provider", "connectors[*].source_type", "connectors[*].status", "connectors[*].supported_modes", "connectors[*].policy", "connectors[*].metadata", "connectors[*].fetch_policy", "connectors[*].schedule", "connectors[*].freshness", "connectors[*].health_metrics", "connectors[*].state", "connectors[*].crawler_policy", "provider_examples", "policy_registry", "financial_data_source_catalog", "active_universe_policy"]},
+      {"consumer": "services/control-plane/bff/personas/service.py:16155 (_read_source_ingest_truth_locked)", "fields_read": ["connectors[*].connector_id", "connectors[*].status", "connectors[*].provider", "connectors[*].source_type", "connectors[*].freshness", "connectors[*].health_metrics", "connectors[*].schedule", "connectors[*].fetch_policy", "connectors[*].policy", "connectors[*].crawler_policy"]},
+      {"consumer": "services/control-plane/bff/research/service.py:3769 (get_source_connectors / GET /api/v1/research/source-connectors)", "fields_read": ["connectors", "provider_examples", "policy_registry"]},
+      {"consumer": "services/source_ingestion/controller_worker.py:523 (read_actual_state_with_fetch_bindings)", "fields_read": ["connectors[*].connector_id", "connectors[*].fetch_policy.mode", "connectors[*].fetch_policy.adapter"]},
+      {"consumer": "scripts/smoke_source_search_bounded.py:295 & scripts/run_dev_paired_readonly_qa.py:55", "fields_read": ["schema_version", "connectors", "policy_registry"]}
     ],
     "measured_before_and_after": {
-      "hosted_before_seconds": [
-        4.7,
-        5.9
-      ],
+      "hosted_before_seconds": [4.7, 5.9],
       "hosted_before_response_bytes": 751216,
-      "local_hosted_shaped_after_4_reads_seconds": [
-        0.051279,
-        0.01543,
-        0.014019,
-        0.01368
-      ],
+      "local_hosted_shaped_after_4_reads_seconds": [0.051279, 0.01543, 0.014019, 0.01368],
       "steady_postgres_full_table_payload_scans_after": 0,
       "steady_schedule_receipt_resorts_after": 0,
       "note": "Timings are recorded in evidence only; no wall-clock threshold is asserted in required CI checks."
@@ -458,26 +155,10 @@
   "acceptance_7_runtime_budget": {
     "configured_connectors_count": 39,
     "per_initial_import": {
-      "data_source_instances": {
-        "rows_added": 39,
-        "bytes_added": 63211,
-        "avg_bytes_per_row": 1621
-      },
-      "source_desired_states": {
-        "rows_added": 39,
-        "bytes_added": 140353,
-        "avg_bytes_per_row": 3599
-      },
-      "source_command_receipts": {
-        "rows_added": 39,
-        "bytes_added": 43720,
-        "avg_bytes_per_row": 1121
-      },
-      "source_observed_snapshots": {
-        "rows_added": 39,
-        "bytes_added": 49835,
-        "avg_bytes_per_row": 1278
-      },
+      "data_source_instances": {"rows_added": 39, "bytes_added": 63211, "avg_bytes_per_row": 1621},
+      "source_desired_states": {"rows_added": 39, "bytes_added": 140353, "avg_bytes_per_row": 3599},
+      "source_command_receipts": {"rows_added": 39, "bytes_added": 43720, "avg_bytes_per_row": 1121},
+      "source_observed_snapshots": {"rows_added": 39, "bytes_added": 49835, "avg_bytes_per_row": 1278},
       "total_rows_added": 156,
       "total_bytes_added": 297119
     },
