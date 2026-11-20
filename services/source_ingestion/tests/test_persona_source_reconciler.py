@@ -949,7 +949,9 @@ def test_dbnomics_and_individual_paper_bundle_sources_are_provisioned(tmp_path, 
 
 def test_default_chip_requirements_provision_independent_idempotent_daily_instances(tmp_path, monkeypatch):
     import json
-    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.connector_definitions import (
+        TW_CHIP_REFRESH_PROFILES, TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS,
+    )
     monkeypatch.delenv('PANTHEON_COLLECTOR_HOST', raising=False)
     desired = json.loads((Path(__file__).parents[1] / 'default_desired_state.json').read_text())
     reconciler, connectors, schedules = _reconciler(tmp_path)
@@ -958,7 +960,10 @@ def test_default_chip_requirements_provision_independent_idempotent_daily_instan
     for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
         cfg = connectors.get_config(cid)
         assert cfg.fetch['request']['dataset'] == profile['dataset']
-        assert cfg.fetch['max_records'] == 500
+        # Official chip profiles hold the whole session (full-market budget); the rest stay at 500.
+        assert cfg.fetch['max_records'] == (
+            TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS if 'venues' in profile else 500
+        )
         assert cfg.fetch['allow_empty'] is False
         if profile['base'] == 'tw-finmind-fundamentals':
             # Symbols and run date come from the active-universe fanout job, never the stored request.
