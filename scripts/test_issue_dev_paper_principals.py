@@ -713,7 +713,7 @@ def test_consultation_persona_pool_read_principal_is_pool_get_only_file_delivere
     import yaml
     root = Path(__file__).resolve().parents[1]
     variable = "CONSULTATION_PERSONA_POOL_READ_TOKEN"
-    assert CONSUMER_FILES["consultation-svc"] == (variable,)
+    assert variable in CONSUMER_FILES["consultation-svc"]
     assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
     values = issue_environment(configured(), now=NOW)
     claims = verify(values[variable])
@@ -733,3 +733,63 @@ def test_consultation_persona_pool_read_principal_is_pool_get_only_file_delivere
     assert "dev-paper-consultation-tokens:/issued/consultation-svc" in (
         compose["services"]["dev-paper-principal-issuer"]["volumes"])
     assert "dev-paper-consultation-tokens" in compose["volumes"]
+
+
+def test_consultation_memory_principal_writes_learn_feedback_as_consultation_svc_only_and_is_mounted(
+        tmp_path, monkeypatch):
+    import yaml
+    from fastapi.testclient import TestClient
+    from services.memory import main as memory_main
+
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_MEMORY_WRITE_TOKEN"
+    assert variable in CONSUMER_FILES["consultation-svc"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    import time
+    now = int(time.time())
+    values = issue_environment(configured(), now=now)
+    claims = verify(values[variable], now=now + 1)
+    # Exactly one role: the write_authority itself. No operator/admin/system/memory-writer.
+    assert claims["roles"] == ["consultation-svc"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    # Why the hosted credential was refused 403: PANTHEON_MEMORY_AUTH_TOKEN is the persona-svc writer;
+    # it passes the write-role gate but holds none of {consultation-svc, operator, admin, system,
+    # memory-writer}, so writeback_learn_feedback raises "cannot represent this memory writer".
+    assert verify(values["PERSONA_MEMORY_WRITE_TOKEN"], now=now + 1)["roles"] == ["persona-svc"]
+
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "m.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "p.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_AUDIENCE", "isolated-audience")
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+    client = TestClient(memory_main.app)
+    payload = {
+        "tenant_id": "tenant-dev", "source_event_type": "consultation_closed",
+        "source_event_id": "consultation:meeting:mtg-x", "write_authority": "consultation-svc",
+        "sponsor_persona_id": "persona-a", "contributing_persona_ids": ["persona-a"],
+        "evidence_refs": ["consultation://memos/mem-x"], "summary": "Meeting closed.", "headline": "Meeting outcome", "body": "Body.",
+    }
+    persona = client.post("/api/memory/writebacks/learn-feedback", json=payload,
+                          headers={"Authorization": "Bearer " + values["PERSONA_MEMORY_WRITE_TOKEN"]})
+    assert persona.status_code == 403
+    assert "cannot represent this memory writer" in persona.text
+    issued = client.post("/api/memory/writebacks/learn-feedback", json=payload,
+                         headers={"Authorization": "Bearer " + values[variable]})
+    assert issued.status_code in (200, 201), issued.text
+    # The same principal cannot write as another authority.
+    other = client.post("/api/memory/writebacks/learn-feedback",
+                        json={**payload, "write_authority": "telemetry-svc", "source_event_id": "x"},
+                        headers={"Authorization": "Bearer " + values[variable]})
+    assert other.status_code == 403
+
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    revoked = issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert revoked[variable] == ""
+    consultation = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]
+    assert "dev-paper-consultation-tokens:/run/pantheon-principals:ro" in consultation["volumes"]
+    assert consultation["environment"]["PANTHEON_MEMORY_AUTH_TOKEN_FILE"].endswith(
+        "/run/pantheon-principals/" + variable + "}")

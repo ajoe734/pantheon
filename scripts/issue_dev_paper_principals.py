@@ -94,6 +94,10 @@ READERS = {
     # PANTHEON_PERSONA_SERVICE_TOKEN is the persona owner's own service-token name, so it is never
     # exported into the shared deploy environment.
     "CONSULTATION_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-consultation-persona-pool-reader", "persona_pool_reader"),
+    # Consultation executor -> memory learn-feedback writeback ONLY as write_authority consultation-svc.
+    # Role consultation-svc is in the memory write set and satisfies the authority check; no
+    # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.
+    "CONSULTATION_MEMORY_WRITE_TOKEN": ("pantheon-dev-consultation-memory-writer", "consultation-svc"),
     # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
     # memory write role). The adapter's actor id must equal this subject in strict auth.
     "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
@@ -271,7 +275,7 @@ CONSUMER_FILES = {
         "AUTO_CONSUMER_REGISTRY_TOKEN",
     ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
-    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN",),
+    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
