@@ -108,41 +108,11 @@ The control compose packages the same existing product owners and Agora request 
 
 Source-only contract; hosted execution still needs the genuine `production` Environment approval.
 
-**Journal per dispatch.** `prod_atomic_switch.sh` archives an existing `state/journal/<release_id>` to
-`state/journal/<release_id>.archived-<UTC timestamp>` (atomic rename) before any baseline check or marker write, so
-rollback and recovery read only the current dispatch. A refusal before the new journal is written (snapshot or baseline
-health) renames the archive back. The newest 10 archives per release id are kept; older ones are deleted at switch start.
-Runtime budget: about 50 KB per dispatch, at most 10 archives per release id, cleaned by the switch.
+**Journal per dispatch.** `prod_atomic_switch.sh` renames an existing `state/journal/<release_id>` to `<release_id>.archived-<UTC timestamp>` before any baseline check or marker write, so rollback reads only the current dispatch. A refusal before the new journal is written renames the archive back. The newest 10 archives per release id are kept (about 50 KB each).
 
-**Dispatch a drill rollback** (workflow `Pantheon Production Release`):
+**Dispatch** (`Pantheon Production Release`): `operation=rollback`, `release_id` = the currently ACTIVE release; other release inputs are ignored. Still required: `PRODUCTION_RELEASE_ENABLED=true`, protected `production` Environment approval by a permitted reviewer (`prod_preflight.py rollback`), WIF auth and IAP transport. Skipped: FE retrieval, snapshot, bootstrap, pre-pull, migrate. This is application rollback, not data recovery.
 
-| Input | Value |
-| --- | --- |
-| `operation` | `rollback` (default `release` keeps the existing behavior) |
-| `release_id` | the currently ACTIVE release (for example the one you want to undo) |
-| other release inputs | ignored (manifest, evidence, FE URI, bootstrap flag) |
-
-Gates that still apply: `PRODUCTION_RELEASE_ENABLED=true` (fail closed), the protected `production` Environment with a
-genuine approval by a required reviewer (approver vs Environment policy checked by `prod_preflight.py rollback`), WIF
-auth and IAP transport. Skipped: FE bundle retrieval, pre-release snapshot, bootstrap, pre-pull, migrate. Rollback is
-application rollback, not data recovery. The initiator must not dispatch with an approver who is not a permitted reviewer.
-
-`scripts/deploy/prod_rollback.sh --protected` runs on the VM, refuses (changing nothing) with:
-
-| Exit | Code | Meaning |
-| --- | --- | --- |
-| 1 | `MISSING_INPUT` | required input missing |
-| 10 | `ROLLBACK_RELEASE_NOT_ACTIVE` | `release_id` is not the release in `state/active_manifest.json` |
-| 11 | `ROLLBACK_NO_JOURNAL` | no current journal for the active release |
-| 12 | `ROLLBACK_BOOTSTRAP_JOURNAL` | bootstrap (first-release) journal: rollback would remove Production |
-| 13 | `ROLLBACK_NO_BASELINE` | journal does not name a retained healthy baseline (or its FE dir/upstream is gone) |
-| 14 | `ROLLBACK_NO_MANIFEST` | retained `manifests/<release_id>.json` missing |
-
-Otherwise it runs `prod_rollback.sh` (which verifies via `baseline_health`: public FE `/deployment.json`, BFF
-`/bff/version` and `/bff/readyz` at the restored baseline), then `prod_ops.sh verify_rollback` (owners and singleton at the
-baseline digest, runtime-manager credential check for the restored paper workers). It prints one JSON line:
-`{"status","from_release","to_release","elapsed_ms","rollback_budget_seconds","exit_code"}` (no secrets). Exit: 0 ok,
-3 restoration failed, 6 over the 120 s budget, 7 post-rollback verification failed. Any nonzero fails the job.
+`scripts/deploy/prod_rollback.sh --protected` refuses without changing anything: exit 1 `MISSING_INPUT`; 10 `ROLLBACK_RELEASE_NOT_ACTIVE` (not the release in `state/active_manifest.json`); 11 `ROLLBACK_NO_JOURNAL`; 12 `ROLLBACK_BOOTSTRAP_JOURNAL` (would remove Production); 13 `ROLLBACK_NO_BASELINE` (no retained healthy baseline, or its FE dir/upstream is gone); 14 `ROLLBACK_NO_MANIFEST`. Otherwise it runs `prod_rollback.sh` (verifies via `baseline_health`), then `prod_ops.sh verify_rollback` (owners/singleton at baseline digest, paper-worker credential check) and prints one secret-free JSON line `{"status","from_release","to_release","elapsed_ms","rollback_budget_seconds","exit_code"}`. Exit: 0 ok, 3 restoration failed, 6 over the 120 s budget, 7 post-rollback verification failed.
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
