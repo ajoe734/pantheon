@@ -215,10 +215,17 @@ _PASSTHROUGH_FIELDS = (
     "side",
     "quantity",
     "price",
+    "reason_detail",
+    "expression_reason_code",
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+_EXPRESSION_REASON_CODES = frozenset(
+    {"long_cash", "long_lever", "short_via_future", "close_leg"}
+)
 
 
 class LifecycleProjectionError(RuntimeError):
@@ -1075,6 +1082,12 @@ class RelationalLifecycleProjector:
                 )
                 if value is not None:
                     event[field] = value
+            if source.get("event_type") == "reconciliation_failed":
+                recon_reason = _first(
+                    source.get("reason_code"), metadata.get("reason_code")
+                )
+                if recon_reason is not None:
+                    event["reason_code"] = str(recon_reason)
             if contradictory_identifiers:
                 event.update(contradictory_identifiers)
             if submitted_to_broker is not None:
@@ -1099,8 +1112,46 @@ class RelationalLifecycleProjector:
                 event["submitted_to_broker"] = False
                 event["quantity"] = 0.0
             elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
-                if reject_reason is not None:
-                    event["reason_code"] = str(reject_reason)
+                producer_reason = _first(
+                    source.get("reject_reason"),
+                    metadata.get("reject_reason"),
+                    source.get("risk_reason"),
+                    metadata.get("risk_reason"),
+                    source.get("reason"),
+                    metadata.get("reason"),
+                    source.get("broker_submission_status"),
+                    metadata.get("broker_submission_status"),
+                )
+                expression_code = _first(
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                )
+                if (
+                    expression_code is not None
+                    and str(expression_code) in _EXPRESSION_REASON_CODES
+                ):
+                    event["expression_reason_code"] = str(expression_code)
+                    expression_code = None
+                chosen = _first(producer_reason, expression_code)
+                if chosen is not None:
+                    event["reason_code"] = str(chosen)
+                reason_detail = {}
+                for detail_key in (
+                    "required",
+                    "available",
+                    "limit",
+                    "holding_quantity",
+                    "requested_quantity",
+                ):
+                    detail_value = _first(
+                        source.get(detail_key),
+                        metadata.get(detail_key),
+                        metrics_map.get(detail_key),
+                    )
+                    if detail_value is not None:
+                        reason_detail[detail_key] = detail_value
+                if reason_detail:
+                    event["reason_detail"] = reason_detail
             elif is_explicit_no_trade:
                 event["reason_code"] = str(
                     explicit_noop_reason
