@@ -737,5 +737,5 @@ def test_default_reader_uses_one_dead_letter_listing_and_the_recovery_rule(monke
     monkeypatch.setattr(cc.ConsultationServiceClient, "_request_json", fake)
     read = mt.default_meeting_reader(PERSONA)
     assert read("m-spent")["execution_state"]["recovery_exhausted"] is True
-    assert read("m-other")["execution_state"]["recovery_exhausted"] is False
+    assert read("m-other")["execution_state"]["recovery_exhausted"] is True  # non-recoverable is terminal
     assert read("m-live")["execution_state"] is None and len(calls) == 1

@@ -1,0 +1,9 @@
+{
+  "task_id": "CONSULT-DEAD-LETTER-NONRECOVERABLE-TERMINAL-20261120",
+  "change": "recovery_exhausted is true for any dead letter whose reason is not a recoverable kind or whose replay_count spent the budget; recover_dead_letters names those failed on the request. New recoverable kinds: writeback (learn-feedback 401/403, probe = empty-payload POST authenticated, no write) and idempotent (memo/publication 409, no probe, retry idempotent per MEETING-CLOSE-WRITEBACK-PRINCIPAL-AND-IDEMPOTENT-RETRY-20261120).",
+  "budget": "replay_count single per-item budget (AUTO_REDRIVE_MAX_PER_ITEM=3), unchanged across reason changes; per-tick cap AUTO_REDRIVE_PER_TICK=3.",
+  "runtime_budget_per_tick_at_hosted_shape": "9 dead letters: at most 1 probe per reason class (max 4: auth, ensure, writeback, idempotent=0), at most 3 redrives, one request read + one sync post per terminal item once per process; no new writer.",
+  "rollback": "No schema change; previous release reads consultation_work_items unchanged (test_old_release_reads_the_table_unchanged).",
+  "tests": "services/consultation/test_workflow_executor.py, services/persona/test_meeting_triggers.py, services/persona/test_pool_publish_port.py: 58 passed",
+  "hosted_proof": "pending post-deploy (persona-loop owner records)"
+}

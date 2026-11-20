@@ -51,6 +51,8 @@ from .workflow_state import (
     WorkflowClaim,
     WorkflowStateStore,
     recoverable_kind,
+    REDRIVE_IDEMPOTENT,
+    REDRIVE_WRITEBACK,
     recovery_exhausted,
 )
 
@@ -1782,6 +1784,28 @@ def _probe_case_file_credentials(config: ExecutorConfig) -> None:
             raise
 
 
+def _probe_writeback_identity(config: ExecutorConfig) -> None:
+    """Authenticate to the memory writeback with the consultation write identity.
+
+    An intentionally empty payload is rejected by validation (400/422) after
+    authentication, so nothing is written; 401/403, 5xx or no transport fails.
+    """
+    if not config.memory_url:
+        raise WorkflowBlocked("memory writeback address is not configured")
+    try:
+        _json_request(
+            config.memory_url + "/api/memory/writebacks/learn-feedback",
+            method="POST",
+            timeout_seconds=config.timeout_seconds,
+            headers=_memory_headers(),
+            payload={},
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 404, 409, 422):
+            return
+        raise
+
+
 def _request_persona_ids(config: ExecutorConfig, request_id: str) -> list[str]:
     request = _api_get(config, f"/api/consult/requests/{request_id}")
     metadata = (request.get("metadata") or {}) if isinstance(request, Mapping) else {}
@@ -1858,11 +1882,10 @@ def recover_dead_letters(
     """
     summary: dict[str, Any] = {"redriven": [], "exhausted": [], "probe_failed": [], "errors": []}
     rows = state.list_items(tenant_id=config.tenant_id, status="dead_letter")
-    candidates: dict[str, list[dict[str, Any]]] = {REDRIVE_AUTH: [], REDRIVE_ENSURE: []}
+    candidates: dict[str, list[dict[str, Any]]] = {
+        REDRIVE_AUTH: [], REDRIVE_ENSURE: [], REDRIVE_WRITEBACK: [], REDRIVE_IDEMPOTENT: []}
     for row in rows:
         kind = recoverable_kind(row.get("last_error"))
-        if kind is None:
-            continue
         if recovery_exhausted(row):
             try:
                 _record_recovery_exhausted(config, row)
@@ -1870,7 +1893,7 @@ def recover_dead_letters(
             except Exception as exc:
                 summary["errors"].append(
                     f"request_id={row['request_id']} exhausted_record={_error_detail(exc)}")
-        elif int(row.get("replay_count") or 0) < AUTO_REDRIVE_MAX_PER_ITEM:
+        elif kind is not None:
             candidates[kind].append(row)
     healthy: dict[str, bool] = {}
     for kind, items in candidates.items():
@@ -1879,6 +1902,10 @@ def recover_dead_letters(
         try:
             if kind == REDRIVE_AUTH:
                 _probe_case_file_credentials(config)
+            elif kind == REDRIVE_WRITEBACK:
+                _probe_writeback_identity(config)
+            elif kind == REDRIVE_IDEMPOTENT:
+                pass  # retry is idempotent by recorded step keys; nothing to probe
             else:
                 _probe_ensure_route(config, provider, str(items[0]["request_id"]))
             healthy[kind] = True

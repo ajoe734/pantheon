@@ -30,6 +30,8 @@ AUTO_REDRIVE_PER_TICK = 3
 
 REDRIVE_AUTH = "auth"
 REDRIVE_ENSURE = "ensure"
+REDRIVE_WRITEBACK = "writeback"  # learn-feedback refused 401/403
+REDRIVE_IDEMPOTENT = "idempotent"  # memo/publication 409 on an already-recorded step
 
 
 def recoverable_kind(reason: str | None) -> str | None:
@@ -39,15 +41,24 @@ def recoverable_kind(reason: str | None) -> str | None:
         return REDRIVE_AUTH
     if "consultation agent ensure failed" in text or "consultation agent ensure transport failed" in text:
         return REDRIVE_ENSURE
+    if "learn-feedback" in text and ("403" in text or "401" in text):
+        return REDRIVE_WRITEBACK
+    if "409" in text and ("memo" in text or "publication" in text):
+        return REDRIVE_IDEMPOTENT
     return None
 
 
 def recovery_exhausted(row: Mapping[str, Any]) -> bool:
-    """A recoverable dead letter that spent its whole redrive budget."""
+    """A dead letter recovery will never redrive: not recoverable, or budget spent.
+
+    The budget is the item's single ``replay_count``; a change of reason between
+    redrives never grants a fresh one.
+    """
+    if str(row.get("status") or "") != "dead_letter":
+        return False
     return (
-        str(row.get("status") or "") == "dead_letter"
-        and recoverable_kind(row.get("last_error")) is not None
-        and int(row.get("replay_count") or 0) >= AUTO_REDRIVE_MAX_PER_ITEM
+        recoverable_kind(row.get("last_error")) is None
+        or int(row.get("replay_count") or 0) >= AUTO_REDRIVE_MAX_PER_ITEM
     )
 
 

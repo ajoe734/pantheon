@@ -744,16 +744,76 @@ def test_budget_exhausted_item_stays_dead_letter_and_is_named_failed(tmp_path, m
     assert recovery_exhausted(state.get(tenant_id=TENANT, request_id="r-last"))
 
 
-def test_other_dead_letter_reasons_keep_today_behaviour(tmp_path, monkeypatch):
+def test_non_recoverable_dead_letter_is_named_failed_within_one_tick(tmp_path, monkeypatch):
     config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
     state = WorkflowStateStore(config.state_path)
     for rid, reason in (("a", "provider schema invalid"), ("b", "panel_case_file: http_500 boom"),
                         ("c", "panel_case_file: http_404 not found")):
         _dead(state, rid, reason)
     out = wf.recover_dead_letters(config=config, state=state, provider=None)
-    assert out["redriven"] == [] and out["exhausted"] == [] and calls["auth"] == 0 and calls["ensure"] == 0
-    assert state.counts(tenant_id=TENANT)["dead_letter"] == 3 and calls["posts"] == []
-    assert not recovery_exhausted(state.get(tenant_id=TENANT, request_id="a"))
+    assert out["redriven"] == [] and sorted(out["exhausted"]) == ["a", "b", "c"]
+    assert calls["auth"] == 0 and calls["ensure"] == 0
+    synced = [p for p, b in calls["posts"] if p.endswith("/sync") and b["request_status"] == "failed"]
+    assert len(synced) == 3
+    assert all(recovery_exhausted(state.get(tenant_id=TENANT, request_id=r)) for r in "abc")
+
+
+_WB = "http_error=403 Forbidden url=http://memory/api/memory/writebacks/learn-feedback"
+_MEMO = "http_error=409 Conflict url=http://api/api/consult/memos"
+
+
+def test_hosted_1431_shape_ends_redriven_or_named_failed(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    wb_ok = {"v": True}
+    probes = {"wb": 0}
+
+    def wb(_config):
+        probes["wb"] += 1
+        if not wb_ok["v"]:
+            raise RuntimeError("http_403")
+
+    monkeypatch.setattr(wf, "_probe_writeback_identity", wb)
+    state = WorkflowStateStore(config.state_path)
+    for i in "abc":
+        _dead(state, f"consult-envelope-publication-{i}", "caller_context_missing", replays=1)
+    _dead(state, "mtg-wb1", _WB, replays=1)
+    _dead(state, "mtg-wb2", _WB, replays=1)
+    _dead(state, "mtg-wb3", _WB, replays=0)
+    _dead(state, "mtg-memo1", _MEMO, replays=1)
+    _dead(state, "mtg-memo2", _MEMO, replays=0)
+    _dead(state, "mtg-roster", "roster identity refused", replays=0)
+
+    wb_ok["v"] = False
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert sorted(out["exhausted"]) == sorted(
+        [f"consult-envelope-publication-{i}" for i in "abc"] + ["mtg-roster"])
+    assert out["probe_failed"] and probes["wb"] == 1
+    assert sorted(out["redriven"]) == ["mtg-memo1", "mtg-memo2"]  # idempotent kind needs no probe
+
+    wb_ok["v"] = True
+    for _ in range(6):
+        wf.recover_dead_letters(config=config, state=state, provider=None)
+        while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
+            state.complete(claim, memo_id="m", handoff_id="h")
+    failed_ids = {b["request_status"] and p.split("/")[-2] for p, b in calls["posts"] if p.endswith("/sync")}
+    for row in state.list_items(tenant_id=TENANT, status="dead_letter"):
+        assert row["request_id"] in failed_ids  # no dead_letter without a failed request
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 4
+    assert state.counts(tenant_id=TENANT)["completed"] == 5
+
+
+def test_budget_survives_reason_change_between_redrives(tmp_path, monkeypatch):
+    config, calls = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    monkeypatch.setattr(wf, "_probe_writeback_identity", lambda _c: None)
+    state = WorkflowStateStore(config.state_path)
+    _dead(state, "r", _AUTH)
+    for reason in (_WB, _MEMO, _AUTH):
+        out = wf.recover_dead_letters(config=config, state=state, provider=None)
+        assert out["redriven"] == ["r"]
+        claim = state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)
+        state.block(claim, reason=reason, max_blocked_attempts=1, retry_after_seconds=0)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and out["exhausted"] == ["r"]
 
 
 def test_completed_item_is_never_redriven_and_request_id_is_reused(tmp_path, monkeypatch):
