@@ -543,7 +543,7 @@
       "no protected rollback mode"
     ],
     "review_independence_exception": "owner Claude2 and reviewer Claude are both Claude family; Codex/Antigravity capacity not available at dispatch",
-    "rollback_operation": "production-release.yml input operation=release|rollback (8 inputs total); scripts/deploy/prod_rollback_mode.sh refusal codes 10-14, post-check prod_ops.sh verify_rollback, one JSON result line",
+    "rollback_operation": "production-release.yml input operation=release|rollback (8 inputs total); scripts/deploy/prod_rollback.sh --protected refusal codes 10-14, post-check prod_ops.sh verify_rollback, one JSON result line",
     "scope": "source only; no hosted run, no dispatch, no cloud or GitHub setting change",
     "tests": "tests/deployment/test_production_release.py: 121 run, 2 env-only errors (fastapi/pydantic not installed locally); new tests for stale-bootstrap redispatch (exit 2 not 4), refusals, cred-check failure, over budget, archive retention, workflow contract"
   }

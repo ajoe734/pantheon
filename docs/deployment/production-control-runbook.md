@@ -127,7 +127,7 @@ genuine approval by a required reviewer (approver vs Environment policy checked 
 auth and IAP transport. Skipped: FE bundle retrieval, pre-release snapshot, bootstrap, pre-pull, migrate. Rollback is
 application rollback, not data recovery. The initiator must not dispatch with an approver who is not a permitted reviewer.
 
-`scripts/deploy/prod_rollback_mode.sh` runs on the VM, refuses (changing nothing) with:
+`scripts/deploy/prod_rollback.sh --protected` runs on the VM, refuses (changing nothing) with:
 
 | Exit | Code | Meaning |
 | --- | --- | --- |

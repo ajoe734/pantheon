@@ -92,7 +92,6 @@ def _live_catalog() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SWITCH = REPO_ROOT / "scripts" / "deploy" / "prod_atomic_switch.sh"
 ROLLBACK = REPO_ROOT / "scripts" / "deploy" / "prod_rollback.sh"
-ROLLBACK_MODE = REPO_ROOT / "scripts" / "deploy" / "prod_rollback_mode.sh"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "production-release.yml"
 COMPOSE = REPO_ROOT / "deploy" / "production" / "docker-compose.prod-control.yml"
 CADDY = REPO_ROOT / "deploy" / "production" / "Caddyfile"
@@ -2222,7 +2221,7 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             env["RELEASE_MANIFEST_PATH"] = str(mpath)
         else:
             env.pop("RELEASE_MANIFEST_PATH", None)  # default: the retained ${PROD_ROOT}/manifests/<release_id>.json
-        return subprocess.run([str(ROLLBACK_MODE)], capture_output=True, text=True, timeout=60, env=env)
+        return subprocess.run([str(ROLLBACK), "--protected", release_id], capture_output=True, text=True, timeout=60, env=env)
 
     def _switch_second_release(self):
         (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
@@ -3260,7 +3259,7 @@ class StaticContractTests(unittest.TestCase):
         op = inputs["operation"]
         self.assertEqual((op["type"], op["default"], op["options"]), ("choice", "release", ["release", "rollback"]))
         text = WORKFLOW.read_text()
-        self.assertIn("scripts/deploy/prod_rollback_mode.sh", text)
+        self.assertIn("prod_rollback.sh\\\" --protected", text)
         self.assertIn("PRODUCTION_RELEASE_ENABLED", text)
         self.assertEqual(wf["jobs"]["deploy"]["environment"], "production")
         steps = {st["name"]: st for st in wf["jobs"]["deploy"]["steps"] if "name" in st}
