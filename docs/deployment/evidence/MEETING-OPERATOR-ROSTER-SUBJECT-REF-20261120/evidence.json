@@ -1,0 +1,15 @@
+{
+  "task_id": "MEETING-OPERATOR-ROSTER-SUBJECT-REF-20261120",
+  "owner": "Claude",
+  "reproduction": "mtg-7087ea03a30a391a: subject_ref persona:<id>, convened_by operator -> default roster stored persona_id='persona:<id>' -> adapter _PERSONA_ID_PATTERN rejected -> dead_letter after 3 attempts (from task brief, not re-read by worker)",
+  "changes": {
+    "services/consultation/meetings.py": "resolve_and_validate_roster: subject_ref default-chair branch strips a persona: prefix, refuses at convene time (HTTP 422, reasons invalid_subject_persona / subject_persona_not_found) when the id fails the adapter pattern or is not in the persona directory. Refusal happens before any work item exists. Persona-convened, explicit participants, trader:/agora_user:/user: paths untouched."
+  },
+  "tests": {
+    "command": "pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py -q",
+    "result": "21 passed",
+    "new_tests": ["test_operator_default_roster_chair_is_bare_persona_id (both forms)", "test_operator_default_roster_refuses_unknown_subject_persona", "test_persona_convened_and_explicit_participants_unchanged", "test_other_subject_ref_kinds_unchanged"]
+  },
+  "hosted_proof": "pending: AC6 requires post-deploy operator-convened meeting recorded by the persona-loop owner; not performed here",
+  "review_independence": "Reviewer Antigravity; if no other model family has capacity, record the exception at review time"
+}

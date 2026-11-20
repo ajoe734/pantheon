@@ -1,0 +1,22 @@
+{
+  "task_id": "SUP-REVIEW-EXCEPTION-EVIDENCE-LOCK-ORDER-20261120",
+  "finding": "persist_task_reassignment holds the task_state lock; _review_exception_capacity_evidence called load_runtime_state, which takes runtime_admission (lower rank). stable_sidecar_lock raised a lock order violation (runtime_admission -> task_state -> activity_audit) that the broad except turned into {}, so every considered family recorded 'no capacity evidence supplied' (seen 2026-11-20 12:27Z ENV-PROD-CONTROL-IMPL-001). Unit tests used a patched loader and never hit the real lock.",
+  "fix": "Evidence reads runtime state via load_runtime_state_snapshot (lock-free, once per same-family reassignment). Failure now records evidence_unavailable:<ErrorClass> per family and logs the error to stderr; the string 'no capacity evidence supplied' is no longer written by the supervisor. No recurring job or persistent writer added; pair choice and incumbent rule unchanged.",
+  "tests": [
+    {
+      "command": "cd .orchestrator && python3 -m unittest test_supervisor.DurableWorkerRecoveryTests test_supervisor.ReviewIndependenceExceptionEvidenceTests",
+      "result": "Ran 43 tests, OK"
+    },
+    {
+      "command": "cd .orchestrator && python3 -m unittest test_supervisor",
+      "result": "430 tests; failures limited to 5 cwd-dependent worktree/.gitignore tests (OrphanUnmergedWorktreeStalenessTests x3, test_ignored_build_artifacts_do_not_dirty_worktree) plus the new test before its fixture fix; the new test was then fixed and passes",
+      "note": "the 4 unrelated tests use a relative .gitignore path and fail when run from .orchestrator; not touched by this change"
+    },
+    {
+      "command": "revert load_runtime_state_snapshot -> load_runtime_state temporarily",
+      "result": "new real-lock test FAILS with evidence_unavailable:RuntimeError (reproduces the bug); passes with the fix"
+    }
+  ],
+  "replay": "test_real_lock_same_family_reassignment_records_concrete_reasons: real canonical_task_state_lock_file and real stable_sidecar_lock, no patched loader, incumbent same-family pair (Codex2/Codex) with healthy antigravity records available:antigravity.",
+  "live_status": "Live only after the supervisor runtime promotion. Accepted when the next same-family reassignment on the promoted runtime records concrete reasons."
+}
