@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-from .common import StrategyRouteContext
+from .common import StrategyRouteContext, strategy_stub_reason
 
 try:
     from services.control_plane.bff.models import ErrorCode
@@ -47,6 +47,17 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             include_spec=True,
             persona_lookup=persona_lookup,
         )
+        stub_reason = strategy_stub_reason(
+            {
+                **(summary if isinstance(summary, dict) else {}),
+                "strategy_id": dto.get("id"),
+                "title": dto.get("name"),
+                "persona_ids": dto.get("personaIds") or [],
+            },
+            persona_lookup,
+        )
+        dto["is_synthetic_or_stub"] = stub_reason is not None
+        dto["stub_reason"] = stub_reason
         # Rules come from one registry owner read per request. A failed read
         # leaves the detail at 200 with rules null and the surface unavailable.
         rules, rules_status = ctx.service.get_strategy_rules(strategy_id)

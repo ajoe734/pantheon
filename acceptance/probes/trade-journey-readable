@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+# acceptance-owner: BFF-TRADE-JOURNEY-READABLE-20261120
+"""Read-only release probe: trade journey list rows are readable.
+
+Logs in as the viewer (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET via /bff/auth/dev-login; the
+token stays in memory and is never printed), reads the first page of
+GET /bff/management/trade-journeys and checks that
+  * a row of a named persona carries persona_name (a row whose persona is named exists
+    only when the persona owner is readable; rows without any persona_id are ignored);
+  * no row has persona_is_probe true (probe personas are excluded by default);
+  * attention=recon_mismatch reports a page_info.total smaller than the unfiltered
+    page_info.total (page lengths are never compared: both pages are full at page_size=50)
+    and every row on that page is a variance (status completed_with_variance or outcome
+    kind variance).
+GET only apart from the login. Exit 0 passed, 1 failed, 77 skipped (a variable is missing).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+BASE = "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50"
+
+
+def _items(body):
+    data = body.get("data") if isinstance(body, dict) else None
+    return [i for i in (data or {}).get("items") or [] if isinstance(i, dict)]
+
+
+def _total(body):
+    info = body.get("page_info") if isinstance(body, dict) else None  # top level: {data, page_info, meta}
+    value = info.get("total") if isinstance(info, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _is_variance(row):
+    outcome = row.get("outcome")
+    kind = outcome.get("kind") if isinstance(outcome, dict) else outcome
+    return row.get("status") == "completed_with_variance" or kind == "variance"
+
+
+def check(fetch) -> dict:
+    first = fetch(BASE)
+    rows = _items(first)
+    failures = []
+    if not rows:
+        failures.append("no_rows_read")
+    with_persona = [r for r in rows if r.get("persona_id")]
+    if with_persona and not any(r.get("persona_name") for r in with_persona):
+        failures.append("persona_name_missing")
+    probe_rows = [r.get("journey_id") for r in rows if r.get("persona_is_probe") is True]
+    if probe_rows:
+        failures.append("probe_persona_rows_listed:" + ",".join(map(str, probe_rows[:5])))
+    filtered_body = fetch(BASE + "&attention=recon_mismatch")
+    filtered = _items(filtered_body)
+    total, filtered_total = _total(first), _total(filtered_body)
+    if filtered_total is None or total is None or filtered_total >= total:
+        failures.append("attention_filter_not_applied")
+    non_variance = [str(r.get("journey_id")) for r in filtered if not _is_variance(r)]
+    if non_variance:
+        failures.append("attention_row_not_variance:" + ",".join(non_variance[:5]))
+    return {"rows": len(rows), "recon_mismatch_rows": len(filtered),
+            "total": total, "recon_mismatch_total": filtered_total, "failed": failures, "passed": not failures}
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = check(lambda path: _request(urllib.request.Request(
+            base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

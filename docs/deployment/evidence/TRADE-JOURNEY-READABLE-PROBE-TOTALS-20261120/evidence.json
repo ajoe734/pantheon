@@ -1,0 +1,7 @@
+{
+  "task_id": "TRADE-JOURNEY-READABLE-PROBE-TOTALS-20261120",
+  "change": "acceptance/probes/trade-journey-readable compares page_info.total of attention=recon_mismatch vs unfiltered (fails only if missing or not smaller) and requires every filtered row to be completed_with_variance / outcome kind variance; page lengths no longer compared",
+  "hosted_reproduction": {"page_size": 50, "unfiltered_total": 158033, "recon_mismatch_total": 6941, "rows_per_page": 50, "previous_result": "attention_filter_not_applied", "new_result": "passed (test_hosted_20261120_full_pages_pass)"},
+  "unchanged": ["GET-only apart from login", "token never printed", "persona_name / probe persona checks", "exit 77 without viewer identity"],
+  "tests": "acceptance/test_trade_journey_readable_probe.py: 7 tests passed (run via direct invocation; pytest not installed in this worktree's python)"
+}

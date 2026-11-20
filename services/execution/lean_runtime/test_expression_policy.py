@@ -305,3 +305,58 @@ def test_default_parameters_and_digest_are_unchanged() -> None:
     assert set(ep.DEFAULT_PARAMETERS) == {"lever_min_strength", "notional_fraction_at_full_strength",
                                           "allow_pyramiding", "close_before_reverse"}
     assert ep.NOTIONAL_REBALANCE_BAND_FRACTION == 0.2
+
+
+# --- cash_share buy sizing leaves room for the buy commission -----------------
+def _eq(code: str, price: float, maximum: int = 100_000) -> dict[str, Any]:
+    return {
+        "instrument_id": f"eq:{code}", "kind": "cash_share", "underlying": code,
+        "side_capability": ["long"], "unit": 1, "price": price, "multiplier": 1,
+        "max_units_by_risk": maximum, "fee_per_unit_per_side": 0, "tax_rate_per_side": 0,
+    }
+
+
+_HOSTED_BUDGET = {"available_cash": 100_000.0, "gross_limit": 100_000.0, "gross_used": 0.0}
+
+
+def test_hosted_2317_case_sizes_451_not_452_decide() -> None:
+    from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+
+    rec = ep.decide(_view("2317", "LONG", 1.0), [_eq("2317", 221.0)], {}, _HOSTED_BUDGET, PARAMS)
+    assert rec["instrument_id"] == "eq:2317"
+    assert rec["units"] == 451
+    assert buy_cash_required("2317", 451, 221.0) <= 100_000
+    assert buy_cash_required("2317", 452, 221.0) == pytest.approx(100034.3461)
+
+
+def test_hosted_2317_case_sizes_451_target_position() -> None:
+    from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+
+    view = {**_view("2317", "LONG", 1.0), "target_notional": 100_000.0}
+    rec = ep.decide_target_position(view, [_eq("2317", 221.0)], {}, _HOSTED_BUDGET, PARAMS)
+    assert rec["instrument_id"] == "eq:2317" and rec["side"] == "buy"
+    assert rec["units"] == 451
+    assert buy_cash_required("2317", 451, 221.0) <= 100_000
+
+
+def test_target_position_single_unit_over_cash_is_no_feasible_instrument() -> None:
+    view = {**_view("2317", "LONG", 1.0), "target_notional": 100_000.0}
+    budget = {**_HOSTED_BUDGET, "available_cash": 221.1}
+    rec = ep.decide_target_position(view, [_eq("2317", 221.0)], {}, budget, PARAMS)
+    assert ep.is_no_trade(rec) and rec["reason_code"] == "no_feasible_instrument"
+
+
+def test_single_unit_plus_commission_over_cash_is_no_feasible_instrument() -> None:
+    budget = {"available_cash": 221.1, "gross_limit": 100_000.0, "gross_used": 0.0}
+    rec = ep.decide(_view("2317", "LONG", 1.0), [_eq("2317", 221.0)], {}, budget, PARAMS)
+    assert ep.is_no_trade(rec)
+    assert rec["reason_code"] == "no_feasible_instrument"
+
+
+def test_closes_and_non_cash_share_are_not_commission_fitted() -> None:
+    rec = ep.decide(_view("2330", "FLAT", 0.0), [_cash_cand()], _held_book(10), _HOSTED_BUDGET, PARAMS)
+    assert rec["units"] == 10 and rec["side"] == "sell"
+    future = {**_eq("2317", 221.0), "kind": "stock_future", "instrument_id": "ssf:X:202611"}
+    cands = [future]
+    # a non cash_share candidate is never passed through the commission fit
+    assert ep.fit_cash_share_buy is not None and cands[0]["kind"] != "cash_share"

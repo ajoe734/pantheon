@@ -22,6 +22,35 @@ TERMINAL_STATUSES = frozenset({"completed", "dead_letter"})
 CLAIMABLE_STATUSES = frozenset({"pending", "blocked"})
 
 
+# Automatic redrive of dead letters whose cause has since been fixed. The budget
+# is carried by the existing ``replay_count`` column (no schema change), so the
+# previous release reads the same table unchanged.
+AUTO_REDRIVE_MAX_PER_ITEM = 3
+AUTO_REDRIVE_PER_TICK = 3
+
+REDRIVE_AUTH = "auth"
+REDRIVE_ENSURE = "ensure"
+
+
+def recoverable_kind(reason: str | None) -> str | None:
+    """Class of dead-letter reason that a fixed cause can recover; None otherwise."""
+    text = str(reason or "").lower()
+    if "panel_case_file" in text and ("http_401" in text or "http_403" in text):
+        return REDRIVE_AUTH
+    if "consultation agent ensure failed" in text or "consultation agent ensure transport failed" in text:
+        return REDRIVE_ENSURE
+    return None
+
+
+def recovery_exhausted(row: Mapping[str, Any]) -> bool:
+    """A recoverable dead letter that spent its whole redrive budget."""
+    return (
+        str(row.get("status") or "") == "dead_letter"
+        and recoverable_kind(row.get("last_error")) is not None
+        and int(row.get("replay_count") or 0) >= AUTO_REDRIVE_MAX_PER_ITEM
+    )
+
+
 class WorkflowStateError(RuntimeError):
     """Base error for durable workflow coordination."""
 
@@ -437,6 +466,41 @@ class WorkflowStateStore:
                    AND status = 'dead_letter'
                 """,
                 (now, now, tenant_id, request_id),
+            ).rowcount
+        return changed == 1
+
+    def redrive_dead_letter(
+        self,
+        *,
+        tenant_id: str,
+        request_id: str,
+        max_redrives: int = AUTO_REDRIVE_MAX_PER_ITEM,
+    ) -> bool:
+        """Automatic, budgeted redrive of one dead letter; same row, same request id.
+
+        Keeps phase, saved contribution and last_error (so a case file or memo
+        already produced is reused and the reason is never lost); only a
+        dead_letter row under budget moves, a completed item never does.
+        """
+        now = self._now()
+        with self._connect() as connection:
+            changed = connection.execute(
+                """
+                UPDATE consultation_work_items
+                   SET status = 'pending',
+                       blocked_count = 0,
+                       replay_count = replay_count + 1,
+                       available_at = ?,
+                       lease_owner = NULL,
+                       lease_token = NULL,
+                       lease_expires_at = NULL,
+                       updated_at = ?
+                 WHERE tenant_id = ?
+                   AND request_id = ?
+                   AND status = 'dead_letter'
+                   AND replay_count < ?
+                """,
+                (now, now, tenant_id, request_id, int(max_redrives)),
             ).rowcount
         return changed == 1
 

@@ -48,6 +48,7 @@ from services.trade_journey.slo_data_quality import (
     load_slo_targets,
     metrics_to_dict,
 )
+from .persona_paper_enrollment import is_probe_or_test_persona
 from .trade_journey_projection_store import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -87,6 +88,7 @@ _LIVE_SENSITIVE_FIELDS = frozenset(
         "client_order_id",
         "broker_order_id",
         "quantity",
+        "filled_quantity",
         "price",
     }
 )
@@ -679,7 +681,163 @@ def _compose_summary_fields(timeline: Sequence[Mapping[str, Any]], identifiers: 
     return summary
 
 
-def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
+_ATTENTION_VALUES = ("attention", "risk_reject", "broker_reject", "partial_fill", "recon_mismatch")
+_UPSTREAM_STAGES = tuple(STAGES[: STAGES.index("signal_generation")])
+# Expression choice codes describe how an order was expressed, never why it was
+# rejected; a rejection that only carries one predates the reason fields.
+_EXPRESSION_REASON_CODES = frozenset({"long_cash", "long_lever", "short_via_future", "close_leg"})
+_DEFERRED_RECON_REASONS = frozenset({"runtime_unhealthy_at_reconciliation"})
+_REASON_NOT_RECORDED = "reason_not_recorded"
+_CASH_REJECT_REASONS = frozenset({"insufficient_cash", "insufficient_buying_power"})
+
+
+def _persona_directory(list_personas: Optional[Callable[[], Any]]) -> Dict[str, Dict[str, Any]]:
+    """One batched persona read per response: id -> {name, is_probe}.
+
+    An unreadable owner leaves the directory empty so rows keep a null name.
+    """
+    if list_personas is None:
+        return {}
+    try:
+        records = list_personas() or []
+    except Exception:
+        return {}
+    directory: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        persona_id = str(record.get("persona_id") or record.get("id") or "").strip()
+        if not persona_id:
+            continue
+        name = record.get("name") or record.get("display_name")
+        directory[persona_id] = {
+            "name": str(name) if name else None,
+            "is_probe": bool(is_probe_or_test_persona(record)),
+        }
+    return directory
+
+
+def _event_for_stage(timeline: Sequence[Mapping[str, Any]], stage: str) -> Optional[Mapping[str, Any]]:
+    for event in timeline:
+        if event.get("stage") == stage:
+            return event
+    return None
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _order_quantities(timeline: Sequence[Mapping[str, Any]], summary_quantity: Any) -> Tuple[Any, Optional[float]]:
+    """Requested order quantity and filled quantity, never the post-fill position."""
+    requested = None
+    for event in timeline:
+        value = _float_or_none(event.get("requested_quantity"))
+        if value is not None:
+            requested = value
+            break
+    fill_event = _event_for_stage(timeline, "fill_management")
+    filled = None
+    if fill_event is not None:
+        filled = _float_or_none(fill_event.get("fill_quantity"))
+        if filled is None:
+            filled = _float_or_none(fill_event.get("filled_quantity"))
+        if filled is None:
+            filled = _float_or_none(fill_event.get("quantity"))
+    if requested is None:
+        order_event = _event_for_stage(timeline, "order_submission")
+        requested = _float_or_none((order_event or {}).get("target_quantity"))
+    if requested is None:
+        requested = summary_quantity
+    return requested, filled
+
+
+def _rejected_reason(event: Optional[Mapping[str, Any]]) -> Tuple[str, Any]:
+    if not event:
+        return _REASON_NOT_RECORDED, None
+    code = str(event.get("reason_code") or "").strip()
+    if not code or code in _EXPRESSION_REASON_CODES:
+        return _REASON_NOT_RECORDED, None
+    return code, event.get("reason_detail")
+
+
+def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    status = snapshot.get("status")
+    stages = snapshot.get("stages") or {}
+
+    def stage_status(name: str) -> Optional[str]:
+        info = stages.get(name)
+        return info.get("status") if isinstance(info, Mapping) else None
+
+    order_event = _event_for_stage(timeline, "order_submission")
+    if status == "no_order" or (
+        order_event is not None
+        and str(order_event.get("decision_status") or "").lower() == "no_order"
+    ):
+        code = (order_event or {}).get("reason_code") or _REASON_NOT_RECORDED
+        return {"kind": "no_trade", "reason_code": str(code), "reason_detail": (order_event or {}).get("reason_detail")}
+    if status == "completed_with_variance" or stage_status("reconciliation") == "failed":
+        recon = _event_for_stage(timeline, "reconciliation")
+        code = str((recon or {}).get("reason_code") or "").strip() or _REASON_NOT_RECORDED
+        kind = "reconciliation_deferred" if code in _DEFERRED_RECON_REASONS else "variance"
+        return {"kind": kind, "reason_code": code, "reason_detail": (recon or {}).get("reason_detail")}
+    if status == "failed" or any(
+        stage_status(name) in {"failed", "rejected"}
+        for name in ("risk_evaluation", "order_submission", "broker_acknowledgement")
+    ):
+        for name in ("broker_acknowledgement", "risk_evaluation", "order_submission"):
+            if stage_status(name) in {"failed", "rejected"}:
+                code, detail = _rejected_reason(_event_for_stage(timeline, name))
+                return {"kind": "rejected", "reason_code": code, "reason_detail": detail, "rejected_stage": name}
+        return {"kind": "rejected", "reason_code": _REASON_NOT_RECORDED, "reason_detail": None}
+    if status == "partially_filled":
+        return {"kind": "open", "reason_code": "partially_filled", "reason_detail": None}
+    if status in TERMINAL_STATUSES:
+        return {"kind": "normal", "reason_code": None, "reason_detail": None}
+    return {"kind": "open", "reason_code": None, "reason_detail": None}
+
+
+def _next_step(
+    outcome: Mapping[str, Any],
+    persona_id: Any,
+    binding_id: Any,
+    open_incident_ids: Mapping[str, str],
+) -> Optional[Dict[str, Any]]:
+    """A link for an operator, never an action: the governed action route is separate."""
+    kind = outcome.get("kind")
+    if kind not in {"rejected", "variance"}:
+        return None
+    incident_id = open_incident_ids.get(str(binding_id)) if binding_id else None
+    if incident_id:
+        return {"action_needed": "review_open_incident", "href": f"/incidents/{incident_id}"}
+    if persona_id:
+        action = "review_cash_and_risk_limits" if kind == "rejected" else "review_reconciliation_variance"
+        return {"action_needed": action, "href": f"/personas/{persona_id}"}
+    return None
+
+
+def _first_identifier(snapshot: Mapping[str, Any], key: str) -> Any:
+    identifiers = snapshot.get("identifiers")
+    if not isinstance(identifiers, Mapping):
+        return None
+    value = identifiers.get(key)
+    if isinstance(value, (list, tuple)):
+        value = next((item for item in value if item not in (None, "")), None)
+    return value or None
+
+
+def _list_row(
+    projection: JourneyProjection,
+    *,
+    now: datetime,
+    personas: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    open_incident_ids: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
     snapshot, diagnostics = _effective_snapshot_and_diagnostics(
         projection.snapshot, projection.diagnostics, projection.timeline
     )
@@ -692,6 +850,11 @@ def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]
     status = snapshot.get("status")
     flags = _flags(snapshot, diagnostics)
     flags["stalled"] = _is_stalled(snapshot, now)
+    quantity, filled_quantity = _order_quantities(projection.timeline, summary.get("quantity"))
+    summary["quantity"] = quantity
+    persona = (personas or {}).get(str(summary.get("persona_id") or "")) or {}
+    outcome = _outcome(snapshot, projection.timeline)
+    next_step = _next_step(outcome, summary.get("persona_id"), _first_identifier(snapshot, "binding_id"), open_incident_ids or {})
     return {
         "journey_id": projection.journey_id,
         "tenant_id": projection.tenant_id,
@@ -700,6 +863,11 @@ def _list_row(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]
         "current_stage": current_stage,
         "severity": _severity(snapshot, diagnostics),
         **summary,
+        "filled_quantity": filled_quantity,
+        "persona_name": persona.get("name"),
+        "persona_is_probe": bool(persona.get("is_probe", False)),
+        "outcome": outcome,
+        "next_step": next_step,
         "created_at": snapshot.get("created_at"),
         "updated_at": snapshot.get("updated_at"),
         "terminal_at": snapshot.get("updated_at") if status in TERMINAL_STATUSES else None,
@@ -721,8 +889,32 @@ def _stage_events(timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, 
     return latest
 
 
-def _detail(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
-    row = _list_row(projection, now=now)
+def _upstream_lineage_diagnostics(diagnostics: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Fold never-linked upstream research stages into one non-attention item."""
+    result: List[Dict[str, Any]] = []
+    unlinked: List[str] = []
+    for item in diagnostics:
+        if item.get("code") != "missing_stages":
+            result.append(dict(item))
+            continue
+        stages = [str(stage) for stage in item.get("stages") or []]
+        unlinked.extend(stage for stage in stages if stage in _UPSTREAM_STAGES and stage not in unlinked)
+        rest = [stage for stage in stages if stage not in _UPSTREAM_STAGES]
+        if rest:
+            result.append({**item, "stages": rest})
+    if unlinked:
+        result.append({"code": "upstream_lineage_unlinked", "stages": unlinked, "attention": False})
+    return result
+
+
+def _detail(
+    projection: JourneyProjection,
+    *,
+    now: datetime,
+    personas: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    open_incident_ids: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
+    row = _list_row(projection, now=now, personas=personas, open_incident_ids=open_incident_ids)
     snapshot, diagnostics = _effective_snapshot_and_diagnostics(
         projection.snapshot, projection.diagnostics, projection.timeline
     )
@@ -732,7 +924,7 @@ def _detail(projection: JourneyProjection, *, now: datetime) -> Dict[str, Any]:
         "stages": snapshot.get("stages"),
         "stage_events": _stage_events(projection.timeline),
         "graph_edges": projection.graph_edges,
-        "diagnostics": diagnostics,
+        "diagnostics": _upstream_lineage_diagnostics(diagnostics),
         "event_count": len(projection.timeline),
     }
 
@@ -1005,6 +1197,8 @@ def create_trade_journeys_router(
     utc_now: Callable[[], str] = _default_utc_now,
     get_slo_alert_transport: Callable[[], DataQualityAlertTransport] = lambda: SLO_ALERT_TRANSPORT,
     latency_recorder: ApiLatencyRecorder = API_LATENCY_RECORDER,
+    list_personas: Optional[Callable[[], Any]] = None,
+    list_incidents: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
     """Factory for the `/bff/management/trade-journeys` route family.
 
@@ -1016,6 +1210,39 @@ def create_trade_journeys_router(
 
     def _identity(authorization: Optional[str]) -> Any:
         return extract_identity(authorization)
+
+    def _open_incident_ids(binding_ids: Sequence[str]) -> Dict[str, str]:
+        """binding_id -> id of an open incident that names it (one read, only when needed)."""
+        wanted = [item for item in binding_ids if item]
+        if list_incidents is None or not wanted:
+            return {}
+        try:
+            incidents = list_incidents() or []
+        except Exception:
+            return {}
+        found: Dict[str, str] = {}
+        for incident in incidents:
+            if not isinstance(incident, Mapping):
+                continue
+            if str(incident.get("status") or "open").lower() in {"resolved", "closed", "cancelled"}:
+                continue
+            incident_id = incident.get("incident_id") or incident.get("id")
+            if not incident_id:
+                continue
+            text = json.dumps(incident, default=str)
+            for binding_id in wanted:
+                if binding_id in text and binding_id not in found:
+                    found[binding_id] = str(incident_id)
+        return found
+
+    def _incident_map(projections: Sequence[JourneyProjection]) -> Dict[str, str]:
+        binding_ids: List[str] = []
+        for projection in projections:
+            if projection.snapshot.get("status") == "completed_with_variance":
+                value = _first_identifier(projection.snapshot, "binding_id")
+                if value:
+                    binding_ids.append(str(value))
+        return _open_incident_ids(binding_ids)
 
     @router.post(
         "/bff/management/trade-journeys/{journey_id}/actions",
@@ -1333,6 +1560,8 @@ def create_trade_journeys_router(
         stalled: Optional[bool] = Query(default=None),
         waiting_human: Optional[bool] = Query(default=None),
         reconciliation_state: Optional[str] = Query(default=None),
+        attention: Optional[str] = Query(default=None),
+        include_probe: bool = Query(default=False),
         date_from: Optional[str] = Query(default=None, alias="from"),
         date_to: Optional[str] = Query(default=None, alias="to"),
         sort: str = Query(default="updated_at_desc"),
@@ -1351,11 +1580,14 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if sort not in _ALLOWED_SORTS:
             return _err(400, "VALIDATION_FAILED", f"sort must be one of {sorted(_ALLOWED_SORTS)}")
+        if attention is not None and attention not in _ATTENTION_VALUES:
+            return _err(400, "VALIDATION_FAILED", f"attention must be one of {list(_ATTENTION_VALUES)}")
         if not _tenant_allowed(identity, tenant_id):
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
         reader = get_projection_reader()
+        personas = _persona_directory(list_personas)
         can_view_sensitive = _can_view_live_sensitive(identity, environment)
         filters = {
             "q": q,
@@ -1369,6 +1601,10 @@ def create_trade_journeys_router(
             "stalled": stalled,
             "waiting_human": waiting_human,
             "reconciliation_state": reconciliation_state,
+            "attention": attention,
+            "exclude_persona_ids": None
+            if include_probe
+            else (sorted(pid for pid, info in personas.items() if info["is_probe"]) or None),
             "date_from": _normalize_bound(date_from),
             "date_to": _normalize_bound(date_to),
         }
@@ -1389,7 +1625,15 @@ def create_trade_journeys_router(
             return _unavailable_list_envelope(snapshot_at, page_size, entity_id="trade-journeys")
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
-        items = [_mask_live_sensitive(_list_row(projection, now=now), identity, projection.environment) for projection in page_result.items]
+        incident_map = _incident_map(page_result.items)
+        items = [
+            _mask_live_sensitive(
+                _list_row(projection, now=now, personas=personas, open_incident_ids=incident_map),
+                identity,
+                projection.environment,
+            )
+            for projection in page_result.items
+        ]
         states = {item.get("read_state") for item in items}
         overall_state = "formal" if not states or states == {"formal"} else "degraded" if "degraded" in states else "partial"
         return {
@@ -1447,7 +1691,14 @@ def create_trade_journeys_router(
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         detail = _mask_live_sensitive(
-            _detail(projection, now=now), identity, projection.environment
+            _detail(
+                projection,
+                now=now,
+                personas=_persona_directory(list_personas),
+                open_incident_ids=_incident_map([projection]),
+            ),
+            identity,
+            projection.environment,
         )
         latency_recorder.record(
             "detail", (time.perf_counter() - _slo_timer_start) * 1000.0

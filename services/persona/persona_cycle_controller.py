@@ -29,7 +29,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from integrations.openclaw.persona_ooda_runtime import (
-    AdapterToolBrokerClient, CycleProposal, ToolBrokerUnavailable, build_brokered_cycle_prompt,
+    AdapterToolBrokerClient, CycleProposal, TURN_CONTEXT_OVERFLOW, ToolBrokerUnavailable, build_brokered_cycle_prompt,
     run_persona_ooda_turn,
 )
 from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
@@ -517,8 +517,9 @@ class PersonaCycleController:
             if not failure:
                 try:
                     tool_use = cycle.setdefault("tool_use", {})
-                    turn, output, returned = self._brokered_turn(
-                        persona, build_case_file_prompt(persona, observe, cycle_case), tool_use)
+                    turn_prompt = build_case_file_prompt(persona, observe, cycle_case)
+                    cycle["turn_input_chars"] = len(turn_prompt)  # visible without gateway logs
+                    turn, output, returned = self._brokered_turn(persona, turn_prompt, tool_use)
                     cycle["turn"] = turn.to_dict()
                     cycle["output"] = output.model_dump(mode="json")
                     check_case_file_citations(output, cycle_case, returned)
@@ -536,9 +537,10 @@ class PersonaCycleController:
                               or set(output.proposals[i].case_file_item_ids) - case_file_item_ids(c) - set(returned)}
                     if unseen:
                         # The agent has not seen these decision-specific cases: show them, then re-decide.
+                        revision_prompt = build_proposal_case_prompt(persona, observe, cycle_case, output, unseen)
+                        cycle["revision_turn_input_chars"] = len(revision_prompt)
                         revised_turn, revised, revised_returned = self._brokered_turn(
-                            persona, build_proposal_case_prompt(persona, observe, cycle_case, output, unseen),
-                            tool_use)
+                            persona, revision_prompt, tool_use)
                         cycle["revision_turn"] = revised_turn.to_dict()
                         returned = sorted(set(returned) | set(revised_returned))
                         if not _same_proposals(output, revised, live_refs):
@@ -590,7 +592,7 @@ class PersonaCycleController:
                 except CaseFileCitationError:
                     failure = "case_file_citation_invalid"
                 except ToolRecordError as exc:
-                    failure = (exc.reason if exc.reason.startswith("persona_tools_blocked:")
+                    failure = (exc.reason if exc.reason.startswith(("persona_tools_blocked:", TURN_CONTEXT_OVERFLOW))
                                else "tool_record_unavailable:" + exc.reason)
                 except ToolBrokerUnavailable as exc:
                     failure = "tool_broker_unavailable:" + str(exc)[:120]
@@ -654,6 +656,8 @@ class PersonaCycleController:
         run = broker.register_run(persona_id, "daily_cycle", session_user)
         turn = self.turn_runner(persona_id, prompt, session_user=session_user)
         if turn.status != "completed" or turn.persona_id != persona_id:
+            if getattr(turn, "error", None) == TURN_CONTEXT_OVERFLOW:
+                raise ToolRecordError(TURN_CONTEXT_OVERFLOW)
             if getattr(turn, "error", None) == "model_auth_failed":
                 raise ToolRecordError(f"persona_tools_blocked:model_auth_failed:model={turn.model}")
             raise ValueError("agent_turn_unavailable")
@@ -668,6 +672,8 @@ class PersonaCycleController:
             output, returned = output_from_tool_record(record, persona_id, run["run_ref"])
         except ToolRecordError as exc:
             blocked = getattr(turn, "blocked_reason", "")
+            if blocked == TURN_CONTEXT_OVERFLOW:
+                raise ToolRecordError(TURN_CONTEXT_OVERFLOW) from exc
             if exc.reason == "tool_record_no_calls" and blocked:
                 # The turn had its tools blocked: name that cause and the backend actually used, not "no calls".
                 used = getattr(turn, "model_used", "") or getattr(turn, "model", "")

@@ -16,6 +16,10 @@ from typing import Any, Mapping
 from urllib.parse import quote
 
 CONSULT_FAILED_STATES = ("canceled", "cancelled", "rejected", "failed", "expired")
+# The executor names a consultation failed once its dead-letter recovery budget is spent.
+# That is a dead end for this request, not for the membership: a replacement may be opened.
+CONSULT_DEAD_LETTERED = "failed"
+MAX_CONSULT_REPLACEMENTS = 2
 
 
 def membership_digest(pool: Mapping[str, Any]) -> str:
@@ -61,12 +65,32 @@ class PoolPublishPort:
             gated = (request.get("metadata") or {}).get("panel", {}).get("gated_decision", {})
             if request.get("from_persona_id") == pid and gated.get("candidate_digest") == digest:
                 found.append((int(gated.get("target_version") or 0), request))
-        if not found:
+        dead = [item for item in found if str(item[1].get("status") or "") == CONSULT_DEAD_LETTERED]
+        found = [item for item in found if str(item[1].get("status") or "") != CONSULT_DEAD_LETTERED]
+
+        def open_panel(request_id):
             requirement = envelope_publication_requirement(tenant, pid, pool, pool["pool_version"])
             created = self.consultation_factory(tenant, f"persona:{pid}").open_persona_panel(
                 requirement, persona_id=pid, trace_id=f"ooda://{packet_id}", tenant_id=tenant,
                 task=f"Risk review of paper envelope publication of pool v{pool['pool_version']} (live membership changed)",
-                evidence_refs=[f"ooda://{packet_id}"], request_id="consult-" + requirement.decision_id)
+                evidence_refs=[f"ooda://{packet_id}"], request_id=request_id)
+            return requirement, created
+
+        if not found and dead:
+            # Every consultation for this membership dead-lettered past its recovery budget: report that
+            # by name (never as pending) and open one replacement so the next cycle waits on a live panel.
+            latest = max(dead, key=lambda item: item[0])[1]
+            failure = {"state": "failed", "reason": "consultation_dead_lettered", "failed_request_id": latest["request_id"]}
+            if len(dead) > MAX_CONSULT_REPLACEMENTS:
+                return {"state": "operator", "reason": "consultation_dead_lettered_retries_exhausted",
+                        "request_id": latest["request_id"], "decision_id": envelope_publication_requirement(
+                            tenant, pid, pool, pool["pool_version"]).decision_id}
+            requirement, created = open_panel(f"consult-{envelope_publication_requirement(tenant, pid, pool, pool['pool_version']).decision_id}-r{len(dead)}")
+            return {**failure, "request_id": created["request_id"], "decision_id": requirement.decision_id,
+                    "replacement_opened": True}
+        if not found:
+            requirement, created = open_panel("consult-" + envelope_publication_requirement(
+                tenant, pid, pool, pool["pool_version"]).decision_id)
             return {"state": "opened", "request_id": created["request_id"], "decision_id": requirement.decision_id}
         bound, request = max(found, key=lambda item: item[0])
         requirement = envelope_publication_requirement(tenant, pid, pool, bound)

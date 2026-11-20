@@ -113,3 +113,23 @@ current members. No cycle observation is not a failure. A run that checks no per
 each checked persona id with `ok`/`failed` plus `read`/`skipped` counts (never a token or body). Task:
 PERSONA-POOL-PROBE-CHECKS-LIVE-PERSONAS-20261119. Tests: `acceptance/test_persona_pool_member_rules.py` with
 `fixtures/hosted_persona_pool_20261119.json` and `fixtures/hosted_strategy_rules_20261119.json`.
+
+## trade-journey-readable probe (`acceptance/probes/trade-journey-readable`)
+
+Task: BFF-TRADE-JOURNEY-READABLE-20261120. Read-only release probe. Logs in at `/bff/auth/dev-login` with
+`ACCEPTANCE_VIEWER_CLIENT_ID` / `ACCEPTANCE_VIEWER_CLIENT_SECRET` (never printed); exit 77 naming the missing variable
+when either (or `ACCEPTANCE_BFF_URL`) is absent. Reads the first page of `GET /bff/management/trade-journeys`
+(`page_size=50`) and fails when no row is read, when rows with a persona have no `persona_name`, when any row has
+`persona_is_probe` true, or when `attention=recon_mismatch` returns as many rows as the unfiltered page.
+Tests: `acceptance/test_trade_journey_readable_probe.py` with `fixtures/hosted_trade_journeys_20261120.json`.
+
+## mgmt-strategy-meeting-research-readable probe (`acceptance/probes/mgmt-strategy-meeting-research-readable`)
+
+Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at `/bff/auth/dev-login` with
+`ACCEPTANCE_VIEWER_CLIENT_ID` / `ACCEPTANCE_VIEWER_CLIENT_SECRET` (never printed); exit 77 naming the missing variable
+when either (or `ACCEPTANCE_BFF_URL`) is absent. GET only. Fails when `GET /bff/strategies?exclude_state=draft` (all pages)
+lists a `SIMULATION paper-only`, `TW official` / `strat-tw-official` row or a retired/unbound `Pantheon Dev Paper Release`
+row, or lacks `meta.hidden_unbound_stub_strategy_count` / `meta.hidden_test_persona_strategy_count`; when
+`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks` lists an `is_non_real`
+row or lacks `meta.hidden_non_real_count`. Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
+`fixtures/hosted_mgmt_strategy_meeting_research_20261120.json`.

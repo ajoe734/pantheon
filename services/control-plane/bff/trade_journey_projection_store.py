@@ -234,6 +234,30 @@ class TradeJourneyProjectionStore:
         if filters.get("reconciliation_state"):
             clauses.append("stage_coverage -> 'reconciliation' ->> 'status' = %s")
             params.append(str(filters["reconciliation_state"]))
+        if filters.get("exclude_persona_ids"):
+            persona_ref = "COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> 'persona_id'"
+            clauses.append(f"NOT COALESCE({persona_ref} ?| %s::text[], false)")
+            params.append([str(item) for item in filters["exclude_persona_ids"]])
+        attention = filters.get("attention")
+        if attention:
+            broker_failed = "stage_coverage -> 'broker_acknowledgement' ->> 'status' IN ('failed', 'rejected')"
+            deferred = (
+                f"EXISTS (SELECT 1 FROM {self.schema}.journey_stages recon WHERE recon.tenant_id={self.schema}.journeys.tenant_id "
+                f"AND recon.environment={self.schema}.journeys.environment AND recon.journey_id={self.schema}.journeys.journey_id "
+                "AND recon.stage_name='reconciliation' AND recon.contract_fields ->> 'reason_code' = 'runtime_unhealthy_at_reconciliation')"
+            )
+            if attention == "recon_mismatch":
+                clauses.append(f"(status='completed_with_variance' AND NOT {deferred})")
+            elif attention == "partial_fill":
+                clauses.append("status='partially_filled'")
+            elif attention == "broker_reject":
+                clauses.append(f"(status='failed' AND {broker_failed})")
+            elif attention == "risk_reject":
+                clauses.append(f"(status='failed' AND NOT COALESCE({broker_failed}, false))")
+            elif attention == "attention":
+                clauses.append(f"((status IN ('failed', 'partially_filled')) OR (status='completed_with_variance' AND NOT {deferred}))")
+            else:
+                raise ValueError("unsupported attention filter")
         if "waiting_human" in filters:
             waiting_stage = "EXISTS (SELECT 1 FROM jsonb_each(COALESCE(stage_coverage, '{}'::jsonb)) AS stage(stage_name, stage_state) WHERE stage.stage_state ->> 'status' = 'waiting_human')"
             if bool(filters["waiting_human"]):
