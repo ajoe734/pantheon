@@ -678,15 +678,14 @@ def test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_
     pipeline = _make_pipeline(repo, store)
     pipeline.run(triggered_by="seed")
 
-    real_open = Path.open
+    real_read_text = Path.read_text
     reading = threading.Event()
 
-    def slow_open(self, mode="r", *args, **kwargs):
-        # reload() streams the file via Path.open; only the read-mode open is the slow readback.
-        if self == store.path and mode == "r":
+    def slow_read_text(self, *args, **kwargs):
+        if self == store.path:
             reading.set()
             time.sleep(0.2)
-        return real_open(self, mode, *args, **kwargs)
+        return real_read_text(self, *args, **kwargs)
 
     real_reload = store.reload
     readbacks: list[threading.Thread] = []
@@ -700,7 +699,7 @@ def test_unchanged_refresh_stays_incremental_when_readback_reloads_after_writer_
             t.start()
             assert reading.wait(5)  # readback is now mid-reload
 
-    with mock.patch.object(Path, "open", slow_open):
+    with mock.patch.object(Path, "read_text", slow_read_text):
         store.reload = reload_then_interleave
         run = pipeline.run(triggered_by="scheduled_refresh")
         for t in readbacks:

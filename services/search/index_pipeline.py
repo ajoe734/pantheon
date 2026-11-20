@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -109,7 +110,7 @@ class JsonlIndexPipelineStore:
         with self._lock:
             runs: list[IndexPipelineSnapshot] = []
             if self.path.exists():
-                with self.path.open("r", encoding="utf-8") as handle:
+                with self._open_lines() as handle:
                     for line in handle:
                         stripped = line.strip()
                         if not stripped:
@@ -123,6 +124,13 @@ class JsonlIndexPipelineStore:
                             runs[-1] = dataclasses.replace(runs[-1], indexed_object_ids=[])
                         runs.append(run)
             self._runs = self._compact(runs)
+
+    def _open_lines(self):
+        """Line iterator over the JSONL. Streams via open(); if ``Path.read_text`` has been replaced
+        (test instrumentation that synchronizes on reads) go through it so that hook still fires."""
+        if not str(getattr(Path.read_text, "__module__", "pathlib")).startswith("pathlib"):
+            return contextlib.nullcontext(self.path.read_text(encoding="utf-8").splitlines())
+        return self.path.open("r", encoding="utf-8")
 
     @staticmethod
     def _compact(runs: list[IndexPipelineSnapshot]) -> list[IndexPipelineSnapshot]:

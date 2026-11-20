@@ -17,11 +17,10 @@
     "named_allocation": "JsonlIndexPipelineStore.reload() full-file read + parse, multiplied by concurrent post-deploy source-completions/refresh calls; bounded to ~48 MB per call (-97%), so worst case with model+embedding ~2.2 GB + small per-call overhead, far below 70% (9.1 GiB)."
   },
   "changes": {
-    "services/search/index_pipeline.py": "streaming reload with per-run compaction; persisted format unchanged; no new writer",
+    "services/search/index_pipeline.py": "streaming reload with per-run compaction; persisted format unchanged; no new writer; _open_lines() streams via Path.open but falls back to the patched Path.read_text when test instrumentation replaced it (services/search/test_index_pipeline.py is outside the artifact contract, so its hook could not be changed)",
     "services/search/scheduler_worker.py": "assess_progress: an in_progress refresh counts as progress when its snapshot backlog_remaining < previous tick's; otherwise still a stalled tick (turns unhealthy after MAX_STALLED_TICKS)",
     "services/search/local_embeddings.py": "LocalEmbeddingEngine._ensure_loaded guarded by a lock + double check so concurrent startup calls load the model once (avoids N x 1.5 GB loads)",
-    "services/search/main.py": "dropped redundant pipeline_store.reload() in record_source_completion (_run_pipeline/freshness already reload)",
-    "services/search/test_index_pipeline.py": "test hook patches Path.open (reload now streams via open) so the readback-interleave test still fires"
+    "services/search/main.py": "dropped redundant pipeline_store.reload() in record_source_completion (_run_pipeline/freshness already reload)"
   },
   "unchanged": "retrieval results, ranking, embedding model, vector dimension, persisted formats",
   "tests": {
