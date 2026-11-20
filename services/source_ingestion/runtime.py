@@ -403,7 +403,78 @@ class SourceIngestionRuntime:
             evidence_builder=self.evidence_builder,
         )
 
+        self._registry_cache_lock = threading.RLock()
+        self._cached_freshness_key: Any | None = None
+        self._cached_freshness_group: dict[str, Any] | None = None
+        self._cached_provider_examples: list[dict[str, Any]] | None = None
+        self._evidence_pg_initialized_repo_id: int | None = None
+        self._evidence_pg_last_append_id: int = 0
+        self._evidence_pg_last_count: int = 0
+        self._latest_record_cache_key: Any | None = None
+        self._latest_record_cache_value: dict[str, SourceRecord] = {}
+
+        self._import_guard_lock = threading.RLock()
+        self._last_import_input_digest: str | None = None
+        self._last_import_report: Any | None = None
+
         self.pipeline = IngestPipelineService(self)
+        self.import_configured_connectors_if_changed()
+
+    def import_configured_connectors_if_changed(self, *, force: bool = False) -> Any | None:
+        """Guarded startup/change import of configured connectors into SourceManagementStore (SD-SRCM § 10.1)."""
+        if not force and os.getenv("SOURCE_MANAGEMENT_STARTUP_IMPORT_ENABLED", "1").strip().lower() in ("0", "false", "no"):
+            return self._last_import_report
+        with self._import_guard_lock:
+            try:
+                configs, _fetch_states = self.connector_store.read_snapshot()
+            except Exception:
+                return self._last_import_report
+            if not configs and not force:
+                self._last_import_input_digest = "empty"
+                return self._last_import_report
+            try:
+                schedules = self.schedule_config_store.list_schedules()
+            except Exception:
+                schedules = []
+            try:
+                managed_count = len(self.source_management_store.list_instances())
+            except Exception:
+                managed_count = 0
+
+            digest_material = {
+                "connectors": [
+                    (c.connector.connector_id, c.connector.status.value, c.updated_at)
+                    for c in sorted(configs, key=lambda item: item.connector.connector_id)
+                ],
+                "schedules": [
+                    (s.connector_id, s.interval_seconds, s.enabled, s.updated_at)
+                    for s in sorted(schedules, key=lambda item: item.connector_id)
+                ],
+                "managed_count": managed_count,
+            }
+            digest = sha256(json.dumps(digest_material, sort_keys=True).encode("utf-8")).hexdigest()
+            if not force and self._last_import_input_digest == digest and managed_count >= len(configs):
+                return self._last_import_report
+
+            from .source_management_import import import_configured_connectors
+
+            report = import_configured_connectors(
+                management_store=self.source_management_store,
+                connector_store=self.connector_store,
+                schedule_config_store=self.schedule_config_store,
+                schedule_store=self.store,
+                runtime=self,
+            )
+            try:
+                post_managed_count = len(self.source_management_store.list_instances())
+            except Exception:
+                post_managed_count = managed_count
+            digest_material["managed_count"] = post_managed_count
+            self._last_import_input_digest = sha256(
+                json.dumps(digest_material, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            self._last_import_report = report
+            return report
 
     # -----------------------------------------------------------------------
     # Authorization & Mutation Guards
@@ -629,14 +700,20 @@ class SourceIngestionRuntime:
         receipts: list[IngestReceipt] | tuple[IngestReceipt, ...],
         now: datetime,
         latest_record: Any | None = None,
+        _preordered_receipts: bool = False,
+        _precomputed_latest_run: Any | None = None,
     ) -> dict[str, Any]:
         from .pipeline import _parse_utc_datetime
 
         # Run/receipt timestamps have second precision. Choosing the first run
         # or breaking receipt ties with a random UUID can pair current health
         # with an older bundle's run, failing the controller's real readback.
-        latest_run = max(reversed(runs), key=self._run_effective_at) if runs else None
-        receipts = _ordered_run_receipts(receipts, runs)
+        if _precomputed_latest_run is not None:
+            latest_run = _precomputed_latest_run
+        else:
+            latest_run = max(reversed(runs), key=self._run_effective_at) if runs else None
+        if not _preordered_receipts:
+            receipts = _ordered_run_receipts(receipts, runs)
         latest_receipt = receipts[-1] if receipts else None
         latest_success_receipt = next(
             (receipt for receipt in reversed(receipts) if receipt.status == "completed"),
@@ -801,30 +878,110 @@ class SourceIngestionRuntime:
             "seconds_until_due": seconds_until_due,
         }
 
+    def _grouped_freshness_snapshot(self) -> dict[str, Any]:
+        store = self.store
+        if (
+            "read_freshness_snapshot" not in getattr(store, "__dict__", {})
+            and hasattr(store, "_reload_if_changed_unlocked")
+            and hasattr(store, "_lock_path")
+            and hasattr(store, "_lock")
+        ):
+            from .process_lock import exclusive_file_lock
+
+            with exclusive_file_lock(store._lock_path, store._lock):
+                store._reload_if_changed_unlocked()
+                last_run_obj = next(reversed(store._runs.values()), None) if store._runs else None
+                last_rcp_obj = next(reversed(store._receipts.values()), None) if store._receipts else None
+                wm_sig = tuple((k, id(v)) for k, v in store._watermarks.items())
+                cache_key: Any = (
+                    id(store),
+                    getattr(store, "_read_key", None),
+                    getattr(store, "_read_offset", 0),
+                    len(store._runs),
+                    len(store._receipts),
+                    id(last_run_obj),
+                    id(last_rcp_obj),
+                    wm_sig,
+                )
+                with self._registry_cache_lock:
+                    if self._cached_freshness_key == cache_key and self._cached_freshness_group is not None:
+                        return self._cached_freshness_group
+                runs_tuple = tuple(store._runs.values())
+                receipts_tuple = tuple(store._sort_receipts_unlocked(store._receipts.values()))
+                watermarks_dict = dict(store._watermarks)
+        else:
+            snapshot = store.read_freshness_snapshot()
+            runs_tuple = tuple(snapshot.get("runs", ()))
+            receipts_tuple = tuple(snapshot.get("receipts", ()))
+            watermarks_dict = dict(snapshot.get("watermarks", {}))
+            cache_key = None
+
+        runs_by_connector: dict[str, list[Any]] = {}
+        for run in runs_tuple:
+            cid = str(getattr(run, "connector_id", ""))
+            runs_by_connector.setdefault(cid, []).append(run)
+        receipts_by_connector: dict[str, list[IngestReceipt]] = {}
+        for receipt in receipts_tuple:
+            receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+
+        ordered_receipts_by_connector: dict[str, tuple[IngestReceipt, ...]] = {}
+        latest_completed_run_id_by_connector: dict[str, str] = {}
+        all_cids = set(runs_by_connector) | set(receipts_by_connector)
+        for cid in all_cids:
+            c_runs = runs_by_connector.get(cid, ())
+            c_recs = receipts_by_connector.get(cid, ())
+            ordered = tuple(_ordered_run_receipts(c_recs, c_runs)) if c_recs else ()
+            ordered_receipts_by_connector[cid] = ordered
+            latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
+            if latest_completed is not None and latest_completed.ingest_run_id:
+                latest_completed_run_id_by_connector[cid] = str(latest_completed.ingest_run_id)
+
+        latest_run_by_connector: dict[str, Any] = {
+            cid: max(reversed(c_runs), key=self._run_effective_at)
+            for cid, c_runs in runs_by_connector.items()
+            if c_runs
+        }
+
+        grouped = {
+            "runs_by_connector": {cid: tuple(c_runs) for cid, c_runs in runs_by_connector.items()},
+            "receipts_by_connector": ordered_receipts_by_connector,
+            "ordered_receipts_by_connector": ordered_receipts_by_connector,
+            "latest_run_by_connector": latest_run_by_connector,
+            "latest_completed_run_id_by_connector": latest_completed_run_id_by_connector,
+            "watermarks": watermarks_dict,
+        }
+        if cache_key is not None:
+            with self._registry_cache_lock:
+                self._cached_freshness_key = cache_key
+                self._cached_freshness_group = grouped
+        return grouped
+
     def _connector_freshness_summary(self, connector_id: str) -> dict[str, Any]:
         config = self.connector_store.get_config(connector_id)
         schedule = self.schedule_config_store.get_schedule(connector_id)
-        snapshot = self.store.read_freshness_snapshot()
-        runs = tuple(
-            run
-            for run in snapshot["runs"]
-            if getattr(run, "connector_id", None) == connector_id
-        )
-        receipts = tuple(
-            receipt
-            for receipt in snapshot["receipts"]
-            if receipt.connector_id == connector_id
-        )
-        latest_record = self._latest_source_record_by_connector().get(connector_id)
+        grouped = self._grouped_freshness_snapshot()
+        runs = grouped["runs_by_connector"].get(connector_id, ())
+        receipts = grouped["ordered_receipts_by_connector"].get(connector_id, ())
+        latest_run = grouped["latest_run_by_connector"].get(connector_id)
+        if connector_id == "tw-twse-tpex-official-market":
+            latest_record = self._latest_source_record_by_connector(
+                receipts_by_connector=grouped["ordered_receipts_by_connector"],
+                runs_by_connector=grouped["runs_by_connector"],
+                connector_ids=(connector_id,),
+            ).get(connector_id)
+        else:
+            latest_record = None
         return self._connector_freshness_summary_from_snapshot(
             connector_id,
             connector_metadata=(config.connector.metadata if config is not None else {}),
             schedule=schedule,
-            watermark=snapshot["watermarks"].get(connector_id),
+            watermark=grouped["watermarks"].get(connector_id),
             runs=runs,
             receipts=receipts,
             now=datetime.now(timezone.utc),
             latest_record=latest_record,
+            _preordered_receipts=True,
+            _precomputed_latest_run=latest_run,
         )
 
     def _warm_snapshot_lookup(self) -> None:
@@ -1085,21 +1242,25 @@ class SourceIngestionRuntime:
             schedule.connector_id: schedule
             for schedule in self.schedule_config_store.list_schedules()
         }
-        freshness_snapshot = self.store.read_freshness_snapshot()
-        runs_by_connector: dict[str, list[Any]] = {}
-        for run in freshness_snapshot["runs"]:
-            connector_id = str(getattr(run, "connector_id", ""))
-            runs_by_connector.setdefault(connector_id, []).append(run)
-        receipts_by_connector: dict[str, list[IngestReceipt]] = {}
-        for receipt in freshness_snapshot["receipts"]:
-            receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+        grouped_freshness = self._grouped_freshness_snapshot()
+        runs_by_connector = grouped_freshness["runs_by_connector"]
+        receipts_by_connector = grouped_freshness["ordered_receipts_by_connector"]
+        latest_run_by_connector = grouped_freshness["latest_run_by_connector"]
+        watermarks = grouped_freshness["watermarks"]
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector(
-            receipts_by_connector=receipts_by_connector, runs_by_connector=runs_by_connector)
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
         connector_ids.update(connector.connector_id for connector in connectors)
+
+        if "tw-twse-tpex-official-market" in connector_ids:
+            latest_by_connector = self._latest_source_record_by_connector(
+                receipts_by_connector=receipts_by_connector,
+                runs_by_connector=runs_by_connector,
+                connector_ids=("tw-twse-tpex-official-market",),
+            )
+        else:
+            latest_by_connector = {}
 
         entries: list[dict[str, Any]] = []
         for connector_id in sorted(connector_ids):
@@ -1118,11 +1279,13 @@ class SourceIngestionRuntime:
                         connector_id,
                         connector_metadata=connector.metadata,
                         schedule=schedule_config,
-                        watermark=freshness_snapshot["watermarks"].get(connector_id),
+                        watermark=watermarks.get(connector_id),
                         runs=runs_by_connector.get(connector_id, ()),
                         receipts=receipts_by_connector.get(connector_id, ()),
                         now=observed_at,
                         latest_record=latest_by_connector.get(connector_id),
+                        _preordered_receipts=True,
+                        _precomputed_latest_run=latest_run_by_connector.get(connector_id),
                     ),
                 )
             )
@@ -1145,6 +1308,8 @@ class SourceIngestionRuntime:
         )
 
     def _provider_example_payloads(self) -> list[dict[str, Any]]:
+        if self._cached_provider_examples is not None:
+            return self._cached_provider_examples
         payloads: list[dict[str, Any]] = []
         for provider in example_provider_catalog():
             connector = provider.connector()
@@ -1154,6 +1319,7 @@ class SourceIngestionRuntime:
                     "fetch_policy": self._fetch_policy_summary(dict(provider.fetch_config())),
                 }
             )
+        self._cached_provider_examples = payloads
         return payloads
 
     def _source_provisioning_reconciler(self) -> SourceProvisioningReconciler:
@@ -1425,34 +1591,157 @@ class SourceIngestionRuntime:
                 }
         return None
 
+    def _sync_and_list_source_records(self) -> Sequence[SourceRecord]:
+        from services.knowledge.evidence import InMemoryEvidenceRepository
+        from .pg_store import PostgresSourceEvidenceRepository
+
+        repo = self.evidence_repository
+        cls_method = getattr(type(repo), "list_source_records", None)
+        if (
+            "list_source_records" in getattr(repo, "__dict__", {})
+            or not hasattr(repo, "_source_records")
+            or cls_method not in (
+                InMemoryEvidenceRepository.list_source_records,
+                PostgresSourceEvidenceRepository.list_source_records,
+            )
+        ):
+            return tuple(repo.list_source_records())
+
+        if cls_method is PostgresSourceEvidenceRepository.list_source_records and hasattr(repo, "_get_connection"):
+            rel_name = getattr(repo, "table", "")
+            try:
+                with repo._get_connection() as conn:
+                    meta_row = conn.execute(
+                        f"SELECT COALESCE(MAX(append_id), 0), COUNT(*) FROM {rel_name} WHERE record_type = %s",
+                        ("source_record",),
+                    ).fetchone()
+                    if isinstance(meta_row, (tuple, list)) and len(meta_row) >= 2:
+                        max_append_id = int(meta_row[0])
+                        db_count = int(meta_row[1])
+                    elif isinstance(meta_row, Mapping) and len(meta_row) >= 2:
+                        vals = list(meta_row.values())
+                        max_append_id = int(vals[0])
+                        db_count = int(vals[1])
+                    else:
+                        raise ValueError("unexpected metadata row format")
+
+                    if self._evidence_pg_initialized_repo_id != id(repo):
+                        if len(repo._source_records) == db_count:
+                            self._evidence_pg_last_append_id = max_append_id
+                            self._evidence_pg_last_count = db_count
+                            self._evidence_pg_initialized_repo_id = id(repo)
+                        else:
+                            rows = conn.execute(
+                                f"SELECT append_id, payload FROM {rel_name} WHERE record_type = %s ORDER BY append_id ASC",
+                                ("source_record",),
+                            ).fetchall()
+                            for row in rows:
+                                payload = row[1] if isinstance(row, (tuple, list)) else row.get("payload")
+                                if isinstance(payload, str):
+                                    payload = json.loads(payload)
+                                if isinstance(payload, dict):
+                                    rec = SourceRecord.from_dict(payload)
+                                    repo._source_records[rec.source_id] = rec
+                                    if hasattr(repo, "_source_records_by_tenant"):
+                                        repo._source_records_by_tenant[(rec.tenant_id, rec.source_id)] = rec
+                            self._evidence_pg_last_append_id = max_append_id
+                            self._evidence_pg_last_count = db_count
+                            self._evidence_pg_initialized_repo_id = id(repo)
+                    elif max_append_id > self._evidence_pg_last_append_id:
+                        rows = conn.execute(
+                            f"SELECT append_id, payload FROM {rel_name} WHERE record_type = %s AND append_id > %s ORDER BY append_id ASC",
+                            ("source_record", self._evidence_pg_last_append_id),
+                        ).fetchall()
+                        for row in rows:
+                            payload = row[1] if isinstance(row, (tuple, list)) else row.get("payload")
+                            if isinstance(payload, str):
+                                payload = json.loads(payload)
+                            if isinstance(payload, dict):
+                                rec = SourceRecord.from_dict(payload)
+                                repo._source_records[rec.source_id] = rec
+                                if hasattr(repo, "_source_records_by_tenant"):
+                                    repo._source_records_by_tenant[(rec.tenant_id, rec.source_id)] = rec
+                        self._evidence_pg_last_append_id = max_append_id
+                        self._evidence_pg_last_count = db_count
+                    elif db_count != self._evidence_pg_last_count:
+                        rows = conn.execute(
+                            f"SELECT append_id, payload FROM {rel_name} WHERE record_type = %s ORDER BY append_id ASC",
+                            ("source_record",),
+                        ).fetchall()
+                        repo._source_records.clear()
+                        for row in rows:
+                            payload = row[1] if isinstance(row, (tuple, list)) else row.get("payload")
+                            if isinstance(payload, str):
+                                payload = json.loads(payload)
+                            if isinstance(payload, dict):
+                                rec = SourceRecord.from_dict(payload)
+                                repo._source_records[rec.source_id] = rec
+                                if hasattr(repo, "_source_records_by_tenant"):
+                                    repo._source_records_by_tenant[(rec.tenant_id, rec.source_id)] = rec
+                        self._evidence_pg_last_append_id = max_append_id
+                        self._evidence_pg_last_count = db_count
+            except Exception:
+                return tuple(repo.list_source_records())
+
+        return tuple(repo._source_records.values())
+
     def _latest_source_record_by_connector(
         self,
         receipts_by_connector: Mapping[str, Sequence[IngestReceipt]] | None = None,
         runs_by_connector: Mapping[str, Sequence[Any]] | None = None,
+        *,
+        connector_ids: Iterable[str] | None = None,
     ) -> dict[str, SourceRecord]:
+        target_cids = frozenset(str(c) for c in connector_ids) if connector_ids is not None else None
+        if target_cids is not None and not target_cids:
+            return {}
         active_symbols = _active_contract_symbols()
         latest_run_by_connector: dict[str, str] = {}
         if receipts_by_connector is None:
             try:
-                snapshot = self.store.read_freshness_snapshot()
+                grouped = self._grouped_freshness_snapshot()
+                latest_run_by_connector = dict(grouped["latest_completed_run_id_by_connector"])
             except Exception:
-                snapshot = {}
-            grouped_receipts: dict[str, list[IngestReceipt]] = {}
-            grouped_runs: dict[str, list[Any]] = {}
-            for receipt in snapshot.get("receipts", ()):
-                grouped_receipts.setdefault(receipt.connector_id, []).append(receipt)
-            for run in snapshot.get("runs", ()):
-                grouped_runs.setdefault(run.connector_id, []).append(run)
-            receipts_by_connector, runs_by_connector = grouped_receipts, grouped_runs
-        for cid, recs in receipts_by_connector.items():
-            ordered = _ordered_run_receipts(recs, (runs_by_connector or {}).get(cid, ()))
-            latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
-            if latest_completed and latest_completed.ingest_run_id:
-                latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
+                latest_run_by_connector = {}
+        else:
+            iter_cids = (
+                (cid for cid in receipts_by_connector if cid in target_cids)
+                if target_cids is not None
+                else receipts_by_connector.keys()
+            )
+            for cid in iter_cids:
+                recs = receipts_by_connector[cid]
+                ordered = _ordered_run_receipts(recs, (runs_by_connector or {}).get(cid, ()))
+                latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
+                if latest_completed and latest_completed.ingest_run_id:
+                    latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
+
+        records = self._sync_and_list_source_records()
+        last_rec_obj = records[-1] if records else None
+        relevant_runs_key = tuple(
+            sorted(
+                (cid, run_id)
+                for cid, run_id in latest_run_by_connector.items()
+                if target_cids is None or cid in target_cids
+            )
+        )
+        cache_key = (
+            id(self.evidence_repository),
+            len(records),
+            id(last_rec_obj),
+            relevant_runs_key,
+            frozenset(active_symbols),
+            target_cids,
+        )
+        with self._registry_cache_lock:
+            if self._latest_record_cache_key == cache_key:
+                return dict(self._latest_record_cache_value)
 
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
-        for record in self.evidence_repository.list_source_records():
+        for record in records:
             cid = record.connector_id
+            if target_cids is not None and cid not in target_cids:
+                continue
             # Historical sweeps grow this population on every tick. Ranking only
             # reads scalar metadata; avoid allocating serialized record and
             # metadata mappings for every stored row in each readback.
@@ -1496,7 +1785,11 @@ class SourceIngestionRuntime:
             if cid not in latest or rec_key > latest[cid][0]:
                 latest[cid] = (rec_key, record)
 
-        return {cid: item[1] for cid, item in latest.items()}
+        result = {cid: item[1] for cid, item in latest.items()}
+        with self._registry_cache_lock:
+            self._latest_record_cache_key = cache_key
+            self._latest_record_cache_value = dict(result)
+        return result
 
     def _collector_offerings(self, configs: Sequence[ConfiguredConnector]) -> dict[str, dict[str, Any]]:
         from .connectors.collector_bundle import (
@@ -1639,7 +1932,7 @@ class SourceIngestionRuntime:
             "controller_state_path": str(self.CONTROLLER_STATE_PATH),
             "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
             "connector_count": len(connector_readbacks),
-            "source_record_count": len(self.evidence_repository.list_source_records()),
+            "source_record_count": len(self._sync_and_list_source_records()),
             "dlq_count": len(dlq_entries),
             "pending_dlq_count": dlq_status_counts[DeadLetterStatus.PENDING.value],
             "unresolved_dlq_count": unresolved_dlq_count,

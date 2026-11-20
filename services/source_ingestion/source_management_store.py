@@ -45,6 +45,21 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+DEFAULT_MAX_OBSERVED_SNAPSHOTS_PER_INSTANCE = 100
+
+
+def _resolve_max_observed_snapshots_per_instance(value: int | None = None) -> int:
+    if value is not None:
+        return max(1, int(value))
+    raw = os.getenv("SOURCE_MANAGEMENT_MAX_OBSERVED_SNAPSHOTS_PER_INSTANCE", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return DEFAULT_MAX_OBSERVED_SNAPSHOTS_PER_INSTANCE
+
+
 class SourceManagementStoreError(RuntimeError):
     """Base error for source management storage operations."""
 
@@ -186,9 +201,17 @@ class SourceManagementStore(ABC):
 class JsonlSourceManagementStore(SourceManagementStore):
     """File/JSONL backed store with in-memory indexes and inter-process locking."""
 
-    def __init__(self, data_dir: Path | str) -> None:
+    def __init__(
+        self,
+        data_dir: Path | str,
+        *,
+        max_observed_snapshots_per_instance: int | None = None,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.max_observed_snapshots_per_instance = _resolve_max_observed_snapshots_per_instance(
+            max_observed_snapshots_per_instance
+        )
         self._instances_path = self.data_dir / "data_source_instances.jsonl"
         self._desired_path = self.data_dir / "source_desired_states.jsonl"
         self._receipts_path = self.data_dir / "source_command_receipts.jsonl"
@@ -277,6 +300,34 @@ class JsonlSourceManagementStore(SourceManagementStore):
                     row = json.loads(line)
                     obs = SourceObservedState.from_dict(row["payload"])
                     self._observed.setdefault(obs.source_instance_id, {})[obs.observed_revision] = obs
+                self._prune_observed_in_memory_unlocked()
+
+    def _prune_observed_in_memory_unlocked(self) -> bool:
+        pruned_any = False
+        cap = self.max_observed_snapshots_per_instance
+        for inst_id, rev_map in list(self._observed.items()):
+            if len(rev_map) > cap:
+                keep_revs = set(sorted(rev_map.keys())[-cap:])
+                for rev in list(rev_map.keys()):
+                    if rev not in keep_revs:
+                        del rev_map[rev]
+                        pruned_any = True
+        return pruned_any
+
+    def _rewrite_observed_file_unlocked(self) -> None:
+        all_items: list[tuple[str, str, dict[str, Any]]] = []
+        for inst_id in sorted(self._observed.keys()):
+            rev_map = self._observed[inst_id]
+            for rev in sorted(rev_map.keys()):
+                obs = rev_map[rev]
+                all_items.append(
+                    (
+                        "source_observed_snapshot",
+                        f"{obs.source_instance_id}::{obs.observed_revision}",
+                        obs.to_dict(),
+                    )
+                )
+        self._rewrite_file(self._observed_path, all_items)
 
     def _append_line(self, file_path: Path, record_type: str, record_id: str, payload: dict[str, Any]) -> None:
         entry = {
@@ -542,13 +593,26 @@ class JsonlSourceManagementStore(SourceManagementStore):
 
     def save_observed_snapshot(self, observed: SourceObservedState) -> None:
         with self._thread_lock:
-            self._observed.setdefault(observed.source_instance_id, {})[observed.observed_revision] = observed
-            self._append_line(
-                self._observed_path,
-                "source_observed_snapshot",
-                f"{observed.source_instance_id}::{observed.observed_revision}",
-                observed.to_dict(),
-            )
+            rev_map = self._observed.setdefault(observed.source_instance_id, {})
+            existing = rev_map.get(observed.observed_revision)
+            if (
+                existing is not None
+                and existing.to_dict() == observed.to_dict()
+                and len(rev_map) <= self.max_observed_snapshots_per_instance
+            ):
+                return
+            replaced_existing = existing is not None
+            rev_map[observed.observed_revision] = observed
+            pruned = self._prune_observed_in_memory_unlocked()
+            if pruned or replaced_existing:
+                self._rewrite_observed_file_unlocked()
+            else:
+                self._append_line(
+                    self._observed_path,
+                    "source_observed_snapshot",
+                    f"{observed.source_instance_id}::{observed.observed_revision}",
+                    observed.to_dict(),
+                )
 
     def get_latest_observed_snapshot(self, source_instance_id: str) -> SourceObservedState | None:
         with self._thread_lock:
@@ -572,10 +636,19 @@ class JsonlSourceManagementStore(SourceManagementStore):
 class PostgresSourceManagementStore(SourceManagementStore):
     """PostgreSQL-backed store with row-level locking (FOR UPDATE) and transactions."""
 
-    def __init__(self, dsn: str, bootstrap: bool = True) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        bootstrap: bool = True,
+        *,
+        max_observed_snapshots_per_instance: int | None = None,
+    ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for PostgresSourceManagementStore")
         self.dsn = dsn
+        self.max_observed_snapshots_per_instance = _resolve_max_observed_snapshots_per_instance(
+            max_observed_snapshots_per_instance
+        )
         self._thread_lock = threading.RLock()
         if bootstrap:
             self._bootstrap()
@@ -1077,6 +1150,24 @@ class PostgresSourceManagementStore(SourceManagementStore):
                     observed.effective_lifecycle.value if hasattr(observed.effective_lifecycle, "value") else str(observed.effective_lifecycle),
                     json.dumps(observed.to_dict(), sort_keys=True),
                     observed.observed_at,
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM source_ingest.source_observed_snapshots
+                WHERE source_instance_id = %s
+                  AND observed_revision NOT IN (
+                      SELECT observed_revision
+                      FROM source_ingest.source_observed_snapshots
+                      WHERE source_instance_id = %s
+                      ORDER BY observed_revision DESC
+                      LIMIT %s
+                  )
+                """,
+                (
+                    observed.source_instance_id,
+                    observed.source_instance_id,
+                    self.max_observed_snapshots_per_instance,
                 ),
             )
 
