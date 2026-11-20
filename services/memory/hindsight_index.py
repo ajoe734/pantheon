@@ -37,14 +37,38 @@ _LOG = logging.getLogger(__name__)
 URL_ENV = "PANTHEON_MEMORY_HINDSIGHT_URL"
 KEY_ENV = "PANTHEON_MEMORY_HINDSIGHT_API_KEY"
 LLM_LAYERS_ENV = "PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED"
+MIRROR_WORKERS_ENV = "PANTHEON_MEMORY_MIRROR_WORKERS"
 
 MIRROR_ATTEMPTS = 3
 MIRROR_BACKOFF_SECONDS = 0.5
+MAX_RETRY_AFTER_SECONDS = 5.0
 REQUEST_TIMEOUT_SECONDS = 60.0
 DEFAULT_FLUSH_TIMEOUT_SECONDS = 30.0
 FAILURE_LOG_LIMIT = 500
-MAX_MIRROR_WORKERS = 4
+DEFAULT_MIRROR_WORKERS = 1
 MAX_PENDING_MIRRORS = 256
+RESYNC_INTERVAL_SECONDS = 60.0
+MAX_RESYNC_BACKOFF_SECONDS = 300.0
+
+
+def _env_mirror_workers(default: int = DEFAULT_MIRROR_WORKERS) -> int:
+    raw = os.getenv(MIRROR_WORKERS_ENV, "").strip()
+    if not raw:
+        return max(1, int(default))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return max(1, int(default))
+
+
+MAX_MIRROR_WORKERS = _env_mirror_workers(DEFAULT_MIRROR_WORKERS)
+_INITIAL_MAX_MIRROR_WORKERS = MAX_MIRROR_WORKERS
+
+
+def _configured_mirror_workers() -> int:
+    if MAX_MIRROR_WORKERS != _INITIAL_MAX_MIRROR_WORKERS:
+        return max(1, int(MAX_MIRROR_WORKERS))
+    return _env_mirror_workers(MAX_MIRROR_WORKERS)
 
 # Anchor kinds (H4).  The value is the tag prefix used by owner writers
 # (``family:x``, ``underlying:TW`` ...) and by the case-file lesson query.
@@ -76,10 +100,28 @@ _TAG_PREFIXES: Dict[str, str] = {
 class HindsightError(RuntimeError):
     """Raised for Hindsight transport or protocol failures (reason is stable)."""
 
-    def __init__(self, reason: str, detail: str = "") -> None:
+    def __init__(self, reason: str, detail: str = "", *, retry_after: Optional[float] = None) -> None:
         super().__init__(reason if not detail else f"{reason}: {detail}")
         self.reason = reason
         self.detail = detail
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(headers: Any, *, max_seconds: float = MAX_RETRY_AFTER_SECONDS) -> Optional[float]:
+    if headers is None or not hasattr(headers, "get"):
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return min(value, max(0.0, float(max_seconds)))
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +288,8 @@ class HindsightClient:
             if ok_missing and exc.code == 404:
                 return None
             detail = exc.read().decode("utf-8", "replace")[:300]
-            raise HindsightError(f"hindsight_http_{exc.code}", detail) from exc
+            retry_after = _parse_retry_after(getattr(exc, "headers", None)) if exc.code == 429 else None
+            raise HindsightError(f"hindsight_http_{exc.code}", detail, retry_after=retry_after) from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             raise HindsightError("hindsight_unreachable", type(exc).__name__) from exc
 
@@ -374,6 +417,9 @@ def forget_layers(bank: str) -> None:
     with _LAYER_LOCK:
         for key in [k for k in _LAYERED_BANKS if k[1] == bank]:
             _LAYERED_BANKS.discard(key)
+    with _IDLE:
+        for key in [k for k in list(_MIRRORED_DOCS) if k[1] == bank]:
+            _MIRRORED_DOCS.discard(key)
 
 
 # ---------------------------------------------------------------------------
@@ -388,10 +434,92 @@ _PENDING: Dict[Tuple[str, str], deque] = {}
 _IN_FLIGHT: set[Tuple[str, str]] = set()
 _SEEN_RETAIN: Dict[Tuple[str, str], None] = {}
 _INVALIDATED: Dict[Tuple[str, str], Any] = {}
+_PENDING_RESYNC: Dict[Tuple[str, str], Any] = {}
+_MIRRORED_DOCS: set[Tuple[int, str, str]] = set()
+_RESYNC_TIMER: Optional[threading.Timer] = None
+_RESYNC_FAILURE_STREAK = 0
+_LAST_RESYNC_AT = 0.0
 _ACTIVE_WORKERS = 0
 _REBUILDING = 0
 _REBUILD_LOCK = threading.Lock()
 _IDLE = threading.Condition(threading.Lock())
+
+
+def _cancel_resync_timer_unlocked() -> None:
+    global _RESYNC_TIMER, _RESYNC_FAILURE_STREAK
+    if _RESYNC_TIMER is not None:
+        _RESYNC_TIMER.cancel()
+        _RESYNC_TIMER = None
+    _RESYNC_FAILURE_STREAK = 0
+
+
+def stop_resync_timer() -> None:
+    """Cancel any active background resync timer (shutdown / test teardown)."""
+    with _IDLE:
+        _cancel_resync_timer_unlocked()
+
+
+def pending_resync_count() -> int:
+    """Number of failed active canonical entries awaiting background resync."""
+    with _IDLE:
+        return len(_PENDING_RESYNC)
+
+
+def _resync_delay_seconds_unlocked() -> float:
+    base = max(0.001, float(RESYNC_INTERVAL_SECONDS))
+    cap = max(base, float(MAX_RESYNC_BACKOFF_SECONDS))
+    backoff_delay = min(cap, base * (2 ** min(max(0, _RESYNC_FAILURE_STREAK), 4)))
+    if _LAST_RESYNC_AT > 0.0:
+        since_last = max(0.0, time.monotonic() - _LAST_RESYNC_AT)
+        min_remaining = max(0.0, base - since_last)
+        return max(backoff_delay, min_remaining)
+    return backoff_delay
+
+
+def _arm_resync_timer_unlocked() -> None:
+    global _RESYNC_TIMER
+    if not _PENDING_RESYNC:
+        _cancel_resync_timer_unlocked()
+        return
+    if _RESYNC_TIMER is not None and _RESYNC_TIMER.is_alive():
+        return
+    delay = _resync_delay_seconds_unlocked()
+    timer = threading.Timer(delay, _resync_timer_tick)
+    timer.name = "memory-mirror-resync"
+    timer.daemon = True
+    _RESYNC_TIMER = timer
+    try:
+        timer.start()
+    except Exception:
+        _RESYNC_TIMER = None
+
+
+def _record_pending_resync(entry: Any) -> None:
+    if not is_indexable(entry):
+        return
+    key = (bank_for(entry), canonical_id(entry))
+    with _IDLE:
+        _PENDING_RESYNC[key] = entry
+        cap = max(1, int(MAX_PENDING_MIRRORS))
+        while len(_PENDING_RESYNC) > cap:
+            oldest = next(iter(_PENDING_RESYNC))
+            _PENDING_RESYNC.pop(oldest, None)
+        _arm_resync_timer_unlocked()
+
+
+def _clear_pending_resync(key: Tuple[str, str]) -> None:
+    with _IDLE:
+        _PENDING_RESYNC.pop(key, None)
+        if not _PENDING_RESYNC:
+            _cancel_resync_timer_unlocked()
+
+
+def _resync_timer_tick() -> None:
+    global _RESYNC_TIMER, _LAST_RESYNC_AT
+    with _IDLE:
+        _RESYNC_TIMER = None
+        _LAST_RESYNC_AT = time.monotonic()
+    resync_pending_mirrors()
 
 
 class MirrorDiagnostics:
@@ -402,12 +530,17 @@ class MirrorDiagnostics:
         self.reset()
 
     def reset(self) -> None:
+        global _LAST_RESYNC_AT
         with self._lock:
             self.counts = {"retained": 0, "invalidated": 0, "failed": 0, "anchor_none": 0}
             self.failures: deque = deque(maxlen=FAILURE_LOG_LIMIT)
         with _IDLE:
             _SEEN_RETAIN.clear()
             _INVALIDATED.clear()
+            _PENDING_RESYNC.clear()
+            _MIRRORED_DOCS.clear()
+            _LAST_RESYNC_AT = 0.0
+            _cancel_resync_timer_unlocked()
 
     def record(self, key: str, **extra: Any) -> None:
         with self._lock:
@@ -420,7 +553,13 @@ class MirrorDiagnostics:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"counts": dict(self.counts), "failures": list(self.failures)}
+            counts = dict(self.counts)
+            failures = list(self.failures)
+        return {
+            "counts": counts,
+            "failures": failures,
+            "pending_resync_count": pending_resync_count(),
+        }
 
 
 DIAGNOSTICS = MirrorDiagnostics()
@@ -436,6 +575,7 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
         if client is None:
             raise HindsightError("hindsight_unconfigured")
         bank = bank_for(entry)
+        key = (bank, entry_id)
         reason = "hindsight_unreachable"
         for attempt in range(1, max(1, attempts) + 1):
             try:
@@ -443,21 +583,32 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
                     item = retain_item(entry)
                     ensure_layers(client, bank)
                     client.retain(bank, [item])
+                    with _IDLE:
+                        _MIRRORED_DOCS.add((id(client), bank, entry_id))
+                    _clear_pending_resync(key)
                     DIAGNOSTICS.record("retained")
                     if item["tags"][0] == ANCHOR_NONE_TAG:
                         DIAGNOSTICS.record("anchor_none")
                 else:
                     client.invalidate_document(bank, entry_id, _invalidation_reason(entry))
+                    with _IDLE:
+                        _MIRRORED_DOCS.discard((id(client), bank, entry_id))
+                    _clear_pending_resync(key)
                     DIAGNOSTICS.record("invalidated")
                 return {"status": "mirrored", "entry_id": entry_id, "action": action}
             except HindsightError as exc:
                 reason = exc.reason
                 if exc.reason == "hindsight_unconfigured" or attempt >= attempts:
                     break
-                time.sleep(backoff * attempt)
+                delay = backoff * attempt
+                if exc.retry_after is not None and exc.retry_after > 0:
+                    delay = max(delay, min(float(exc.retry_after), MAX_RETRY_AFTER_SECONDS))
+                time.sleep(delay)
         raise HindsightError(reason)
     except Exception as exc:  # canonical writes must survive index outages
         reason = exc.reason if isinstance(exc, HindsightError) else "hindsight_mirror_failed"
+        if action == "retain" and reason != "hindsight_unconfigured":
+            _record_pending_resync(entry)
         DIAGNOSTICS.failure(entry_id, action, reason)
         _LOG.warning("memory_mirror_failed entry_id=%s action=%s reason=%s", entry_id, action, reason)
         return {"status": "failed", "entry_id": entry_id, "action": action, "reason": reason}
@@ -475,6 +626,10 @@ def _bound_map_unlocked(mapping: Dict[Tuple[str, str], Any]) -> None:
 def _enqueue_entry_unlocked(key: Tuple[str, str], entry: Any) -> bool:
     queue = _PENDING.get(key)
     indexable = is_indexable(entry)
+    if not indexable:
+        _PENDING_RESYNC.pop(key, None)
+        if not _PENDING_RESYNC:
+            _cancel_resync_timer_unlocked()
     if queue is None and _pending_keys_unlocked() >= max(1, MAX_PENDING_MIRRORS):
         return False
     if indexable:
@@ -507,7 +662,7 @@ def _ensure_workers_unlocked() -> List[Any]:
         return []
     unclaimed = sum(1 for k, q in _PENDING.items() if k not in _IN_FLIGHT and q)
     free_workers = max(0, _ACTIVE_WORKERS - len(_IN_FLIGHT))
-    needed = min(unclaimed - free_workers, max(1, MAX_MIRROR_WORKERS) - _ACTIVE_WORKERS)
+    needed = min(unclaimed - free_workers, _configured_mirror_workers() - _ACTIVE_WORKERS)
     for _ in range(max(0, needed)):
         _ACTIVE_WORKERS += 1
         try:
@@ -541,7 +696,127 @@ def schedule_mirror(entry: Any) -> None:
         return
     for item in failed_to_start:
         action = "retain" if is_indexable(item) else "invalidate"
+        if action == "retain" and get_hindsight_client() is not None:
+            _record_pending_resync(item)
         DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+
+
+def resync_pending_mirrors(*, client: Any = None) -> dict:
+    """Retry entries in the bounded in-memory resync map without blocking writers or deleting banks."""
+    global _RESYNC_FAILURE_STREAK
+    with _IDLE:
+        if _REBUILDING:
+            _arm_resync_timer_unlocked()
+            return {"retried": 0, "mirrored": 0, "failed": 0, "pending_resync_count": len(_PENDING_RESYNC)}
+        keys = [k for k in list(_PENDING_RESYNC) if k not in _IN_FLIGHT and not _PENDING.get(k)]
+    retried = 0
+    mirrored = 0
+    failed = 0
+    for key in keys:
+        with _IDLE:
+            if _REBUILDING or key in _IN_FLIGHT or _PENDING.get(key):
+                continue
+            entry = _PENDING_RESYNC.get(key)
+            if entry is None:
+                continue
+            if not is_indexable(entry):
+                _PENDING_RESYNC.pop(key, None)
+                continue
+            _IN_FLIGHT.add(key)
+        try:
+            retried += 1
+            res = mirror_entry(entry, client=client)
+            if res.get("status") == "mirrored":
+                mirrored += 1
+            else:
+                failed += 1
+        finally:
+            _drain(key)
+    with _IDLE:
+        if failed > 0 and _PENDING_RESYNC:
+            _RESYNC_FAILURE_STREAK += 1
+        elif mirrored > 0:
+            _RESYNC_FAILURE_STREAK = 0
+        if _PENDING_RESYNC:
+            _arm_resync_timer_unlocked()
+        else:
+            _cancel_resync_timer_unlocked()
+        remaining = len(_PENDING_RESYNC)
+    return {"retried": retried, "mirrored": mirrored, "failed": failed, "pending_resync_count": remaining}
+
+
+def _is_entry_mirrored(client: Any, bank: str, doc_id: str) -> bool:
+    key = (bank, doc_id)
+    with _IDLE:
+        if key in _PENDING_RESYNC:
+            return False
+        seen_in_client = (id(client), bank, doc_id) in _MIRRORED_DOCS
+    memory_units_fn = getattr(client, "memory_units", None)
+    if callable(memory_units_fn):
+        try:
+            return bool(memory_units_fn(bank, doc_id))
+        except Exception:
+            return False
+    return seen_in_client
+
+
+def catch_up_mirrors(institutional_store: Any, persona_store: Any, *, client: Any = None) -> dict:
+    """Idempotent non-destructive startup catch-up: schedule active canonical entries missing or unmirrored.
+
+    Never calls ``delete_bank``. Safe to invoke repeatedly.
+    """
+    resolved_client = client or get_hindsight_client()
+    if resolved_client is None:
+        return {
+            "status": "skipped",
+            "reason": "hindsight_unconfigured",
+            "scheduled": 0,
+            "already_mirrored": 0,
+            "inactive_skipped": 0,
+            "pending_resync_count": pending_resync_count(),
+        }
+    scheduled = 0
+    already_mirrored = 0
+    inactive_skipped = 0
+    for store in (institutional_store, persona_store):
+        if store is None:
+            continue
+        archive_expired_fn = getattr(store, "archive_expired", None)
+        if callable(archive_expired_fn):
+            try:
+                archive_expired_fn()
+            except Exception:
+                pass
+        try:
+            entries = list(store.list(active_only=False))
+        except Exception:
+            continue
+        for entry in entries:
+            bank = bank_for(entry)
+            doc_id = canonical_id(entry)
+            key = (bank, doc_id)
+            if not is_indexable(entry):
+                inactive_skipped += 1
+                _clear_pending_resync(key)
+                continue
+            with _IDLE:
+                already_queued = key in _IN_FLIGHT or any(is_indexable(item) for item in _PENDING.get(key, ()))
+            if already_queued or _is_entry_mirrored(resolved_client, bank, doc_id):
+                already_mirrored += 1
+                continue
+            schedule_mirror(entry)
+            scheduled += 1
+    return {
+        "status": "ok",
+        "scheduled": scheduled,
+        "already_mirrored": already_mirrored,
+        "inactive_skipped": inactive_skipped,
+        "pending_resync_count": pending_resync_count(),
+    }
+
+
+resync_missing_mirrors = catch_up_mirrors
+catch_up_unmirrored = catch_up_mirrors
 
 
 def _worker_loop() -> None:
@@ -685,13 +960,17 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
                 report["banks"] += 1
                 retained = 0
                 for entry in entries:
+                    entry_id = canonical_id(entry)
                     item = retain_item(entry)
                     try:
                         ensure_layers(resolved_client, bank)
                         resolved_client.retain(bank, [item])
                     except HindsightError as exc:
-                        report["failures"].append({"bank": bank, "entry_id": canonical_id(entry), "reason": exc.reason})
+                        report["failures"].append({"bank": bank, "entry_id": entry_id, "reason": exc.reason})
                         continue
+                    with _IDLE:
+                        _MIRRORED_DOCS.add((id(resolved_client), bank, entry_id))
+                    _clear_pending_resync((bank, entry_id))
                     retained += 1
                     report["anchor_none"] += int(item["tags"][0] == ANCHOR_NONE_TAG)
                 report["retained"] += retained

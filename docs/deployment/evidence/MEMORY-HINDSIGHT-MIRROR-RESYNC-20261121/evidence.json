@@ -1,0 +1,34 @@
+{
+  "task_id": "MEMORY-HINDSIGHT-MIRROR-RESYNC-20261121",
+  "title": "Queue burst memory bridge calls and resync canonical entries missed by Hindsight mirror",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "reproduction": {
+    "before_fix": "When a closed meeting writes two persona entries (p-alpha-meeting, p-beta-meeting) and one institutional meeting minute (mem-meeting-minute) together, services/memory/hindsight_index.py spawned up to MAX_MIRROR_WORKERS=4 concurrent retain threads while services/openclaw-gateway-adapter/memory_llm_bridge.py acquired its max_concurrency=2 semaphore with blocking=False and immediately returned 429 concurrency_limit. mirror_entry exhausted its 3 retries (0.5s + 1.0s = 1.5s) while the first two 1.7s LLM calls were still in flight and dropped mem-meeting-minute (retained=2, failed=1, reason=hindsight_http_429) without a catch-up mechanism.",
+    "after_fix": "MemoryLlmBridge waits up to bounded slot_wait_seconds (default 15.0s via MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS, bounded by remaining request deadline; 0.0 restores immediate non-blocking refusal) before returning 429 concurrency_limit; hindsight_index defaults PANTHEON_MEMORY_MIRROR_WORKERS=1, honours bounded HTTP 429 Retry-After in HindsightClient and mirror_entry, retains any entry that still fails immediate retries in a bounded in-memory resync map (capped at MAX_PENDING_MIRRORS=256) retried on a bounded backoff timer (at most once per 60s while pending_resync_count > 0, stopping when empty), exposes pending_resync_count via GET /api/memory/health alongside existing mirror diagnostics, and runs idempotent non-destructive catch_up_mirrors at memory service startup without calling delete_bank. All 4 concurrent burst retains against a max_concurrency=2 bridge converge to mirrored with zero dropped entries."
+  },
+  "scoped_artifacts": [
+    "services/openclaw-gateway-adapter/memory_llm_bridge.py",
+    "services/openclaw-gateway-adapter/test_memory_llm_bridge.py",
+    "services/memory/hindsight_index.py",
+    "services/memory/test_hindsight_index.py",
+    "services/memory/main.py",
+    "services/memory/test_main.py",
+    "docs/deployment/evidence/MEMORY-HINDSIGHT-MIRROR-RESYNC-20261121/evidence.json"
+  ],
+  "runtime_budget": {
+    "new_persistent_writers_or_files_or_tables": 0,
+    "in_memory_resync_map_cap": 256,
+    "in_memory_resync_map_estimated_max_bytes": "< 256 KB (256 canonical entry references keyed by (bank, canonical_id))",
+    "resync_timer_cadence": "At most once per 60 seconds (exponential backoff 60s -> 120s -> 240s -> 300s cap) while pending_resync_count > 0; timer stops and cancels when pending_resync_count reaches 0",
+    "bridge_daily_call_budget_enforced": true
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/openclaw-gateway-adapter/test_memory_llm_bridge.py services/memory/test_hindsight_index.py services/memory/test_main.py",
+      "result": "90 passed, 1 skipped in 12.99s"
+    }
+  ],
+  "residual_findings": [],
+  "credentials_or_secrets_recorded": "none"
+}
