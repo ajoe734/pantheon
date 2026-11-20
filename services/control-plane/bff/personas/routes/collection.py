@@ -109,6 +109,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.get("/bff/management/persona-intent")
     def bff_management_persona_intent(
+        kind: Optional[str] = None,
         source_type: Optional[str] = None,
         persona_id: Optional[str] = None,
         status: Optional[str] = None,
@@ -117,7 +118,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ):
-        """BFF: compose redacted Persona Intent trace, trainer, and Agora summaries."""
+        """BFF: compose Persona Intent trace, consultation, meeting, and trainer audit items."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
@@ -126,6 +127,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items(caller_tenant_id)
         filtered = _persona_intent_filter_items(
             items,
+            kind=kind,
             source_type=source_type,
             persona_id=persona_id,
             status=status,
@@ -133,7 +135,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         )
         total = len(filtered)
         page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-        summary = _management_prune_camel_aliases(_persona_intent_summary(filtered, len(page_items)))
+        summary = _management_prune_camel_aliases(
+            _persona_intent_summary(filtered, len(page_items), all_items=items)
+        )
         canonical_page_items = _management_prune_camel_aliases(page_items)
         meta = _snapshot_meta(snapshot_at)
         meta["surfaces"] = _persona_intent_surfaces(snapshot_at=snapshot_at)
