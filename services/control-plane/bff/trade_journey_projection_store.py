@@ -277,8 +277,25 @@ class TradeJourneyProjectionStore:
             if filters.get(key):
                 link_match = f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)"
                 if identifier_type in SHARED_IDENTIFIER_TYPES:
-                    clauses.append(f"({link_match} OR COALESCE(current_identity_summary -> 'identifiers', current_identity_summary) -> %s ? %s)")
-                    params.extend((identifier_type, str(filters[key]), identifier_type, str(filters[key])))
+                    # Containment matches idx_journeys_summary_gin; legacy identity_links rows join as a
+                    # once-evaluated id array so the OR stays a bitmap scan instead of a per-row subplan.
+                    summary_ref = "(COALESCE(current_identity_summary -> 'identifiers', current_identity_summary))"
+                    legacy_ids = (
+                        f"journey_id = ANY(ARRAY(SELECT link.journey_id FROM {self.schema}.identity_links link "
+                        "WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_type=%s AND link.identifier_value=%s))"
+                    )
+                    clauses.append(f"({summary_ref} @> %s::jsonb OR {summary_ref} @> %s::jsonb OR {legacy_ids})")
+                    value = str(filters[key])
+                    params.extend(
+                        (
+                            json.dumps({identifier_type: [value]}),
+                            json.dumps({identifier_type: value}),
+                            tenant_id,
+                            environment,
+                            identifier_type,
+                            value,
+                        )
+                    )
                 else:
                     clauses.append(link_match)
                     params.extend((identifier_type, str(filters[key])))

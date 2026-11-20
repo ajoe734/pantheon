@@ -1,0 +1,112 @@
+{
+ "task_id": "BFF-TRADE-JOURNEY-READABLE-RESIDUALS-20261120",
+ "method": "Postgres 16 (docker), repo migrations 001+002 applied, synthetic journeys table of 300000 rows (80 personas, 20 rows of one rare persona far back in updated_at order), ANALYZE. Not a copy of the hosted projection; no hosted access from this worker.",
+ "persona_filter_query_plan": {
+  "before": {
+   "sql_shape": "EXISTS(identity_links) OR identifiers->'persona_id' ? value",
+   "runs_ms": [
+    146.2,
+    144.1,
+    143.6
+   ],
+   "plan": [
+    "Limit (actual time=133.338..157.438 rows=20 loops=1)",
+    "  Buffers: shared hit=5138 read=8047 written=4750",
+    "  ->  Index Scan using idx_journeys_tenant_env_updated_journey on journeys (actual time=133.337..157.433 rows=20 loops=1)",
+    "        Index Cond: ((tenant_id = 'tenant-dev'::text) AND (environment = 'paper'::text))",
+    "        Filter: ((hashed SubPlan 2) OR ((COALESCE((current_identity_summary -> 'identifiers'::text), current_identity_summary) -> 'persona_id'::text) ? 'persona-rare'::text))",
+    "        Rows Removed by Filter: 299980",
+    "        Buffers: shared hit=5138 read=8047 written=4750",
+    "        SubPlan 2",
+    "          ->  Index Scan using identity_links_pkey on identity_links link (actual time=0.008..0.009 rows=0 loops=1)",
+    "                Index Cond: ((identifier_type = 'persona_id'::text) AND (identifier_value = 'persona-rare'::text))",
+    "                Buffers: shared hit=1",
+    "Planning:",
+    "  Buffers: shared hit=314 read=22 dirtied=2",
+    "Planning Time: 1.719 ms",
+    "Execution Time: 157.484 ms"
+   ]
+  },
+  "after": {
+   "sql_shape": "summary @> array form OR summary @> scalar form OR journey_id = ANY(ARRAY(identity_links lookup))",
+   "runs_ms": [
+    5.3,
+    4.1,
+    4.1
+   ],
+   "plan": [
+    "Limit (actual time=4.466..4.491 rows=20 loops=1)",
+    "  Buffers: shared hit=245 read=226 written=40",
+    "  InitPlan 1 (returns $0)",
+    "    ->  Index Scan using idx_identity_links_tenant_env_value_journey on identity_links link (actual time=0.016..0.017 rows=0 loops=1)",
+    "          Index Cond: ((tenant_id = 'tenant-dev'::text) AND (environment = 'paper'::text) AND (identifier_value = 'persona-rare'::text))",
+    "          Filter: (identifier_type = 'persona_id'::text)",
+    "          Buffers: shared hit=2",
+    "  ->  Sort (actual time=4.465..4.487 rows=20 loops=1)",
+    "        Sort Key: journeys.updated_at DESC, journeys.journey_id DESC",
+    "        Sort Method: quicksort  Memory: 26kB",
+    "        Buffers: shared hit=245 read=226 written=40",
+    "        ->  Bitmap Heap Scan on journeys (actual time=4.423..4.434 rows=20 loops=1)",
+    "              Recheck Cond: ((COALESCE((current_identity_summary -> 'identifiers'::text), current_identity_summary) @> '{\"persona_id\": [\"persona-rare\"]}'::jsonb) OR (COALESCE((current_identity_summary -> 'identifiers'::text), current_identity_summary) @> '{\"persona_id\": \"persona-rare\"}'::jsonb) OR ((tenant_id = 'tenant-dev'::text) AND (environment = 'paper'::text) AND (journey_id = ANY ($0))))",
+    "              Filter: ((tenant_id = 'tenant-dev'::text) AND (environment = 'paper'::text))",
+    "              Heap Blocks: exact=1",
+    "              Buffers: shared hit=239 read=226 written=40",
+    "              ->  BitmapOr (actual time=4.413..4.414 rows=0 loops=1)",
+    "                    Buffers: shared hit=238 read=226 written=40",
+    "                    ->  Bitmap Index Scan on idx_journeys_summary_gin (actual time=2.724..2.724 rows=20 loops=1)",
+    "                          Index Cond: (COALESCE((current_identity_summary -> 'identifiers'::text), current_identity_summary) @> '{\"persona_id\": [\"persona-rare\"]}'::jsonb)",
+    "                          Buffers: shared hit=6 read=226 written=40",
+    "                    ->  Bitmap Index Scan on idx_journeys_summary_gin (actual time=1.664..1.664 rows=0 loops=1)",
+    "                          Index Cond: (COALESCE((current_identity_summary -> 'identifiers'::text), current_identity_summary) @> '{\"persona_id\": \"persona-rare\"}'::jsonb)",
+    "                          Buffers: shared hit=230",
+    "                    ->  Bitmap Index Scan on journeys_pkey (actual time=0.024..0.024 rows=0 loops=1)",
+    "                          Index Cond: ((tenant_id = 'tenant-dev'::text) AND (environment = 'paper'::text) AND (journey_id = ANY ($0)))",
+    "                          Buffers: shared hit=2",
+    "Planning:",
+    "  Buffers: shared hit=14 read=6 dirtied=1",
+    "Planning Time: 0.406 ms",
+    "Execution Time: 4.550 ms"
+   ]
+  }
+ },
+ "latency_store_level_after_ms": {
+  "note": "25 rows, three runs each, same measurement on the local synthetic table; store reads only (no BFF, no persona owner read). Default list and detail SQL are unchanged by this task, so no before/after delta is claimed for them at store level; their hosted cost was the per-request persona read, removed by the 60s directory cache and proven by test_persona_directory_is_read_once_per_60s_and_refreshed_after.",
+  "default_list": [
+   73.5,
+   78.5,
+   73.9
+  ],
+  "persona_filter": [
+   44.5,
+   47.3,
+   45.7
+  ],
+  "detail": [
+   22.9,
+   23.3,
+   23.9
+  ]
+ },
+ "hosted_before_recorded_by_coordinator_s": {
+  "default_list": [
+   5.3,
+   6.3
+  ],
+  "include_probe": 4.0,
+  "persona_filter": "8-19",
+  "detail": 5.0,
+  "personas_owner_alone": 1.7
+ },
+ "hosted_after": "not measured: requires a deploy of this change; no wall-clock assertion added to a required check",
+ "tests": "services/control-plane/bff/tests/test_trade_journey_readable_residuals.py, test_trade_journey_readable.py, test_trade_journey_shared_identity_filter.py, test_bff_test_architecture.py",
+ "full_suite_totals": {
+  "command": "pytest of every services/control-plane/bff/tests file mentioning journey + services/trade_journey",
+  "result": "904 passed, 61 skipped, 3 failed (run 2)",
+  "failures_not_caused_by_this_task": [
+   "test_control_loops_router::test_loop_runs_control_room_and_downstream_replay (fails identically on parent commit)",
+   "test_read_surface_caller_migration::test_main_py_all_read_store_attributes_are_inventoried_and_mapped (fails identically on parent commit)",
+   "test_projection_store connect_timeout publication race (timing flake under load; 44/44 pass in isolation 3 times, and on parent)"
+  ],
+  "fixed_during_this_pass": "test_hosted_bff_readback retained root42397678868 reasonless rejection must stay partial: submitted_to_broker=false fallback now requires a stored reason_code (recorded tj_79726064 carries long_cash, still infers rejected)"
+ }
+}

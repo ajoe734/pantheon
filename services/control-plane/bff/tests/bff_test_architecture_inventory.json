@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 401,
+  "total_test_files": 402,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -102,7 +102,7 @@
     "application": 191,
     "composition": 19,
     "hosted": 12,
-    "router": 123
+    "router": 124
   },
   "main_by_layer": {
     "composition": 14,
@@ -110,7 +110,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 333,
+    "DECOUPLED": 334,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2956,6 +2956,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114: full HTTP legacy parity, constant 200-plan owner/store reads, decision and runtime evidence precedence, request isolation, and reproducible real-port profiling; never imports main"
+    },
+    {
+      "file": "tests/test_trade_journey_readable_residuals.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-TRADE-JOURNEY-READABLE-RESIDUALS-20261120: recorded post-deploy hosted bodies; rejected flag, inferred risk stage, timeline source and expression-code mapping, persona directory TTL, indexed persona filter SQL; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,
