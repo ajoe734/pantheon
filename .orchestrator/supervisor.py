@@ -10310,7 +10310,7 @@ def build_review_independence_exception(
     }
     considered = []
     for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family}):
-        reason = evidence.get(family) or "no capacity evidence supplied"
+        reason = evidence.get(family) or "evidence_unavailable"
         considered.append(
             {"family": family, "reason": reason[:_REVIEW_EXCEPTION_REASON_LIMIT]}
         )
@@ -10357,9 +10357,20 @@ def _review_exception_capacity_evidence(
     if owner_family is None or owner_family != agent_family(reviewer):
         return {}
     try:
-        state = load_runtime_state(config)
-    except Exception:  # noqa: BLE001 - evidence is advisory, never blocks assignment
-        return {}
+        # Lock-free snapshot: the caller holds the task_state lock, and taking
+        # runtime_admission (lower rank) here would violate the lock order.
+        state = load_runtime_state_snapshot(config)
+    except Exception as exc:  # noqa: BLE001 - evidence is advisory, never blocks assignment
+        error_class = type(exc).__name__
+        print(
+            f"supervisor: review exception capacity evidence unavailable: "
+            f"{error_class}: {exc}",
+            file=sys.stderr,
+        )
+        return {
+            family: f"evidence_unavailable:{error_class}"
+            for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family})
+        }
     evidence: dict[str, str] = {}
     for agent_id in sorted(config.get("agents", {}) or {}):
         family = agent_family(agent_id)
