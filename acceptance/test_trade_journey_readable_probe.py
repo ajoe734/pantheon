@@ -17,6 +17,8 @@ _loader = SourceFileLoader("trade_journey_readable_probe", str(PROBE))
 probe = module_from_spec(spec_from_loader(_loader.name, _loader))
 _loader.exec_module(probe)
 
+HOSTED = json.loads((ROOT / "fixtures" / "hosted_trade_journey_probe_pages_20261120.json").read_text())
+
 PERSONA = "persona-2448c7053e33ea48da47"
 
 
@@ -27,11 +29,11 @@ def row(jid, name, probe_flag=False):
 def fetcher(rows, filtered, total=None, filtered_total=None):
     def fetch(path):
         flt = "attention=recon_mismatch" in path
-        data = {"items": filtered if flt else rows}
+        body = {"data": {"items": filtered if flt else rows}, "meta": {}}
         t = filtered_total if flt else total
         if t is not None:
-            data["page_info"] = {"total": t}
-        return {"data": data}
+            body["page_info"] = {"total": t}  # top level, as the BFF returns it
+        return body
     return fetch
 
 
@@ -50,12 +52,20 @@ def test_passes_on_readable_rows():
     assert report["passed"] and report["rows"] == 2 and report["recon_mismatch_rows"] == 1
 
 
-def test_hosted_20261120_full_pages_pass():
-    rows = [row(f"tj_{i}", "n") for i in range(50)]
-    filtered = [variance(f"tj_{i}") for i in range(50)]
-    report = probe.check(fetcher(rows, filtered, 158033, 6941))
+def test_hosted_20261120_recorded_bodies_pass():
+    assert set(HOSTED["unfiltered"]) == {"data", "page_info", "meta"}
+    bodies = {False: HOSTED["unfiltered"], True: HOSTED["recon_mismatch"]}
+    report = probe.check(lambda path: bodies["attention=recon_mismatch" in path])
     assert report["passed"], report
-    assert report["rows"] == 50 and report["recon_mismatch_rows"] == 50
+    assert report["total"] == 158033 and report["recon_mismatch_total"] == 6941
+
+
+def test_page_info_nested_under_data_fails():
+    def fetch(path):
+        flt = "attention=recon_mismatch" in path
+        items = [variance("tj_a")] if flt else [row("tj_a", "n")]
+        return {"data": {"items": items, "page_info": {"total": 1 if flt else 2}}}
+    assert probe.check(fetch)["failed"] == ["attention_filter_not_applied"]
 
 
 def test_fails_when_server_ignores_filter():
