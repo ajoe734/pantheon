@@ -43,6 +43,7 @@ def _inst_rows(count: int, day: str = "1151119") -> list[dict]:
 
 
 def _adapter(connector_id: str) -> TaiwanOfficialMarketDatasetAdapter:
+    # chip_profile_provider builds the adapter with max_records=500; the full-market profile lifts it to 3000.
     return chip_profile_provider(connector_id)
 
 
@@ -82,6 +83,10 @@ def test_twse_margin_rows_without_date_get_published_session_not_fetch_date() ->
 
 def test_run_date_is_not_used_as_row_session_for_full_market_profiles() -> None:
     adapter = _adapter(TWSE_MARGIN)
+    direct = adapter.records_from_payload(
+        "tw_margin_short_balance", "TWSE", _margin_rows(1), trade_date="2026-11-19", fetch_time=FETCH_1850, trace_id="t"
+    )
+    assert direct[0].metadata["date"] == "2026-11-18"
     request = {
         "dataset": "tw_margin_short_balance",
         "venues": ["TWSE"],
@@ -125,15 +130,17 @@ def test_undecidable_session_fails_run_naming_profile(monkeypatch: pytest.Monkey
 
 def test_over_budget_response_fails_instead_of_truncating() -> None:
     adapter = TaiwanOfficialMarketDatasetAdapter(connector_id=TWSE_MARGIN, max_records=100)
+    assert adapter.max_records == 3000  # a smaller caller budget is lifted to the profile budget
     with pytest.raises(SourceEvidenceError, match="refusing to truncate"):
         adapter.records_from_payload(
-            "tw_margin_short_balance", "TWSE", _margin_rows(101), fetch_time=FETCH_1850, trace_id="t"
+            "tw_margin_short_balance", "TWSE", _margin_rows(3001), fetch_time=FETCH_1850, trace_id="t"
         )
+    # the run through the provider-owned path fails too (adapter raises before any generic slice)
     connector = _adapter(TWSE_MARGIN).connector()
     fetch = {
         "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
-        "adapter_config": {}, "max_records": 50,
-        "request": {"dataset": "tw_margin_short_balance", "venues": ["TWSE"], "payload": _margin_rows(60)},
+        "adapter_config": {}, "max_records": 3000,
+        "request": {"dataset": "tw_margin_short_balance", "venues": ["TWSE"], "payload": _margin_rows(3001)},
     }
     with pytest.raises(SourceEvidenceError):
         execute_provider_owned_adapter(connector=connector, fetch=fetch, trace_id="t")

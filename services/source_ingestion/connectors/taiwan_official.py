@@ -901,6 +901,16 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
     listing_filter: Any | None = None
 
+    def __post_init__(self) -> None:
+        # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three full-market chip profiles hold the whole
+        # session in one run, whatever smaller budget the caller built the adapter with (profile budget 3000).
+        from ..connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+        profile = TW_CHIP_REFRESH_PROFILES.get(self.connector_id) or {}
+        budget = int(profile.get("max_records") or 0) if profile.get("full_market") else 0
+        if budget and self.max_records < budget:
+            object.__setattr__(self, "max_records", budget)
+
     def _resolve_bundle_transport(
         self,
         *,
@@ -1543,6 +1553,11 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         source_dataset = source_dataset or str(endpoint.get("source_dataset") or dataset)
         api_endpoint = api_endpoint or str(endpoint.get("endpoint") or "")
+        if self._is_full_market_chip(dataset):
+            # The caller's trade_date/run_date is the fetch date for scheduled jobs; it must never become a row
+            # session. Only a date the provider response itself carries (payload or row) is trusted; otherwise
+            # the published-session helper decides (see _stamp_full_market_sessions).
+            trade_date = None
         if trade_date is None and isinstance(payload, Mapping):
             trade_date = _roc_date_to_iso(payload.get("date") or payload.get("Date") or payload.get("資料日期"))
         normalized_rows = self.normalized_rows_from_payload(

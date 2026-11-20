@@ -10,9 +10,9 @@
     ],
     "places_that_cut_rows": [
       "connector_definitions.py TW_CHIP_REFRESH_PROFILES default_limits max_records 500",
-      "persona_source_reconciler.chip_profile_provider adapter max_records=500 -> fetch.max_records",
+      "persona_source_reconciler.chip_profile_provider builds the adapter with max_records=500 -> fetch.max_records (outside this task's artifact contract: lifted inside TaiwanOfficialMarketDatasetAdapter.__post_init__ instead)",
       "taiwan_official.TaiwanOfficialMarketDatasetAdapter._records_from_normalized_rows normalized_rows[:limit]",
-      "provider_adapters.execute_provider_owned_adapter records[:max_records]",
+      "provider_adapters.execute_provider_owned_adapter records[:max_records] (outside contract, unchanged: never cuts because the adapter itself fails closed above the same 3000 budget)",
       "configured.py provider_owned_adapter fetch.max_records bound 1000",
       "scripts/deploy_nonprod_vm.sh SOURCE_INGEST_MAX_RECORDS <= 500 check and SOURCE_REFRESH_MAX_RECORDS default 100 (runtime MAX_RECORDS_PER_JOB)",
       "deploy_nonprod_vm.sh max_records=500 at ~3430 is the FinMind fundamentals adapter, not a TWSE/TPEx chip profile: unchanged"
@@ -20,9 +20,9 @@
   },
   "changes": {
     "full_market_budget": "3 TWSE/TPEx chip profiles: max_records 3000 (profile key full_market=true). configured.py bound 5000 (named PROVIDER_OWNED_ADAPTER_MAX_RECORDS); FinMind keeps its own 1000 per-job guard in the deploy script.",
-    "session_date": "taiwan_official._stamp_full_market_sessions: provider row date wins; a date-less row gets chip_publication_schedule.resolve_chip_row_session -> latest_published_chip_session(connector, fetch_time). Request run_date (fetch date) is no longer a row-date fallback for these profiles. Undecidable session raises SourceEvidenceError naming the profile; fetch date is never used.",
+    "session_date": "taiwan_official._stamp_full_market_sessions: provider row date wins; a date-less row gets chip_publication_schedule.resolve_chip_row_session -> latest_published_chip_session(connector, fetch_time). The caller trade_date/run_date (fetch date) is ignored for these profiles; only provider response dates count. Undecidable session raises SourceEvidenceError naming the profile; fetch date is never used.",
     "listing": "existing ListingFilter (security_listing) now also applied to these chip rows when present; rows are never invented for symbols the provider did not return.",
-    "no_silent_truncation": "adapter and execute_provider_owned_adapter raise 'refusing to truncate' when a full-market chip response exceeds max_records.",
+    "no_silent_truncation": "the adapter raises 'refusing to truncate' when a full-market chip response exceeds max_records.",
     "batching": "single run, no cursor: one provider response is ~1310 rows (TWSE margin) / ~1000 (TPEx), budget 3000 holds the whole session in one refresh; batching not needed, over-budget fails closed.",
     "coverage_readback": "records carry provider_listed_count; deploy readback calls chip_publication_schedule.evaluate_chip_row_coverage (complete | partial with missing_count | session_mismatch) against receipt.normalized_count and fails the refresh unless complete.",
     "unchanged": "six chip publication schedules and TAIFEX schedule values; only chip profile entries/limits changed in connector_definitions.py (no INTRADAY-KBAR-CONNECTOR-20261111 areas touched)."
