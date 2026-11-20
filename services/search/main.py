@@ -930,7 +930,6 @@ def create_app(
                 trigger_ref=ingest_run_id,
                 force_full=body.force_full,
             )
-            pipeline_store.reload()
             freshness = pipeline.freshness_status()
             materialized = (
                 _materialize_index_state(
