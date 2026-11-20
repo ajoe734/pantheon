@@ -30,6 +30,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
@@ -564,6 +565,9 @@ def classify_and_validate_participant(
     }
 
 
+_ROSTER_PERSONA_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
 def resolve_and_validate_roster(
     *,
     spec: Mapping[str, Any],
@@ -587,7 +591,24 @@ def resolve_and_validate_roster(
         if convener_kind == "persona" and convener_id:
             entries.append({"persona_id": convener_id, "role": "chair"})
         elif subject_ref and not str(subject_ref).startswith(("trader:", "agora_user:", "user:")):
-            entries.append({"persona_id": str(subject_ref), "role": "chair"})
+            subject_persona_id = str(subject_ref).strip()
+            if subject_persona_id.startswith("persona:"):
+                subject_persona_id = subject_persona_id[len("persona:"):].strip()
+            if not _ROSTER_PERSONA_ID_PATTERN.fullmatch(subject_persona_id):
+                raise MeetingRefusedError(
+                    "invalid_subject_persona",
+                    f"subject_ref {subject_ref!r} does not resolve to an admissible persona id",
+                    persona_id=subject_persona_id,
+                    meeting_type=meeting_code,
+                )
+            if subject_persona_id not in directory:
+                raise MeetingRefusedError(
+                    "subject_persona_not_found",
+                    f"subject_ref persona {subject_persona_id} is not in the persona directory",
+                    persona_id=subject_persona_id,
+                    meeting_type=meeting_code,
+                )
+            entries.append({"persona_id": subject_persona_id, "role": "chair"})
         else:
             # Find enrolled trading personas in directory or default
             trading_ids = [
