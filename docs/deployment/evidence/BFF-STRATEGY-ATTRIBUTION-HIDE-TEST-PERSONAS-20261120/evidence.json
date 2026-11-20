@@ -1,0 +1,13 @@
+{
+  "task_id": "BFF-STRATEGY-ATTRIBUTION-HIDE-TEST-PERSONAS-20261120",
+  "reproduction": {
+    "source": "coordinator hosted reads 2026-11-20 (read-only; BFF fb8ed951d; 67-page sweep kept in mgmt-readability-sweep-20261120 on the development host)",
+    "observed": "default strategy list (exclude_state=draft) started with 'Pantheon Dev Paper Release 43688794313 Attempt 1' whose persona carries data_scope test; performance attribution listed it as a persona"
+  },
+  "change": {
+    "strategy_list": "GET /bff/strategies hides strategies whose personas are all test-scoped (classify_persona_data_scope) unless include_test_personas=true; meta.hidden_test_persona_strategy_count states how many",
+    "performance_attribution": "all four /bff/management/performance-attribution routes drop facts of test-scoped personas unless include_test_personas=true; summary and meta carry hidden_test_persona_count and hidden_test_strategy_count",
+    "reads": "test persona ids come from the single persona directory read already made per request (PersonaStateLookup.test_persona_ids) and from sources.personas_by_id for attribution; no per-row owner call"
+  },
+  "tests": "services/control-plane/bff/tests/test_strategy_list_test_scope.py"
+}
