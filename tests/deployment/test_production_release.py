@@ -3328,5 +3328,237 @@ class StaticContractTests(unittest.TestCase):
             self.assertEqual(prod_services[paper_svc]["healthcheck"].get("start_period"), "5s", paper_svc)
 
 
+FAKE_SNAP_BIN = r"""#!/usr/bin/env bash
+# fake gcloud/docker/sudo/mount/umount for snapshot-schedule and restore-drill tests. State in $FAKE_STATE.
+S="$FAKE_STATE"; mkdir -p "$S"/disks "$S"/attached "$S"/ctr "$S"/net
+tool="$(basename "$0")"; echo "$tool $*" >> "$S/calls.log"
+all="$*"
+disk_arg() { local a=("$@"); set -- $all; while [[ $# -gt 0 ]]; do [[ "$1" == --disk ]] && { echo "$2"; return; }; shift; done; }
+case "$tool" in
+  sudo) exec "$@" ;;
+  mount) [[ "${FAIL:-}" == mount_readonly ]] && exit 32; [[ "$all" == *"-o ro,noload"* ]] || exit 33
+         cp -a "$S/content/." "${@: -1}/" ;;
+  umount) rm -rf "$1"/* 2>/dev/null; exit 0 ;;
+  gcloud)
+    case "$all" in
+      "config get-value project") echo "${FAKE_PROJECT:-prod-proj}" ;;
+      "compute disks describe pantheon-prod-control-data"*"resourcePolicies"*) cat "$S/disk_policies" 2>/dev/null; exit 0 ;;
+      "compute disks describe pantheon-prod-control-data"*) exit 0 ;;
+      "compute disks describe "*) n="$4"; [[ -e "$S/disks/$n" ]] || exit 1 ;;
+      "compute disks create"*) [[ "${FAIL:-}" == create_disk ]] && exit 1; touch "$S/disks/$4" ;;
+      "compute disks delete"*) rm -f "$S/disks/$4" ;;
+      "compute disks list"*) ls "$S/disks" ;;
+      "compute disks add-resource-policies"*) echo "$all" >> "$S/mutations.log"; echo "https://x/resourcePolicies/pantheon-prod-data-hourly" > "$S/disk_policies" ;;
+      "compute instances attach-disk"*) echo "$all" >> "$S/attach.log"; [[ "${FAIL:-}" == attach_readonly ]] && exit 1; touch "$S/attached/$(disk_arg)" ;;
+      "compute instances detach-disk"*) rm -f "$S/attached/$(disk_arg)" ;;
+      "compute snapshots list"*) cat "$S/snapshot" 2>/dev/null ;;
+      "compute resource-policies describe"*) [[ -f "$S/policy.json" ]] && cat "$S/policy.json" || exit 1 ;;
+      "compute resource-policies create"*) echo "$all" >> "$S/mutations.log"
+        echo '{"snapshotSchedulePolicy":{"schedule":{"hourlySchedule":{"hoursInCycle":1}},"retentionPolicy":{"maxRetentionDays":3}}}' > "$S/policy.json" ;;
+      *) echo "unexpected gcloud: $all" >&2; exit 99 ;;
+    esac ;;
+  docker)
+    case "$1" in
+      ps) if [[ "$all" == *compose.service=postgres* ]]; then echo live; else n="${all##*name=^}"; n="${n%\$}"; [[ -e "$S/ctr/$n" ]] && echo "$n"; fi; exit 0 ;;
+      network) case "$2" in
+        create) [[ "$all" == *--internal* ]] || exit 1; touch "$S/net/${@: -1}" ;;
+        rm) rm -f "$S/net/$3" ;;
+        ls) n="${all##*name=^}"; n="${n%\$}"; [[ -e "$S/net/$n" ]] && echo "$n" ;; esac; exit 0 ;;
+      run) [[ "${FAIL:-}" == start_postgres ]] && exit 1
+           [[ "$all" == *" -p "* || "$all" == *"--publish"* || "$all" == *"/var/lib/pantheon-production"* ]] && exit 1
+           echo "$all" >> "$S/run.log"; touch "$S/ctr/$4" ;;
+      stop) exit 0 ;;
+      rm) rm -f "$S/ctr/$3" ;;
+      exec) shift; [[ "$1" == -i ]] && shift; c="$1"; shift; [[ "$1" == pg_isready ]] && exit 0
+            key=restored; [[ "$c" == live ]] && key=live
+            sql="$(cat)"
+            case "$sql" in
+              *"information_schema.columns"*) cat "$S/catalog_$key" ;;
+              *"information_schema.tables"*) cut -d= -f1 "$S/counts_$key" ;;
+              *"select count(*)"*) t="${sql#*from }"; t="$(echo "$t" | tr -d '"')"; grep "^$t=" "$S/counts_$key" | cut -d= -f2 ;;
+            esac ;;
+    esac ;;
+esac
+exit 0
+"""
+
+SNAP_ENV_KEYS = ("PROD_GCP_PROJECT_ID", "PROD_GCP_ZONE", "PROD_DATA_DISK", "PROD_RPO_SECONDS")
+
+
+class SnapshotDrillHarness(unittest.TestCase):
+    OPS = REPO_ROOT / "scripts" / "deploy" / "prod_ops.sh"
+    ENSURE = (OPS, "snapshot_schedule")
+    DRILL = (OPS, "restore_drill")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        for tool in ("gcloud", "docker", "sudo", "mount", "umount"):
+            (self.bin / tool).write_text(FAKE_SNAP_BIN)
+            (self.bin / tool).chmod(0o755)
+        self.state = self.tmp / "state"
+        (self.state / "content").mkdir(parents=True)
+        for d in ("postgres", "bff", "runtime", "governance", "product"):
+            (self.state / "content" / d).mkdir()
+            (self.state / "content" / d / "f.dat").write_text(d)
+        (self.state / "catalog_live").write_text("public.t.a:int\n")
+        (self.state / "catalog_restored").write_text("public.t.a:int\n")
+        (self.state / "counts_live").write_text("public.t=12\n")
+        (self.state / "counts_restored").write_text("public.t=10\n")
+        self.data_mount = self.tmp / "var-lib-pantheon-production"
+        (self.data_mount / "postgres").mkdir(parents=True)
+        (self.data_mount / "postgres" / "live.dat").write_text("live")
+        self.mnt, self.tmpbase = self.tmp / "mnt", self.tmp / "vtmp"
+        self.mnt.mkdir(); self.tmpbase.mkdir()
+        self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_STATE": str(self.state),
+                    "PROD_GCP_PROJECT_ID": "prod-proj", "PROD_GCP_ZONE": "asia-east1-b",
+                    "PROD_DATA_DISK": "pantheon-prod-control-data", "PROD_VM_NAME": "prod-vm",
+                    "PROD_RPO_SECONDS": "3600", "PROD_RTO_SECONDS": "1800", "PROD_DATA_MOUNT": str(self.data_mount),
+                    "PROD_POSTGRES_USER": "pgu", "PROD_POSTGRES_DB": "pdb", "PROD_DRILL_POLL_SECONDS": "0",
+                    "PANTHEON_POSTGRES_IMAGE": "postgres:16@sha256:" + "c" * 64,
+                    "PROD_DRILL_MNT_BASE": str(self.mnt), "PROD_DRILL_TMP_BASE": str(self.tmpbase)}
+        self.env.pop("CLOUDSDK_CORE_PROJECT", None)
+        self.env.pop("FAIL", None)
+
+    def snapshot(self, age_seconds):
+        import datetime as dt
+        ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=age_seconds)).isoformat()
+        (self.state / "snapshot").write_text(f"auto-snap-1\t{ts}\n")
+
+    def run_script(self, script, *args, **env):
+        return subprocess.run(["bash", *map(str, script if isinstance(script, tuple) else (script,)), *args], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+
+    def calls(self):
+        p = self.state / "calls.log"
+        return p.read_text() if p.exists() else ""
+
+    def assert_clean(self, out):
+        res = json.loads(out.strip().splitlines()[-1])
+        self.assertEqual(res["cleanup"], {"clean": True, "container": 0, "network": 0, "temp_copy": 0, "mount": 0, "scratch_disk": 0}, res)
+        self.assertEqual(list((self.state / "disks").iterdir()), [])
+        self.assertEqual(list((self.state / "attached").iterdir()), [])
+        self.assertEqual(list((self.state / "ctr").iterdir()), [])
+        self.assertEqual(list((self.state / "net").iterdir()), [])
+        self.assertEqual(list(self.tmpbase.iterdir()), [])
+        self.assertEqual(list(self.mnt.iterdir()), [])
+        return res
+
+    def assert_live_untouched(self):
+        self.assertEqual(sorted(p.name for p in self.data_mount.rglob("*")), ["live.dat", "postgres"])
+        self.assertEqual((self.data_mount / "postgres" / "live.dat").read_text(), "live")
+        self.assertNotIn(str(self.data_mount), self.calls())
+
+    # ---- snapshot schedule ----
+    def test_ensure_is_idempotent_and_touches_only_the_data_disk(self):
+        self.snapshot(60)
+        first = self.run_script(self.ENSURE, "ensure")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        mutations = (self.state / "mutations.log").read_text()
+        for needle in ("--hourly-schedule=1", "--max-retention-days=3", "--on-source-disk-delete=keep-auto-snapshots",
+                       "--storage-location asia-east1", "--region asia-east1", "environment=production,managed_by=pantheon",
+                       "add-resource-policies pantheon-prod-control-data"):
+            self.assertIn(needle, mutations)
+        before = mutations
+        second = self.run_script(self.ENSURE, "ensure")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual((self.state / "mutations.log").read_text(), before)
+        out = json.loads(second.stdout)
+        self.assertTrue(out["policy_present"] and out["attached"])
+        self.assertEqual((out["schedule"], out["retention_days"], out["newest_snapshot"]), ("hourly/1h", 3, "auto-snap-1"))
+        self.assertNotRegex(self.calls(), r"(?i)boot|snapshots delete|disks delete")
+
+    def test_check_is_read_only_and_fails_on_stale_snapshot(self):
+        self.snapshot(60)
+        self.assertEqual(self.run_script(self.ENSURE, "ensure").returncode, 0)
+        (self.state / "mutations.log").unlink()
+        self.snapshot(3600 + 900 - 30)
+        self.assertEqual(self.run_script(self.ENSURE, "check").returncode, 0)
+        self.snapshot(3600 + 900 + 120)
+        stale = self.run_script(self.ENSURE, "check")
+        self.assertEqual(stale.returncode, 1)
+        self.assertGreater(json.loads(stale.stdout)["newest_age_seconds"], 4500)
+        (self.state / "snapshot").unlink()
+        self.assertEqual(self.run_script(self.ENSURE, "check").returncode, 1)
+        self.assertFalse((self.state / "mutations.log").exists())
+
+    def test_schedule_refuses_wrong_project_or_missing_disk(self):
+        wrong = self.run_script(self.ENSURE, "ensure", FAKE_PROJECT="other-proj")
+        self.assertEqual(wrong.returncode, 1)
+        self.assertIn("WRONG_PROJECT", wrong.stderr)
+        self.assertFalse((self.state / "mutations.log").exists())
+        missing = self.run_script(self.ENSURE, "ensure", PROD_DATA_DISK="no-such-disk")
+        self.assertIn("DISK_NOT_FOUND", missing.stderr)
+        self.assertFalse((self.state / "mutations.log").exists())
+
+    # ---- restore drill ----
+    def test_drill_success_proves_readability_and_cleans_up(self):
+        self.snapshot(900)
+        r = self.run_script(self.DRILL)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        res = self.assert_clean(r.stdout)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["snapshot"], "auto-snap-1")
+        self.assertTrue(895 <= res["rpo_seconds"] <= 905)
+        self.assertLessEqual(res["rto_seconds"], 60)
+        c = res["checks"]
+        self.assertTrue(c["catalog_hash_equal"] and c["owner_store_manifest_equal"] and c["tables_match_live"])
+        self.assertEqual(c["row_count_drift_vs_live"], {"public.t": 2})
+        attach = (self.state / "attach.log").read_text()
+        self.assertIn("--mode ro", attach)
+        self.assertIn("pantheon-prod-restore-drill-", attach)
+        run = (self.state / "run.log").read_text()
+        self.assertIn("--network pantheon-restore-drill-", run)
+        self.assertIn("postgres:16@sha256:" + "c" * 64, run)
+        self.assertNotRegex(run, r"PASSWORD|dsn|://")
+        self.assert_live_untouched()
+        self.assertNotIn("pwd", r.stdout.lower())
+
+    def test_drill_over_budget_fails_but_still_cleans_up(self):
+        self.snapshot(3601 + 5)
+        r = self.run_script(self.DRILL)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.assert_clean(r.stdout)["status"], "over_budget")
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, PROD_RTO_SECONDS="-1")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.assert_clean(r.stdout)["status"], "over_budget")
+
+    def test_drill_tears_down_on_failure_injected_at_each_stage(self):
+        self.snapshot(60)
+        cases = [("create_disk", {"FAIL": "create_disk"}), ("attach_readonly", {"FAIL": "attach_readonly"}),
+                 ("mount_readonly", {"FAIL": "mount_readonly"}), ("start_postgres", {"FAIL": "start_postgres"})]
+        for stage, env in cases:
+            with self.subTest(stage=stage):
+                r = self.run_script(self.DRILL, **env)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                res = self.assert_clean(r.stdout)
+                self.assertEqual((res["status"], res["failed_stage"]), ("failed", stage))
+                self.assert_live_untouched()
+        with self.subTest(stage="copy"):
+            shutil.rmtree(self.state / "content" / "governance")
+            r = self.run_script(self.DRILL)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "copy")
+            (self.state / "content" / "governance").mkdir()
+        with self.subTest(stage="verify"):
+            (self.state / "catalog_restored").write_text("public.t.a:int\npublic.t.b:text\n")
+            r = self.run_script(self.DRILL)
+            self.assertEqual(r.returncode, 3)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "verify")
+        with self.subTest(stage="select_snapshot"):
+            (self.state / "snapshot").unlink()
+            r = self.run_script(self.DRILL)
+            self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "select_snapshot")
+
+    def test_drill_refuses_wrong_project_without_creating_anything(self):
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, FAKE_PROJECT="other-proj")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("disks create", self.calls())
+
+
 if __name__ == "__main__":
     unittest.main()
