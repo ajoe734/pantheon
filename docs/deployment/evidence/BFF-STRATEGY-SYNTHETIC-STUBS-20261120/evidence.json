@@ -1,0 +1,23 @@
+{
+  "task_id": "BFF-STRATEGY-SYNTHETIC-STUBS-20261120",
+  "reproduction": {
+    "source": "2026-11-20 hosted sweep (BFF fb8ed951d), recorded texts strategies.txt / risk.txt; read-only, no VM access",
+    "observed": "exclude_state=draft led with unbound 'TW official tw_price_daily TWSE 2330 2026-10-15' (raw seed, no rules) and 'SIMULATION paper-only SPY anchor dev-product-...' above the live Paper strategies"
+  },
+  "change": {
+    "strategy_list": "default view and exclude_state=draft hide unbound raw-seed / simulation stubs and data_scope test|acceptance|fixture|synthetic rows unless include_test_personas=true (same parameter as BFF-STRATEGY-ATTRIBUTION-HIDE-TEST-PERSONAS); meta.hidden_unbound_stub_strategy_count and meta.hidden_test_persona_strategy_count",
+    "strategy_rows_and_detail": "persona_display_names from the single persona directory read; detail adds is_synthetic_or_stub and stub_reason",
+    "meetings": "GET /bff/meetings and /bff/management/meetings forward include_failed; execution_state, effective_status, summary.dead_letter_count preserved",
+    "probe": "acceptance/probes/mgmt-strategy-meeting-research-readable (read-only, exit 77 without viewer credentials)"
+  },
+  "limits": {
+    "hide_retired_personas_default": "left false: making it default true broke bounded-owner-page tests and costs a full owner walk; retired-persona hiding stays opt-in (hide_retired_personas=true)",
+    "stub_count_exactness": "on the bounded owner page the stub count is exact only when the candidate set was read for operational_counts, otherwise it counts the returned page",
+    "preexisting_failure": "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies fails on the unmodified base as well"
+  },
+  "tests": {
+    "bff": "services/control-plane/bff/tests/test_strategy_synthetic_stubs.py, test_meetings_include_failed_forward.py (+ existing strategy/meeting suites: 111 passed, 1 preexisting failure)",
+    "acceptance": "acceptance/test_mgmt_strategy_meeting_research_readable.py and scripts/test_dev_acceptance_stage.py: 21 passed"
+  },
+  "runtime_budget": "read-only projections and one read-only probe; zero owner writes, stores or background writers"
+}

@@ -185,6 +185,7 @@ def create_meetings_router(
         page_token: Optional[str],
         limit: int,
         page_size: Optional[int],
+        include_failed: bool = False,
     ) -> Dict[str, Any]:
         identity, tenant_id, is_operator, caller_user_id = _caller_context(
             request,
@@ -208,6 +209,7 @@ def create_meetings_router(
                 persona_id=eff_persona,
                 cursor=eff_cursor,
                 limit=eff_limit,
+                include_failed=include_failed,
             )
         except MeetingsOwnerUnavailableError as exc:
             return unavailable_meetings_envelope("meetings", exc.reason, snapshot_at=snap)
@@ -448,6 +450,7 @@ def create_meetings_router(
         page_token: Optional[str] = Query(default=None),
         limit: int = Query(default=50, ge=1, le=500),
         page_size: Optional[int] = Query(default=None, ge=1, le=500),
+        include_failed: bool = Query(default=False),
     ) -> Dict[str, Any]:
         return _handle_list_meetings(
             request,
@@ -460,6 +463,7 @@ def create_meetings_router(
             page_token=page_token,
             limit=limit,
             page_size=page_size,
+            include_failed=include_failed,
         )
 
     @router.get("/bff/meetings", operation_id="bff_list_meetings")
@@ -474,6 +478,7 @@ def create_meetings_router(
         page_token: Optional[str] = Query(default=None),
         limit: int = Query(default=50, ge=1, le=500),
         page_size: Optional[int] = Query(default=None, ge=1, le=500),
+        include_failed: bool = Query(default=False),
     ) -> Dict[str, Any]:
         return _handle_list_meetings(
             request,
@@ -486,6 +491,7 @@ def create_meetings_router(
             page_token=page_token,
             limit=limit,
             page_size=page_size,
+            include_failed=include_failed,
         )
 
     @router.post("/bff/management/meetings", status_code=202, operation_id="bff_management_convene_meeting")

@@ -410,7 +410,9 @@ def test_symbols_are_empty_list_when_summary_has_none(
         )
     )
     app, _ = _build_app(monkeypatch, world)
-    body = TestClient(app).get("/bff/strategies?page_size=200", headers=HEADERS).json()
+    body = TestClient(app).get(
+        "/bff/strategies?page_size=200&include_test_personas=true", headers=HEADERS
+    ).json()
     row = next(r for r in body["items"] if r["id"] == "strat-src-dev-product-spy-anchor-1")
     assert row["symbols"] == []
 
