@@ -6,7 +6,7 @@
   "delivery_state": "merged_pending_review",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "generated_at": "2026-11-20T03:36:00Z",
+  "generated_at": "2026-11-20T03:50:30Z",
   "reproduction": {
     "source": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120",
     "hosted_read_date": "2026-11-20",
@@ -99,15 +99,15 @@
   "validation": {
     "pytest_batches": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/incident/test_incident.py services/incident/test_pg_store_integration.py services/incidents/test_consume_agent_finding.py services/incident/smoke_test_incident.py",
-        "passed": 101,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/incident services/incidents",
+        "passed": 262,
         "skipped": 7,
         "failed": 0,
         "exit_code": 0
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/incidents/test_main_routes.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_incident_router.py",
-        "passed": 101,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_incident_router.py",
+        "passed": 39,
         "skipped": 0,
         "failed": 0,
         "exit_code": 0

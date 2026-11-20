@@ -1358,12 +1358,17 @@ class IncidentStore:
                 f"Cannot merge infrastructure incident into non-infrastructure incident: {incident_id}"
             )
         extra_telemetry = list(incoming.telemetry_event_ids or [])
+        extra_summary_parts: List[str] = []
         if incoming.incident_id and incoming.incident_id != existing.incident_id:
             extra_telemetry.append(f"merged_incident_id:{incoming.incident_id}")
             if incoming.telemetry_event_ids:
                 extra_telemetry.append(
                     f"merged_event:{incoming.incident_id}:{incoming.telemetry_event_ids[0]}"
                 )
+            extra_summary_parts.append(f"merged_incident_id={incoming.incident_id}")
+        incoming_raw_summary = (incoming.evidence_summary or "").strip()
+        if incoming_raw_summary:
+            extra_summary_parts.append(incoming_raw_summary)
 
         merged_telemetry = _merge_unique(
             existing.telemetry_event_ids,
@@ -1374,7 +1379,7 @@ class IncidentStore:
             incoming.reconciliation_ids,
         )
         merged_severity = _max_incident_severity(existing.severity, incoming.severity)
-        incoming_summary = (incoming.evidence_summary or "").strip()
+        incoming_summary = "; ".join(part for part in extra_summary_parts if part)
         existing_summary = (existing.evidence_summary or "").strip()
         has_oversized_existing = len(existing_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
 
