@@ -32,7 +32,7 @@ def _items(body):
 
 
 def _total(body):
-    info = ((body.get("data") if isinstance(body, dict) else None) or {}).get("page_info")
+    info = body.get("page_info") if isinstance(body, dict) else None  # top level: {data, page_info, meta}
     value = info.get("total") if isinstance(info, dict) else None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
