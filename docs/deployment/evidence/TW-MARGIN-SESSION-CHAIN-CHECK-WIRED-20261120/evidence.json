@@ -1,0 +1,12 @@
+{
+  "task_id": "TW-MARGIN-SESSION-CHAIN-CHECK-WIRED-20261120",
+  "wiring": "chip_publication_schedule.margin_chain_wiring(connector_id) supplies previous_session_lookup + accept_first_load for tw-official-twse/tpex-margin-balances; applied in chip_profile_provider and the base official provider factory (persona_source_reconciler.py), ProviderAdapterSpec.build and _taiwan_official_records (provider_adapters.py, incl. the bundle-transport rebuild). Only margin wiring changed in provider_adapters.py; no conflict with INTRADAY-KBAR-CONNECTOR-20261111 expected (different hunks).",
+  "tolerance": {"constant": "MARGIN_CHAIN_MIN_MATCH_RATIO", "value": 0.99,
+    "reason": "hosted read-only 2026-11-20: consecutive sessions matched 498/498 and 500/500; several sessions apart 102/500",
+    "failure": "ChipSessionUndecidable naming matched and mismatched counts"},
+  "lookup": "stored_margin_session_lookup reads only normalized/tw_margin_short_balance/date=<previous session>/ rows of one connector (bounded, one session one venue); no new writer",
+  "first_load": {"rule": "accepted per connector only when the previous session partition holds only pre-7655 rows (date '') or the dataset has never been stored; recorded on every stamped row as session_chain {status: first_load_accepted, connector_id, session}",
+    "gap": "previous partition missing in a populated store, or no rows for the connector, raises ChipSessionUndecidable (fails closed)"},
+  "validation": {"command": "pytest test_tw_margin_session_chain_wired.py test_tw_official_chip_full_market.py test_taiwan_official_connectors.py test_chip_publication_schedule.py test_persona_source_reconciler.py", "result": "214 passed, 1 skipped"},
+  "open_after_deploy": "coordinator reads next two Taiwan refresh runs and steady pulls on hosted (acceptance 5); first-load evidence is in row session_chain, a separate run-outcome field was not added"
+}
