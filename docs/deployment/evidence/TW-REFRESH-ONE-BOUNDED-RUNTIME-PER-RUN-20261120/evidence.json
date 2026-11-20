@@ -1,0 +1,80 @@
+{
+  "task_id": "TW-REFRESH-ONE-BOUNDED-RUNTIME-PER-RUN-20261120",
+  "base": "origin/dev 9f3044ab9 (includes PR 7655, TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120)",
+  "acceptance_1_diagnosis": {
+    "run": 44638166258,
+    "job": 135962026433,
+    "window_utc": "2026-11-19T23:30:06Z to 2026-11-20T00:43:58Z",
+    "observation": "pantheon-source-ingest-1 was recreated 23 times in about 70 minutes (23 'Container pantheon-source-ingest-1  Recreated' lines in the job log; 12 profiles x (bounded recreate + steady restore) = 24 possible, the last profile timed out before its restore, the steady check restored it).",
+    "quoted_log_lines": [
+      "2026-11-19T23:31:20.4027282Z  Container pantheon-source-ingest-1  Recreate",
+      "2026-11-19T23:31:51.1644856Z  Container pantheon-source-ingest-1  Recreated",
+      "2026-11-19T23:35:20.5879626Z  Container pantheon-source-ingest-1  Recreate",
+      "2026-11-19T23:35:51.3682791Z  Container pantheon-source-ingest-1  Recreated",
+      "2026-11-19T23:37:22.2185675Z  Container pantheon-source-ingest-1  Recreate",
+      "2026-11-19T23:37:53.0233817Z  Container pantheon-source-ingest-1  Recreated",
+      "2026-11-20T00:38:51.1945920Z  Container pantheon-source-ingest-1  Recreate",
+      "2026-11-20T00:39:22.0293710Z  Container pantheon-source-ingest-1  Recreated"
+    ],
+    "recreate_cost": "every Recreate -> Recreated pair is 30.7 to 34.6 s of stop time (compose stop of source-ingest), followed by the readyz warm-up wait of up to 180 s (36 x 5 s); the host capture ~/pantheon-market-data-acceptance/hosted_refresh_profile_cost_20261119T2330Z_b.txt shows the connection and thread counts during those windows.",
+    "cause": "execute_bounded_source_refresh_entrypoint recreated source-ingest into the bounded runtime at the start of every profile call and again at its end (restore_bounded_source_refresh), and each workflow step called it once per profile.",
+    "per_profile_environment": {
+      "container_level (cannot change per call; needs a recreate)": [
+        "PANTHEON_EXTERNAL_EGRESS=allowlist and PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.taifex.com.tw,www.taifex.com.tw for tw-taifex-futures-options-chip, tw-taifex-institutional-positions, tw-taifex-put-call, tw-taifex-tx-daily; openapi.twse.com.tw,www.tpex.org.tw for tw-twse-tpex-official-market, tw-official-twse-margin-balances, tw-official-tpex-margin-balances, tw-official-tpex-institutional-flow; api.finmindtrade.com,storage.googleapis.com for tw-finmind-broker-daily-report; api.finmindtrade.com for tw-finmind-monthly-revenue, tw-finmind-quarterly-statements, tw-finmind-valuation",
+        "FINMIND_API_TOKEN (env://FINMIND_API_TOKEN) for the four FinMind connectors",
+        "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS (same set for every profile of a run)",
+        "SOURCE_INGEST_MAX_RECORDS (100 official market, 500 chips and fundamentals)"
+      ],
+      "per_call (already chosen per one-shot container, no source-ingest recreate needed)": [
+        "connector id: SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS / EXCLUSIVE_CONNECTOR_IDS on the one-shot scheduler",
+        "dataset: SOURCE_INGEST_BOUNDED_DATASET on the one-shot scheduler and projector and in prepare_bounded_source_refresh_dataset",
+        "tick and concurrency sizing, session selection time, desired-state path"
+      ]
+    },
+    "decision": "the container-level values are the union over the run (hosts), the FinMind token only when a FinMind profile is in the run, the largest max records, and the run's symbol set; per-profile values stay per call."
+  },
+  "change": {
+    "scripts/deploy_nonprod_vm.sh": [
+      "--bounded-runtime-run, --run-hosts, --run-finmind, --run-max-records and their remote pass-through",
+      "bounded_runtime_* helpers: per-run state directory (mode 0700/0600) recorded before the first mutation with the steady pre-environment, image id, stopped steady container ids, steady controller mode, lease seconds and deploy values; restore from that record; memory.peak / limit / OOM capture; market-open guard; profile validation against the run union",
+      "execute_bounded_source_refresh_entrypoint: in a run the first profile that needs a refresh enters the bounded runtime once, later profiles reuse it and only start and remove their own one-shot containers; a signal or failure ends only that profile (one-shots removed, created leftovers removed, container counts checked, failed outcome written)",
+      "execute_steady_posture_check: restores the run's bounded runtime once from the record (never from the contaminated bounded container environment, so the egress union and the FinMind token are removed), waits for health start periods, reads only its own outcome, reports bounded_runtime enter and restore recreates and memory",
+      "preflight snapshot and readback reads wait (12 attempts x 10 s call, 5 s pause) for a warming-up source-ingest instead of failing on one 3 s call",
+      "steady_check_find_refresh_orphans ignores the calling call's own children (call id), so the next profile can wait for or stop a left-over process of the run"
+    ],
+    ".github/workflows/dev-tw-market-refresh.yml": "plan step (scripts/tw_refresh_outcome_summary.py --plan) gives the egress union, FinMind flag and max records; every refresh step passes them; the steady check step keeps the bounded_runtime summary in the outcome artifact; no step other than the steady check restores",
+    "scripts/tw_refresh_outcome_summary.py": "PROFILE_HOSTS table, plan_run(), --plan; not_run is a failing connector status",
+    "not_changed": ["scripts/run_with_dev_environment_lease.sh", "scripts/dev_remote_guarded_exec.py", "lease heartbeat and release steps", "no persistent writer added"]
+  },
+  "acceptance_2_recreates": {
+    "design": "at most 2: one recreate into the bounded runtime by the first profile call that needs a refresh, one restore by the steady check",
+    "test": "scripts/test_deploy_nonprod_vm.py::test_full_run_with_timed_out_and_failed_profile_recreates_source_ingest_twice (12 profiles, one timed out and left running, one failed): bounded=1 restore=1, one docker stop of the steady containers",
+    "hosted_count": "pending: the release owner reads the next hosted refresh run by its run id; count Recreate/Recreated lines of pantheon-source-ingest-1 in the job log or docker events (expected 2)."
+  },
+  "acceptance_3_egress_union": {
+    "full_profile_set": "openapi.taifex.com.tw,www.taifex.com.tw,api.finmindtrade.com,storage.googleapis.com,openapi.twse.com.tw,www.tpex.org.tw",
+    "morning_crons": "openapi.taifex.com.tw,www.taifex.com.tw,openapi.twse.com.tw,www.tpex.org.tw (no FinMind token)",
+    "afternoon_crons": "api.finmindtrade.com,storage.googleapis.com (FinMind token)",
+    "tests": ["test_run_plan_names_the_egress_union_for_the_full_profile_set_and_each_schedule", "test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime", "test_chip_and_fundamentals_profile_hosts_match_the_plan_table", "test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change", "test_run_without_finmind_profile_carries_no_finmind_token_into_the_bounded_runtime"]
+  },
+  "acceptance_4_guarantees": "lease acquire, heartbeat, re-arm and release steps unchanged (the lease is held from before the first recreate until after the steady check); the steady check still waits for or stops a left-over process, waits for health start periods, removes created leftovers and checks container counts, and only reads its own call outcome; interrupt tests: test_interrupt_at_any_profile_leaves_one_restore_for_the_steady_check (profiles 0, 1, 6, 11 x TERM, HUP), test_interrupt_while_entering_is_retried_by_the_next_profile_and_still_restored_once",
+  "acceptance_5_no_overlap": "every run-mode profile call first settles left-over refresh processes of the run (wait STEADY_CHECK_ORPHAN_WAIT_SECONDS, default 180, then TERM, grace 60, then KILL) and records previous_profile_process {action ended|stopped, pids, seconds} in its outcome; the loops keep going after a failed profile and every outcome file is listed by the summary step",
+  "acceptance_6_market_open": "bounded_runtime_market_open_guard: on Mon-Fri UTC a profile does not start from 00:35Z (00:55Z minus a 900 s profile budget and a 300 s restore budget) until the 05:30Z close; the first such call restores the steady posture from the record, writes status not_run with a reason naming market_open_0055z and the 00:55Z open, exits 1; every later profile writes the same; tw_refresh_outcome_summary treats not_run as failing. Test: test_trading_day_before_market_open_restores_steady_once_and_marks_remaining_profiles_not_run, test_market_open_guard_window",
+  "acceptance_7_snapshot_reads_and_memory": "each profile call waits for /readyz (36 x 5 s) before the preflight and reuses the bounded runtime without recreating it; preflight reads retry a warming-up source-ingest; memory.peak (docker exec cat /sys/fs/cgroup/memory.peak), HostConfig.Memory and State.OOMKilled are recorded in the state after every profile and before the restore and are reported by the steady check as bounded_runtime.memory_peak_bytes / memory_limit_bytes / oom_killed; an OOM-killed source-ingest fails the steady check (source_ingest_killed_for_memory). Tests: test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call, test_steady_check_fails_when_source_ingest_was_killed_for_memory",
+  "acceptance_8_validation": {
+    "behavior_tests_fail_on_dev": "with scripts/deploy_nonprod_vm.sh from 9f3044ab9 the 19 new behavior tests selected by -k 'full_run_with_timed or interrupt_at_any or trading_day_before or market_open_guard or dead_run or preflight_waits' fail (the run-level functions do not exist and a run recreates per profile); with the change they pass",
+    "commands": [
+      {"command": "python -m pytest scripts/test_deploy_nonprod_vm.py -q -p no:cacheprovider", "result": "234 passed, 2 skipped in 291.25s"},
+      {"command": "python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -p no:cacheprovider", "result": "45 passed in 56.43s"},
+      {"command": "python -m pytest scripts/test_dev_tw_market_refresh.py -q -p no:cacheprovider", "result": "132 passed in 300.33s"}
+    ],
+    "existing_test_edits": ["test_dev_tw_market_refresh.py preflight fixture allows a per-call timeout of 3 to 10 s and no pause between retries", "test_dev_tw_market_refresh_workflow.py chip step assertion narrowed from 'finmind' to 'tw-finmind' (the step now carries --run-finmind)"],
+    "persistent_writer_added": false
+  },
+  "residual_findings": [
+    "Why source-ingest needs about 31 s to stop is out of scope (market-data owner).",
+    "During the bounded window the steady scheduler and projector stay stopped for the whole run instead of per profile (the operator decision); collector steady pulls pause for the run duration.",
+    "If a run's first profile is interrupted while entering, the next profile enters again from the recorded steady state (one extra recreate, documented in test_interrupt_while_entering_is_retried_by_the_next_profile_and_still_restored_once).",
+    "Hosted recreate count and memory.peak of a real run are not yet observed: post-merge read of the next hosted run by the release owner."
+  ]
+}
