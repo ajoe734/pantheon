@@ -735,6 +735,50 @@ def test_consultation_persona_pool_read_principal_is_pool_get_only_file_delivere
     assert "dev-paper-consultation-tokens" in compose["volumes"]
 
 
+def test_consultation_persona_directory_principal_is_viewer_only_file_delivered_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN"
+    assert variable in CONSUMER_FILES["consultation-svc"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["roles"] == ["viewer"]  # existing read-only persona role; nothing broader
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert not {"operator", "admin", "persona.admin", "persona_pool_reader"} & set(claims["roles"])
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    assert issuer.revoked_environment(
+        {**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""
+    env = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
+    assert env[variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+
+
+def test_writeback_probe_payload_passes_real_memory_authority_check_and_writes_nothing(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from services.memory import main as memory_main
+
+    now = int(time.time())
+    values = issue_environment(configured(), now=now)
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "m.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "p.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_AUDIENCE", "isolated-audience")
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+    client = TestClient(memory_main.app)
+    url = "/api/memory/writebacks/learn-feedback"
+    auth = {"Authorization": "Bearer " + values["CONSULTATION_MEMORY_WRITE_TOKEN"]}
+    probe = {"write_authority": "consultation-svc", "tenant_id": "tenant-dev"}
+    assert client.post(url, json={}, headers=auth).status_code == 403  # the old probe
+    assert client.post(url, json=probe, headers=auth).status_code == 422  # validation only
+    assert client.get("/api/memory/entries", headers=auth).status_code in (200, 403)
+    assert not (tmp_path / "m.json").exists() or '"entry_id"' not in (tmp_path / "m.json").read_text()
+
+
 def test_consultation_memory_principal_writes_learn_feedback_as_consultation_svc_only_and_is_mounted(
         tmp_path, monkeypatch):
     import yaml

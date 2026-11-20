@@ -1,0 +1,20 @@
+{
+  "task_id": "CONSULTATION-WRITEBACK-PROBE-AND-PERSONA-DIRECTORY-20261120",
+  "source_verified": true,
+  "hosted_verified": false,
+  "hosted_pending": "memory log shows no learn-feedback 403 from consultation-svc for one hour after deploy; operator-convened meeting with subject_ref passes convene (persona-loop owner records it). Requires issuer run so CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN exists in the consultation volume.",
+  "writeback_probe": {
+    "payload": {"write_authority": "consultation-svc", "tenant_id": "<executor tenant>"},
+    "before": "empty payload {} refused 403 by memory-svc authority check before validation; probed every 15 s tick = about 5760 refused requests/day",
+    "after": "payload passes authority + tenant checks and is rejected only by validation (422), nothing written; at most one request per 900 s interval (CONSULTATION_WRITEBACK_PROBE_INTERVAL_SECONDS) = at most 96 requests/day",
+    "redrive": "hosted-shaped test: mtg-0f7fa4993625ca47, mtg-1f38c1a87b17344a, mtg-16d42d0b44dfeab5 redriven within existing budget after probe passes, converge to completed"
+  },
+  "persona_directory": {
+    "credential": "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN delivered as file (CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE), role viewer only, tenant-dev only, consultation-svc only",
+    "failure": "unreadable directory refused as persona_directory_unavailable (503); an empty directory is never subject_persona_not_found for a named subject",
+    "roster": "operator subject_ref <id> and persona:<id> resolve against a real persona owner in strict auth (test)"
+  },
+  "tokens_in_evidence": false,
+  "tests": "services/consultation/test_workflow_executor.py, services/consultation/tests/test_persona_meetings.py, services/consultation/tests/test_persona_meeting_routes.py, scripts/test_issue_dev_paper_principals.py: 150 passed",
+  "review_independence": "reviewer Antigravity; if no other model family has capacity at review time, record the exception"
+}
