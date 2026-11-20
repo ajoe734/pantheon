@@ -534,5 +534,17 @@
     "runtime_budget": "Only writer: one line rewritten in the existing secrets env file per dispatch; constant size (<1 KB), no growth; atomic temp file removed on success and failure.",
     "staging_bootstrap_changed": false,
     "validation": "python3 -m unittest tests.deployment.test_production_release: 113 run, 2 errors, both ModuleNotFoundError (pydantic, fastapi) in the local venv for pre-existing static contract tests; all new and other tests pass. Local mocked tests prove controller behavior only; no hosted evidence."
+  },
+  "prod_protected_rollback_and_journal_per_dispatch_20261120": {
+    "hosted_drill_evidence": "none; mocked/local tests prove controller behavior only",
+    "journal": "prod_atomic_switch.sh archives journal/<release_id> to .archived-<UTC> at start (renamed back on pre-journal refusal); newest 10 per release id kept; ~50 KB per dispatch",
+    "register_rows": [
+      "production journal is keyed by release id",
+      "no protected rollback mode"
+    ],
+    "review_independence_exception": "owner Claude2 and reviewer Claude are both Claude family; Codex/Antigravity capacity not available at dispatch",
+    "rollback_operation": "production-release.yml input operation=release|rollback (8 inputs total); scripts/deploy/prod_rollback_mode.sh refusal codes 10-14, post-check prod_ops.sh verify_rollback, one JSON result line",
+    "scope": "source only; no hosted run, no dispatch, no cloud or GitHub setting change",
+    "tests": "tests/deployment/test_production_release.py: 121 run, 2 env-only errors (fastapi/pydantic not installed locally); new tests for stale-bootstrap redispatch (exit 2 not 4), refusals, cred-check failure, over budget, archive retention, workflow contract"
   }
 }
