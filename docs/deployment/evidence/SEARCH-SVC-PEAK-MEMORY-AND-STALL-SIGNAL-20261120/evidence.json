@@ -1,0 +1,26 @@
+{
+  "task_id": "SEARCH-SVC-PEAK-MEMORY-AND-STALL-SIGNAL-20261120",
+  "diagnosis": {
+    "hosted_measurement_status": "NOT_MEASURED_BY_WORKER: worker has no hosted/kernel-log access. Kernel OOM lines and per-phase hosted memory quoted in the task brief (9.9 GiB at ~100 s, 11.3 GiB peak, anon-rss 13.6 GB on 2026-11-20 09:15:38Z, object count 28798) are the operator's, not re-measured here.",
+    "code_finding": "JsonlIndexPipelineStore.reload() did path.read_text().splitlines() and json.loads() on every line before compacting. Every run line persists the full indexed_object_ids checkpoint (~28.8k ids, ~1-2 MB/line, up to 500 lines retained). reload() runs on every /index/refresh, /index/source-completions, /index/freshness and pipeline-runs call, so the post-restart mix (87 source-completions + 6 refresh + 6 materialize) allocated file-size text + all parsed id lists per call, concurrently across request threads.",
+    "bounded_allocation": "Pipeline-run JSONL reload. Now streamed line-by-line and each run compacted as the next arrives: peak is one line in flight plus the latest run's id list (the next run's baseline).",
+    "not_ruled_out": "Model load (multilingual-e5-large ONNX), repository.reload, and query-time allocations were not measured; model load is a fixed cost. If hosted memory.peak is still above 70% (9.1 GiB) after release, treat as residual finding for those phases."
+  },
+  "changes": {
+    "services/search/index_pipeline.py": "streaming reload with per-run compaction; persisted format unchanged; no new writer",
+    "services/search/scheduler_worker.py": "assess_progress: an in_progress refresh counts as progress when its snapshot backlog_remaining < previous tick's; otherwise still a stalled tick (turns unhealthy after MAX_STALLED_TICKS)"
+  },
+  "unchanged": "retrieval results, ranking, embedding model, vector dimension, persisted formats",
+  "tests": {
+    "command": "/tmp/pv/bin/python -m pytest services/search/test_index_scheduler_worker.py services/search/tests -q --ignore=services/search/tests/test_qdrant_backend.py",
+    "result_with_change": "191 passed, 23 skipped, 3 failed",
+    "preexisting_failures": "3 x tests/test_zh_segmentation.py fail identically on unchanged dev code; tests/test_qdrant_backend.py fails at collection (ImportError, missing dependency in the venv) and was excluded",
+    "new_tests_fail_on_old_code_pass_on_new": [
+      "test_index_scheduler_worker.py::test_in_progress_ticks_with_falling_backlog_stay_healthy",
+      "test_index_scheduler_worker.py::test_in_progress_ticks_without_backlog_decrease_turn_unhealthy",
+      "tests/test_search_memory_bound.py::test_pipeline_store_reload_memory_is_bounded_by_one_line"
+    ]
+  },
+  "release_owner_read_only_command": "cid=$(docker ps -q --filter name=search-svc | head -1); cg=$(docker inspect -f '{{.Id}}' $cid); echo memory.peak=$(cat /sys/fs/cgroup/system.slice/docker-$cg.scope/memory.peak 2>/dev/null) limit=$(cat /sys/fs/cgroup/system.slice/docker-$cg.scope/memory.max); journalctl -k --since '24 hours ago' | grep -i 'Memory cgroup out of memory\\|oom-kill' | grep -i 'uvicorn\\|search'. Pass: no OOM lines across a 10:00Z persona cycle and memory.peak <= 9.1 GiB (70% of 13 GiB = 9771050598 bytes)",
+  "open_items": ["Hosted 24h verification after first release carrying the fix is the release owner's; not done."]
+}

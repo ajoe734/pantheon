@@ -182,3 +182,34 @@ def test_memory_growth_per_10000_evidence_rows_is_linear_and_stated() -> None:
     print(f"heap growth per 10000 evidence rows: {per_10k_rows_mb:.1f} MB")
     assert len(repo.list_evidence_items()) == 5000
     assert per_10k_rows_mb < 200
+
+
+def test_pipeline_store_reload_memory_is_bounded_by_one_line(tmp_path) -> None:
+    """Each run line persists the full checkpoint id list; reload must not hold the whole file."""
+    import gc
+    import json as _json
+
+    path = tmp_path / "pipeline.jsonl"
+    ids = [f"ko-{i:08d}-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" for i in range(6000)]
+    with path.open("w", encoding="utf-8") as handle:
+        for n in range(40):
+            snap = IndexPipelineSnapshot(
+                pipeline_run_id=f"run-{n}", schema_version="v", triggered_by="t", trigger_ref=None,
+                indexed_count=len(ids), incremental_count=1, removed_count=0, indexed_watermarks={},
+                indexed_at=f"2026-11-20T00:00:{n:02d}Z", is_full_rebuild=False,
+                freshness_sla_seconds=3600, indexed_object_ids=ids, backlog_remaining=40 - n,
+            )
+            handle.write(_json.dumps(snap.to_dict()) + "\n")
+    file_size = path.stat().st_size
+    gc.collect()
+    tracemalloc.start()
+    try:
+        store = JsonlIndexPipelineStore(path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert store.count_runs() == 40
+    assert store.get_latest().indexed_object_ids == ids
+    assert all(r.indexed_object_ids == [] for r in store.list_runs(40)[:-1])
+    # Old behaviour: peak >= file size (read_text) plus every parsed id list. Now ~ one line + latest ids.
+    assert peak < file_size * 0.25, (peak, file_size)

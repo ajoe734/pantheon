@@ -99,18 +99,29 @@ class JsonlIndexPipelineStore:
         self.reload()
 
     def reload(self) -> None:
+        """Stream the JSONL one line at a time, compacting each run as the next one arrives.
+
+        Every run line persists the full ``indexed_object_ids`` checkpoint (~28k ids at the hosted
+        object count, ~1-2 MB/line, up to ``max_retention`` lines). Reading the whole file and
+        parsing every line first made each refresh/source-completion/freshness call allocate
+        several GB transiently; here only the line in flight and the latest run's ids are alive.
+        """
         with self._lock:
             runs: list[IndexPipelineSnapshot] = []
             if self.path.exists():
-                for line in self.path.read_text(encoding="utf-8").splitlines():
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        data = json.loads(stripped)
-                        runs.append(IndexPipelineSnapshot.from_dict(data))
-                    except (json.JSONDecodeError, KeyError):
-                        continue
+                with self.path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        try:
+                            run = IndexPipelineSnapshot.from_dict(json.loads(stripped))
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+                        del stripped, line
+                        if runs and runs[-1].indexed_object_ids:
+                            runs[-1] = dataclasses.replace(runs[-1], indexed_object_ids=[])
+                        runs.append(run)
             self._runs = self._compact(runs)
 
     @staticmethod
