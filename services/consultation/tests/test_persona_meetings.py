@@ -1319,3 +1319,27 @@ def test_other_subject_ref_kinds_unchanged(ref):
     roster, chair = _roster(ref)
     # directory-derived default roster (sorted), not the subject_ref path
     assert chair == "persona-2448c7053e33ea48da47"
+
+
+def test_preread_memory_refusal_is_named_and_does_not_block(monkeypatch):
+    import urllib.error
+    import integrations.openclaw.persona_memory_bridge as bridge
+    from services.consultation.meetings import build_participant_pre_read
+
+    calls = []
+
+    def refuse(url, **kw):
+        calls.append(kw)
+        raise urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr(bridge, "fetch_canonical_memory", refuse)
+    monkeypatch.delenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "")
+    refusals: dict = {}
+    out = build_participant_pre_read(
+        refusals=refusals, meeting_id="m1", tenant_id=TENANT, topic="t", memory_url="http://memory.invalid",
+        participants=[{"persona_id": "persona-a", "role": "r", "style": "s", "origin": "o"}])
+    assert refusals == {"persona-a": "memory_read_refused:HTTPError:http_403"}
+    assert out[0]["entries"] and "memory_read_refusal" not in out[0]  # round proceeds; request content stable
+    assert calls[0]["actor_id"] and calls[0]["actor_roles"]

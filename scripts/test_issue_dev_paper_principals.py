@@ -793,3 +793,51 @@ def test_consultation_memory_principal_writes_learn_feedback_as_consultation_svc
     assert "dev-paper-consultation-tokens:/run/pantheon-principals:ro" in consultation["volumes"]
     assert consultation["environment"]["PANTHEON_MEMORY_AUTH_TOKEN_FILE"].endswith(
         "/run/pantheon-principals/" + variable + "}")
+
+
+def test_consultation_memory_read_principal_is_read_only_and_distinct_from_write(tmp_path, monkeypatch):
+    import time
+    import yaml
+    from fastapi.testclient import TestClient
+    from services.memory import main as memory_main
+
+    root = Path(__file__).resolve().parents[1]
+    read, write = "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN"
+    assert read in CONSUMER_FILES["consultation-svc"]
+    assert all(read not in names for c, names in CONSUMER_FILES.items() if c != "consultation-svc")
+    now = int(time.time())
+    values = issue_environment(configured(), now=now)
+    rc, wc = verify(values[read], now=now + 1), verify(values[write], now=now + 1)
+    assert rc["roles"] == ["consultation_session"] and rc["sub"] == "pantheon-dev-consultation-memory-reader"
+    assert wc["roles"] == ["consultation-svc"]  # write stays write-only
+    assert rc["tenant_id"] == "tenant-dev"
+
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "m.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "p.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_AUDIENCE", "isolated-audience")
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+    client = TestClient(memory_main.app)
+    params = {"actor_id": rc["sub"], "actor_roles": "consultation_session", "session_id": "s1", "scope": "institutional"}
+    ok = client.get("/api/memory/retrieve", params=params, headers={"Authorization": "Bearer " + values[read]})
+    assert ok.status_code == 200, ok.text
+    # The write principal is not a read role; the read principal cannot write.
+    assert client.get("/api/memory/retrieve", params={**params, "actor_id": wc["sub"], "actor_roles": "consultation-svc"},
+                      headers={"Authorization": "Bearer " + values[write]}).status_code == 403
+    payload = {"tenant_id": "tenant-dev", "source_event_type": "consultation_closed", "source_event_id": "x",
+               "write_authority": "consultation-svc", "sponsor_persona_id": "persona-a",
+               "contributing_persona_ids": ["persona-a"], "evidence_refs": ["consultation://memos/m"],
+               "summary": "s", "headline": "h", "body": "b"}
+    assert client.post("/api/memory/writebacks/learn-feedback", json=payload,
+                       headers={"Authorization": "Bearer " + values[read]}).status_code == 403
+
+    env = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
+    assert env["CONSULTATION_MEMORY_READ_TOKEN_FILE"].endswith("/run/pantheon-principals/" + read + "}")
+    assert env["PANTHEON_MEMORY_READ_ACTOR_ID"] == rc["sub"]
+    assert env["PANTHEON_MEMORY_READ_ACTOR_ROLES"] == "consultation_session"
+    # Hosted-shaped config: nothing in compose leaves the case-file caller empty.
+    assert env.get("PANTHEON_MEMORY_ACTOR_ID", "x") and env.get("PANTHEON_MEMORY_ACTOR_ROLES", "x")

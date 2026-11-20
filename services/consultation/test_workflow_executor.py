@@ -837,3 +837,93 @@ def test_old_release_reads_the_table_unchanged(tmp_path):
     assert state.redrive_dead_letter(tenant_id=TENANT, request_id="r1")
     # the previous release's own replay path still reads and moves the same row
     assert state.get(tenant_id=TENANT, request_id="r1")["status"] == "pending"
+
+
+# ---- CONSULTATION-MEMORY-READ-IDENTITY-20261120 ----------------------------
+def _read_double(tokens: dict[str, tuple[str, set[str]]]):
+    """Memory double enforcing services/memory/main.py _authorize_memory_read."""
+    read_roles = {"researcher", "operator", "admin", "system", "analyst", "consultation_session",
+                  "persona_memory_reader", "persona_session"}
+    seen: list[dict[str, Any]] = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            import urllib.parse as up
+            q = up.parse_qs(up.urlparse(self.path).query)
+            tok = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            ident = tokens.get(tok)
+            roles = [r for r in q.get("actor_roles", []) for r in r.split(",") if r]
+            actor = (q.get("actor_id") or [""])[0]
+            code = 200
+            if ident is None or not (ident[1] & read_roles):
+                code = 403
+            elif actor != ident[0] or not roles or not set(roles) <= ident[1]:
+                code = 403
+            seen.append({"code": code, "actor": actor, "roles": roles})
+            body = json.dumps({"hits": []} if code == 200 else {"detail": {"error": "unauthorized"}}).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_panel_case_file_composes_with_issued_read_identity(tmp_path, monkeypatch):
+    import time
+    from scripts.issue_dev_paper_principals import issue_environment
+    from services.knowledge import case_file as cf
+    from services.runtime_auth_inbound import _verify_jwt_hs256
+
+    key = "synthetic-dev-principal-unit-key-" * 2
+    now = int(time.time())
+    env = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+           "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}
+    import scripts.test_issue_dev_paper_principals as t
+    values = issue_environment(t.configured(), now=now)
+    claims = {n: _verify_jwt_hs256(values[n], secret=key, issuer="isolated-issuer",
+                                   audience="isolated-audience", now=now + 1)
+              for n in ("CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN")}
+    tokens = {values[n]: (c["sub"], set(c["roles"])) for n, c in claims.items()}
+    srv, seen = _read_double(tokens)
+    try:
+        read_file = tmp_path / "read"
+        read_file.write_text(values["CONSULTATION_MEMORY_READ_TOKEN"])
+        monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
+        monkeypatch.setenv("PANTHEON_MEMORY_READ_ACTOR_ID", "pantheon-dev-consultation-memory-reader")
+        monkeypatch.setenv("PANTHEON_MEMORY_READ_ACTOR_ROLES", "consultation_session")
+        for k in ("PANTHEON_MEMORY_ACTOR_ID", "PANTHEON_MEMORY_ACTOR_ROLES"):
+            monkeypatch.delenv(k, raising=False)  # hosted-shaped: legacy vars empty
+        token, actor, roles = wf.memory_read_identity()
+        assert actor and roles == ("consultation_session",)
+        owners = cf.Owners(memory=cf.OwnerEndpoint(f"http://127.0.0.1:{srv.server_port}", token))
+        subject = cf.Subject(decision_type="consult", persona_id="persona-a", tenant_id="tenant-dev",
+                             strategy_family="fam-1", member_artifact_refs=("r1",))
+        caller = cf.Caller(actor_id=actor, actor_roles=roles, session_id="consult-x", persona_id="")
+        case = cf.compose_case_file(subject, caller, owners)
+        assert seen and all(s["code"] == 200 for s in seen)
+        assert not any("http_" in str(u) for g in case["groups"].values() for u in g["unavailable"]), case["groups"]
+        # The write credential is refused as a reader (no 403-free path through it).
+        bad = cf.Owners(memory=cf.OwnerEndpoint(f"http://127.0.0.1:{srv.server_port}",
+                                                values["CONSULTATION_MEMORY_WRITE_TOKEN"]))
+        seen.clear()
+        cf.compose_case_file(subject, caller, bad)
+        assert seen and all(s["code"] == 403 for s in seen)
+        assert values["CONSULTATION_MEMORY_READ_TOKEN"] not in json.dumps(case)
+    finally:
+        srv.shutdown()
+
+
+def test_memory_read_identity_never_empty_roles(monkeypatch):
+    monkeypatch.delenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "")
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", raising=False)
+    _t, actor, roles = wf.memory_read_identity()
+    assert actor and roles
