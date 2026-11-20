@@ -1228,3 +1228,53 @@ def test_jobs_list_diagnostics_isolated_across_concurrent_requests(monkeypatch) 
 
 
 
+
+
+# --------------------------------------------------------------------------- #
+# Detail status matches list; list rows carry connector + failure reason
+# --------------------------------------------------------------------------- #
+
+_FAILED_RUN = {
+    "ingest_run_id": "ingest-5d3c7b7750de",
+    "connector_id": "conn-openalex",
+    "status": "failed",
+    "started_at": "2026-11-20T01:00:00Z",
+    "finished_at": "2026-11-20T01:02:00Z",
+    "events": [
+        {"event_type": "IngestRunStarted", "status": "fetching", "message": None},
+        {"event_type": "IngestRunFailed", "status": "failed", "message": "upstream 503"},
+    ],
+}
+
+
+def test_source_ingest_detail_unwraps_run_and_agrees_with_list(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://ingest.local")
+    spec = next(s for s in _JOB_SOURCES if s.prefix == "job-ingest-")
+    monkeypatch.setenv(spec.base_url_envs[0], "http://ingest.local")
+    calls: List[str] = []
+
+    def fake_get(url: str) -> Tuple[bool, Any]:
+        calls.append(url)
+        if url.endswith("/api/source-ingest/jobs/ingest-5d3c7b7750de"):
+            return True, {"run": _FAILED_RUN, "receipt": {"x": 1}}
+        if "/api/source-ingest/jobs?" in url:
+            return True, {"runs": [_FAILED_RUN], "receipts": []}
+        return True, None
+
+    port = JobReadPort(http_get=fake_get)
+    detail = port.get_job_bff("job-ingest-ingest-5d3c7b7750de")
+    assert detail["status"] == "failed"
+    assert detail["started_at"] == "2026-11-20T01:00:00Z"
+    assert detail["completed_at"] == "2026-11-20T01:02:00Z"
+    assert detail["connector_id"] == "conn-openalex"
+    assert detail["failure_reason"] == "upstream 503"
+    assert "run" in detail["detail"]
+
+    calls.clear()
+    rows = [j for j in port.list_jobs_bff() if j["source"] == spec.name]
+    assert rows and rows[0]["status"] == detail["status"]
+    assert rows[0]["connector_id"] == "conn-openalex"
+    assert rows[0]["failure_reason"] == "upstream 503"
+    # No per-row owner request: only list calls, none for the detail path.
+    assert not any(c.endswith("/ingest-5d3c7b7750de") for c in calls)
+    assert len([c for c in calls if "source-ingest" in c]) == 1
