@@ -8,12 +8,16 @@ through the owner API or a read-only database role.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 from services.knowledge.evidence import (
     EvidenceBundle,
@@ -64,6 +68,16 @@ _DEDUPE_FIELDS_BY_RECORD_TYPE: Dict[str, str] = {
     "source_record": "source_dedupe_key",
     "evidence_item": "evidence_dedupe_key",
 }
+_CONCURRENT_LOOKUP_INDEX_SPECS: tuple[tuple[str, str], ...] = (
+    (
+        "source_evidence_dedupe_lookup_idx",
+        f"(record_type, {_DEDUPE_KEY_EXPR}, append_id DESC, {_TENANT_SCOPE_EXPR})",
+    ),
+    (
+        "source_evidence_object_id_lookup_idx",
+        f"(record_type, {_OBJECT_ID_EXPR}, append_id DESC)",
+    ),
+)
 
 
 def _quote_pg(identifier: str) -> str:
@@ -179,88 +193,205 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             except queue.Empty:
                 break
 
-    def _bootstrap(self) -> None:
-        with self._get_connection() as conn:
-            if self.schema:
-                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(self.schema)}")
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.table} (
-                    append_id   BIGSERIAL PRIMARY KEY,
-                    record_id   TEXT NOT NULL,
-                    record_type TEXT NOT NULL,
-                    payload     JSONB NOT NULL,
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE (record_type, record_id)
-                )
-                """
-            )
+    def _acquire_bootstrap_advisory_lock(
+        self,
+        conn: Any,
+        lock_namespace: str,
+        timeout_seconds: float = 120.0,
+        poll_interval_seconds: float = 0.05,
+    ) -> bool:
+        """Acquire session advisory lock without holding a virtual transaction while waiting.
 
-            # Stored scalar projections avoid repeatedly detoasting the payload in
-            # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
-            # writes from independent owner processes; no cache invalidation path.
-            verified_expr = (
-                "CASE "
-                "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
-                "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-                "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-                "ELSE FALSE "
-                "END"
+        A blocking SQL ``SELECT pg_advisory_lock(...)`` keeps a virtual transaction
+        open while waiting, which deadlocks against ``CREATE INDEX CONCURRENTLY`` /
+        ``DROP INDEX CONCURRENTLY`` waiting for older virtual transactions to finish.
+        Polling ``pg_try_advisory_lock`` on an autocommit connection ends each probe
+        statement immediately so the waiting session stays idle between probes.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            rows = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s), hashtext(%s))",
+                (lock_namespace, self.table),
+            ).fetchall()
+            if (
+                not rows
+                or not isinstance(rows[0], (tuple, list))
+                or len(rows[0]) != 1
+                or not isinstance(rows[0][0], bool)
+            ):
+                return True
+            if rows[0][0]:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_interval_seconds)
+
+    def _bootstrap(self) -> None:
+        lock_namespace = "source_ingest.source_evidence.bootstrap"
+        with self._get_connection() as conn:
+            lock_acquired = self._acquire_bootstrap_advisory_lock(conn, lock_namespace)
+            try:
+                if self.schema:
+                    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(self.schema)}")
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.table} (
+                        append_id   BIGSERIAL PRIMARY KEY,
+                        record_id   TEXT NOT NULL,
+                        record_type TEXT NOT NULL,
+                        payload     JSONB NOT NULL,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        UNIQUE (record_type, record_id)
+                    )
+                    """
+                )
+
+                # Stored scalar projections avoid repeatedly detoasting the payload in
+                # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
+                # writes from independent owner processes; no cache invalidation path.
+                verified_expr = (
+                    "CASE "
+                    "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
+                    "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+                    "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
+                    "ELSE FALSE "
+                    "END"
+                )
+                entity_values = " || ".join([
+                    "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
+                    "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
+                    *[
+                        f"CASE WHEN jsonb_typeof(document->'metadata'->'{key}') = 'array' "
+                        f"THEN jsonb_path_query_array(document, '$.metadata.{key}[*].entity_type') ELSE '[]'::jsonb END"
+                        for key in ("linked_decisions", "linked_entities", "related_entities")
+                    ],
+                ])
+                link_types_fn = _quote_pg(f"{self.schema or 'public'}.source_evidence_link_types")
+                # SQL functions allow the immutable array reduction a generated
+                # column cannot express with a subquery. Normalize at write time so
+                # overlap reads use GIN without parsing/detoasting any payload.
+                conn.execute(
+                    f"CREATE OR REPLACE FUNCTION {link_types_fn}(document JSONB) RETURNS TEXT[] "
+                    "LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$ "
+                    "SELECT COALESCE(array_agg(DISTINCT LOWER(BTRIM(value))) FILTER (WHERE value IS NOT NULL), ARRAY[]::text[]) "
+                    f"FROM jsonb_array_elements_text({entity_values}) links(value) $$"
+                )
+                projections = {
+                    "evidence_tenant_id": ("TEXT", "payload->'metadata'->>'tenant_id'"),
+                    "evidence_capture_time": ("TEXT", "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"),
+                    "evidence_linked_types": ("TEXT[]", f"{link_types_fn}(payload)"),
+                    "evidence_source_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal')"),
+                    "evidence_link_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting')"),
+                    "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
+                    "evidence_verified": ("BOOLEAN", verified_expr),
+                }
+                alterations = ", ".join(
+                    f"ADD COLUMN IF NOT EXISTS {name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
+                    for name, (kind, expr) in projections.items()
+                )
+                conn.execute(f"ALTER TABLE {self.table} {alterations}")
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
+                    "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
+                    "evidence_credibility_tier, evidence_verified) WHERE record_type = 'evidence_item'"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_linked_types_idx ON {self.table} "
+                    "USING GIN (evidence_linked_types) WHERE record_type = 'evidence_item'"
+                )
+                self._ensure_concurrent_lookup_indexes(conn)
+            finally:
+                if lock_acquired:
+                    try:
+                        conn.execute(
+                            "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s))",
+                            (lock_namespace, self.table),
+                        )
+                    except Exception:
+                        pass
+
+    def _ensure_concurrent_lookup_indexes(self, conn: Any) -> None:
+        """Create or repair non-blocking concurrent expression lookup indexes.
+
+        CREATE INDEX CONCURRENTLY takes SHARE UPDATE EXCLUSIVE instead of SHARE
+        or ACCESS EXCLUSIVE so active service writers are not blocked while
+        building on the ~203 MB hosted table. If an earlier concurrent build
+        was interrupted (process killed or connection lost), PostgreSQL leaves
+        an index entry with indisvalid = false (or indisready = false) that
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS would otherwise skip on later
+        starts and that the planner never uses. Check pg_index.indisvalid and
+        pg_index.indisready first; if an index exists but is not valid/ready,
+        drop it with DROP INDEX CONCURRENTLY IF EXISTS and rebuild it.
+        """
+        index_names = tuple(name for name, _ in _CONCURRENT_LOOKUP_INDEX_SPECS)
+        rows = conn.execute(
+            """
+            SELECT c.relname, i.indisvalid, i.indisready
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = COALESCE(NULLIF(%s, ''), current_schema())
+              AND c.relname IN (%s, %s)
+            """,
+            (self.schema, index_names[0], index_names[1]),
+        ).fetchall()
+        index_states: Dict[str, tuple[bool, bool]] = {}
+        for row in rows or ():
+            if isinstance(row, dict):
+                name = row.get("relname")
+                valid = row.get("indisvalid")
+                ready = row.get("indisready")
+            elif isinstance(row, (tuple, list)) and len(row) == 3:
+                name, valid, ready = row[0], row[1], row[2]
+            else:
+                continue
+            if isinstance(name, str) and isinstance(valid, bool) and isinstance(ready, bool):
+                index_states[name] = (valid, ready)
+
+        for index_name, index_expr in _CONCURRENT_LOOKUP_INDEX_SPECS:
+            qualified_index = (
+                _quote_pg(f"{self.schema}.{index_name}")
+                if self.schema
+                else _quote_pg(index_name)
             )
-            entity_values = " || ".join([
-                "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
-                "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
-                *[
-                    f"CASE WHEN jsonb_typeof(document->'metadata'->'{key}') = 'array' "
-                    f"THEN jsonb_path_query_array(document, '$.metadata.{key}[*].entity_type') ELSE '[]'::jsonb END"
-                    for key in ("linked_decisions", "linked_entities", "related_entities")
-                ],
-            ])
-            link_types_fn = _quote_pg(f"{self.schema or 'public'}.source_evidence_link_types")
-            # SQL functions allow the immutable array reduction a generated
-            # column cannot express with a subquery. Normalize at write time so
-            # overlap reads use GIN without parsing/detoasting any payload.
+            state = index_states.get(index_name)
+            if state is not None:
+                is_valid, is_ready = state
+                if not (is_valid and is_ready):
+                    logger.warning(
+                        "Lookup index %s on %s is invalid or not ready (indisvalid=%s, indisready=%s); "
+                        "dropping with DROP INDEX CONCURRENTLY IF EXISTS and rebuilding",
+                        index_name,
+                        self.table,
+                        is_valid,
+                        is_ready,
+                    )
+                    conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_index}")
+                    logger.info(
+                        "Rebuilding lookup index %s on %s with CREATE INDEX CONCURRENTLY IF NOT EXISTS",
+                        index_name,
+                        self.table,
+                    )
+                    conn.execute(
+                        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {self.table} {index_expr}"
+                    )
+                    continue
+                logger.info(
+                    "Lookup index %s on %s is already valid and ready (indisvalid=%s, indisready=%s)",
+                    index_name,
+                    self.table,
+                    is_valid,
+                    is_ready,
+                )
+                continue
+            logger.info(
+                "Creating lookup index %s on %s with CREATE INDEX CONCURRENTLY IF NOT EXISTS",
+                index_name,
+                self.table,
+            )
             conn.execute(
-                f"CREATE OR REPLACE FUNCTION {link_types_fn}(document JSONB) RETURNS TEXT[] "
-                "LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$ "
-                "SELECT COALESCE(array_agg(DISTINCT LOWER(BTRIM(value))) FILTER (WHERE value IS NOT NULL), ARRAY[]::text[]) "
-                f"FROM jsonb_array_elements_text({entity_values}) links(value) $$"
-            )
-            projections = {
-                "evidence_tenant_id": ("TEXT", "payload->'metadata'->>'tenant_id'"),
-                "evidence_capture_time": ("TEXT", "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"),
-                "evidence_linked_types": ("TEXT[]", f"{link_types_fn}(payload)"),
-                "evidence_source_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal')"),
-                "evidence_link_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting')"),
-                "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
-                "evidence_verified": ("BOOLEAN", verified_expr),
-            }
-            alterations = ", ".join(
-                f"ADD COLUMN IF NOT EXISTS {name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
-                for name, (kind, expr) in projections.items()
-            )
-            conn.execute(f"ALTER TABLE {self.table} {alterations}")
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
-                "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
-                "evidence_credibility_tier, evidence_verified) WHERE record_type = 'evidence_item'"
-            )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS source_evidence_linked_types_idx ON {self.table} "
-                "USING GIN (evidence_linked_types) WHERE record_type = 'evidence_item'"
-            )
-            # Non-blocking concurrent expression indexes for per-record ingest
-            # dedupe and unscoped object-id lookups. CREATE INDEX CONCURRENTLY
-            # takes SHARE UPDATE EXCLUSIVE instead of SHARE / ACCESS EXCLUSIVE,
-            # so active service writers are not blocked while building on the
-            # ~203 MB hosted table.
-            conn.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_dedupe_lookup_idx ON {self.table} "
-                f"(record_type, {_DEDUPE_KEY_EXPR}, append_id DESC, {_TENANT_SCOPE_EXPR})"
-            )
-            conn.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS source_evidence_object_id_lookup_idx ON {self.table} "
-                f"(record_type, {_OBJECT_ID_EXPR}, append_id DESC)"
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {self.table} {index_expr}"
             )
 
     def reload(self) -> None:

@@ -16,7 +16,9 @@ No wall-clock thresholds are asserted in any required check.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -744,3 +746,270 @@ def test_startup_concurrent_index_ddl_and_rollback_reader_compatibility(real_pg_
         assert _norm(_legacy_read_one(repo, "evidence_item", "evi-rollback-1", tenant_id=_UNSCOPED)) == item.to_dict()
     finally:
         repo.close()
+
+
+def _query_lookup_index_catalog(conn: Any, schema: str) -> dict[str, tuple[int, bool, bool]]:
+    rows = conn.execute(
+        """
+        SELECT c.relname, i.indexrelid::bigint, i.indisvalid, i.indisready
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s
+          AND c.relname IN ('source_evidence_dedupe_lookup_idx', 'source_evidence_object_id_lookup_idx')
+        """,
+        (schema,),
+    ).fetchall()
+    return {str(row[0]): (int(row[1]), bool(row[2]), bool(row[3])) for row in rows}
+
+
+def test_bootstrap_repairs_invalid_concurrent_lookup_indexes_and_explain_uses_repaired_indexes(
+    real_pg_tables,
+    caplog,
+):
+    """AC 4: interrupted CREATE INDEX CONCURRENTLY leaving indisvalid/indisready=false is dropped and rebuilt on next bootstrap, logged, and used by EXPLAIN."""
+    dsn, table = real_pg_tables
+    caplog.set_level(logging.INFO, logger="services.source_ingestion.pg_store")
+
+    repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+    repaired_repo = None
+    valid_repo = None
+    try:
+        assert any(
+            "Creating lookup index source_evidence_dedupe_lookup_idx" in rec.getMessage()
+            for rec in caplog.records
+        )
+        assert any(
+            "Creating lookup index source_evidence_object_id_lookup_idx" in rec.getMessage()
+            for rec in caplog.records
+        )
+
+        with repo._get_connection() as conn:
+            _populate_multi_page_table(conn, repo.table, count_per_type=400)
+            initial_catalog = _query_lookup_index_catalog(conn, repo.schema)
+            assert initial_catalog["source_evidence_dedupe_lookup_idx"][1:] == (True, True)
+            assert initial_catalog["source_evidence_object_id_lookup_idx"][1:] == (True, True)
+
+            # Simulate an interrupted CREATE INDEX CONCURRENTLY build:
+            # mark dedupe index indisvalid=false (interrupted during phase 2/3 scan)
+            # and object_id index indisvalid=false, indisready=false (interrupted in phase 1).
+            conn.execute(
+                """
+                UPDATE pg_index
+                SET indisvalid = FALSE
+                WHERE indexrelid = %s::oid
+                """,
+                (initial_catalog["source_evidence_dedupe_lookup_idx"][0],),
+            )
+            conn.execute(
+                """
+                UPDATE pg_index
+                SET indisvalid = FALSE, indisready = FALSE
+                WHERE indexrelid = %s::oid
+                """,
+                (initial_catalog["source_evidence_object_id_lookup_idx"][0],),
+            )
+            # Force relcache invalidation so the planner immediately sees the invalid catalog state.
+            conn.execute(f"ANALYZE {repo.table}")
+            invalid_catalog = _query_lookup_index_catalog(conn, repo.schema)
+            assert invalid_catalog["source_evidence_dedupe_lookup_idx"][1:] == (False, True)
+            assert invalid_catalog["source_evidence_object_id_lookup_idx"][1:] == (False, False)
+
+            # While invalid, the planner refuses to use source_evidence_dedupe_lookup_idx.
+            dedupe_sql = (
+                f"SELECT payload FROM {repo.table} "
+                "WHERE record_type = %s "
+                "AND (CASE record_type "
+                "WHEN 'source_record' THEN payload->'metadata'->>'source_dedupe_key' "
+                "WHEN 'evidence_item' THEN payload->'metadata'->>'evidence_dedupe_key' "
+                "END) = %s "
+                "AND COALESCE(payload->'metadata'->>'tenant_id', '') = %s "
+                "ORDER BY append_id DESC LIMIT 1"
+            )
+            dedupe_params = (
+                "source_record",
+                "url:https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN?row=25",
+                "tenant-dev",
+            )
+            invalid_plan_text = "\n".join(
+                row[0] for row in conn.execute(f"EXPLAIN {dedupe_sql}", dedupe_params).fetchall()
+            )
+            assert "source_evidence_dedupe_lookup_idx" not in invalid_plan_text
+
+        caplog.clear()
+        repaired_repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(
+            "Lookup index source_evidence_dedupe_lookup_idx" in msg
+            and "indisvalid=False, indisready=True" in msg
+            and "DROP INDEX CONCURRENTLY IF EXISTS" in msg
+            for msg in messages
+        ), f"expected invalid dedupe index drop warning in logs, got: {messages}"
+        assert any(
+            "Rebuilding lookup index source_evidence_dedupe_lookup_idx" in msg
+            for msg in messages
+        ), f"expected dedupe index rebuild info log, got: {messages}"
+        assert any(
+            "Lookup index source_evidence_object_id_lookup_idx" in msg
+            and "indisvalid=False, indisready=False" in msg
+            and "DROP INDEX CONCURRENTLY IF EXISTS" in msg
+            for msg in messages
+        ), f"expected invalid object_id index drop warning in logs, got: {messages}"
+        assert any(
+            "Rebuilding lookup index source_evidence_object_id_lookup_idx" in msg
+            for msg in messages
+        ), f"expected object_id index rebuild info log, got: {messages}"
+
+        with repaired_repo._get_connection() as conn:
+            repaired_catalog = _query_lookup_index_catalog(conn, repaired_repo.schema)
+            assert repaired_catalog["source_evidence_dedupe_lookup_idx"][1:] == (True, True)
+            assert repaired_catalog["source_evidence_object_id_lookup_idx"][1:] == (True, True)
+            assert (
+                repaired_catalog["source_evidence_dedupe_lookup_idx"][0]
+                != initial_catalog["source_evidence_dedupe_lookup_idx"][0]
+            )
+            assert (
+                repaired_catalog["source_evidence_object_id_lookup_idx"][0]
+                != initial_catalog["source_evidence_object_id_lookup_idx"][0]
+            )
+
+            # Prove EXPLAIN uses the repaired indexes without any whole-table Filter afterwards.
+            dedupe_plan = _assert_indexed_plan_without_filter(
+                conn,
+                dedupe_sql,
+                dedupe_params,
+                "repaired_get_source_record_by_dedupe_key[tenanted]",
+            )
+            assert dedupe_plan["indexes"] == ["source_evidence_dedupe_lookup_idx"]
+
+            unscoped_read_one_sql = (
+                "SELECT payload FROM ("
+                f"(SELECT append_id, payload FROM {repaired_repo.table} WHERE record_type = %s AND record_id = %s ORDER BY append_id DESC LIMIT 1) "
+                "UNION ALL "
+                f"(SELECT append_id, payload FROM {repaired_repo.table} WHERE record_type = %s AND "
+                "(CASE record_type "
+                "WHEN 'source_record' THEN payload->>'source_id' "
+                "WHEN 'evidence_item' THEN payload->>'evidence_item_id' "
+                "WHEN 'evidence_bundle' THEN payload->>'evidence_bundle_id' "
+                "WHEN 'knowledge_object' THEN payload->>'knowledge_object_id' "
+                "END) = %s ORDER BY append_id DESC LIMIT 1)"
+                ") AS matched ORDER BY append_id DESC LIMIT 1"
+            )
+            read_one_plan = _assert_indexed_plan_without_filter(
+                conn,
+                unscoped_read_one_sql,
+                ("source_record", "src-25", "source_record", "src-25"),
+                "repaired_get_source_record[unscoped]",
+            )
+            assert set(read_one_plan["indexes"]) == {
+                "source_evidence_record_type_record_id_key",
+                "source_evidence_object_id_lookup_idx",
+            }
+
+        # Next bootstrap when indexes are already valid logs validity and performs no rebuild.
+        caplog.clear()
+        valid_repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+        valid_messages = [rec.getMessage() for rec in caplog.records]
+        assert any(
+            "Lookup index source_evidence_dedupe_lookup_idx" in msg
+            and "already valid and ready (indisvalid=True, indisready=True)" in msg
+            for msg in valid_messages
+        )
+        assert any(
+            "Lookup index source_evidence_object_id_lookup_idx" in msg
+            and "already valid and ready (indisvalid=True, indisready=True)" in msg
+            for msg in valid_messages
+        )
+        with valid_repo._get_connection() as conn:
+            after_valid_catalog = _query_lookup_index_catalog(conn, valid_repo.schema)
+            assert after_valid_catalog == repaired_catalog
+    finally:
+        repo.close()
+        if repaired_repo is not None:
+            repaired_repo.close()
+        if valid_repo is not None:
+            valid_repo.close()
+
+
+def test_two_processes_bootstrapping_concurrently_succeed_without_error_or_duplicate_build(
+    real_pg_tables,
+    caplog,
+):
+    """AC 4: two concurrent bootstraps (e.g. API container + scheduler/one-shot container) serialize cleanly via session advisory lock with no error and no duplicate build."""
+    dsn, table = real_pg_tables
+    caplog.set_level(logging.INFO, logger="services.source_ingestion.pg_store")
+
+    def _boot_one() -> PostgresSourceEvidenceRepository:
+        return PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(_boot_one)
+        f2 = pool.submit(_boot_one)
+        repo1 = f1.result()
+        repo2 = f2.result()
+
+    try:
+        with repo1._get_connection() as conn:
+            catalog = _query_lookup_index_catalog(conn, repo1.schema)
+        assert catalog["source_evidence_dedupe_lookup_idx"][1:] == (True, True)
+        assert catalog["source_evidence_object_id_lookup_idx"][1:] == (True, True)
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        create_dedupe = [
+            msg for msg in messages if "Creating lookup index source_evidence_dedupe_lookup_idx" in msg
+        ]
+        valid_dedupe = [
+            msg
+            for msg in messages
+            if "Lookup index source_evidence_dedupe_lookup_idx" in msg
+            and "already valid and ready" in msg
+        ]
+        create_obj = [
+            msg for msg in messages if "Creating lookup index source_evidence_object_id_lookup_idx" in msg
+        ]
+        valid_obj = [
+            msg
+            for msg in messages
+            if "Lookup index source_evidence_object_id_lookup_idx" in msg
+            and "already valid and ready" in msg
+        ]
+        assert len(create_dedupe) == 1, f"expected exactly 1 build of dedupe index, got: {messages}"
+        assert len(valid_dedupe) == 1, f"expected second bootstrap to observe valid dedupe index, got: {messages}"
+        assert len(create_obj) == 1, f"expected exactly 1 build of object_id index, got: {messages}"
+        assert len(valid_obj) == 1, f"expected second bootstrap to observe valid object_id index, got: {messages}"
+
+        # Also verify two concurrent bootstraps when an index starts in an INVALID state:
+        # exactly one drops and rebuilds it, and the second sees the repaired valid index.
+        with repo1._get_connection() as conn:
+            conn.execute(
+                "UPDATE pg_index SET indisvalid = FALSE WHERE indexrelid = %s::oid",
+                (catalog["source_evidence_dedupe_lookup_idx"][0],),
+            )
+        caplog.clear()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f3 = pool.submit(_boot_one)
+            f4 = pool.submit(_boot_one)
+            repo3 = f3.result()
+            repo4 = f4.result()
+        try:
+            repair_messages = [rec.getMessage() for rec in caplog.records]
+            rebuilds = [
+                msg
+                for msg in repair_messages
+                if "Rebuilding lookup index source_evidence_dedupe_lookup_idx" in msg
+            ]
+            already_valid = [
+                msg
+                for msg in repair_messages
+                if "Lookup index source_evidence_dedupe_lookup_idx" in msg
+                and "already valid and ready" in msg
+            ]
+            assert len(rebuilds) == 1, f"expected exactly 1 rebuild of invalid dedupe index, got: {repair_messages}"
+            assert len(already_valid) == 1, f"expected second concurrent bootstrap to see valid repaired index, got: {repair_messages}"
+        finally:
+            repo3.close()
+            repo4.close()
+    finally:
+        repo1.close()
+        repo2.close()
