@@ -72,7 +72,7 @@ def test_bar_allocation_is_order_independent_and_uses_full_budget():
         out = ep.decide_for_policy(ep.TARGET_POLICY_KIND,
             {"underlying": code, "direction": "LONG", "strength": 1, "target_notional": target},
             [candidate(code)], {}, BUDGET, PARAMS)
-        assert out["units"] == 25
+        assert out["units"] == 24  # was 25 before commission-aware sizing (2500 + 3.56 fee > 2500 target)
 
 
 @pytest.mark.parametrize("direction,target,units", [("FLAT", 0, 100), ("LONG", 5000, 50), ("SHORT", 5000, 100)])
