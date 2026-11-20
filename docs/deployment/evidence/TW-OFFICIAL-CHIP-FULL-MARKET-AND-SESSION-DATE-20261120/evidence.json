@@ -83,5 +83,6 @@
     "test_taiwan_official_connectors.py": "58 passed, 1 skipped",
     "scripts/test_deploy_nonprod_vm.py": "22 + 189 passed, 2 skipped (two -k batches, full coverage)",
     "scripts/test_dev_tw_market_refresh.py": "64 + 68 passed (two -k batches, full coverage)"
-  }
+  },
+  "trailer_correction": "trailer of the post-reassignment commit corrected to the current owner by operator-approved force-push; content unchanged; old head a1acf176e new head 1ab07a519133dd5c85833807a9bb9ca27c68ccef (merge) plus this evidence commit"
 }
