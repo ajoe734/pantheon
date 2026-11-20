@@ -28,6 +28,10 @@ OK_STEP_OUTCOMES = frozenset({"success", "skipped"})
 #   not_yet_published - provider has not yet published the session (readback path)
 OK_CONNECTOR_STATUSES = frozenset({"completed", "noop", "skipped", "not_yet_published"})
 
+# Deliberately NOT ok: "not_run" is written by scripts/deploy_nonprod_vm.sh for a profile that was
+# not started because a Taiwan trading day was about to open (00:55Z): the steady posture was restored
+# first and the run ends failed through this summary.
+
 # steady_restore_check status written by execute_steady_posture_check(); the workflow
 # step itself exits 1 on anything but healthy, so "restored" stays failing here.
 OK_STEADY_STATUSES = frozenset({"healthy"})
@@ -46,6 +50,60 @@ STEP_PROFILES: dict[str, tuple[str, list[tuple[str, str]]]] = {
         (c, f"{c}-refresh-outcome.json") for c in (
             "tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation")]),
 }
+
+
+# Hosts each profile needs (egress allowlist) and the profiles each schedule runs. The one bounded runtime of
+# a run allows exactly the union of the hosts of the profiles of that run, and carries the FinMind token
+# only when a FinMind profile is in it. Keep in step with dev-tw-market-refresh.yml (tests compare them).
+TAIFEX_HOSTS = "openapi.taifex.com.tw,www.taifex.com.tw"
+OFFICIAL_HOSTS = "openapi.twse.com.tw,www.tpex.org.tw"
+FINMIND_BROKER_HOSTS = "api.finmindtrade.com,storage.googleapis.com"
+FINMIND_HOSTS = "api.finmindtrade.com"
+PROFILE_HOSTS: dict[str, str] = {
+    "tw-taifex-futures-options-chip": TAIFEX_HOSTS,
+    "tw-finmind-broker-daily-report": FINMIND_BROKER_HOSTS,
+    "tw-twse-tpex-official-market": OFFICIAL_HOSTS,
+    "tw-official-twse-margin-balances": OFFICIAL_HOSTS,
+    "tw-official-tpex-margin-balances": OFFICIAL_HOSTS,
+    "tw-official-tpex-institutional-flow": OFFICIAL_HOSTS,
+    "tw-taifex-institutional-positions": TAIFEX_HOSTS,
+    "tw-taifex-put-call": TAIFEX_HOSTS,
+    "tw-taifex-tx-daily": TAIFEX_HOSTS,
+    "tw-finmind-monthly-revenue": FINMIND_HOSTS,
+    "tw-finmind-quarterly-statements": FINMIND_HOSTS,
+    "tw-finmind-valuation": FINMIND_HOSTS,
+}
+MORNING_SCHEDULES = frozenset({"0 7 * * 1-5", "0 8 * * 1-5"})
+AFTERNOON_SCHEDULES = frozenset({"30 10 * * 1-5", "30 12 * * 1-5"})
+FINMIND_PROFILES = frozenset(c for c in PROFILE_HOSTS if c.startswith("tw-finmind-"))
+RUN_MAX_RECORDS = 500
+
+
+def plan_run(schedule: str, finmind_token_present: bool) -> dict[str, object]:
+    """Profiles, egress union and FinMind token flag of one run of the given cron schedule.
+
+    Morning crons skip the FinMind steps, afternoon crons skip TAIFEX/official/chip steps, a manual
+    dispatch (empty schedule) runs everything. FinMind profiles without the secret are skipped by their
+    steps (missing_credential) and so do not count.
+    """
+    schedule = (schedule or "").strip()
+    profiles = [
+        c for c in PROFILE_HOSTS
+        if not (schedule in MORNING_SCHEDULES and c in FINMIND_PROFILES)
+        and not (schedule in AFTERNOON_SCHEDULES and c not in FINMIND_PROFILES)
+        and not (c in FINMIND_PROFILES and not finmind_token_present)
+    ]
+    hosts: list[str] = []
+    for connector in profiles:
+        for host in PROFILE_HOSTS[connector].split(","):
+            if host not in hosts:
+                hosts.append(host)
+    return {
+        "profiles": profiles,
+        "hosts": ",".join(hosts),
+        "finmind": any(c in FINMIND_PROFILES for c in profiles),
+        "max_records": RUN_MAX_RECORDS,
+    }
 
 
 def _read_json(path: Path) -> dict | None:
@@ -122,10 +180,20 @@ def render(rows: list[dict[str, str]], failures: list[str]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--outcomes-dir", required=True, type=Path)
+    parser.add_argument("--plan", metavar="SCHEDULE", default=None, help="print the bounded runtime plan (GITHUB_OUTPUT lines) for this cron schedule and exit")
+    parser.add_argument("--finmind-token-present", action="store_true")
+    parser.add_argument("--outcomes-dir", type=Path, default=None)
     parser.add_argument("--summary-file", type=Path, default=None, help="job summary file (GITHUB_STEP_SUMMARY)")
     parser.add_argument("--step", action="append", default=[], metavar="ID=OUTCOME")
     args = parser.parse_args(argv)
+    if args.plan is not None:
+        plan = plan_run(args.plan, args.finmind_token_present)
+        print(f"hosts={plan['hosts']}")
+        print(f"finmind={'true' if plan['finmind'] else 'false'}")
+        print(f"max_records={plan['max_records']}")
+        return 0
+    if args.outcomes_dir is None:
+        parser.error("--outcomes-dir is required")
     step_outcomes: dict[str, str] = {}
     for item in args.step:
         key, _, value = item.partition("=")

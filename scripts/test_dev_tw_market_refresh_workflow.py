@@ -452,7 +452,7 @@ def test_workflow_requests_each_finmind_fundamental_dataset_once_after_publicati
         assert f'{cid}-refresh-outcome.json' in upload['with']['path']
     # the early-cron chip profiles are unchanged: FinMind fundamentals are not among them
     chip = next(s for s in steps if s.get('id') == 'chip_refresh')
-    assert 'finmind' not in chip['run']
+    assert 'tw-finmind' not in chip['run']
 
 
 def test_refresh_entrypoint_waits_for_readyz_36x5_before_preflight_and_fails_closed(tmp_path: Path) -> None:
@@ -1013,3 +1013,78 @@ def test_quarantine_then_rearm_then_probe_records_probe_own_result(tmp_path: Pat
             os.kill(pid, 15)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------------------------
+# TW-REFRESH-ONE-BOUNDED-RUNTIME-PER-RUN-20261120
+# ---------------------------------------------------------------------------------------------
+FULL_RUN_UNION = {
+    "openapi.taifex.com.tw", "www.taifex.com.tw", "openapi.twse.com.tw", "www.tpex.org.tw",
+    "api.finmindtrade.com", "storage.googleapis.com",
+}
+
+
+def _plan(schedule: str, token: bool) -> dict[str, str]:
+    args = ["python3", str(ROOT / "scripts/tw_refresh_outcome_summary.py"), "--plan", schedule]
+    if token:
+        args.append("--finmind-token-present")
+    out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
+    return dict(line.split("=", 1) for line in out.splitlines())
+
+
+def test_run_plan_names_the_egress_union_for_the_full_profile_set_and_each_schedule() -> None:
+    full = _plan("", True)  # a manual dispatch runs every profile
+    assert set(full["hosts"].split(",")) == FULL_RUN_UNION and len(full["hosts"].split(",")) == len(FULL_RUN_UNION)
+    assert full["finmind"] == "true"
+    morning = _plan("0 7 * * 1-5", True)
+    assert set(morning["hosts"].split(",")) == {"openapi.taifex.com.tw", "www.taifex.com.tw", "openapi.twse.com.tw", "www.tpex.org.tw"}
+    assert morning["finmind"] == "false"  # no FinMind profile in the run: the token never reaches the container
+    afternoon = _plan("30 10 * * 1-5", True)
+    assert set(afternoon["hosts"].split(",")) == {"api.finmindtrade.com", "storage.googleapis.com"} and afternoon["finmind"] == "true"
+    # Without the secret the FinMind steps skip with missing_credential and add neither hosts nor the token.
+    assert _plan("", False)["finmind"] == "false"
+    assert set(_plan("", False)["hosts"].split(",")) == FULL_RUN_UNION - {"api.finmindtrade.com", "storage.googleapis.com"}
+
+
+def test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime() -> None:
+    wf_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    steps = _load_workflow()["jobs"]["refresh"]["steps"]
+    plan_step = next(s for s in steps if s.get("id") == "plan")
+    assert "--plan" in plan_step["run"] and "GITHUB_OUTPUT" in plan_step["run"]
+    union = FULL_RUN_UNION
+    seen_hosts: set[str] = set()
+    refresh_steps = [s for s in steps if s.get("id") in {"taifex_refresh", "finmind_refresh", "refresh", "chip_refresh", "finmind_fundamentals_refresh"}]
+    assert len(refresh_steps) == 5
+    for step in refresh_steps:
+        run = step["run"]
+        # every call carries the run's bounded runtime arguments from the plan step
+        assert '"${run_args[@]}"' in run and "--bounded-runtime-run" in run and '--run-hosts "${PANTHEON_RUN_HOSTS}"' in run, step["id"]
+        assert step["env"]["PANTHEON_RUN_HOSTS"] == "${{ steps.plan.outputs.hosts }}"
+        assert step["env"]["PANTHEON_RUN_FINMIND"] == "${{ steps.plan.outputs.finmind }}"
+        # the token is available to whichever step enters the runtime; it is only used when the plan says FinMind
+        assert step["env"]["FINMIND_API_TOKEN"] == "${{ secrets.FINMIND_API_TOKEN }}", step["id"]
+    for hosts in re.findall(r"--allowed-hosts ([A-Za-z0-9.,-]+)", wf_text) + re.findall(r"^\s+\S+ \S+ ((?:[a-z0-9.-]+,?)+)$", wf_text, flags=re.M):
+        if "." in hosts:
+            seen_hosts |= set(hosts.split(","))
+    assert seen_hosts and seen_hosts <= union, seen_hosts - union
+    # no step restores the steady posture except the steady check (the single restore of the run)
+    for step in refresh_steps:
+        assert "--steady-check" not in step["run"]
+    check = next(s for s in steps if s.get("id") == "steady_check")
+    assert "--steady-check" in check["run"] and 'bounded_runtime' in check["run"]
+
+
+def test_chip_and_fundamentals_profile_hosts_match_the_plan_table() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tw_refresh_outcome_summary", ROOT / "scripts/tw_refresh_outcome_summary.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    rows = re.findall(r"(?:^|[\s'=])(tw-[a-z0-9-]+) ([a-z_]+) ((?:[a-z0-9.-]+,?)+)(?=\s*(?:'|$))", text, flags=re.M)
+    assert len(rows) == 9, rows  # six chip profiles and three fundamentals profiles
+    for connector, _dataset, hosts in rows:
+        assert module.PROFILE_HOSTS[connector] == hosts, connector
+    for connector in module.PROFILE_HOSTS:
+        assert connector in text
