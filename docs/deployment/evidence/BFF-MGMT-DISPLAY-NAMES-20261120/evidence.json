@@ -1,0 +1,41 @@
+{
+  "task_id": "BFF-MGMT-DISPLAY-NAMES-20261120",
+  "register_class": "RC6",
+  "work_package": "WP6.2",
+  "title": "Management rows carry persona and strategy display names resolved by the BFF",
+  "delivery_state": "source_complete_pending_review",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "generated_at": "2026-11-20T06:00:00Z",
+  "reproduction": {
+    "source": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/mgmt-readability-sweep-20261120",
+    "hosted_read_date": "2026-11-20",
+    "bff_commit": "fb8ed951d",
+    "pages_swept": 67,
+    "observed_defects": [
+      "GET /bff/runtimes rows have persona_id and strategy_id and no name",
+      "GET /bff/artifacts registry row name equals the strategy id",
+      "GET /bff/deployments has no persona or strategy name",
+      "GET /bff/meetings has chair_persona_id only"
+    ],
+    "note": "Hosted reads were cited from the coordinator sweep; this worker did not re-read the hosted environment."
+  },
+  "design": {
+    "resolver": "services/control-plane/bff/core/display_names.py",
+    "reads": "persona directory via shared_persona_directory_list, strategy labels via get_strategy_labels, runtime bindings via list_runtime_bindings; each cached once per request with cached_owner_call and once per resolver; no per-row owner call",
+    "fallback": "unknown id or owner failure returns the id with <prefix>_name_missing: true",
+    "title_presentation": "stored title unchanged; title_display carries the binding id replaced by persona / strategy names",
+    "excluded": "trade journeys (BFF-TRADE-JOURNEY-READABLE-20261120)"
+  },
+  "acceptance_verification": {
+    "2_resolver_one_read_per_request": "tests/test_management_display_names.py::test_each_directory_is_read_once_per_request and ::test_resolver_names_fallback_and_flag",
+    "3_surfaces": "runtimes (test_bff_runtimes_contract.py), artifacts, meetings list/detail/participants, deployments list/detail, inbox and incident projections (tests/test_management_display_names.py)",
+    "4_titles": "tests/test_management_display_names.py::test_incident_and_inbox_titles_are_presented_without_rewriting_stored_title",
+    "5_additive": "existing contract tests pass; tests/test_artifact_catalog_registry.py key-set assertion widened to allow only strategy_display_name and strategy_name_missing"
+  },
+  "verification": {
+    "command_scope": "bff tests matching incident|inbox|meeting|runtime|deploy|artifact|management|human|bff_main|contract_registry|alert",
+    "result": "795 passed in the final full run with 3 failures that also fail on the unmodified base: test_cockpit_overlapping_reload_waves_keep_every_section_complete, test_ai_persona_fleet_projects_source_health_personas_through_app_persona_service (full-run order dependent), test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals (fails alone on base), plus test_agora_workshop_dev_deploy_config and test_bff_management_delta_routes heatmap/ranking tests fail on base",
+    "hosted_verification": "not run; no hosted completion track claimed by this evidence"
+  }
+}

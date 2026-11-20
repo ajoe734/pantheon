@@ -1198,6 +1198,8 @@ def mount_bff_routers(
     from ..personas import service as _persona_service_module
     _persona_service_module._composed_persona_service = persona_service
     _persona_service_module._composed_command_adapter_service = command_adapter_service
+    from .display_names import configure_display_name_source
+    configure_display_name_source(app_deps.read_surface)
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,

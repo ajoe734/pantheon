@@ -20,6 +20,7 @@ try:
 except (ImportError, ValueError):
     from models import CommandType, ObjectType, OperatorIdentity
 
+from services.control_plane.bff.core.display_names import annotate_subject_row, current_resolver
 from services.incident.incident import derive_incident_summary_fields
 
 from .promotion_review import (
@@ -436,6 +437,7 @@ def _human_inbox_incident_item(record: Dict[str, Any]) -> Optional[Dict[str, Any
         "source_id": incident_id,
         "incident_id": incident_id,
         "incident_kind": incident_kind,
+        **{k: record[k] for k in ("persona_id", "strategy_id", "binding_id") if record.get(k)},
         "title": record.get("title") or f"Incident: {incident_kind}",
         "summary": derived.get("summary") or "Incident requires operator review.",
         "summary_key": derived.get("summary_key"),
@@ -1013,10 +1015,18 @@ def _human_inbox_project_items(
             lambda row: _human_inbox_persona_readiness_item(row, snapshot_at=snapshot_at),
         ),
     )
+    names = current_resolver()
     for records, projector in projectors:
         for record in records:
             projected = projector(record)
             if projected is not None:
+                if projected.get("inboxType") == "incident":
+                    annotate_subject_row(names, projected)
+                    context = projected.get("incident_context")
+                    if isinstance(context, dict):
+                        names.annotate(context, strategy_keys=())
+                else:
+                    names.annotate(projected)
                 items.append(projected)
     items.sort(
         key=lambda item: (
