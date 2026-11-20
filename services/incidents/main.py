@@ -80,6 +80,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -153,7 +155,6 @@ try:
         IncidentResponse as _BaseIncidentResponse,
         OperatorIncidentPayload as _BaseOperatorIncidentPayload,
         UpdateIncidentStatusRequest,
-        ResolveRetiredBindingRequest,
     )
     from .consumer import (
         DriftReportIncidentConsumer,
@@ -172,7 +173,6 @@ except ImportError:
         IncidentResponse as _BaseIncidentResponse,
         OperatorIncidentPayload as _BaseOperatorIncidentPayload,
         UpdateIncidentStatusRequest,
-        ResolveRetiredBindingRequest,
     )
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
@@ -1408,6 +1408,15 @@ def update_status(
 RUNTIME_BINDING_RETIRED_RESOLUTION_REASON = "runtime_binding_retired"
 
 
+class ResolveRetiredBindingRequest(BaseModel):
+    binding_id: str
+    retired_at: Optional[str] = None
+
+
+class _RetirementStatusRequest(UpdateIncidentStatusRequest):
+    resolution_reason: Optional[str] = None
+
+
 @app.post(
     "/api/incidents/resolve-retired-binding",
     summary="Resolve open drift incidents of a retired RuntimeBinding",
@@ -1432,7 +1441,7 @@ def resolve_retired_binding_drift_incidents(
             continue
         update_status(
             inc.incident_id,
-            UpdateIncidentStatusRequest(
+            _RetirementStatusRequest(
                 status="resolved",
                 resolved_at=body.retired_at,
                 resolution_reason=RUNTIME_BINDING_RETIRED_RESOLUTION_REASON,
