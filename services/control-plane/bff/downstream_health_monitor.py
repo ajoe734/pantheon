@@ -804,6 +804,12 @@ class _DurableHealthStore:
                     last_event_id TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS incident_recovery (
+                    target_name TEXT PRIMARY KEY,
+                    ok_streak INTEGER NOT NULL,
+                    first_ok_epoch REAL NOT NULL,
+                    recovered_epoch REAL
+                );
                 CREATE TABLE IF NOT EXISTS delivery_outbox (
                     delivery_id TEXT PRIMARY KEY,
                     event_id TEXT NOT NULL,
@@ -1338,6 +1344,65 @@ class _DurableHealthStore:
             ).fetchall()
         return {str(row["target_name"]): dict(row) for row in rows}
 
+    def clear_recovery(self, target_name: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM incident_recovery WHERE target_name=?",
+                (target_name,),
+            )
+
+    def advance_recovery(
+        self,
+        *,
+        target_name: str,
+        now_epoch: float,
+        required_successes: int,
+        min_seconds: float,
+        reopen_window_seconds: float,
+    ) -> bool:
+        """Record one OK probe; True once recovery is sustained and quiet.
+
+        Sustained = ``required_successes`` consecutive OK probes spanning at
+        least ``min_seconds``.  The incident is then held for
+        ``reopen_window_seconds``; a failure inside it (clear_recovery) keeps
+        the same incident, so resolve is only confirmed after the window.
+        """
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM incident_recovery WHERE target_name=?",
+                (target_name,),
+            ).fetchone()
+            if row is None:
+                streak, first, recovered = 1, now_epoch, None
+            else:
+                streak = int(row["ok_streak"]) + 1
+                first = float(row["first_ok_epoch"])
+                recovered = row["recovered_epoch"]
+            if (
+                recovered is None
+                and streak >= required_successes
+                and now_epoch - first >= min_seconds
+            ):
+                recovered = now_epoch
+            connection.execute(
+                """
+                INSERT INTO incident_recovery(
+                    target_name, ok_streak, first_ok_epoch, recovered_epoch
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(target_name) DO UPDATE SET
+                    ok_streak=excluded.ok_streak,
+                    first_ok_epoch=excluded.first_ok_epoch,
+                    recovered_epoch=excluded.recovered_epoch
+                """,
+                (target_name, streak, first, recovered),
+            )
+            connection.commit()
+        return bool(
+            recovered is not None
+            and now_epoch - float(recovered) >= reopen_window_seconds
+        )
+
     def reserve_incident(
         self,
         *,
@@ -1361,8 +1426,19 @@ class _DurableHealthStore:
                 "open",
                 "resolving",
             }:
-                connection.rollback()
+                if str(existing["status"]) in {"opening", "open"}:
+                    # A failure continues the same incident: drop any
+                    # in-progress recovery so it must be sustained again.
+                    connection.execute(
+                        "DELETE FROM incident_recovery WHERE target_name=?",
+                        (target_name,),
+                    )
+                connection.commit()
                 return dict(existing), False
+            connection.execute(
+                "DELETE FROM incident_recovery WHERE target_name=?",
+                (target_name,),
+            )
             connection.execute(
                 """
                 INSERT INTO incident_mappings(
@@ -2143,6 +2219,9 @@ class DownstreamHealthMonitor:
         incidents_url: Optional[str] = None,
         probe_interval_seconds: Optional[float] = None,
         failure_threshold: Optional[int] = None,
+        recovery_successes: Optional[int] = None,
+        recovery_min_seconds: Optional[float] = None,
+        reopen_window_seconds: Optional[float] = None,
         health_path: str = "/__health__",
         http_timeout: float = 3.0,
         state_path: Optional[str] = None,
@@ -2189,6 +2268,34 @@ class DownstreamHealthMonitor:
                 failure_threshold
                 if failure_threshold is not None
                 else os.getenv("PANTHEON_BFF_HEALTH_FAILURE_THRESHOLD", "3")
+            ),
+        )
+        # Recovery must be sustained: N consecutive OK probes spanning at
+        # least M seconds, then held for the reopen window.  Defaults: 3 OK
+        # probes over >=120s (4+ probes at the 30s interval) and a 600s hold,
+        # which absorbs the 5-15 minute flap observed on 2026-11-20.
+        self._recovery_successes = max(
+            1,
+            int(
+                recovery_successes
+                if recovery_successes is not None
+                else os.getenv("PANTHEON_BFF_HEALTH_RECOVERY_SUCCESSES", "3")
+            ),
+        )
+        self._recovery_min_seconds = max(
+            0.0,
+            float(
+                recovery_min_seconds
+                if recovery_min_seconds is not None
+                else os.getenv("PANTHEON_BFF_HEALTH_RECOVERY_MIN_SECONDS", "120")
+            ),
+        )
+        self._reopen_window_seconds = max(
+            0.0,
+            float(
+                reopen_window_seconds
+                if reopen_window_seconds is not None
+                else os.getenv("PANTHEON_BFF_HEALTH_REOPEN_WINDOW_SECONDS", "600")
             ),
         )
         self._health_path = health_path
@@ -3170,17 +3277,27 @@ class DownstreamHealthMonitor:
             observed_at=recorded.checked_at,
         )
 
-        is_recovery = bool(
-            recorded.ok
-            and (
-                (previous is not None and not previous.ok)
-                or recorded.target_name in self._open_incident_ids
-                or (
-                    (self._store.get_incident(recorded.target_name) or {}).get("status")
-                    in {"opening", "open", "resolving"}
+        mapped = self._store.get_incident(recorded.target_name) or {}
+        mapped_status = mapped.get("status")
+        if not recorded.ok:
+            self._store.clear_recovery(recorded.target_name)
+        if recorded.ok and mapped_status in {"opening", "open"}:
+            is_recovery = self._store.advance_recovery(
+                target_name=recorded.target_name,
+                now_epoch=_parse_rfc3339(recorded.checked_at).timestamp(),
+                required_successes=self._recovery_successes,
+                min_seconds=self._recovery_min_seconds,
+                reopen_window_seconds=self._reopen_window_seconds,
+            )
+        else:
+            is_recovery = bool(
+                recorded.ok
+                and (
+                    (previous is not None and not previous.ok)
+                    or recorded.target_name in self._open_incident_ids
+                    or mapped_status == "resolving"
                 )
             )
-        )
         if is_recovery:
             recorded.probe_kind = "recovery"
             recorded.window_started_at = _window_start(
