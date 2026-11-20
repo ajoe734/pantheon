@@ -2626,6 +2626,62 @@ def _format_participant_summary(p: Mapping[str, Any]) -> Dict[str, Any]:
     return item
 
 
+_DEFAULT_MAX_ATTEMPTS = 3
+_ACTIVE_MEETING_STATUSES = {"triggered", "convened", "in_round", "open", "in_progress"}
+
+
+def _max_attempts() -> int:
+    try:
+        return max(1, int(os.environ.get("CONSULTATION_WORKFLOW_MAX_BLOCKED_ATTEMPTS", _DEFAULT_MAX_ATTEMPTS)))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_ATTEMPTS
+
+
+def _iso_from_epoch(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _execution_state_from_row(row: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not row:
+        return None
+    return {
+        "status": str(row.get("status") or ""),
+        "attempt_count": int(row.get("attempt_count") or row.get("blocked_count") or 0),
+        "max_attempts": _max_attempts(),
+        "last_error": row.get("last_error"),
+        "updated_at": _iso_from_epoch(row.get("updated_at")),
+    }
+
+
+def _effective_status(meeting: Mapping[str, Any], execution_state: Optional[Mapping[str, Any]]) -> str:
+    stored = str(meeting.get("status") or "convened")
+    if (
+        execution_state
+        and execution_state.get("status") == "dead_letter"
+        and stored.lower() in _ACTIVE_MEETING_STATUSES
+        and int(meeting.get("round") or 0) == 0
+    ):
+        return "execution_failed"
+    return stored
+
+
+def _execution_states_by_request(
+    workflow_state: Any, tenant_id: str
+) -> Dict[str, Dict[str, Any]]:
+    if workflow_state is None:
+        return {}
+    # One tenant-scoped read per request; matched in memory (no N+1).
+    return {
+        str(r.get("request_id")): r
+        for r in workflow_state.list_items(tenant_id=tenant_id)
+    }
+
+
 def list_meetings_view(
     store: Any,
     *,
@@ -2636,8 +2692,15 @@ def list_meetings_view(
     cursor: Optional[str] = None,
     limit: int = 50,
     catalogue: Optional[Mapping[str, Any]] = None,
+    workflow_state: Any = None,
+    include_failed: bool = False,
 ) -> Dict[str, Any]:
     cat = dict(catalogue or load_meeting_catalogue())
+    wf_rows = _execution_states_by_request(workflow_state, tenant_id)
+    exec_states = {
+        mid: _execution_state_from_row(r) for mid, r in wf_rows.items()
+    }
+    dead_letter_count = 0
     rows = [
         m
         for m in store.list_meetings()
@@ -2646,12 +2709,18 @@ def list_meetings_view(
     if status:
         st = status.strip().lower()
         if st in {"open", "upcoming"}:
-            rows = [
-                m
-                for m in rows
-                if str(m.get("status") or "").lower()
-                in {"triggered", "convened", "in_round", "open", "in_progress"}
-            ]
+            kept = []
+            for m in rows:
+                if str(m.get("status") or "").lower() not in _ACTIVE_MEETING_STATUSES:
+                    continue
+                if (
+                    _effective_status(m, exec_states.get(str(m.get("meeting_id")))) == "execution_failed"
+                    and not include_failed
+                ):
+                    dead_letter_count += 1
+                    continue
+                kept.append(m)
+            rows = kept
         elif st in {"closed", "completed", "history"}:
             rows = [
                 m
@@ -2708,6 +2777,8 @@ def list_meetings_view(
 
     items = [
         {
+            "execution_state": exec_states.get(str(m["meeting_id"])),
+            "effective_status": _effective_status(m, exec_states.get(str(m["meeting_id"]))),
             "meeting_id": str(m["meeting_id"]),
             "meeting_type": str(m["meeting_type"]),
             "topic": str(m.get("topic") or ""),
@@ -2726,7 +2797,11 @@ def list_meetings_view(
         }
         for m in sliced
     ]
-    return {"items": items, "next_cursor": next_cursor}
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "summary": {"dead_letter_count": dead_letter_count},
+    }
 
 
 def get_meeting_detail_view(
@@ -2734,11 +2809,19 @@ def get_meeting_detail_view(
     *,
     tenant_id: str,
     meeting_id: str,
+    workflow_state: Any = None,
 ) -> Optional[Dict[str, Any]]:
     m = store.get_meeting(meeting_id)
     if not m or str(m.get("tenant_id") or "default") != tenant_id:
         return None
     detail = copy.deepcopy(m)
+    exec_state = None
+    if workflow_state is not None:
+        exec_state = _execution_state_from_row(
+            workflow_state.get(tenant_id=tenant_id, request_id=str(m.get("meeting_id") or meeting_id))
+        )
+    detail["execution_state"] = exec_state
+    detail["effective_status"] = _effective_status(m, exec_state)
     detail["participants"] = [
         _format_participant_summary(p) for p in (m.get("participants") or [])
     ]

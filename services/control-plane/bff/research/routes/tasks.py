@@ -112,6 +112,72 @@ def _resolve_task_name(task: Dict[str, Any], task_id: str) -> str:
     return task_id
 
 
+_NON_REAL_RUN_MODES = {"stub": "stub_run", "manual": "manual_record"}
+_NON_REAL_DATA_SCOPES = {"test", "acceptance", "synthetic"}
+
+
+def _is_blank_name(task: Dict[str, Any]) -> bool:
+    return not any(str(task.get(k) or "").strip() for k in ("title", "objective"))
+
+
+def _first_text(values: Any) -> Optional[str]:
+    if isinstance(values, (list, tuple)):
+        for v in values:
+            text = str(v or "").strip()
+            if text:
+                return text
+    return None
+
+
+def _classify_non_real(
+    task: Dict[str, Any],
+    latest_run: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Return non_real_reason for acceptance/stub/manual records, else None."""
+    title = str(task.get("title") or "").strip()
+    if title.upper().startswith("ACCEPTANCE TEST"):
+        return "acceptance_test"
+    constraints = task.get("constraints") if isinstance(task.get("constraints"), dict) else {}
+    scopes = [task.get("data_scope"), constraints.get("data_scope")]
+    if isinstance(latest_run, dict):
+        scopes.append(latest_run.get("data_scope"))
+        params = latest_run.get("parameters")
+        if isinstance(params, dict):
+            scopes.append(params.get("data_scope"))
+    if any(str(sc or "").strip().lower() in _NON_REAL_DATA_SCOPES for sc in scopes):
+        return "acceptance_test"
+    if isinstance(latest_run, dict):
+        for key in ("adapter", "dispatch_mode"):
+            reason = _NON_REAL_RUN_MODES.get(str(latest_run.get(key) or "").strip().lower())
+            if reason:
+                return reason
+    return None
+
+
+def _build_display_summary(
+    task: Dict[str, Any],
+    latest_run: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Structured summary from recorded fields only; missing values stay null."""
+    constraints = task.get("constraints") if isinstance(task.get("constraints"), dict) else {}
+    params = (
+        latest_run.get("parameters")
+        if isinstance(latest_run, dict) and isinstance(latest_run.get("parameters"), dict)
+        else {}
+    )
+    symbol = params.get("symbol") or constraints.get("symbol")
+    dataset_ref = (
+        _first_text(latest_run.get("input_refs") if isinstance(latest_run, dict) else None)
+        or (str(constraints.get("dataset_ref")).strip() if constraints.get("dataset_ref") else None)
+    )
+    return {
+        "task_kind": task.get("task_type") or None,
+        "subject_ref": _first_text(task.get("source_refs")),
+        "symbol": str(symbol).strip() if symbol else None,
+        "dataset_ref": dataset_ref,
+    }
+
+
 def _run_sort_key(run: Dict[str, Any]) -> Tuple[str, str, str]:
     return (
         str(run.get("created_at") or ""),
@@ -151,7 +217,13 @@ def _project_task_item(
     item_id = str(task.get("id") or task_id).strip()
     ordered_runs = sorted(task_runs, key=_run_sort_key)
     latest_run = _project_latest_run(ordered_runs[-1]) if ordered_runs else None
+    latest_raw = ordered_runs[-1] if ordered_runs else None
+    non_real_reason = _classify_non_real(task, latest_raw)
     return {
+        "is_non_real": non_real_reason is not None,
+        "non_real_reason": non_real_reason,
+        "name_is_fallback_id": _is_blank_name(task),
+        "display_summary": _build_display_summary(task, latest_raw),
         "id": item_id,
         "task_id": task_id,
         "name": _resolve_task_name(task, task_id),
@@ -215,6 +287,7 @@ def create_research_tasks_router(
         source: str,
         excluded_unscoped_count: int = 0,
         message: Optional[str] = None,
+        hidden_non_real_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         base = dict(snapshot_meta_fn(snapshot_at) or {"snapshot_at": snapshot_at})
         surfaces = dict(base.get("surfaces") or {})
@@ -230,6 +303,9 @@ def create_research_tasks_router(
         base["surfaces"] = surfaces
         base["status"] = status
         base["excluded_unscoped_count"] = excluded_unscoped_count
+        if hidden_non_real_count is not None:
+            base["hidden_non_real_count"] = hidden_non_real_count
+            surface_payload["hidden_non_real_count"] = hidden_non_real_count
         return base
 
     def _not_found(task_id: str) -> Exception:
@@ -245,6 +321,7 @@ def create_research_tasks_router(
         status: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=20, ge=1, le=200),
+        include_non_real: bool = Query(default=False),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
@@ -338,6 +415,7 @@ def create_research_tasks_router(
             )
 
             excluded_unscoped_count = 0
+            hidden_non_real_count = 0
             scoped_items: List[Dict[str, Any]] = []
             for raw_task in raw_tasks:
                 task_id = str(raw_task.get("task_id") or raw_task.get("id") or "").strip()
@@ -351,7 +429,11 @@ def create_research_tasks_router(
                     continue
                 if allowed_statuses is not None and str(raw_task.get("status") or "") not in allowed_statuses:
                     continue
-                scoped_items.append(_project_task_item(raw_task, runs_by_task.get(task_id, ())))
+                projected = _project_task_item(raw_task, runs_by_task.get(task_id, ()))
+                if projected["is_non_real"] and not include_non_real:
+                    hidden_non_real_count += 1
+                    continue
+                scoped_items.append(projected)
 
             scoped_items.sort(
                 key=lambda item: (str(item.get("created_at") or ""), str(item.get("task_id") or "")),
@@ -373,6 +455,7 @@ def create_research_tasks_router(
                     status="ok",
                     source="research_orchestrator",
                     excluded_unscoped_count=excluded_unscoped_count,
+                    hidden_non_real_count=hidden_non_real_count,
                 ),
             }
         finally:
