@@ -2326,7 +2326,7 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "incident_followup": 1,
         "incident_severity": 1,
         "postmortem_draft": 2,
-        "total": 4,
+        "total": 2,
     }
 
     # 1. Omitting view behaves identically to view=all
@@ -2375,8 +2375,9 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "postmortem:pm-draft-001",
         "postmortem:pm-draft-002",
     }
-    # The list and the counts agree: page_info.total == auto_proposal_counts.total
-    assert body_auto["page_info"]["total"] == expected_counts["total"] == 4
+    # The auto list still shows drafts; the proposal total excludes them and
+    # drafts are a separate labelled count.
+    assert body_auto["page_info"]["total"] == expected_counts["total"] + expected_counts["postmortem_draft"] == 4
     assert body_auto["data"]["summary"]["total_items"] == 4
     assert body_auto["data"]["auto_proposal_counts"] == expected_counts
 
@@ -2485,10 +2486,10 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
         "incident_followup": 15,
         "incident_severity": 0,
         "postmortem_draft": 1,
-        "total": 16,
+        "total": 15,
     }
-    assert auto_body["page_info"]["total"] == counts["total"]
-    assert auto_body["data"]["summary"]["total_items"] == counts["total"]
+    assert auto_body["page_info"]["total"] == counts["total"] + counts["postmortem_draft"]
+    assert auto_body["data"]["summary"]["total_items"] == counts["total"] + counts["postmortem_draft"]
     seen_ids: list[str] = []
     token = auto_body["page_info"]["next_page_token"]
     seen_ids.extend(it["id"] for it in auto_body["data"]["items"])
@@ -2497,10 +2498,10 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
             f"/bff/management/evolution-journal?view=auto_proposals&page_size=4&page_token={token}",
             headers=OPERATOR_HEADERS,
         ).json()
-        assert page["page_info"]["total"] == counts["total"]
+        assert page["page_info"]["total"] == counts["total"] + counts["postmortem_draft"]
         seen_ids.extend(it["id"] for it in page["data"]["items"])
         token = page["page_info"]["next_page_token"]
-    assert len(seen_ids) == len(set(seen_ids)) == counts["total"]
+    assert len(seen_ids) == len(set(seen_ids)) == counts["total"] + counts["postmortem_draft"]
 
 
 def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view() -> None:
@@ -2693,7 +2694,7 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
-            "total": 2029,
+            "total": 2,
         }
         assert body_default["page_info"]["total"] == 2027 + 3
 
@@ -2716,7 +2717,7 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
-            "total": 2029,
+            "total": 2,
         }
 
         # 3. No proposal or postmortem was deleted or changed in state
@@ -2920,7 +2921,10 @@ def test_hosted_shape_history_reports_one_row_per_decision() -> None:
     auto = client.get(
         "/bff/management/evolution-journal?view=auto_proposals&page_size=50", headers=OPERATOR_HEADERS
     ).json()
-    assert auto["page_info"]["total"] == auto["data"]["auto_proposal_counts"]["total"]
+    assert auto["page_info"]["total"] == (
+        auto["data"]["auto_proposal_counts"]["total"]
+        + auto["data"]["auto_proposal_counts"]["postmortem_draft"]
+    )
     assert auto["data"]["auto_proposal_counts"]["incident_severity"] == 0
 
 

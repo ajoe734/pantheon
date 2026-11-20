@@ -7,6 +7,10 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Opti
 
 from fastapi import HTTPException
 
+from services.control_plane.bff.personas.fleet_classification import (
+    DATA_SCOPE_TEST,
+    classify_persona_data_scope,
+)
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 from ..service import (
     ROLE_ROLLBACK_BASELINE,
@@ -69,6 +73,16 @@ class PersonaStateLookup:
     states_by_id: Mapping[str, str] = field(default_factory=dict)
     operational_states: FrozenSet[str] = frozenset()
     failure: Optional[str] = None
+    # Personas whose data_scope classifies as test (classify_persona_data_scope),
+    # taken from the same single directory read as ``states_by_id``.
+    test_persona_ids: FrozenSet[str] = frozenset()
+
+    def is_test_scoped(self, persona_ids: Iterable[str]) -> bool:
+        """True only when the strategy has personas and all are test-scoped."""
+        ids = list(persona_ids)
+        if not self.available or not ids or not self.test_persona_ids:
+            return False
+        return all(pid in self.test_persona_ids for pid in ids)
 
     def persona_states(self, persona_ids: Iterable[str]) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
@@ -129,6 +143,12 @@ def read_persona_state_lookup(
             str(persona_id): str(projected_state(record))
             for persona_id, record in directory.records_by_id.items()
         }
+        test_ids = frozenset(
+            str(persona_id)
+            for persona_id, record in directory.records_by_id.items()
+            if isinstance(record, Mapping)
+            and classify_persona_data_scope(record)[0] == DATA_SCOPE_TEST
+        )
     except Exception as exc:  # noqa: BLE001 - any owner failure degrades, never hides rows
         log.warning("strategy persona state read failed: %s", exc)
         return unavailable_lookup(f"persona directory read failed: {type(exc).__name__}")
@@ -136,6 +156,7 @@ def read_persona_state_lookup(
         available=True,
         states_by_id=states,
         operational_states=frozenset(str(s) for s in operational_states),
+        test_persona_ids=test_ids,
     )
 
 

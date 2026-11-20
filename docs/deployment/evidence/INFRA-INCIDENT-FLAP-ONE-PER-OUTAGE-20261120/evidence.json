@@ -1,0 +1,25 @@
+{
+  "task_id": "INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120",
+  "reproduction": {
+    "hosted_reads": "coordinator read-only reads 2026-11-20 (BFF fb8ed951d; 67-page sweep kept in mgmt-readability-sweep-20261120 on the development host): GET /bff/incidents returned 24 resolved high-severity BFF downstream degradation incidents among the 25 newest (paper-fleet-reconciler, paper-signal-producer, source-ingest), opened every 5 to 15 minutes; about 19 per 2 hours; 4715 postmortem drafts",
+    "unit_test": "TestIncidentFlapOnePerOutage::test_legacy_single_ok_recovery_opens_two_incidents drives fail fail fail ok fail fail fail ok with the old settings (1 OK, no hold) and gets 2 incident_open deliveries"
+  },
+  "defaults": {
+    "PANTHEON_BFF_HEALTH_RECOVERY_SUCCESSES": "3 consecutive OK probes, so one lucky probe cannot close an incident",
+    "PANTHEON_BFF_HEALTH_RECOVERY_MIN_SECONDS": "120s span between first and last of those OK probes (4+ probes at the 30s interval), so a burst of fast OKs is not recovery",
+    "PANTHEON_BFF_HEALTH_REOPEN_WINDOW_SECONDS": "600s hold after sustained recovery before resolve is queued; covers the observed 5 to 15 minute flap period. A failure inside the hold keeps the same incident (the failure clears recovery progress); a failure after the resolve opens a new incident"
+  },
+  "mechanism": "incident_recovery table (one row per target) tracks the OK streak; resolve is queued only when the streak, span and hold are all met. No incidents-service change: the incident stays open during the hold instead of being resolved then reopened, so no extra postmortem draft is created.",
+  "continuous_outage": "unchanged: open after the existing failure threshold (3), one incident; test_continuous_outage_opens_exactly_one_at_threshold",
+  "error_rate_path": "_queue_error_rate_window_sync uses the same reserve_incident: an opening/open incident is continued (and recovery progress cleared), a new incident is only created after resolve, so it follows the same hold and cannot flap inside it",
+  "evolution_journal": "evolution_journal_auto_proposal_counts total no longer includes postmortem drafts; postmortem_draft is a separate labelled count; the auto_proposals list still shows drafts. Tests: test_bff_b3_evolution_journal.py and test_evolution_router.py updated",
+  "not_changed": "existing incidents and postmortem drafts are not deleted or rewritten",
+  "runtime_budget": {
+    "before": "about 19 BFF degradation incidents and as many postmortem drafts per 2 hours at hosted scale on 2026-11-20 (about 228 per day); 4715 drafts accumulated",
+    "after": "one incident and one draft per outage; per target at most one per (recovery span + 600s) in the worst alternating case; expected single digits per day. Not yet re-measured on hosted (needs a deploy)",
+    "cap": "incident_mappings and incident_recovery are one row per target; incident cases and drafts are rate-bounded, not row-capped",
+    "cleanup": "none added: existing rows are kept; an age or cap cleanup for incident.incident_cases and incident.postmortems remains open in RC3",
+    "manifest": "storage-manifest.json: incident_mappings bounded, incident_recovery added, incident.incident_cases and incident.postmortems growth text updated; scripts/check_storage_manifest.py passes"
+  },
+  "tests": "pytest services/control-plane/bff/test_bff_downstream_health_monitor.py tests/test_bff_b3_evolution_journal.py tests/test_evolution_router.py: 133 passed"
+}

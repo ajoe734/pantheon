@@ -480,6 +480,7 @@ def create_performance_attribution_router(
         broker: Optional[str] = Query(default=None),
         stage: Optional[str] = Query(default=None),
         as_of: Optional[str] = Query(default=None, alias="asOf"),
+        include_test_personas: bool = Query(default=False),
     ):
         """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
         identity = _extract_identity(authorization)
@@ -498,6 +499,7 @@ def create_performance_attribution_router(
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
             stage=stage, as_of=as_of,
+            include_test_personas=include_test_personas,
             tenant_id=tenant_id,
         )
 
@@ -532,6 +534,7 @@ def create_performance_attribution_router(
         broker: Optional[str] = Query(default=None),
         stage: Optional[str] = Query(default=None),
         as_of: Optional[str] = Query(default=None, alias="asOf"),
+        include_test_personas: bool = Query(default=False),
     ):
         """BFF: PM-12 performance attribution grouped by strategy."""
         identity = _extract_identity(authorization)
@@ -552,6 +555,7 @@ def create_performance_attribution_router(
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
             stage=stage, as_of=as_of,
+            include_test_personas=include_test_personas,
             tenant_id=tenant_id,
         )
 
@@ -578,6 +582,7 @@ def create_performance_attribution_router(
         broker: Optional[str] = Query(default=None),
         stage: Optional[str] = Query(default=None),
         as_of: Optional[str] = Query(default=None, alias="asOf"),
+        include_test_personas: bool = Query(default=False),
     ):
         """BFF: PM-12 performance attribution grouped by persona."""
         identity = _extract_identity(authorization)
@@ -598,6 +603,7 @@ def create_performance_attribution_router(
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
             stage=stage, as_of=as_of,
+            include_test_personas=include_test_personas,
             tenant_id=tenant_id,
         )
 
@@ -624,6 +630,7 @@ def create_performance_attribution_router(
         broker: Optional[str] = Query(default=None),
         stage: Optional[str] = Query(default=None),
         as_of: Optional[str] = Query(default=None, alias="asOf"),
+        include_test_personas: bool = Query(default=False),
     ):
         """BFF: PM-12 performance attribution grouped by capital pool."""
         identity = _extract_identity(authorization)
@@ -644,6 +651,7 @@ def create_performance_attribution_router(
             artifact_id=artifact_id, artifact=artifact,
             broker_id=broker_id, broker=broker,
             stage=stage, as_of=as_of,
+            include_test_personas=include_test_personas,
             tenant_id=tenant_id,
         )
 
