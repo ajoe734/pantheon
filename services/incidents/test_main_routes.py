@@ -1645,3 +1645,28 @@ def test_consume_four_drift_reports_updates_summary_occurrences_and_timeline():
     assert [entry["source_ref"] for entry in body["timeline"]] == [
         f"drift-{eid}-drawdown" for eid in event_ids
     ]
+
+
+def test_resolve_retired_binding_resolves_only_open_drift_incidents():
+    drift = client.post("/api/incidents/consume-drift-report", json={"drift_report": _drift_report_payload()})
+    assert drift.status_code in (200, 201), drift.text
+    drift_id = drift.json()["incident_id"]
+    other = client.post("/api/incidents", json={**_BASE_PAYLOAD, "binding_id": "binding-drift-001"})
+    assert other.status_code in (200, 201), other.text
+    other_id = other.json()["incident_id"]
+
+    resp = client.post(
+        "/api/incidents/resolve-retired-binding",
+        json={"binding_id": "binding-drift-001", "retired_at": "2026-11-18T07:00:00Z"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resolved_incident_ids"] == [drift_id]
+    assert body["resolution_reason"] == "runtime_binding_retired"
+    resolved = client.get(f"/api/incidents/{drift_id}").json()
+    assert resolved["status"] == "resolved"
+    assert "runtime_binding_retired" in json.dumps(resolved)
+    assert client.get(f"/api/incidents/{other_id}").json()["status"] == "open"
+
+    again = client.post("/api/incidents/resolve-retired-binding", json={"binding_id": "binding-drift-001"})
+    assert again.json()["resolved_incident_ids"] == []

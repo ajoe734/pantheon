@@ -5021,9 +5021,9 @@
    },
    "bound_status": "bounded",
    "cap": "one row per deduplicated open incident (by (binding_id, runtime_id, incident_cluster_id) for drift, canonical finding key for monitor-agent findings, and component for infrastructure health); repeated reports update occurrence_count, last_seen_at, and observed in place and replace evidence_summary with the latest single report summary (<= 4000 chars, typically ~450-550 chars vs 4000-char appended log before; row JSON size reduced from ~4,800 B to ~1,350 B on hosted drift shape while row count per report is unchanged at 0 net new rows per repeated report)",
-   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation",
+   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation; open drift incidents of a retired RuntimeBinding are resolved with resolution_reason=runtime_binding_retired (POST /api/incidents/resolve-retired-binding, called by the scheduled drift pass when it sees the binding retired)",
    "growth_driver": "deduplicated IncidentCase owner-store rows updated in place on repeated reports (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120); BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap (INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120)",
-   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted",
+   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted; drift incidents per active binding per day: before, 1 stuck open incident per retired binding indefinitely (inc-drift-5f668ec4c8d9 open 2026-11-18 to 2026-11-20); after, 0 open once the binding retires, and no new one from stale drawdown",
    "kind": "schema_table",
    "name": "incident.incident_cases",
    "owner": "schema:incident",
@@ -5031,7 +5031,7 @@
     "services/incident/pg_store.py"
    ],
    "register_class": "RC6",
-   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120"
+   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120; DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120"
   },
   {
    "bound_status": "unreviewed",
@@ -5329,19 +5329,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_status": "bounded",
+   "cap": "drift report id is deterministic per (causal telemetry event, metric), so a repeated breach of the same event rewrites one row; a drawdown older than the evaluation window (RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS, default RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS=300s) is recorded as a degraded stale_input check and produces no drift report; a retired binding produces none",
+   "cleanup": "none needed beyond the cap; no report is written for stale or retired inputs",
+   "growth_driver": "one row per distinct fresh breaching telemetry event per binding (stale carried-forward drawdown no longer counts)",
+   "growth_per_day": "per active binding at the 300s window: before, up to 288 scheduled evaluations/day each re-reporting a carried-forward drawdown breach (one stable report id, 288 evaluation rows citing it); after, 0 drift reports from a stale drawdown, and at most one per fresh breaching drawdown event. Hosted per-binding counts not re-measured in this task: derived from window config and the coordinator 2026-11-20 reads",
    "kind": "schema_table",
    "name": "reconciliation_drift.drift_reports",
    "owner": "schema:reconciliation_drift",
    "readers": [
     "services/reconciliation-drift/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC6",
+   "task": "DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120",
+   "bound_proof": {
+    "file": "services/reconciliation-drift/main.py",
+    "contains": "def _mark_stale_drawdown_input("
+   }
   },
   {
    "bound_status": "unreviewed",
