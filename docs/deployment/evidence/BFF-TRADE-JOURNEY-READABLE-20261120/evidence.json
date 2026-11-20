@@ -1,0 +1,25 @@
+{
+  "task": "BFF-TRADE-JOURNEY-READABLE-20261120",
+  "recorded_hosted_input": "acceptance/fixtures/hosted_trade_journeys_20261120.json (read-only hosted read 2026-11-20T00:13Z; hosted was not read by this task)",
+  "verification": {
+    "command": "pytest acceptance scripts/test_dev_acceptance_stage.py services/control-plane/bff/{tests/test_trade_journey_readable.py,test_tj_e2e_005_trade_journeys_read_api.py,test_trade_journey_contract.py,tests/test_trade_journey_list_identity.py,tests/test_trade_journey_shared_identity_filter.py,tests/test_trade_journey_metrics_scope.py}",
+    "result": "passed"
+  },
+  "acceptance_map": {
+    "1": "test_names_come_from_one_persona_read_and_probe_flag_from_shared_rule; test_unreadable_persona_owner_keeps_rows_with_null_name",
+    "2": "test_probe_personas_excluded_by_default_and_included_on_request; test_probe_exclusion_is_in_sql_and_total_counts_the_filtered_result",
+    "3": "test_unknown_attention_is_rejected_and_known_values_pass_through; test_recon_mismatch_is_applied_in_sql_to_variance_rows_before_paging_and_counting",
+    "4": "test_recorded_sell_of_one_share_keeps_order_quantity",
+    "5": "test_outcomes_of_recorded_journeys; test_deferred_reconciliation_reason_is_its_own_kind",
+    "6": "test_next_step_only_for_rejected_or_variance_and_prefers_open_incident; test_reason_recorded_before_reason_fields_existed",
+    "7": "test_detail_reports_upstream_lineage_unlinked_without_attention",
+    "8": "contract.md 4.2.2; trade_journey.schema.json; test_readable_read_fields_are_accepted_by_schema",
+    "9": "acceptance/probes/trade-journey-readable; acceptance/test_trade_journey_readable_probe.py",
+    "10": "services/control-plane/bff/tests/test_trade_journey_readable.py (fixture-backed)"
+  },
+  "notes": [
+    "Probe persona fixture uses metadata.release_probe=true; the hosted persona record shape for the probe persona was not recorded.",
+    "Frontend routes /personas/{id} and /incidents/{id} are assumed; no route table was found in the repo.",
+    "Hosted rejected journey tj_79726064 only recorded the expression code long_cash, so it reads reason_not_recorded."
+  ]
+}
