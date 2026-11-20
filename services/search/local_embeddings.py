@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Any, Sequence
@@ -33,6 +34,7 @@ class LocalEmbeddingEngine:
         cache_dir: Path | str | None = None,
         local_files_only: bool = True,
     ) -> None:
+        self._load_lock = threading.Lock()
         self.manifest_path = Path(manifest_path or MANIFEST_PATH)
         self.manifest = self._load_manifest()
         self.model_name = str(self.manifest.get("model_name", "intfloat/multilingual-e5-large"))
@@ -140,7 +142,12 @@ class LocalEmbeddingEngine:
     def _ensure_loaded(self) -> Any:
         if self._embedder is not None:
             return self._embedder
+        with self._load_lock:
+            if self._embedder is not None:
+                return self._embedder
+            return self._load_embedder()
 
+    def _load_embedder(self) -> Any:
         if not self.verify_integrity():
             raise SearchCapabilityUnavailableError(
                 f"Embedding model integrity check failed for '{self.model_name}' at {self.cache_dir}"
