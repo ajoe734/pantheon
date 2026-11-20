@@ -1,0 +1,12 @@
+{
+  "task_id": "DRIFT-RETIRED-BINDING-INCIDENT-SWEEP-20261120",
+  "reproduction": "Coordinator hosted reads 2026-11-20 09:45Z (BFF 2d09ff1b1, contains DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120): inc-drift-5f668ec4c8d9 open for binding rb-3823397e125e4579ba5f4174067087ed (retired 2026-11-18T07:00Z); runtime rt-ad81501b now carries rb-eb74118dd3ca4b169496b1c239087512, so the telemetry summary never names the retired binding and the in-loop resolver never sees it.",
+  "fix": "_sweep_retired_binding_incidents runs once per scheduled pass after the summary loop: reads GET /api/incidents?open_only=true, keeps drift: cluster incidents whose binding was not in this pass's summaries, looks each binding up via the existing _authoritative_runtime_binding, and resolves retired ones via the existing _resolve_retired_binding_incidents -> POST /api/incidents/resolve-retired-binding (reason runtime_binding_retired). No second resolver; services/incidents unchanged. Skipped for lifecycle_only / single-binding passes.",
+  "bounds": "Lookups capped by PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS (default 10) and each call limited by the existing dispatch_timeout (tick SLA budget, max 5s). A failed lookup or list leaves incidents open; retried next pass.",
+  "runtime_budget": "Extra reads per pass: 1 incident list read + at most 10 runtime-manager binding lookups (distinct un-evaluated bindings of open drift incidents; hosted currently has a handful). Writes: none except resolve-retired-binding calls for bindings confirmed retired.",
+  "commands": [
+    {"command": "/tmp/pv/bin/python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q", "result": "85 passed"}
+  ],
+  "tests_added": ["rebound runtime resolves old binding incident", "lookup failure leaves incident open and continues", "per-pass lookup bound"],
+  "post_deploy": "Coordinator reads inc-drift-5f668ec4c8d9 on hosted; expect resolved with reason runtime_binding_retired."
+}

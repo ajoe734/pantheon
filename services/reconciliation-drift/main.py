@@ -3566,6 +3566,97 @@ def _resolve_retired_binding_incidents(
         return None
 
 
+def _get_json(url: str, *, timeout_seconds: float) -> Any:
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else None
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"incident service rejected request: {exc.code}") from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc!r}") from exc
+
+
+def _sweep_max_lookups() -> int:
+    try:
+        return max(0, int(os.getenv("PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS", "10")))
+    except ValueError:
+        return 10
+
+
+def _sweep_retired_binding_incidents(
+    evaluated_binding_ids: set,
+    *,
+    tenant_id: str,
+    timestamp: str,
+    dispatch_timeout: Any,
+    skip_binding_ids: set | None = None,
+) -> Dict[str, Any]:
+    """Resolve open drift incidents whose binding this pass did not evaluate and is retired.
+
+    Reads only open incidents plus at most N runtime-manager lookups per pass; the only
+    write is the existing resolve-retired-binding call. Failures leave incidents open.
+    """
+    result: Dict[str, Any] = {
+        "open_drift_incident_count": 0,
+        "lookups": 0,
+        "lookup_failures": 0,
+        "resolutions": [],
+        "retired_binding_ids": [],
+        "truncated": False,
+    }
+    incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+    if not incidents_api_url or not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
+        return result
+    budget = dispatch_timeout()
+    if budget <= 0:
+        return result
+    try:
+        incidents = _get_json(
+            f"{incidents_api_url}/api/incidents?open_only=true", timeout_seconds=budget
+        )
+    except HTTPException:
+        logging.getLogger(__name__).warning("retired-binding sweep could not list incidents", exc_info=True)
+        result["lookup_failures"] += 1
+        return result
+    candidates: List[str] = []
+    for inc in incidents if isinstance(incidents, list) else []:
+        if not isinstance(inc, dict):
+            continue
+        if not str(inc.get("incident_cluster_id") or "").startswith("drift:"):
+            continue
+        result["open_drift_incident_count"] += 1
+        bid = str(inc.get("binding_id") or "").strip()
+        if bid and bid not in evaluated_binding_ids and bid not in (skip_binding_ids or set()):
+            if bid not in candidates:
+                candidates.append(bid)
+    limit = _sweep_max_lookups()
+    if len(candidates) > limit:
+        result["truncated"] = True
+        candidates = candidates[:limit]
+    for bid in candidates:
+        lookup_budget = dispatch_timeout()
+        if lookup_budget <= 0:
+            result["truncated"] = True
+            break
+        result["lookups"] += 1
+        try:
+            binding = _authoritative_runtime_binding(bid, timeout_seconds=lookup_budget)
+        except RuntimeError:
+            result["lookup_failures"] += 1
+            continue
+        if not _binding_retired_before(binding, timestamp):
+            continue
+        result["retired_binding_ids"].append(bid)
+        resolution = _resolve_retired_binding_incidents(
+            bid, (binding or {}).get("retired_at"), timeout_seconds=dispatch_timeout()
+        )
+        if resolution and resolution.get("resolved_incident_ids"):
+            result["resolutions"].append(resolution)
+    return result
+
+
 def _first_trigger_value(*payloads: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> Any:
     for payload in payloads:
         if not isinstance(payload, dict):
@@ -4010,6 +4101,16 @@ def _execute_scheduled_reconcile(
                 }
             )
 
+    retired_sweep: Dict[str, Any] | None = None
+    if not body.lifecycle_only and not requested_binding_id:
+        retired_sweep = _sweep_retired_binding_incidents(
+            {_summary_binding_id(item) for item in summaries},
+            tenant_id=tenant_id,
+            timestamp=timestamp,
+            dispatch_timeout=dispatch_timeout,
+        )
+        retired_incident_resolutions.extend(retired_sweep["resolutions"])
+
     tick_status = _worst_status(evaluation_statuses)
     if incident_delivery_errors or lifecycle_retryable_errors or lifecycle_terminal_rejections:
         tick_status = "failure"
@@ -4040,6 +4141,7 @@ def _execute_scheduled_reconcile(
         "retired_binding_ids": retired_binding_ids,
         "stale_input_binding_ids": stale_input_binding_ids,
         "retired_incident_resolutions": retired_incident_resolutions,
+        "retired_binding_sweep": retired_sweep,
         "paused_binding_ids": paused_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
