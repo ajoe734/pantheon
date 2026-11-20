@@ -890,7 +890,9 @@ def evolution_journal_auto_proposal_counts(
         else:
             other_proposed += 1
     draft_count = max(0, int(postmortem_draft_count))
-    total = incident_followup + incident_severity + other_proposed + draft_count
+    # Postmortem drafts are reports, not proposals: they are returned as a
+    # separate labelled count and never added to the proposal total.
+    total = incident_followup + incident_severity + other_proposed
     return {
         "incident_followup": incident_followup,
         "incident_severity": incident_severity,
