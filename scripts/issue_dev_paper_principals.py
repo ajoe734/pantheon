@@ -98,6 +98,10 @@ READERS = {
     # Role consultation-svc is in the memory write set and satisfies the authority check; no
     # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.
     "CONSULTATION_MEMORY_WRITE_TOKEN": ("pantheon-dev-consultation-memory-writer", "consultation-svc"),
+    # Consultation executor + meeting pre-read -> memory retrieve ONLY. consultation_session is a memory read
+    # role (institutional and committee-scoped persona reads) and not a write role. The actor id the service
+    # sends must equal this subject (memory-svc matches actor_id to the verified token identity).
+    "CONSULTATION_MEMORY_READ_TOKEN": ("pantheon-dev-consultation-memory-reader", "consultation_session"),
     # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
     # memory write role). The adapter's actor id must equal this subject in strict auth.
     "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
@@ -275,7 +279,8 @@ CONSUMER_FILES = {
         "AUTO_CONSUMER_REGISTRY_TOKEN",
     ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
-    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN"),
+    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
+                         "CONSULTATION_MEMORY_READ_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),

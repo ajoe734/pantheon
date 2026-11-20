@@ -833,7 +833,7 @@ def _compose_panel_case_file(
     owners = decision_case.Owners.from_env()
     if config.memory_url:
         owners = replace(owners, memory=decision_case.OwnerEndpoint(
-            config.memory_url, _memory_headers().get("Authorization", "").removeprefix("Bearer ")))
+            config.memory_url, memory_read_identity()[0]))
     persona = str(request["from_persona_id"])
     panel = request["metadata"]["panel"]
     canary = "paper_canary_candidacy" in (panel.get("touches") or [])
@@ -865,9 +865,8 @@ def _compose_panel_case_file(
                 raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
             families.setdefault(str(entry["strategy_id"]), []).append(entry)
         caller = decision_case.Caller(
-            actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip(),
-            actor_roles=tuple(x.strip() for x in os.getenv(
-                "PANTHEON_MEMORY_ACTOR_ROLES", "").split(",") if x.strip()),
+            actor_id=memory_read_identity()[1],
+            actor_roles=memory_read_identity()[2],
             session_id=f"consult-{request['request_id']}",
             # Service caller: the shared file may NEVER include private memory.
             persona_id="")
@@ -1132,6 +1131,39 @@ def _memory_headers() -> dict[str, str]:
             default_token="",
         ).headers(),
     }
+
+
+_READ_FILE_ENV = "CONSULTATION_MEMORY_READ_TOKEN_FILE"
+_READ_ACTOR_DEFAULT = "pantheon-dev-consultation-memory-reader"
+
+
+def memory_read_identity() -> tuple[str, str, tuple[str, ...]]:
+    """(bearer token, actor_id, actor_roles) for memory reads; roles never empty.
+
+    The issued read principal wins when its file is configured: actor id and
+    roles then describe that credential (memory-svc requires actor_id to equal
+    the token identity and roles to be a subset of the token roles). Without it
+    the legacy shared credential and PANTHEON_MEMORY_ACTOR_* apply. The token is
+    never logged or returned in any error text.
+    """
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    def _csv(raw: str) -> tuple[str, ...]:
+        return tuple(x.strip() for x in raw.split(",") if x.strip())
+
+    if os.getenv(_READ_FILE_ENV, "").strip():
+        auth = resolve_runtime_manager_auth(
+            token_env_key="CONSULTATION_MEMORY_READ_TOKEN",
+            token_file_env_key=_READ_FILE_ENV, default_token="")
+        actor = os.getenv("PANTHEON_MEMORY_READ_ACTOR_ID", "").strip() or _READ_ACTOR_DEFAULT
+        roles = _csv(os.getenv("PANTHEON_MEMORY_READ_ACTOR_ROLES", "")) or ("consultation_session",)
+        return auth.token, actor, roles
+    auth = resolve_runtime_manager_auth(
+        token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE", default_token="")
+    actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip() or "consultation-svc"
+    roles = _csv(os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "")) or ("consultation_session",)
+    return auth.token, actor, roles
 
 
 def _write_panel_memory(
@@ -1769,7 +1801,7 @@ def _probe_case_file_credentials(config: ExecutorConfig) -> None:
     owners = decision_case.Owners.from_env()
     if config.memory_url:
         owners = replace(owners, memory=decision_case.OwnerEndpoint(
-            config.memory_url, _memory_headers().get("Authorization", "").removeprefix("Bearer ")))
+            config.memory_url, memory_read_identity()[0]))
     for endpoint, path in (
         (owners.pool, "/api/personas/consult-redrive-probe/strategy-pool"),
         (owners.registry, "/api/registry/entries/consult-redrive-probe"),

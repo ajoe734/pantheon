@@ -271,8 +271,11 @@ services:
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
-      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
-      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
+      # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this
+      # credential and send the matching actor id/roles; the write principal above stays write-only.
+      CONSULTATION_MEMORY_READ_TOKEN_FILE: ${CONSULTATION_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_READ_ACTOR_ID: pantheon-dev-consultation-memory-reader
+      PANTHEON_MEMORY_READ_ACTOR_ROLES: consultation_session
       # No depends_on for evolution: it transitively depends on this service
       # (via runtime-manager). A harness-patch panel probes it and blocks.
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093

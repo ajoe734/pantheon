@@ -1036,6 +1036,7 @@ def build_participant_pre_read(
     topic: str,
     supplied_pre_read: Any = None,
     memory_url: str = "",
+    refusals: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Build each participant's pre-read of committee-visible entries in full (<=12 items).
 
@@ -1063,24 +1064,21 @@ def build_participant_pre_read(
     for p in participants:
         pid = str(p["persona_id"])
         raw_entries = list(supplied_by_persona.get(pid) or [])
+        memory_read_refusal = ""
         if not raw_entries and memory_url:
             try:
                 from integrations.openclaw.persona_memory_bridge import (
                     fetch_canonical_memory,
                     normalize_retrieval_hits,
                 )
-                from services.runtime_auth import resolve_runtime_manager_auth
+                from .workflow_executor import memory_read_identity
 
-                token = resolve_runtime_manager_auth(
-                    token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
-                    token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
-                    default_token="",
-                ).token
+                token, read_actor_id, read_actor_roles = memory_read_identity()
                 retrieval = fetch_canonical_memory(
                     memory_url,
                     persona_id=pid,
-                    actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "consultation-svc"),
-                    actor_roles=["operator"],
+                    actor_id=read_actor_id,
+                    actor_roles=list(read_actor_roles),
                     session_id=f"preread-{meeting_id}-{pid}",
                     scope="both",
                     query=topic,
@@ -1095,8 +1093,15 @@ def build_participant_pre_read(
                             and hit.get("relevance_scope") == "persona_and_committee"
                         ):
                             raw_entries.append(dict(hit))
-            except Exception:
+            except Exception as exc:
+                # A refused or failed canonical read never blocks the round; it is
+                # named in the contribution. Never include credentials in the text.
                 raw_entries = []
+                code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+                memory_read_refusal = (
+                    f"memory_read_refused:{type(exc).__name__}"
+                    + (f":http_{code}" if code else "")
+                )
 
         filtered_entries: List[Dict[str, Any]] = []
         for idx, entry in enumerate(raw_entries):
@@ -1160,6 +1165,10 @@ def build_participant_pre_read(
                 }
             )
 
+        if memory_read_refusal and refusals is not None:
+            # Kept out of the pre-read record: that record is part of the provider
+            # request, so a retry must not change its content (idempotency key).
+            refusals[pid] = memory_read_refusal
         pre_read_records.append(
             {
                 "persona_id": pid,
@@ -2122,7 +2131,9 @@ def execute_persona_meeting(
             meeting["attribution_record"] = resolved_attr
 
     meta = dict(meeting.get("metadata") or {})
+    memory_refusals: Dict[str, str] = {}
     pre_read = build_participant_pre_read(
+        refusals=memory_refusals,
         meeting_id=meeting_id,
         tenant_id=tenant_id,
         participants=participants,
@@ -2131,6 +2142,10 @@ def execute_persona_meeting(
         memory_url=memory_url,
     )
     meeting["pre_read"] = pre_read
+    if memory_refusals:
+        # Named per persona, never blocking; kept off the provider request so a
+        # retry's content (idempotency key) is unchanged.
+        meeting["memory_read_refusals"] = dict(memory_refusals)
     meeting["status"] = "in_round"
     store.put_meeting(meeting)
 
