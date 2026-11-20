@@ -38,6 +38,9 @@ from .ports import DeploymentCommands, DeploymentQueries
 from .service import DeploymentService
 
 
+from ..core.display_names import current_resolver
+
+
 def create_deployment_router(
     *,
     queries: DeploymentQueries,
@@ -419,6 +422,8 @@ def create_deployment_router(
         else:
             plans, next_page_token = page_slice(plans, page_token, page_size)
             plans = service.deployment_plans_with_stage_truth(plans, snapshot_at=snapshot_at)
+            _names = current_resolver()
+            plans = [_names.annotate(dict(p)) for p in plans]
 
         meta = snapshot_meta(snapshot_at)
         stage_surfaces = (
@@ -469,6 +474,7 @@ def create_deployment_router(
             snapshot_at=snapshot_at,
         )
 
+        plan_payload = current_resolver().annotate(dict(plan_payload))
         return {
             "data": {
                 **plan_payload,
