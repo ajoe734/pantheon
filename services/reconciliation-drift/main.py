@@ -2246,6 +2246,68 @@ def _paper_lifecycle_identity(
     return identity, None
 
 
+_RUNTIME_HEALTH_CHECKS = frozenset(
+    {
+        "runtime_state",
+        "runtime_health_summary",
+        "queue_lag_ms",
+        "event_delivery_lag_ms",
+        "actual_metrics_presence",
+    }
+)
+_RUNTIME_UNHEALTHY_DEFER_SECONDS = 60 * 60
+
+
+def _journey_reconciliation_decision(
+    evaluation: Dict[str, Any],
+    *,
+    snapshot_created_at: Any,
+    timestamp: str,
+) -> tuple[str, str | None, List[Dict[str, Any]]]:
+    """Decide one journey from journey-scoped checks only.
+
+    Returns (decision, reason_code, reason_detail) where decision is one of
+    ``completed``, ``failed`` or ``defer``.  Strategy performance drift
+    (``drift_checks``) is reported through the drift incident path and never
+    decides a journey; runtime health is transient and defers the journey.
+    """
+    non_ok = [
+        check
+        for check in evaluation.get("reconciliation_checks") or []
+        if isinstance(check, dict)
+        and str(check.get("status") or "").strip().lower() != "ok"
+    ]
+    if not non_ok:
+        return "completed", None, []
+    detail = [
+        {
+            "check": check.get("check"),
+            "status": check.get("status"),
+            "detail": check.get("detail"),
+            "observed": check.get("observed"),
+            "threshold": check.get(
+                "threshold",
+                check.get("critical_threshold", check.get("warning_threshold")),
+            ),
+        }
+        for check in non_ok
+    ]
+    names = {str(check.get("check") or "") for check in non_ok}
+    if names <= _RUNTIME_HEALTH_CHECKS:
+        snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
+        now = _strict_lifecycle_datetime(timestamp)
+        if (
+            snapshot_at is not None
+            and now is not None
+            and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
+        ):
+            return "failed", "runtime_unhealthy_at_reconciliation", detail
+        return "defer", None, detail
+    if "authoritative_actual_identity" in names:
+        return "failed", "reconciliation_identity_unverified", detail
+    return "failed", "reconciliation_check_failed", detail
+
+
 def _scheduled_lifecycle_event(
     *,
     summary: Dict[str, Any],
@@ -2278,9 +2340,16 @@ def _scheduled_lifecycle_event(
             f"pantheon:scheduled-reconciliation:{evaluation_id}",
         )
     )
+    decision, recon_reason_code, recon_reason_detail = _journey_reconciliation_decision(
+        evaluation,
+        snapshot_created_at=identity.get("created_at"),
+        timestamp=timestamp,
+    )
+    if decision == "defer":
+        return None, "reconciliation_deferred_runtime_unhealthy"
     event_type = (
         "reconciliation_completed"
-        if str(evaluation.get("status") or "").lower() == "ok"
+        if decision == "completed"
         else "reconciliation_failed"
     )
     sequence_no = int(identity["sequence_no"]) + 1
@@ -2344,6 +2413,11 @@ def _scheduled_lifecycle_event(
         "metadata": metadata,
         "correlation_envelope": envelope,
     }
+    if event_type == "reconciliation_failed":
+        event["reason_code"] = recon_reason_code
+        event["reason_detail"] = recon_reason_detail
+        event["metadata"]["reason_code"] = recon_reason_code
+        event["metadata"]["reason_detail"] = recon_reason_detail
     if isinstance(identity.get("authority_refs"), dict):
         event["authority_refs"] = json.loads(json.dumps(identity["authority_refs"]))
     return event, None
