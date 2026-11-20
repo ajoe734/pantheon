@@ -1,0 +1,537 @@
+{
+ "source": "hosted read-only, 2026-11-20T00:13Z, BFF 2fb152cd3",
+ "persona_names": {
+  "persona-2448c7053e33ea48da47": "青禾｜2330 台股 Paper 學習 R3",
+  "persona-ee7112a829d38b9135ac": "衡岳｜0050 台股 Paper 學習 R2",
+  "persona-6507750312870d03a241": "澄川｜2317 台股 Paper 學習 R2",
+  "persona-d64835a203ce276b8fbb": "Pantheon Dev Paper Release 43688794313 Attempt 1"
+ },
+ "paper_runtime_rejection_log": "2026-11-19T23:46:17Z pantheon-paper-fleet-reconciler-1 WARNING:__main__:[sig-7ed048e23fd14b14546cfb0902532b8a] TW order rejected by risk gate for 2317.TWSE (eq:2317): reason=insufficient_cash required=100034.3461 available=100000.0 limit=100000.0",
+ "journeys": {
+  "tj_29473e86": {
+   "journey_id": "tj_29473e86-63ff-5384-bda1-23eef61cebb2",
+   "tenant_id": "tenant-dev",
+   "environment": "paper",
+   "status": "completed_with_variance",
+   "persona_id": "persona-2448c7053e33ea48da47",
+   "created_at": "2026-11-16T06:52:04.000000Z",
+   "updated_at": "2026-11-16T06:58:29.000000Z",
+   "identifiers": {
+    "order_id": [
+     "c771bc1adfff4f2cbbd709face8c6378"
+    ],
+    "binding_id": [
+     "rb-3823397e125e4579ba5f4174067087ed"
+    ],
+    "persona_id": [
+     "persona-2448c7053e33ea48da47"
+    ]
+   },
+   "stages": {
+    "ledger_booking": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:08.000000Z",
+     "revision": 7
+    },
+    "reconciliation": {
+     "status": "failed",
+     "updated_at": "2026-11-16T06:58:29.000000Z",
+     "revision": 8
+    },
+    "trade_decision": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:04.000000Z",
+     "revision": 2
+    },
+    "fill_management": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:08.000000Z",
+     "revision": 6
+    },
+    "risk_evaluation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:08.000000Z",
+     "revision": 3
+    },
+    "order_submission": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:08.000000Z",
+     "revision": 4
+    },
+    "signal_generation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:04.000000Z",
+     "revision": 1
+    },
+    "broker_acknowledgement": {
+     "status": "succeeded",
+     "updated_at": "2026-11-16T06:52:08.000000Z",
+     "revision": 5
+    }
+   },
+   "timeline": [
+    {
+     "side": "sell",
+     "stage": "reconciliation",
+     "symbol": "2330.TWSE",
+     "event_type": "reconciliation_failed",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "failed",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "sell",
+     "price": 2215.0,
+     "stage": "ledger_booking",
+     "symbol": "2330.TWSE",
+     "quantity": 0.0,
+     "event_type": "position_snapshot",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "sell",
+     "price": 2215.0,
+     "stage": "fill_management",
+     "symbol": "2330.TWSE",
+     "quantity": 1.0,
+     "event_type": "paper_fill_simulated",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "fill_quantity": 1.0,
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "sell",
+     "stage": "broker_acknowledgement",
+     "symbol": "2330.TWSE",
+     "event_type": "order_accepted",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "sell",
+     "stage": "order_submission",
+     "symbol": "2330.TWSE",
+     "event_type": "order_submitted",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "sell",
+     "stage": "risk_evaluation",
+     "symbol": "2330.TWSE",
+     "event_type": "risk_evaluation",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "stage": "trade_decision",
+     "symbol": "2330.TWSE",
+     "event_type": "trade_decision",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded"
+    },
+    {
+     "stage": "signal_generation",
+     "symbol": "2330.TWSE",
+     "event_type": "signal_generation",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded"
+    }
+   ],
+   "diagnostics": [
+    {
+     "code": "missing_stages",
+     "stages": [
+      "research_rationale",
+      "strategy_candidate",
+      "candidate_evaluation",
+      "promotion_decision",
+      "capital_binding",
+      "deployment_runtime"
+     ]
+    }
+   ],
+   "hosted_row": {
+    "quantity": 1.0,
+    "side": "sell",
+    "symbol": "2330.TWSE",
+    "flags": {
+     "waiting_human": false,
+     "blocked": false,
+     "rejected": true,
+     "mismatch": true,
+     "orphan": false,
+     "stalled": false
+    }
+   }
+  },
+  "tj_79726064": {
+   "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+   "tenant_id": "tenant-dev",
+   "environment": "paper",
+   "status": "failed",
+   "persona_id": "persona-6507750312870d03a241",
+   "created_at": "2026-11-19T23:46:15.000000Z",
+   "updated_at": "2026-11-19T23:46:17.000000Z",
+   "identifiers": {
+    "order_id": [
+     "paper-order-91d55953-b575-4fe8-8d39-6e0cade58d59"
+    ],
+    "binding_id": [
+     "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4"
+    ],
+    "persona_id": [
+     "persona-6507750312870d03a241"
+    ]
+   },
+   "stages": {
+    "trade_decision": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 2
+    },
+    "order_submission": {
+     "status": "failed",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 3
+    },
+    "signal_generation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 1
+    }
+   },
+   "timeline": [
+    {
+     "side": "buy",
+     "stage": "order_submission",
+     "symbol": "2317.TWSE",
+     "quantity": 0.0,
+     "event_type": "order_rejection",
+     "persona_id": "persona-6507750312870d03a241",
+     "reason_code": "long_cash",
+     "stage_status": "failed",
+     "requested_quantity": 452.0,
+     "submitted_to_broker": false
+    },
+    {
+     "stage": "trade_decision",
+     "symbol": "2317.TWSE",
+     "event_type": "trade_decision",
+     "persona_id": "persona-6507750312870d03a241",
+     "stage_status": "succeeded"
+    },
+    {
+     "stage": "signal_generation",
+     "symbol": "2317.TWSE",
+     "event_type": "signal_generation",
+     "persona_id": "persona-6507750312870d03a241",
+     "stage_status": "succeeded"
+    }
+   ],
+   "diagnostics": [
+    {
+     "code": "missing_stages",
+     "stages": [
+      "research_rationale",
+      "strategy_candidate",
+      "candidate_evaluation",
+      "promotion_decision",
+      "capital_binding",
+      "deployment_runtime",
+      "risk_evaluation"
+     ]
+    }
+   ],
+   "hosted_row": {
+    "quantity": 0.0,
+    "side": "buy",
+    "symbol": "2317.TWSE",
+    "flags": {
+     "waiting_human": false,
+     "blocked": false,
+     "rejected": true,
+     "mismatch": false,
+     "orphan": false,
+     "stalled": false
+    }
+   }
+  },
+  "tj_e32ead77": {
+   "journey_id": "tj_e32ead77-ed06-53b5-9807-2416ef98be44",
+   "tenant_id": "tenant-dev",
+   "environment": "paper",
+   "status": "completed",
+   "persona_id": "persona-2448c7053e33ea48da47",
+   "created_at": "2026-11-19T23:46:15.000000Z",
+   "updated_at": "2026-11-19T23:50:03.000000Z",
+   "identifiers": {
+    "order_id": [
+     "b019a6c10d1f40949f468c1b786adce4"
+    ],
+    "binding_id": [
+     "rb-eb74118dd3ca4b169496b1c239087512"
+    ],
+    "persona_id": [
+     "persona-2448c7053e33ea48da47"
+    ]
+   },
+   "stages": {
+    "ledger_booking": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 7
+    },
+    "reconciliation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:50:03.000000Z",
+     "revision": 8
+    },
+    "trade_decision": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 2
+    },
+    "fill_management": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 6
+    },
+    "risk_evaluation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 3
+    },
+    "order_submission": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 4
+    },
+    "signal_generation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 1
+    },
+    "broker_acknowledgement": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 5
+    }
+   },
+   "timeline": [
+    {
+     "side": "buy",
+     "stage": "reconciliation",
+     "symbol": "2330.TWSE",
+     "event_type": "reconciliation_completed",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "buy",
+     "price": 2165.0,
+     "stage": "ledger_booking",
+     "symbol": "2330.TWSE",
+     "quantity": 1.0,
+     "event_type": "position_snapshot",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "buy",
+     "price": 2165.0,
+     "stage": "fill_management",
+     "symbol": "2330.TWSE",
+     "quantity": 1.0,
+     "event_type": "paper_fill_simulated",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "fill_quantity": 1.0,
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "buy",
+     "stage": "broker_acknowledgement",
+     "symbol": "2330.TWSE",
+     "event_type": "order_accepted",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "buy",
+     "stage": "order_submission",
+     "symbol": "2330.TWSE",
+     "event_type": "order_submitted",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "side": "buy",
+     "stage": "risk_evaluation",
+     "symbol": "2330.TWSE",
+     "event_type": "risk_evaluation",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": true
+    },
+    {
+     "stage": "trade_decision",
+     "symbol": "2330.TWSE",
+     "event_type": "trade_decision",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded"
+    },
+    {
+     "stage": "signal_generation",
+     "symbol": "2330.TWSE",
+     "event_type": "signal_generation",
+     "persona_id": "persona-2448c7053e33ea48da47",
+     "stage_status": "succeeded"
+    }
+   ],
+   "diagnostics": [
+    {
+     "code": "missing_stages",
+     "stages": [
+      "research_rationale",
+      "strategy_candidate",
+      "candidate_evaluation",
+      "promotion_decision",
+      "capital_binding",
+      "deployment_runtime"
+     ]
+    }
+   ],
+   "hosted_row": {
+    "quantity": 1.0,
+    "side": "buy",
+    "symbol": "2330.TWSE",
+    "flags": {
+     "waiting_human": false,
+     "blocked": false,
+     "rejected": false,
+     "mismatch": false,
+     "orphan": false,
+     "stalled": false
+    }
+   }
+  },
+  "tj_efaa5c30": {
+   "journey_id": "tj_efaa5c30-7feb-5359-8873-4993ca16edb3",
+   "tenant_id": "tenant-dev",
+   "environment": "paper",
+   "status": "no_order",
+   "persona_id": "persona-d64835a203ce276b8fbb",
+   "created_at": "2026-11-19T23:46:15.000000Z",
+   "updated_at": "2026-11-19T23:46:17.000000Z",
+   "identifiers": {
+    "binding_id": [
+     "rb-23c9d71a91c5420dae77ca14eea9f988"
+    ],
+    "persona_id": [
+     "persona-d64835a203ce276b8fbb"
+    ]
+   },
+   "stages": {
+    "trade_decision": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 2
+    },
+    "risk_evaluation": {
+     "status": "skipped",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 1
+    },
+    "order_submission": {
+     "status": "skipped",
+     "updated_at": "2026-11-19T23:46:17.000000Z",
+     "revision": 3
+    },
+    "signal_generation": {
+     "status": "succeeded",
+     "updated_at": "2026-11-19T23:46:15.000000Z",
+     "revision": 1
+    }
+   },
+   "timeline": [
+    {
+     "stage": "order_submission",
+     "symbol": "2330.TW",
+     "quantity": 0.0,
+     "event_type": "paper_order_simulated",
+     "persona_id": "persona-d64835a203ce276b8fbb",
+     "reason_code": "hold_signal",
+     "order_status": "not_submitted",
+     "stage_status": "skipped",
+     "decision_status": "no_order",
+     "requested_quantity": 1.0,
+     "submitted_to_broker": false
+    },
+    {
+     "stage": "trade_decision",
+     "symbol": "2330.TW",
+     "event_type": "trade_decision",
+     "persona_id": "persona-d64835a203ce276b8fbb",
+     "stage_status": "succeeded"
+    },
+    {
+     "stage": "signal_generation",
+     "symbol": "2330.TW",
+     "event_type": "signal_generation",
+     "persona_id": "persona-d64835a203ce276b8fbb",
+     "stage_status": "succeeded"
+    }
+   ],
+   "diagnostics": [
+    {
+     "code": "missing_stages",
+     "stages": [
+      "research_rationale",
+      "strategy_candidate",
+      "candidate_evaluation",
+      "promotion_decision",
+      "capital_binding",
+      "deployment_runtime"
+     ]
+    }
+   ],
+   "hosted_row": {
+    "quantity": 0.0,
+    "side": null,
+    "symbol": "2330.TW",
+    "flags": {
+     "waiting_human": false,
+     "blocked": false,
+     "rejected": false,
+     "mismatch": false,
+     "orphan": false,
+     "stalled": false
+    }
+   }
+  }
+ },
+ "list_page_total": 158095
+}

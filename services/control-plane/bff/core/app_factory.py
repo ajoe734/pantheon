@@ -1024,6 +1024,8 @@ def mount_bff_routers(
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
             get_projection_reader=app_deps.read_surface.trade_journey_projection_reader,
+            list_personas=app_deps.read_surface.list_personas,
+            list_incidents=app_deps.read_surface.list_incidents,
         )
     )
 

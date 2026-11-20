@@ -31,13 +31,26 @@ if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
 
 
+_DEFAULT_FINANCIAL_CATALOG_FN = financial_data_source_catalog_payload
+_CACHED_FINANCIAL_CATALOG: dict[str, Any] | None = None
+
+
+def _get_financial_catalog() -> dict[str, Any]:
+    global _CACHED_FINANCIAL_CATALOG
+    if financial_data_source_catalog_payload is not _DEFAULT_FINANCIAL_CATALOG_FN:
+        return financial_data_source_catalog_payload()
+    if _CACHED_FINANCIAL_CATALOG is None:
+        _CACHED_FINANCIAL_CATALOG = financial_data_source_catalog_payload()
+    return _CACHED_FINANCIAL_CATALOG
+
+
 def create_catalog_controller_router(runtime: SourceIngestionRuntime) -> APIRouter:
     router = APIRouter(tags=["catalog-controller"])
 
     @router.get("/api/source-ingest/registry")
     def source_connector_registry() -> dict[str, Any]:
         entries = runtime._source_connector_entries()
-        financial_catalog = financial_data_source_catalog_payload()
+        financial_catalog = _get_financial_catalog()
         return {
             "schema_version": "source_connector_registry.v1",
             "connectors": entries,

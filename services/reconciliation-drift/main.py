@@ -40,6 +40,11 @@ from services.trade_journey.correlation_envelope import (
     propagate_envelope,
     validate_envelope,
 )
+from broker_paper_client import (
+    BrokerOrderNotFound,
+    BrokerPaperError,
+    fetch_paper_order,
+)
 from store import build_reconciliation_drift_store
 from telemetry_client import (
     TelemetryAuthError,
@@ -2308,6 +2313,189 @@ def _journey_reconciliation_decision(
     return "failed", "reconciliation_check_failed", detail
 
 
+_BOOKING_TOLERANCE = 1e-6
+_BROKER_READ_TIMEOUT_SECONDS = 3.0
+
+
+def _num(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _booking_fill(identity: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Fill evidence carried by the committed position snapshot, or None for no-fill journeys."""
+    meta = identity.get("metadata") if isinstance(identity.get("metadata"), dict) else {}
+    if _num(meta.get("position_quantity_before")) is None or _num(
+        meta.get("position_quantity_after")
+    ) is None:
+        return None
+    return meta
+
+
+def _booking_check(
+    check: str, expected: float | None, actual: float | None
+) -> Dict[str, Any]:
+    if expected is None or actual is None:
+        return {
+            "check": check,
+            "status": "failed",
+            "expected": expected,
+            "actual": actual,
+            "difference": None,
+        }
+    diff = actual - expected
+    return {
+        "check": check,
+        "status": "passed" if abs(diff) <= _BOOKING_TOLERANCE else "failed",
+        "expected": expected,
+        "actual": actual,
+        "difference": diff,
+    }
+
+
+def _journey_booking_decision(
+    identity: Dict[str, Any],
+    *,
+    snapshot_created_at: Any,
+    timestamp: str,
+    broker_url: str,
+) -> tuple[str, str | None, List[Dict[str, Any]]] | None:
+    """Compare broker record, fill and booked position/cash for a journey with a fill.
+
+    Returns None when the journey has no fill (reconciled as before), otherwise
+    (decision, reason_code, reason_detail) with decision completed|failed|defer.
+    Commission and tax are ledger-owned: they are never compared with the broker.
+    """
+    fill = _booking_fill(identity)
+    if fill is None:
+        return None
+    side = str(fill.get("side") or "").strip().lower()
+    sign = -1.0 if side == "sell" else 1.0
+    fill_qty = _num(fill.get("fill_quantity"))
+    fill_price = _num(fill.get("fill_price"))
+    kind = str(fill.get("kind") or "cash_share")
+    multiplier = _num(fill.get("multiplier")) or 1.0
+    broker_order_id = str(fill.get("broker_order_id") or "").strip()
+    detail: List[Dict[str, Any]] = []
+    failures: List[str] = []
+
+    # 1. broker record vs fill event
+    if not broker_url:
+        detail.append({"check": "broker_record", "status": "not_configured"})
+    else:
+        order: Dict[str, Any] | None = None
+        if broker_order_id:
+            try:
+                order = fetch_paper_order(
+                    broker_url, broker_order_id, timeout_seconds=_BROKER_READ_TIMEOUT_SECONDS
+                )
+            except BrokerOrderNotFound:
+                order = None
+            except BrokerPaperError as exc:
+                snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
+                now = _strict_lifecycle_datetime(timestamp)
+                unavailable = [
+                    {
+                        "check": "broker_record",
+                        "status": "unavailable",
+                        "broker_order_id": broker_order_id,
+                        "error": str(exc),
+                    }
+                ]
+                if (
+                    snapshot_at is not None
+                    and now is not None
+                    and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
+                ):
+                    return "failed", "broker_unavailable_at_reconciliation", unavailable
+                return "defer", None, unavailable
+        if order is None:
+            detail.append(
+                {
+                    "check": "broker_record",
+                    "status": "failed",
+                    "broker_order_id": broker_order_id or None,
+                    "expected": "paper broker order present",
+                    "actual": "missing",
+                }
+            )
+            failures.append("broker_record_missing")
+        else:
+            broker_checks = [
+                _booking_check("broker_fill_qty", fill_qty, _num(order.get("fill_qty"))),
+                _booking_check("broker_fill_price", fill_price, _num(order.get("fill_price"))),
+            ]
+            for name, expected, actual in (
+                ("broker_status", "filled", str(order.get("status") or "").lower()),
+                ("broker_side", side, str(order.get("side") or "").lower()),
+                (
+                    "broker_instrument_id",
+                    str(fill.get("instrument_id") or ""),
+                    str(order.get("instrument_id") or ""),
+                ),
+            ):
+                broker_checks.append(
+                    {
+                        "check": name,
+                        "status": "passed" if expected == actual else "failed",
+                        "expected": expected,
+                        "actual": actual,
+                    }
+                )
+            detail.extend(broker_checks)
+            if any(c["status"] == "failed" for c in broker_checks):
+                failures.append("broker_fill_mismatch")
+
+    # 2. position change equals the signed fill quantity
+    before = _num(fill.get("position_quantity_before"))
+    after = _num(fill.get("position_quantity_after"))
+    signed_qty = None if fill_qty is None else sign * fill_qty
+    position = _booking_check(
+        "position_change",
+        signed_qty,
+        None if before is None or after is None else after - before,
+    )
+    snap_metrics = identity.get("metrics") if isinstance(identity.get("metrics"), dict) else {}
+    snap_position = _booking_check(
+        "committed_snapshot_position", after, _num(snap_metrics.get("position_qty"))
+    )
+    detail.extend([position, snap_position])
+    if position["status"] == "failed" or snap_position["status"] == "failed":
+        failures.append("position_variance")
+
+    # 3. cash change equals -(signed qty x price x multiplier) - fee - tax (cash_share)
+    if kind == "cash_share":
+        cash_before = _num(fill.get("cash_before"))
+        cash_after = _num(fill.get("cash_after"))
+        fee = _num(fill.get("fee")) or 0.0
+        tax = _num(fill.get("tax")) or 0.0
+        expected_cash = (
+            None
+            if signed_qty is None or fill_price is None
+            else -(signed_qty * fill_price * multiplier) - fee - tax
+        )
+        cash = _booking_check(
+            "cash_change",
+            expected_cash,
+            None if cash_before is None or cash_after is None else cash_after - cash_before,
+        )
+        snap_cash = _booking_check(
+            "committed_snapshot_cash", cash_after, _num(snap_metrics.get("cash"))
+        )
+        detail.extend([cash, snap_cash])
+        if cash["status"] == "failed" or snap_cash["status"] == "failed":
+            failures.append("cash_variance")
+
+    if failures:
+        return "failed", failures[0], detail
+    return "completed", None, detail
+
+
 def _scheduled_lifecycle_event(
     *,
     summary: Dict[str, Any],
@@ -2347,6 +2535,17 @@ def _scheduled_lifecycle_event(
     )
     if decision == "defer":
         return None, "reconciliation_deferred_runtime_unhealthy"
+    if decision == "completed":
+        booking = _journey_booking_decision(
+            identity,
+            snapshot_created_at=identity.get("created_at"),
+            timestamp=timestamp,
+            broker_url=os.getenv("PANTHEON_PAPER_BROKER_URL", "").strip(),
+        )
+        if booking is not None:
+            decision, recon_reason_code, recon_reason_detail = booking
+            if decision == "defer":
+                return None, "reconciliation_deferred_broker_unavailable"
     event_type = (
         "reconciliation_completed"
         if decision == "completed"
@@ -2417,6 +2616,9 @@ def _scheduled_lifecycle_event(
         event["reason_code"] = recon_reason_code
         event["reason_detail"] = recon_reason_detail
         event["metadata"]["reason_code"] = recon_reason_code
+        event["metadata"]["reason_detail"] = recon_reason_detail
+    elif recon_reason_detail:
+        event["reason_detail"] = recon_reason_detail
         event["metadata"]["reason_detail"] = recon_reason_detail
     if isinstance(identity.get("authority_refs"), dict):
         event["authority_refs"] = json.loads(json.dumps(identity["authority_refs"]))
