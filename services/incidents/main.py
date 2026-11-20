@@ -80,6 +80,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -1401,6 +1403,57 @@ def update_status(
         )
 
     return _to_response(updated)
+
+
+RUNTIME_BINDING_RETIRED_RESOLUTION_REASON = "runtime_binding_retired"
+
+
+class ResolveRetiredBindingRequest(BaseModel):
+    binding_id: str
+    retired_at: Optional[str] = None
+
+
+class _RetirementStatusRequest(UpdateIncidentStatusRequest):
+    resolution_reason: Optional[str] = None
+
+
+@app.post(
+    "/api/incidents/resolve-retired-binding",
+    summary="Resolve open drift incidents of a retired RuntimeBinding",
+)
+def resolve_retired_binding_drift_incidents(
+    body: ResolveRetiredBindingRequest,
+) -> Dict[str, Any]:
+    """Resolve every open drift incident of a binding that runtime-manager retired.
+
+    A retired binding can no longer drift, so its drift incidents must not stay
+    on the human inbox. Only drift-cluster incidents are touched; the
+    resolution reason names the retirement.
+    """
+    binding_id = body.binding_id.strip()
+    if not binding_id:
+        raise HTTPException(status_code=400, detail="binding_id is required")
+    resolved_ids: List[str] = []
+    for inc in store.list_incidents():
+        if inc.binding_id != binding_id or not inc.is_open():
+            continue
+        if not str(inc.incident_cluster_id or "").startswith("drift:"):
+            continue
+        update_status(
+            inc.incident_id,
+            _RetirementStatusRequest(
+                status="resolved",
+                resolved_at=body.retired_at,
+                resolution_reason=RUNTIME_BINDING_RETIRED_RESOLUTION_REASON,
+            ),
+        )
+        resolved_ids.append(inc.incident_id)
+    log.info("Resolved %d drift incidents of retired binding %s", len(resolved_ids), binding_id)
+    return {
+        "binding_id": binding_id,
+        "resolution_reason": RUNTIME_BINDING_RETIRED_RESOLUTION_REASON,
+        "resolved_incident_ids": resolved_ids,
+    }
 
 
 # ---------------------------------------------------------------------------

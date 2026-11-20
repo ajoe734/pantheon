@@ -3484,6 +3484,88 @@ def _dispatch_scheduled_drift_report(report: Dict[str, Any], *, timeout_seconds:
     return result
 
 
+def _drift_input_max_age_seconds() -> float:
+    """Longest age a telemetry drawdown may have and still count as this window's input.
+
+    Defaults to the scheduler evaluation window; telemetry carries the last
+    drawdown forward indefinitely, so age is judged here, not assumed.
+    """
+    for name in (
+        "RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS",
+        "RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS",
+    ):
+        raw = os.getenv(name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            value = float(str(raw).strip())
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return 300.0
+
+
+def _mark_stale_drawdown_input(
+    drift_checks: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+    *,
+    evaluated_at: str,
+) -> bool:
+    """Turn a drawdown check built on an out-of-window value into a stale-input result.
+
+    A stale input is recorded as ``stale_input`` and degraded, never as a
+    warning/critical breach, so it neither opens nor extends a breach incident.
+    """
+    drawdown_at = _strict_lifecycle_datetime(summary.get("drawdown_at"))
+    evaluated = _strict_lifecycle_datetime(evaluated_at)
+    if drawdown_at is None or evaluated is None:
+        return False
+    age_seconds = (evaluated - drawdown_at).total_seconds()
+    max_age = _drift_input_max_age_seconds()
+    if age_seconds <= max_age:
+        return False
+    marked = False
+    for check in drift_checks:
+        if check.get("metric") != "drawdown" or check.get("observed") is None:
+            continue
+        check.update(
+            {
+                "status": "degraded",
+                "stale_input": True,
+                "input_observed_at": summary.get("drawdown_at"),
+                "input_age_seconds": age_seconds,
+                "input_max_age_seconds": max_age,
+                "governed_threshold_breached": False,
+                "detail": "drawdown input is older than the evaluation window",
+            }
+        )
+        marked = True
+    return marked
+
+
+def _resolve_retired_binding_incidents(
+    binding_id: str,
+    retired_at: Any,
+    *,
+    timeout_seconds: float,
+) -> Dict[str, Any] | None:
+    incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+    if not incidents_api_url or timeout_seconds <= 0:
+        return None
+    try:
+        return _post_json(
+            f"{incidents_api_url}/api/incidents/resolve-retired-binding",
+            {"binding_id": binding_id, "retired_at": retired_at or None},
+            timeout_seconds=timeout_seconds,
+        )
+    except HTTPException:
+        logging.getLogger(__name__).warning(
+            "could not resolve drift incidents of retired binding %s", binding_id, exc_info=True
+        )
+        return None
+
+
 def _first_trigger_value(*payloads: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> Any:
     for payload in payloads:
         if not isinstance(payload, dict):
@@ -3658,6 +3740,8 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_failures: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     retired_binding_ids: List[str] = []
+    stale_input_binding_ids: List[str] = []
+    retired_incident_resolutions: List[Dict[str, Any]] = []
     paused_binding_ids: List[str] = []
     binding_lookup_failed = False
     dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
@@ -3721,6 +3805,8 @@ def _execute_scheduled_reconcile(
             baseline_sources,
         )
         _record_causal_drawdown_event(drift_checks, summary)
+        if _mark_stale_drawdown_input(drift_checks, summary, evaluated_at=timestamp):
+            stale_input_binding_ids.append(binding_id)
         reconciliation_checks = _summary_actual_state_checks(
             summary,
             binding_id=binding_id,
@@ -3754,6 +3840,13 @@ def _execute_scheduled_reconcile(
                     if _binding_retired_before(authoritative, timestamp):
                         retired_binding_ids.append(binding_id)
                         lifecycle_ineligible_binding_ids.append(binding_id)
+                        resolution = _resolve_retired_binding_incidents(
+                            binding_id,
+                            (authoritative or {}).get("retired_at"),
+                            timeout_seconds=dispatch_timeout(),
+                        )
+                        if resolution and resolution.get("resolved_incident_ids"):
+                            retired_incident_resolutions.append(resolution)
                         continue
                     if _binding_paused(authoritative):
                         paused_binding_ids.append(binding_id)
@@ -3945,6 +4038,8 @@ def _execute_scheduled_reconcile(
         "lifecycle_terminal_failures": lifecycle_terminal_failures,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
         "retired_binding_ids": retired_binding_ids,
+        "stale_input_binding_ids": stale_input_binding_ids,
+        "retired_incident_resolutions": retired_incident_resolutions,
         "paused_binding_ids": paused_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
