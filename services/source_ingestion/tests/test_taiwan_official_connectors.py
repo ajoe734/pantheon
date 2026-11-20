@@ -2409,7 +2409,12 @@ def test_recorded_chip_profiles_dispatch_existing_adapters_and_store_raw_values(
         assert all(r.connector_id == cid and r.metadata['dataset'] == profile['dataset'] for r in records)
         assert all(r.metadata['raw_row'] in recorded['payload'] for r in records)
         if venue == 'TWSE':
-            assert all(not r.metadata['date'] for r in records)  # Missing source date is not guessed.
+            # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: a date-less MI_MARGN row takes the session
+            # of the shared published-session rule at fetch time (never empty, never the fetch date).
+            from datetime import datetime as _dt, timezone as _tz
+            from services.source_ingestion.chip_publication_schedule import resolve_chip_row_session
+            session = resolve_chip_row_session(cid, '', _dt.now(_tz.utc)).isoformat()
+            assert all(r.metadata['date'] == session for r in records)
         result = SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id=f'chip-{index}'))
         # Use the existing persistence contract; no fixture-generated market observations.
         manifest = writer.write_run(connector=adapter.connector(), result=result)

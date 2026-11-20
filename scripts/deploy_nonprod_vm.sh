@@ -175,6 +175,14 @@ SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}"
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three TWSE/TPEx official chip profiles store the whole
+# session (~1310 rows) in one run; a smaller per-job cap would reject or cut it, so lift it to the profile budget.
+case "${SOURCE_REFRESH_CONNECTOR_ID}" in
+  tw-official-twse-margin-balances|tw-official-tpex-margin-balances|tw-official-tpex-institutional-flow)
+    if [[ "${SOURCE_REFRESH_MAX_RECORDS}" =~ ^[0-9]+$ ]] && (( SOURCE_REFRESH_MAX_RECORDS < 3000 )); then
+      SOURCE_REFRESH_MAX_RECORDS="3000"
+    fi ;;
+esac
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
@@ -1437,8 +1445,8 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
     || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
   [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
-    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
+    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 5000 )) \
+    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 5000"
   [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
     || error "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id"
   if [[ -n "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -2045,6 +2053,23 @@ if profile is not None:
             )
         if chip_verdict.is_failure:
             raise SystemExit(chip_verdict.detail)
+        coverage = (
+            chip_row_coverage_outcome(
+                connector_id,
+                record_metadata,
+                receipt.get("normalized_count"),
+                record_session_date,
+                chip_verdict.expected_session,
+            )
+            if chip_verdict.status == "published"
+            else None
+        )
+        if coverage is not None:
+            print("chip_coverage " + json.dumps(coverage, sort_keys=True))
+            if coverage["status"] == "coverage_unverified_image_predates_full_market":
+                print("WARNING " + coverage["status"] + ": " + coverage["detail"], file=sys.stderr)
+            elif coverage["is_failure"]:
+                raise SystemExit(f"{coverage['status']}: {coverage['detail']}")
     elif profile["base"] == "tw-finmind-fundamentals":
         from services.source_ingestion.connectors.finmind_taiwan import (
             latest_published_broker_session,
@@ -2476,6 +2501,42 @@ def derive_chip_record_provider_session(
         except ValueError:
             return None, f"bounded chip record for {connector_id} has invalid event_time {ev_raw!r}"
     return record_session_date, None
+
+
+# Full-market chip coverage lives in these helpers (emitted by the running script), not imported from the hosted
+# image: an image that predates TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120 has neither the module
+# symbols nor record metadata provider_listed_count and must get one explicit non-crashing outcome.
+FULL_MARKET_CHIP_CONNECTOR_IDS = frozenset({
+    "tw-official-twse-margin-balances",
+    "tw-official-tpex-margin-balances",
+    "tw-official-tpex-institutional-flow",
+})
+
+
+def chip_row_coverage_outcome(connector_id, record_metadata, stored_count, record_session, expected_session):
+    """Coverage of one full-market chip run against the provider listed count; never raises."""
+    if connector_id not in FULL_MARKET_CHIP_CONNECTOR_IDS:
+        return None
+    listed = (record_metadata or {}).get("provider_listed_count")
+    stored = int(stored_count or 0)
+    expected = str(expected_session)[:10]
+    got = str(record_session or "")[:10]
+    base = {"connector_id": connector_id, "expected_session": expected, "stored_session": got,
+            "stored_count": stored, "provider_listed_count": listed}
+    if not isinstance(listed, int) or isinstance(listed, bool) or listed < 1:
+        return {**base, "status": "coverage_unverified_image_predates_full_market", "is_failure": False,
+                "missing_count": None,
+                "detail": f"{connector_id} record has no provider_listed_count (image predates full-market "
+                          f"chip storage); stored count {stored}; coverage not verified"}
+    if got != expected:
+        return {**base, "status": "session_mismatch", "is_failure": True, "missing_count": max(listed - stored, 0),
+                "detail": f"{connector_id} stored session {got!r} != expected {expected!r}"}
+    missing = max(listed - stored, 0)
+    if missing:
+        return {**base, "status": "partial", "is_failure": True, "missing_count": missing,
+                "detail": f"{connector_id} stored {stored} of {listed} provider rows; missing {missing}"}
+    return {**base, "status": "complete", "is_failure": False, "missing_count": 0,
+            "detail": f"{connector_id} stored all {listed} provider rows for {expected}"}
 
 
 def finmind_bare_symbol(value):
