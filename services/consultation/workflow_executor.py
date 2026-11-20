@@ -43,9 +43,15 @@ from .provider import (
     QualifiedContribution,
 )
 from .workflow_state import (
+    AUTO_REDRIVE_MAX_PER_ITEM,
+    AUTO_REDRIVE_PER_TICK,
+    REDRIVE_AUTH,
+    REDRIVE_ENSURE,
     StaleWorkflowClaim,
     WorkflowClaim,
     WorkflowStateStore,
+    recoverable_kind,
+    recovery_exhausted,
 )
 
 
@@ -1733,6 +1739,153 @@ def _error_detail(exc: Exception) -> str:
     return str(exc)
 
 
+# Request ids whose exhausted recovery was already recorded on the request.
+_EXHAUSTION_RECORDED: set[tuple[str, str]] = set()
+
+
+def _probe_case_file_credentials(config: ExecutorConfig) -> None:
+    """Persona and registry owner reads with the executor's own credentials.
+
+    A 404 on the probe id is an answer; 401/403, 5xx or no transport is not.
+    """
+    from dataclasses import replace
+
+    owners = decision_case.Owners.from_env()
+    if config.memory_url:
+        owners = replace(owners, memory=decision_case.OwnerEndpoint(
+            config.memory_url, _memory_headers().get("Authorization", "").removeprefix("Bearer ")))
+    for endpoint, path in (
+        (owners.pool, "/api/personas/consult-redrive-probe/strategy-pool"),
+        (owners.registry, "/api/registry/entries/consult-redrive-probe"),
+    ):
+        try:
+            decision_case.http_json(endpoint, path, tenant_id=config.tenant_id)
+        except decision_case.OwnerUnavailable as exc:
+            if exc.reason.startswith(("http_404", "http_400", "http_422")):
+                continue
+            raise
+
+
+def _request_persona_ids(config: ExecutorConfig, request_id: str) -> list[str]:
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    metadata = (request.get("metadata") or {}) if isinstance(request, Mapping) else {}
+    found: list[str] = []
+    panel = metadata.get("panel") or {}
+    meeting = metadata.get("meeting") or {}
+    for group in (panel.get("participants"), meeting.get("participants")):
+        for item in group or []:
+            if isinstance(item, Mapping):
+                value = item.get("persona_id") or item.get("id")
+            else:
+                value = item
+            if value:
+                found.append(str(value))
+    if not found:
+        meeting_row = _api_get(config, f"/api/consult/meetings/{request_id}")
+        for item in (meeting_row or {}).get("participants") or []:
+            value = item.get("persona_id") or item.get("id") if isinstance(item, Mapping) else item
+            if value:
+                found.append(str(value))
+    if not found and isinstance(request, Mapping) and request.get("from_persona_id"):
+        found.append(str(request["from_persona_id"]))
+    return list(dict.fromkeys(found))[:1]
+
+
+def _probe_ensure_route(
+    config: ExecutorConfig, provider: HttpContributionProvider, request_id: str
+) -> None:
+    persona_ids = _request_persona_ids(config, request_id)
+    if not persona_ids:
+        raise WorkflowBlocked("ensure probe has no persona to reconcile")
+    provider.ensure_agents(tenant_id=config.tenant_id, persona_ids=persona_ids)
+
+
+def _record_recovery_exhausted(
+    config: ExecutorConfig, row: Mapping[str, Any]
+) -> None:
+    """Name the failure on the request itself so readers stop treating it as pending."""
+    request_id = str(row["request_id"])
+    key = (config.tenant_id, request_id)
+    if key in _EXHAUSTION_RECORDED:
+        return
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    if isinstance(request, Mapping) and str(request.get("status") or "") not in (
+        "failed", "published", "cancelled"
+    ):
+        reason = str(row.get("last_error") or "")[:300]
+        try:
+            _api_post(config, f"/api/consult/requests/{request_id}/events", {
+                "request_id": request_id, "event_type": "workflow_recovery_exhausted",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": {"reason": reason, "redrive_count": int(row.get("replay_count") or 0)},
+                "idempotency_key": f"{request_id}:recovery-exhausted"})
+        except Exception:  # the status below is the contract; the event is advisory
+            pass
+        _api_post(config, f"/api/consult/meetings/{request_id}/sync", {
+            "request_status": "failed", "completed_at": _utc_now()})
+    _EXHAUSTION_RECORDED.add(key)
+
+
+def recover_dead_letters(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+) -> dict[str, Any]:
+    """Redrive dead letters whose cause is fixed, bounded, once probes answer.
+
+    Per tick: at most ``AUTO_REDRIVE_PER_TICK`` items redriven, one probe per
+    reason class (one persona + one registry read for auth; one adapter ensure
+    call for ensure), nothing when there is no recoverable dead letter. An item
+    redriven ``AUTO_REDRIVE_MAX_PER_ITEM`` times stays dead_letter with its
+    reason and is named failed on its request.
+    """
+    summary: dict[str, Any] = {"redriven": [], "exhausted": [], "probe_failed": [], "errors": []}
+    rows = state.list_items(tenant_id=config.tenant_id, status="dead_letter")
+    candidates: dict[str, list[dict[str, Any]]] = {REDRIVE_AUTH: [], REDRIVE_ENSURE: []}
+    for row in rows:
+        kind = recoverable_kind(row.get("last_error"))
+        if kind is None:
+            continue
+        if recovery_exhausted(row):
+            try:
+                _record_recovery_exhausted(config, row)
+                summary["exhausted"].append(str(row["request_id"]))
+            except Exception as exc:
+                summary["errors"].append(
+                    f"request_id={row['request_id']} exhausted_record={_error_detail(exc)}")
+        elif int(row.get("replay_count") or 0) < AUTO_REDRIVE_MAX_PER_ITEM:
+            candidates[kind].append(row)
+    healthy: dict[str, bool] = {}
+    for kind, items in candidates.items():
+        if not items:
+            continue
+        try:
+            if kind == REDRIVE_AUTH:
+                _probe_case_file_credentials(config)
+            else:
+                _probe_ensure_route(config, provider, str(items[0]["request_id"]))
+            healthy[kind] = True
+        except Exception as exc:
+            healthy[kind] = False
+            summary["probe_failed"].append(f"{kind}: {_error_detail(exc)}"[:300])
+    budget = AUTO_REDRIVE_PER_TICK
+    for kind, items in candidates.items():
+        if not healthy.get(kind):
+            continue
+        for row in items:
+            if budget <= 0:
+                break
+            if state.redrive_dead_letter(
+                tenant_id=config.tenant_id,
+                request_id=str(row["request_id"]),
+                max_redrives=AUTO_REDRIVE_MAX_PER_ITEM,
+            ):
+                summary["redriven"].append(str(row["request_id"]))
+                budget -= 1
+    return summary
+
+
 def run_tick(
     *,
     config: ExecutorConfig | None = None,
@@ -1769,6 +1922,13 @@ def run_tick(
             )
     except Exception as exc:  # discovery failure must not hide durable backlog
         errors.append(f"discovery_error={_error_detail(exc)}")
+
+    recovery: dict[str, Any] = {}
+    try:
+        recovery = recover_dead_letters(config=config, state=state, provider=provider)
+        errors.extend(recovery.get("errors") or [])
+    except Exception as exc:  # recovery must never block the normal queue
+        errors.append(f"dead_letter_recovery_error={_error_detail(exc)}")
 
     for _ in range(config.batch_size):
         claim = state.claim_next(
@@ -1849,6 +2009,7 @@ def run_tick(
         ),
         "errors": errors,
         "outcomes": outcomes,
+        "recovery": {k: v for k, v in recovery.items() if k != "errors"},
         "state_counts": counts,
     }
 
