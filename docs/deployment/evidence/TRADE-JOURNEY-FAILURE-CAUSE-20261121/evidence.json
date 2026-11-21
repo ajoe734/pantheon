@@ -84,6 +84,7 @@
           "_booking_check"
         ],
         "invariants": [
+          "Booking reconciliation runs for journeys whose committed position snapshot carries broker submission (submitted_to_broker=true) or any booking comparison field (position_quantity_before, position_quantity_after, cash_before, cash_after, fill_quantity, fill_price, broker_order_id); legacy in-process non-broker snapshots without booking comparison fields reconcile as before.",
           "Completed numeric trade-specific comparisons (broker_fill_qty, broker_fill_price, position_change, committed_snapshot_position, cash_change, committed_snapshot_cash) carry check, status, expected, actual, difference, and delta.",
           "When expected or actual is None on a fill journey, the check is marked status='unverified' with difference=null, delta=null, and missing_evidence=['expected'|'actual'].",
           "Accounting variance codes (cash_variance, position_variance, broker_fill_mismatch, broker_record_missing) are emitted only when a trade-specific comparison completed and failed.",

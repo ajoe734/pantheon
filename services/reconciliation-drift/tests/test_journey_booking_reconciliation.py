@@ -160,6 +160,24 @@ def test_journey_without_fill_reconciles_as_before() -> None:
     assert "reason_detail" not in event
     fetch.assert_not_called()
 
+    # Legacy in-process non-broker fill snapshots carry ledger_committed/fill_id/source_fill_event_id
+    # with submitted_to_broker=False and no booking-evidence keys; they reconcile as before.
+    legacy_summary = _paper_lifecycle_summary()
+    legacy_summary["last_lifecycle_identity"]["metadata"].update(
+        {
+            "fill_id": "paper-fill-legacy-001",
+            "source_fill_event_id": "legacy-fill-event-001",
+            "ledger_committed": True,
+            "submitted_to_broker": False,
+        }
+    )
+    legacy_summary["committed_position_snapshot"] = legacy_summary["last_lifecycle_identity"]
+    (legacy_event, legacy_reason), fetch_legacy = _run(legacy_summary)
+    assert legacy_reason is None
+    assert legacy_event["event_type"] == "reconciliation_completed"
+    assert "reason_detail" not in legacy_event
+    fetch_legacy.assert_not_called()
+
 
 def test_incomplete_booking_evidence_is_classified_distinctly_from_accounting_variance() -> None:
     # 1. Missing cash_before/cash_after on a fill must report reconciliation_evidence_incomplete, never cash_variance

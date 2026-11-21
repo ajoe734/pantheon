@@ -2334,17 +2334,16 @@ _FILL_BOOKING_EVIDENCE_KEYS = (
     "cash_after",
     "fill_quantity",
     "fill_price",
-    "fill_id",
-    "source_fill_event_id",
     "broker_order_id",
-    "ledger_committed",
 )
 
 
 def _booking_fill(identity: Dict[str, Any]) -> Dict[str, Any] | None:
     """Fill evidence carried by the committed position snapshot, or None for no-fill journeys."""
     meta = identity.get("metadata") if isinstance(identity.get("metadata"), dict) else {}
-    if not any(meta.get(key) not in (None, "") for key in _FILL_BOOKING_EVIDENCE_KEYS):
+    if meta.get("submitted_to_broker") is not True and not any(
+        meta.get(key) not in (None, "") for key in _FILL_BOOKING_EVIDENCE_KEYS
+    ):
         return None
     return meta
 
