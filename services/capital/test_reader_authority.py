@@ -33,8 +33,30 @@ JWT_SECRET = "test-capital-reader-secret-32bytes!!"
 @pytest.fixture()
 def capital_reader_env():
     tempdir = tempfile.mkdtemp(prefix="capital_reader_test_")
+    policy_dir = Path(tempdir) / "risk_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    (policy_dir / "risk-main.json").write_text(
+        json.dumps(
+            {
+                "risk_policy_id": "risk-main",
+                "version": "1.0",
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+                "max_single_name_weight": 0.5,
+                "allowed_asset_classes": ["equity", "future"],
+                "metadata": {
+                    "tenant_id": "tenant-alpha",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     keys = (
         "CAPITAL_DATA_DIR",
+        "CAPITAL_RISK_POLICY_DIR",
         "PANTHEON_GOVERNANCE_DATA_DIR",
         "CAPITAL_STORE_BACKEND",
         "CAPITAL_AUDIT_BACKEND",
@@ -48,6 +70,7 @@ def capital_reader_env():
     os.environ.update(
         {
             "CAPITAL_DATA_DIR": tempdir,
+            "CAPITAL_RISK_POLICY_DIR": str(policy_dir),
             "PANTHEON_GOVERNANCE_DATA_DIR": tempdir,
             "CAPITAL_STORE_BACKEND": "json",
             "CAPITAL_AUDIT_BACKEND": "jsonl",
@@ -61,6 +84,9 @@ def capital_reader_env():
     sys.modules.pop("services.capital.main", None)
     module = importlib.import_module("services.capital.main")
     module = importlib.reload(module)
+    from services.capital.risk_policy import load_risk_policy as _load_owner_risk_policy
+
+    module.capital_guard._policy_loader = _load_owner_risk_policy
 
     client = TestClient(module.app)
     try:
@@ -489,7 +515,55 @@ def test_isolated_run_deploy_authority_against_capital_app(capital_reader_env, m
             expires_at="2099-01-01T00:00:00Z",
             revoked_at=None,
         )
-        approval_reader = SnapshotApprovalReader(approval_evidence)
+        from services.capital.risk_policy import load_risk_policy, risk_policy_digest
+
+        owner_policy = load_risk_policy("risk-main")
+        pool_activation_evidence = approval_snapshot(
+            decision_id="approval-pool-create",
+            decision_state="decided",
+            decision="approved",
+            target_type="capital_pool_activation",
+            target_id="pool-alpha-1",
+            target_version=pool_proof["approval_digest"],
+            tenant_id="tenant-alpha",
+            owner_user_id="proposer-1",
+            actor_id="governance-reviewer",
+            conditions=[],
+            expires_at="2099-01-01T00:00:00Z",
+            revoked_at=None,
+            metadata={
+                "subject": {
+                    "pool_id": "pool-alpha-1",
+                    "risk_direction": "increase",
+                    "risk_policy_id": "risk-main",
+                    "risk_policy_version": str(owner_policy["version"]),
+                    "risk_policy_digest": risk_policy_digest(owner_policy),
+                    "requested_risk": "low",
+                },
+                "approvals": [
+                    {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                    {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                ],
+            },
+        )
+        decisions_by_id = {
+            "appr-alpha-1": approval_evidence,
+            "approval-pool-create": pool_activation_evidence,
+            "apv-capital-pool-pool-alpha-1": {
+                **pool_activation_evidence,
+                "decision_id": "apv-capital-pool-pool-alpha-1",
+            },
+        }
+        approval_reader = SnapshotApprovalReader(decisions_by_id["appr-alpha-1"])
+        orig_get = approval_reader.get
+
+        def _get_decision(decision_id: str):
+            snap = decisions_by_id.get(decision_id)
+            if snap is not None:
+                return SnapshotApprovalReader(snap).get(decision_id)
+            return orig_get(decision_id)
+
+        approval_reader.get = _get_decision  # type: ignore[method-assign]
 
         authority_report = deploy_auth.verify_deploy_authorities(
             request={
@@ -521,6 +595,36 @@ def test_isolated_run_deploy_authority_against_capital_app(capital_reader_env, m
         assert authority_report["capital_pool_sha256"].startswith("sha256:")
         assert authority_report["capital_admissibility_sha256"].startswith("sha256:")
         assert authority_report["persona_capital_binding_sha256"].startswith("sha256:")
+
+        # C) Prove fail-closed missing-ref behavior when the referenced owner policy is missing
+        with monkeypatch.context() as m:
+            empty_policy_dir = Path(os.environ["CAPITAL_DATA_DIR"]) / "empty_risk_policies"
+            empty_policy_dir.mkdir(parents=True, exist_ok=True)
+            m.setenv("CAPITAL_RISK_POLICY_DIR", str(empty_policy_dir))
+            with pytest.raises(deploy_auth.DeployAuthorityError, match="risk_policy_missing"):
+                deploy_auth.verify_deploy_authorities(
+                    request={
+                        "plan_id": "plan-alpha-1",
+                        "plan_status": "approved",
+                        "target_stage": "paper",
+                        "artifact_id": artifact_id,
+                        "artifact_version": artifact["version"],
+                        "strategy_id": artifact["strategy_id"],
+                        "approval_decision_id": "appr-alpha-1",
+                        "capital_pool_id": "pool-alpha-1",
+                        "sponsor_persona_id": "persona-alpha",
+                        "persona_capital_binding_id": "binding-alpha-1",
+                        "persona_capital_binding_status": "active",
+                        "allowed_deployment_scope": "paper",
+                    },
+                    deployment_base_url="http://deployment:8095",
+                    registry_base_url="http://registry:8087",
+                    governance_base_url="http://governance:8082",
+                    capital_base_url="http://capital:8092",
+                    approval_reader=approval_reader,
+                    registry_fetch_json=lambda url, timeout: registry_payload,
+                    fetch_json=worker._fetch_authority_json,
+                )
 
 
 def test_evaluator_viewer_token_read_pool_and_admissibility_succeeds(capital_reader_env):

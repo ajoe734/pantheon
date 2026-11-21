@@ -1200,7 +1200,8 @@ def test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer
         assert ignored_res.reason_code == "risk_policy_profile_mapping_unapproved"
 
     # 2. Wire the real Capital owner FastAPI routes (/api/capital-pools/{id} and /api/capital-pools/{id}/approvals/{decision_id})
-    from capital_pool import CapitalPool, CapitalPoolStore
+    CapitalPool = capital_main.CapitalPool
+    CapitalPoolStore = capital_main.CapitalPoolStore
 
     test_pool_store = CapitalPoolStore(tmp_path / "capital_pools.json")
     stored_pool = CapitalPool(
