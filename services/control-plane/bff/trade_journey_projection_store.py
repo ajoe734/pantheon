@@ -241,10 +241,44 @@ class TradeJourneyProjectionStore:
         attention = filters.get("attention")
         if attention:
             broker_failed = "stage_coverage -> 'broker_acknowledgement' ->> 'status' IN ('failed', 'rejected')"
+            runtime_checks = (
+                "'runtime_state', 'runtime_health_summary', 'queue_lag_ms', "
+                "'event_delivery_lag_ms', 'actual_metrics_presence'"
+            )
+            recon_detail_array = (
+                "CASE WHEN jsonb_typeof(recon.contract_fields -> 'reason_detail') = 'array' "
+                "THEN recon.contract_fields -> 'reason_detail' ELSE '[]'::jsonb END"
+            )
             deferred = (
-                f"EXISTS (SELECT 1 FROM {self.schema}.journey_stages recon WHERE recon.tenant_id={self.schema}.journeys.tenant_id "
-                f"AND recon.environment={self.schema}.journeys.environment AND recon.journey_id={self.schema}.journeys.journey_id "
-                "AND recon.stage_name='reconciliation' AND recon.contract_fields ->> 'reason_code' = 'runtime_unhealthy_at_reconciliation')"
+                f"EXISTS (SELECT 1 FROM ("
+                f"SELECT recon.contract_fields FROM {self.schema}.journey_stages recon "
+                f"WHERE recon.tenant_id={self.schema}.journeys.tenant_id "
+                f"AND recon.environment={self.schema}.journeys.environment "
+                f"AND recon.journey_id={self.schema}.journeys.journey_id "
+                "AND recon.stage_name='reconciliation' "
+                "ORDER BY recon.stage_ordinal DESC, recon.event_sequence DESC, "
+                "recon.source_ingested_seq DESC, recon.source_event_id DESC LIMIT 1"
+                ") recon WHERE ("
+                "btrim(COALESCE(recon.contract_fields ->> 'reason_code', '')) IN ("
+                "'runtime_unhealthy_at_reconciliation', 'broker_unavailable_at_reconciliation', "
+                "'reconciliation_deferred_runtime_unhealthy', 'reconciliation_deferred_broker_unavailable', "
+                "'reconciliation_identity_unverified', 'reconciliation_evidence_incomplete') "
+                f"OR EXISTS (SELECT 1 FROM jsonb_array_elements({recon_detail_array}) AS elem "
+                "WHERE jsonb_typeof(elem) = 'object' "
+                "AND jsonb_typeof(elem -> 'check') = 'string' "
+                "AND btrim(elem ->> 'check') = 'broker_record' "
+                "AND jsonb_typeof(elem -> 'status') = 'string' "
+                "AND lower(btrim(elem ->> 'status')) = 'unavailable') "
+                f"OR (EXISTS (SELECT 1 FROM jsonb_array_elements({recon_detail_array}) AS elem "
+                "WHERE jsonb_typeof(elem) = 'object' "
+                "AND jsonb_typeof(elem -> 'check') = 'string' "
+                f"AND btrim(elem ->> 'check') IN ({runtime_checks})) "
+                f"AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements({recon_detail_array}) AS elem "
+                "WHERE jsonb_typeof(elem) = 'object' "
+                "AND jsonb_typeof(elem -> 'check') = 'string' "
+                "AND btrim(elem ->> 'check') <> '' "
+                f"AND btrim(elem ->> 'check') NOT IN ({runtime_checks})))"
+                "))"
             )
             if attention == "recon_mismatch":
                 clauses.append(f"(status='completed_with_variance' AND NOT {deferred})")
