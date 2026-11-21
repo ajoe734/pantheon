@@ -64,8 +64,7 @@ def cycle_stack(stack, system, tmp_path, monkeypatch):  # noqa: F811
     assert r.status_code == 201, r.text
     store = create_in_memory_read_surface_ports(persona_capital_runtime_kwargs={"personas": [{
         "persona_id": PID, "tenant_id": TENANT, "name": "Cycle persona", "status": "active",
-        "lifecycle_state": "paper_running", "metadata": {"tenant_id": TENANT}}]},
-        ooda_management_kwargs={"ooda_port": OodaPacketsPort()})
+        "lifecycle_state": "paper_running", "metadata": {"tenant_id": TENANT}}]})
     service = PersonaService(write_owner=store, read_store=store, ranking_write_owner=store,
         command_store=CommandStore(str(tmp_path / "commands.jsonl")),
         provisioning_store=MemoryPersonaProvisioningStore())
@@ -270,8 +269,14 @@ def test_detail_day_matches_probe_cycle_day(cycle_stack, route):
 
 def test_view_and_probe_share_the_daily_cycle_rule():
     from acceptance import persona_day
+    from services.control_plane.bff.personas.cycle_views import cycle_owner_lifecycle
     from services.persona import persona_cycle_controller as ctl
-    rows = [{"persona_id": "a", "state": "paper_owner"}, {"persona_id": "b", "state": "consultable"},
-            {"persona_id": "c", "state": "draft"}]
+    rows = [
+        {"persona_id": "a", "tenant_id": TENANT, "owner_lifecycle_state": "paper_owner", "state": "paper_running"},
+        {"persona_id": "b", "tenant_id": TENANT, "owner_lifecycle_state": "consultable", "state": "consultable"},
+        {"persona_id": "c", "tenant_id": TENANT, "owner_lifecycle_state": "draft", "state": "draft"},
+        {"persona_id": "d", "tenant_id": TENANT, "owner_lifecycle_state": "research_only", "state": "paper_running"},
+    ]
     assert [r["persona_id"] for r in persona_day.daily_cycle_personas(rows)] == ["a"]
+    assert [r["persona_id"] for r in rows if cycle_owner_lifecycle(r) in persona_day.DAILY_CYCLE_STATES] == ["a"]
     assert persona_day.DAILY_CYCLE_STATES == ctl.DAILY_CYCLE_STATES
