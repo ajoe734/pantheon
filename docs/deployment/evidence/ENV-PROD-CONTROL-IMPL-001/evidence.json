@@ -550,8 +550,8 @@
   "prod_snapshot_schedule_and_restore_drill_20261120": {
     "scope": "source only; no hosted run, no dispatch, no cloud or GitHub setting change",
     "scripts": [
-      "scripts/deploy/prod_snapshot_schedule.sh",
-      "scripts/deploy/prod_restore_drill.sh"
+      "scripts/deploy/prod_ops.sh snapshot_schedule ensure|check",
+      "scripts/deploy/prod_ops.sh restore_drill"
     ],
     "budget": "hourly incremental snapshots, 72 kept, ~200 MB used, 3-day cap; restore drill leaves no resources (cleanup readback in output)",
     "hosted_drill_evidence": "none; mocked/local tests prove controller behavior only",
@@ -559,5 +559,37 @@
     "release_complete_claimed": false,
     "tests": "tests/deployment/test_production_release.py: 126 pass, 2 env-only errors (fastapi/pydantic not installed locally); 7 new tests",
     "runbook": "docs/deployment/production-control-runbook.md section 5"
+  },
+  "prod_snapshot_flags_and_restore_privileges_repair_20261121": {
+    "task_generation": 76,
+    "register_class": "RC5; existing ENV-PROD-CONTROL-IMPL-001 g73 PR #7694 repair",
+    "scope": "source and local validation only; no cloud operations, deployment dispatch, secrets access or GitHub settings changes",
+    "changes": [
+      "snapshot_schedule ensure uses --snapshot-labels=environment=production,managed_by=pantheon; disk-create --labels is unchanged",
+      "restore_drill routes every Docker operation, including cleanup/readback and live PostgreSQL queries, through priv; gcloud retains the OSLogin caller's credential context",
+      "owner-directory traversal and hashes run through priv with pipeline errors propagated to the verify stage",
+      "after attach-disk, wait at most 15 one-second polls for the real VM device symlink; GCLOUD_BIN test seam bypasses this wait",
+      "correct g73 evidence references to the existing prod_ops.sh subcommands",
+      "static store-wiring test also mocks Registry index bootstrap, matching its existing database-bootstrap mocks; runtime code and wiring assertions are unchanged"
+    ],
+    "regression": {
+      "before": "Legacy source: strict fake gcloud rejects --labels with POLICY_CREATE_FAILED; sudo-required Docker causes restore_drill to fail at start_postgres. Both regression tests failed before repair.",
+      "focused_command": "python3 -m unittest tests.deployment.test_production_release.SnapshotDrillHarness",
+      "focused_result": "9 tests passed, exit 0; includes sudo-required Docker and owner-store reads, expected nonempty content hash, successful cleanup and failure cleanup. Nonroot-specific cases require a nonroot test caller.",
+      "provisioned_command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests tests.deployment.test_production_release.SnapshotDrillHarness",
+      "provisioned_result": "27 tests passed, exit 0; provisioned with python3 scripts/dev/provision_python_distribution.py using supervisor-provided PANTHEON_DEPENDENCY_PYTHON",
+      "proof_limit": "Fake local binaries prove controller behavior only; no hosted RPO/RTO or restore success is claimed."
+    },
+    "runtime_budget": {
+      "change": "unchanged from g73; no new recurring job or persistent writer",
+      "snapshots": "one incremental snapshot/hour on pantheon-prod-control-data; 24 deltas/day; retention 3 days / approximately 72 hourly snapshots; cloud retention cleans expired snapshots. Existing ~200 MB used estimate is inherited, not remeasured; byte growth depends on actual changed blocks.",
+      "restore_drill": "on demand; one scratch disk, container, internal network, mount and temporary copy of PostgreSQL plus four owner directories per invocation; copy size equals restored content. Exit trap removes resources and reads back cleanup; zero retained daily growth after successful cleanup."
+    },
+    "residual_findings": [
+      "Existing cleanup Docker/gcloud readback pipelines use wc -l without checking the command status, so a failed empty readback can appear as zero resources. The pre-fix sudo-denied regression returned cleanup.clean=true despite unreadable Docker counts. This patch restores required privileges; general readback failure handling remains with the same RC5/g73 owning chain."
+    ],
+    "hosted_acceptance": "external_wait: coordinator runs snapshot_schedule ensure/check and restore_drill on pantheon-prod-control after the hourly auto-snapshot is available",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

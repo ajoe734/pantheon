@@ -3124,7 +3124,8 @@ class StaticContractTests(unittest.TestCase):
 
             reg_runtime_env = {**rendered_kv, **{k: str(v) for k, v in reg_env.items()}, "PANTHEON_ENV": "production"}
             with mock.patch.dict(os.environ, reg_runtime_env, clear=True), \
-                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None):
+                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None):
                 owner_reg = build_registry_store()
                 self.assertIsInstance(owner_reg, PostgresRegistryStore)
 
@@ -3157,6 +3158,7 @@ class StaticContractTests(unittest.TestCase):
                 runtime_env = {**rendered_kv, **{k: str(v) for k, v in bff_env.items()}, "PANTHEON_ENV": "production"}
                 with mock.patch.dict(os.environ, runtime_env, clear=True), \
                      mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
+                     mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
                      mock.patch.object(PostgresSourceManagementStore, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresActionLedger, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresTradingRoomStore, "_bootstrap", return_value=None), \
