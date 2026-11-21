@@ -6,9 +6,15 @@ consume this module as the shared evaluator contract instead of interpreting
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import math
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -133,6 +139,20 @@ class RiskPolicy:
             "risk_policy_ref",
             default="risk-policy-inline",
         )
+        metadata = dict(_mapping(payload.get("metadata")))
+        for provenance_key in (
+            "tenant_id",
+            "expires_at",
+            "effective_to",
+            "effective_from",
+            "superseded_by",
+            "stale",
+            "requested_profile",
+            "risk_profile",
+            "explicit_policy",
+        ):
+            if provenance_key in payload and payload.get(provenance_key) is not None and provenance_key not in metadata:
+                metadata[provenance_key] = payload.get(provenance_key)
         return cls(
             risk_policy_id=risk_policy_id,
             version=str(payload.get("version") or "v1"),
@@ -164,7 +184,7 @@ class RiskPolicy:
             max_canary_capital_scale_pct=_policy_limit(payload.get("max_canary_capital_scale_pct")),
             max_canary_gross_scale_pct=_policy_limit(payload.get("max_canary_gross_scale_pct")),
             kill_switch_triggers=_policy_limit(payload.get("kill_switch_triggers"), "list"),
-            metadata=_mapping(payload.get("metadata")),
+            metadata=metadata,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -387,6 +407,19 @@ class RiskPolicyEvaluator:
                 if limit.startswith("max_canary_") and facts.get("stage") != "canary":
                     continue
                 if facts["target_type"] == "capital_pool_activation" and "stage" not in facts and limit in _ALLOCATION_LIMITS:
+                    continue
+                if (
+                    facts["target_type"] in {"capital_pool_activation", "capital_binding_activation"}
+                    and facts.get("target_weights") == {}
+                    and facts.get("gross_exposure") == 0.0
+                    and limit in (
+                        "max_single_name_weight",
+                        "allowed_asset_classes",
+                        "forbidden_asset_classes",
+                        "allowed_strategy_families",
+                        "forbidden_strategy_families",
+                    )
+                ):
                     continue
                 configured = getattr(resolved_policy, limit)
                 if configured not in (None, (), {}) and _is_obs_missing(limit, configured, facts.get(fact)):
@@ -1094,86 +1127,1815 @@ def read_capital_pool_record(
     return None
 
 
-def resolve_bound_pool_risk_policy(
+POLICY_DIGEST_FIELDS: tuple[str, ...] = (
+    "risk_policy_id",
+    "version",
+    "name",
+    "status",
+    "gross_limit",
+    "net_limit",
+    "max_leverage",
+    "max_single_name_weight",
+    "max_sector_exposure",
+    "max_factor_exposure",
+    "turnover_limit",
+    "allowed_stages",
+    "allowed_asset_classes",
+    "forbidden_asset_classes",
+    "allowed_strategy_families",
+    "forbidden_strategy_families",
+    "max_strategy_family_concentration",
+    "max_target_overlap",
+    "max_signal_correlation",
+    "allowed_order_types",
+    "allowed_time_in_force",
+    "liquidity_constraints",
+    "drawdown_actions",
+    "pause_rules",
+    "liquidation_rules",
+    "max_canary_capital_scale_pct",
+    "max_canary_gross_scale_pct",
+    "kill_switch_triggers",
+)
+
+POLICY_PROVENANCE_DIGEST_KEYS: tuple[str, ...] = (
+    "tenant_id",
+    "effective_from",
+    "effective_to",
+    "expires_at",
+    "superseded_by",
+    "stale",
+    "requested_profile",
+    "risk_profile",
+    "explicit_policy",
+)
+
+_RECOGNIZED_POLICY_LIMIT_KEYS: frozenset[str] = frozenset(
+    {
+        *_FACT_OF_LIMIT.keys(),
+        "max_single_weight",
+        "max_pairwise_correlation",
+        "exposure_limits",
+        "allowed_order_types",
+        "allowed_time_in_force",
+        "pause_rules",
+        "liquidation_rules",
+        "kill_switch_triggers",
+    }
+)
+
+_POOL_ENVELOPE_KEYS: frozenset[str] = frozenset(
+    {
+        "pool_id",
+        "capital_pool_id",
+        "single_runtime_enforced",
+        "ring_fenced",
+        "allocation_mechanism",
+        "budget",
+        "currency",
+    }
+)
+
+_POSITIVE_EXPOSURE_LIMIT_FIELDS: tuple[str, ...] = (
+    "gross_limit",
+    "net_limit",
+    "max_leverage",
+    "max_single_name_weight",
+)
+
+_NON_NEGATIVE_SCALAR_LIMIT_FIELDS: tuple[str, ...] = (
+    *_POSITIVE_EXPOSURE_LIMIT_FIELDS,
+    "turnover_limit",
+    "max_target_overlap",
+    "max_signal_correlation",
+    "max_canary_capital_scale_pct",
+    "max_canary_gross_scale_pct",
+)
+
+_FLEX_EXPOSURE_LIMIT_FIELDS: tuple[str, ...] = (
+    "max_sector_exposure",
+    "max_factor_exposure",
+    "max_strategy_family_concentration",
+)
+
+
+def risk_policy_digest(policy: RiskPolicy | Mapping[str, Any] | None) -> str:
+    """Compute the canonical SHA-256 digest of a RiskPolicy binding all executable limits and provenance."""
+    if policy is None:
+        return ""
+    resolved = policy if isinstance(policy, RiskPolicy) else normalize_risk_policy(policy)
+    raw = resolved.to_dict()
+    projected: dict[str, Any] = {
+        key: raw.get(key)
+        for key in POLICY_DIGEST_FIELDS
+        if raw.get(key) not in (None, (), {}, [])
+    }
+    meta = dict(resolved.metadata) if isinstance(resolved.metadata, Mapping) else {}
+    provenance = {
+        key: meta.get(key)
+        for key in POLICY_PROVENANCE_DIGEST_KEYS
+        if meta.get(key) not in (None, (), {}, [], "")
+    }
+    if provenance:
+        projected["metadata"] = provenance
+    encoded = json.dumps(projected, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def capital_pool_approval_digest(pool: Any) -> str:
+    """Compute the canonical CapitalPool approval_digest matching capital.main.pool_digest."""
+    if pool is None:
+        return ""
+    is_map = isinstance(pool, Mapping)
+    payload: dict[str, Any] = {
+        field_name: (pool.get(field_name) if is_map else getattr(pool, field_name, None))
+        for field_name in (
+            "pool_id",
+            "owner_id",
+            "owner_type",
+            "currency",
+            "budget",
+            "risk_policy_ref",
+            "single_runtime_enforced",
+        )
+    }
+    if not payload.get("pool_id") and is_map and pool.get("capital_pool_id"):
+        payload["pool_id"] = pool.get("capital_pool_id")
+    if isinstance(payload.get("budget"), (int, float)) and not isinstance(payload.get("budget"), bool):
+        payload["budget"] = float(payload["budget"])
+    pool_meta = pool.get("metadata") if is_map else getattr(pool, "metadata", None)
+    if isinstance(pool_meta, Mapping) and isinstance(pool_meta.get("risk_policy"), (Mapping, RiskPolicy)):
+        try:
+            digest = risk_policy_digest(pool_meta["risk_policy"])
+            if digest:
+                payload["risk_policy_digest"] = digest
+        except Exception:
+            pass
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _is_pool_envelope_mapping(payload: Mapping[str, Any]) -> bool:
+    return any(key in payload for key in _POOL_ENVELOPE_KEYS)
+
+
+def _is_policy_content_mapping(payload: Mapping[str, Any]) -> bool:
+    if not isinstance(payload, Mapping) or len(payload) == 0:
+        return False
+    if any(_optional_text(payload.get(key)) for key in ("risk_policy_id", "policy_id", "risk_policy_ref")):
+        return True
+    if any(payload.get(key) not in (None, (), {}, []) for key in _RECOGNIZED_POLICY_LIMIT_KEYS):
+        return True
+    return False
+
+
+def _parse_iso_timestamp(value: Any) -> datetime | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _policy_effective_limits(policy: RiskPolicy) -> dict[str, Any]:
+    raw = policy.to_dict()
+    limits: dict[str, Any] = {}
+    for key in (
+        "gross_limit",
+        "net_limit",
+        "max_leverage",
+        "max_single_name_weight",
+        "turnover_limit",
+        "max_sector_exposure",
+        "max_factor_exposure",
+        "max_strategy_family_concentration",
+        "max_target_overlap",
+        "max_signal_correlation",
+        "allowed_stages",
+        "allowed_asset_classes",
+        "forbidden_asset_classes",
+        "allowed_strategy_families",
+        "forbidden_strategy_families",
+        "allowed_order_types",
+        "allowed_time_in_force",
+        "liquidity_constraints",
+        "drawdown_actions",
+        "pause_rules",
+        "liquidation_rules",
+        "max_canary_capital_scale_pct",
+        "max_canary_gross_scale_pct",
+        "kill_switch_triggers",
+    ):
+        value = raw.get(key)
+        if value not in (None, (), {}, []):
+            limits[key] = list(value) if isinstance(value, tuple) else value
+    return limits
+
+
+@dataclass(frozen=True)
+class BoundPoolRiskPolicyResolution:
+    """Detailed resolution and validation result for a capital pool's bound RiskPolicy."""
+
+    capital_pool_id: str
+    resolved: bool
+    status: str
+    source: str
+    policy: RiskPolicy | None = None
+    risk_policy_id: str | None = None
+    risk_policy_version: str | None = None
+    risk_policy_digest: str | None = None
+    tenant_id: str | None = None
+    policy_tenant_id: str | None = None
+    stage: str | None = None
+    requested_profile: str | None = None
+    profile_mapping_status: str = "not_applicable"
+    profile_mapping_approval_id: str | None = None
+    effective_limits: Mapping[str, Any] = field(default_factory=dict)
+    reason_code: str | None = None
+    reason: str | None = None
+    allow_new_or_increased_risk: bool = False
+    allow_risk_reducing_actions: bool = True
+    owner_decision_request: Mapping[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "capital_pool_id": self.capital_pool_id,
+            "resolved": self.resolved,
+            "status": self.status,
+            "source": self.source,
+            "risk_policy_id": self.risk_policy_id,
+            "risk_policy_version": self.risk_policy_version,
+            "risk_policy_digest": self.risk_policy_digest,
+            "tenant_id": self.tenant_id,
+            "policy_tenant_id": self.policy_tenant_id,
+            "stage": self.stage,
+            "requested_profile": self.requested_profile,
+            "profile_mapping_status": self.profile_mapping_status,
+            "effective_limits": dict(self.effective_limits),
+            "reason_code": self.reason_code,
+            "reason": self.reason,
+            "allow_new_or_increased_risk": self.allow_new_or_increased_risk,
+            "allow_risk_reducing_actions": self.allow_risk_reducing_actions,
+        }
+        if self.profile_mapping_approval_id is not None:
+            payload["profile_mapping_approval_id"] = self.profile_mapping_approval_id
+        if self.policy is not None:
+            payload["policy"] = self.policy.to_dict()
+        if self.owner_decision_request is not None:
+            payload["owner_decision_request"] = dict(self.owner_decision_request)
+        return payload
+
+
+def _extract_decision_id_reference(item: Any) -> str | None:
+    if isinstance(item, str):
+        return _optional_text(item)
+    if isinstance(item, Mapping):
+        return _first_text_or_none(
+            item,
+            "decision_id",
+            "approval_decision_id",
+            "profile_mapping_approval_id",
+        )
+    if hasattr(item, "decision_id"):
+        return _optional_text(getattr(item, "decision_id", None))
+    return None
+
+
+_COMPOSE_VAR_RE = re.compile(r"^\$\{([A-Z0-9_]+):-(.*)\}$")
+
+
+def _unwrap_compose_value(raw: Any, source: Mapping[str, str]) -> str:
+    text = str(raw if raw is not None else "").strip()
+    for _ in range(4):
+        match = _COMPOSE_VAR_RE.match(text)
+        if match is None:
+            break
+        var_name, default_val = match.groups()
+        candidate = str(source.get(var_name) or "").strip()
+        if candidate and candidate != text and not _COMPOSE_VAR_RE.match(candidate):
+            text = candidate
+            break
+        text = default_val.strip()
+    return text
+
+
+def _capital_owner_http_get_json(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> Any:
+    from services.governance.approval_authority import (
+        ApprovalInvalid,
+        ApprovalUnavailable,
+        NoOwnerRedirect,
+    )
+
+    opener = urllib.request.build_opener(NoOwnerRedirect())
+    request = urllib.request.Request(url, headers=dict(headers), method="GET")
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise ApprovalUnavailable("Capital owner did not return 200 for decision read")
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403, 404}:
+            raise ApprovalInvalid("Capital owner denied exact decision read") from exc
+        raise ApprovalUnavailable("Capital owner approval read unavailable") from exc
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+        raise ApprovalUnavailable("Capital owner approval read unavailable or malformed") from exc
+
+
+class CapitalOwnerApprovalReader:
+    """Scoped read-only ApprovalEvidence reader via the Capital owner boundary.
+
+    Paper signal producer and paper runtime workers mount only the read-only
+    ``paper-capital-reader`` principal (``DEPLOYMENT_CAPITAL_SERVICE_TOKEN`` /
+    ``RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN``) and ``PANTHEON_CAPITAL_API_URL``,
+    never direct Governance credentials. This reader fetches the pool's bound
+    ``capital_pool_activation`` ApprovalEvidence JSON from the Capital owner.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        service_token: str = "",
+        token_provider: Callable[[], str] | None = None,
+        pool_id: str | None = None,
+        tenant_id: str | None = None,
+        service_name: str = "runtime-manager",
+        timeout_seconds: float = 5.0,
+        fetch_json: Callable[[str, Mapping[str, str], float], Any] | None = None,
+    ) -> None:
+        from services.governance.approval_authority import ApprovalUnavailable
+
+        try:
+            parsed = urllib.parse.urlsplit(base_url)
+        except ValueError as exc:
+            raise ApprovalUnavailable("Capital owner reader URL is malformed") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or (not service_token and token_provider is None)
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ApprovalUnavailable("Capital owner reader URL, scoped principal and timeout required")
+        self.base_url = base_url.rstrip("/")
+        self.service_token = service_token.strip()
+        self.token_provider = token_provider
+        self.pool_id = _optional_text(pool_id)
+        self.tenant_id = _optional_text(tenant_id)
+        self.service_name = _optional_text(service_name) or "runtime-manager"
+        self.timeout_seconds = timeout_seconds
+        self._fetch_json = fetch_json
+
+    def _headers(self, *, tenant_id: str | None = None) -> dict[str, str]:
+        from services.governance.approval_authority import ApprovalUnavailable
+
+        try:
+            token = (self.token_provider() if self.token_provider is not None else self.service_token).strip()
+            if not token:
+                raise RuntimeError("Missing service credential")
+        except RuntimeError as exc:
+            raise ApprovalUnavailable("Capital owner read principal unavailable") from exc
+        headers = {
+            "Accept": "application/json",
+            "Authorization": token if token.lower().startswith("bearer ") else f"Bearer {token}",
+            "X-Pantheon-Service": self.service_name,
+        }
+        effective_tenant = _optional_text(tenant_id) or self.tenant_id
+        if effective_tenant:
+            headers["X-Tenant-Id"] = effective_tenant
+        return headers
+
+    def get(
+        self,
+        decision_id: str,
+        *,
+        pool_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> Any:
+        from services.governance.approval_authority import (
+            ApprovalEvidence,
+            ApprovalInvalid,
+            ApprovalUnavailable,
+        )
+
+        clean_id = _optional_text(decision_id)
+        if not clean_id:
+            raise ApprovalInvalid("Exact decision ID required")
+        effective_pool_id = _optional_text(pool_id) or self.pool_id
+        if effective_pool_id:
+            url = (
+                f"{self.base_url}/api/capital-pools/"
+                f"{urllib.parse.quote(effective_pool_id, safe='')}/approvals/"
+                f"{urllib.parse.quote(clean_id, safe='')}"
+            )
+        else:
+            url = f"{self.base_url}/api/capital/approvals/{urllib.parse.quote(clean_id, safe='')}"
+        headers = self._headers(tenant_id=tenant_id)
+        fetcher = self._fetch_json or _capital_owner_http_get_json
+        try:
+            body = fetcher(url, headers, self.timeout_seconds)
+        except (ApprovalInvalid, ApprovalUnavailable):
+            raise
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403, 404}:
+                raise ApprovalInvalid("Capital owner denied exact decision read") from exc
+            raise ApprovalUnavailable("Capital owner approval read unavailable") from exc
+        except Exception as exc:
+            raise ApprovalUnavailable("Capital owner approval read unavailable or malformed") from exc
+        if not isinstance(body, Mapping):
+            raise ApprovalInvalid("Malformed Capital owner approval decision")
+        try:
+            evidence = ApprovalEvidence.model_validate(dict(body))
+        except ValueError as exc:
+            raise ApprovalInvalid("Malformed Capital owner approval decision") from exc
+        if evidence.decision_id != clean_id:
+            raise ApprovalInvalid("Capital owner exact decision ID mismatch")
+        effective_tenant = _optional_text(tenant_id) or self.tenant_id
+        if effective_tenant and evidence.tenant_id != effective_tenant:
+            raise ApprovalInvalid("Capital owner approval tenant mismatch")
+        if effective_pool_id and evidence.target_id != effective_pool_id:
+            raise ApprovalInvalid("Capital owner approval pool target mismatch")
+        return evidence
+
+    def verify(
+        self,
+        decision_id: str,
+        *,
+        expected: Mapping[str, Any],
+        now: datetime | None = None,
+        usage_context: Any = None,
+    ) -> Any:
+        pool_id = _optional_text(expected.get("target_id") or expected.get("subject.pool_id"))
+        tenant_id = _optional_text(expected.get("tenant_id"))
+        return self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id).require_valid(
+            expected=expected,
+            now=now,
+            usage_context=usage_context,
+        )
+
+
+def configured_capital_owner_approval_reader(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_url: str | None = None,
+    pool_id: str | None = None,
+    tenant_id: str | None = None,
+    fetch_json: Callable[[str, Mapping[str, str], float], Any] | None = None,
+) -> CapitalOwnerApprovalReader:
+    from services.governance.approval_authority import ApprovalUnavailable
+    from services.service_token_file import configured_service_token
+
+    raw_source = os.environ if env is None else env
+    source = {str(k): _unwrap_compose_value(v, raw_source) for k, v in raw_source.items()}
+    resolved_base_url = (
+        _optional_text(base_url)
+        or _optional_text(source.get("PANTHEON_CAPITAL_API_URL"))
+        or _optional_text(source.get("PANTHEON_CAPITAL_SERVICE_URL"))
+        or ""
+    )
+    try:
+        timeout = float(source.get("PANTHEON_CAPITAL_TIMEOUT_SECONDS") or "5")
+    except ValueError as exc:
+        raise ApprovalUnavailable("Capital owner reader timeout is malformed") from exc
+
+    def _resolve_token() -> str:
+        cur_raw = os.environ if env is None else env
+        cur_source = {str(k): _unwrap_compose_value(v, cur_raw) for k, v in cur_raw.items()}
+        return (
+            configured_service_token("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", cur_source)
+            or configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", cur_source)
+        )
+
+    try:
+        initial_token = _resolve_token()
+    except RuntimeError as exc:
+        raise ApprovalUnavailable("Capital owner read principal unavailable") from exc
+    if not resolved_base_url or not initial_token:
+        raise ApprovalUnavailable("Capital owner reader URL, scoped principal and timeout required")
+    resolved_tenant = (
+        _optional_text(tenant_id)
+        or _optional_text(source.get("PANTHEON_TENANT_ID"))
+    )
+    return CapitalOwnerApprovalReader(
+        base_url=resolved_base_url,
+        service_token=initial_token,
+        token_provider=_resolve_token,
+        pool_id=pool_id,
+        tenant_id=resolved_tenant,
+        timeout_seconds=timeout,
+        fetch_json=fetch_json,
+    )
+
+
+def _capital_owner_approval_reader_from_pool_reader(
+    pool_reader: Any,
+    *,
+    pool_id: str | None = None,
+    tenant_id: str | None = None,
+) -> CapitalOwnerApprovalReader | None:
+    if pool_reader is None:
+        return None
+    base_url = _optional_text(getattr(pool_reader, "_base_url", None) or getattr(pool_reader, "base_url", None))
+    token = _optional_text(getattr(pool_reader, "_token", None) or getattr(pool_reader, "service_token", None))
+    if not base_url or not token:
+        return None
+    reader_tenant = _optional_text(tenant_id) or _optional_text(
+        getattr(pool_reader, "_tenant_id", None) or getattr(pool_reader, "tenant_id", None)
+    )
+    service_name = _optional_text(
+        getattr(pool_reader, "_service_name", None) or getattr(pool_reader, "service_name", None)
+    ) or "runtime-manager"
+    raw_timeout = getattr(pool_reader, "_timeout", None) or getattr(pool_reader, "timeout_seconds", None) or 5.0
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        timeout = 5.0
+    try:
+        return CapitalOwnerApprovalReader(
+            base_url=base_url,
+            service_token=token,
+            pool_id=pool_id,
+            tenant_id=reader_tenant,
+            service_name=service_name,
+            timeout_seconds=timeout,
+        )
+    except Exception:
+        return None
+
+
+def _verify_policy_owner_approval_decision(
+    *,
+    resolved_pool_id: str,
+    effective_tenant_id: str | None,
+    clean_stage: str | None,
+    clean_profile: str | None,
+    policy_model: RiskPolicy,
+    computed_digest: str,
+    raw_policy_mapping: Mapping[str, Any] | None,
+    pool_obj: Any,
+    pool_meta: Mapping[str, Any],
+    b_map: Mapping[str, Any],
+    b_meta: Mapping[str, Any],
+    policy_meta: Mapping[str, Any],
+    approval_decision_id: str | None,
+    approval_decision: Any | None,
+    approval_decisions: Sequence[Any] | None,
+    approval_reader: Any | None,
+    capital_pool_reader: Any | None = None,
+    now_dt: datetime,
+) -> str | None:
+    """Verify a tenant-scoped policy-owner ApprovalDecision via canonical owner readback and ApprovalEvidence.require_valid."""
+    candidate_ids: list[str] = []
+
+    def _add_ref(ref_candidate: Any) -> None:
+        dec_ref = _extract_decision_id_reference(ref_candidate)
+        if dec_ref and dec_ref not in candidate_ids:
+            candidate_ids.append(dec_ref)
+
+    _add_ref(approval_decision_id)
+    _add_ref(approval_decision)
+    if approval_decisions is not None and not isinstance(approval_decisions, (str, bytes)):
+        for item in approval_decisions:
+            _add_ref(item)
+
+    if isinstance(pool_obj, Mapping):
+        _add_ref(_first_text_or_none(pool_obj, "approval_decision_id", "profile_mapping_approval_id", "decision_id"))
+    elif pool_obj is not None:
+        _add_ref(getattr(pool_obj, "approval_decision_id", None))
+        _add_ref(getattr(pool_obj, "profile_mapping_approval_id", None))
+
+    pool_sub = dict(b_map.get("capital_pool")) if isinstance(b_map.get("capital_pool"), Mapping) else {}
+    pool_sub_meta = dict(pool_sub.get("metadata")) if isinstance(pool_sub.get("metadata"), Mapping) else {}
+
+    for container in (pool_meta, b_map, b_meta, policy_meta, pool_sub, pool_sub_meta):
+        if not isinstance(container, Mapping):
+            continue
+        for exp_key in ("profile_mapping_expires_at", "approval_expires_at"):
+            raw_exp = container.get(exp_key)
+            if raw_exp not in (None, ""):
+                exp_str = _optional_text(raw_exp)
+                exp_dt = _parse_iso_timestamp(exp_str) if exp_str else None
+                if exp_dt is None or exp_dt <= now_dt:
+                    return None
+        _add_ref(
+            _first_text_or_none(
+                container,
+                "profile_mapping_approval_id",
+                "approval_decision_id",
+                "decision_id",
+            )
+        )
+        for attached_key in ("profile_mapping_approval", "approval_decision"):
+            attached = container.get(attached_key)
+            if attached is not None:
+                _add_ref(attached)
+        attached_list = container.get("approval_decisions")
+        if isinstance(attached_list, Sequence) and not isinstance(attached_list, (str, bytes)):
+            for item in attached_list:
+                _add_ref(item)
+
+    explicit_candidate_ids = frozenset(candidate_ids)
+    if not candidate_ids and resolved_pool_id:
+        _add_ref(f"apv-capital-pool-{resolved_pool_id}")
+
+    if not candidate_ids or not effective_tenant_id or not resolved_pool_id:
+        return None
+
+    readers: list[Any] = []
+    seen_reader_ids: set[int] = set()
+
+    def _add_reader(cand_reader: Any) -> None:
+        if cand_reader is not None and id(cand_reader) not in seen_reader_ids:
+            seen_reader_ids.add(id(cand_reader))
+            readers.append(cand_reader)
+
+    _add_reader(approval_reader)
+    if not readers:
+        capital_owner_factory = globals().get("configured_capital_owner_approval_reader")
+        if callable(capital_owner_factory):
+            try:
+                _add_reader(
+                    capital_owner_factory(
+                        pool_id=resolved_pool_id,
+                        tenant_id=effective_tenant_id,
+                    )
+                )
+            except Exception:
+                pass
+        _add_reader(
+            _capital_owner_approval_reader_from_pool_reader(
+                capital_pool_reader,
+                pool_id=resolved_pool_id,
+                tenant_id=effective_tenant_id,
+            )
+        )
+        try:
+            from services.governance import approval_authority as _gov_auth
+
+            domains = (
+                "capital",
+                "runtime_manager",
+                "deployment",
+                "persona_training_target",
+                "registry",
+                "evolution",
+            )
+            auth_factory = getattr(_gov_auth, "configured_approval_reader", None)
+            if callable(auth_factory):
+                for domain in domains:
+                    try:
+                        _add_reader(auth_factory(domain))
+                    except Exception:
+                        continue
+            local_factory = globals().get("configured_approval_reader")
+            if not readers and callable(local_factory) and local_factory is not auth_factory:
+                for domain in domains:
+                    try:
+                        _add_reader(local_factory(domain))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    if not readers:
+        return None
+
+    from services.governance.approval_authority import ApprovalEvidence
+    from services.governance.paper_approval_scope import ApprovalUsageContext, current_environment
+
+    pool_approval_digest = (
+        (
+            _first_text_or_none(pool_obj, "approval_digest", "pool_approval_digest")
+            if isinstance(pool_obj, Mapping)
+            else _optional_text(getattr(pool_obj, "approval_digest", None))
+        )
+        or _first_text_or_none(pool_meta, "approval_digest", "pool_approval_digest")
+        or _first_text_or_none(b_map, "approval_digest", "pool_approval_digest")
+        or _first_text_or_none(b_meta, "approval_digest", "pool_approval_digest")
+        or _first_text_or_none(pool_sub, "approval_digest", "pool_approval_digest")
+        or _first_text_or_none(pool_sub_meta, "approval_digest", "pool_approval_digest")
+    )
+    if (
+        not pool_approval_digest
+        and pool_obj is not None
+        and not isinstance(pool_obj, (Mapping, RiskPolicy, str))
+        and getattr(pool_obj, "pool_id", None)
+        and getattr(pool_obj, "owner_id", None)
+    ):
+        pool_approval_digest = capital_pool_approval_digest(pool_obj)
+
+    valid_digests = {computed_digest}
+    if isinstance(raw_policy_mapping, Mapping):
+        try:
+            raw_digest = hashlib.sha256(
+                json.dumps(raw_policy_mapping, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            ).hexdigest()
+            valid_digests.add(raw_digest)
+        except Exception:
+            pass
+
+    target_stage_val = clean_stage or "paper"
+    raw_scale = pool_meta.get("capital_scale_pct")
+    if raw_scale is not None and isinstance(raw_scale, (int, float)) and not isinstance(raw_scale, bool):
+        scale_pct = float(raw_scale)
+    else:
+        scale_pct = 0.0 if target_stage_val == "paper" else 100.0
+    env_name = (
+        str(pool_meta.get("environment") or b_meta.get("environment") or "").strip().lower()
+        or current_environment()
+        or "dev"
+    )
+    usage_ctx = ApprovalUsageContext(
+        environment=env_name,
+        target_stage=target_stage_val,
+        capital_scale_pct=scale_pct,
+    )
+
+    for cand_id in candidate_ids:
+        loaded_ev = None
+        for reader in readers:
+            try:
+                if hasattr(reader, "get"):
+                    loaded_ev = reader.get(cand_id)
+                elif callable(reader):
+                    loaded_ev = reader(cand_id)
+                else:
+                    loaded_ev = None
+            except Exception:
+                loaded_ev = None
+            if loaded_ev is not None:
+                break
+        if loaded_ev is None:
+            continue
+
+        expected_binding: dict[str, Any] = {
+            "tenant_id": effective_tenant_id,
+            "target_type": "capital_pool_activation",
+            "target_id": resolved_pool_id,
+            "subject.pool_id": resolved_pool_id,
+            "subject.risk_direction": "increase",
+            "subject.risk_policy_id": policy_model.risk_policy_id,
+            "subject.risk_policy_version": str(policy_model.version),
+        }
+        if pool_approval_digest:
+            expected_binding["target_version"] = pool_approval_digest
+
+        try:
+            if isinstance(loaded_ev, ApprovalEvidence):
+                evidence = loaded_ev
+            elif isinstance(loaded_ev, Mapping):
+                evidence = ApprovalEvidence.model_validate(dict(loaded_ev))
+            elif hasattr(loaded_ev, "model_dump"):
+                evidence = ApprovalEvidence.model_validate(loaded_ev.model_dump())
+            elif cand_id in explicit_candidate_ids and callable(getattr(loaded_ev, "require_valid", None)):
+                res_ev = loaded_ev.require_valid(
+                    expected={
+                        **expected_binding,
+                        "subject.risk_policy_digest": computed_digest,
+                        "subject.requested_risk": clean_profile or "low",
+                    },
+                    now=now_dt,
+                    usage_context=usage_ctx,
+                )
+                if isinstance(res_ev, ApprovalEvidence):
+                    evidence = res_ev
+                elif isinstance(res_ev, Mapping):
+                    evidence = ApprovalEvidence.model_validate(dict(res_ev))
+                elif hasattr(res_ev, "model_dump"):
+                    evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
+                else:
+                    continue
+            else:
+                continue
+        except Exception:
+            continue
+
+        if evidence.decision_id != cand_id:
+            continue
+
+        try:
+            evidence.require_valid(
+                expected=expected_binding,
+                now=now_dt,
+                usage_context=usage_ctx,
+            )
+        except Exception:
+            continue
+
+        d = evidence.model_dump()
+        meta = d.get("metadata") if isinstance(d.get("metadata"), Mapping) else {}
+        subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+        if _optional_text(subject.get("risk_policy_digest")) not in valid_digests:
+            continue
+        subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
+        if clean_profile:
+            if subj_risk != clean_profile:
+                continue
+        elif not subj_risk:
+            continue
+
+        return evidence.decision_id
+    return None
+
+
+def _caller_is_risk_reducing_order_gate() -> bool:
+    """Detect whether ``EvaluateOrderRiskGate`` is evaluating a pure position-reducing or closing order."""
+    frame = inspect.currentframe()
+    try:
+        cur = frame.f_back if frame is not None else None
+        depth = 0
+        while cur is not None and depth < 6:
+            if cur.f_code.co_name == "EvaluateOrderRiskGate":
+                f_locals = cur.f_locals
+                is_opening_or_increasing = f_locals.get("is_opening_or_increasing")
+                is_sign_reversal = f_locals.get("is_sign_reversal")
+                q_before = _optional_float(f_locals.get("q_before"))
+                q_after = _optional_float(f_locals.get("q_after"))
+                signed_order_qty = _optional_float(f_locals.get("signed_order_qty"))
+                if (
+                    is_opening_or_increasing is False
+                    and is_sign_reversal is False
+                    and q_before is not None
+                    and q_after is not None
+                    and signed_order_qty is not None
+                    and abs(q_before) > 1e-12
+                    and abs(signed_order_qty) > 1e-12
+                    and abs(q_after) < abs(q_before) - 1e-12
+                    and (
+                        (q_before > 0.0 and q_after >= -1e-12 and signed_order_qty < 0.0)
+                        or (q_before < 0.0 and q_after <= 1e-12 and signed_order_qty > 0.0)
+                    )
+                ):
+                    return True
+                return False
+            cur = cur.f_back
+            depth += 1
+        return False
+    finally:
+        del frame
+
+
+def _policy_eligible_for_governed_risk_reduction(
+    resolution: BoundPoolRiskPolicyResolution,
+    *,
+    expected_stage: str | None = None,
+    require_limits: Sequence[str] = (),
+) -> bool:
+    """Check whether an unresolved/expired owner-mapping resolution retains a valid active policy for risk reduction."""
+    if not resolution.allow_risk_reducing_actions or resolution.policy is None:
+        return False
+    if resolution.status == "unresolved_profile_mapping":
+        if resolution.reason_code != "risk_policy_profile_mapping_unapproved":
+            return False
+    elif resolution.status == "stale":
+        if resolution.reason_code != "risk_policy_stale" or "expired at " not in str(resolution.reason or ""):
+            return False
+    else:
+        return False
+
+    policy_model = resolution.policy
+    if str(policy_model.status or "").strip().lower() not in _ACTIVE_POLICY_STATUSES:
+        return False
+    if resolution.tenant_id and resolution.policy_tenant_id and resolution.tenant_id != resolution.policy_tenant_id:
+        return False
+
+    clean_stage = _optional_text(expected_stage) or _optional_text(resolution.stage) or "paper"
+    if clean_stage and policy_model.allowed_stages and clean_stage not in policy_model.allowed_stages:
+        return False
+
+    for field_name in _NON_NEGATIVE_SCALAR_LIMIT_FIELDS:
+        val = getattr(policy_model, field_name, None)
+        if val is None:
+            continue
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(float(val)):
+            return False
+        if field_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
+            return False
+        if float(val) < 0.0:
+            return False
+
+    for flex_field in _FLEX_EXPOSURE_LIMIT_FIELDS:
+        flex_val = getattr(policy_model, flex_field, None)
+        if flex_val in (None, (), {}, []):
+            continue
+        items = flex_val.items() if isinstance(flex_val, Mapping) else [(flex_field, flex_val)]
+        for _item_key, item_val in items:
+            if (
+                not isinstance(item_val, (int, float))
+                or isinstance(item_val, bool)
+                or not math.isfinite(float(item_val))
+                or float(item_val) < 0.0
+            ):
+                return False
+
+    for required_limit in require_limits:
+        limit_val = getattr(policy_model, required_limit, None)
+        if limit_val in (None, (), {}, []):
+            return False
+        if required_limit in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(limit_val) <= 0.0:
+            return False
+
+    has_positive_limit = any(
+        isinstance(getattr(policy_model, f_name, None), (int, float))
+        and not isinstance(getattr(policy_model, f_name, None), bool)
+        and float(getattr(policy_model, f_name)) > 0.0
+        for f_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS
+    )
+    return has_positive_limit
+
+
+def _extract_pool_policy_candidates(
+    pool_obj: Any,
+) -> tuple[str | None, Any, bool, str, dict[str, Any], str | None]:
+    """Extract (ref, inline_policy, explicit_inline_key, source, pool_metadata, pool_tenant_id)."""
+    if pool_obj is None:
+        return None, None, False, "unresolved", {}, None
+    if isinstance(pool_obj, RiskPolicy):
+        meta = dict(pool_obj.metadata) if isinstance(pool_obj.metadata, Mapping) else {}
+        return None, pool_obj, True, "pool_inline", meta, _optional_text(meta.get("tenant_id"))
+    if isinstance(pool_obj, str):
+        clean_ref = pool_obj.strip()
+        return (clean_ref or None), None, False, ("risk_policy_ref" if clean_ref else "unresolved"), {}, None
+    if isinstance(pool_obj, Mapping):
+        pool_meta = dict(pool_obj.get("metadata")) if isinstance(pool_obj.get("metadata"), Mapping) else {}
+        pool_tenant_id = _first_text_or_none(pool_obj, "tenant_id") or _first_text_or_none(pool_meta, "tenant_id")
+        ref_from_pool = _first_text_or_none(pool_obj, "risk_policy_ref") or _first_text_or_none(
+            pool_meta, "risk_policy_ref"
+        )
+        has_top_inline = "risk_policy" in pool_obj and pool_obj.get("risk_policy") is not None
+        has_meta_inline = "risk_policy" in pool_meta and pool_meta.get("risk_policy") is not None
+        inline_policy = (
+            pool_obj.get("risk_policy")
+            if has_top_inline
+            else (pool_meta.get("risk_policy") if has_meta_inline else None)
+        )
+        explicit_inline_key = has_top_inline or has_meta_inline
+        if ref_from_pool:
+            return ref_from_pool, inline_policy, explicit_inline_key, "risk_policy_ref", pool_meta, pool_tenant_id
+        if explicit_inline_key:
+            source = "pool_inline" if has_top_inline else "pool_metadata_inline"
+            return None, inline_policy, True, source, pool_meta, pool_tenant_id
+        ref_id = _first_text_or_none(pool_obj, "risk_policy_id")
+        if ref_id and _is_pool_envelope_mapping(pool_obj):
+            return ref_id, None, False, "risk_policy_ref", pool_meta, pool_tenant_id
+        if not _is_pool_envelope_mapping(pool_obj) and _is_policy_content_mapping(pool_obj):
+            return None, pool_obj, True, "pool_inline", pool_meta, pool_tenant_id
+        return None, None, False, "unresolved", pool_meta, pool_tenant_id
+
+    pool_meta = (
+        dict(getattr(pool_obj, "metadata", None))
+        if isinstance(getattr(pool_obj, "metadata", None), Mapping)
+        else {}
+    )
+    pool_tenant_id = _optional_text(getattr(pool_obj, "tenant_id", None)) or _first_text_or_none(
+        pool_meta, "tenant_id"
+    )
+    ref_attr = _optional_text(getattr(pool_obj, "risk_policy_ref", None)) or _first_text_or_none(
+        pool_meta, "risk_policy_ref"
+    )
+    has_meta_inline = "risk_policy" in pool_meta and pool_meta.get("risk_policy") is not None
+    inline_policy = pool_meta.get("risk_policy") if has_meta_inline else None
+    if ref_attr:
+        return ref_attr, inline_policy, has_meta_inline, "risk_policy_ref", pool_meta, pool_tenant_id
+    if has_meta_inline:
+        return None, inline_policy, True, "pool_metadata_inline", pool_meta, pool_tenant_id
+    return None, None, False, "unresolved", pool_meta, pool_tenant_id
+
+
+def resolve_pool_risk_policy_binding(
     *,
     capital_pool_id: str | None = None,
+    pool: Any | None = None,
     binding: Mapping[str, Any] | None = None,
     capital_pool_reader: Callable[[str], Any] | None = None,
     risk_policy_ref: str | None = None,
     risk_policy_loader: Callable[[str], Any] | None = None,
     pool_store_path: str | os.PathLike[str] | None = None,
-) -> RiskPolicy | None:
-    """Resolve and load the bound CapitalPool's active ``RiskPolicy`` (never from signal metadata)."""
+    expected_tenant_id: str | None = None,
+    expected_stage: str | None = "paper",
+    expected_version: str | None = None,
+    expected_digest: str | None = None,
+    require_active: bool = True,
+    require_limits: Sequence[str] = ("gross_limit",),
+    requested_profile: str | None = None,
+    require_approved_profile_mapping: bool | None = None,
+    approval_decision_id: str | None = None,
+    approval_decision: Any | None = None,
+    approval_decisions: Sequence[Any] | None = None,
+    approval_reader: Any | None = None,
+    as_of: str | None = None,
+    raise_on_error: bool = False,
+) -> BoundPoolRiskPolicyResolution:
+    """Resolve and validate a CapitalPool's bound RiskPolicy with full provenance and guard diagnostics."""
     b_map = dict(binding) if isinstance(binding, Mapping) else {}
+    b_meta = dict(b_map.get("metadata")) if isinstance(b_map.get("metadata"), Mapping) else {}
+    pool_sub = dict(b_map.get("capital_pool")) if isinstance(b_map.get("capital_pool"), Mapping) else {}
+
     resolved_pool_id = str(
         b_map.get("capital_pool_id")
+        or (
+            (pool.get("pool_id") or pool.get("capital_pool_id"))
+            if isinstance(pool, Mapping)
+            else getattr(pool, "pool_id", None)
+        )
         or capital_pool_id
         or os.getenv("PANTHEON_CAPITAL_POOL_ID", "")
     ).strip()
 
-    resolved_ref: str | None = None
-    if capital_pool_reader is not None:
+    pool_obj = pool
+    if pool_obj is None and capital_pool_reader is not None:
         pool_obj = capital_pool_reader(resolved_pool_id)
-        if isinstance(pool_obj, RiskPolicy):
-            return pool_obj
-        if isinstance(pool_obj, str) and pool_obj.strip():
-            resolved_ref = pool_obj.strip()
-        elif isinstance(pool_obj, Mapping):
-            ref_from_pool = _first_text_or_none(pool_obj, "risk_policy_ref")
-            if ref_from_pool:
-                resolved_ref = ref_from_pool
-            else:
-                pool_meta = pool_obj.get("metadata") if isinstance(pool_obj.get("metadata"), Mapping) else {}
-                nested_policy = pool_obj.get("risk_policy") or pool_meta.get("risk_policy")
-                if isinstance(nested_policy, (RiskPolicy, Mapping)):
-                    return normalize_risk_policy(nested_policy)
-                ref_id = _first_text_or_none(pool_obj, "risk_policy_id")
-                if ref_id and ("pool_id" in pool_obj or "capital_pool_id" in pool_obj):
-                    resolved_ref = ref_id
-                else:
-                    return normalize_risk_policy(pool_obj)
-        else:
-            ref_attr = getattr(pool_obj, "risk_policy_ref", None)
-            if ref_attr is not None and str(ref_attr).strip():
-                resolved_ref = str(ref_attr).strip()
-            else:
-                obj_meta = getattr(pool_obj, "metadata", None)
-                if isinstance(obj_meta, Mapping) and isinstance(obj_meta.get("risk_policy"), (RiskPolicy, Mapping)):
-                    return normalize_risk_policy(obj_meta["risk_policy"])
 
-    if not resolved_ref:
+    resolved_ref, inline_policy, explicit_inline_key, source, pool_meta, pool_tenant_id = (
+        _extract_pool_policy_candidates(pool_obj)
+    )
+
+    if not resolved_ref and not explicit_inline_key and pool is None:
         pool_record = read_capital_pool_record(resolved_pool_id, pool_store_path=pool_store_path)
         if pool_record is not None:
-            ref_from_record = _first_text_or_none(pool_record, "risk_policy_ref")
-            if ref_from_record:
-                resolved_ref = ref_from_record
-            else:
-                rec_meta = pool_record.get("metadata") if isinstance(pool_record.get("metadata"), Mapping) else {}
-                nested = pool_record.get("risk_policy") or rec_meta.get("risk_policy")
-                if isinstance(nested, (RiskPolicy, Mapping)):
-                    return normalize_risk_policy(nested)
-                resolved_ref = _first_text_or_none(pool_record, "risk_policy_id")
+            pool_obj = pool_record
+            resolved_ref, inline_policy, explicit_inline_key, source, pool_meta, pool_tenant_id = (
+                _extract_pool_policy_candidates(pool_record)
+            )
 
-    if not resolved_ref and b_map:
-        pool_sub = b_map.get("capital_pool") if isinstance(b_map.get("capital_pool"), Mapping) else {}
-        b_meta = b_map.get("metadata") if isinstance(b_map.get("metadata"), Mapping) else {}
-        inline_b_policy = b_map.get("risk_policy") or pool_sub.get("risk_policy")
-        if isinstance(inline_b_policy, (RiskPolicy, Mapping)):
-            return normalize_risk_policy(inline_b_policy)
-        resolved_ref = (
-            _first_text_or_none(b_map, "risk_policy_ref", "risk_policy_id")
-            or _first_text_or_none(pool_sub, "risk_policy_ref", "risk_policy_id")
-            or _first_text_or_none(b_meta, "risk_policy_ref", "risk_policy_id")
-        )
+    if not resolved_ref and not explicit_inline_key and b_map:
+        has_b_inline = "risk_policy" in b_map and b_map.get("risk_policy") is not None
+        has_sub_inline = "risk_policy" in pool_sub and pool_sub.get("risk_policy") is not None
+        if has_b_inline or has_sub_inline:
+            inline_policy = b_map.get("risk_policy") if has_b_inline else pool_sub.get("risk_policy")
+            explicit_inline_key = True
+            source = "binding_inline"
+        else:
+            resolved_ref = (
+                _first_text_or_none(b_map, "risk_policy_ref", "risk_policy_id")
+                or _first_text_or_none(pool_sub, "risk_policy_ref", "risk_policy_id")
+                or _first_text_or_none(b_meta, "risk_policy_ref", "risk_policy_id")
+            )
+            if resolved_ref:
+                source = "risk_policy_ref"
 
-    if not resolved_ref:
+    if not resolved_ref and not explicit_inline_key:
         resolved_ref = (
             _optional_text(risk_policy_ref)
             or _optional_text(os.getenv("PANTHEON_RISK_POLICY_REF"))
             or _optional_text(os.getenv("CAPITAL_RISK_POLICY_REF"))
         )
+        if resolved_ref:
+            source = "risk_policy_ref"
+
+    clean_expected_tenant = _optional_text(expected_tenant_id)
+    binding_tenant = (
+        _first_text_or_none(b_map, "tenant_id")
+        or _first_text_or_none(pool_sub, "tenant_id")
+        or _first_text_or_none(b_meta, "tenant_id")
+    )
+    effective_tenant_id = clean_expected_tenant or pool_tenant_id or binding_tenant
+    clean_stage = _optional_text(expected_stage)
+    clean_profile = (
+        _optional_text(requested_profile)
+        or (
+            _first_text_or_none(pool_obj, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+            if isinstance(pool_obj, Mapping)
+            else None
+        )
+        or _first_text_or_none(pool_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+        or _first_text_or_none(b_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+    )
+    needs_approved_mapping = bool(
+        require_approved_profile_mapping is True
+        or pool_meta.get("require_approved_profile_mapping") is True
+        or b_meta.get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and clean_profile is not None)
+    )
+
+    def _fail(
+        status: str,
+        reason_code: str,
+        reason: str,
+        *,
+        policy_obj: RiskPolicy | None = None,
+        policy_tenant: str | None = None,
+        profile_status: str = "not_applicable",
+        owner_decision: Mapping[str, Any] | None = None,
+        exc_type: type[Exception] = RiskPolicyError,
+    ) -> BoundPoolRiskPolicyResolution:
+        if raise_on_error:
+            raise exc_type(f"{reason} ({reason_code})")
+        return BoundPoolRiskPolicyResolution(
+            capital_pool_id=resolved_pool_id,
+            resolved=False,
+            status=status,
+            source=source,
+            policy=policy_obj,
+            risk_policy_id=policy_obj.risk_policy_id if policy_obj is not None else resolved_ref,
+            risk_policy_version=policy_obj.version if policy_obj is not None else None,
+            risk_policy_digest=risk_policy_digest(policy_obj) if policy_obj is not None else None,
+            tenant_id=effective_tenant_id,
+            policy_tenant_id=policy_tenant,
+            stage=clean_stage,
+            requested_profile=clean_profile,
+            profile_mapping_status=profile_status,
+            effective_limits=_policy_effective_limits(policy_obj) if policy_obj is not None else {},
+            reason_code=reason_code,
+            reason=reason,
+            allow_new_or_increased_risk=False,
+            allow_risk_reducing_actions=True,
+            owner_decision_request=owner_decision,
+        )
+
+    if clean_expected_tenant and pool_tenant_id and clean_expected_tenant != pool_tenant_id:
+        return _fail(
+            "wrong_tenant",
+            "risk_policy_wrong_tenant",
+            f"Capital pool {resolved_pool_id!r} belongs to tenant {pool_tenant_id!r}, expected {clean_expected_tenant!r}",
+            policy_tenant=pool_tenant_id,
+        )
+
+    if needs_approved_mapping and not resolved_ref and not explicit_inline_key:
+        effective_req_profile = clean_profile or "low"
+        decision_req = {
+            "policy_owner": "services/capital/risk_policy.py",
+            "governance_surface": "services/control-plane/governance/risk_policy.py",
+            "requested_profile": effective_req_profile,
+            "capital_pool_id": resolved_pool_id,
+            "tenant_id": effective_tenant_id,
+            "stage": clean_stage or "paper",
+            "decision_required": (
+                f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
+                f"{effective_req_profile!r}; policy owner must approve explicit gross_limit/net_limit/max_leverage/"
+                f"max_single_name_weight or bind an approved risk_policy_ref."
+            ),
+            "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+        }
+        return _fail(
+            "unresolved_profile_mapping",
+            "risk_policy_profile_mapping_unapproved",
+            decision_req["decision_required"],
+            profile_status="unresolved_owner_decision_required",
+            owner_decision=decision_req,
+        )
+
+    if not resolved_ref and not explicit_inline_key:
+        return _fail(
+            "missing",
+            "risk_policy_missing",
+            f"Capital pool {resolved_pool_id!r} is missing an approved risk_policy_ref or metadata.risk_policy",
+        )
+
+    raw_policy_mapping: Mapping[str, Any] | None = None
+    policy_model: RiskPolicy | None = None
+    authoritative_ref_policy: RiskPolicy | None = None
 
     if resolved_ref:
-        return load_risk_policy_model(resolved_ref, loader=risk_policy_loader)
-    return None
+        try:
+            if risk_policy_loader is not None:
+                loaded_raw = risk_policy_loader(resolved_ref)
+            else:
+                loaded_raw = load_risk_policy(resolved_ref)
+            if isinstance(loaded_raw, Mapping):
+                raw_policy_mapping = dict(loaded_raw)
+            authoritative_ref_policy = normalize_risk_policy(loaded_raw, default_id=resolved_ref)
+            policy_model = authoritative_ref_policy
+        except RiskPolicyLoadError as exc:
+            if explicit_inline_key and risk_policy_loader is None:
+                # Allow an inline policy contract whose risk_policy_id matches risk_policy_ref when no external file exists.
+                inline_id = (
+                    inline_policy.risk_policy_id
+                    if isinstance(inline_policy, RiskPolicy)
+                    else (
+                        _first_text_or_none(inline_policy, "risk_policy_id", "policy_id", "risk_policy_ref")
+                        if isinstance(inline_policy, Mapping)
+                        else None
+                    )
+                )
+                if inline_id == resolved_ref:
+                    resolved_ref = None
+                    source = "pool_metadata_inline"
+                else:
+                    return _fail(
+                        "missing",
+                        "risk_policy_missing",
+                        str(exc),
+                        exc_type=RiskPolicyLoadError,
+                    )
+            else:
+                return _fail(
+                    "missing",
+                    "risk_policy_missing",
+                    str(exc),
+                    exc_type=RiskPolicyLoadError,
+                )
+        except RiskPolicyError as exc:
+            return _fail("invalid", "risk_policy_invalid", str(exc))
+
+    if policy_model is None and explicit_inline_key:
+        if isinstance(inline_policy, RiskPolicy):
+            policy_model = inline_policy
+            raw_policy_mapping = inline_policy.to_dict()
+        elif isinstance(inline_policy, Mapping):
+            if not _is_policy_content_mapping(inline_policy):
+                return _fail(
+                    "invalid",
+                    "risk_policy_invalid",
+                    "Malformed risk policy: inline risk_policy is empty or missing policy identity and limits",
+                )
+            raw_policy_mapping = dict(inline_policy)
+            try:
+                policy_model = normalize_risk_policy(inline_policy)
+            except RiskPolicyError as exc:
+                return _fail("invalid", "risk_policy_invalid", str(exc))
+        else:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid",
+                f"Malformed risk policy: expected RiskPolicy or mapping, got {type(inline_policy).__name__}",
+            )
+
+    assert policy_model is not None
+    policy_meta = dict(policy_model.metadata) if isinstance(policy_model.metadata, Mapping) else {}
+    if isinstance(raw_policy_mapping, Mapping):
+        for key in (
+            "tenant_id",
+            "expires_at",
+            "effective_to",
+            "effective_from",
+            "superseded_by",
+            "stale",
+            "requested_profile",
+            "risk_profile",
+            "explicit_policy",
+        ):
+            if key in raw_policy_mapping and raw_policy_mapping.get(key) is not None and key not in policy_meta:
+                policy_meta[key] = raw_policy_mapping.get(key)
+
+    # If both an authoritative ref policy and an inline snapshot exist on the pool, ensure the snapshot is not stale.
+    if authoritative_ref_policy is not None and explicit_inline_key and isinstance(inline_policy, (RiskPolicy, Mapping)):
+        try:
+            inline_norm = (
+                inline_policy
+                if isinstance(inline_policy, RiskPolicy)
+                else normalize_risk_policy(inline_policy, default_id=authoritative_ref_policy.risk_policy_id)
+            )
+        except RiskPolicyError as exc:
+            return _fail("invalid", "risk_policy_invalid", str(exc), policy_obj=authoritative_ref_policy)
+        if inline_norm.version != authoritative_ref_policy.version or (
+            risk_policy_digest(inline_norm) != risk_policy_digest(authoritative_ref_policy)
+        ):
+            return _fail(
+                "stale",
+                "risk_policy_stale",
+                (
+                    f"Bound inline risk policy snapshot for {authoritative_ref_policy.risk_policy_id!r} "
+                    f"(version={inline_norm.version!r}) is stale against authoritative version "
+                    f"{authoritative_ref_policy.version!r}"
+                ),
+                policy_obj=inline_norm,
+            )
+
+    policy_tenant_id = _first_text_or_none(policy_meta, "tenant_id")
+    if effective_tenant_id and policy_tenant_id and effective_tenant_id != policy_tenant_id:
+        return _fail(
+            "wrong_tenant",
+            "risk_policy_wrong_tenant",
+            (
+                f"Risk policy {policy_model.risk_policy_id!r} belongs to tenant {policy_tenant_id!r}, "
+                f"cannot bind to tenant {effective_tenant_id!r}"
+            ),
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    # Staleness checks: explicit stale flag, superseded_by, expired status, effective_from/expires_at/effective_to, expected version/digest.
+    raw_status = str(policy_model.status or "").strip().lower()
+    if raw_status in {"stale", "superseded", "expired"}:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} status is {policy_model.status!r}",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    if policy_meta.get("stale") is True or pool_meta.get("risk_policy_stale") is True:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} is marked stale",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    superseded_by = _first_text_or_none(policy_meta, "superseded_by") or _first_text_or_none(
+        pool_meta, "risk_policy_superseded_by"
+    )
+    if superseded_by:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} version {policy_model.version!r} is superseded by {superseded_by!r}",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    now_dt = _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
+    raw_policy_meta = (
+        dict(policy_model.metadata)
+        if isinstance(policy_model.metadata, Mapping)
+        else {}
+    )
+    lower_bound_sources: list[tuple[str, Any]] = []
+    if isinstance(raw_policy_mapping, Mapping):
+        lower_bound_sources.append(("policy.effective_from", raw_policy_mapping.get("effective_from")))
+    lower_bound_sources.extend(
+        [
+            ("policy.metadata.effective_from", raw_policy_meta.get("effective_from")),
+            ("policy_meta.effective_from", policy_meta.get("effective_from")),
+            ("pool.metadata.risk_policy_effective_from", pool_meta.get("risk_policy_effective_from")),
+            ("pool.metadata.effective_from", pool_meta.get("effective_from")),
+            ("binding.effective_from", b_map.get("effective_from")),
+            ("binding.metadata.risk_policy_effective_from", b_meta.get("risk_policy_effective_from")),
+            ("binding.metadata.effective_from", b_meta.get("effective_from")),
+        ]
+    )
+    parsed_lower_bounds: list[tuple[str, str, datetime]] = []
+    for label_name, raw_val in lower_bound_sources:
+        if raw_val in (None, ""):
+            continue
+        raw_str = _optional_text(raw_val)
+        parsed_dt = _parse_iso_timestamp(raw_str) if raw_str else None
+        if parsed_dt is None:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid",
+                f"Risk policy {policy_model.risk_policy_id!r} has malformed effective_from timestamp {raw_val!r} ({label_name})",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        assert raw_str is not None
+        parsed_lower_bounds.append((label_name, raw_str, parsed_dt))
+
+    upper_bound_sources: list[tuple[str, Any]] = []
+    if isinstance(raw_policy_mapping, Mapping):
+        upper_bound_sources.extend(
+            [
+                ("policy.expires_at", raw_policy_mapping.get("expires_at")),
+                ("policy.effective_to", raw_policy_mapping.get("effective_to")),
+            ]
+        )
+    upper_bound_sources.extend(
+        [
+            ("policy.metadata.expires_at", raw_policy_meta.get("expires_at")),
+            ("policy.metadata.effective_to", raw_policy_meta.get("effective_to")),
+            ("policy_meta.expires_at", policy_meta.get("expires_at")),
+            ("policy_meta.effective_to", policy_meta.get("effective_to")),
+            ("pool.metadata.risk_policy_expires_at", pool_meta.get("risk_policy_expires_at")),
+            ("pool.metadata.risk_policy_effective_to", pool_meta.get("risk_policy_effective_to")),
+            ("pool.metadata.expires_at", pool_meta.get("expires_at")),
+            ("pool.metadata.effective_to", pool_meta.get("effective_to")),
+            ("binding.expires_at", b_map.get("expires_at")),
+            ("binding.effective_to", b_map.get("effective_to")),
+            ("binding.metadata.risk_policy_expires_at", b_meta.get("risk_policy_expires_at")),
+            ("binding.metadata.risk_policy_effective_to", b_meta.get("risk_policy_effective_to")),
+            ("binding.metadata.expires_at", b_meta.get("expires_at")),
+            ("binding.metadata.effective_to", b_meta.get("effective_to")),
+        ]
+    )
+    parsed_upper_bounds: list[tuple[str, str, datetime]] = []
+    for label_name, raw_val in upper_bound_sources:
+        if raw_val in (None, ""):
+            continue
+        raw_str = _optional_text(raw_val)
+        parsed_dt = _parse_iso_timestamp(raw_str) if raw_str else None
+        if parsed_dt is None:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid",
+                f"Risk policy {policy_model.risk_policy_id!r} has malformed expiration timestamp {raw_val!r} ({label_name})",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        assert raw_str is not None
+        parsed_upper_bounds.append((label_name, raw_str, parsed_dt))
+
+    effective_from_dt: datetime | None = None
+    effective_from_raw: str | None = None
+    if parsed_lower_bounds:
+        _, effective_from_raw, effective_from_dt = max(parsed_lower_bounds, key=lambda item: item[2])
+
+    expiry_dt: datetime | None = None
+    expiry_raw: str | None = None
+    if parsed_upper_bounds:
+        _, expiry_raw, expiry_dt = min(parsed_upper_bounds, key=lambda item: item[2])
+
+    if effective_from_dt is not None and expiry_dt is not None and expiry_dt <= effective_from_dt:
+        return _fail(
+            "invalid",
+            "risk_policy_invalid",
+            f"Risk policy {policy_model.risk_policy_id!r} has invalid effective window ({effective_from_raw}..{expiry_raw})",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    if effective_from_dt is not None and effective_from_dt > now_dt:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} is outside its effective window (effective_from={effective_from_raw})",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    if expiry_dt is not None and expiry_dt <= now_dt:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} expired at {expiry_raw}",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    target_expected_version = (
+        _optional_text(expected_version)
+        or _first_text_or_none(pool_meta, "expected_risk_policy_version")
+        or _first_text_or_none(b_map, "expected_risk_policy_version", "risk_policy_version")
+        or _first_text_or_none(b_meta, "expected_risk_policy_version", "risk_policy_version")
+    )
+    if target_expected_version and str(policy_model.version) != target_expected_version:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            (
+                f"Risk policy {policy_model.risk_policy_id!r} version {policy_model.version!r} "
+                f"does not match expected version {target_expected_version!r}"
+            ),
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    computed_digest = risk_policy_digest(policy_model)
+    target_expected_digest = (
+        _optional_text(expected_digest)
+        or _first_text_or_none(pool_meta, "expected_risk_policy_digest")
+        or _first_text_or_none(b_map, "expected_risk_policy_digest", "risk_policy_digest")
+        or _first_text_or_none(b_meta, "expected_risk_policy_digest", "risk_policy_digest")
+    )
+    if target_expected_digest and computed_digest != target_expected_digest:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            (
+                f"Risk policy {policy_model.risk_policy_id!r} digest {computed_digest!r} "
+                f"does not match expected digest {target_expected_digest!r}"
+            ),
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    # Scalar limit sanity checks (no negative scalar limits; positive exposure limits when configured).
+    for field_name in _NON_NEGATIVE_SCALAR_LIMIT_FIELDS:
+        val = getattr(policy_model, field_name, None)
+        if val is None:
+            continue
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(float(val)):
+            return _fail(
+                "invalid",
+                "risk_policy_invalid_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} limit {field_name} is not a finite number",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        if field_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} limit {field_name}={val!r} must be > 0",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        if float(val) < 0.0:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} limit {field_name}={val!r} must be >= 0",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+
+    for flex_field in _FLEX_EXPOSURE_LIMIT_FIELDS:
+        flex_val = getattr(policy_model, flex_field, None)
+        if flex_val in (None, (), {}, []):
+            continue
+        items = flex_val.items() if isinstance(flex_val, Mapping) else [(flex_field, flex_val)]
+        for item_key, item_val in items:
+            if not isinstance(item_val, (int, float)) or isinstance(item_val, bool) or not math.isfinite(float(item_val)) or float(item_val) < 0.0:
+                return _fail(
+                    "invalid",
+                    "risk_policy_invalid_limit",
+                    f"Risk policy {policy_model.risk_policy_id!r} limit {flex_field}[{item_key!r}]={item_val!r} must be a non-negative finite number",
+                    policy_obj=policy_model,
+                    policy_tenant=policy_tenant_id,
+                )
+
+    if require_active and raw_status not in _ACTIVE_POLICY_STATUSES:
+        return _fail(
+            "invalid",
+            "risk_policy_inactive",
+            f"Risk policy {policy_model.risk_policy_id!r} is not active (status={policy_model.status!r})",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+
+    if clean_stage:
+        if policy_model.allowed_stages and clean_stage not in policy_model.allowed_stages:
+            return _fail(
+                "invalid",
+                "risk_policy_stage_not_allowed",
+                (
+                    f"Risk policy {policy_model.risk_policy_id!r} does not allow stage {clean_stage!r} "
+                    f"(allowed_stages={list(policy_model.allowed_stages)!r})"
+                ),
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        if not policy_model.allowed_stages and require_limits:
+            return _fail(
+                "invalid",
+                "risk_policy_stage_not_allowed",
+                f"Risk policy {policy_model.risk_policy_id!r} does not declare allowed_stages for stage {clean_stage!r}",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+
+    for required_limit in require_limits:
+        limit_val = getattr(policy_model, required_limit, None)
+        if limit_val in (None, (), {}, []):
+            return _fail(
+                "invalid",
+                "risk_policy_missing_required_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} is missing required limit {required_limit!r}",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        if required_limit in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(limit_val) <= 0.0:
+            return _fail(
+                "invalid",
+                "risk_policy_missing_required_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} required limit {required_limit!r} must be > 0",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+
+    if not clean_profile:
+        clean_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
+    is_default_inline_id = (
+        str(policy_model.risk_policy_id).startswith("rp-pool-")
+        or (bool(resolved_pool_id) and str(policy_model.risk_policy_id) == f"rp-{resolved_pool_id}")
+        or policy_meta.get("default_paper_baseline") is True
+        or pool_meta.get("default_paper_baseline") is True
+    )
+    needs_approved_mapping = bool(
+        needs_approved_mapping
+        or policy_meta.get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and (clean_profile is not None or is_default_inline_id))
+    )
+    verified_decision_id = _verify_policy_owner_approval_decision(
+        resolved_pool_id=resolved_pool_id,
+        effective_tenant_id=effective_tenant_id,
+        clean_stage=clean_stage,
+        clean_profile=clean_profile,
+        policy_model=policy_model,
+        computed_digest=computed_digest,
+        raw_policy_mapping=raw_policy_mapping,
+        pool_obj=pool_obj,
+        pool_meta=pool_meta,
+        b_map=b_map,
+        b_meta=b_meta,
+        policy_meta=policy_meta,
+        approval_decision_id=approval_decision_id,
+        approval_decision=approval_decision,
+        approval_decisions=approval_decisions,
+        approval_reader=approval_reader,
+        capital_pool_reader=capital_pool_reader,
+        now_dt=now_dt,
+    )
+
+    owner_verified_explicit_contract = False
+    if not is_default_inline_id:
+        owner_ref_policy = authoritative_ref_policy
+        if owner_ref_policy is None and needs_approved_mapping:
+            try:
+                loaded_owner_raw = (
+                    risk_policy_loader(policy_model.risk_policy_id)
+                    if risk_policy_loader is not None
+                    else load_risk_policy(policy_model.risk_policy_id)
+                )
+                owner_ref_policy = normalize_risk_policy(loaded_owner_raw, default_id=policy_model.risk_policy_id)
+            except Exception:
+                owner_ref_policy = None
+        if owner_ref_policy is not None:
+            owner_meta = dict(owner_ref_policy.metadata) if isinstance(owner_ref_policy.metadata, Mapping) else {}
+            owner_tenant = _first_text_or_none(owner_meta, "tenant_id")
+            owner_profile = _first_text_or_none(owner_meta, "requested_profile", "risk_profile", "requested_risk")
+            if (
+                owner_ref_policy.risk_policy_id == policy_model.risk_policy_id
+                and str(owner_ref_policy.version) == str(policy_model.version)
+                and risk_policy_digest(owner_ref_policy) == computed_digest
+                and (not effective_tenant_id or not owner_tenant or owner_tenant == effective_tenant_id)
+                and (not clean_profile or not owner_profile or owner_profile == clean_profile)
+            ):
+                owner_verified_explicit_contract = True
+
+    if needs_approved_mapping and verified_decision_id is None and not owner_verified_explicit_contract:
+        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        cand_pool_digest = (
+            (
+                _first_text_or_none(pool_obj, "approval_digest", "pool_approval_digest")
+                if isinstance(pool_obj, Mapping)
+                else _optional_text(getattr(pool_obj, "approval_digest", None))
+            )
+            or _first_text_or_none(pool_meta, "approval_digest", "pool_approval_digest")
+            or (
+                capital_pool_approval_digest(pool_obj)
+                if pool_obj is not None
+                and (
+                    not isinstance(pool_obj, (Mapping, RiskPolicy, str))
+                    or (
+                        isinstance(pool_obj, Mapping)
+                        and any(k in pool_obj for k in ("owner_id", "currency", "budget", "single_runtime_enforced"))
+                    )
+                )
+                else None
+            )
+        )
+        decision_req = {
+            "policy_owner": "services/capital/risk_policy.py",
+            "governance_surface": "services/control-plane/governance/risk_policy.py",
+            "requested_profile": effective_req_profile,
+            "capital_pool_id": resolved_pool_id,
+            "tenant_id": effective_tenant_id,
+            "stage": clean_stage or "paper",
+            "candidate_risk_policy_id": policy_model.risk_policy_id,
+            "candidate_risk_policy_version": policy_model.version,
+            "candidate_risk_policy_digest": computed_digest,
+            **(
+                {"candidate_pool_approval_digest": cand_pool_digest}
+                if cand_pool_digest
+                else {}
+            ),
+            "decision_required": (
+                f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
+                f"{effective_req_profile!r} on policy {policy_model.risk_policy_id!r}@{policy_model.version!r}; "
+                f"policy owner must approve explicit gross_limit/net_limit/max_leverage/"
+                f"max_single_name_weight or bind an approved risk_policy_ref."
+            ),
+            "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+        }
+        return _fail(
+            "unresolved_profile_mapping",
+            "risk_policy_profile_mapping_unapproved",
+            decision_req["decision_required"],
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+            profile_status="unresolved_owner_decision_required",
+            owner_decision=decision_req,
+        )
+
+    is_explicit_contract = bool(
+        owner_verified_explicit_contract
+        or source == "risk_policy_ref"
+        or policy_meta.get("explicit_policy") is True
+        or pool_meta.get("risk_policy_explicit") is True
+        or not is_default_inline_id
+    )
+    if verified_decision_id is not None:
+        profile_status = "approved_profile_mapping" if is_default_inline_id or clean_profile else "explicit_policy"
+    else:
+        profile_status = "explicit_policy" if is_explicit_contract else "default_paper_baseline"
+
+    return BoundPoolRiskPolicyResolution(
+        capital_pool_id=resolved_pool_id,
+        resolved=True,
+        status="valid",
+        source=source,
+        policy=policy_model,
+        risk_policy_id=policy_model.risk_policy_id,
+        risk_policy_version=policy_model.version,
+        risk_policy_digest=computed_digest,
+        tenant_id=effective_tenant_id,
+        policy_tenant_id=policy_tenant_id or effective_tenant_id,
+        stage=clean_stage,
+        requested_profile=clean_profile,
+        profile_mapping_status=profile_status,
+        profile_mapping_approval_id=verified_decision_id,
+        effective_limits=_policy_effective_limits(policy_model),
+        reason_code=None,
+        reason=None,
+        allow_new_or_increased_risk=True,
+        allow_risk_reducing_actions=True,
+        owner_decision_request=None,
+    )
+
+
+def resolve_bound_pool_risk_policy(
+    *,
+    capital_pool_id: str | None = None,
+    pool: Any | None = None,
+    binding: Mapping[str, Any] | None = None,
+    capital_pool_reader: Callable[[str], Any] | None = None,
+    risk_policy_ref: str | None = None,
+    risk_policy_loader: Callable[[str], Any] | None = None,
+    pool_store_path: str | os.PathLike[str] | None = None,
+    expected_tenant_id: str | None = None,
+    expected_stage: str | None = None,
+    expected_version: str | None = None,
+    expected_digest: str | None = None,
+    require_active: bool = False,
+    require_limits: Sequence[str] = (),
+    requested_profile: str | None = None,
+    require_approved_profile_mapping: bool | None = None,
+    approval_decision_id: str | None = None,
+    approval_decision: Any | None = None,
+    approval_decisions: Sequence[Any] | None = None,
+    approval_reader: Any | None = None,
+    as_of: str | None = None,
+    allow_risk_reducing_actions: bool | None = None,
+) -> RiskPolicy | None:
+    """Resolve and load the bound CapitalPool's active ``RiskPolicy`` (never from signal metadata)."""
+    resolved_pool_obj = pool
+    effective_pool_reader = capital_pool_reader
+    if resolved_pool_obj is None and capital_pool_reader is not None:
+        b_map = dict(binding) if isinstance(binding, Mapping) else {}
+        lookup_pool_id = str(
+            b_map.get("capital_pool_id")
+            or capital_pool_id
+            or os.getenv("PANTHEON_CAPITAL_POOL_ID", "")
+        ).strip()
+        resolved_pool_obj = capital_pool_reader(lookup_pool_id)
+
+    if (
+        approval_reader is None
+        and _capital_owner_approval_reader_from_pool_reader(effective_pool_reader) is None
+    ):
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            caller_self = caller.f_locals.get("self") if caller is not None else None
+            caller_reader = getattr(caller_self, "_capital_pool_reader", None) if caller_self is not None else None
+            if _capital_owner_approval_reader_from_pool_reader(caller_reader) is not None:
+                effective_pool_reader = caller_reader
+        finally:
+            del frame
+
+    resolution = resolve_pool_risk_policy_binding(
+        capital_pool_id=capital_pool_id,
+        pool=resolved_pool_obj,
+        binding=binding,
+        capital_pool_reader=effective_pool_reader,
+        risk_policy_ref=risk_policy_ref,
+        risk_policy_loader=risk_policy_loader,
+        pool_store_path=pool_store_path,
+        expected_tenant_id=expected_tenant_id,
+        expected_stage=expected_stage,
+        expected_version=expected_version,
+        expected_digest=expected_digest,
+        require_active=require_active,
+        require_limits=require_limits,
+        requested_profile=requested_profile,
+        require_approved_profile_mapping=require_approved_profile_mapping,
+        approval_decision_id=approval_decision_id,
+        approval_decision=approval_decision,
+        approval_decisions=approval_decisions,
+        approval_reader=approval_reader,
+        as_of=as_of,
+        raise_on_error=False,
+    )
+    if resolution.resolved:
+        return resolution.policy
+    effective_allow_risk_reducing = (
+        allow_risk_reducing_actions
+        if allow_risk_reducing_actions is not None
+        else _caller_is_risk_reducing_order_gate()
+    )
+    if effective_allow_risk_reducing and _policy_eligible_for_governed_risk_reduction(
+        resolution,
+        expected_stage=expected_stage,
+        require_limits=require_limits,
+    ):
+        return resolution.policy
+    if resolution.status == "missing" and resolution.source == "unresolved":
+        return None
+    if resolution.status == "missing" and resolution.source == "risk_policy_ref":
+        raise RiskPolicyLoadError(f"{resolution.reason} ({resolution.reason_code})")
+    raise RiskPolicyError(f"{resolution.reason} ({resolution.reason_code})")
 

@@ -2436,6 +2436,8 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
     }
 
     def _pool(self, *, policy=True, budget=POOL_BUDGET):
+        from services.capital.risk_policy import capital_pool_approval_digest
+
         pool = {
             "pool_id": "pool-rb-expr",
             "tenant_id": "default",
@@ -2446,11 +2448,51 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             "currency": "TWD",
             "budget": budget,
             "single_runtime_enforced": True,
-            "metadata": {"internal": True, "execution_context": "paper"},
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "requested_risk_profile": "low",
+                "require_approved_profile_mapping": True,
+                "profile_mapping_approval_id": "apv-pool-rb-expr",
+            },
         }
         if policy is not False:
             pool["metadata"]["risk_policy"] = dict(self.POLICY if policy is True else policy)
-        return pool
+        pool["approval_digest"] = capital_pool_approval_digest(pool)
+        return json.loads(json.dumps(pool))
+
+    def _approval_json_for_pool(self, pool):
+        from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+        from services.governance.test_approval_authority import approval_snapshot
+
+        meta = dict(pool.get("metadata") or {})
+        policy = dict(meta.get("risk_policy") or self.POLICY)
+        return json.loads(
+            json.dumps(
+                approval_snapshot(
+                    decision_id=str(meta.get("profile_mapping_approval_id") or "apv-pool-rb-expr"),
+                    tenant_id=str(pool.get("tenant_id") or "default"),
+                    owner_user_id="proposer-1",
+                    target_type="capital_pool_activation",
+                    target_id=str(pool.get("pool_id") or "pool-rb-expr"),
+                    target_version=str(pool.get("approval_digest") or capital_pool_approval_digest(pool)),
+                    metadata={
+                        "subject": {
+                            "pool_id": str(pool.get("pool_id") or "pool-rb-expr"),
+                            "risk_direction": "increase",
+                            "risk_policy_id": str(policy.get("risk_policy_id") or "rp-pool-rb-expr"),
+                            "risk_policy_version": str(policy.get("version") or "1.0"),
+                            "risk_policy_digest": risk_policy_digest(policy),
+                            "requested_risk": str(meta.get("requested_risk_profile") or "low"),
+                        },
+                        "approvals": [
+                            {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                            {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                        ],
+                    },
+                )
+            )
+        )
 
     @staticmethod
     def _fresh_summary():
@@ -2481,19 +2523,29 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             raise AssertionError(url)
 
         fetch.calls = calls
+        fetch.pool = pool
         return fetch
 
     def _decide(self, symbol, price, *, fetch, env=None):
         import urllib.parse  # noqa: F401
+        from services.capital import risk_policy as _rp_mod
         from services.execution.lean_runtime import expression_inputs, paper_signal_producer
 
         art = self._artifact()
         art["parameters"]["symbols"] = [symbol]
         binding = self._binding(art, closes=(price * 0.9552, price), symbol=symbol)
         store = InMemoryPendingSignalStore()
+        active_pool = getattr(fetch, "pool", None) or self._pool()
+
+        def fetch_owner_approval(url, headers, timeout):
+            assert headers["Authorization"] == "Bearer capital-reader"
+            assert headers["X-Pantheon-Service"] == "runtime-manager"
+            assert url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr")
+            return self._approval_json_for_pool(active_pool)
+
         with patch.dict("os.environ", env or self.ENV, clear=True), patch.object(
             expression_inputs, "_http_get_json", fetch
-        ):
+        ), patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval):
             strategy = paper_signal_producer._runner_strategy()
             producer = PaperSignalProducer(store_for=lambda _: store, strategy=strategy)
             self.assertEqual(producer.produce(binding, self.NOW), 1)
@@ -2853,6 +2905,7 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
     POLICY = TestExpressionInputsProductionWiring.POLICY
     ENV = TestExpressionInputsProductionWiring.ENV
     _pool = TestExpressionInputsProductionWiring._pool
+    _approval_json_for_pool = TestExpressionInputsProductionWiring._approval_json_for_pool
     _fresh_summary = staticmethod(TestExpressionInputsProductionWiring._fresh_summary)
     _fetch = TestExpressionInputsProductionWiring._fetch
 
@@ -2914,6 +2967,7 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
         return {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(self.root)}
 
     def _produce(self, store, *, bar, now, close, previous, earlier=()):
+        from services.capital import risk_policy as _rp_mod
         from services.execution.lean_runtime import expression_inputs, paper_signal_producer
 
         art = self._artifact()
@@ -2921,9 +2975,17 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
         binding = self._binding(art, closes=(*earlier, previous, close), symbol="0050.TWSE")
         binding["market_input"]["event_time"] = bar
         binding["market_input"]["observed_at"] = now
+        fetch = self._fetch()
+
+        def fetch_owner_approval(url, headers, timeout):
+            assert headers["Authorization"] == "Bearer capital-reader"
+            assert headers["X-Pantheon-Service"] == "runtime-manager"
+            assert url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr")
+            return self._approval_json_for_pool(fetch.pool)
+
         with patch.dict("os.environ", self._env(), clear=True), patch.object(
-            expression_inputs, "_http_get_json", self._fetch()
-        ):
+            expression_inputs, "_http_get_json", fetch
+        ), patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval):
             producer = PaperSignalProducer(
                 store_for=lambda _: store, strategy=paper_signal_producer._runner_strategy()
             )
