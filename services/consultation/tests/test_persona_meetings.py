@@ -97,6 +97,7 @@ class _AdapterModelDouble:
                 "persona-alpha",
                 "persona-beta",
                 "persona-gamma",
+                "persona-2448c7053e33ea48da47",
                 "persona-risk-officer",
                 "persona-red-team",
                 "agora-advisor-macro",
@@ -120,6 +121,7 @@ class _AdapterModelDouble:
             "persona-alpha",
             "persona-beta",
             "persona-gamma",
+            "persona-2448c7053e33ea48da47",
             "persona-risk-officer",
             "persona-red-team",
             "agora-advisor-macro",
@@ -1443,3 +1445,832 @@ def test_directory_unconfigured_or_unreachable_is_refused_by_name(monkeypatch):
     with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
         meetings_mod._fetch_persona_directory("tenant-dev")
     assert exc.value.reason == "persona_directory_unavailable"
+
+
+# --- MEETING-CASE-FILE-RESOLVES-MEMBER-FACTS-20261120 ------------------------
+
+def test_unresolvable_ref_stays_in_meeting_case_file_with_named_unavailable_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    ref = "artifact-missing-404"
+
+    def _not_found(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path.startswith("/api/registry/entries/"):
+            raise cf.OwnerUnavailable("http_404:not_found")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _not_found)
+    owners = cf.Owners(
+        registry=cf.OwnerEndpoint("http://registry"),
+        pool=cf.OwnerEndpoint("http://persona"),
+    )
+    case_file, items, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-unresolvable-1",
+        meeting_code="MT-1",
+        topic="Pool evolution review",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[ref],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    reg_items = [i for i in items if i["source_id"] == ref]
+    assert len(reg_items) == 1
+    item = reg_items[0]
+    assert item["status"] == "unavailable"
+    assert item["unavailable_reason"] == "http_404:not_found"
+    assert item["excerpt"] != ref
+    assert f"Evidence {ref}" not in item["excerpt"]
+    parsed_excerpt = json.loads(item["excerpt"])
+    assert parsed_excerpt["ref"] == ref
+    assert parsed_excerpt["status"] == "unavailable"
+    assert "http_404:not_found" in parsed_excerpt["unavailable_reason"]
+    assert {
+        "owner": f"registry:{ref}",
+        "reason": "http_404:not_found",
+    } in case_file["groups"]["facts"]["unavailable"]
+
+
+def test_private_persona_memory_never_enters_meeting_case_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    pid = "persona-2448c7053e33ea48da47"
+
+    def _memory_with_private(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path.startswith("/api/memory/retrieve"):
+            return {
+                "hits": [
+                    {
+                        "type": "persona",
+                        "relevance_score": 2.0,
+                        "entry": {
+                            "memory_id": "pmem-secret-1",
+                            "persona_id": pid,
+                            "relevance_scope": "persona_private",
+                            "content": {"summary": "private secret sizing note"},
+                        },
+                    },
+                    {
+                        "type": "persona",
+                        "relevance_score": 1.0,
+                        "entry": {
+                            "memory_id": "pmem-committee-1",
+                            "persona_id": pid,
+                            "relevance_scope": "persona_and_committee",
+                            "content": {"summary": "shared committee lesson"},
+                        },
+                    },
+                ]
+            }
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _memory_with_private)
+    owners = cf.Owners(
+        pool=cf.OwnerEndpoint("http://persona"),
+        memory=cf.OwnerEndpoint("http://memory", "tok"),
+    )
+    case_file, items, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-priv-check",
+        meeting_code="MT-1",
+        topic="Pool evolution review",
+        subject_ref=f"persona:{pid}",
+        evidence_refs=[],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    lesson_ids = {i["source_id"] for i in case_file["groups"]["lessons"]["items"]}
+    assert "pmem-committee-1" in lesson_ids
+    assert "pmem-secret-1" not in lesson_ids
+    assert "private secret sizing note" not in json.dumps(case_file)
+    assert all(i.get("relevance_scope") != "persona_private" for i in items)
+
+    for bad_kw in (
+        {"evidence_refs": [{"item_id": "p1", "relevance_scope": "persona_private", "excerpt": "secret"}]},
+        {"supplied_case_file": {"items": [{"item_id": "p2", "memory_layer": "persona_private", "excerpt": "secret"}]}},
+    ):
+        with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+            meetings_mod.compose_meeting_case_file(
+                meeting_id="mtg-priv-refused",
+                meeting_code="MT-1",
+                topic="Pool evolution review",
+                subject_ref=f"persona:{pid}",
+                evidence_refs=bad_kw.get("evidence_refs", []),
+                attribution_record_id=None,
+                attribution_record=None,
+                supplied_case_file=bad_kw.get("supplied_case_file"),
+                tenant_id=TENANT,
+                owners=owners,
+            )
+        assert exc.value.reason == "private_memory_forbidden"
+
+
+def test_hosted_shape_mt1_resolves_member_facts_pool_v4_and_zero_observation_book_into_participant_prompts(
+    stack: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    client: ConsultationServiceClient = stack["client"]
+    double: _AdapterModelDouble = stack["double"]
+    pid = "persona-2448c7053e33ea48da47"
+    ref = "artifact-persona-paper-039ad01f8bcd2b4aa466"
+    binding_id = "pcb-persona-paper-039ad01f8bcd2b4aa466"
+
+    hosted_entry = {
+        "registry_id": ref,
+        "artifact_type": "execution_bundle",
+        "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+        "version": "1.0.0",
+        "artifact_state": "approved",
+        "owner_tenant": TENANT,
+        "metadata": {
+            "market": "TW",
+            "tenant_id": TENANT,
+            "persona_id": pid,
+            "execution_context": "paper",
+            "persona_capital_binding_id": binding_id,
+            "strategy_artifact": {
+                "artifact_id": ref,
+                "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+                "version": "1.0.0",
+                "strategy_logic": {
+                    "kind": "close_to_close_momentum",
+                    "positive_action": "BUY",
+                    "non_positive_action": "SELL",
+                    "lookback_parameter": "lookback_bars",
+                    "threshold_parameter": "momentum_threshold",
+                },
+                "parameters": {
+                    "market": "TW",
+                    "symbols": ["2330.TWSE"],
+                    "data_source": "source-ingest:tw_price_daily",
+                    "bar_frequency": "1d",
+                    "lookback_bars": 2,
+                    "momentum_threshold": 0.0,
+                    "order_quantity": 1,
+                    "quantity_type": "SHARES",
+                    "zero_momentum_action": "SELL",
+                    "strength_scale_k": 1.0,
+                    "strength_floor_momentum": 0.01,
+                },
+            },
+        },
+    }
+    hosted_pool = {
+        "schema_version": "persona_strategy_pool.v1",
+        "tenant_id": TENANT,
+        "persona_id": pid,
+        "pool_version": 4,
+        "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+        "members": [
+            {
+                "artifact_ref": ref,
+                "stage": "active",
+                "risk_weight": 1.0,
+                "baseline_ref": "apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
+                "checksum": "sha256:" + "a" * 64,
+            }
+        ],
+        "decision": {
+            "action": "reweight",
+            "status": "refused",
+            "reasons": ["virtual_book_source_missing"],
+            "health": {
+                "window_trading_days": 20,
+                "demand_reasons": ["health_inputs_unknown"],
+                "effective_bets": {
+                    "status": "unknown",
+                    "value": None,
+                    "reason": "health_window_missing_or_invalid",
+                },
+            },
+        },
+    }
+    hosted_telemetry = {
+        "summaries": [
+            {
+                "runtime_id": "rt-persona-paper-039ad01f8bcd2b4aa466",
+                "tenant_id": TENANT,
+                "deployment_stage": "paper",
+                "persona_capital_binding_id": binding_id,
+                "member_virtual_books": [
+                    {
+                        "member_id": ref,
+                        "artifact_id": ref,
+                        "version": "1.0.0",
+                        "observation_count": 0,
+                        "total_return": 0.0,
+                        "sharpe_ratio": None,
+                        "sharpe_undefined_reason": "insufficient_or_constant_returns",
+                        "max_drawdown": 0.0,
+                        "marks_complete": False,
+                        "as_of": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    real_http_json = cf.http_json
+
+    def _owner_double(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path == f"/api/registry/entries/{ref}":
+            return hosted_entry
+        if path == f"/api/personas/{pid}/strategy-pool":
+            return hosted_pool
+        if path == f"/api/personas/{pid}/strategy-pool/versions":
+            return {"versions": [hosted_pool], "refusals": []}
+        if path == "/api/telemetry/runtime-summaries":
+            return hosted_telemetry
+        return real_http_json(endpoint, path, **kwargs)
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", stack["adapter_url"])
+    monkeypatch.setattr(cf, "http_json", _owner_double)
+
+    double.calls.clear()
+    created = client.open_persona_meeting(
+        meeting_type="MT-1",
+        topic=f"Pool evolution review for {pid} (2026-W47)",
+        convened_by={"kind": "persona", "id": pid},
+        subject_ref=f"persona:{pid}",
+        participants=[pid, "persona-risk-officer"],
+        evidence_refs=[ref],
+        iso_week="2026-W47",
+    )
+    mtg_id = created["meeting_id"]
+    tick_res = _tick(stack)
+    assert tick_res["errors"] == [], tick_res
+    assert tick_res["completed"] == 1, tick_res
+
+    detail = client.get_meeting(mtg_id)
+    assert detail is not None and detail["status"] == "closed"
+    fact_items = {i["kind"]: i for i in detail["case_file"]["groups"]["facts"]["items"]}
+    assert {"registry_entry", "strategy_pool", "member_virtual_book"} <= set(fact_items)
+
+    mtg_calls = [c for c in double.calls if c["request_id"] == mtg_id]
+    assert len(mtg_calls) == 5  # 2 participants x 2 rounds + 1 chair synthesis
+    for call in mtg_calls:
+        prompt = call["prompt"]
+        # Registry entry resolved facts: strategy family, approved scope, rule parameters
+        assert "close_to_close_momentum" in prompt
+        assert '"approved_scope":"paper"' in prompt
+        assert '"lookback_bars":2' in prompt
+        assert '"2330.TWSE"' in prompt
+        # Pool version 4 membership and weights + pool health unavailable reason
+        assert '"pool_version":4' in prompt
+        assert '"risk_weight":1.0' in prompt
+        assert "virtual_book_source_missing" in prompt
+        assert "health_window_missing_or_invalid" in prompt
+        # Virtual book with zero observations + unavailable reason
+        assert '"observation_count":0' in prompt
+        assert "zero_observations:insufficient_or_constant_returns" in prompt
+
+
+def test_chair_synthesis_records_why_empty_or_unreadable_cause_on_meeting(
+    tmp_path: Path,
+) -> None:
+    store = ConsultationStore(str(tmp_path / "synth_causes"))
+    wf_state = WorkflowStateStore(tmp_path / "synth_causes.sqlite3")
+
+    def _run_with_synth_behavior(idx: int, synth_fn: Any) -> dict[str, Any]:
+        created, _ = meetings_mod.convene_persona_meeting(
+            store=store,
+            workflow_state=wf_state,
+            tenant_id=TENANT,
+            payload={
+                "meeting_type": "MT-1",
+                "topic": f"Synthesis cause test {idx}",
+                "convened_by": {"kind": "persona", "id": "persona-alpha"},
+                "participants": ["persona-alpha", "persona-risk-officer"],
+                "iso_week": f"2026-W{10 + idx}",
+            },
+        )
+        mid = created["meeting_id"]
+
+        class _Prov:
+            def obtain(self, *, tenant_id: str, request: Mapping[str, Any], participant_scope: str = "") -> Any:
+                if participant_scope.endswith(":synthesis"):
+                    return synth_fn(mid)
+                cid = request["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+                return SimpleNamespace(
+                    summary="round position",
+                    recommendation="request_more_research",
+                    confidence=0.7,
+                    event_content={
+                        "stance": "request_more_research",
+                        "confidence": 0.7,
+                        "citations": [cid],
+                        "claims": [{"claim": "need facts", "evidence_refs": [cid]}],
+                    },
+                    evidence=[{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                )
+
+        return meetings_mod.execute_persona_meeting(
+            store=store,
+            meeting_id=mid,
+            tenant_id=TENANT,
+            provider=_Prov(),
+        )
+
+    # 1. Model output missing
+    m_missing = _run_with_synth_behavior(
+        1,
+        lambda _mid: (_ for _ in ()).throw(RuntimeError("OpenClaw persona agent did not complete")),
+    )
+    assert m_missing["outcome"] == "REVIEW"
+    assert m_missing["synthesis"]["unreadable_reason"] == "model_output_missing"
+    assert m_missing["synthesis_unreadable_reason"] == "model_output_missing"
+    assert "model_output_missing" in m_missing["synthesis"]["summary"]
+
+    # 2. Parse failure with raw length
+    m_parse = _run_with_synth_behavior(
+        2,
+        lambda _mid: (_ for _ in ()).throw(json.JSONDecodeError("Expecting value", "NOT-VALID-JSON", 0)),
+    )
+    assert m_parse["outcome"] == "REVIEW"
+    assert m_parse["synthesis"]["unreadable_reason"] == "parse_failure (raw_length=14)"
+    assert m_parse["synthesis_unreadable_reason"] == "parse_failure (raw_length=14)"
+    assert "parse_failure (raw_length=14)" in m_parse["synthesis"]["summary"]
+
+    # 3. Timeout
+    m_timeout = _run_with_synth_behavior(
+        3,
+        lambda _mid: (_ for _ in ()).throw(TimeoutError("provider transport timed out after 30s")),
+    )
+    assert m_timeout["outcome"] == "REVIEW"
+    assert m_timeout["synthesis"]["unreadable_reason"] == "timeout"
+    assert m_timeout["synthesis_unreadable_reason"] == "timeout"
+    assert "timeout" in m_timeout["synthesis"]["summary"]
+
+    # 4. Real HttpContributionProvider with 1700-char invalid JSON preserves JSONDecodeError cause & raw_length=1700 (not 36)
+    import io
+
+    def _run_with_http_provider(idx: int, urlopen_fn: Any, monkeypatch_obj: Any) -> dict[str, Any]:
+        created, _ = meetings_mod.convene_persona_meeting(
+            store=store,
+            workflow_state=wf_state,
+            tenant_id=TENANT,
+            payload={
+                "meeting_type": "MT-1",
+                "topic": f"HTTP provider synthesis cause test {idx}",
+                "convened_by": {"kind": "persona", "id": "persona-alpha"},
+                "participants": ["persona-alpha", "persona-risk-officer"],
+                "iso_week": f"2026-W{20 + idx}",
+            },
+        )
+        mid = created["meeting_id"]
+        cid = created["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+
+        def _fake_urlopen(req: urllib.request.Request, timeout: float = 10.0) -> Any:
+            if req.full_url.endswith("/agents/ensure"):
+                body = json.loads((req.data or b"{}").decode("utf-8"))
+                raw_bytes = json.dumps(
+                    {
+                        "status": "ready",
+                        "tenant_id": body.get("tenant_id"),
+                        "persona_id": body.get("persona_id"),
+                    }
+                ).encode("utf-8")
+            else:
+                envelope = json.loads((req.data or b"{}").decode("utf-8"))
+                inner_req = envelope.get("request") or {}
+                part = inner_req.get("participant") or {}
+                if part.get("round") == "synthesis":
+                    raw_bytes = urlopen_fn(mid, cid)
+                else:
+                    raw_bytes = json.dumps(
+                        {
+                            "contribution_id": f"c-{mid}-{part.get('persona_id')}-{part.get('round')}",
+                            "tenant_id": TENANT,
+                            "request_id": mid,
+                            "participant_type": "persona",
+                            "participant_ref": str(part.get("persona_id") or "persona-alpha"),
+                            "summary": "round position",
+                            "recommendation": "request_more_research",
+                            "confidence": 0.7,
+                            "event_type": "persona_contribution",
+                            "event_content": {
+                                "stance": "request_more_research",
+                                "confidence": 0.7,
+                                "citations": [cid],
+                                "claims": [{"claim": "need facts", "evidence_refs": [cid]}],
+                            },
+                            "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                            "findings": [],
+                        }
+                    ).encode("utf-8")
+
+            class _Resp:
+                def __enter__(self) -> "_Resp":
+                    return self
+
+                def __exit__(self, *args: Any) -> bool:
+                    return False
+
+                def read(self) -> bytes:
+                    return raw_bytes
+
+            return _Resp()
+
+        import services.consultation.provider as prov_mod
+
+        monkeypatch_obj.setattr(prov_mod.urllib.request, "urlopen", _fake_urlopen)
+        http_prov = HttpContributionProvider(
+            endpoint="http://provider.invalid/api/openclaw-adapter/consultation/contributions",
+            bearer_token="tok",
+            service_actor="consultation-workflow-executor",
+            timeout_seconds=5.0,
+        )
+        return meetings_mod.execute_persona_meeting(
+            store=store,
+            meeting_id=mid,
+            tenant_id=TENANT,
+            provider=http_prov,
+        )
+
+    mp = pytest.MonkeyPatch()
+    try:
+        m_http_invalid_json = _run_with_http_provider(
+            1,
+            lambda _mid, _cid: ("x" * 1700).encode("utf-8"),
+            mp,
+        )
+        assert m_http_invalid_json["outcome"] == "REVIEW"
+        assert m_http_invalid_json["synthesis"]["unreadable_reason"] == "parse_failure (raw_length=1700)"
+        assert m_http_invalid_json["synthesis_unreadable_reason"] == "parse_failure (raw_length=1700)"
+        assert "raw_length=36" not in m_http_invalid_json["synthesis"]["summary"]
+
+        # 5. Real HttpContributionProvider with missing summary is classified as model_output_missing (not parse_failure)
+        m_http_missing_summary = _run_with_http_provider(
+            2,
+            lambda mid, cid: json.dumps(
+                {
+                    "contribution_id": f"c-{mid}-synth",
+                    "tenant_id": TENANT,
+                    "request_id": mid,
+                    "participant_type": "persona",
+                    "participant_ref": "persona-alpha",
+                    "summary": "",
+                    "recommendation": "request_more_research",
+                    "confidence": 0.7,
+                    "event_type": "persona_contribution",
+                    "event_content": {"synthesis": {"outcome": "completed_no_proposal", "proposals": []}},
+                    "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                    "findings": [],
+                }
+            ).encode("utf-8"),
+            mp,
+        )
+        assert m_http_missing_summary["outcome"] == "REVIEW"
+        assert m_http_missing_summary["synthesis"]["unreadable_reason"] == "model_output_missing"
+        assert m_http_missing_summary["synthesis_unreadable_reason"] == "model_output_missing"
+
+        # 6. Synthesis event_content missing summary is also classified as model_output_missing
+        m_http_missing_synth_summary = _run_with_http_provider(
+            3,
+            lambda mid, cid: json.dumps(
+                {
+                    "contribution_id": f"c-{mid}-synth",
+                    "tenant_id": TENANT,
+                    "request_id": mid,
+                    "participant_type": "persona",
+                    "participant_ref": "persona-alpha",
+                    "summary": "top-level turn summary",
+                    "recommendation": "request_more_research",
+                    "confidence": 0.7,
+                    "event_type": "persona_contribution",
+                    "event_content": {"synthesis": {"outcome": "completed_no_proposal"}},
+                    "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                    "findings": [],
+                }
+            ).encode("utf-8"),
+            mp,
+        )
+        assert m_http_missing_synth_summary["outcome"] == "REVIEW"
+        assert m_http_missing_synth_summary["synthesis"]["unreadable_reason"] == "model_output_missing"
+        assert m_http_missing_synth_summary["synthesis_unreadable_reason"] == "model_output_missing"
+
+        # 7. Real HttpContributionProvider with wrapped URLError(TimeoutError) is classified as timeout
+        m_http_timeout = _run_with_http_provider(
+            4,
+            lambda _mid, _cid: (_ for _ in ()).throw(urllib.error.URLError(TimeoutError("read timed out"))),
+            mp,
+        )
+        assert m_http_timeout["outcome"] == "REVIEW"
+        assert m_http_timeout["synthesis"]["unreadable_reason"] == "timeout"
+        assert m_http_timeout["synthesis_unreadable_reason"] == "timeout"
+    finally:
+        mp.undo()
+
+
+def test_execute_preserves_explicit_evidence_and_supplied_facts_and_migrates_only_legacy_placeholders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    def _owner_404(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path == "/api/registry/entries/legacy-member-1":
+            return {
+                "registry_id": "legacy-member-1",
+                "strategy_id": "momentum",
+                "artifact_type": "execution_bundle",
+                "artifact_state": "approved",
+                "approved_scope": "paper",
+            }
+        if path.startswith("/api/registry/entries/"):
+            raise cf.OwnerUnavailable("http_404")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _owner_404)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.invalid")
+
+    store = ConsultationStore(str(tmp_path / "preserve_case"))
+    wf_state = WorkflowStateStore(tmp_path / "preserve_case.sqlite3")
+
+    # 1. Convene with explicit evidence_ref with real excerpt + supplied case_file fact, then execute
+    created, _ = meetings_mod.convene_persona_meeting(
+        store=store,
+        workflow_state=wf_state,
+        tenant_id=TENANT,
+        persona_directory={},
+        payload={
+            "meeting_type": "MT-1",
+            "topic": "Explicit and supplied preservation test",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": ["persona-alpha", "persona-risk-officer"],
+            "evidence_refs": [
+                {"item_id": "measurement-1", "excerpt": "Observed drawdown is 0.12"},
+            ],
+            "case_file": {
+                "items": [
+                    {"item_id": "supplied-fact", "group": "facts", "excerpt": "Approved weight is 0.4"},
+                ]
+            },
+            "iso_week": "2026-W31",
+        },
+    )
+    mid = created["meeting_id"]
+
+    class _SimpleProv:
+        def obtain(self, *, tenant_id: str, request: Mapping[str, Any], participant_scope: str = "") -> Any:
+            cid = request["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+            return SimpleNamespace(
+                summary="round position",
+                recommendation="approve_with_conditions",
+                confidence=0.8,
+                event_content={
+                    "stance": "approve_with_conditions",
+                    "confidence": 0.8,
+                    "citations": [cid],
+                    "claims": [{"claim": "reviewed facts", "evidence_refs": [cid]}],
+                    "synthesis": {"summary": "Chair synthesis complete", "proposals": []},
+                },
+                evidence=[{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+            )
+
+    completed = meetings_mod.execute_persona_meeting(
+        store=store,
+        meeting_id=mid,
+        tenant_id=TENANT,
+        provider=_SimpleProv(),
+    )
+    by_id = {i["item_id"]: i for i in completed["case_file"]["groups"]["facts"]["items"]}
+    assert "measurement-1" in by_id
+    assert by_id["measurement-1"]["excerpt"] == "Observed drawdown is 0.12"
+    assert by_id["measurement-1"].get("status") != "unavailable"
+    assert "supplied-fact" in by_id
+    assert by_id["supplied-fact"]["excerpt"] == "Approved weight is 0.4"
+    assert "facts:registry_entry:measurement-1" not in by_id
+
+    # 2. Legacy meeting record with a genuinely unresolved placeholder alongside explicit & supplied items
+    created_legacy, _ = meetings_mod.convene_persona_meeting(
+        store=store,
+        workflow_state=wf_state,
+        tenant_id=TENANT,
+        persona_directory={},
+        payload={
+            "meeting_type": "MT-1",
+            "topic": "Legacy migration topic",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": ["persona-alpha", "persona-risk-officer"],
+            "iso_week": "2026-W32",
+        },
+    )
+    legacy_mid = created_legacy["meeting_id"]
+    legacy_Items = [
+        {
+            "item_id": "legacy-member-1",
+            "group": "facts",
+            "kind": "evidence_ref",
+            "source_owner": "consultation",
+            "source_id": "legacy-member-1",
+            "excerpt": "Evidence legacy-member-1 for Legacy migration topic",
+            "subject_fields": {},
+        },
+        {
+            "item_id": "measurement-1",
+            "group": "facts",
+            "kind": "evidence_ref",
+            "source_owner": "consultation",
+            "source_id": "measurement-1",
+            "excerpt": "Observed drawdown is 0.12",
+            "subject_fields": {},
+        },
+        {
+            "item_id": "supplied-fact",
+            "group": "facts",
+            "kind": "supplied",
+            "source_owner": "persona",
+            "source_id": "supplied-fact",
+            "excerpt": "Approved weight is 0.4",
+            "subject_fields": {},
+        },
+    ]
+    created_legacy["case_file_items"] = legacy_Items
+    created_legacy["case_file"] = {"items": list(legacy_Items)}
+    store.put_meeting(created_legacy)
+
+    migrated = meetings_mod.execute_persona_meeting(
+        store=store,
+        meeting_id=legacy_mid,
+        tenant_id=TENANT,
+        provider=_SimpleProv(),
+    )
+    mig_by_id = {i["item_id"]: i for i in migrated["case_file"]["groups"]["facts"]["items"]}
+    assert "facts:registry_entry:legacy-member-1" in mig_by_id
+    assert "momentum" in mig_by_id["facts:registry_entry:legacy-member-1"]["excerpt"]
+    assert mig_by_id["measurement-1"]["excerpt"] == "Observed drawdown is 0.12"
+    assert mig_by_id["supplied-fact"]["excerpt"] == "Approved weight is 0.4"
+
+
+def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_total_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    reg_calls: list[str] = []
+
+    def _missing_owners(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if endpoint is None or not getattr(endpoint, "base_url", ""):
+            raise cf.OwnerUnavailable("owner_unconfigured")
+        if path.startswith("/api/registry/entries/"):
+            reg_calls.append(path)
+            raise cf.OwnerUnavailable("http_404")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _missing_owners)
+    owners = cf.Owners(
+        registry=cf.OwnerEndpoint("http://registry"),
+        pool=cf.OwnerEndpoint("http://persona"),
+    )
+
+    # 1. 20 missing refs -> capped at 8 registry entry reads and <=8 fact items
+    case_20, items_20, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-20",
+        meeting_code="MT-1",
+        topic="Budget cap test 20 missing refs",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[f"missing-ref-{i}" for i in range(20)],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    assert len(reg_calls) == 8
+    assert len(case_20["groups"]["facts"]["items"]) <= 8
+    assert len(items_20) <= 8
+    assert case_20["groups"]["facts"]["truncated"] is True
+
+    # 2. Explicit excerpt x*20000 and oversized subject_fields -> clipped to <=400 chars and <=12000 total
+    case_huge, items_huge, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-huge",
+        meeting_code="MT-1",
+        topic="Budget cap test huge excerpt",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[
+            {
+                "item_id": "huge-explicit-1",
+                "excerpt": "x" * 20000,
+                "subject_fields": {"huge_field": "y" * 20000},
+            }
+        ],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file={
+            "groups": {
+                g: {
+                    "items": [
+                        {
+                            "item_id": f"{g}-supplied-{i}",
+                            "group": g,
+                            "excerpt": f"{g}-{i}-" + ("z" * 1000),
+                            "subject_fields": {"note": "w" * 1000},
+                        }
+                        for i in range(10)
+                    ]
+                }
+                for g in cf.GROUPS
+            }
+        },
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    for g_name, grp in case_huge["groups"].items():
+        assert len(grp["items"]) <= 8, g_name
+        for it in grp["items"]:
+            assert len(it["excerpt"]) <= 400
+            assert len(json.dumps(it["subject_fields"])) <= 400
+    independent_huge_chars = sum(
+        len(it["excerpt"]) + len(json.dumps(it["subject_fields"], sort_keys=True))
+        for grp in case_huge["groups"].values()
+        for it in grp["items"]
+    )
+    assert independent_huge_chars <= 12000
+    assert len(items_huge) <= 15
+
+    # 3. Reproduction: Owners(), four supplied groups of eight items, excerpt=x*400 and subject_fields={note:y*370}
+    case_repro, items_repro, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-repro",
+        meeting_code="MT-1",
+        topic="Additive excerpt plus subject_fields budget reproduction",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file={
+            "groups": {
+                g: {
+                    "items": [
+                        {
+                            "item_id": f"{g}-item-{i}",
+                            "group": g,
+                            "excerpt": "x" * 400,
+                            "subject_fields": {"note": "y" * 370},
+                        }
+                        for i in range(8)
+                    ]
+                }
+                for g in cf.GROUPS
+            }
+        },
+        tenant_id=TENANT,
+        owners=cf.Owners(),
+    )
+    independent_repro_chars = sum(
+        len(it["excerpt"]) + len(json.dumps(it["subject_fields"], sort_keys=True))
+        for grp in case_repro["groups"].values()
+        for it in grp["items"]
+    )
+    assert independent_repro_chars <= 12000
+    assert len(items_repro) <= 15
+    assert all(case_repro["groups"][g]["truncated"] is True for g in cf.GROUPS)
+
+    # 4. Unicode (20000 Chinese chars) and escaped strings (20000 double quotes / backslashes) fit <=400 serialized chars
+    for label, huge_note in (("zh", "中" * 20000), ("quotes", '"' * 20000), ("backslashes", "\\" * 20000)):
+        case_ue, items_ue, _ = meetings_mod.compose_meeting_case_file(
+            meeting_id=f"mtg-budget-{label}",
+            meeting_code="MT-1",
+            topic=f"Unicode and escaped subject_fields cap test {label}",
+            subject_ref="persona:persona-2448c7053e33ea48da47",
+            evidence_refs=[
+                {
+                    "item_id": f"explicit-{label}",
+                    "excerpt": "explicit item with oversized unicode/escaped subject_fields",
+                    "subject_fields": {"note": huge_note},
+                }
+            ],
+            attribution_record_id=None,
+            attribution_record=None,
+            supplied_case_file=None,
+            tenant_id=TENANT,
+            owners=cf.Owners(),
+        )
+        by_id_ue = {it["item_id"]: it for it in items_ue}
+        explicit_it = by_id_ue[f"explicit-{label}"]
+        serialized_sf = json.dumps(explicit_it["subject_fields"], sort_keys=True)
+        assert len(serialized_sf) <= 400, (label, len(serialized_sf))
+        assert explicit_it["subject_fields"]["note"].startswith(huge_note[0])
+        assert explicit_it["subject_fields"]["note"].endswith("…")
+        for grp in case_ue["groups"].values():
+            for it in grp["items"]:
+                assert len(it["excerpt"]) <= 400
+                assert len(json.dumps(it["subject_fields"], sort_keys=True)) <= 400
