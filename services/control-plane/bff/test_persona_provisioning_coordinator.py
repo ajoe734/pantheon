@@ -81,7 +81,7 @@ class FakeOwnerTransport:
         mutation_failure: set[str] | None = None,
         governance_subject: str = "pantheon-persona-provisioner",
         governance_roles: tuple[str, ...] = ("approval_proposer", "automated_gate"),
-        seed_pool_policy_approval: bool = False,
+        seed_pool_policy_approval: bool = True,
     ) -> None:
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
         self.calls: list[tuple[str, str, str, dict[str, Any] | None]] = []
@@ -722,10 +722,9 @@ def _coordinator(
 ) -> PersonaProvisioningCoordinator:
     if store is not None and store not in FakeOwnerTransport._TEST_STORES:
         FakeOwnerTransport._TEST_STORES.append(store)
-    if seed_pool_approval:
-        target_tx = getattr(transport, "_others", transport)
-        if isinstance(target_tx, FakeOwnerTransport):
-            target_tx.seed_pool_policy_approval = True
+    target_tx = getattr(transport, "_others", transport)
+    if isinstance(target_tx, FakeOwnerTransport):
+        target_tx.seed_pool_policy_approval = bool(seed_pool_approval)
     return PersonaProvisioningCoordinator(
         store=store,
         transport=transport,
