@@ -217,12 +217,6 @@ _PASSTHROUGH_FIELDS = (
     "price",
     "reason_detail",
     "expression_reason_code",
-    "risk_status",
-    "risk_gate_evaluated",
-    "order_status",
-    "rejection_status",
-    "broker_submission_status",
-    "missing_evidence",
 )
 
 
@@ -1095,11 +1089,19 @@ class RelationalLifecycleProjector:
                 if value is not None:
                     event[field] = value
             if source.get("event_type") == "reconciliation_failed":
+                event["source_event_id"] = str(source["event_id"])
                 recon_reason = _first(
                     source.get("reason_code"), metadata.get("reason_code")
                 )
                 if recon_reason is not None:
                     event["reason_code"] = str(recon_reason)
+                recon_missing = _first(
+                    source.get("missing_evidence"),
+                    metadata.get("missing_evidence"),
+                    metrics_map.get("missing_evidence"),
+                )
+                if recon_missing is not None:
+                    event["missing_evidence"] = recon_missing
             if contradictory_identifiers:
                 event.update(contradictory_identifiers)
             if submitted_to_broker is not None:
@@ -1123,6 +1125,19 @@ class RelationalLifecycleProjector:
                 "order_rejection_simulated",
             }:
                 event["source_event_id"] = str(source["event_id"])
+                for reject_field in (
+                    "risk_status",
+                    "risk_gate_evaluated",
+                    "order_status",
+                    "missing_evidence",
+                ):
+                    reject_value = _first(
+                        source.get(reject_field),
+                        metadata.get(reject_field),
+                        metrics_map.get(reject_field),
+                    )
+                    if reject_value is not None:
+                        event[reject_field] = reject_value
                 raw_reason_candidates = (
                     source.get("reject_reason"),
                     metadata.get("reject_reason"),

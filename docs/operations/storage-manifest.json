@@ -4650,12 +4650,12 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code for whole-table historical row/byte retention (tracked under RC3 WP3.1); incremental contract_fields JSONB keys added by TRADE-JOURNEY-FAILURE-CAUSE-20261121 on order_rejection and reconciliation_failed stage rows are bounded per row to a fixed key set (reason_detail holds at most 5 numeric scalar keys on order_rejection or the fixed 10-check booking/runtime list on reconciliation_failed; missing_evidence holds at most 10 field names) with 0 extra rows",
+   "cap": "none verified in code for whole-table historical row/byte retention (tracked under RC3 WP3.1); incremental contract_fields JSONB keys added by TRADE-JOURNEY-FAILURE-CAUSE-20261121 are narrowed in services/trade_journey/lifecycle_projector.py strictly to order_rejection/order_rejection_simulated and reconciliation_failed stage rows (plus delta on the 4 numeric booking checks in reason_detail on fill-journey reconciliation_completed rows) and are bounded per row to a fixed key set (reason_detail holds at most 5 numeric scalar keys on order_rejection or the fixed 10-check booking/runtime list on reconciliation; missing_evidence holds at most 10 field names; rejection_status and broker_submission_status are not persisted in contract_fields) with 0 extra rows",
    "changed_fields": {
-    "cadence": "written once per projected order_rejection or reconciliation_failed stage event via idempotent ON CONFLICT (tenant_id, environment, journey_id, source_event_id, stage_name) DO UPDATE in services/trade_journey/projection_store.py (0 extra rows added)",
-    "cap": "per-row JSONB additions are bounded to a fixed schema (reason_detail holds at most 5 numeric scalar keys on order_rejection or the fixed 10-check booking/runtime list on reconciliation_failed; missing_evidence holds at most 10 field names); table-level row retention cap is none verified in code (bound_status=unreviewed, tracked under RC3 WP3.1)",
+    "cadence": "written once per projected order_rejection/order_rejection_simulated or reconciliation (reconciliation_failed or fill-journey reconciliation_completed) stage event via idempotent ON CONFLICT (tenant_id, environment, journey_id, source_event_id, stage_name) DO UPDATE in services/trade_journey/projection_store.py (0 extra rows added)",
+    "cap": "per-row JSONB additions are bounded to a fixed schema (reason_detail holds at most 5 numeric scalar keys on order_rejection or the fixed 10-check booking/runtime list on reconciliation; missing_evidence holds at most 10 field names; rejection_status and broker_submission_status are excluded from universal _PASSTHROUGH_FIELDS and not persisted); table-level row retention cap is none verified in code (bound_status=unreviewed, tracked under RC3 WP3.1)",
     "cleanup": "none found in code for trade_journey_projection.journey_stages (table-level cleanup=none found by the static inventory; tracked under RC3 WP3.1)",
-    "count_at_hosted_scale": "about 50-200 journeys/day across 3 trading personas, with at most 1 order_rejection or reconciliation stage row per journey carrying these keys (0 bytes on signal_generation, trade_decision, order_submitted, order_accepted, paper_fill_simulated, and position_snapshot stage rows)",
+    "count_at_hosted_scale": "about 50-200 journeys/day across 3 trading personas, with at most 1 order_rejection or reconciliation stage row per journey carrying these keys (0 bytes on signal_generation, trade_decision, risk_evaluation, order_submitted, order_accepted, paper_fill_simulated, position_snapshot, and no-trade reconciliation_completed stage rows)",
     "fields": [
      "contract_fields.source_event_id",
      "contract_fields.expression_reason_code",
@@ -4665,13 +4665,13 @@
      "contract_fields.risk_gate_evaluated",
      "contract_fields.missing_evidence"
     ],
-    "growth_per_day": "about 6-48 KB/day of incremental JSONB payload across 50-200 journeys/day (< 1.5 MB/month)",
-    "size": "about 120-240 bytes added to contract_fields JSONB per affected order_rejection or reconciliation stage row",
+    "growth_per_day": "about 2.4-48 KB/day of incremental JSONB payload across 50-200 journeys/day (< 1.5 MB/month)",
+    "size": "about 48-64 bytes added to contract_fields.reason_detail (booking-check delta fields) on a passing fill-journey reconciliation_completed stage row, or about 120-240 bytes added to contract_fields JSONB on an order_rejection or reconciliation_failed stage row (0 bytes on normal signal, decision, order, fill, and snapshot stage rows)",
     "task": "TRADE-JOURNEY-FAILURE-CAUSE-20261121"
    },
    "cleanup": "none found by the static inventory for whole-table row retention (tracked under RC3 WP3.1); idempotent ON CONFLICT (tenant_id, environment, journey_id, source_event_id, stage_name) DO UPDATE in services/trade_journey/projection_store.py overwrites duplicate stage projections in place without adding rows",
-   "growth_driver": "one row per projected journey stage event (CREATE TABLE; ON CONFLICT DO UPDATE per (tenant_id, environment, journey_id, source_event_id, stage_name)); TRADE-JOURNEY-FAILURE-CAUSE-20261121 adds failure-cause JSONB keys only on order_rejection and reconciliation stage rows",
-   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental failure-cause JSONB fields (TRADE-JOURNEY-FAILURE-CAUSE-20261121) add ~120-240 bytes per order_rejection or reconciliation stage row (0 bytes on normal signal, decision, order, fill, and snapshot rows), or ~6-48 KB/day (< 1.5 MB/month) across ~50-200 journeys/day for 3 trading personas",
+   "growth_driver": "one row per projected journey stage event (CREATE TABLE; ON CONFLICT DO UPDATE per (tenant_id, environment, journey_id, source_event_id, stage_name)); TRADE-JOURNEY-FAILURE-CAUSE-20261121 narrows new failure-cause JSONB keys strictly to order_rejection/order_rejection_simulated and reconciliation stage rows",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental JSONB fields (TRADE-JOURNEY-FAILURE-CAUSE-20261121) add ~48-64 bytes on passing fill-journey reconciliation_completed rows or ~120-240 bytes on order_rejection and reconciliation_failed stage rows (0 bytes on normal signal, decision, order, fill, and snapshot rows), or ~2.4-48 KB/day (< 1.5 MB/month) across ~50-200 journeys/day for 3 trading personas",
    "kind": "table",
    "name": "trade_journey_projection.journey_stages",
    "owner": "trade_journey",

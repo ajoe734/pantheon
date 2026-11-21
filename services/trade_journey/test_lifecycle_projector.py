@@ -3157,3 +3157,116 @@ def test_rejection_retains_failure_and_identifies_missing_producer_evidence() ->
         "requested_quantity": 1.0,
     }
     assert "missing_evidence" not in no_holdings_event
+
+
+def test_failure_cause_fields_are_not_persisted_on_normal_fill_or_snapshot_stage_rows() -> None:
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+
+    base_identity = {
+        "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "persona_id": "persona-6507750312870d03a241",
+        "persona_capital_binding_id": "pcb-1",
+        "artifact_id": "a",
+        "artifact_version": "1",
+        "plan_id": "pl",
+        "trace_id": "tr",
+    }
+    fill_events = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "evt-paper-fill-1",
+                "event_type": "paper_fill_simulated",
+                "created_at": "2026-11-19T23:46:17Z",
+                "symbol": "2317.TWSE",
+                "side": "sell",
+                "quantity": 1.0,
+                "broker_submission_status": "filled",
+                "submitted_to_broker": True,
+                "metrics": {"fill_quantity": 1.0, "fill_price": 218.5},
+                "metadata": {
+                    "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+                    "risk_status": "succeeded",
+                    "risk_gate_status": "succeeded",
+                    "risk_gate_evaluated": True,
+                    "order_status": "filled",
+                    "rejection_status": "none",
+                },
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 4,
+        }
+    )
+    assert [ev["stage"] for ev in fill_events] == ["fill_management"]
+    snapshot_events = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "evt-pos-snap-1",
+                "event_type": "position_snapshot",
+                "created_at": "2026-11-19T23:46:18Z",
+                "symbol": "2317.TWSE",
+                "side": "sell",
+                "submitted_to_broker": True,
+                "metrics": {"position_qty": 0.0, "cash": 100217.5331375},
+                "metadata": {
+                    "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+                    "risk_status": "succeeded",
+                    "risk_gate_evaluated": True,
+                    "order_status": "filled",
+                    "rejection_status": "none",
+                },
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 5,
+        }
+    )
+    assert [ev["stage"] for ev in snapshot_events] == ["ledger_booking"]
+    for stage_event in [*fill_events, *snapshot_events]:
+        for forbidden_key in (
+            "source_event_id",
+            "risk_status",
+            "risk_gate_evaluated",
+            "order_status",
+            "rejection_status",
+            "broker_submission_status",
+            "missing_evidence",
+        ):
+            assert forbidden_key not in stage_event
+
+    (recon_failed_event,) = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+                "event_type": "reconciliation_failed",
+                "created_at": "2026-11-19T23:47:17Z",
+                "reason_code": "reconciliation_evidence_incomplete",
+                "reason_detail": [
+                    {
+                        "check": "cash_change",
+                        "status": "unverified",
+                        "expected": 217.5331375,
+                        "actual": None,
+                        "difference": None,
+                        "delta": None,
+                        "missing_evidence": ["actual"],
+                    }
+                ],
+                "metadata": {
+                    "risk_status": "succeeded",
+                    "missing_evidence": ["cash_change:actual"],
+                },
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 6,
+        }
+    )
+    assert recon_failed_event["source_event_id"] == "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+    assert recon_failed_event["reason_code"] == "reconciliation_evidence_incomplete"
+    assert recon_failed_event["missing_evidence"] == ["cash_change:actual"]
+    assert "risk_status" not in recon_failed_event
+    assert "broker_submission_status" not in recon_failed_event
+
