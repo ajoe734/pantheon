@@ -1439,6 +1439,12 @@ def retire_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -
     )
 
 
+def repair_paper_pool_risk_policy(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).repair_paper_pool_risk_policy(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
+
+
 # --- retire_persona_provisioning_case ---
 def retire_persona_provisioning_case(
     tenant_id: str,
@@ -3516,6 +3522,113 @@ def _project_persona_fleet_health(
     }
 
 
+def _resolve_active_runtime_binding_overlay(
+    raw_persona: Mapping[str, Any],
+    *,
+    all_runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Resolve active replacement RuntimeBinding (e.g. after publish_pool_envelope) for a persona DTO."""
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    if not persona_id:
+        return {}
+    raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
+    recorded_rb_id = str(raw_meta.get("runtime_binding_id") or "").strip()
+    expected_tenant = str(raw_persona.get("tenant_id") or raw_meta.get("tenant_id") or "").strip()
+
+    binding_ids: set[str] = set()
+    for meta_key in ("persona_capital_binding_id", "binding_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            binding_ids.add(val)
+
+    capital_pool_ids: set[str] = set()
+    for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            capital_pool_ids.add(val)
+
+    runtime_refs: set[str] = set()
+    for meta_key in ("runtime_binding_id", "runtime_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            runtime_refs.add(val)
+
+    plan_ids: set[str] = set()
+    meta_plan_id = str(raw_meta.get("deployment_plan_id") or "").strip()
+    if meta_plan_id:
+        plan_ids.add(meta_plan_id)
+
+    try:
+        candidates = (
+            list(all_runtime_bindings)
+            if all_runtime_bindings is not None
+            else list(_fleet_runtime_bindings() or [])
+        )
+    except Exception:
+        return {}
+
+    matching: List[Dict[str, Any]] = []
+    for rb in candidates:
+        if not isinstance(rb, dict):
+            continue
+        rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), Mapping) else {}
+        rb_tenant = str(rb.get("tenant_id") or rb_meta.get("tenant_id") or "").strip()
+        if expected_tenant and rb_tenant and rb_tenant != expected_tenant:
+            continue
+        if _persona_fleet_runtime_matches(
+            rb,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+            persona_id=persona_id,
+            plan_ids=plan_ids,
+        ):
+            matching.append(rb)
+
+    if not matching:
+        return {}
+
+    active_matches = [
+        rb
+        for rb in matching
+        if str(rb.get("state") or rb.get("status") or "").strip().lower() in {"active", "running", "ok"}
+    ]
+    if not active_matches:
+        return {}
+
+    # Prefer an active binding that explicitly replaces the recorded binding or is the latest active binding.
+    chosen: Optional[Dict[str, Any]] = None
+    if recorded_rb_id:
+        for rb in active_matches:
+            rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), Mapping) else {}
+            replaces_id = str(rb.get("replaces_binding_id") or rb_meta.get("replaces_binding_id") or "").strip()
+            if replaces_id == recorded_rb_id:
+                chosen = rb
+                break
+        if chosen is None:
+            for rb in active_matches:
+                rb_id = str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+                if rb_id == recorded_rb_id:
+                    chosen = rb
+                    break
+    if chosen is None:
+        sorted_active = _sort_records_latest_first(active_matches, ("updated_at", "created_at"))
+        chosen = sorted_active[0] if sorted_active else active_matches[-1]
+
+    chosen_rb_id = str(chosen.get("binding_id") or chosen.get("runtime_binding_id") or chosen.get("id") or "").strip()
+    if not chosen_rb_id:
+        return {}
+    chosen_rt_id = str(chosen.get("runtime_id") or "").strip() or chosen_rb_id
+    chosen_plan_id = str(chosen.get("plan_id") or chosen.get("deployment_plan_id") or "").strip()
+    overlay: Dict[str, Any] = {
+        "runtimeBindingId": chosen_rb_id,
+        "runtimeId": chosen_rt_id,
+    }
+    if chosen_plan_id:
+        overlay["deploymentPlanId"] = chosen_plan_id
+    return overlay
+
+
 # --- _project_persona_fleet_item ---
 def _project_persona_fleet_item(
     raw_persona: Dict[str, Any],
@@ -3527,7 +3640,14 @@ def _project_persona_fleet_item(
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
     raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
     routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
+    rb_overlay = _resolve_active_runtime_binding_overlay(
+        raw_persona, all_runtime_bindings=all_runtime_bindings
+    )
+    persona_dto = _project_persona_dto(
+        raw_persona,
+        overlay=rb_overlay or None,
+        routed_strategies=routed,
+    )
 
     bindings = list(_get_active_read_store().get_bindings_for_persona(persona_id) or [])
     binding_ids = {
@@ -6177,10 +6297,24 @@ def _persona_create_canonical_payload(
     ):
         canonical.pop(field, None)
     canonical["requested_by"] = requested_by
-    if "budget" not in canonical:
-        canonical["budget"] = canonical.get("paperBudget") or canonical.get("paper_budget")
-    if "risk_policy_ref" not in canonical:
+    if "budget" not in canonical or canonical.get("budget") is None:
+        fallback_budget = canonical.get("paperBudget") if canonical.get("paperBudget") is not None else canonical.get("paper_budget")
+        if fallback_budget is not None or "budget" not in canonical:
+            canonical["budget"] = fallback_budget
+    if not str(canonical.get("risk_policy_ref") or "").strip():
         canonical["risk_policy_ref"] = canonical.get("riskPolicyRef")
+    if "riskPolicyRef" in canonical:
+        canonical.pop("riskPolicyRef", None)
+    if "risk" not in canonical or not str(canonical.get("risk") or "").strip():
+        risk_profile_obj = canonical.get("risk_profile") if isinstance(canonical.get("risk_profile"), Mapping) else {}
+        inferred_risk = (
+            canonical.get("risk_level")
+            or canonical.get("riskLevel")
+            or risk_profile_obj.get("risk_level")
+            or risk_profile_obj.get("riskLevel")
+        )
+        if inferred_risk is not None and str(inferred_risk).strip():
+            canonical["risk"] = str(inferred_risk).strip()
     return canonical
 
 

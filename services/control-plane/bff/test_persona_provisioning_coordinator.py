@@ -145,6 +145,12 @@ class FakeOwnerTransport:
         binding_path = path.removesuffix("/status")
         binding = self.objects[(owner, binding_path)]
         binding["status"] = body["status"]
+        if "risk_policy_ref" in body and body["risk_policy_ref"] is not None:
+            binding["risk_policy_ref"] = body["risk_policy_ref"]
+        if isinstance(body.get("metadata"), Mapping):
+            existing_meta = dict(binding.get("metadata") or {})
+            existing_meta.update(body["metadata"])
+            binding["metadata"] = existing_meta
         return deepcopy(binding)
 
     def _owner_registry_entry(self, registry_id: str) -> dict[str, Any]:
@@ -3136,3 +3142,191 @@ def test_paper_enrollment_reconcile_skips_terminal_ledger_records() -> None:
         record.state = state
         assert coordinator.reconcile_paper_enrollment(record).state == state
         assert "paper_enrollment" not in record.references
+
+
+def test_canonical_payload_and_active_runtime_binding_overlay_projection() -> None:
+    from services.control_plane.bff.personas.service import (
+        _persona_create_canonical_payload,
+        _project_persona_dto,
+        _resolve_active_runtime_binding_overlay,
+    )
+
+    canonical = _persona_create_canonical_payload(
+        {
+            "name": "Alpha Trader",
+            "risk_policy_ref": None,
+            "riskPolicyRef": "rp-explicit-01",
+            "risk_profile": {"risk_level": "aggressive"},
+            "paperBudget": 100000,
+        },
+        name="Alpha Trader",
+        tenant_id="tenant-a",
+        requested_by="operator-a",
+    )
+    assert canonical["risk_policy_ref"] == "rp-explicit-01"
+    assert "riskPolicyRef" not in canonical
+    assert canonical["risk"] == "aggressive"
+    assert canonical["budget"] == 100000
+
+    raw_persona = {
+        "persona_id": "persona-tw-202611161257-6863c3",
+        "tenant_id": "tenant-dev",
+        "name": "TW Momentum",
+        "lifecycle_state": "active",
+        "metadata": {
+            "tenant_id": "tenant-dev",
+            "capital_mode": "paper",
+            "internal_paper_capital_pool_id": "pool-persona-6863c3",
+            "persona_capital_binding_id": "pcb-persona-6863c3",
+            "runtime_binding_id": "rb-1dc692fd72aa57eb",
+            "runtime_id": "rt-6863c3",
+            "deployment_plan_id": "plan-v1",
+        },
+    }
+    runtime_bindings = [
+        {
+            "binding_id": "rb-1dc692fd72aa57eb",
+            "runtime_id": "rt-6863c3",
+            "plan_id": "plan-v1",
+            "capital_pool_id": "pool-persona-6863c3",
+            "persona_capital_binding_id": "pcb-persona-6863c3",
+            "deployment_mode": "paper",
+            "status": "retired",
+            "metadata": {"tenant_id": "tenant-dev", "persona_id": "persona-tw-202611161257-6863c3"},
+        },
+        {
+            "binding_id": "rb-a224d8623d1eb191",
+            "runtime_id": "rt-6863c3",
+            "plan_id": "plan-v2",
+            "capital_pool_id": "pool-persona-6863c3",
+            "persona_capital_binding_id": "pcb-persona-6863c3",
+            "replaces_binding_id": "rb-1dc692fd72aa57eb",
+            "deployment_mode": "paper",
+            "status": "active",
+            "metadata": {"tenant_id": "tenant-dev", "persona_id": "persona-tw-202611161257-6863c3"},
+        },
+    ]
+    overlay = _resolve_active_runtime_binding_overlay(
+        raw_persona, all_runtime_bindings=runtime_bindings
+    )
+    assert overlay == {
+        "runtimeBindingId": "rb-a224d8623d1eb191",
+        "runtimeId": "rt-6863c3",
+        "deploymentPlanId": "plan-v2",
+    }
+    dto = _project_persona_dto(raw_persona, overlay=overlay)
+    assert dto["runtimeBindingId"] == "rb-a224d8623d1eb191"
+    assert dto["deploymentPlanId"] == "plan-v2"
+
+
+def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_version_changes_and_repair() -> None:
+    # 1. Explicit policy contract on new pool creation is validated and preserved
+    explicit_policy = {
+        "risk_policy_id": "rp-custom-paper-v2",
+        "version": "2.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 1.75,
+        "net_limit": 1.25,
+        "max_leverage": 1.75,
+        "max_single_name_weight": 0.3,
+        "allowed_asset_classes": ["equity"],
+    }
+    store_exp, record_exp = _record_and_store({"risk_policy": explicit_policy})
+    tx_exp = FakeOwnerTransport()
+    res_exp = _coordinator(store_exp, tx_exp, _schedule_receipt).coordinate(record_exp)
+    assert res_exp.state == "provisioning"
+    created_pool = _post_payload(tx_exp, "/api/capital-pools")
+    assert created_pool["metadata"]["risk_policy"] == explicit_policy
+
+    # 2. Invalid, stale, wrong-tenant, or unapproved profile mapping fails closed at capital_pool step
+    for bad_payload, expected_err in [
+        ({"risk_policy": {**explicit_policy, "gross_limit": -1.0}}, "risk_policy_invalid_limit"),
+        ({"risk_policy": {**explicit_policy, "allowed_stages": ["live"]}}, "risk_policy_stage_not_allowed"),
+        ({"risk_policy": {**explicit_policy, "tenant_id": "tenant-foreign"}}, "risk_policy_wrong_tenant"),
+        ({"risk_policy": {**explicit_policy, "status": "superseded"}}, "risk_policy_stale"),
+        ({"risk": "aggressive", "require_approved_profile_mapping": True}, "risk_policy_profile_mapping_unapproved"),
+    ]:
+        s_bad, r_bad = _record_and_store(bad_payload)
+        tx_bad = FakeOwnerTransport()
+        res_bad = _coordinator(s_bad, tx_bad, _schedule_receipt).coordinate(r_bad)
+        assert res_bad.state == "failed"
+        assert res_bad.error["failed_step"] == "capital_pool"
+        assert expected_err in res_bad.error["terminal_reason"]
+        assert tx_bad.mutations[("capital", "/api/capital-pools")] == 0
+
+    # 3. Existing active pool missing metadata.risk_policy is repaired on retry and via repair_paper_pool_risk_policy
+    store_rep, record_rep = _record_and_store()
+    ids_rep = deterministic_provisioning_ids(record_rep)
+    tx_rep = FakeOwnerTransport()
+    pool_path = f"/api/capital-pools/{ids_rep.capital_pool_id}"
+    tx_rep.objects[("capital", pool_path)] = {
+        "pool_id": ids_rep.capital_pool_id,
+        "owner_id": record_rep.tenant_id,
+        "tenant_id": record_rep.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "USD",
+        "budget": 25000,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": record_rep.tenant_id,
+            "persona_id": record_rep.persona_id,
+        },
+    }
+    coord_rep = _coordinator(store_rep, tx_rep, _schedule_receipt)
+    repair_receipt = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+    )
+    assert repair_receipt["repaired"] is True
+    assert repair_receipt["idempotent_noop"] is False
+    assert repair_receipt["before_resolution"]["status"] == "missing"
+    assert repair_receipt["after_resolution"]["resolved"] is True
+    assert repair_receipt["after_resolution"]["status"] == "valid"
+    assert repair_receipt["after_resolution"]["risk_policy_id"] == f"paper-inline-policy:{record_rep.persona_id}"
+
+    # Idempotent replay performs zero additional PATCH calls
+    patches_before = tx_rep.mutations[("capital", f"{pool_path}/status")]
+    noop_receipt = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+    )
+    assert noop_receipt["repaired"] is False
+    assert noop_receipt["idempotent_noop"] is True
+    assert tx_rep.mutations[("capital", f"{pool_path}/status")] == patches_before
+
+    # Policy version upgrade / rebinding updates version and digest
+    upgraded_receipt = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+        risk_policy_version="2.0",
+    )
+    assert upgraded_receipt["repaired"] is True
+    assert upgraded_receipt["after_resolution"]["risk_policy_version"] == "2.0"
+    assert (
+        upgraded_receipt["after_resolution"]["risk_policy_digest"]
+        != noop_receipt["after_resolution"]["risk_policy_digest"]
+    )
+
+    # Unapproved profile mapping surfaces owner_decision_request without mutating the pool
+    owner_decision_receipt = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+        requested_profile="aggressive",
+        require_approved_profile_mapping=True,
+    )
+    assert owner_decision_receipt["repaired"] is False
+    assert owner_decision_receipt["after_resolution"]["status"] == "unresolved_profile_mapping"
+    assert owner_decision_receipt["owner_decision_request"]["policy_owner"] == "services/capital/risk_policy.py"
+
+    # Tenant isolation and paper boundary preserved on repair
+    with pytest.raises(PersonaProvisioningCoordinationError, match="another tenant"):
+        coord_rep.repair_paper_pool_risk_policy(
+            tenant_id="tenant-foreign",
+            persona_id=record_rep.persona_id,
+            capital_pool_id=ids_rep.capital_pool_id,
+        )
+
