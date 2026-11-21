@@ -149,7 +149,16 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         base_env={k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")},
         lease_held=False, identity_fn=OK)
     # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
-    assert [r["id"] for r in results] == ["check:deployed-pair-identity", "probe:mgmt-strategy-meeting-research-readable", "probe:persona-pool-member-rules", "probe:trade-journey-readable"]
+    assert [r["id"] for r in results] == [
+        "check:deployed-pair-identity",
+        "probe:meeting-review-disposition",
+        "probe:mgmt-strategy-meeting-research-readable",
+        "probe:paper-risk-policy-binding",
+        "probe:persona-pool-member-rules",
+        "probe:trade-journey-readable",
+    ]
+    risk_probe = next(r for r in results if r["id"] == "probe:paper-risk-policy-binding")
+    assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
     assert "probe:persona-day" not in {r["id"] for r in results}
     assert stage.verdict_status(results) == "passed"
 

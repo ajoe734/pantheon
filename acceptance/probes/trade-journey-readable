@@ -24,6 +24,10 @@ import urllib.request
 
 REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
 BASE = "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50"
+EXPRESSION_REASON_CODES = frozenset({"long_cash", "long_lever", "short_via_future", "close_leg"})
+DEFERRED_RECON_REASON_CODES = frozenset(
+    {"runtime_unhealthy_at_reconciliation", "broker_unavailable_at_reconciliation"}
+)
 
 
 def _items(body):
@@ -43,6 +47,60 @@ def _is_variance(row):
     return row.get("status") == "completed_with_variance" or kind == "variance"
 
 
+def _has_expression_rejection_reason(row) -> bool:
+    outcome = row.get("outcome")
+    if not isinstance(outcome, dict):
+        return False
+    if outcome.get("kind") != "rejected" and row.get("status") != "failed":
+        return False
+    return str(outcome.get("reason_code") or "").strip() in EXPRESSION_REASON_CODES
+
+
+def _is_deferred_reconciliation(row) -> bool:
+    outcome = row.get("outcome")
+    if not isinstance(outcome, dict):
+        return False
+    return (
+        outcome.get("kind") == "reconciliation_deferred"
+        or outcome.get("classification") in {"runtime_health", "broker_unavailable"}
+        or str(outcome.get("reason_code") or "").strip() in DEFERRED_RECON_REASON_CODES
+    )
+
+
+def _valid_discrepancy(item: object) -> bool:
+    if not isinstance(item, dict) or not str(item.get("check") or "").strip():
+        return False
+    exp = item.get("expected")
+    act = item.get("actual")
+    if exp is None or act is None or isinstance(exp, bool) or isinstance(act, bool):
+        return False
+    if isinstance(exp, (int, float)) and isinstance(act, (int, float)):
+        computed = float(act) - float(exp)
+        if abs(computed) <= 1e-6:
+            return False
+        for key in ("delta", "difference"):
+            val = item.get(key)
+            if val is not None:
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    return False
+                if abs(float(val) - computed) > 1e-6:
+                    return False
+        return True
+    return exp != act
+
+
+def _claims_accounting_variance_without_discrepancy(row) -> bool:
+    outcome = row.get("outcome")
+    if not isinstance(outcome, dict):
+        return False
+    if outcome.get("accounting_variance") is not True and outcome.get("classification") != "accounting_variance":
+        return False
+    discrepancies = outcome.get("discrepancies")
+    if not isinstance(discrepancies, list) or not discrepancies:
+        return True
+    return not all(_valid_discrepancy(item) for item in discrepancies)
+
+
 def check(fetch) -> dict:
     first = fetch(BASE)
     rows = _items(first)
@@ -55,6 +113,9 @@ def check(fetch) -> dict:
     probe_rows = [r.get("journey_id") for r in rows if r.get("persona_is_probe") is True]
     if probe_rows:
         failures.append("probe_persona_rows_listed:" + ",".join(map(str, probe_rows[:5])))
+    expr_rejected = [str(r.get("journey_id")) for r in rows if _has_expression_rejection_reason(r)]
+    if expr_rejected:
+        failures.append("rejected_row_has_expression_reason_code:" + ",".join(expr_rejected[:5]))
     filtered_body = fetch(BASE + "&attention=recon_mismatch")
     filtered = _items(filtered_body)
     total, filtered_total = _total(first), _total(filtered_body)
@@ -63,6 +124,16 @@ def check(fetch) -> dict:
     non_variance = [str(r.get("journey_id")) for r in filtered if not _is_variance(r)]
     if non_variance:
         failures.append("attention_row_not_variance:" + ",".join(non_variance[:5]))
+    deferred_in_mismatch = [str(r.get("journey_id")) for r in filtered if _is_deferred_reconciliation(r)]
+    if deferred_in_mismatch:
+        failures.append("deferred_reconciliation_in_recon_mismatch:" + ",".join(deferred_in_mismatch[:5]))
+    unproven_variance = [
+        str(r.get("journey_id"))
+        for r in [*rows, *filtered]
+        if _claims_accounting_variance_without_discrepancy(r)
+    ]
+    if unproven_variance:
+        failures.append("accounting_variance_missing_discrepancy:" + ",".join(unproven_variance[:5]))
     return {"rows": len(rows), "recon_mismatch_rows": len(filtered),
             "total": total, "recon_mismatch_total": filtered_total, "failed": failures, "passed": not failures}
 

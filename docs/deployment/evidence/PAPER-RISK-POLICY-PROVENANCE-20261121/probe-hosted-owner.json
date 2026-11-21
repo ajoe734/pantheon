@@ -1,0 +1,110 @@
+{
+  "approval_rows": 697,
+  "checked": 3,
+  "expected": 3,
+  "failed": [
+    "persona-2448c7053e33ea48da47:required_profile_mapping_unresolved",
+    "persona-6507750312870d03a241:required_profile_mapping_unresolved",
+    "persona-ee7112a829d38b9135ac:required_profile_mapping_unresolved"
+  ],
+  "observed_at": "2026-11-21T13:23:33.436822+00:00",
+  "passed": false,
+  "personas": {
+    "persona-2448c7053e33ea48da47": {
+      "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+      "artifact_version": "1.2.0",
+      "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+      "effective_policy": {
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        "net_limit": 2.0,
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "status": "active",
+        "version": "1.0"
+      },
+      "failed": [
+        "required_profile_mapping_unresolved"
+      ],
+      "name": "青禾｜2330 台股 Paper 學習 R3",
+      "persona_display_binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+      "policy_origin": "inline",
+      "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+      "profile_mapping_approval": null,
+      "requested_risk": "low",
+      "risk_policy_ref": null,
+      "runtime_id": "rt-ad81501b",
+      "tenant_id": "tenant-dev"
+    },
+    "persona-6507750312870d03a241": {
+      "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "artifact_version": "1.2.0",
+      "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+      "effective_policy": {
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        "net_limit": 2.0,
+        "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+        "status": "active",
+        "version": "1.0"
+      },
+      "failed": [
+        "required_profile_mapping_unresolved"
+      ],
+      "name": "澄川｜2317 台股 Paper 學習 R2",
+      "persona_display_binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+      "policy_origin": "inline",
+      "pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "profile_mapping_approval": null,
+      "requested_risk": "low",
+      "risk_policy_ref": null,
+      "runtime_id": "rt-3252fa75",
+      "tenant_id": "tenant-dev"
+    },
+    "persona-ee7112a829d38b9135ac": {
+      "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+      "artifact_version": "1.2.0",
+      "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+      "effective_policy": {
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ],
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        "net_limit": 2.0,
+        "risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+        "status": "active",
+        "version": "1.0"
+      },
+      "failed": [
+        "required_profile_mapping_unresolved"
+      ],
+      "name": "衡岳｜0050 台股 Paper 學習 R2",
+      "persona_display_binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+      "policy_origin": "inline",
+      "pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+      "profile_mapping_approval": null,
+      "requested_risk": "low",
+      "risk_policy_ref": null,
+      "runtime_id": "rt-3b65a843",
+      "tenant_id": "tenant-dev"
+    }
+  }
+}

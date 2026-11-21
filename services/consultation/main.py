@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -57,6 +58,7 @@ from .meetings import (
     list_meeting_proposals_view,
     list_meetings_view,
     record_chair_new_evidence,
+    record_meeting_operator_review,
     resolve_meeting_type_spec,
 )
 from services.persona import consult_triggers
@@ -1679,6 +1681,138 @@ def post_persona_meeting_evidence(
         except MeetingRefusedError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
     return get_meeting_detail_view(store, tenant_id=identity.tenant_id, meeting_id=updated["meeting_id"], workflow_state=workflow_state) or updated
+
+
+class RecordMeetingOperatorReviewRequest(BaseModel):
+    note: Optional[str] = None
+    rationale: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    tenant_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    actor_role: Optional[str] = None
+
+
+_ALLOWED_REVIEW_OPERATOR_ROLES = frozenset({"operator", "approver", "admin"})
+_DISALLOWED_BFF_ACTOR_IDS = frozenset({"", "viewer", "human-inbox", "anonymous", "trader"})
+
+
+@app.post("/api/consult/meetings/{meeting_id}/review")
+def post_persona_meeting_operator_review(
+    meeting_id: str,
+    req: RecordMeetingOperatorReviewRequest,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+) -> JSONResponse:
+    identity = _require_actor("service", "operator")
+    if req.tenant_id and str(req.tenant_id).strip() != identity.tenant_id:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "ConsultMeeting tenant scope denied",
+                "reason": "tenant_mismatch",
+                "meeting_id": meeting_id,
+            },
+        )
+    declared_role = str(
+        req.actor_role
+        or request.headers.get("X-Pantheon-Actor-Role")
+        or ""
+    ).strip().lower()
+    if declared_role and declared_role not in _ALLOWED_REVIEW_OPERATOR_ROLES:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Operator role is required to review a meeting",
+                "reason": "insufficient_role",
+                "meeting_id": meeting_id,
+            },
+        )
+    if identity.actor_type == "persona" or identity.actor_id.startswith("persona:"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Persona actor is not permitted to record an operator meeting review",
+                "reason": "insufficient_role",
+                "meeting_id": meeting_id,
+            },
+        )
+    if identity.actor_id.startswith("bff:"):
+        bff_actor = identity.actor_id[len("bff:"):].strip()
+        if bff_actor.lower() in _DISALLOWED_BFF_ACTOR_IDS:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "Operator role is required to review a meeting",
+                    "reason": "insufficient_role",
+                    "meeting_id": meeting_id,
+                },
+            )
+        if req.reviewed_by and str(req.reviewed_by).strip() != bff_actor:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "reviewed_by does not match authenticated operator",
+                    "reason": "operator_mismatch",
+                    "meeting_id": meeting_id,
+                },
+            )
+        operator_id = bff_actor
+    else:
+        if (
+            identity.actor_type == "operator"
+            and req.reviewed_by
+            and str(req.reviewed_by).strip() != identity.actor_id
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "reviewed_by does not match authenticated operator",
+                    "reason": "operator_mismatch",
+                    "meeting_id": meeting_id,
+                },
+            )
+        operator_id = str(req.reviewed_by or "").strip() or identity.actor_id
+
+    note_text = req.note if req.note is not None else (req.rationale or "")
+    eff_idem = str(idempotency_key or req.idempotency_key or "").strip() or None
+
+    with _REQUEST_COMMAND_LOCK:
+        try:
+            updated, replayed = record_meeting_operator_review(
+                store=store,
+                tenant_id=identity.tenant_id,
+                meeting_id=meeting_id,
+                reviewed_by=operator_id,
+                note=note_text,
+                reviewed_at=req.reviewed_at,
+                idempotency_key=eff_idem,
+                service_actor_id=CONSULTATION_SERVICE_ACTOR.actor_id if identity.actor_type == "service" else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Persona meeting not found") from exc
+        except MeetingRefusedError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "detail": exc.reason,
+                    "reason": exc.reason,
+                    "message": exc.detail,
+                    "meeting_id": meeting_id,
+                },
+            )
+
+    detail = (
+        get_meeting_detail_view(
+            store,
+            tenant_id=identity.tenant_id,
+            meeting_id=updated["meeting_id"],
+            workflow_state=workflow_state,
+        )
+        or updated
+    )
+    detail["replayed"] = replayed
+    return JSONResponse(status_code=200, content=detail)
 
 
 @app.post("/api/consult/meetings/{meeting_id}/sync")
