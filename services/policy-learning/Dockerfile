@@ -14,4 +14,4 @@ COPY . /workspace
 ENV PORT=8100
 EXPOSE 8100
 
-CMD ["sh", "-c", "uvicorn main:app --app-dir services/policy-learning --host 0.0.0.0 --port ${PORT:-8100}"]
+CMD ["sh", "-c", "exec uvicorn main:app --app-dir services/policy-learning --host 0.0.0.0 --port ${PORT:-8100}"]

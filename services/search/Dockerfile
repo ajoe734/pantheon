@@ -21,4 +21,4 @@ ENV SEARCH_EMBEDDING_CACHE_DIR=/opt/search/models \
 ENV PORT=8098
 EXPOSE 8098
 
-CMD ["sh", "-c", "uvicorn services.search.main:app --host 0.0.0.0 --port ${PORT:-8098}"]
+CMD ["sh", "-c", "exec uvicorn services.search.main:app --host 0.0.0.0 --port ${PORT:-8098}"]

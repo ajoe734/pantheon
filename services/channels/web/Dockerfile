@@ -14,4 +14,4 @@ COPY . /workspace
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn main:app --app-dir services/channels/web --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn main:app --app-dir services/channels/web --host 0.0.0.0 --port ${PORT:-8000}"]
