@@ -1941,7 +1941,11 @@ def test_preexisting_proven_variance_idempotency_across_repeated_apply_runs(
         )
     ].contract_fields
     assert cf1["reason_code"] == "cash_variance"
-    assert len(cf1["reason_detail"]) == 3
+    assert len(cf1["reason_detail"]) == 6
+    checks1 = {item["check"]: item for item in cf1["reason_detail"]}
+    assert checks1["cash_change"]["status"] == "failed"
+    assert checks1["cash_change"]["difference"] == pytest.approx(-45.0)
+    assert checks1["cash_change"]["delta"] == pytest.approx(-45.0)
 
     run2 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
     assert run2.proven_variances == 1
@@ -1957,7 +1961,7 @@ def test_preexisting_proven_variance_idempotency_across_repeated_apply_runs(
             "reconciliation",
         )
     ].contract_fields
-    assert len(cf2["reason_detail"]) == 3
+    assert len(cf2["reason_detail"]) == 6
 
     run3 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
     assert run3.proven_variances == 1
@@ -1973,6 +1977,104 @@ def test_preexisting_proven_variance_idempotency_across_repeated_apply_runs(
             "reconciliation",
         )
     ].contract_fields
-    assert len(cf3["reason_detail"]) == 3
+    assert len(cf3["reason_detail"]) == 6
+
+
+def test_merges_original_proven_checks_with_reconstructed_booking_failures_and_repeat_apply_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    recon_stage, telemetry, companions, evaluations = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    recon_eid = "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+    fill_eid = "000600fb-6496-47d9-a550-1fa23449c1e2"
+    snap_eid = "8d6761c5-5ae8-5799-87bb-10302186595a"
+
+    # Immutable reconciliation metadata has broker_fill_mismatch + broker_fill_qty failed
+    telemetry[recon_eid]["payload"]["metadata"].update(
+        {
+            "reason_code": "broker_fill_mismatch",
+            "reason_detail": [
+                {
+                    "check": "broker_fill_qty",
+                    "status": "failed",
+                    "expected": 1,
+                    "actual": 2,
+                    "difference": 1,
+                }
+            ],
+        }
+    )
+    # Fill and snapshot carry complete booking evidence with cash_change delta=-45.0
+    telemetry[fill_eid]["payload"]["metadata"].update(
+        {
+            "position_quantity_before": 1,
+            "position_quantity_after": 0,
+            "fee": 0.3113625,
+            "tax": 0.6555,
+            "cash_before": 100000,
+            "cash_after": 100172.5331375,
+        }
+    )
+    telemetry[snap_eid]["payload"]["metrics"]["cash"] = 100172.5331375
+
+    backend = InMemoryCauseRepairBackend(
+        stages=[recon_stage],
+        telemetry_events=telemetry,
+        companion_stages=companions,
+        drift_evaluations=evaluations,
+    )
+
+    # Default CLI-equivalent apply without broker_orders
+    apply1 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert apply1.scanned_rows == 1
+    assert apply1.proven_variances == 1
+    assert apply1.updated_rows == 1
+
+    cf = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            recon_stage.journey_id,
+            recon_eid,
+            "reconciliation",
+        )
+    ].contract_fields
+    assert cf["reason_code"] == "broker_fill_mismatch"
+    assert "missing_evidence" not in cf
+
+    analysis = _reconciliation_analysis(cf)
+    assert analysis["classification"] == "accounting_variance"
+    assert analysis["accounting_variance"] is True
+    assert analysis["comparison_completed"] is True
+    assert analysis["reason_code"] == "broker_fill_mismatch"
+    assert "unverified_reason_code" not in analysis
+
+    discrepancies_by_check = {d["check"]: d for d in analysis["discrepancies"]}
+    assert set(discrepancies_by_check) == {"broker_fill_qty", "cash_change"}
+
+    bf_disc = discrepancies_by_check["broker_fill_qty"]
+    assert bf_disc["status"] == "failed"
+    assert bf_disc["expected"] == pytest.approx(1.0)
+    assert bf_disc["actual"] == pytest.approx(2.0)
+    assert bf_disc["difference"] == pytest.approx(1.0)
+    assert bf_disc["delta"] == pytest.approx(1.0)
+
+    cash_disc = discrepancies_by_check["cash_change"]
+    assert cash_disc["status"] == "failed"
+    assert cash_disc["expected"] == pytest.approx(217.5331375)
+    assert cash_disc["actual"] == pytest.approx(172.5331375)
+    assert cash_disc["difference"] == pytest.approx(-45.0)
+    assert cash_disc["delta"] == pytest.approx(-45.0)
+
+    # Repeat apply updates zero rows and preserves identical merged reason_detail
+    apply2 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert apply2.scanned_rows == 1
+    assert apply2.proven_variances == 1
+    assert apply2.already_repaired_rows == 1
+    assert apply2.needs_update_rows == 0
+    assert apply2.updated_rows == 0
+    assert apply2.before_image_records == 1
+
 
 

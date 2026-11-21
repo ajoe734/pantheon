@@ -1632,7 +1632,43 @@ def _deduplicate_reason_detail(
             new_status = _clean_str(entry.get("status")).lower()
             if existing_status == "unverified" and new_status in {"failed", "passed"}:
                 deduped[existing_idx] = entry
+            elif existing_status == "passed" and new_status == "failed":
+                deduped[existing_idx] = entry
+            elif existing_status == "unverified" and new_status == "unverified":
+                if not deduped[existing_idx].get("missing_evidence") and entry.get(
+                    "missing_evidence"
+                ):
+                    deduped[existing_idx] = entry
     return deduped
+
+
+def _variance_codes_for_failed_checks(failed_checks: set[str]) -> list[str]:
+    codes: list[str] = []
+    if "broker_record" in failed_checks:
+        codes.append("broker_record_missing")
+    if failed_checks & {
+        "broker_fill_qty",
+        "broker_fill_price",
+        "broker_status",
+        "broker_side",
+        "broker_instrument_id",
+    }:
+        codes.append("broker_fill_mismatch")
+    if failed_checks & {"position_change", "committed_snapshot_position"}:
+        codes.append("position_variance")
+    if failed_checks & {"cash_change", "committed_snapshot_cash"}:
+        codes.append("cash_variance")
+    return codes
+
+
+def _collect_preexisting_reason_detail(*sources: Any) -> list[Mapping[str, Any]]:
+    items: list[Mapping[str, Any]] = []
+    for source in sources:
+        if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
+            for item in source:
+                if isinstance(item, Mapping):
+                    items.append(item)
+    return items
 
 
 def _has_preexisting_proven_variance(
@@ -1653,33 +1689,60 @@ def _has_preexisting_proven_variance(
             act_num = _num(entry.get("actual"))
             if exp_num is not None and act_num is not None:
                 diff = act_num - exp_num
-                entry["difference"] = diff
-                entry["delta"] = diff
-                if status_val == "failed" and abs(diff) > _BOOKING_TOLERANCE:
-                    failed_checks.add(check_name)
-        elif check_name in _TRADE_COMPARISON_CHECKS and status_val == "failed":
+                has_raw_delta = "delta" in entry and entry.get("delta") is not None
+                has_raw_diff = (
+                    "difference" in entry and entry.get("difference") is not None
+                )
+                supplied_delta = _num(entry.get("delta")) if has_raw_delta else None
+                supplied_diff = _num(entry.get("difference")) if has_raw_diff else None
+                delta_conflict = has_raw_delta and (
+                    supplied_delta is None
+                    or abs(supplied_delta - diff) > _BOOKING_TOLERANCE
+                )
+                diff_conflict = has_raw_diff and (
+                    supplied_diff is None
+                    or abs(supplied_diff - diff) > _BOOKING_TOLERANCE
+                )
+                status_conflict = (
+                    status_val == "failed" and abs(diff) <= _BOOKING_TOLERANCE
+                ) or (status_val == "passed" and abs(diff) > _BOOKING_TOLERANCE)
+                if not (
+                    delta_conflict or diff_conflict or status_conflict
+                ) and status_val in {"failed", "passed"}:
+                    entry["expected"] = exp_num
+                    entry["actual"] = act_num
+                    entry["difference"] = diff
+                    entry["delta"] = diff
+                    if status_val == "failed":
+                        failed_checks.add(check_name)
+                else:
+                    entry["status"] = "unverified"
+            else:
+                entry["status"] = "unverified"
+        elif check_name in _TRADE_COMPARISON_CHECKS:
             exp_val = entry.get("expected")
             act_val = entry.get("actual")
-            if exp_val not in (None, "") and act_val not in (None, "") and exp_val != act_val:
-                failed_checks.add(check_name)
+            if status_val == "failed":
+                if (
+                    exp_val not in (None, "")
+                    and act_val not in (None, "")
+                    and exp_val != act_val
+                ):
+                    failed_checks.add(check_name)
+                else:
+                    entry["status"] = "unverified"
+            elif status_val == "passed":
+                if (
+                    exp_val in (None, "")
+                    or act_val in (None, "")
+                    or exp_val != act_val
+                ):
+                    entry["status"] = "unverified"
         normalized.append(entry)
-    if not failed_checks:
+    codes = _variance_codes_for_failed_checks(failed_checks)
+    if not codes:
         return False, [], ""
-    if "broker_record" in failed_checks:
-        code = "broker_record_missing"
-    elif failed_checks & {
-        "broker_fill_qty",
-        "broker_fill_price",
-        "broker_status",
-        "broker_side",
-        "broker_instrument_id",
-    }:
-        code = "broker_fill_mismatch"
-    elif failed_checks & {"position_change", "committed_snapshot_position"}:
-        code = "position_variance"
-    else:
-        code = "cash_variance"
-    return True, _deduplicate_reason_detail((), normalized), code
+    return True, _deduplicate_reason_detail((), normalized), codes[0]
 
 
 def _derive_reconciliation_repair(
@@ -1745,9 +1808,11 @@ def _derive_reconciliation_repair(
 
     # Check if source event or stage row already carries a proven variance
     pre_proven, pre_detail, pre_code = _has_preexisting_proven_variance(
-        src.get("reason_detail")
-        or src_meta.get("reason_detail")
-        or updated.get("reason_detail")
+        _collect_preexisting_reason_detail(
+            src.get("reason_detail"),
+            src_meta.get("reason_detail"),
+            updated.get("reason_detail"),
+        )
     )
     booking_checks, booking_failures, missing_fields = _evaluate_booking_checks(
         evidence,
@@ -1757,24 +1822,50 @@ def _derive_reconciliation_repair(
     eval_checks, eval_is_health_only = _extract_evaluation_checks(evaluation)
 
     if not evidence.get("conflicting_fields") and (booking_failures or pre_proven):
-        variance_code = booking_failures[0] if booking_failures else pre_code
+        combined_detail = _deduplicate_reason_detail(
+            eval_checks,
+            (*pre_detail, *booking_checks),
+        )
+        combined_failed_checks = {
+            _clean_str(item.get("check"))
+            for item in combined_detail
+            if isinstance(item, Mapping)
+            and _clean_str(item.get("check")) in _TRADE_COMPARISON_CHECKS
+            and _clean_str(item.get("status")).lower() == "failed"
+        }
+        supported_codes = _variance_codes_for_failed_checks(combined_failed_checks)
+        variance_code = (
+            supported_codes[0]
+            if supported_codes
+            else (booking_failures[0] if booking_failures else pre_code)
+        )
         raw_src_code = _first_str(
             src.get("reason_code"),
             src_meta.get("reason_code"),
             updated.get("reason_code"),
         )
         if raw_src_code in _ACCOUNTING_VARIANCE_REASONS and (
-            raw_src_code in booking_failures or raw_src_code == pre_code
+            raw_src_code in supported_codes
+            or raw_src_code in booking_failures
+            or raw_src_code == pre_code
         ):
             variance_code = raw_src_code
-        combined_detail = _deduplicate_reason_detail(
-            eval_checks,
-            booking_checks if booking_failures else pre_detail,
-        )
         updated["reason_code"] = variance_code
         updated["reason_detail"] = combined_detail
-        if missing_fields:
-            updated["missing_evidence"] = list(missing_fields)
+        proven_missing: list[str] = []
+        if evidence.get("missing_referenced_fill"):
+            proven_missing.append("fill_event")
+        if evidence.get("missing_referenced_snapshot"):
+            proven_missing.append("snapshot_event")
+        for check_item in combined_detail:
+            if _clean_str(check_item.get("status")).lower() != "unverified":
+                continue
+            for m_item in check_item.get("missing_evidence") or ():
+                m_str = _clean_str(m_item)
+                if m_str and m_str not in proven_missing:
+                    proven_missing.append(m_str)
+        if proven_missing:
+            updated["missing_evidence"] = proven_missing
         else:
             updated.pop("missing_evidence", None)
         needs_update = updated != row.contract_fields

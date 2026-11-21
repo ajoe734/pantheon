@@ -246,6 +246,7 @@
       "max_before_image_bytes_cap": 16777216,
       "max_before_image_records_cap": 25000,
       "preview_cursor_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_preview_cursor.json",
+      "proven_variance_merge": "original proven checks from source/stage reason_detail are merged and deduplicated with reconstructed booking_checks so all discrepancies and numeric evidence are preserved across repeat apply runs (0 rows modified on repeat apply)",
       "retention_seconds": 604800,
       "storage_manifest_entry": "jsonl:paper_journey_cause_repair_before_image.jsonl (bound_status=bounded)"
     }
