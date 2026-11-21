@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "target_repo": "pantheon",
+  "branch": "task/REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+  "published_acceptance_evidence": {
+    "path": "docs/deployment/evidence/REGIME-DATA-HOSTED-ACCEPTANCE-20261114/evidence.json",
+    "publish_source_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/REGIME-DATA-HOSTED-ACCEPTANCE-20261114-20261121._bxeer3g/evidence-publish.json",
+    "publish_sha256": "527da3fdd1368c2875b31e9a22eeae0348328005e0c15c20a31a8e77abff8814",
+    "bytes": 13341,
+    "lines": 293,
+    "evidence_line_limit_cap": 400,
+    "within_evidence_line_limit": true,
+    "preserved_original_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/REGIME-DATA-HOSTED-ACCEPTANCE-20261114-20261121._bxeer3g/evidence.json",
+    "preserved_original_sha256": "14e7505903c310befc49bdeb667a6a9c05f1fe47702025dc70557ad40b3e2e68",
+    "parsed_json_equals_preserved_original": true
+  },
+  "validated_companion_observations": {
+    "normalized_and_manifest": {
+      "source_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/REGIME-DATA-HOSTED-ACCEPTANCE-20261114-20261121._bxeer3g/regime-readback.json",
+      "sha256": "03cd28fc2ccb910814b376105a0417fbbda3a303798d8fe9c3b1553f04b5306d",
+      "matches_evidence_observation_sha256": true
+    },
+    "venue_recheck": {
+      "source_path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/REGIME-DATA-HOSTED-ACCEPTANCE-20261114-20261121._bxeer3g/venue-proof.json",
+      "sha256": "0670011cd9f2904580cd2b82b6e34c577a145ae3031205dbedf1ffec775397ae",
+      "matches_evidence_observation_sha256": true
+    }
+  },
+  "acceptance_validation": {
+    "accepted_release_identities": {
+      "root_workflow": 44915049855,
+      "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+      "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+      "gate": "44918407417",
+      "pair_id": "a3a38db06b52f24e57eaa69bc033e32c55bac631b466ebbf059390b2f0b6a1aa",
+      "ready": 200
+    },
+    "measurement_windows_utc": [
+      {"from": "2026-11-21T17:43:18+00:00", "through": "2026-11-21T17:43:28+00:00"},
+      {"from": "2026-11-21T17:44:58+00:00", "through": "2026-11-21T17:45:00+00:00"}
+    ],
+    "selected_source_image_comparison": {
+      "official_steady_artifact_id": 14712990236,
+      "official_steady_artifact_sha256": "3d99f5d7bcda8f12790074e8b73e507ce4833e19a17b1db6983696a514decf26",
+      "all_four_runtime_services_healthy_and_matched": true,
+      "stable_during_each_read": true
+    },
+    "dataset_coverage_and_gaps_verified": {
+      "taiex": "2012-01-02..2026-11-20 (3639 dates, 3967 rows)",
+      "other_named_index_series": "55 series, 2026-11-13..2026-11-17 (3 dates, 13 rows each)",
+      "market_breadth": "2026-11-13..2026-11-17 (3 dates, 13 rows)",
+      "tpex_institutional_flow_and_equity_margin": "TPEX 4500 dated rows each on 2026-11-16..2026-11-19; 33362 legacy trade_date-only unspecified flow rows; 6000 undated TWSE margin rows; 0 dates with both venues; governed market-total directories absent",
+      "taifex_raw_positions": "2026-11-13..2026-11-19 (4 dates, 48 rows; 2 complete sessions, 2 withheld for duplicate_entity_rows)",
+      "taifex_raw_put_call": "2026-10-19..2026-11-19 (22 dates, 126 rows; all 22 withheld for incomplete_or_duplicate_txo_market_row)",
+      "taifex_tx_mtx_daily": "2026-11-18..2026-11-19 (2 dates; TX 70 rows, MTX 90 rows)",
+      "per_stock_daily_bars": "481 published daily_bars_manifest.v2 manifests (2024-11-27..2026-11-20, 2765000 rows); 4 earlier raw-only dates linked to MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117"
+    },
+    "scope_and_credential_safety": {
+      "measured_task_id": "REGIME-DATA-HOSTED-ACCEPTANCE-20261114",
+      "preserved_engine_task_scope": "REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115",
+      "related_market_data_task": "MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117",
+      "credential_free_commands_verified": true
+    },
+    "prior_delivery_attribution": {
+      "task_id": "REGIME-DATA-HOSTED-EVIDENCE-DELIVERY-20261121",
+      "local_commits": ["dd47194b6", "2d8233ccf"]
+    }
+  },
+  "runtime_budget": {
+    "new_or_changed_writers": "none (documentation/evidence-only task)"
+  }
+}
