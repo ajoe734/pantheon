@@ -84,6 +84,21 @@
       "command": "timeout 180s ssh ... docker exec -i pantheon-paper-signal-producer-1 python3 - < replay_hosted.py",
       "exit_code": 0,
       "result": "451 shares; fee-inclusive cash 99813.031175; remaining 186.968825; original source event, no order submission"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "27 passed in 0.61s after evidence compaction; probe and test source unchanged"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base ca54c80d5a9e158c66b4dffd5767ca4e70e4360d --head 558e870be",
+      "exit_code": 0,
+      "result": "No evidence-cap violations; production +257, tests +205, docs/evidence +1914 at compaction anchor"
+    },
+    {
+      "command": "Validate evidence_compaction original/compacted/canonical SHA-256 values and parsed equality using git show source_commit:path plus Python json/hashlib",
+      "exit_code": 0,
+      "result": "All three complete readbacks equal the reviewed originals; 353/266/294 lines; all evidence JSON parses; 14 files totaling 125089 bytes at compaction anchor, under 200 KiB cap"
     }
   ],
   "verified_deployed_source_hashes": {
