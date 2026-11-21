@@ -105,10 +105,46 @@ class InMemoryPostgresProjectionReader:
         stalled = filters.get("stalled")
         waiting_human = filters.get("waiting_human")
         reconciliation_state = filters.get("reconciliation_state")
+        attention = filters.get("attention")
+        exclude_persona_ids = set(filters.get("exclude_persona_ids") or [])
         date_from = filters.get("date_from")
         date_to = filters.get("date_to")
 
         q_journey_only = bool(filters.get("q_journey_only"))
+
+        def _match_attention(proj, row):
+            if not attention:
+                return True
+            row_status = proj.snapshot.get("status")
+            stages = proj.snapshot.get("stages") or {}
+            broker_failed = (stages.get("broker_acknowledgement") or {}).get("status") in {"failed", "rejected"}
+            recon_ev = tj._event_for_stage(proj.timeline, "reconciliation")
+            raw_recon_code = str((recon_ev or {}).get("reason_code") or "").strip()
+            recon_analysis = tj._reconciliation_analysis(recon_ev) if recon_ev is not None else {}
+            deferred = (
+                raw_recon_code in {
+                    "runtime_unhealthy_at_reconciliation",
+                    "broker_unavailable_at_reconciliation",
+                    "reconciliation_deferred_runtime_unhealthy",
+                    "reconciliation_deferred_broker_unavailable",
+                    "reconciliation_identity_unverified",
+                    "reconciliation_evidence_incomplete",
+                }
+                or recon_analysis.get("kind") == "reconciliation_deferred"
+            )
+            if attention == "recon_mismatch":
+                return row_status == "completed_with_variance" and not deferred
+            if attention == "partial_fill":
+                return row_status == "partially_filled"
+            if attention == "broker_reject":
+                return row_status == "failed" and broker_failed
+            if attention == "risk_reject":
+                return row_status == "failed" and not broker_failed
+            if attention == "attention":
+                return row_status in {"failed", "partially_filled"} or (
+                    row_status == "completed_with_variance" and not deferred
+                )
+            return False
 
         def _match_q(proj, query):
             if query is None:
@@ -145,6 +181,8 @@ class InMemoryPostgresProjectionReader:
             and (decision_id is None or row.get("decision_id") == decision_id)
             and (order_id is None or row.get("order_id") == order_id)
             and (broker_order_id is None or row.get("broker_order_id") == broker_order_id)
+            and (not exclude_persona_ids or row.get("persona_id") not in exclude_persona_ids)
+            and _match_attention(p, row)
             and _match_q(p, q)
         ]
 
@@ -1686,6 +1724,103 @@ def test_retained_sell_without_holdings_and_no_order_journeys_report_formal_whil
                 assert "risk_evaluation" not in eff_snap["stages"]
                 assert "risk_evaluation" in eff_snap["completeness"]["missing_stages"]
                 assert tj._read_state(snap, empty_timeline_diagnostics, up_tl) == "partial"
+
+
+def test_trade_journey_failure_causes_and_tenant_isolation_across_bff_routes():
+    """Verify tj_79726064, tj_57418ba7, genuine mismatch, upstream omission, and cross-tenant isolation via BFF router."""
+    rej_jid = "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd"
+    recon_jid = "tj_57418ba7-ef37-5015-9b5e-b6423872da89"
+    other_jid = "tj_other_tenant_001"
+
+    events = [
+        # 1. tj_79726064 pre-broker rejection (event 91d55953-b575-4fe8-8d39-6e0cade58d59)
+        _event("9f10b727-7903-59bb-9f69-4fd8d8997eb9", rej_jid, "signal_generation", "succeeded", 1, tenant="tenant-dev", symbol="2317.TWSE", side="buy", quantity=452.0, broker_order_id=None, client_order_id=None),
+        _event("2c852171-3d1d-517c-8038-829098f0fd74", rej_jid, "trade_decision", "succeeded", 2, tenant="tenant-dev", symbol="2317.TWSE", side="buy", quantity=452.0, broker_order_id=None, client_order_id=None),
+        _event(
+            "91d55953-b575-4fe8-8d39-6e0cade58d59",
+            rej_jid,
+            "order_submission",
+            "failed",
+            3,
+            tenant="tenant-dev",
+            symbol="2317.TWSE",
+            side="buy",
+            quantity=0.0,
+            requested_quantity=452.0,
+            broker_order_id=None,
+            client_order_id=None,
+            event_type="order_rejection",
+            submitted_to_broker=False,
+            reason_code="insufficient_cash",
+            expression_reason_code="long_cash",
+            reason_detail={
+                "required": 100034.3461,
+                "available": 100000.0,
+                "limit": 100000.0,
+                "requested_quantity": 452.0,
+            },
+        ),
+        # 2. tj_57418ba7 reconciliation with proven accounting variance (event 48c946c8-39d1-52bd-b1a1-ce72dc7f6e14)
+        _event("s1", recon_jid, "signal_generation", "succeeded", 1, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0),
+        _event("s2", recon_jid, "trade_decision", "succeeded", 2, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0),
+        _event("s3", recon_jid, "risk_evaluation", "succeeded", 3, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0),
+        _event("51aa9da8-1766-5db8-b505-c89a94d89d8d", recon_jid, "order_submission", "succeeded", 4, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0, order_id="b00575cfc62f44d18ed052dad34d23ea", broker_order_id="b00575cfc62f44d18ed052dad34d23ea"),
+        _event("s5", recon_jid, "broker_acknowledgement", "succeeded", 5, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0, order_id="b00575cfc62f44d18ed052dad34d23ea", broker_order_id="b00575cfc62f44d18ed052dad34d23ea"),
+        _event("000600fb-6496-47d9-a550-1fa23449c1e2", recon_jid, "fill_management", "succeeded", 6, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0, fill_quantity=1.0, price=218.5, order_id="b00575cfc62f44d18ed052dad34d23ea", broker_order_id="b00575cfc62f44d18ed052dad34d23ea"),
+        _event("s7", recon_jid, "ledger_booking", "succeeded", 7, tenant="tenant-dev", symbol="2317.TWSE", side="sell", quantity=1.0),
+        _event(
+            "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+            recon_jid,
+            "reconciliation",
+            "failed",
+            8,
+            tenant="tenant-dev",
+            symbol="2317.TWSE",
+            side="sell",
+            quantity=1.0,
+            event_type="reconciliation_failed",
+            reason_code="cash_variance",
+            reason_detail=[
+                {"check": "position_change", "status": "passed", "expected": -1.0, "actual": -1.0, "difference": 0.0},
+                {"check": "cash_change", "status": "failed", "expected": 217.5331375, "actual": 172.5331375, "difference": -45.0},
+            ],
+        ),
+        # 3. Another tenant journey (tenant-other)
+        _event("o1", other_jid, "signal_generation", "succeeded", 1, tenant="tenant-other", symbol="2330.TWSE", side="buy", quantity=1.0),
+        _event("o2", other_jid, "trade_decision", "succeeded", 2, tenant="tenant-other", symbol="2330.TWSE", side="buy", quantity=1.0),
+        _event("o3", other_jid, "order_submission", "failed", 3, tenant="tenant-other", symbol="2330.TWSE", side="buy", quantity=0.0, event_type="order_rejection", submitted_to_broker=False, reason_code="insufficient_cash", broker_order_id=None, client_order_id=None),
+    ]
+    client, _ = _direct_client(events)
+    scoped_headers = {"Authorization": "Bearer op-dev:operator:tenant-dev"}
+
+    # List under tenant-dev returns only tenant-dev rows
+    list_res = client.get("/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper", headers=scoped_headers)
+    assert list_res.status_code == 200
+    items = {item["journey_id"]: item for item in list_res.json()["data"]["items"]}
+    assert set(items) == {rej_jid, recon_jid}
+    assert items[rej_jid]["outcome"]["reason_code"] == "insufficient_cash"
+    assert items[rej_jid]["outcome"]["rejected_stage"] == "risk_evaluation"
+    assert items[rej_jid]["outcome"]["order_status"] == "not_submitted"
+    assert items[rej_jid]["outcome"]["source_event_id"] == "91d55953-b575-4fe8-8d39-6e0cade58d59"
+    assert items[recon_jid]["outcome"]["classification"] == "accounting_variance"
+    assert items[recon_jid]["outcome"]["accounting_variance"] is True
+    assert items[recon_jid]["outcome"]["discrepancies"][0]["delta"] == -45.0
+
+    # Detail & Timeline for tj_79726064
+    rej_detail = client.get(f"/bff/management/trade-journeys/{rej_jid}?tenant_id=tenant-dev&environment=paper", headers=scoped_headers).json()["data"]
+    assert rej_detail["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert rej_detail["stages"]["risk_evaluation"]["reason_code"] == "insufficient_cash"
+    assert rej_detail["stages"]["order_submission"]["status"] == "not_submitted"
+    rej_tl = client.get(f"/bff/management/trade-journeys/{rej_jid}/timeline?tenant_id=tenant-dev&environment=paper", headers=scoped_headers).json()["data"]["items"]
+    assert rej_tl[-1]["stage"] == "risk_evaluation"
+    assert rej_tl[-1]["reason_code"] == "insufficient_cash"
+    assert rej_tl[-1]["order_status"] == "not_submitted"
+    assert rej_tl[-1]["reason_detail"]["required"] == 100034.3461
+
+    # Another tenant isolation: 404 under tenant-dev, 403 when querying tenant-other
+    assert client.get(f"/bff/management/trade-journeys/{other_jid}?tenant_id=tenant-dev&environment=paper", headers=scoped_headers).status_code == 404
+    assert client.get(f"/bff/management/trade-journeys/{other_jid}/timeline?tenant_id=tenant-dev&environment=paper", headers=scoped_headers).status_code == 404
+    assert client.get("/bff/management/trade-journeys?tenant_id=tenant-other&environment=paper", headers=scoped_headers).status_code == 403
 
 
 

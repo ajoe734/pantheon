@@ -59,7 +59,7 @@ if [[ "$MODE" == ensure ]]; then
   if ! policy_json >/dev/null; then
     "$GCLOUD" compute resource-policies create snapshot-schedule "$POLICY" --project "$PROJECT" --region "$REGION" \
       --hourly-schedule=1 --start-time=00:00 --max-retention-days=3 --on-source-disk-delete=keep-auto-snapshots \
-      --storage-location "$REGION" --labels environment=production,managed_by=pantheon >/dev/null \
+      --storage-location "$REGION" --snapshot-labels=environment=production,managed_by=pantheon >/dev/null \
       || fail POLICY_CREATE_FAILED "resource policy create failed"
   fi
   if [[ "$(disk_policies)" != *"/resourcePolicies/${POLICY}"* ]]; then
@@ -134,15 +134,15 @@ OWNER_DIRS=(bff runtime governance product)
 
 cleanup() {
   local rc=$?; trap - EXIT
-  [[ $CTR_UP -eq 1 ]] && { "$DOCKER" stop "$CTR" >/dev/null 2>&1; "$DOCKER" rm -f "$CTR" >/dev/null 2>&1; }
-  [[ $NET_UP -eq 1 ]] && "$DOCKER" network rm "$NET" >/dev/null 2>&1
+  [[ $CTR_UP -eq 1 ]] && { priv "$DOCKER" stop "$CTR" >/dev/null 2>&1; priv "$DOCKER" rm -f "$CTR" >/dev/null 2>&1; }
+  [[ $NET_UP -eq 1 ]] && priv "$DOCKER" network rm "$NET" >/dev/null 2>&1
   [[ $TMP_UP -eq 1 ]] && priv rm -rf -- "$TMPD" >/dev/null 2>&1
   [[ $MOUNTED -eq 1 ]] && { priv umount "$MNT" >/dev/null 2>&1; priv rmdir "$MNT" >/dev/null 2>&1; }
   [[ $ATTACHED -eq 1 ]] && "$G" compute instances detach-disk "$VM" "${PZ[@]}" --disk "$SCRATCH" >/dev/null 2>&1
   [[ $CREATED -eq 1 ]] && "$G" compute disks delete "$SCRATCH" "${PZ[@]}" --quiet >/dev/null 2>&1
   local rb_ctr rb_net rb_tmp rb_mnt rb_disk
-  rb_ctr=$("$DOCKER" ps -aq --filter "name=^${CTR}\$" 2>/dev/null | wc -l)
-  rb_net=$("$DOCKER" network ls -q --filter "name=^${NET}\$" 2>/dev/null | wc -l)
+  rb_ctr=$(priv "$DOCKER" ps -aq --filter "name=^${CTR}\$" 2>/dev/null | wc -l)
+  rb_net=$(priv "$DOCKER" network ls -q --filter "name=^${NET}\$" 2>/dev/null | wc -l)
   rb_tmp=0; [[ -e "$TMPD" ]] && rb_tmp=1
   rb_mnt=0; [[ -e "$MNT" ]] && rb_mnt=1
   rb_disk=$("$G" compute disks list --project "$PROJECT" --filter="name=${SCRATCH}" --format='value(name)' 2>/dev/null | wc -l)
@@ -178,6 +178,14 @@ STAGE=attach_readonly
 "$G" compute instances attach-disk "$VM" "${PZ[@]}" --disk "$SCRATCH" --mode ro --device-name "$DEV" >/dev/null 2>&1 \
   || { ATTACHED=1; die attach_readonly; }
 ATTACHED=1
+# attach-disk can return before udev publishes the device symlink on the real VM.
+if [[ -d /dev/disk/by-id && -z "${GCLOUD_BIN:-}" ]]; then
+  for _ in $(seq 1 15); do
+    [[ -e "/dev/disk/by-id/google-${DEV}" ]] && break
+    sleep 1
+  done
+  [[ -e "/dev/disk/by-id/google-${DEV}" ]] || die mount_readonly
+fi
 STAGE=mount_readonly
 priv mkdir -p "$MNT" && priv mount -o ro,noload "/dev/disk/by-id/google-${DEV}" "$MNT" >/dev/null 2>&1 || { MOUNTED=1; die mount_readonly; }
 MOUNTED=1
@@ -190,30 +198,39 @@ for d in postgres "${OWNER_DIRS[@]}"; do
 done
 
 STAGE=start_postgres
-"$DOCKER" network create --internal --label purpose=restore-drill "$NET" >/dev/null 2>&1 || { NET_UP=1; die start_postgres; }
+priv "$DOCKER" network create --internal --label purpose=restore-drill "$NET" >/dev/null 2>&1 || { NET_UP=1; die start_postgres; }
 NET_UP=1
-"$DOCKER" run -d --name "$CTR" --network "$NET" --label purpose=restore-drill -e "POSTGRES_USER=${PROD_POSTGRES_USER}" \
+priv "$DOCKER" run -d --name "$CTR" --network "$NET" --label purpose=restore-drill -e "POSTGRES_USER=${PROD_POSTGRES_USER}" \
   -e "POSTGRES_DB=${PROD_POSTGRES_DB}" -v "${TMPD}/postgres:/var/lib/postgresql/data" "$PANTHEON_POSTGRES_IMAGE" >/dev/null 2>&1 \
   || { CTR_UP=1; die start_postgres; }
 CTR_UP=1
 ready=0; for _ in $(seq 1 60); do
-  "$DOCKER" exec "$CTR" pg_isready -q -U "$PROD_POSTGRES_USER" -d "$PROD_POSTGRES_DB" >/dev/null 2>&1 && { ready=1; break; }; sleep "${PROD_DRILL_POLL_SECONDS:-2}"
+  priv "$DOCKER" exec "$CTR" pg_isready -q -U "$PROD_POSTGRES_USER" -d "$PROD_POSTGRES_DB" >/dev/null 2>&1 && { ready=1; break; }; sleep "${PROD_DRILL_POLL_SECONDS:-2}"
 done
 [[ $ready -eq 1 ]] || die start_postgres
 
 STAGE=verify
 CATALOG_SQL="select table_schema||'.'||table_name||'.'||column_name||':'||data_type from information_schema.columns where table_schema not in ('pg_catalog','information_schema') order by 1"
 TABLES_SQL="select table_schema||'.'||table_name from information_schema.tables where table_type='BASE TABLE' and table_schema not in ('pg_catalog','information_schema') order by 1"
-pq() { "$DOCKER" exec -i "$1" sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 2>/dev/null; }
+pq() { priv "$DOCKER" exec -i "$1" sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 2>/dev/null; }
 counts() { # $1 container -> "schema.table=count" lines
   local t; while IFS= read -r t; do printf '%s=%s\n' "$t" "$(pq "$1" <<<"select count(*) from ${t%%.*}.\"${t#*.}\"")" || return 1; done < <(pq "$1" <<<"$TABLES_SQL")
 }
-LIVE="$("$DOCKER" ps -q --filter label=com.docker.compose.service=postgres | head -1)"
+LIVE="$(priv "$DOCKER" ps -q --filter label=com.docker.compose.service=postgres | head -1)"
 [[ -n "$LIVE" ]] || die verify
 R_CAT="$(pq "$CTR" <<<"$CATALOG_SQL" | sha256sum | cut -d' ' -f1)"; L_CAT="$(pq "$LIVE" <<<"$CATALOG_SQL" | sha256sum | cut -d' ' -f1)"
 R_CNT="$(counts "$CTR")" || die verify; L_CNT="$(counts "$LIVE")" || die verify
-mani() { (cd "$1" && for d in "${OWNER_DIRS[@]}"; do [[ -d $d ]] && find "$d" -type f -print0; done | sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1); }
-M_SRC="$(mani "$MNT")"; M_COPY="$(mani "$TMPD")"
+mani() {
+  priv bash -o pipefail -c '
+    cd "$1" || exit 1; shift
+    for d in "$@"; do
+      [[ -d "$d" ]] || exit 1
+      find "$d" -type f -print0 || exit 1
+    done | sort -z | xargs -0 -r sha256sum | sha256sum | cut -d" " -f1
+  ' bash "$1" "${OWNER_DIRS[@]}"
+}
+M_SRC="$(mani "$MNT")" || die verify
+M_COPY="$(mani "$TMPD")" || die verify
 RTO=$(( $(date +%s) - T0 ))
 CHECKS="$(python3 -I - "$R_CAT" "$L_CAT" "$R_CNT" "$L_CNT" "$M_SRC" "$M_COPY" <<'PY'
 import json, sys
