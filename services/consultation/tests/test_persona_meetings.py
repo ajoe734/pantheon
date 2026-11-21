@@ -1814,3 +1814,393 @@ def test_chair_synthesis_records_why_empty_or_unreadable_cause_on_meeting(
     assert m_timeout["synthesis"]["unreadable_reason"] == "timeout"
     assert m_timeout["synthesis_unreadable_reason"] == "timeout"
     assert "timeout" in m_timeout["synthesis"]["summary"]
+
+    # 4. Real HttpContributionProvider with 1700-char invalid JSON preserves JSONDecodeError cause & raw_length=1700 (not 36)
+    import io
+
+    def _run_with_http_provider(idx: int, urlopen_fn: Any, monkeypatch_obj: Any) -> dict[str, Any]:
+        created, _ = meetings_mod.convene_persona_meeting(
+            store=store,
+            workflow_state=wf_state,
+            tenant_id=TENANT,
+            payload={
+                "meeting_type": "MT-1",
+                "topic": f"HTTP provider synthesis cause test {idx}",
+                "convened_by": {"kind": "persona", "id": "persona-alpha"},
+                "participants": ["persona-alpha", "persona-risk-officer"],
+                "iso_week": f"2026-W{20 + idx}",
+            },
+        )
+        mid = created["meeting_id"]
+        cid = created["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+
+        def _fake_urlopen(req: urllib.request.Request, timeout: float = 10.0) -> Any:
+            if req.full_url.endswith("/agents/ensure"):
+                body = json.loads((req.data or b"{}").decode("utf-8"))
+                raw_bytes = json.dumps(
+                    {
+                        "status": "ready",
+                        "tenant_id": body.get("tenant_id"),
+                        "persona_id": body.get("persona_id"),
+                    }
+                ).encode("utf-8")
+            else:
+                envelope = json.loads((req.data or b"{}").decode("utf-8"))
+                inner_req = envelope.get("request") or {}
+                part = inner_req.get("participant") or {}
+                if part.get("round") == "synthesis":
+                    raw_bytes = urlopen_fn(mid, cid)
+                else:
+                    raw_bytes = json.dumps(
+                        {
+                            "contribution_id": f"c-{mid}-{part.get('persona_id')}-{part.get('round')}",
+                            "tenant_id": TENANT,
+                            "request_id": mid,
+                            "participant_type": "persona",
+                            "participant_ref": str(part.get("persona_id") or "persona-alpha"),
+                            "summary": "round position",
+                            "recommendation": "request_more_research",
+                            "confidence": 0.7,
+                            "event_type": "persona_contribution",
+                            "event_content": {
+                                "stance": "request_more_research",
+                                "confidence": 0.7,
+                                "citations": [cid],
+                                "claims": [{"claim": "need facts", "evidence_refs": [cid]}],
+                            },
+                            "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                            "findings": [],
+                        }
+                    ).encode("utf-8")
+
+            class _Resp:
+                def __enter__(self) -> "_Resp":
+                    return self
+
+                def __exit__(self, *args: Any) -> bool:
+                    return False
+
+                def read(self) -> bytes:
+                    return raw_bytes
+
+            return _Resp()
+
+        import services.consultation.provider as prov_mod
+
+        monkeypatch_obj.setattr(prov_mod.urllib.request, "urlopen", _fake_urlopen)
+        http_prov = HttpContributionProvider(
+            endpoint="http://provider.invalid/api/openclaw-adapter/consultation/contributions",
+            bearer_token="tok",
+            service_actor="consultation-workflow-executor",
+            timeout_seconds=5.0,
+        )
+        return meetings_mod.execute_persona_meeting(
+            store=store,
+            meeting_id=mid,
+            tenant_id=TENANT,
+            provider=http_prov,
+        )
+
+    mp = pytest.MonkeyPatch()
+    try:
+        m_http_invalid_json = _run_with_http_provider(
+            1,
+            lambda _mid, _cid: ("x" * 1700).encode("utf-8"),
+            mp,
+        )
+        assert m_http_invalid_json["outcome"] == "REVIEW"
+        assert m_http_invalid_json["synthesis"]["unreadable_reason"] == "parse_failure (raw_length=1700)"
+        assert m_http_invalid_json["synthesis_unreadable_reason"] == "parse_failure (raw_length=1700)"
+        assert "raw_length=36" not in m_http_invalid_json["synthesis"]["summary"]
+
+        # 5. Real HttpContributionProvider with missing summary is classified as model_output_missing (not parse_failure)
+        m_http_missing_summary = _run_with_http_provider(
+            2,
+            lambda mid, cid: json.dumps(
+                {
+                    "contribution_id": f"c-{mid}-synth",
+                    "tenant_id": TENANT,
+                    "request_id": mid,
+                    "participant_type": "persona",
+                    "participant_ref": "persona-alpha",
+                    "summary": "",
+                    "recommendation": "request_more_research",
+                    "confidence": 0.7,
+                    "event_type": "persona_contribution",
+                    "event_content": {"synthesis": {"outcome": "completed_no_proposal", "proposals": []}},
+                    "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                    "findings": [],
+                }
+            ).encode("utf-8"),
+            mp,
+        )
+        assert m_http_missing_summary["outcome"] == "REVIEW"
+        assert m_http_missing_summary["synthesis"]["unreadable_reason"] == "model_output_missing"
+        assert m_http_missing_summary["synthesis_unreadable_reason"] == "model_output_missing"
+
+        # 6. Synthesis event_content missing summary is also classified as model_output_missing
+        m_http_missing_synth_summary = _run_with_http_provider(
+            3,
+            lambda mid, cid: json.dumps(
+                {
+                    "contribution_id": f"c-{mid}-synth",
+                    "tenant_id": TENANT,
+                    "request_id": mid,
+                    "participant_type": "persona",
+                    "participant_ref": "persona-alpha",
+                    "summary": "top-level turn summary",
+                    "recommendation": "request_more_research",
+                    "confidence": 0.7,
+                    "event_type": "persona_contribution",
+                    "event_content": {"synthesis": {"outcome": "completed_no_proposal"}},
+                    "evidence": [{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                    "findings": [],
+                }
+            ).encode("utf-8"),
+            mp,
+        )
+        assert m_http_missing_synth_summary["outcome"] == "REVIEW"
+        assert m_http_missing_synth_summary["synthesis"]["unreadable_reason"] == "model_output_missing"
+        assert m_http_missing_synth_summary["synthesis_unreadable_reason"] == "model_output_missing"
+
+        # 7. Real HttpContributionProvider with wrapped URLError(TimeoutError) is classified as timeout
+        m_http_timeout = _run_with_http_provider(
+            4,
+            lambda _mid, _cid: (_ for _ in ()).throw(urllib.error.URLError(TimeoutError("read timed out"))),
+            mp,
+        )
+        assert m_http_timeout["outcome"] == "REVIEW"
+        assert m_http_timeout["synthesis"]["unreadable_reason"] == "timeout"
+        assert m_http_timeout["synthesis_unreadable_reason"] == "timeout"
+    finally:
+        mp.undo()
+
+
+def test_execute_preserves_explicit_evidence_and_supplied_facts_and_migrates_only_legacy_placeholders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    def _owner_404(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path == "/api/registry/entries/legacy-member-1":
+            return {
+                "registry_id": "legacy-member-1",
+                "strategy_id": "momentum",
+                "artifact_type": "execution_bundle",
+                "artifact_state": "approved",
+                "approved_scope": "paper",
+            }
+        if path.startswith("/api/registry/entries/"):
+            raise cf.OwnerUnavailable("http_404")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _owner_404)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.invalid")
+
+    store = ConsultationStore(str(tmp_path / "preserve_case"))
+    wf_state = WorkflowStateStore(tmp_path / "preserve_case.sqlite3")
+
+    # 1. Convene with explicit evidence_ref with real excerpt + supplied case_file fact, then execute
+    created, _ = meetings_mod.convene_persona_meeting(
+        store=store,
+        workflow_state=wf_state,
+        tenant_id=TENANT,
+        persona_directory={},
+        payload={
+            "meeting_type": "MT-1",
+            "topic": "Explicit and supplied preservation test",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": ["persona-alpha", "persona-risk-officer"],
+            "evidence_refs": [
+                {"item_id": "measurement-1", "excerpt": "Observed drawdown is 0.12"},
+            ],
+            "case_file": {
+                "items": [
+                    {"item_id": "supplied-fact", "group": "facts", "excerpt": "Approved weight is 0.4"},
+                ]
+            },
+            "iso_week": "2026-W31",
+        },
+    )
+    mid = created["meeting_id"]
+
+    class _SimpleProv:
+        def obtain(self, *, tenant_id: str, request: Mapping[str, Any], participant_scope: str = "") -> Any:
+            cid = request["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+            return SimpleNamespace(
+                summary="round position",
+                recommendation="approve_with_conditions",
+                confidence=0.8,
+                event_content={
+                    "stance": "approve_with_conditions",
+                    "confidence": 0.8,
+                    "citations": [cid],
+                    "claims": [{"claim": "reviewed facts", "evidence_refs": [cid]}],
+                    "synthesis": {"summary": "Chair synthesis complete", "proposals": []},
+                },
+                evidence=[{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+            )
+
+    completed = meetings_mod.execute_persona_meeting(
+        store=store,
+        meeting_id=mid,
+        tenant_id=TENANT,
+        provider=_SimpleProv(),
+    )
+    by_id = {i["item_id"]: i for i in completed["case_file"]["groups"]["facts"]["items"]}
+    assert "measurement-1" in by_id
+    assert by_id["measurement-1"]["excerpt"] == "Observed drawdown is 0.12"
+    assert by_id["measurement-1"].get("status") != "unavailable"
+    assert "supplied-fact" in by_id
+    assert by_id["supplied-fact"]["excerpt"] == "Approved weight is 0.4"
+    assert "facts:registry_entry:measurement-1" not in by_id
+
+    # 2. Legacy meeting record with a genuinely unresolved placeholder alongside explicit & supplied items
+    created_legacy, _ = meetings_mod.convene_persona_meeting(
+        store=store,
+        workflow_state=wf_state,
+        tenant_id=TENANT,
+        persona_directory={},
+        payload={
+            "meeting_type": "MT-1",
+            "topic": "Legacy migration topic",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": ["persona-alpha", "persona-risk-officer"],
+            "iso_week": "2026-W32",
+        },
+    )
+    legacy_mid = created_legacy["meeting_id"]
+    legacy_Items = [
+        {
+            "item_id": "legacy-member-1",
+            "group": "facts",
+            "kind": "evidence_ref",
+            "source_owner": "consultation",
+            "source_id": "legacy-member-1",
+            "excerpt": "Evidence legacy-member-1 for Legacy migration topic",
+            "subject_fields": {},
+        },
+        {
+            "item_id": "measurement-1",
+            "group": "facts",
+            "kind": "evidence_ref",
+            "source_owner": "consultation",
+            "source_id": "measurement-1",
+            "excerpt": "Observed drawdown is 0.12",
+            "subject_fields": {},
+        },
+        {
+            "item_id": "supplied-fact",
+            "group": "facts",
+            "kind": "supplied",
+            "source_owner": "persona",
+            "source_id": "supplied-fact",
+            "excerpt": "Approved weight is 0.4",
+            "subject_fields": {},
+        },
+    ]
+    created_legacy["case_file_items"] = legacy_Items
+    created_legacy["case_file"] = {"items": list(legacy_Items)}
+    store.put_meeting(created_legacy)
+
+    migrated = meetings_mod.execute_persona_meeting(
+        store=store,
+        meeting_id=legacy_mid,
+        tenant_id=TENANT,
+        provider=_SimpleProv(),
+    )
+    mig_by_id = {i["item_id"]: i for i in migrated["case_file"]["groups"]["facts"]["items"]}
+    assert "facts:registry_entry:legacy-member-1" in mig_by_id
+    assert "momentum" in mig_by_id["facts:registry_entry:legacy-member-1"]["excerpt"]
+    assert mig_by_id["measurement-1"]["excerpt"] == "Observed drawdown is 0.12"
+    assert mig_by_id["supplied-fact"]["excerpt"] == "Approved weight is 0.4"
+
+
+def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_total_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    reg_calls: list[str] = []
+
+    def _missing_owners(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path.startswith("/api/registry/entries/"):
+            reg_calls.append(path)
+            raise cf.OwnerUnavailable("http_404")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _missing_owners)
+    owners = cf.Owners(
+        registry=cf.OwnerEndpoint("http://registry"),
+        pool=cf.OwnerEndpoint("http://persona"),
+    )
+
+    # 1. 20 missing refs -> capped at 8 registry entry reads and <=8 fact items
+    case_20, items_20, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-20",
+        meeting_code="MT-1",
+        topic="Budget cap test 20 missing refs",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[f"missing-ref-{i}" for i in range(20)],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    assert len(reg_calls) == 8
+    assert len(case_20["groups"]["facts"]["items"]) <= 8
+    assert len(items_20) <= 8
+    assert case_20["groups"]["facts"]["truncated"] is True
+
+    # 2. Explicit excerpt x*20000 and oversized subject_fields -> clipped to <=400 chars and <=12000 total
+    case_huge, items_huge, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-huge",
+        meeting_code="MT-1",
+        topic="Budget cap test huge excerpt",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[
+            {
+                "item_id": "huge-explicit-1",
+                "excerpt": "x" * 20000,
+                "subject_fields": {"huge_field": "y" * 20000},
+            }
+        ],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file={
+            "groups": {
+                g: {
+                    "items": [
+                        {
+                            "item_id": f"{g}-supplied-{i}",
+                            "group": g,
+                            "excerpt": f"{g}-{i}-" + ("z" * 1000),
+                            "subject_fields": {"note": "w" * 1000},
+                        }
+                        for i in range(10)
+                    ]
+                }
+                for g in cf.GROUPS
+            }
+        },
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    for g_name, grp in case_huge["groups"].items():
+        assert len(grp["items"]) <= 8, g_name
+        for it in grp["items"]:
+            assert len(it["excerpt"]) <= 400
+            assert len(json.dumps(it["subject_fields"])) <= 400
+    total_chars = sum(
+        cf._item_char_size(it)
+        for grp in case_huge["groups"].values()
+        for it in grp["items"]
+    )
+    assert total_chars <= 12000
+    assert len(items_huge) <= 32

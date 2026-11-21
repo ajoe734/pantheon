@@ -286,3 +286,50 @@ class CaseFileTests(unittest.TestCase):
             {"owner": f"telemetry:virtual_book:{ref}", "reason": "zero_observations:insufficient_or_constant_returns"},
             facts["unavailable"],
         )
+
+    def test_bounded_owner_reads_and_structured_subject_fields(self):
+        calls = []
+
+        def tracking_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            calls.append(path)
+            if path.startswith("/api/registry/entries/"):
+                raise cf.OwnerUnavailable("http_404")
+            if "owner-binding" in path:
+                return {"status": "done", "gate_verdict": {"passed": True}}
+            if path.endswith("/strategy-pool"):
+                return {
+                    "pool_version": 4,
+                    "change_reason": "z" * 1000,
+                    "members": [{"artifact_ref": f"m-{i}", "stage": "active", "risk_weight": 0.1} for i in range(20)],
+                }
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {"hits": []}
+            if path.startswith("/api/search"):
+                return {"retrieval_mode": "hybrid", "results": []}
+            return []
+
+        many_sub = subject(
+            member_artifact_refs=tuple(f"reg-{i}" for i in range(20)),
+            backtest_run_refs=tuple(f"bt-{i}" for i in range(20)),
+            strategy_families=tuple(f"fam-{i}" for i in range(20)),
+        )
+        with mock.patch.object(cf, "http_json", tracking_http):
+            out = cf.compose_case_file(many_sub, OP, OWNERS)
+        jsonschema.validate(out, SCHEMA)
+        reg_reads = [p for p in calls if p.startswith("/api/registry/entries/")]
+        bt_reads = [p for p in calls if "owner-binding" in p]
+        fam_reads = [p for p in calls if "/api/registry/strategies/" in p]
+        self.assertEqual(len(reg_reads), 8)
+        self.assertEqual(len(bt_reads), 8)
+        self.assertEqual(len(fam_reads), 8)
+        facts = out["groups"]["facts"]
+        self.assertTrue(facts["truncated"])
+        self.assertLessEqual(len(facts["items"]), 8)
+        for grp in out["groups"].values():
+            for item in grp["items"]:
+                self.assertLessEqual(len(item["excerpt"]), 400)
+                self.assertLessEqual(len(json.dumps(item["subject_fields"])), 400)

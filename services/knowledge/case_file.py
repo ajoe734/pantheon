@@ -164,6 +164,70 @@ def _clip(text: Any, limit: int) -> str:
     return s if len(s) <= limit else s[: max(0, limit - 1)] + "…"
 
 
+def _bound_subject_value(val: Any, limit: int, max_items: int, depth: int = 0) -> Any:
+    if isinstance(val, (int, float, bool)):
+        return val
+    if isinstance(val, str):
+        return _clip(val, limit)
+    if depth >= 2:
+        return _clip(str(val), limit)
+    if isinstance(val, (list, tuple)):
+        out_list: list[Any] = []
+        for x in list(val)[:max_items]:
+            if x is None:
+                continue
+            nx = _bound_subject_value(x, limit, max_items, depth + 1)
+            if len(json.dumps([*out_list, nx], sort_keys=True, default=str)) <= limit:
+                out_list.append(nx)
+            else:
+                break
+        return out_list
+    if isinstance(val, Mapping):
+        nested: dict[str, Any] = {}
+        for mk, mv in val.items():
+            if mv is None:
+                continue
+            nk = _clip(str(mk), min(64, limit))
+            nv = _bound_subject_value(mv, limit, max_items, depth + 1)
+            cand = {**nested, nk: nv}
+            if len(json.dumps(cand, sort_keys=True, default=str)) <= limit:
+                nested = cand
+        return nested
+    return _clip(str(val), limit)
+
+
+def _bound_subject_fields(subject_fields: Any, budgets: Budgets) -> dict[str, Any]:
+    if not isinstance(subject_fields, Mapping) or not subject_fields:
+        return {}
+    limit = max(2, int(budgets.max_excerpt_chars))
+    out: dict[str, Any] = {}
+    for raw_k, raw_v in subject_fields.items():
+        if raw_v is None:
+            continue
+        k = _clip(str(raw_k), min(64, limit))
+        v = _bound_subject_value(raw_v, limit, budgets.max_items_per_group)
+        candidate = {**out, k: v}
+        encoded = json.dumps(candidate, sort_keys=True, default=str)
+        if len(encoded) <= limit:
+            out = candidate
+        elif isinstance(v, str):
+            overhead = len(json.dumps({**out, k: "…"}, sort_keys=True, default=str))
+            avail = limit - overhead + 1
+            if avail > 1:
+                out[k] = _clip(v, avail)
+            break
+    return out
+
+
+def _item_char_size(item: Mapping[str, Any]) -> int:
+    excerpt_len = len(str(item.get("excerpt") or ""))
+    sf = item.get("subject_fields")
+    if not sf:
+        return excerpt_len
+    sf_json = json.dumps(sf, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return max(excerpt_len, max(0, len(sf_json) - 2))
+
+
 def _item(group: str, kind: str, owner: str, source_id: str, excerpt: Any, *,
           score: Optional[float], mode: str, budgets: Budgets,
           subject_fields: Optional[dict] = None, **extra: Any) -> dict:
@@ -172,20 +236,20 @@ def _item(group: str, kind: str, owner: str, source_id: str, excerpt: Any, *,
         "group": group, "kind": kind, "source_owner": owner, "source_id": str(source_id),
         "excerpt": _clip(excerpt, budgets.max_excerpt_chars),
         "retrieval_score": score, "retrieval_mode": mode,
-        "subject_fields": subject_fields or {}, **extra,
+        "subject_fields": _bound_subject_fields(subject_fields, budgets), **extra,
     }
 
 
 class _Group:
     def __init__(self, name: str):
-        self.name, self.items, self.unavailable = name, [], []
+        self.name, self.items, self.unavailable, self.truncated = name, [], [], False
 
     def missing(self, owner: str, reason: str) -> None:
         self.unavailable.append({"owner": owner, "reason": reason})
 
     def render(self, budgets: Budgets) -> dict:
         items = self.items[: budgets.max_items_per_group]
-        truncated = len(self.items) > len(items)
+        truncated = self.truncated or len(self.items) > len(items)
         if self.unavailable and not items:
             status = "unavailable"
         elif self.unavailable:
@@ -333,9 +397,9 @@ def _summarize_registry_entry(raw: Any, budgets: Budgets) -> tuple[str, dict, di
         subject_fields["strategy_family"] = strategy_family
     if approved_scope:
         subject_fields["approved_scope"] = approved_scope
-    if clean_params:
-        subject_fields["parameters"] = dict(clean_params)
-    return s, subject_fields, dict(e)
+    if isinstance(summary.get("parameters"), Mapping) and summary["parameters"]:
+        subject_fields["parameters"] = dict(summary["parameters"])
+    return s, _bound_subject_fields(subject_fields, budgets), dict(e)
 
 
 def _summarize_strategy_pool(pool: Any, budgets: Budgets) -> tuple[str, dict]:
@@ -414,12 +478,18 @@ def _summarize_strategy_pool(pool: Any, budgets: Budgets) -> tuple[str, dict]:
         out["pool_health"] = health_summary
     if pool.get("change_reason"):
         out["change_reason"] = pool.get("change_reason")
-    subj_fields = dict(out)
+    subj_fields: dict[str, Any] = {}
+    if pool.get("pool_version") is not None:
+        subj_fields["pool_version"] = pool.get("pool_version")
+    if members:
+        subj_fields["members"] = members
+    if isinstance(health_summary, Mapping) and health_summary.get("unavailable_reason"):
+        subj_fields["unavailable_reason"] = health_summary["unavailable_reason"]
     s = json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str)
     if len(s) > budgets.max_excerpt_chars and "change_reason" in out:
         out.pop("change_reason", None)
         s = json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str)
-    return s, subj_fields
+    return s, _bound_subject_fields(subj_fields, budgets)
 
 
 def _summarize_virtual_book(b: Any, mid: Any, budgets: Budgets) -> tuple[str, Optional[str], dict]:
@@ -453,21 +523,42 @@ def _summarize_virtual_book(b: Any, mid: Any, budgets: Budgets) -> tuple[str, Op
             val = net.get(k) if k in net else b.get(k)
             if k in b or k in net:
                 out[k] = val
-        return json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str), reason, dict(out)
+        subj = {
+            "member_id": str(mid),
+            "observation_count": 0 if obs_count is None else int(obs_count),
+            "status": "unavailable",
+            "unavailable_reason": reason,
+        }
+        return (
+            json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str),
+            reason,
+            _bound_subject_fields(subj, budgets),
+        )
+    subj_ok: dict[str, Any] = {"member_id": str(mid)}
+    if obs_count is not None:
+        subj_ok["observation_count"] = int(obs_count)
     bulky = {"return_series", "returns", "fills", "fill_gaps", "dates", "underlyings", "envelope_checksum", "checksum"}
     if any(k in b for k in bulky):
         compact = {k: v for k, v in b.items() if k not in bulky}
         if isinstance(compact.get("net_of_costs"), Mapping):
             compact["net_of_costs"] = {k: v for k, v in compact["net_of_costs"].items() if k not in bulky}
-        return json.dumps(compact, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str), None, dict(compact)
-    return _clip(b, budgets.max_excerpt_chars), None, dict(b)
+        return (
+            json.dumps(compact, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str),
+            None,
+            _bound_subject_fields(subj_ok, budgets),
+        )
+    return _clip(b, budgets.max_excerpt_chars), None, _bound_subject_fields(subj_ok, budgets)
 
 
 def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Subject:
     tenant = subject.tenant_id
     q = urllib.parse.quote
     resolved_entries: list[dict] = []
-    for ref in subject.member_artifact_refs:
+    all_member_refs = tuple(dict.fromkeys(subject.member_artifact_refs))
+    if len(all_member_refs) > budgets.max_items_per_group:
+        g.truncated = True
+    member_refs = all_member_refs[: budgets.max_items_per_group]
+    for ref in member_refs:
         try:
             raw = http_json(owners.registry, f"/api/registry/entries/{q(ref, safe='')}", tenant_id=tenant)
             excerpt, subj_fields, e = _summarize_registry_entry(raw, budgets)
@@ -477,7 +568,11 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
                 subject_fields=subj_fields))
         except OwnerUnavailable as exc:
             g.missing(f"registry:{ref}", exc.reason)
-    for run in subject.backtest_run_refs:
+    all_backtest_refs = tuple(dict.fromkeys(subject.backtest_run_refs))
+    if len(all_backtest_refs) > budgets.max_items_per_group:
+        g.truncated = True
+    backtest_refs = all_backtest_refs[: budgets.max_items_per_group]
+    for run in backtest_refs:
         try:
             r = http_json(owners.research, f"/api/research-orchestrator/backtest-runs/{q(run, safe='')}/owner-binding",
                           tenant_id=tenant)
@@ -543,7 +638,7 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
             if len(rows) != 1:
                 g.missing("telemetry", "own_paper_telemetry_missing_or_ambiguous")
             else:
-                wanted = set(subject.member_artifact_refs)
+                wanted = set(member_refs)
                 seen_books: set[str] = set()
                 for b in rows[0].get("member_virtual_books") or []:
                     mid = b.get("member_id") or b.get("artifact_id")
@@ -558,7 +653,7 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
                                          subject_fields=book_subj))
                     if unavail_reason:
                         g.missing(f"telemetry:virtual_book:{mid}", unavail_reason)
-                for ref in subject.member_artifact_refs:
+                for ref in member_refs:
                     if ref not in seen_books:
                         g.missing(f"telemetry:virtual_book:{ref}", "virtual_book_source_missing")
         except OwnerUnavailable as exc:
@@ -657,7 +752,10 @@ def _lessons(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
 
 def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
     tenant, q = subject.tenant_id, urllib.parse.quote
-    for family in dict.fromkeys((subject.strategy_family, *subject.strategy_families)):
+    all_families = tuple(dict.fromkeys(f for f in (subject.strategy_family, *subject.strategy_families) if f))
+    if len(all_families) > budgets.max_items_per_group:
+        g.truncated = True
+    for family in all_families[: budgets.max_items_per_group]:
         try:
             entries = http_json(owners.registry, f"/api/registry/strategies/{q(family, safe='')}/entries",
                                 tenant_id=tenant) or []
@@ -758,9 +856,12 @@ def compose_case_file(subject: Subject, caller: Caller, owners: Owners, *,
     rendered = {n: g.render(budgets) for n, g in groups.items()}
     # total character budget: trim tail items from the largest group until it fits
     def size() -> int:
-        return sum(len(i["excerpt"]) for g in rendered.values() for i in g["items"])
+        return sum(_item_char_size(i) for g in rendered.values() for i in g["items"])
     while size() > budgets.max_total_chars:
-        biggest = max((g for g in rendered.values() if g["items"]), key=lambda g: len(g["items"]))
+        non_empty = [g for g in rendered.values() if g["items"]]
+        if not non_empty:
+            break
+        biggest = max(non_empty, key=lambda g: len(g["items"]))
         biggest["items"].pop()
         biggest["truncated"] = True
     for g in rendered.values():  # re-derive status after trimming
