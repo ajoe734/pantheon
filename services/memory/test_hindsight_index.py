@@ -873,6 +873,11 @@ def test_catch_up_mirrors_handles_backlog_above_256_with_truthful_counts_and_bou
         def __init__(self):
             super().__init__()
             self.release = threading.Event()
+            self.lookup_calls = 0
+
+        def memory_units(self, bank, document_id):
+            self.lookup_calls += 1
+            return super().memory_units(bank, document_id)
 
         def retain(self, bank, items):
             assert self.release.wait(5), "probe release timeout"
@@ -884,16 +889,58 @@ def test_catch_up_mirrors_handles_backlog_above_256_with_truthful_counts_and_bou
     report = hs.catch_up_mirrors(Store(entries), Store([]), client=client)
 
     # Truthful admission counts while first worker is held: queue admits at most 1 in-flight + 256 pending,
-    # and defers the remaining entries to bounded canonical rescan continuation without dropping them.
+    # and defers the remaining entries to bounded canonical rescan continuation without querying remote
+    # memory_units for deferred entries before the queue has capacity.
     assert report["scheduled"] <= hs.MAX_PENDING_MIRRORS + 1
     assert report["deferred"] >= 300 - (hs.MAX_PENDING_MIRRORS + 1)
     assert report["scheduled"] + report["deferred"] == 300
+    assert client.lookup_calls == report["scheduled"]
 
     client.release.set()
     assert hs.flush_mirrors(timeout=10)
     assert len(client.retained) == 300
     assert hs.pending_resync_count() == 0
     assert hs.DIAGNOSTICS.snapshot()["counts"]["failed"] == 0
+
+
+def test_catchup_archive_and_supersede_race_during_remote_probe_never_resurrects_inactive_entry():
+    store = InstitutionalMemoryStore()
+    archived_entry = store.create(inst(mid("review-catchup-archive-race")))
+    superseded_entry = store.create(inst(mid("review-catchup-supersede-old")))
+    replacement_entry = store.create(inst(mid("review-catchup-supersede-new")))
+    assert hs.flush_mirrors(timeout=3)
+
+    class MutateDuringLookup(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.mutated: set[str] = set()
+
+        def memory_units(self, bank, doc_id):
+            if doc_id == archived_entry.entry_id and doc_id not in self.mutated:
+                self.mutated.add(doc_id)
+                store.archive(doc_id, reason="retired_during_catchup")
+                assert hs.flush_mirrors(timeout=3)
+            elif doc_id == superseded_entry.entry_id and doc_id not in self.mutated:
+                self.mutated.add(doc_id)
+                store.supersede(doc_id, replacement_entry.entry_id)
+                assert hs.flush_mirrors(timeout=3)
+            return super().memory_units(bank, doc_id)
+
+    client = MutateDuringLookup()
+    hs.set_hindsight_client(client)
+    report = hs.catch_up_mirrors(store, None, client=client)
+    assert hs.flush_mirrors(timeout=3)
+
+    assert not store.require(archived_entry.entry_id).is_active
+    assert not store.require(superseded_entry.entry_id).is_active
+    assert store.require(replacement_entry.entry_id).is_active
+    assert report["scheduled"] == 1
+    assert report["inactive_skipped"] == 2
+    assert client.memory_units(hs.bank_for(archived_entry), archived_entry.entry_id) == []
+    assert client.memory_units(hs.bank_for(superseded_entry), superseded_entry.entry_id) == []
+    assert len(client.memory_units(hs.bank_for(replacement_entry), replacement_entry.entry_id)) == 1
+    assert ("retain", archived_entry.entry_id) not in client.events
+    assert ("retain", superseded_entry.entry_id) not in client.events
 
 
 def test_resync_pending_mirrors_routes_through_shared_worker_limit_without_overlapping_passes():

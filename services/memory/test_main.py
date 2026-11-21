@@ -1313,6 +1313,83 @@ def test_startup_catch_up_schedules_unmirrored_active_entries_without_deleting_b
         hs.set_hindsight_client(None)
 
 
+def test_lifespan_yields_and_allows_health_and_canonical_writes_when_hindsight_is_slow_or_unavailable(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import FakeClient, inst, mid
+
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst-slow-startup.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-slow-startup.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    hs.stop_resync_timer()
+    hs.flush_mirrors()
+    hs.DIAGNOSTICS.reset()
+    hs.set_hindsight_client(None)
+
+    # Pre-populate one canonical entry before startup.
+    main._store().create(inst(mid("review-slow-startup")))
+    assert hs.flush_mirrors()
+
+    class HeldLookup(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def memory_units(self, bank, doc_id):
+            self.entered.set()
+            assert self.release.wait(5), "held lookup release timeout"
+            return []
+
+    client = HeldLookup()
+    hs.set_hindsight_client(client)
+    hs.DIAGNOSTICS.reset()
+    startup_yielded = threading.Event()
+    write_completed = threading.Event()
+    errors: list[Exception] = []
+
+    def run_lifespan():
+        async def _inner():
+            async with main.memory_lifespan(main.app):
+                startup_yielded.set()
+                health_res = await main.memory_health()
+                assert health_res["status"] == "ok"
+                saved = main._store().create(inst(mid("write-during-held-startup")))
+                assert saved.entry_id == mid("write-during-held-startup")
+                write_completed.set()
+
+        try:
+            asyncio.run(_inner())
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_lifespan)
+    thread.start()
+    try:
+        assert client.entered.wait(2)
+        assert startup_yielded.wait(0.25)
+        assert write_completed.wait(0.5)
+    finally:
+        client.release.set()
+        thread.join(3)
+    try:
+        assert not thread.is_alive()
+        assert not errors
+        assert hs.flush_mirrors(timeout=5)
+        assert {items[0]["document_id"] for _bank, items in client.retained} == {
+            mid("review-slow-startup"),
+            mid("write-during-held-startup"),
+        }
+    finally:
+        hs.stop_resync_timer()
+        hs.flush_mirrors()
+        hs.DIAGNOSTICS.reset()
+        hs.set_hindsight_client(None)
+
+
 def test_meeting_close_writeback_burst_converges_against_max_concurrency_two_bridge(memory_client, monkeypatch):
     from services.memory import hindsight_index as hs
     from services.memory.test_hindsight_index import FakeClient

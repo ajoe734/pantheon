@@ -249,7 +249,7 @@ def _authenticate_memory_request(
         raise HTTPException(status_code=401, detail="Unauthorized: a verified operator JWT is required")
     return ctx
 
-def startup_hindsight_catch_up() -> Dict[str, Any]:
+def startup_hindsight_catch_up(*, background: bool = False) -> Dict[str, Any]:
     """Non-destructive startup catch-up when Hindsight is configured (never deletes banks)."""
     client = hs.get_hindsight_client()
     if client is None:
@@ -262,12 +262,31 @@ def startup_hindsight_catch_up() -> Dict[str, Any]:
             "inactive_skipped": 0,
             "pending_resync_count": hs.pending_resync_count(),
         }
+    if background:
+        store_fn = _store
+        persona_store_fn = _persona_store
+        inst_path = _store_path()
+        persona_path = _persona_store_path()
+
+        def _lazy_store() -> Any:
+            if store_fn is _default_store:
+                inst_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_institutional_memory_store(inst_path)
+            return store_fn()
+
+        def _lazy_persona_store() -> Any:
+            if persona_store_fn is _default_persona_store:
+                persona_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_persona_memory_store(persona_path)
+            return persona_store_fn()
+
+        return hs.schedule_catch_up_mirrors(_lazy_store, _lazy_persona_store, client=client)
     return hs.catch_up_mirrors(_store(), _persona_store(), client=client)
 
 
 @asynccontextmanager
 async def memory_lifespan(_: FastAPI):
-    startup_hindsight_catch_up()
+    startup_hindsight_catch_up(background=True)
     try:
         yield
     finally:
@@ -314,10 +333,16 @@ def _store() -> InstitutionalMemoryStore:
     return build_institutional_memory_store(path)
 
 
+_default_store = _store
+
+
 def _persona_store() -> PersonaMemoryStore:
     path = _persona_store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     return build_persona_memory_store(path)
+
+
+_default_persona_store = _persona_store
 
 
 def _candidate_store_path() -> Path:

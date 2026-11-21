@@ -447,8 +447,9 @@ _RESYNC_IN_PROGRESS = False
 _RESYNC_TIMER: Optional[threading.Timer] = None
 _RESYNC_FAILURE_STREAK = 0
 _LAST_RESYNC_AT = 0.0
-_CATCHUP_CONTINUATION: Optional[Tuple[Any, Any, Any, set[Tuple[str, str]]]] = None
+_CATCHUP_CONTINUATION: Optional[Tuple[Any, ...]] = None
 _CATCHUP_RESCANNING = False
+_CATCHUP_THREAD: Optional[threading.Thread] = None
 _ACTIVE_WORKERS = 0
 _REBUILDING = 0
 _REBUILD_LOCK = threading.Lock()
@@ -590,7 +591,7 @@ class MirrorDiagnostics:
         self.reset()
 
     def reset(self) -> None:
-        global _LAST_RESYNC_AT, _CATCHUP_CONTINUATION, _CATCHUP_RESCANNING
+        global _LAST_RESYNC_AT, _CATCHUP_CONTINUATION, _CATCHUP_RESCANNING, _CATCHUP_THREAD
         with self._lock:
             self.counts = {"retained": 0, "invalidated": 0, "failed": 0, "anchor_none": 0}
             self.failures: deque = deque(maxlen=FAILURE_LOG_LIMIT)
@@ -604,6 +605,7 @@ class MirrorDiagnostics:
             _RESYNC_OUTCOMES.clear()
             _CATCHUP_CONTINUATION = None
             _CATCHUP_RESCANNING = False
+            _CATCHUP_THREAD = None
             _LAST_RESYNC_AT = 0.0
             _cancel_resync_timer_unlocked()
 
@@ -732,8 +734,6 @@ def _ensure_workers_unlocked() -> List[Any]:
     if _REBUILDING:
         return []
     unclaimed = sum(1 for k, q in _PENDING.items() if k not in _IN_FLIGHT and q)
-    if unclaimed == 0 and _CATCHUP_CONTINUATION is not None and not _CATCHUP_RESCANNING:
-        unclaimed = 1
     free_workers = max(0, _ACTIVE_WORKERS - len(_IN_FLIGHT))
     needed = min(unclaimed - free_workers, _configured_mirror_workers() - _ACTIVE_WORKERS)
     for _ in range(max(0, needed)):
@@ -750,6 +750,25 @@ def _ensure_workers_unlocked() -> List[Any]:
                 return failed
             break
     return []
+
+
+def _ensure_catchup_worker_unlocked() -> None:
+    global _CATCHUP_RESCANNING, _CATCHUP_THREAD, _CATCHUP_CONTINUATION
+    if _REBUILDING or _CATCHUP_RESCANNING or _CATCHUP_CONTINUATION is None:
+        return
+    is_continuation = bool(_CATCHUP_CONTINUATION[4]) if len(_CATCHUP_CONTINUATION) > 4 else True
+    if is_continuation and (_PENDING or _IN_FLIGHT):
+        return
+    _CATCHUP_RESCANNING = True
+    try:
+        thread = threading.Thread(target=_catchup_worker_loop, name="memory-catchup", daemon=True)
+        _CATCHUP_THREAD = thread
+        thread.start()
+    except Exception:
+        _CATCHUP_RESCANNING = False
+        _CATCHUP_THREAD = None
+        _CATCHUP_CONTINUATION = None
+        _IDLE.notify_all()
 
 
 def schedule_mirror(entry: Any) -> bool:
@@ -857,12 +876,66 @@ def _is_entry_mirrored(client: Any, bank: str, doc_id: str) -> bool:
     return False
 
 
+def _has_tombstone_unlocked(key: Tuple[str, str]) -> bool:
+    if key in _TOMBSTONES or key in _INVALIDATED:
+        return True
+    if any(not is_indexable(item) for item in _PENDING.get(key, ())):
+        return True
+    existing_resync = _PENDING_RESYNC.get(key)
+    return existing_resync is not None and not is_indexable(existing_resync)
+
+
+def _record_tombstone_unlocked(key: Tuple[str, str], entry: Any) -> None:
+    _TOMBSTONES[key] = entry
+    _bound_map_unlocked(_TOMBSTONES)
+    existing_resync = _PENDING_RESYNC.get(key)
+    if existing_resync is not None and is_indexable(existing_resync):
+        _PENDING_RESYNC.pop(key, None)
+        _PENDING_RESYNC_BYTES.pop(key, None)
+        if not _PENDING_RESYNC:
+            _cancel_resync_timer_unlocked()
+
+
+def _revalidate_canonical_entry(store: Any, doc_id: str, snapshot_entry: Any) -> Optional[Any]:
+    path = getattr(store, "_path", None)
+    load_fn = getattr(store, "_load", None)
+    lock = getattr(store, "_lock", None)
+    if path is not None and callable(load_fn):
+        try:
+            if path.exists():
+                if lock is not None:
+                    with lock:
+                        load_fn(path)
+                else:
+                    load_fn(path)
+        except Exception:
+            pass
+    get_fn = getattr(store, "get", None)
+    if callable(get_fn):
+        try:
+            return get_fn(doc_id)
+        except Exception:
+            return snapshot_entry
+    list_fn = getattr(store, "list", None)
+    if callable(list_fn):
+        try:
+            for item in list_fn(active_only=False):
+                if canonical_id(item) == doc_id:
+                    return item
+            return None
+        except Exception:
+            return snapshot_entry
+    return snapshot_entry
+
+
 def _try_schedule_catchup_entry(entry: Any) -> Tuple[str, List[Any]]:
     key = (bank_for(entry), canonical_id(entry))
     with _IDLE:
+        if _has_tombstone_unlocked(key):
+            return "tombstoned", []
         if key in _IN_FLIGHT or any(is_indexable(item) for item in _PENDING.get(key, ())):
             return "already_queued", []
-        if not _enqueue_entry_unlocked(key, entry):
+        if not _enqueue_entry_unlocked(key, entry, from_resync=True):
             return "queue_full", []
         return "scheduled", _ensure_workers_unlocked()
 
@@ -876,11 +949,13 @@ def _scan_catchup_batch(
     is_continuation: bool = False,
 ) -> dict:
     global _CATCHUP_CONTINUATION
+    resolved_institutional = institutional_store() if callable(institutional_store) else institutional_store
+    resolved_persona = persona_store() if callable(persona_store) else persona_store
     scheduled = 0
     deferred = 0
     already_mirrored = 0
     inactive_skipped = 0
-    for store in (institutional_store, persona_store):
+    for store in (resolved_institutional, resolved_persona):
         if store is None:
             continue
         if not is_continuation:
@@ -901,30 +976,40 @@ def _scan_catchup_batch(
             if not is_indexable(entry):
                 inactive_skipped += 1
                 with _IDLE:
-                    _TOMBSTONES[key] = entry
-                    _bound_map_unlocked(_TOMBSTONES)
-                    existing_resync = _PENDING_RESYNC.get(key)
-                    if existing_resync is not None and is_indexable(existing_resync):
-                        _PENDING_RESYNC.pop(key, None)
-                        _PENDING_RESYNC_BYTES.pop(key, None)
-                        if not _PENDING_RESYNC:
-                            _cancel_resync_timer_unlocked()
+                    _record_tombstone_unlocked(key, entry)
                 continue
             if is_continuation and key in attempted_keys:
                 continue
             with _IDLE:
+                if _has_tombstone_unlocked(key):
+                    inactive_skipped += 1
+                    continue
                 already_queued = (
                     key in _IN_FLIGHT
                     or any(is_indexable(item) for item in _PENDING.get(key, ()))
                     or (is_continuation and key in _PENDING_RESYNC)
                 )
-            if already_queued or _is_entry_mirrored(resolved_client, bank, doc_id):
+                queue_full = (
+                    deferred > 0
+                    or (_PENDING.get(key) is None and _pending_keys_unlocked() >= max(1, MAX_PENDING_MIRRORS))
+                )
+            if already_queued:
                 already_mirrored += 1
                 continue
-            if deferred > 0:
+            if queue_full:
                 deferred += 1
                 continue
-            outcome, failed_to_start = _try_schedule_catchup_entry(entry)
+            if _is_entry_mirrored(resolved_client, bank, doc_id):
+                already_mirrored += 1
+                continue
+            current = _revalidate_canonical_entry(store, doc_id, entry)
+            if current is None or not is_indexable(current):
+                inactive_skipped += 1
+                if current is not None:
+                    with _IDLE:
+                        _record_tombstone_unlocked(key, current)
+                continue
+            outcome, failed_to_start = _try_schedule_catchup_entry(current)
             for item in failed_to_start:
                 action = "retain" if is_indexable(item) else "invalidate"
                 if (resolved_client or get_hindsight_client()) is not None:
@@ -935,14 +1020,17 @@ def _scan_catchup_batch(
                 attempted_keys.add(key)
             elif outcome == "already_queued":
                 already_mirrored += 1
+            elif outcome == "tombstoned":
+                inactive_skipped += 1
             else:
                 deferred += 1
     failed_continuation_start: List[Any] = []
     with _IDLE:
         if deferred > 0:
-            _CATCHUP_CONTINUATION = (institutional_store, persona_store, resolved_client, attempted_keys)
+            _CATCHUP_CONTINUATION = (resolved_institutional, resolved_persona, resolved_client, attempted_keys, True)
             failed_continuation_start = _ensure_workers_unlocked()
-        else:
+            _ensure_catchup_worker_unlocked()
+        elif _CATCHUP_CONTINUATION is not None and bool(_CATCHUP_CONTINUATION[4] if len(_CATCHUP_CONTINUATION) > 4 else True):
             _CATCHUP_CONTINUATION = None
     for item in failed_continuation_start:
         action = "retain" if is_indexable(item) else "invalidate"
@@ -955,6 +1043,33 @@ def _scan_catchup_batch(
         "deferred": deferred,
         "already_mirrored": already_mirrored,
         "inactive_skipped": inactive_skipped,
+        "pending_resync_count": pending_resync_count(),
+    }
+
+
+def schedule_catch_up_mirrors(institutional_store: Any, persona_store: Any, *, client: Any = None) -> dict:
+    """Schedule an idempotent non-destructive startup catch-up scan in bounded background work."""
+    global _CATCHUP_CONTINUATION
+    resolved_client = client or get_hindsight_client()
+    if resolved_client is None:
+        return {
+            "status": "skipped",
+            "reason": "hindsight_unconfigured",
+            "scheduled": 0,
+            "deferred": 0,
+            "already_mirrored": 0,
+            "inactive_skipped": 0,
+            "pending_resync_count": pending_resync_count(),
+        }
+    with _IDLE:
+        _CATCHUP_CONTINUATION = (institutional_store, persona_store, resolved_client, set(), False)
+        _ensure_catchup_worker_unlocked()
+    return {
+        "status": "scheduled",
+        "scheduled": 0,
+        "deferred": 0,
+        "already_mirrored": 0,
+        "inactive_skipped": 0,
         "pending_resync_count": pending_resync_count(),
     }
 
@@ -988,10 +1103,46 @@ resync_missing_mirrors = catch_up_mirrors
 catch_up_unmirrored = catch_up_mirrors
 
 
+def _catchup_worker_loop() -> None:
+    global _CATCHUP_RESCANNING, _CATCHUP_THREAD, _CATCHUP_CONTINUATION
+    current_thread = threading.current_thread()
+    try:
+        while True:
+            with _IDLE:
+                if _REBUILDING or _CATCHUP_CONTINUATION is None:
+                    return
+                is_cont = bool(_CATCHUP_CONTINUATION[4]) if len(_CATCHUP_CONTINUATION) > 4 else True
+                if is_cont and (_PENDING or _IN_FLIGHT):
+                    return
+                continuation = _CATCHUP_CONTINUATION
+                _CATCHUP_CONTINUATION = None
+            try:
+                istore, pstore, cclient, attempted = continuation[:4]
+                is_cont = bool(continuation[4]) if len(continuation) > 4 else True
+                _scan_catchup_batch(
+                    istore,
+                    pstore,
+                    cclient,
+                    attempted_keys=attempted,
+                    is_continuation=is_cont,
+                )
+            except Exception:
+                with _IDLE:
+                    _CATCHUP_CONTINUATION = None
+                return
+    finally:
+        with _IDLE:
+            if _CATCHUP_THREAD is current_thread or _CATCHUP_THREAD is None:
+                _CATCHUP_RESCANNING = False
+                _CATCHUP_THREAD = None
+            _ensure_workers_unlocked()
+            _ensure_catchup_worker_unlocked()
+            _IDLE.notify_all()
+
+
 def _worker_loop() -> None:
-    global _ACTIVE_WORKERS, _CATCHUP_RESCANNING, _CATCHUP_CONTINUATION
+    global _ACTIVE_WORKERS
     while True:
-        continuation = None
         with _IDLE:
             if _REBUILDING:
                 _ACTIVE_WORKERS -= 1
@@ -1000,33 +1151,12 @@ def _worker_loop() -> None:
             key = next((k for k, q in _PENDING.items() if k not in _IN_FLIGHT and q), None)
             if key is not None:
                 _IN_FLIGHT.add(key)
-            elif _CATCHUP_CONTINUATION is not None and not _CATCHUP_RESCANNING:
-                _CATCHUP_RESCANNING = True
-                continuation = _CATCHUP_CONTINUATION
             else:
                 _ACTIVE_WORKERS -= 1
+                _ensure_catchup_worker_unlocked()
                 _IDLE.notify_all()
                 return
-        if key is not None:
-            _drain(key)
-        elif continuation is not None:
-            try:
-                istore, pstore, cclient, attempted = continuation
-                _scan_catchup_batch(
-                    istore,
-                    pstore,
-                    cclient,
-                    attempted_keys=attempted,
-                    is_continuation=True,
-                )
-            except Exception:
-                with _IDLE:
-                    _CATCHUP_CONTINUATION = None
-            finally:
-                with _IDLE:
-                    _CATCHUP_RESCANNING = False
-                    _ensure_workers_unlocked()
-                    _IDLE.notify_all()
+        _drain(key)
 
 
 def _drain(key: Tuple[str, str]) -> None:
@@ -1073,14 +1203,25 @@ def _drain(key: Tuple[str, str]) -> None:
 
 def _wait_drained(timeout: float = DEFAULT_FLUSH_TIMEOUT_SECONDS) -> bool:
     deadline = time.monotonic() + timeout
+    current_thread = threading.current_thread()
     with _IDLE:
+        on_catchup_thread = current_thread is _CATCHUP_THREAD
         _ensure_workers_unlocked()
-        while _PENDING or _IN_FLIGHT or _CATCHUP_CONTINUATION is not None or _CATCHUP_RESCANNING:
+        if not on_catchup_thread:
+            _ensure_catchup_worker_unlocked()
+        while (
+            _PENDING
+            or _IN_FLIGHT
+            or (not on_catchup_thread and (_CATCHUP_CONTINUATION is not None or _CATCHUP_RESCANNING))
+        ):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
             _IDLE.wait(remaining)
+            on_catchup_thread = current_thread is _CATCHUP_THREAD
             _ensure_workers_unlocked()
+            if not on_catchup_thread:
+                _ensure_catchup_worker_unlocked()
     return True
 
 
@@ -1116,11 +1257,12 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
         deadline = time.monotonic() + DEFAULT_FLUSH_TIMEOUT_SECONDS
         with _IDLE:
             _REBUILDING += 1
-            while _IN_FLIGHT:
+            while _IN_FLIGHT or _CATCHUP_RESCANNING:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     _REBUILDING -= 1
                     _ensure_workers_unlocked()
+                    _ensure_catchup_worker_unlocked()
                     _IDLE.notify_all()
                     report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
                     return report
@@ -1180,9 +1322,10 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
             failed_to_start: List[Any] = []
             with _IDLE:
                 _REBUILDING -= 1
-                has_pending = bool(_PENDING or _IN_FLIGHT)
+                has_pending = bool(_PENDING or _IN_FLIGHT or _CATCHUP_CONTINUATION is not None or _CATCHUP_RESCANNING)
                 if not _REBUILDING:
                     failed_to_start = _ensure_workers_unlocked()
+                    _ensure_catchup_worker_unlocked()
                 _IDLE.notify_all()
             for item in failed_to_start:
                 action = "retain" if is_indexable(item) else "invalidate"
