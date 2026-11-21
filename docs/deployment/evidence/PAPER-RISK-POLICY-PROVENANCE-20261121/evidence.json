@@ -91,5 +91,35 @@
     "services/capital/risk_policy.py": "0f38cbebf00ea5ca1a7fafc8ec291d1a2df0af28ba2c97e52c228e7a07948959",
     "services/control-plane/bff/persona_provisioning_coordinator.py": "c4f62bd31190dc923583365b8c5771a8e8b26b2d9ef4ebb12bd7678068b923ef",
     "services/control-plane/bff/personas/service.py": "f2040650b906373d955eac845b27dd817bc54773bb13195cf51c6b916cb2bb4e"
+  },
+  "evidence_compaction": {
+    "source_commit": "4209dbe755f38269d5fb4e46022ec3c837487c94",
+    "source_location": "git show <source_commit>:docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/<filename>",
+    "format": "JSON containers at depth 4 are compact; all values and hierarchy retained without selection or redaction",
+    "canonical_digest_encoding": "SHA-256 over UTF-8 json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(comma, colon)), no trailing newline",
+    "semantic_equality_verified": true,
+    "files": {
+      "historical-events.json": {
+        "original_bytes_sha256": "41175d7ffa5bc47e3435689d269d2507ea0507f625890f567206d2ca670afda2",
+        "original_lines": 643,
+        "compacted_bytes_sha256": "a05b0b811e014afd449e68c8087efdfbfdf3d28596f8503d93a9f7ad63fd3ffb",
+        "compacted_lines": 353,
+        "canonical_content_sha256": "2f9d27141c3c95d04ba189c825c1e72b0f1b9d7369e987ac21c0b207b2d5b102"
+      },
+      "owner-readback.json": {
+        "original_bytes_sha256": "983716cb49161b808df805a59998f50d3d798a626c4ebd4455c843840350f339",
+        "original_lines": 431,
+        "compacted_bytes_sha256": "22490badd08f7fd13025bf35c98f31c8d81acbce4530a660785cf311aa0b9af2",
+        "compacted_lines": 266,
+        "canonical_content_sha256": "bed9a768958854a331eee4a6dbf92d3f15149d8a3f5581f37632f3d83c25b915"
+      },
+      "runtime-readback.json": {
+        "original_bytes_sha256": "750f42cd9a780db9b1d8dc97692dedcf807232013268a81bf78d8830bd3a9eae",
+        "original_lines": 1248,
+        "compacted_bytes_sha256": "4d71d13bacb92cd037dcc2e98c3c4f30c03dc8fbef0887f526d38947c186a1f2",
+        "compacted_lines": 294,
+        "canonical_content_sha256": "fac60d0aeb166151ed1e089137d7a55b7291a1153260c71768b21a3a6b21c450"
+      }
+    }
   }
 }

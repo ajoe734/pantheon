@@ -238,6 +238,23 @@ task evidence is committed once; collectors write stdout only, tokens stay in
 memory, and disposable local captures can be removed after reviewed publication.
 No new dev blocking gate is added.
 
+## Evidence compaction after review
+
+The three bulky readbacks retain every JSON value and hierarchy; containers at
+nesting depth four use compact JSON formatting. `historical-events.json` is
+353 lines, `owner-readback.json` 266, and `runtime-readback.json` 294, each below
+the 400 added-line evidence cap. Use `python3 -m json.tool <path>` for expanded
+local inspection. No hosted read was repeated and the original observation
+times still apply.
+
+The `evidence_compaction` section in `evidence.json` records SHA-256 digests
+for original bytes, compacted bytes and canonical JSON content, plus line
+counts. Original expanded bytes remain available at commit
+`4209dbe755f38269d5fb4e46022ec3c837487c94` using the recorded repository paths.
+Parsed equality against that commit was checked for all three files, so the
+same source events, tenant owner receipts, inline policies, active bindings
+and frozen artifacts remain available to the next task.
+
 ## Handoff and residual dispositions
 
 The existing Capital/risk policy owner must decide whether `low` maps to an

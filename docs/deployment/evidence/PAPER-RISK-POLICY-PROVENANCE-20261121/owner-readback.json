@@ -4,18 +4,7 @@
     "persona-2448c7053e33ea48da47": {
       "capitalMode": "paper",
       "current_pool_members": [
-        {
-          "artifact_ref": "artifact-persona-paper-06d4775a9b6a8f63b311",
-          "baseline_ref": "apv-persona-paper-artifact-06d4775a9b6a8f63b311",
-          "checksum": "sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6",
-          "demand_ref": null,
-          "joined_at": "2026-11-08T12:19:51Z",
-          "parent_ref": null,
-          "removal_reason": null,
-          "removed_at": null,
-          "risk_weight": 1.0,
-          "stage": "active"
-        }
+        {"artifact_ref":"artifact-persona-paper-06d4775a9b6a8f63b311","baseline_ref":"apv-persona-paper-artifact-06d4775a9b6a8f63b311","checksum":"sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6","demand_ref":null,"joined_at":"2026-11-08T12:19:51Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
       ],
       "id": "persona-2448c7053e33ea48da47",
       "legacyPaperCapitalPoolId": "pool-persona-paper-06d4775a9b6a8f63b311",
@@ -29,18 +18,7 @@
     "persona-6507750312870d03a241": {
       "capitalMode": "paper",
       "current_pool_members": [
-        {
-          "artifact_ref": "artifact-persona-paper-039ad01f8bcd2b4aa466",
-          "baseline_ref": "apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
-          "checksum": "sha256:f2fd6496cf5b695c86ddcca66f932d25e941065c056d1a223eb81b37fe303f68",
-          "demand_ref": null,
-          "joined_at": "2026-11-08T18:11:01Z",
-          "parent_ref": null,
-          "removal_reason": null,
-          "removed_at": null,
-          "risk_weight": 1.0,
-          "stage": "active"
-        }
+        {"artifact_ref":"artifact-persona-paper-039ad01f8bcd2b4aa466","baseline_ref":"apv-persona-paper-artifact-039ad01f8bcd2b4aa466","checksum":"sha256:f2fd6496cf5b695c86ddcca66f932d25e941065c056d1a223eb81b37fe303f68","demand_ref":null,"joined_at":"2026-11-08T18:11:01Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
       ],
       "id": "persona-6507750312870d03a241",
       "legacyPaperCapitalPoolId": "pool-persona-paper-039ad01f8bcd2b4aa466",
@@ -54,18 +32,7 @@
     "persona-ee7112a829d38b9135ac": {
       "capitalMode": "paper",
       "current_pool_members": [
-        {
-          "artifact_ref": "artifact-persona-paper-a81b4fd15944698341aa",
-          "baseline_ref": "apv-persona-paper-artifact-a81b4fd15944698341aa",
-          "checksum": "sha256:ac953240e1e4350c97be1ca712b350c4cb1a307efb857c2dbe75e347ced9e7f1",
-          "demand_ref": null,
-          "joined_at": "2026-11-08T18:10:02Z",
-          "parent_ref": null,
-          "removal_reason": null,
-          "removed_at": null,
-          "risk_weight": 1.0,
-          "stage": "active"
-        }
+        {"artifact_ref":"artifact-persona-paper-a81b4fd15944698341aa","baseline_ref":"apv-persona-paper-artifact-a81b4fd15944698341aa","checksum":"sha256:ac953240e1e4350c97be1ca712b350c4cb1a307efb857c2dbe75e347ced9e7f1","demand_ref":null,"joined_at":"2026-11-08T18:10:02Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
       ],
       "id": "persona-ee7112a829d38b9135ac",
       "legacyPaperCapitalPoolId": "pool-persona-paper-a81b4fd15944698341aa",
@@ -86,29 +53,7 @@
         "currency": "TWD",
         "description": null,
         "idempotent_replay": false,
-        "metadata": {
-          "execution_context": "paper",
-          "internal": true,
-          "persona_id": "persona-2448c7053e33ea48da47",
-          "provisioning_request_hash": "91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8",
-          "requested_by": "pantheon-dev-admin-test",
-          "risk_policy": {
-            "allowed_asset_classes": [
-              "equity",
-              "future"
-            ],
-            "allowed_stages": [
-              "paper"
-            ],
-            "gross_limit": 2.0,
-            "max_leverage": 2.0,
-            "net_limit": 2.0,
-            "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
-            "status": "active",
-            "version": "1.0"
-          },
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-2448c7053e33ea48da47","provisioning_request_hash":"91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-06d4775a9b6a8f63b311","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
         "name": "青禾｜2330 台股 Paper 學習 R3 paper pool",
         "owner_id": "tenant-dev",
         "owner_type": "org",
@@ -134,14 +79,7 @@
         "effective_to": null,
         "idempotent_replay": false,
         "mandate": "台股 Paper 操盤學習 Persona。以 2330 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；不得把名稱或對話視為策略換版。",
-        "metadata": {
-          "market": "TW",
-          "provisioning_request_hash": "91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8",
-          "registry_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
-          "requested_by": "pantheon-dev-admin-test",
-          "strategy_spec_registry_id": "reg-strategy-spec-persona-06d4775a9b6a8f63b311",
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"market":"TW","provisioning_request_hash":"91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8","registry_id":"artifact-persona-paper-06d4775a9b6a8f63b311","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-06d4775a9b6a8f63b311","tenant_id":"tenant-dev"},
         "persona_id": "persona-2448c7053e33ea48da47",
         "role": "paper_owner",
         "status": "active",
@@ -166,24 +104,9 @@
         "risk": "low",
         "risk_policy_ref": null,
         "strategy_family": "daily_learning_paper_momentum",
-        "symbols": [
-          "2330.TWSE"
-        ],
+        "symbols": ["2330.TWSE"],
         "tenant_id": "tenant-dev",
-        "traits": {
-          "decision_style": "evidence-based; explain assumptions and unknowns",
-          "hard_rules": [
-            "paper_only",
-            "no_live_capital",
-            "no_fabricated_evidence",
-            "consultation_is_advisory"
-          ],
-          "instruments": [
-            "2330.TWSE"
-          ],
-          "persona_voice": "繁體中文；清楚區分事實、假設、建議與已執行結果",
-          "time_horizon": "daily"
-        }
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["2330.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
       },
       "state": "succeeded",
       "strategy_artifact_receipt": {
@@ -202,29 +125,7 @@
         "currency": "TWD",
         "description": null,
         "idempotent_replay": false,
-        "metadata": {
-          "execution_context": "paper",
-          "internal": true,
-          "persona_id": "persona-6507750312870d03a241",
-          "provisioning_request_hash": "a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd",
-          "requested_by": "pantheon-dev-admin-test",
-          "risk_policy": {
-            "allowed_asset_classes": [
-              "equity",
-              "future"
-            ],
-            "allowed_stages": [
-              "paper"
-            ],
-            "gross_limit": 2.0,
-            "max_leverage": 2.0,
-            "net_limit": 2.0,
-            "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
-            "status": "active",
-            "version": "1.0"
-          },
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-6507750312870d03a241","provisioning_request_hash":"a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-039ad01f8bcd2b4aa466","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
         "name": "澄川｜2317 台股 Paper 學習 R2 paper pool",
         "owner_id": "tenant-dev",
         "owner_type": "org",
@@ -250,14 +151,7 @@
         "effective_to": null,
         "idempotent_replay": false,
         "mandate": "台股 Paper 操盤學習 Persona。以 2317 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；強調資料與執行差異的可追溯說明。",
-        "metadata": {
-          "market": "TW",
-          "provisioning_request_hash": "a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd",
-          "registry_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
-          "requested_by": "pantheon-dev-admin-test",
-          "strategy_spec_registry_id": "reg-strategy-spec-persona-039ad01f8bcd2b4aa466",
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"market":"TW","provisioning_request_hash":"a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd","registry_id":"artifact-persona-paper-039ad01f8bcd2b4aa466","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-039ad01f8bcd2b4aa466","tenant_id":"tenant-dev"},
         "persona_id": "persona-6507750312870d03a241",
         "role": "paper_owner",
         "status": "active",
@@ -282,24 +176,9 @@
         "risk": "low",
         "risk_policy_ref": null,
         "strategy_family": "daily_learning_paper_momentum",
-        "symbols": [
-          "2317.TWSE"
-        ],
+        "symbols": ["2317.TWSE"],
         "tenant_id": "tenant-dev",
-        "traits": {
-          "decision_style": "evidence-based; explain assumptions and unknowns",
-          "hard_rules": [
-            "paper_only",
-            "no_live_capital",
-            "no_fabricated_evidence",
-            "consultation_is_advisory"
-          ],
-          "instruments": [
-            "2317.TWSE"
-          ],
-          "persona_voice": "繁體中文；清楚區分事實、假設、建議與已執行結果",
-          "time_horizon": "daily"
-        }
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["2317.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
       },
       "state": "succeeded",
       "strategy_artifact_receipt": {
@@ -318,29 +197,7 @@
         "currency": "TWD",
         "description": null,
         "idempotent_replay": false,
-        "metadata": {
-          "execution_context": "paper",
-          "internal": true,
-          "persona_id": "persona-ee7112a829d38b9135ac",
-          "provisioning_request_hash": "bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f",
-          "requested_by": "pantheon-dev-admin-test",
-          "risk_policy": {
-            "allowed_asset_classes": [
-              "equity",
-              "future"
-            ],
-            "allowed_stages": [
-              "paper"
-            ],
-            "gross_limit": 2.0,
-            "max_leverage": 2.0,
-            "net_limit": 2.0,
-            "risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
-            "status": "active",
-            "version": "1.0"
-          },
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-ee7112a829d38b9135ac","provisioning_request_hash":"bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-a81b4fd15944698341aa","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
         "name": "衡岳｜0050 台股 Paper 學習 R2 paper pool",
         "owner_id": "tenant-dev",
         "owner_type": "org",
@@ -366,14 +223,7 @@
         "effective_to": null,
         "idempotent_replay": false,
         "mandate": "台股 Paper 操盤學習 Persona。以 0050 日線觀察大盤，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思，並與 2330、2317 的 Persona 做跨標的比較與風險解釋。建立時使用共同基礎動能策略；商品（現股或 ETF 期貨）由表達政策逐筆決定。",
-        "metadata": {
-          "market": "TW",
-          "provisioning_request_hash": "bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f",
-          "registry_id": "artifact-persona-paper-a81b4fd15944698341aa",
-          "requested_by": "pantheon-dev-admin-test",
-          "strategy_spec_registry_id": "reg-strategy-spec-persona-a81b4fd15944698341aa",
-          "tenant_id": "tenant-dev"
-        },
+        "metadata": {"market":"TW","provisioning_request_hash":"bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f","registry_id":"artifact-persona-paper-a81b4fd15944698341aa","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-a81b4fd15944698341aa","tenant_id":"tenant-dev"},
         "persona_id": "persona-ee7112a829d38b9135ac",
         "role": "paper_owner",
         "status": "active",
@@ -398,24 +248,9 @@
         "risk": "low",
         "risk_policy_ref": null,
         "strategy_family": "daily_learning_paper_momentum",
-        "symbols": [
-          "0050.TWSE"
-        ],
+        "symbols": ["0050.TWSE"],
         "tenant_id": "tenant-dev",
-        "traits": {
-          "decision_style": "evidence-based; explain assumptions and unknowns",
-          "hard_rules": [
-            "paper_only",
-            "no_live_capital",
-            "no_fabricated_evidence",
-            "consultation_is_advisory"
-          ],
-          "instruments": [
-            "0050.TWSE"
-          ],
-          "persona_voice": "繁體中文；清楚區分事實、假設、建議與已執行結果",
-          "time_horizon": "daily"
-        }
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["0050.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
       },
       "state": "succeeded",
       "strategy_artifact_receipt": {
