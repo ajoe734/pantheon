@@ -606,6 +606,8 @@ def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_des
         ({"risk_policy": {**valid_policy, "allowed_stages": ["live"]}}, "risk_policy_stage_not_allowed"),
         ({"risk_policy": {**valid_policy, "tenant_id": "tenant-foreign"}}, "risk_policy_wrong_tenant"),
         ({"risk_policy": {**valid_policy, "expires_at": "2026-07-01T00:00:00Z"}}, "risk_policy_stale"),
+        ({"risk_policy": {**valid_policy, "risk_policy_id": "rp-pool-loop-prod-dep-001"}}, "risk_policy_profile_mapping_unapproved"),
+        ({"requested_risk_profile": "low", "risk_policy": dict(valid_policy)}, "risk_policy_profile_mapping_unapproved"),
     ]:
         bad_pool = {**capital_pool, "metadata": {"tenant_id": "tenant-unit", **bad_meta}}
         with pytest.raises(authority.DeployAuthorityError, match=expected_code):
@@ -661,4 +663,11 @@ def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_des
     state_bad = fds.build_fleet_desired_state([bad_rb])
     assert state_bad.active_count == 0
     assert state_bad.excluded[0].exclusion_reason == "non_executable_risk_policy_wrong_tenant"
+
+    unmapped_rb = copy.deepcopy(base_binding)
+    unmapped_rb["metadata"]["risk_policy"] = {**valid_policy, "risk_policy_id": "rp-pool-loop-prod-dep-001"}
+    state_unmapped = fds.build_fleet_desired_state([unmapped_rb])
+    assert state_unmapped.active_count == 0
+    assert state_unmapped.excluded[0].exclusion_reason == "non_executable_risk_policy_profile_mapping_unapproved"
+
 
