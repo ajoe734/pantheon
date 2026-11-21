@@ -4376,7 +4376,7 @@ class PersonaProvisioningCoordinator:
             if risk_policy_version is not None and str(risk_policy_version).strip():
                 target_policy["version"] = str(risk_policy_version).strip()
         else:
-            default_id = f"paper-inline-policy:{persona_id}"
+            default_id = f"rp-{resolved_pool_id}"
             target_policy = self._default_paper_pool_risk_policy(
                 resolved_pool_id,
                 policy_id=default_id,

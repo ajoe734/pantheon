@@ -1811,11 +1811,14 @@ def resolve_pool_risk_policy_binding(
                 policy_tenant=policy_tenant_id,
             )
 
+    is_default_inline_id = str(policy_model.risk_policy_id).startswith(
+        ("paper-inline-policy:", "rp-pool-")
+    )
     is_explicit_contract = bool(
         source == "risk_policy_ref"
         or policy_meta.get("explicit_policy") is True
         or pool_meta.get("risk_policy_explicit") is True
-        or not str(policy_model.risk_policy_id).startswith("paper-inline-policy:")
+        or not is_default_inline_id
     )
     profile_status = "explicit_policy" if is_explicit_contract else "default_paper_baseline"
 

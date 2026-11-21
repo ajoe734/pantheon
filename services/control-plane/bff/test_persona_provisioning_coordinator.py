@@ -3286,7 +3286,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     assert repair_receipt["before_resolution"]["status"] == "missing"
     assert repair_receipt["after_resolution"]["resolved"] is True
     assert repair_receipt["after_resolution"]["status"] == "valid"
-    assert repair_receipt["after_resolution"]["risk_policy_id"] == f"paper-inline-policy:{record_rep.persona_id}"
+    assert repair_receipt["after_resolution"]["risk_policy_id"] == f"rp-{ids_rep.capital_pool_id}"
 
     # Idempotent replay performs zero additional PATCH calls
     patches_before = tx_rep.mutations[("capital", f"{pool_path}/status")]

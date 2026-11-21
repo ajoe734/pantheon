@@ -3575,6 +3575,9 @@ def _resolve_active_runtime_binding_overlay(
         rb_tenant = str(rb.get("tenant_id") or rb_meta.get("tenant_id") or "").strip()
         if expected_tenant and rb_tenant and rb_tenant != expected_tenant:
             continue
+        rb_persona = str(rb.get("persona_id") or rb_meta.get("persona_id") or "").strip()
+        if rb_persona and rb_persona != persona_id:
+            continue
         if _persona_fleet_runtime_matches(
             rb,
             binding_ids=binding_ids,
@@ -3582,6 +3585,7 @@ def _resolve_active_runtime_binding_overlay(
             runtime_refs=runtime_refs,
             persona_id=persona_id,
             plan_ids=plan_ids,
+            plans_by_id={},
         ):
             matching.append(rb)
 
@@ -3601,7 +3605,13 @@ def _resolve_active_runtime_binding_overlay(
     if recorded_rb_id:
         for rb in active_matches:
             rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), Mapping) else {}
-            replaces_id = str(rb.get("replaces_binding_id") or rb_meta.get("replaces_binding_id") or "").strip()
+            replaces_id = str(
+                rb.get("replaces_binding_id")
+                or rb.get("replacement_parent_binding_id")
+                or rb_meta.get("replaces_binding_id")
+                or rb_meta.get("replacement_parent_binding_id")
+                or ""
+            ).strip()
             if replaces_id == recorded_rb_id:
                 chosen = rb
                 break
