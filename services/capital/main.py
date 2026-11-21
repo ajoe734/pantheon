@@ -413,15 +413,92 @@ class CapitalBoundaryService:
         resolution = resolve_pool_risk_policy_binding(
             capital_pool_id=pool.pool_id,
             pool=pool,
-            risk_policy_loader=capital_guard._policy_loader,
+            risk_policy_loader=self.guard._policy_loader,
             expected_tenant_id=_tenant_of(pool),
             expected_stage=expected_stage or "paper",
-            approval_reader=capital_guard._approval_reader,
+            approval_reader=self.guard._effective_approval_reader(),
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
         )
         return resolution.to_dict()
+
+    def get_pool_approval_evidence(
+        self,
+        decision_id: str,
+        *,
+        pool_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from services.governance.approval_authority import ApprovalEvidence
+
+        clean_decision_id = str(decision_id or "").strip()
+        if not clean_decision_id:
+            raise CapitalPoolError("Approval decision not found")
+        tenant = _current_tenant()
+        pool: Optional[CapitalPool] = None
+        if pool_id is not None:
+            pool = self.get_pool(pool_id)
+        reader = self.guard._effective_approval_reader()
+        if reader is None:
+            raise CapitalServiceError("Governance approval reader is not configured")
+        try:
+            loaded = reader.get(clean_decision_id)
+        except Exception as exc:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}") from exc
+        if loaded is None:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        evidence: Optional[ApprovalEvidence] = None
+        if isinstance(loaded, ApprovalEvidence):
+            evidence = loaded
+        elif isinstance(loaded, dict):
+            evidence = ApprovalEvidence.model_validate(dict(loaded))
+        elif hasattr(loaded, "model_dump"):
+            evidence = ApprovalEvidence.model_validate(loaded.model_dump())
+        elif pool is not None and callable(getattr(loaded, "require_valid", None)):
+            pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+            raw_policy = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+            req_risk = (
+                str(
+                    pool_meta.get("requested_risk_profile")
+                    or pool_meta.get("risk_profile")
+                    or "low"
+                ).strip()
+                or "low"
+            )
+            expected_binding: Dict[str, Any] = {
+                "tenant_id": _tenant_of(pool) or tenant or "default",
+                "target_type": "capital_pool_activation",
+                "target_id": pool.pool_id,
+                "target_version": pool_digest(pool),
+                "subject.pool_id": pool.pool_id,
+                "subject.risk_direction": "increase",
+                "subject.risk_policy_id": str(
+                    raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
+                ),
+                "subject.risk_policy_version": str(raw_policy.get("version") or "1.0"),
+                "subject.risk_policy_digest": risk_policy_digest(raw_policy) if raw_policy else "",
+                "subject.requested_risk": req_risk,
+            }
+            res_ev = loaded.require_valid(expected=expected_binding)
+            if isinstance(res_ev, ApprovalEvidence):
+                evidence = res_ev
+            elif isinstance(res_ev, dict):
+                evidence = ApprovalEvidence.model_validate(dict(res_ev))
+            elif hasattr(res_ev, "model_dump"):
+                evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
+        if evidence is None or evidence.decision_id != clean_decision_id:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if tenant and evidence.tenant_id != tenant:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if evidence.target_type != "capital_pool_activation":
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is not None and evidence.target_id != pool.pool_id:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is None:
+            target_pool = self.get_pool(evidence.target_id)
+            if target_pool.pool_id != evidence.target_id:
+                raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        return evidence.model_dump(mode="json")
 
     def create_binding(
         self,
@@ -1361,6 +1438,29 @@ def get_capital_pool_risk_policy(
     service = get_capital_service()
     try:
         return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/approvals/{decision_id}")
+def get_capital_pool_approval_evidence(
+    pool_id: str,
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id, pool_id=pool_id)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital/approvals/{decision_id}")
+def get_capital_approval_evidence(
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

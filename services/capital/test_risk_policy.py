@@ -1092,6 +1092,253 @@ def test_runtime_entry_points_enforce_profile_mapping_on_existing_pools_and_admi
             )
 
 
+def test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer_and_reconciler_envs(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+    import os
+    import pytest
+    import urllib.error
+    import yaml
+    from fastapi.testclient import TestClient
+
+    from services.capital import main as capital_main
+    from services.capital import risk_policy as rp_mod
+    from services.capital.risk_policy import (
+        CapitalOwnerApprovalReader,
+        RiskPolicyError,
+        capital_pool_approval_digest,
+        configured_capital_owner_approval_reader,
+        resolve_bound_pool_risk_policy,
+        resolve_pool_risk_policy_binding,
+        risk_policy_digest,
+    )
+    from services.execution.lean_runtime import expression_inputs as ei_mod
+    from services.execution.lean_runtime.expression_inputs import (
+        ExpressionInputsProvider,
+        ExpressionInputsUnavailable,
+        build_production_expression_inputs,
+    )
+    from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+    from services.execution.lean_runtime.test_expression_inputs import _compose_environment
+    from services.governance.test_approval_authority import (
+        SnapshotApprovalReader,
+        approval_snapshot,
+    )
+
+    policy = {
+        "risk_policy_id": "rp-pool-review",
+        "version": "1.0",
+        "status": "active",
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+    }
+    pool = {
+        "pool_id": "pool-review",
+        "tenant_id": "tenant-dev",
+        "name": "Review paper pool",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "currency": "USD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "status": "active",
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": "tenant-dev",
+            "risk_policy": dict(policy),
+            "requested_risk_profile": "low",
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-review",
+        },
+    }
+    pool["approval_digest"] = capital_pool_approval_digest(pool)
+    # Must be pure JSON with no callable metadata
+    pool_json = json.loads(json.dumps(pool))
+    decision = approval_snapshot(
+        decision_id="apv-review",
+        tenant_id="tenant-dev",
+        owner_user_id="proposer-1",
+        target_type="capital_pool_activation",
+        target_id="pool-review",
+        target_version=pool_json["approval_digest"],
+        metadata={
+            "subject": {
+                "pool_id": "pool-review",
+                "risk_direction": "increase",
+                "risk_policy_id": policy["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(policy),
+                "requested_risk": "low",
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    decision_json = json.loads(json.dumps(decision))
+
+    # 1. Callable approval_reader stuffed into pool metadata is ignored and never used
+    from services.capital.conftest import _ApprovesWhatIsAsked
+
+    metadata_callable_pool = {
+        **pool_json,
+        "metadata": {
+            **pool_json["metadata"],
+            "approval_reader": _ApprovesWhatIsAsked(),
+        },
+    }
+    with monkeypatch.context() as m:
+        m.setattr(os, "environ", {})
+        ignored_res = resolve_pool_risk_policy_binding(pool=metadata_callable_pool)
+        assert ignored_res.resolved is False
+        assert ignored_res.reason_code == "risk_policy_profile_mapping_unapproved"
+
+    # 2. Wire the real Capital owner FastAPI routes (/api/capital-pools/{id} and /api/capital-pools/{id}/approvals/{decision_id})
+    from capital_pool import CapitalPool, CapitalPoolStore
+
+    test_pool_store = CapitalPoolStore(tmp_path / "capital_pools.json")
+    stored_pool = CapitalPool(
+        pool_id="pool-review",
+        name="Review paper pool",
+        owner_id="tenant-dev",
+        owner_type="org",
+        status="active",
+        created_at="2026-11-21T00:00:00Z",
+        currency="USD",
+        budget=100000.0,
+        risk_policy_ref=None,
+        single_runtime_enforced=True,
+        metadata=dict(pool_json["metadata"]),
+    )
+    object.__setattr__(stored_pool, "tenant_id", "tenant-dev")
+    test_pool_store.create(stored_pool)
+
+    foreign_pool = CapitalPool(
+        pool_id="pool-foreign",
+        name="Foreign pool",
+        owner_id="tenant-other",
+        owner_type="org",
+        status="active",
+        created_at="2026-11-21T00:00:00Z",
+        currency="USD",
+        budget=100000.0,
+        risk_policy_ref=None,
+        single_runtime_enforced=True,
+        metadata={"tenant_id": "tenant-other", "execution_context": "paper"},
+    )
+    object.__setattr__(foreign_pool, "tenant_id", "tenant-other")
+    test_pool_store.create(foreign_pool)
+
+    decisions_by_id = {"apv-review": decision_json}
+
+    class _GovernanceStoreReader:
+        def get(self, dec_id: str):
+            return decisions_by_id.get(dec_id)
+
+    monkeypatch.setattr(capital_main, "pool_store", test_pool_store)
+    monkeypatch.setattr(capital_main.capital_guard, "_approval_reader", _GovernanceStoreReader())
+    monkeypatch.setenv("CAPITAL_AUTH_DISABLED", "true")
+    capital_client = TestClient(capital_main.app)
+
+    # Verify Capital owner GET endpoints directly
+    pool_resp = capital_client.get(
+        "/api/capital-pools/pool-review",
+        headers={"X-Tenant-Id": "tenant-dev", "X-Pantheon-Service": "runtime-manager"},
+    )
+    assert pool_resp.status_code == 200
+    owner_pool_json = pool_resp.json()
+    assert owner_pool_json["approval_digest"] == pool_json["approval_digest"]
+
+    apv_resp = capital_client.get(
+        "/api/capital-pools/pool-review/approvals/apv-review",
+        headers={"X-Tenant-Id": "tenant-dev", "X-Pantheon-Service": "runtime-manager"},
+    )
+    assert apv_resp.status_code == 200
+    assert apv_resp.json()["decision_id"] == "apv-review"
+
+    apv_direct_resp = capital_client.get(
+        "/api/capital/approvals/apv-review",
+        headers={"X-Tenant-Id": "tenant-dev", "X-Pantheon-Service": "runtime-manager"},
+    )
+    assert apv_direct_resp.status_code == 200
+    assert apv_direct_resp.json()["decision_id"] == "apv-review"
+
+    # Wrong tenant or wrong pool is denied (404 fail-closed)
+    wrong_tenant_resp = capital_client.get(
+        "/api/capital-pools/pool-review/approvals/apv-review",
+        headers={"X-Tenant-Id": "tenant-other", "X-Pantheon-Service": "runtime-manager"},
+    )
+    assert wrong_tenant_resp.status_code == 404
+    wrong_pool_resp = capital_client.get(
+        "/api/capital-pools/pool-foreign/approvals/apv-review",
+        headers={"X-Tenant-Id": "tenant-dev", "X-Pantheon-Service": "runtime-manager"},
+    )
+    assert wrong_pool_resp.status_code == 404
+
+    def forward_to_capital_or_telemetry(url: str, headers, timeout: float):
+        if url.startswith("http://capital:8092/"):
+            path = url[len("http://capital:8092") :]
+            with monkeypatch.context() as cap_env:
+                cap_env.setenv("CAPITAL_AUTH_DISABLED", "true")
+                resp = capital_client.get(path, headers=dict(headers))
+            if resp.status_code != 200:
+                raise urllib.error.HTTPError(url, resp.status_code, resp.text, {}, None)
+            return resp.json()
+        if "/api/telemetry/runtime-summaries/" in url:
+            return {"runtime_id": "rt-review", "binding_id": "rb-review", "ledger_fill_count": 0}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    # 3. Verify both paper-fleet-reconciler and paper-signal-producer Compose environments end-to-end
+    token_path = tmp_path / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+    token_path.write_text("issued-capital-reader-token", encoding="utf-8")
+    token_path.chmod(0o600)
+
+    for service in ("paper-fleet-reconciler", "paper-signal-producer"):
+        env = _compose_environment(service, str(token_path))
+        env["PANTHEON_TENANT_ID"] = "tenant-dev"
+        env["PANTHEON_PAPER_EXPRESSION_LAYER"] = "on"
+        assert [key for key in env if "GOVERNANCE" in key] == []
+
+        with monkeypatch.context() as m:
+            m.setattr(os, "environ", dict(env))
+            m.setattr(ei_mod, "_http_get_json", forward_to_capital_or_telemetry)
+            m.setattr(rp_mod, "_capital_owner_http_get_json", forward_to_capital_or_telemetry)
+
+            reader_instance = configured_capital_owner_approval_reader()
+            assert isinstance(reader_instance, CapitalOwnerApprovalReader)
+
+            res = resolve_pool_risk_policy_binding(pool=owner_pool_json)
+            assert res.resolved is True, f"{service}: {res.reason_code}: {res.reason}"
+            assert res.profile_mapping_status == "approved_profile_mapping"
+            assert res.profile_mapping_approval_id == "apv-review"
+
+            provider = build_production_expression_inputs(env)
+            expr_out = provider({"capital_pool_id": "pool-review", "runtime_id": "rt-review"})
+            assert expr_out["risk_budget"]["gross_limit"] == 200000.0
+
+            lambda_provider = ExpressionInputsProvider(
+                capital_pool_reader=lambda _: owner_pool_json,
+                runtime_summary_reader=lambda _: {"ledger_fill_count": 0},
+            )
+            lambda_out = lambda_provider({"capital_pool_id": "pool-review", "runtime_id": "rt-review"})
+            assert lambda_out["risk_budget"]["gross_limit"] == 200000.0
+
+            algo = PaperExecutionAlgorithm(
+                capital_pool_id="pool-review",
+                capital_pool_reader=ei_mod.capital_pool_reader_from_env(env),
+            )
+            algo_policy = algo._resolve_active_risk_policy()
+            assert algo_policy.risk_policy_id == "rp-pool-review"
+            assert algo_policy.gross_limit == 2.0
+
+
+
 
 
 

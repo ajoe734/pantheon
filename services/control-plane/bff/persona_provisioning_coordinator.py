@@ -2076,6 +2076,37 @@ class PersonaProvisioningCoordinator:
         currency = self._capital_pool_currency(record)
         budget = req.get("budget")
 
+        if (
+            not clean_ref
+            and not has_explicit_policy
+            and isinstance(base_pool, Mapping)
+            and str(base_pool.get("risk_policy_ref") or "").strip()
+        ):
+            base_meta = base_pool.get("metadata") if isinstance(base_pool.get("metadata"), Mapping) else {}
+            if "risk_policy" not in base_meta or base_meta.get("risk_policy") is None:
+                base_ref = str(base_pool.get("risk_policy_ref")).strip()
+                base_ref_res = resolve_pool_risk_policy_binding(
+                    capital_pool_id=ids.capital_pool_id,
+                    pool=self._pool_with_authoritative_approval_digest(
+                        base_pool,
+                        tenant_id=record.tenant_id,
+                    ),
+                    expected_tenant_id=record.tenant_id,
+                    expected_stage="paper",
+                    requested_profile=requested_profile,
+                    require_approved_profile_mapping=False,
+                    approval_decision_id=candidate_approval_id,
+                    approval_reader=self._governance_approval_reader(),
+                    require_active=True,
+                    require_limits=("gross_limit",),
+                    raise_on_error=False,
+                )
+                if not base_ref_res.resolved or base_ref_res.policy is None:
+                    raise PersonaProvisioningCoordinationError(
+                        f"CapitalPool readback risk policy rejected: {base_ref_res.reason} ({base_ref_res.reason_code})"
+                    )
+                return base_ref, base_ref_res.policy.to_dict(), False
+
         if require_approved_mapping and not clean_ref and not has_explicit_policy:
             candidate_default = self._default_paper_pool_risk_policy(
                 ids.capital_pool_id,
@@ -2256,6 +2287,8 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
         currency = self._capital_pool_currency(record)
+        pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
+        existing = self._owner_get("capital", pool_path)
         requested_profile, require_approved_mapping, candidate_approval_id = (
             self._extract_request_risk_profile_context(
                 record.request_payload,
@@ -2266,6 +2299,7 @@ class PersonaProvisioningCoordinator:
             self._resolve_requested_pool_risk_policy(
                 record,
                 ids,
+                base_pool=existing,
             )
         )
         req_meta = (
@@ -2324,7 +2358,6 @@ class PersonaProvisioningCoordinator:
             "idempotency_key": f"{record.idempotency_key}:capital-pool",
             "request_hash": _stable_hash(base_payload),
         }
-        pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
 
         def validate_envelope(receipt: Mapping[str, Any]) -> None:
             if (
@@ -2372,7 +2405,6 @@ class PersonaProvisioningCoordinator:
                         f"CapitalPool readback risk policy rejected: {resolution.reason} ({resolution.reason_code})"
                     )
 
-        existing = self._owner_get("capital", pool_path)
         if existing is not None:
             validate_envelope(existing)
             existing_meta = dict(existing.get("metadata")) if isinstance(existing.get("metadata"), Mapping) else {}
@@ -4191,40 +4223,39 @@ class PersonaProvisioningCoordinator:
         pool_rec = self._owner_get("capital", f"/api/capital-pools/{_path_id(ids.capital_pool_id)}")
         if pool_rec is not None:
             pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
-            if "risk_policy" in pool_meta or not pool_rec.get("risk_policy_ref") or pub.get("require_risk_policy") is True:
-                ledger_record = self.store.get_by_persona(tenant_id, persona_id) if self.store is not None else None
-                ledger_profile, _, _ = (
-                    self._extract_request_risk_profile_context(
-                        ledger_record.request_payload,
-                        request_hash=ledger_record.request_hash,
-                    )
-                    if ledger_record is not None
-                    else (None, False, None)
+            ledger_record = self.store.get_by_persona(tenant_id, persona_id) if self.store is not None else None
+            ledger_profile, _, _ = (
+                self._extract_request_risk_profile_context(
+                    ledger_record.request_payload,
+                    request_hash=ledger_record.request_hash,
                 )
-                pool_policy_res = resolve_pool_risk_policy_binding(
-                    capital_pool_id=ids.capital_pool_id,
-                    pool=self._pool_with_authoritative_approval_digest(
-                        pool_rec,
-                        tenant_id=tenant_id,
-                    ),
-                    expected_tenant_id=tenant_id,
-                    expected_stage="paper",
-                    requested_profile=ledger_profile or (
-                        str(pool_meta.get("requested_risk_profile")).strip()
-                        if pool_meta.get("requested_risk_profile")
-                        else None
-                    ),
-                    require_approved_profile_mapping=None,
-                    approval_reader=self._governance_approval_reader(),
-                    require_active=True,
-                    require_limits=("gross_limit",),
-                    raise_on_error=False,
+                if ledger_record is not None
+                else (None, False, None)
+            )
+            pool_policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=ids.capital_pool_id,
+                pool=self._pool_with_authoritative_approval_digest(
+                    pool_rec,
+                    tenant_id=tenant_id,
+                ),
+                expected_tenant_id=tenant_id,
+                expected_stage="paper",
+                requested_profile=ledger_profile or (
+                    str(pool_meta.get("requested_risk_profile")).strip()
+                    if pool_meta.get("requested_risk_profile")
+                    else None
+                ),
+                require_approved_profile_mapping=None,
+                approval_reader=self._governance_approval_reader(),
+                require_active=True,
+                require_limits=("gross_limit",),
+                raise_on_error=False,
+            )
+            if not pool_policy_res.resolved:
+                raise PersonaProvisioningCoordinationError(
+                    f"Cannot publish pool envelope: bound capital pool risk policy is unresolved "
+                    f"({pool_policy_res.reason_code}: {pool_policy_res.reason})"
                 )
-                if not pool_policy_res.resolved:
-                    raise PersonaProvisioningCoordinationError(
-                        f"Cannot publish pool envelope: bound capital pool risk policy is unresolved "
-                        f"({pool_policy_res.reason_code}: {pool_policy_res.reason})"
-                    )
         elif pub.get("require_risk_policy") is True:
             raise PersonaProvisioningCoordinationError(
                 f"Cannot publish pool envelope: bound capital pool {ids.capital_pool_id!r} not found (risk_policy_missing)"
@@ -4844,7 +4875,10 @@ class PersonaProvisioningCoordinator:
                     f"CapitalPool risk policy repair rejected: {ref_resolution.reason} ({ref_resolution.reason_code})"
                 )
             target_policy = ref_resolution.policy.to_dict()
-            has_authoritative_replacement = True
+            has_authoritative_replacement = bool(
+                (risk_policy_ref is not None and str(risk_policy_ref).strip())
+                or isinstance(pool_meta.get("risk_policy"), Mapping)
+            )
         elif (
             (
                 (before_resolution.resolved and before_resolution.policy is not None)

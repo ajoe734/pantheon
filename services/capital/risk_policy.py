@@ -7,9 +7,14 @@ consume this module as the shared evaluator contract instead of interpreting
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -1403,6 +1408,277 @@ def _extract_decision_id_reference(item: Any) -> str | None:
     return None
 
 
+_COMPOSE_VAR_RE = re.compile(r"^\$\{([A-Z0-9_]+):-(.*)\}$")
+
+
+def _unwrap_compose_value(raw: Any, source: Mapping[str, str]) -> str:
+    text = str(raw if raw is not None else "").strip()
+    for _ in range(4):
+        match = _COMPOSE_VAR_RE.match(text)
+        if match is None:
+            break
+        var_name, default_val = match.groups()
+        candidate = str(source.get(var_name) or "").strip()
+        if candidate and candidate != text and not _COMPOSE_VAR_RE.match(candidate):
+            text = candidate
+            break
+        text = default_val.strip()
+    return text
+
+
+def _capital_owner_http_get_json(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> Any:
+    from services.governance.approval_authority import (
+        ApprovalInvalid,
+        ApprovalUnavailable,
+        NoOwnerRedirect,
+    )
+
+    opener = urllib.request.build_opener(NoOwnerRedirect())
+    request = urllib.request.Request(url, headers=dict(headers), method="GET")
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise ApprovalUnavailable("Capital owner did not return 200 for decision read")
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403, 404}:
+            raise ApprovalInvalid("Capital owner denied exact decision read") from exc
+        raise ApprovalUnavailable("Capital owner approval read unavailable") from exc
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+        raise ApprovalUnavailable("Capital owner approval read unavailable or malformed") from exc
+
+
+class CapitalOwnerApprovalReader:
+    """Scoped read-only ApprovalEvidence reader via the Capital owner boundary.
+
+    Paper signal producer and paper runtime workers mount only the read-only
+    ``paper-capital-reader`` principal (``DEPLOYMENT_CAPITAL_SERVICE_TOKEN`` /
+    ``RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN``) and ``PANTHEON_CAPITAL_API_URL``,
+    never direct Governance credentials. This reader fetches the pool's bound
+    ``capital_pool_activation`` ApprovalEvidence JSON from the Capital owner.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        service_token: str = "",
+        token_provider: Callable[[], str] | None = None,
+        pool_id: str | None = None,
+        tenant_id: str | None = None,
+        service_name: str = "runtime-manager",
+        timeout_seconds: float = 5.0,
+        fetch_json: Callable[[str, Mapping[str, str], float], Any] | None = None,
+    ) -> None:
+        from services.governance.approval_authority import ApprovalUnavailable
+
+        try:
+            parsed = urllib.parse.urlsplit(base_url)
+        except ValueError as exc:
+            raise ApprovalUnavailable("Capital owner reader URL is malformed") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or (not service_token and token_provider is None)
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ApprovalUnavailable("Capital owner reader URL, scoped principal and timeout required")
+        self.base_url = base_url.rstrip("/")
+        self.service_token = service_token.strip()
+        self.token_provider = token_provider
+        self.pool_id = _optional_text(pool_id)
+        self.tenant_id = _optional_text(tenant_id)
+        self.service_name = _optional_text(service_name) or "runtime-manager"
+        self.timeout_seconds = timeout_seconds
+        self._fetch_json = fetch_json
+
+    def _headers(self, *, tenant_id: str | None = None) -> dict[str, str]:
+        from services.governance.approval_authority import ApprovalUnavailable
+
+        try:
+            token = (self.token_provider() if self.token_provider is not None else self.service_token).strip()
+            if not token:
+                raise RuntimeError("Missing service credential")
+        except RuntimeError as exc:
+            raise ApprovalUnavailable("Capital owner read principal unavailable") from exc
+        headers = {
+            "Accept": "application/json",
+            "Authorization": token if token.lower().startswith("bearer ") else f"Bearer {token}",
+            "X-Pantheon-Service": self.service_name,
+        }
+        effective_tenant = _optional_text(tenant_id) or self.tenant_id
+        if effective_tenant:
+            headers["X-Tenant-Id"] = effective_tenant
+        return headers
+
+    def get(
+        self,
+        decision_id: str,
+        *,
+        pool_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> Any:
+        from services.governance.approval_authority import (
+            ApprovalEvidence,
+            ApprovalInvalid,
+            ApprovalUnavailable,
+        )
+
+        clean_id = _optional_text(decision_id)
+        if not clean_id:
+            raise ApprovalInvalid("Exact decision ID required")
+        effective_pool_id = _optional_text(pool_id) or self.pool_id
+        if effective_pool_id:
+            url = (
+                f"{self.base_url}/api/capital-pools/"
+                f"{urllib.parse.quote(effective_pool_id, safe='')}/approvals/"
+                f"{urllib.parse.quote(clean_id, safe='')}"
+            )
+        else:
+            url = f"{self.base_url}/api/capital/approvals/{urllib.parse.quote(clean_id, safe='')}"
+        headers = self._headers(tenant_id=tenant_id)
+        fetcher = self._fetch_json or _capital_owner_http_get_json
+        try:
+            body = fetcher(url, headers, self.timeout_seconds)
+        except (ApprovalInvalid, ApprovalUnavailable):
+            raise
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403, 404}:
+                raise ApprovalInvalid("Capital owner denied exact decision read") from exc
+            raise ApprovalUnavailable("Capital owner approval read unavailable") from exc
+        except Exception as exc:
+            raise ApprovalUnavailable("Capital owner approval read unavailable or malformed") from exc
+        if not isinstance(body, Mapping):
+            raise ApprovalInvalid("Malformed Capital owner approval decision")
+        try:
+            evidence = ApprovalEvidence.model_validate(dict(body))
+        except ValueError as exc:
+            raise ApprovalInvalid("Malformed Capital owner approval decision") from exc
+        if evidence.decision_id != clean_id:
+            raise ApprovalInvalid("Capital owner exact decision ID mismatch")
+        effective_tenant = _optional_text(tenant_id) or self.tenant_id
+        if effective_tenant and evidence.tenant_id != effective_tenant:
+            raise ApprovalInvalid("Capital owner approval tenant mismatch")
+        if effective_pool_id and evidence.target_id != effective_pool_id:
+            raise ApprovalInvalid("Capital owner approval pool target mismatch")
+        return evidence
+
+    def verify(
+        self,
+        decision_id: str,
+        *,
+        expected: Mapping[str, Any],
+        now: datetime | None = None,
+        usage_context: Any = None,
+    ) -> Any:
+        pool_id = _optional_text(expected.get("target_id") or expected.get("subject.pool_id"))
+        tenant_id = _optional_text(expected.get("tenant_id"))
+        return self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id).require_valid(
+            expected=expected,
+            now=now,
+            usage_context=usage_context,
+        )
+
+
+def configured_capital_owner_approval_reader(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_url: str | None = None,
+    pool_id: str | None = None,
+    tenant_id: str | None = None,
+    fetch_json: Callable[[str, Mapping[str, str], float], Any] | None = None,
+) -> CapitalOwnerApprovalReader:
+    from services.governance.approval_authority import ApprovalUnavailable
+    from services.service_token_file import configured_service_token
+
+    raw_source = os.environ if env is None else env
+    source = {str(k): _unwrap_compose_value(v, raw_source) for k, v in raw_source.items()}
+    resolved_base_url = (
+        _optional_text(base_url)
+        or _optional_text(source.get("PANTHEON_CAPITAL_API_URL"))
+        or _optional_text(source.get("PANTHEON_CAPITAL_SERVICE_URL"))
+        or ""
+    )
+    try:
+        timeout = float(source.get("PANTHEON_CAPITAL_TIMEOUT_SECONDS") or "5")
+    except ValueError as exc:
+        raise ApprovalUnavailable("Capital owner reader timeout is malformed") from exc
+
+    def _resolve_token() -> str:
+        cur_raw = os.environ if env is None else env
+        cur_source = {str(k): _unwrap_compose_value(v, cur_raw) for k, v in cur_raw.items()}
+        return (
+            configured_service_token("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", cur_source)
+            or configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", cur_source)
+        )
+
+    try:
+        initial_token = _resolve_token()
+    except RuntimeError as exc:
+        raise ApprovalUnavailable("Capital owner read principal unavailable") from exc
+    if not resolved_base_url or not initial_token:
+        raise ApprovalUnavailable("Capital owner reader URL, scoped principal and timeout required")
+    resolved_tenant = (
+        _optional_text(tenant_id)
+        or _optional_text(source.get("PANTHEON_TENANT_ID"))
+    )
+    return CapitalOwnerApprovalReader(
+        base_url=resolved_base_url,
+        service_token=initial_token,
+        token_provider=_resolve_token,
+        pool_id=pool_id,
+        tenant_id=resolved_tenant,
+        timeout_seconds=timeout,
+        fetch_json=fetch_json,
+    )
+
+
+def _capital_owner_approval_reader_from_pool_reader(
+    pool_reader: Any,
+    *,
+    pool_id: str | None = None,
+    tenant_id: str | None = None,
+) -> CapitalOwnerApprovalReader | None:
+    if pool_reader is None:
+        return None
+    base_url = _optional_text(getattr(pool_reader, "_base_url", None) or getattr(pool_reader, "base_url", None))
+    token = _optional_text(getattr(pool_reader, "_token", None) or getattr(pool_reader, "service_token", None))
+    if not base_url or not token:
+        return None
+    reader_tenant = _optional_text(tenant_id) or _optional_text(
+        getattr(pool_reader, "_tenant_id", None) or getattr(pool_reader, "tenant_id", None)
+    )
+    service_name = _optional_text(
+        getattr(pool_reader, "_service_name", None) or getattr(pool_reader, "service_name", None)
+    ) or "runtime-manager"
+    raw_timeout = getattr(pool_reader, "_timeout", None) or getattr(pool_reader, "timeout_seconds", None) or 5.0
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        timeout = 5.0
+    try:
+        return CapitalOwnerApprovalReader(
+            base_url=base_url,
+            service_token=token,
+            pool_id=pool_id,
+            tenant_id=reader_tenant,
+            service_name=service_name,
+            timeout_seconds=timeout,
+        )
+    except Exception:
+        return None
+
+
 def _verify_policy_owner_approval_decision(
     *,
     resolved_pool_id: str,
@@ -1421,6 +1697,7 @@ def _verify_policy_owner_approval_decision(
     approval_decision: Any | None,
     approval_decisions: Sequence[Any] | None,
     approval_reader: Any | None,
+    capital_pool_reader: Any | None = None,
     now_dt: datetime,
 ) -> str | None:
     """Verify a tenant-scoped policy-owner ApprovalDecision via canonical owner readback and ApprovalEvidence.require_valid."""
@@ -1483,10 +1760,24 @@ def _verify_policy_owner_approval_decision(
 
     _add_reader(approval_reader)
     if not readers:
-        for container in (b_map, b_meta, pool_meta, pool_sub, pool_sub_meta):
-            if isinstance(container, Mapping):
-                _add_reader(container.get("approval_reader"))
-    if not readers:
+        capital_owner_factory = globals().get("configured_capital_owner_approval_reader")
+        if callable(capital_owner_factory):
+            try:
+                _add_reader(
+                    capital_owner_factory(
+                        pool_id=resolved_pool_id,
+                        tenant_id=effective_tenant_id,
+                    )
+                )
+            except Exception:
+                pass
+        _add_reader(
+            _capital_owner_approval_reader_from_pool_reader(
+                capital_pool_reader,
+                pool_id=resolved_pool_id,
+                tenant_id=effective_tenant_id,
+            )
+        )
         try:
             from services.governance import approval_authority as _gov_auth
 
@@ -1668,7 +1959,9 @@ def _extract_pool_policy_candidates(
     if isinstance(pool_obj, Mapping):
         pool_meta = dict(pool_obj.get("metadata")) if isinstance(pool_obj.get("metadata"), Mapping) else {}
         pool_tenant_id = _first_text_or_none(pool_obj, "tenant_id") or _first_text_or_none(pool_meta, "tenant_id")
-        ref_from_pool = _first_text_or_none(pool_obj, "risk_policy_ref")
+        ref_from_pool = _first_text_or_none(pool_obj, "risk_policy_ref") or _first_text_or_none(
+            pool_meta, "risk_policy_ref"
+        )
         has_top_inline = "risk_policy" in pool_obj and pool_obj.get("risk_policy") is not None
         has_meta_inline = "risk_policy" in pool_meta and pool_meta.get("risk_policy") is not None
         inline_policy = (
@@ -1697,7 +1990,9 @@ def _extract_pool_policy_candidates(
     pool_tenant_id = _optional_text(getattr(pool_obj, "tenant_id", None)) or _first_text_or_none(
         pool_meta, "tenant_id"
     )
-    ref_attr = _optional_text(getattr(pool_obj, "risk_policy_ref", None))
+    ref_attr = _optional_text(getattr(pool_obj, "risk_policy_ref", None)) or _first_text_or_none(
+        pool_meta, "risk_policy_ref"
+    )
     has_meta_inline = "risk_policy" in pool_meta and pool_meta.get("risk_policy") is not None
     inline_policy = pool_meta.get("risk_policy") if has_meta_inline else None
     if ref_attr:
@@ -2316,6 +2611,7 @@ def resolve_pool_risk_policy_binding(
         approval_decision=approval_decision,
         approval_decisions=approval_decisions,
         approval_reader=approval_reader,
+        capital_pool_reader=capital_pool_reader,
         now_dt=now_dt,
     )
 
@@ -2461,6 +2757,7 @@ def resolve_bound_pool_risk_policy(
 ) -> RiskPolicy | None:
     """Resolve and load the bound CapitalPool's active ``RiskPolicy`` (never from signal metadata)."""
     resolved_pool_obj = pool
+    effective_pool_reader = capital_pool_reader
     if resolved_pool_obj is None and capital_pool_reader is not None:
         b_map = dict(binding) if isinstance(binding, Mapping) else {}
         lookup_pool_id = str(
@@ -2470,11 +2767,25 @@ def resolve_bound_pool_risk_policy(
         ).strip()
         resolved_pool_obj = capital_pool_reader(lookup_pool_id)
 
+    if (
+        approval_reader is None
+        and _capital_owner_approval_reader_from_pool_reader(effective_pool_reader) is None
+    ):
+        frame = inspect.currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            caller_self = caller.f_locals.get("self") if caller is not None else None
+            caller_reader = getattr(caller_self, "_capital_pool_reader", None) if caller_self is not None else None
+            if _capital_owner_approval_reader_from_pool_reader(caller_reader) is not None:
+                effective_pool_reader = caller_reader
+        finally:
+            del frame
+
     resolution = resolve_pool_risk_policy_binding(
         capital_pool_id=capital_pool_id,
         pool=resolved_pool_obj,
         binding=binding,
-        capital_pool_reader=None if resolved_pool_obj is not None else capital_pool_reader,
+        capital_pool_reader=effective_pool_reader,
         risk_policy_ref=risk_policy_ref,
         risk_policy_loader=risk_policy_loader,
         pool_store_path=pool_store_path,

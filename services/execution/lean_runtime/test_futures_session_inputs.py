@@ -418,17 +418,61 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
     }
 
     def setUp(self) -> None:
-        from services.capital.conftest import _ApprovesWhatIsAsked
-        from services.governance import approval_authority
+        from services.capital import risk_policy as _rp_mod
+        from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+        from services.governance.test_approval_authority import approval_snapshot
 
         super().setUp()
-        patcher = patch.object(
-            approval_authority,
-            "configured_approval_reader",
-            lambda _domain="capital", **_kw: _ApprovesWhatIsAsked(),
+        env_patcher = patch.dict(
+            os.environ,
+            {
+                "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+                "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-reader",
+                "PANTHEON_TENANT_ID": "default",
+            },
+            clear=False,
         )
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+        pool_json = json.loads(json.dumps(self.POOL))
+        policy = dict(pool_json["metadata"]["risk_policy"])
+        approval_json = json.loads(
+            json.dumps(
+                approval_snapshot(
+                    decision_id="apv-pool-rb-expr",
+                    tenant_id=str(pool_json.get("tenant_id") or "default"),
+                    owner_user_id="proposer-1",
+                    target_type="capital_pool_activation",
+                    target_id=str(pool_json["pool_id"]),
+                    target_version=capital_pool_approval_digest(pool_json),
+                    metadata={
+                        "subject": {
+                            "pool_id": str(pool_json["pool_id"]),
+                            "risk_direction": "increase",
+                            "risk_policy_id": str(policy["risk_policy_id"]),
+                            "risk_policy_version": str(policy["version"]),
+                            "risk_policy_digest": risk_policy_digest(policy),
+                            "requested_risk": "low",
+                        },
+                        "approvals": [
+                            {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                            {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                        ],
+                    },
+                )
+            )
+        )
+
+        def fetch_owner_approval(url, headers, timeout):
+            self.assertEqual(headers["Authorization"], "Bearer capital-reader")
+            self.assertEqual(headers["X-Pantheon-Service"], "runtime-manager")
+            self.assertTrue(url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr"))
+            return approval_json
+
+        http_patcher = patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval)
+        http_patcher.start()
+        self.addCleanup(http_patcher.stop)
 
     def _artifact(self, *, symbol: str = "0050.TWSE", bearish: bool = False):
         import copy

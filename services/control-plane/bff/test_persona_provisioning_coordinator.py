@@ -3852,3 +3852,184 @@ def test_coordinator_ref_only_creation_and_stale_custom_policy_repair_preserve_a
     assert repaired_sector["after_resolution"]["effective_limits"]["max_sector_exposure"] == {"tech": 0.9}
 
 
+def test_coordinator_ref_only_policies_validated_on_deployment_rebinding_and_publish_pool_envelope_renewal(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+
+    policy_dir = tmp_path / "ref_only_risk_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    valid_ref_policy = {
+        "risk_policy_id": "rp-valid-ref-only",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity"],
+        "gross_limit": 0.75,
+        "net_limit": 0.75,
+        "max_leverage": 1.0,
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    stale_ref_policy = {
+        **valid_ref_policy,
+        "risk_policy_id": "rp-stale-ref-only",
+        "status": "stale",
+    }
+    expired_ref_policy = {
+        **valid_ref_policy,
+        "risk_policy_id": "rp-expired-ref-only",
+        "expires_at": "2020-01-01T00:00:00Z",
+    }
+    wrong_tenant_ref_policy = {
+        **valid_ref_policy,
+        "risk_policy_id": "rp-wrong-tenant-ref-only",
+        "metadata": {"tenant_id": "tenant-foreign"},
+    }
+    for pol in (valid_ref_policy, stale_ref_policy, expired_ref_policy, wrong_tenant_ref_policy):
+        (policy_dir / f"{pol['risk_policy_id']}.json").write_text(json.dumps(pol), encoding="utf-8")
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+
+    # 1. Deployment creation rejects missing, stale, expired, and wrong-tenant ref-only policies
+    for bad_ref, expected_code in [
+        ("rp-missing-ref-only", "risk_policy_missing"),
+        ("rp-stale-ref-only", "risk_policy_stale"),
+        ("rp-expired-ref-only", "risk_policy_stale"),
+        ("rp-wrong-tenant-ref-only", "risk_policy_wrong_tenant"),
+    ]:
+        store_bad, record_bad = _record_and_store({"risk_policy_ref": bad_ref}, seed_pool_approval=False)
+        tx_bad = FakeOwnerTransport()
+        res_bad = _coordinator(store_bad, tx_bad, _schedule_receipt, seed_pool_approval=False).coordinate(record_bad)
+        assert res_bad.state == "failed"
+        assert expected_code in str(res_bad.error or "")
+
+    # 2. Rebinding / retry against an existing ref-only pool (no inline metadata.risk_policy) rejects missing, stale, and wrong-tenant refs
+    for bad_ref, expected_code in [
+        ("rp-missing-ref-only", "risk_policy_missing"),
+        ("rp-stale-ref-only", "risk_policy_stale"),
+        ("rp-expired-ref-only", "risk_policy_stale"),
+        ("rp-wrong-tenant-ref-only", "risk_policy_wrong_tenant"),
+    ]:
+        store_reb, record_reb = _record_and_store(seed_pool_approval=False)
+        ids_reb = deterministic_provisioning_ids(record_reb)
+        tx_reb = FakeOwnerTransport()
+        pool_path = f"/api/capital-pools/{ids_reb.capital_pool_id}"
+        tx_reb.objects[("capital", pool_path)] = {
+            "pool_id": ids_reb.capital_pool_id,
+            "owner_id": record_reb.tenant_id,
+            "tenant_id": record_reb.tenant_id,
+            "owner_type": "org",
+            "status": "active",
+            "currency": "USD",
+            "budget": 25000,
+            "risk_policy_ref": bad_ref,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "tenant_id": record_reb.tenant_id,
+                "persona_id": record_reb.persona_id,
+            },
+        }
+        coord_reb = _coordinator(store_reb, tx_reb, _schedule_receipt, seed_pool_approval=False)
+        res_reb = coord_reb.coordinate(record_reb)
+        assert res_reb.state == "failed"
+        assert expected_code in str(res_reb.error or "")
+
+    # 3. publish_pool_envelope renewal validates ref-only bound CapitalPools (no inline metadata.risk_policy)
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import (
+        FakeRuntimeManager,
+        PublishOwnerTransport,
+    )
+
+    store_pub, record_pub = _record_and_store({"risk_policy_ref": "rp-valid-ref-only"}, seed_pool_approval=False)
+    ids_pub = deterministic_provisioning_ids(record_pub)
+    runtime_pub = FakeRuntimeManager()
+    tx_pub = PublishOwnerTransport(runtime_pub)
+    pool_path_pub = f"/api/capital-pools/{ids_pub.capital_pool_id}"
+    coord_pub = PersonaProvisioningCoordinator(
+        store=store_pub,
+        transport=tx_pub,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="worker-test",
+        actor_id="pantheon-persona-provisioner",
+        runtime_binding_reader=runtime_pub.reader,
+    )
+    res_init = coord_pub.coordinate(record_pub)
+    assert res_init.state == "provisioning", res_init.error
+
+    base_artifact = tx_pub.objects[
+        ("registry", f"/api/registry/strategy-artifacts/{ids_pub.strategy_artifact_id}")
+    ]["entry"]["metadata"]["strategy_artifact"]
+    next_envelope = {
+        **base_artifact,
+        "artifact_id": "artifact-pool-envelope-v2",
+        "version": "2.0.0",
+    }
+    pub_request = {
+        "tenant_id": record_pub.tenant_id,
+        "persona_id": record_pub.persona_id,
+        "pool_version": 2,
+        "pool_digest": "sha256:" + "a" * 64,
+        "request_hash": record_pub.request_hash,
+        "requested_by": "operator-a",
+        "stage": "paper",
+        "envelope": next_envelope,
+        "previous": {
+            "artifact_id": ids_pub.strategy_artifact_id,
+            "version": ids_pub.version,
+            "plan_id": ids_pub.deployment_plan_id,
+        },
+    }
+
+    for bad_ref, expected_code in [
+        ("rp-missing-ref-only", "risk_policy_missing"),
+        ("rp-stale-ref-only", "risk_policy_stale"),
+        ("rp-expired-ref-only", "risk_policy_stale"),
+        ("rp-wrong-tenant-ref-only", "risk_policy_wrong_tenant"),
+    ]:
+        tx_pub.objects[("capital", pool_path_pub)] = {
+            "pool_id": ids_pub.capital_pool_id,
+            "owner_id": record_pub.tenant_id,
+            "tenant_id": record_pub.tenant_id,
+            "owner_type": "org",
+            "status": "active",
+            "currency": "USD",
+            "budget": 25000,
+            "risk_policy_ref": bad_ref,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "tenant_id": record_pub.tenant_id,
+                "persona_id": record_pub.persona_id,
+            },
+        }
+        assert "risk_policy" not in tx_pub.objects[("capital", pool_path_pub)]["metadata"]
+        with pytest.raises(PersonaProvisioningCoordinationError, match=expected_code):
+            coord_pub.publish_pool_envelope(pub_request)
+
+    # Valid ref-only pool (no inline metadata.risk_policy) passes publish_pool_envelope renewal
+    tx_pub.objects[("capital", pool_path_pub)] = {
+        "pool_id": ids_pub.capital_pool_id,
+        "owner_id": record_pub.tenant_id,
+        "tenant_id": record_pub.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "USD",
+        "budget": 25000,
+        "risk_policy_ref": "rp-valid-ref-only",
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": record_pub.tenant_id,
+            "persona_id": record_pub.persona_id,
+        },
+    }
+    assert "risk_policy" not in tx_pub.objects[("capital", pool_path_pub)]["metadata"]
+    receipt_pub = coord_pub.publish_pool_envelope(pub_request)
+    assert receipt_pub["envelope_artifact_id"] == "artifact-pool-envelope-v2"
+    assert receipt_pub["pool_version"] == 2
+
+
+

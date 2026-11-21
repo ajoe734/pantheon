@@ -727,3 +727,87 @@ def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_des
     assert state_wrong_digest.excluded[0].exclusion_reason == "non_executable_risk_policy_profile_mapping_unapproved"
 
 
+def test_verify_deploy_authorities_enforces_ref_only_risk_policies_for_missing_stale_wrong_tenant_and_valid(
+    monkeypatch,
+) -> None:
+    from services.capital import risk_policy as rp_mod
+    from services.capital.risk_policy import RiskPolicyLoadError
+
+    request, registry, approval, plan, capital_pool, persona_binding = _facts()
+    base_ref_only_pool = {
+        **capital_pool,
+        "tenant_id": "tenant-unit",
+        "metadata": {"tenant_id": "tenant-unit"},
+    }
+    assert "risk_policy" not in base_ref_only_pool
+    assert "risk_policy" not in base_ref_only_pool["metadata"]
+
+    policies_by_ref = {
+        "rp-valid-ref-only": {
+            "risk_policy_id": "rp-valid-ref-only",
+            "version": "2.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.25,
+            "net_limit": 1.0,
+            "max_leverage": 1.25,
+            "metadata": {"tenant_id": "tenant-unit"},
+        },
+        "rp-stale-status-ref-only": {
+            "risk_policy_id": "rp-stale-status-ref-only",
+            "version": "1.0",
+            "status": "stale",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.0,
+            "metadata": {"tenant_id": "tenant-unit"},
+        },
+        "rp-stale-expired-ref-only": {
+            "risk_policy_id": "rp-stale-expired-ref-only",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.0,
+            "expires_at": "2026-07-01T00:00:00Z",
+            "metadata": {"tenant_id": "tenant-unit"},
+        },
+        "rp-wrong-tenant-ref-only": {
+            "risk_policy_id": "rp-wrong-tenant-ref-only",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.0,
+            "metadata": {"tenant_id": "tenant-foreign"},
+        },
+    }
+    loader_calls: list[str] = []
+
+    def fake_load_risk_policy(ref: str):
+        loader_calls.append(ref)
+        if ref not in policies_by_ref:
+            raise RiskPolicyLoadError(f"Risk policy file not found for ref={ref!r}")
+        return dict(policies_by_ref[ref])
+
+    monkeypatch.setattr(rp_mod, "load_risk_policy", fake_load_risk_policy)
+
+    # 1. Valid ref-only policy calls loader and passes
+    valid_pool = {**base_ref_only_pool, "risk_policy_ref": "rp-valid-ref-only"}
+    report = _verify(request, registry, approval, plan, valid_pool, persona_binding)
+    assert report["status"] == "passed"
+    assert "rp-valid-ref-only" in loader_calls
+
+    # 2. Missing, stale, and wrong-tenant ref-only policies call loader and fail closed
+    for ref_name, expected_code in [
+        ("rp-missing-ref-only-review", "risk_policy_missing"),
+        ("rp-stale-status-ref-only", "risk_policy_stale"),
+        ("rp-stale-expired-ref-only", "risk_policy_stale"),
+        ("rp-wrong-tenant-ref-only", "risk_policy_wrong_tenant"),
+    ]:
+        before_calls = len(loader_calls)
+        bad_ref_pool = {**base_ref_only_pool, "risk_policy_ref": ref_name}
+        with pytest.raises(authority.DeployAuthorityError, match=expected_code):
+            _verify(request, registry, approval, plan, bad_ref_pool, persona_binding)
+        assert len(loader_calls) > before_calls
+        assert loader_calls[-1] == ref_name
+
+
+

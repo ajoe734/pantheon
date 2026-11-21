@@ -489,7 +489,10 @@ def verify_deploy_authorities(
         else {}
     )
     has_pool_policy_claim = bool(
-        "risk_policy" in capital_pool
+        capital_pool.get("risk_policy_ref") is not None
+        or pool_meta.get("risk_policy_ref") is not None
+        or capital_pool.get("risk_policy_id") is not None
+        or "risk_policy" in capital_pool
         or "risk_policy" in pool_meta
         or pool_meta.get("risk_policy_required") is True
         or pool_meta.get("require_approved_profile_mapping") is True
@@ -501,6 +504,7 @@ def verify_deploy_authorities(
             "risk_policy" in pool_meta
             and pool_meta.get("risk_policy") is None
             and not capital_pool.get("risk_policy_ref")
+            and not pool_meta.get("risk_policy_ref")
             and not pool_meta.get("require_approved_profile_mapping")
             and not str(pool_meta.get("requested_risk_profile") or "").strip()
         ):

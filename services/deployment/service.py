@@ -537,38 +537,52 @@ class DeploymentPlannerService:
             raise DeploymentPlanError(f"DeploymentPlan '{request.plan_id}' already exists")
 
         has_inline_meta_policy = "risk_policy" in metadata
-        if request.risk_policy is not None or has_inline_meta_policy:
+        has_meta_policy_ref = "risk_policy_ref" in metadata
+        meta_policy_ref = str(metadata.get("risk_policy_ref") or "").strip() or None
+        if request.risk_policy is not None or has_inline_meta_policy or has_meta_policy_ref:
             from services.capital.risk_policy import resolve_pool_risk_policy_binding
 
             candidate_policy = (
                 request.risk_policy if request.risk_policy is not None else metadata.get("risk_policy")
             )
-            if candidate_policy is None:
+            if candidate_policy is None and not meta_policy_ref:
                 raise DeploymentPlanError(
                     "RiskPolicy rejected: metadata.risk_policy is null or missing (risk_policy_missing)"
                 )
-            policy_res = resolve_pool_risk_policy_binding(
-                capital_pool_id=capital_pool_id,
-                pool={
-                    "pool_id": capital_pool_id,
-                    "tenant_id": tenant_id,
-                    "metadata": {
-                        **metadata,
-                        "risk_policy": candidate_policy,
-                    },
+            pool_for_res: Dict[str, Any] = {
+                "pool_id": capital_pool_id,
+                "tenant_id": tenant_id,
+                "metadata": {
+                    **metadata,
                     **(
-                        {"approval_digest": metadata.get("approval_digest") or metadata.get("pool_approval_digest")}
-                        if (metadata.get("approval_digest") or metadata.get("pool_approval_digest"))
+                        {"risk_policy": candidate_policy}
+                        if (request.risk_policy is not None or has_inline_meta_policy)
                         else {}
                     ),
                 },
+                **(
+                    {"risk_policy_ref": meta_policy_ref}
+                    if meta_policy_ref is not None
+                    else {}
+                ),
+                **(
+                    {"approval_digest": metadata.get("approval_digest") or metadata.get("pool_approval_digest")}
+                    if (metadata.get("approval_digest") or metadata.get("pool_approval_digest"))
+                    else {}
+                ),
+            }
+            policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=capital_pool_id,
+                pool=pool_for_res,
                 expected_tenant_id=tenant_id,
                 expected_stage=request.target_stage.value,
                 approval_reader=self.approval_reader,
                 require_active=True,
                 require_limits=(
                     ("gross_limit",)
-                    if request.target_stage.value == "paper" and has_inline_meta_policy and request.risk_policy is None
+                    if request.target_stage.value == "paper"
+                    and (has_inline_meta_policy or has_meta_policy_ref)
+                    and request.risk_policy is None
                     else ()
                 ),
                 raise_on_error=False,
