@@ -24,6 +24,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, build_opener
 
+from services.capital.risk_policy import resolve_pool_risk_policy_binding
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     strategy_artifact_checksum,
@@ -482,6 +483,36 @@ def verify_deploy_authorities(
         )
     if capital_pool.get("single_runtime_enforced") is not True:
         pool_mismatches.append("single_runtime_enforced must be literal true")
+    pool_meta = (
+        capital_pool.get("metadata")
+        if isinstance(capital_pool.get("metadata"), Mapping)
+        else {}
+    )
+    has_pool_policy_claim = bool(
+        "risk_policy" in capital_pool
+        or "risk_policy" in pool_meta
+        or pool_meta.get("risk_policy_required") is True
+        or pool_meta.get("require_approved_profile_mapping") is True
+        or pool_meta.get("source") == "persona_provisioning_coordinator"
+    )
+    if has_pool_policy_claim:
+        if "risk_policy" in pool_meta and pool_meta.get("risk_policy") is None and not capital_pool.get("risk_policy_ref"):
+            pool_mismatches.append("risk_policy risk_policy_missing: inline metadata.risk_policy is null or missing")
+        else:
+            pool_policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=capital_pool_id,
+                pool=capital_pool,
+                expected_tenant_id=str(plan_metadata.get("tenant_id") or "").strip() or None,
+                expected_stage=target_stage,
+                require_active=True,
+                require_limits=("gross_limit",),
+                as_of=observed_at.isoformat().replace("+00:00", "Z"),
+                raise_on_error=False,
+            )
+            if not pool_policy_res.resolved:
+                pool_mismatches.append(
+                    f"risk_policy {pool_policy_res.reason_code}: {pool_policy_res.reason}"
+                )
     if pool_mismatches:
         raise DeployAuthorityError(
             "capital pool authority mismatch: " + "; ".join(pool_mismatches)

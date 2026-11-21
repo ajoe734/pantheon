@@ -565,3 +565,100 @@ def test_capital_reads_never_borrow_the_deployment_principal(monkeypatch):
         match="Capital scoped read principal required",
     ):
         authority._capital_request_headers("tenant-dev")
+
+
+def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_desired_state():
+    valid_policy = {
+        "risk_policy_id": "paper-inline-policy:persona-loop-prod-dep-001",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+    request, registry, approval, plan, capital_pool, persona_binding = _facts()
+    capital_pool["metadata"] = {
+        "tenant_id": "tenant-unit",
+        "source": "persona_provisioning_coordinator",
+        "risk_policy": dict(valid_policy),
+    }
+    report = authority.verify_deploy_authorities(
+        request,
+        deployment_base_url="http://deployment.local",
+        registry_base_url="http://registry.local",
+        governance_base_url="http://governance.local",
+        capital_base_url="http://capital.local",
+        fetch_json=_fetcher(registry, approval, plan, capital_pool, persona_binding),
+        registry_fetch_json=_fetcher(registry, approval, plan, capital_pool, persona_binding),
+        capital_fetch_json=_fetcher(registry, approval, plan, capital_pool, persona_binding),
+        approval_reader=SnapshotApprovalReader(approval),
+        now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+    )
+    assert report["status"] == "passed"
+
+    for bad_meta, expected_code in [
+        ({"source": "persona_provisioning_coordinator"}, "risk_policy_missing"),
+        ({"risk_policy": {}}, "risk_policy_invalid"),
+        ({"risk_policy": {**valid_policy, "gross_limit": -1.0}}, "risk_policy_invalid_limit"),
+        ({"risk_policy": {**valid_policy, "status": "retired"}}, "risk_policy_inactive"),
+        ({"risk_policy": {**valid_policy, "allowed_stages": ["live"]}}, "risk_policy_stage_not_allowed"),
+        ({"risk_policy": {**valid_policy, "tenant_id": "tenant-foreign"}}, "risk_policy_wrong_tenant"),
+        ({"risk_policy": {**valid_policy, "expires_at": "2026-07-01T00:00:00Z"}}, "risk_policy_stale"),
+    ]:
+        bad_pool = {**capital_pool, "metadata": {"tenant_id": "tenant-unit", **bad_meta}}
+        with pytest.raises(authority.DeployAuthorityError, match=expected_code):
+            authority.verify_deploy_authorities(
+                request,
+                deployment_base_url="http://deployment.local",
+                registry_base_url="http://registry.local",
+                governance_base_url="http://governance.local",
+                capital_base_url="http://capital.local",
+                fetch_json=_fetcher(registry, approval, plan, bad_pool, persona_binding),
+                registry_fetch_json=_fetcher(registry, approval, plan, bad_pool, persona_binding),
+                capital_fetch_json=_fetcher(registry, approval, plan, bad_pool, persona_binding),
+                approval_reader=SnapshotApprovalReader(approval),
+                now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+            )
+
+    # Also verify fleet_desired_state excludes bindings with invalid/missing/wrong-tenant risk_policy
+    import sys
+
+    fds_path = Path(__file__).with_name("fleet_desired_state.py")
+    fds_spec = importlib.util.spec_from_file_location("rm_fleet_desired_state", fds_path)
+    assert fds_spec and fds_spec.loader
+    fds = importlib.util.module_from_spec(fds_spec)
+    sys.modules[fds_spec.name] = fds
+    fds_spec.loader.exec_module(fds)
+
+    base_binding = {
+        "binding_id": "rb-paper-1",
+        "runtime_id": "rt-paper-1",
+        "capital_pool_id": "pool-loop-prod-dep-001",
+        "deployment_mode": "paper",
+        "status": "active",
+        "plan_id": "plan-1",
+        "artifact_id": "art-1",
+        "artifact_version": "1.0.0",
+        "persona_capital_binding_id": "pcb-1",
+        "effective_at": "2026-07-10T00:00:00Z",
+        "metadata": {
+            "tenant_id": "tenant-unit",
+            "strategy_id": "strat-1",
+            "symbol": "2330.TW",
+            "object_store": {
+                "openclaw/registry/strat-1/1.0.0/metadata.json": {"checksum": "sha256:abc"},
+            },
+            "market_data_policy": {"owner": "source-ingest"},
+            "risk_policy": dict(valid_policy),
+        },
+    }
+    state_ok = fds.build_fleet_desired_state([base_binding], include_excluded=False) if False else fds.build_fleet_desired_state([base_binding])
+    assert state_ok.active_count == 1
+    bad_rb = copy.deepcopy(base_binding)
+    bad_rb["metadata"]["risk_policy"] = {**valid_policy, "tenant_id": "tenant-foreign"}
+    state_bad = fds.build_fleet_desired_state([bad_rb])
+    assert state_bad.active_count == 0
+    assert state_bad.excluded[0].exclusion_reason == "non_executable_risk_policy_wrong_tenant"
+
