@@ -148,6 +148,9 @@ def test_no_broker_url_records_not_configured_and_decides_on_booking() -> None:
     bad = _summary({"cash_after": 0.0}, {"cash": 0.0})
     (event, _), _ = _run(bad, broker_url="")
     _failed(event, "cash_variance")
+    cash_check = next(c for c in event["reason_detail"] if c["check"] == "cash_change")
+    assert cash_check["difference"] == -102206.0
+    assert cash_check["delta"] == -102206.0
 
 
 def test_journey_without_fill_reconciles_as_before() -> None:
@@ -156,3 +159,90 @@ def test_journey_without_fill_reconciles_as_before() -> None:
     assert event["event_type"] == "reconciliation_completed"
     assert "reason_detail" not in event
     fetch.assert_not_called()
+
+
+def test_incomplete_booking_evidence_is_classified_distinctly_from_accounting_variance() -> None:
+    # 1. Missing cash_before/cash_after on a fill must report reconciliation_evidence_incomplete, never cash_variance
+    missing_cash = _summary({"cash_before": None, "cash_after": None})
+    (event, reason), _ = _run(missing_cash, order=BROKER_ORDER)
+    assert reason is None
+    _failed(event, "reconciliation_evidence_incomplete")
+    cash_check = next(c for c in event["reason_detail"] if c["check"] == "cash_change")
+    assert cash_check["status"] == "unverified"
+    assert cash_check["difference"] is None and cash_check["delta"] is None
+    assert cash_check["missing_evidence"] == ["actual"]
+
+    # 2. Missing position_quantity_before/after on a fill (with fill_id/broker_order_id present)
+    # must report reconciliation_evidence_incomplete, never reconciliation_completed or position_variance
+    missing_pos = _summary({"position_quantity_before": None, "position_quantity_after": None})
+    (event2, _), _ = _run(missing_pos, order=BROKER_ORDER)
+    _failed(event2, "reconciliation_evidence_incomplete")
+    pos_check = next(c for c in event2["reason_detail"] if c["check"] == "position_change")
+    assert pos_check["status"] == "unverified"
+    assert pos_check["missing_evidence"] == ["actual"]
+
+    # 3. Missing broker_order_id when broker_url is configured reports unverified evidence, not broker_record_missing
+    missing_broker_id = _summary({"broker_order_id": ""})
+    (event3, _), fetch3 = _run(missing_broker_id, order=BROKER_ORDER)
+    fetch3.assert_not_called()
+    _failed(event3, "reconciliation_evidence_incomplete")
+    broker_check = next(c for c in event3["reason_detail"] if c["check"] == "broker_record")
+    assert broker_check["status"] == "unverified"
+    assert broker_check["missing_evidence"] == ["broker_order_id"]
+
+
+def test_recorded_tj_57418ba7_sell_reconciliation_with_complete_and_incomplete_evidence() -> None:
+    broker_order = {
+        "order_id": "b00575cfc62f44d18ed052dad34d23ea",
+        "instrument_id": "2317.TWSE",
+        "side": "sell",
+        "qty": 1.0,
+        "status": "filled",
+        "fill_qty": 1.0,
+        "fill_price": 218.5,
+    }
+    summary = _summary(
+        {
+            "side": "sell",
+            "instrument_id": "2317.TWSE",
+            "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+            "fill_quantity": 1.0,
+            "fill_price": 218.5,
+            "fee": 0.3113625,
+            "tax": 0.6555,
+            "position_quantity_before": 1.0,
+            "position_quantity_after": 0.0,
+            "cash_before": 100000.0,
+            "cash_after": 100217.5331375,
+        },
+        {"position_qty": 0.0, "cash": 100217.5331375},
+    )
+    (completed_event, _), _ = _run(summary, order=broker_order)
+    assert completed_event["event_type"] == "reconciliation_completed"
+    assert all(c["status"] == "passed" for c in completed_event["reason_detail"])
+
+    # Proven cash discrepancy on tj_57418ba7 carries expected, actual, difference and delta
+    mismatch_summary = _summary(
+        {
+            "side": "sell",
+            "instrument_id": "2317.TWSE",
+            "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+            "fill_quantity": 1.0,
+            "fill_price": 218.5,
+            "fee": 0.3113625,
+            "tax": 0.6555,
+            "position_quantity_before": 1.0,
+            "position_quantity_after": 0.0,
+            "cash_before": 100000.0,
+            "cash_after": 100172.5331375,
+        },
+        {"position_qty": 0.0, "cash": 100172.5331375},
+    )
+    (variance_event, _), _ = _run(mismatch_summary, order=broker_order)
+    _failed(variance_event, "cash_variance")
+    cash_change = next(c for c in variance_event["reason_detail"] if c["check"] == "cash_change")
+    assert cash_change["status"] == "failed"
+    assert cash_change["expected"] == pytest.approx(217.5331375)
+    assert cash_change["actual"] == pytest.approx(172.5331375)
+    assert cash_change["delta"] == pytest.approx(-45.0)
+    assert cash_change["difference"] == pytest.approx(-45.0)

@@ -1,0 +1,389 @@
+{
+  "task_id": "TRADE-JOURNEY-FAILURE-CAUSE-20261121",
+  "register_class": "RC6",
+  "work_packages": [
+    "WP6.1",
+    "WP6.3"
+  ],
+  "residual_of_prs": [
+    7658,
+    7671,
+    7702
+  ],
+  "downstream_consumers": [
+    "FE-TRADE-JOURNEY-FAILURE-CAUSE-20261121",
+    "TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121"
+  ],
+  "end_to_end_trace": {
+    "pre_broker_rejection": {
+      "producer": {
+        "file": "services/execution/lean_runtime/paper_runtime.py",
+        "function": "SubmitTaiwanBrokerOrder",
+        "event_type": "order_rejection",
+        "fields_emitted": {
+          "submitted_to_broker": false,
+          "broker_submission_status": "<actual_risk_reason>",
+          "metadata": {
+            "reason": "<actual_risk_reason>",
+            "reject_reason": "<actual_risk_reason>",
+            "risk_reason": "<actual_risk_reason>",
+            "risk_status": "rejected",
+            "risk_gate_evaluated": true,
+            "required": "<float>",
+            "available": "<float>",
+            "limit": "<float>",
+            "requested_quantity": "<float>",
+            "holding_quantity": "<float_if_position_check>",
+            "reason_code": "long_cash (merged from _current_signal_metadata expression decision)"
+          }
+        }
+      },
+      "stage_projection": {
+        "file": "services/trade_journey/lifecycle_projector.py",
+        "function": "LifecycleProjector._journey_events",
+        "contract_fields_preserved": [
+          "source_event_id",
+          "canonical_event_id",
+          "reason_code",
+          "reason_detail",
+          "expression_reason_code",
+          "submitted_to_broker",
+          "order_status",
+          "risk_status",
+          "risk_gate_evaluated",
+          "missing_evidence"
+        ],
+        "invariants": [
+          "Expression choice codes (long_cash, long_lever, short_via_future, close_leg) are stored in expression_reason_code and never used as reason_code.",
+          "Actual rejection reason_code is selected from reject_reason, risk_reason, reason, broker_submission_status, or non-expression reason_code (or sell_without_holdings).",
+          "Pre-broker rejections set submitted_to_broker=false and order_status='not_submitted'.",
+          "If producer evidence is omitted (no non-expression reason or missing required/available/holding_quantity/requested_quantity), reason_code='reason_not_recorded' is retained when the reason is absent and missing_evidence lists the omitted fields."
+        ]
+      },
+      "bff_read_model": {
+        "file": "services/control-plane/bff/trade_journeys.py",
+        "surfaces": [
+          "GET /bff/management/trade-journeys",
+          "GET /bff/management/trade-journeys/{journey_id}",
+          "GET /bff/management/trade-journeys/{journey_id}/timeline",
+          "GET /bff/management/trade-journeys/attention"
+        ],
+        "invariants": [
+          "One rejection cause at risk_evaluation (status='rejected', rejected_stage='risk_evaluation', current_stage='risk_evaluation') with reason_code, reason_detail, source_event_id, expression_reason_code, and missing_evidence when applicable.",
+          "Order not submitted on order_submission (stages.order_submission.status='not_submitted', order_status='not_submitted', submitted_to_broker=false) with no duplicate failure status or reason.",
+          "Timeline item for pre-broker risk rejection is normalized to stage='risk_evaluation', stage_status='rejected', status='rejected', order_status='not_submitted', submitted_to_broker=false, preserving source_event_id, reason_code, reason_detail, expression_reason_code, and missing_evidence."
+        ]
+      }
+    },
+    "reconciliation_and_accounting_variance": {
+      "producer": {
+        "file": "services/reconciliation-drift/main.py",
+        "functions": [
+          "_journey_reconciliation_decision",
+          "_journey_booking_decision",
+          "_booking_check"
+        ],
+        "invariants": [
+          "Completed numeric trade-specific comparisons (broker_fill_qty, broker_fill_price, position_change, committed_snapshot_position, cash_change, committed_snapshot_cash) carry check, status, expected, actual, difference, and delta.",
+          "When expected or actual is None on a fill journey, the check is marked status='unverified' with difference=null, delta=null, and missing_evidence=['expected'|'actual'].",
+          "Accounting variance codes (cash_variance, position_variance, broker_fill_mismatch, broker_record_missing) are emitted only when a trade-specific comparison completed and failed.",
+          "If a fill journey has unverified checks and no proven discrepancy, it emits reconciliation_evidence_incomplete.",
+          "Runtime health and broker read errors honor the 60-minute defer window before stamping runtime_unhealthy_at_reconciliation or broker_unavailable_at_reconciliation."
+        ]
+      },
+      "bff_read_model": {
+        "files": [
+          "services/control-plane/bff/trade_journeys.py",
+          "services/control-plane/bff/trade_journey_projection_store.py"
+        ],
+        "classifications": {
+          "accounting_variance": {
+            "kind": "variance",
+            "accounting_variance": true,
+            "comparison_completed": true,
+            "condition": "At least one trade-specific check completed with both expected and actual present and failed beyond tolerance (1e-6), populating discrepancies with check, expected, actual, delta, and difference."
+          },
+          "runtime_health": {
+            "kind": "reconciliation_deferred",
+            "accounting_variance": false,
+            "comparison_completed": false,
+            "reason_code": "runtime_unhealthy_at_reconciliation",
+            "mismatch_flag": false
+          },
+          "broker_unavailable": {
+            "kind": "reconciliation_deferred",
+            "accounting_variance": false,
+            "comparison_completed": false,
+            "reason_code": "broker_unavailable_at_reconciliation",
+            "mismatch_flag": false
+          },
+          "unverified_evidence": {
+            "kind": "variance",
+            "accounting_variance": false,
+            "comparison_completed": false,
+            "condition": "Reconciliation failed without a completed trade-specific discrepancy and without runtime_health or broker_unavailable evidence; missing_evidence explicitly identifies the missing data."
+          }
+        }
+      }
+    }
+  },
+  "stable_response_examples": {
+    "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd": {
+      "recorded_source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+      "producer_log_line": "2026-11-19 23:46:17,059 WARNING paper-execution-engine [paper_runtime.py:2038] Taiwan broker order rejected by risk gate for 2317: reason=insufficient_cash required=100034.3461 available=100000.0 limit=100000.0",
+      "with_producer_evidence": {
+        "list_row": {
+          "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+          "tenant_id": "tenant-dev",
+          "environment": "paper",
+          "status": "failed",
+          "current_stage": "risk_evaluation",
+          "severity": "critical",
+          "persona_id": "persona-6507750312870d03a241",
+          "persona_name": "澄川｜2317 台股 Paper 學習 R2",
+          "symbol": "2317.TWSE",
+          "side": "buy",
+          "quantity": 452.0,
+          "filled_quantity": null,
+          "outcome": {
+            "kind": "rejected",
+            "rejected_stage": "risk_evaluation",
+            "reason_code": "insufficient_cash",
+            "reason_detail": {
+              "required": 100034.3461,
+              "available": 100000.0,
+              "limit": 100000.0,
+              "requested_quantity": 452.0
+            },
+            "expression_reason_code": "long_cash",
+            "submitted_to_broker": false,
+            "order_status": "not_submitted",
+            "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59"
+          },
+          "flags": {
+            "waiting_human": false,
+            "blocked": false,
+            "rejected": true,
+            "mismatch": false,
+            "orphan": false,
+            "stalled": false
+          },
+          "read_state": "formal"
+        },
+        "detail_stages": {
+          "signal_generation": {
+            "status": "succeeded"
+          },
+          "trade_decision": {
+            "status": "succeeded"
+          },
+          "risk_evaluation": {
+            "status": "rejected",
+            "reason_code": "insufficient_cash",
+            "reason_detail": {
+              "required": 100034.3461,
+              "available": 100000.0,
+              "limit": 100000.0,
+              "requested_quantity": 452.0
+            },
+            "expression_reason_code": "long_cash",
+            "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59"
+          },
+          "order_submission": {
+            "status": "not_submitted",
+            "order_status": "not_submitted",
+            "submitted_to_broker": false
+          }
+        },
+        "timeline_rejection_item": {
+          "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59:order_submission",
+          "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+          "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+          "stage": "risk_evaluation",
+          "rejected_stage": "risk_evaluation",
+          "event_type": "order_rejection",
+          "stage_status": "rejected",
+          "status": "rejected",
+          "reason_code": "insufficient_cash",
+          "reason_detail": {
+            "required": 100034.3461,
+            "available": 100000.0,
+            "limit": 100000.0,
+            "requested_quantity": 452.0
+          },
+          "expression_reason_code": "long_cash",
+          "submitted_to_broker": false,
+          "order_status": "not_submitted",
+          "source": "execution.paper_runtime"
+        }
+      },
+      "before_historical_repair_missing_producer_evidence": {
+        "outcome": {
+          "kind": "rejected",
+          "rejected_stage": "risk_evaluation",
+          "reason_code": "reason_not_recorded",
+          "reason_detail": null,
+          "expression_reason_code": "long_cash",
+          "submitted_to_broker": false,
+          "order_status": "not_submitted",
+          "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+          "missing_evidence": [
+            "reject_reason"
+          ]
+        }
+      }
+    },
+    "tj_57418ba7-ef37-5015-9b5e-b6423872da89": {
+      "recorded_source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+      "unverified_historical_row": {
+        "outcome": {
+          "kind": "variance",
+          "classification": "unverified_evidence",
+          "accounting_variance": false,
+          "comparison_completed": false,
+          "reason_code": "reason_not_recorded",
+          "reason_detail": null,
+          "discrepancies": [],
+          "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+          "missing_evidence": [
+            "reconciliation_reason",
+            "booking_comparison"
+          ]
+        }
+      },
+      "runtime_health_at_reconciliation": {
+        "outcome": {
+          "kind": "reconciliation_deferred",
+          "classification": "runtime_health",
+          "accounting_variance": false,
+          "comparison_completed": false,
+          "reason_code": "runtime_unhealthy_at_reconciliation",
+          "reason_detail": [
+            {
+              "check": "runtime_health_summary",
+              "status": "critical",
+              "detail": "Runtime heartbeat stale during deployment window",
+              "observed": "unhealthy",
+              "threshold": "healthy"
+            }
+          ],
+          "discrepancies": [],
+          "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+        },
+        "flags_mismatch": false
+      },
+      "broker_unavailable_at_reconciliation": {
+        "outcome": {
+          "kind": "reconciliation_deferred",
+          "classification": "broker_unavailable",
+          "accounting_variance": false,
+          "comparison_completed": false,
+          "reason_code": "broker_unavailable_at_reconciliation",
+          "reason_detail": [
+            {
+              "check": "broker_record",
+              "status": "unavailable",
+              "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+              "error": "paper broker status 503"
+            }
+          ],
+          "discrepancies": [],
+          "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+        },
+        "flags_mismatch": false
+      },
+      "genuine_mismatch": {
+        "outcome": {
+          "kind": "variance",
+          "classification": "accounting_variance",
+          "accounting_variance": true,
+          "comparison_completed": true,
+          "reason_code": "cash_variance",
+          "reason_detail": [
+            {
+              "check": "position_change",
+              "status": "passed",
+              "expected": -1.0,
+              "actual": -1.0,
+              "difference": 0.0,
+              "delta": 0.0
+            },
+            {
+              "check": "cash_change",
+              "status": "failed",
+              "expected": 217.5331375,
+              "actual": 172.5331375,
+              "difference": -45.0,
+              "delta": -45.0
+            }
+          ],
+          "discrepancies": [
+            {
+              "check": "cash_change",
+              "status": "failed",
+              "expected": 217.5331375,
+              "actual": 172.5331375,
+              "difference": -45.0,
+              "delta": -45.0
+            }
+          ],
+          "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+        },
+        "flags_mismatch": true
+      },
+      "upstream_omission_in_booking_comparison": {
+        "outcome": {
+          "kind": "variance",
+          "classification": "unverified_evidence",
+          "accounting_variance": false,
+          "comparison_completed": false,
+          "reason_code": "reconciliation_evidence_incomplete",
+          "unverified_reason_code": "cash_variance",
+          "reason_detail": [
+            {
+              "check": "cash_change",
+              "status": "unverified",
+              "expected": 217.5331375,
+              "actual": null,
+              "difference": null,
+              "delta": null
+            }
+          ],
+          "discrepancies": [],
+          "missing_evidence": [
+            "cash_change:actual"
+          ],
+          "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+        }
+      }
+    },
+    "cross_tenant_isolation": {
+      "caller_tenant_scope": "tenant-dev",
+      "other_tenant_id": "tenant-other",
+      "other_journey_id": "tj_other_tenant_001",
+      "list_under_tenant_dev": "excluded (only tenant-dev journeys returned)",
+      "detail_under_tenant_dev_status": 404,
+      "detail_under_tenant_dev_code": "RESOURCE_NOT_FOUND",
+      "timeline_under_tenant_dev_status": 404,
+      "list_under_tenant_other_status": 403,
+      "list_under_tenant_other_code": "FORBIDDEN"
+    }
+  },
+  "incremental_storage_impact": {
+    "new_persistent_writers": 0,
+    "new_periodic_scanners": 0,
+    "per_request_fleet_scans": 0,
+    "existing_writer": "trade_journey_projection.journey_stages (contract_fields JSONB)",
+    "persisted_fields_added_on_rejection_and_reconciliation_rows": [
+      "source_event_id",
+      "expression_reason_code",
+      "reason_detail",
+      "order_status",
+      "risk_status",
+      "risk_gate_evaluated",
+      "missing_evidence"
+    ],
+    "bytes_per_affected_stage_row": "120-240 bytes on order_rejection and reconciliation stage rows; 0 bytes on normal signal, decision, order, fill, and snapshot stage rows",
+    "estimated_growth_per_day_at_hosted_scale": "< 48 KB/day across 50-200 journeys/day for 3 trading personas (< 1.5 MB/month)"
+  }
+}

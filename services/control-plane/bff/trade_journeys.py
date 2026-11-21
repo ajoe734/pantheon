@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -472,6 +473,19 @@ def _is_nonfill_unsubmitted_event(
     return True
 
 
+def _source_event_id(event: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not isinstance(event, Mapping):
+        return None
+    for key in ("source_event_id", "canonical_event_id"):
+        val = str(event.get(key) or "").strip()
+        if val:
+            return val
+    raw_event_id = str(event.get("event_id") or "").strip()
+    if raw_event_id:
+        return raw_event_id.split(":", 1)[0]
+    return None
+
+
 def _is_risk_gate_rejection(event: Mapping[str, Any]) -> bool:
     """An order_rejection stopped before the broker by the risk gate.
 
@@ -485,9 +499,17 @@ def _is_risk_gate_rejection(event: Mapping[str, Any]) -> bool:
         return True
     if str(event.get("risk_status") or "").strip().lower() == "rejected":
         return True
-    # Recorded shape needs a stored reason; a reasonless rejection stays partial.
-    return event.get("submitted_to_broker") is False and bool(
-        str(event.get("reason_code") or "").strip()
+    # Recorded shape needs a stored reason or expression reason; a reasonless rejection stays partial.
+    return event.get("submitted_to_broker") is False and any(
+        bool(str(event.get(field) or "").strip())
+        for field in (
+            "reason_code",
+            "expression_reason_code",
+            "reject_reason",
+            "risk_reason",
+            "reason",
+            "broker_submission_status",
+        )
     )
 
 
@@ -505,14 +527,35 @@ def _effective_snapshot_and_diagnostics(
     diag_list: List[Dict[str, Any]] = [
         dict(item) for item in diagnostics if isinstance(item, Mapping)
     ]
-    if "risk_evaluation" in stages:
-        return dict(snapshot), diag_list
+    if "reconciliation" in stages and (stages.get("reconciliation") or {}).get("status") == "failed":
+        recon_event = _event_for_stage(timeline, "reconciliation")
+        recon_analysis = _reconciliation_analysis(recon_event)
+        recon_stage = dict(stages["reconciliation"])
+        recon_stage["reason_code"] = recon_analysis["reason_code"]
+        recon_stage["classification"] = recon_analysis["classification"]
+        recon_stage["accounting_variance"] = recon_analysis["accounting_variance"]
+        recon_stage["comparison_completed"] = recon_analysis["comparison_completed"]
+        if recon_analysis["reason_detail"] is not None:
+            recon_stage["reason_detail"] = recon_analysis["reason_detail"]
+        if recon_analysis["discrepancies"]:
+            recon_stage["discrepancies"] = recon_analysis["discrepancies"]
+        if recon_analysis["missing_evidence"]:
+            recon_stage["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis["source_event_id"]:
+            recon_stage["source_event_id"] = recon_analysis["source_event_id"]
+        stages["reconciliation"] = recon_stage
+    has_explicit_risk = "risk_evaluation" in stages
+    if has_explicit_risk and not (
+        (stages.get("risk_evaluation") or {}).get("status") == "rejected"
+        and (stages.get("order_submission") or {}).get("status") in {"failed", "rejected"}
+    ):
+        return {**snapshot, "stages": stages}, diag_list
     if stages.get("signal_generation", {}).get("status") != "succeeded":
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     if stages.get("trade_decision", {}).get("status") not in {"succeeded", "skipped"}:
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     if {"broker_acknowledgement", "fill_management", "ledger_booking", "reconciliation"} & set(stages):
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     identifiers = snapshot.get("identifiers") if isinstance(snapshot.get("identifiers"), Mapping) else {}
     if any(
         identifiers.get(field)
@@ -524,7 +567,7 @@ def _effective_snapshot_and_diagnostics(
             "reconciliation_id",
         )
     ):
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     if not all(
         isinstance(item, Mapping)
         and _is_nonfill_unsubmitted_event(
@@ -532,20 +575,20 @@ def _effective_snapshot_and_diagnostics(
         )
         for item in (timeline or ())
     ):
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     order_stage = stages.get("order_submission")
     if not isinstance(order_stage, Mapping):
-        return dict(snapshot), diag_list
+        return {**snapshot, "stages": stages}, diag_list
     order_status = order_stage.get("status")
-    if order_status not in {"failed", "rejected", "skipped"}:
-        return dict(snapshot), diag_list
+    if order_status not in {"failed", "rejected", "skipped", "not_submitted"}:
+        return {**snapshot, "stages": stages}, diag_list
     submission_events = [
         item
         for item in (timeline or ())
         if isinstance(item, Mapping) and item.get("stage") == "order_submission"
     ]
     inferred_status: Optional[str] = None
-    inferred_reason: Optional[str] = None
+    gate_evidence: Optional[Dict[str, Any]] = None
     if submission_events:
         if (
             order_status == "skipped"
@@ -562,36 +605,55 @@ def _effective_snapshot_and_diagnostics(
             )
         ):
             inferred_status = "skipped"
-        elif order_status in {"failed", "rejected"} and any(
-            item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
-            and str(
-                item.get("reason_code")
-                or item.get("reject_reason")
-                or item.get("reason")
-                or item.get("risk_reason")
-                or item.get("broker_submission_status")
-                or ""
-            ).strip()
-            == "sell_without_holdings"
-            for item in submission_events
-        ):
-            inferred_status = "rejected"
-        elif order_status in {"failed", "rejected"}:
+        elif order_status in {"failed", "rejected", "not_submitted"}:
             gate_event = next(
-                (item for item in submission_events if _is_risk_gate_rejection(item)), None
+                (
+                    item
+                    for item in submission_events
+                    if _is_risk_gate_rejection(item)
+                    or (
+                        item.get("event_type") in {"order_rejection", "order_rejection_simulated"}
+                        and str(
+                            item.get("reason_code")
+                            or item.get("reject_reason")
+                            or item.get("reason")
+                            or item.get("risk_reason")
+                            or item.get("broker_submission_status")
+                            or ""
+                        ).strip()
+                        == "sell_without_holdings"
+                    )
+                ),
+                None,
             )
             if gate_event is not None:
                 inferred_status = "rejected"
-                inferred_reason = str(gate_event.get("reason_code") or "").strip() or None
+                gate_evidence = _rejection_evidence(gate_event)
     if inferred_status is None:
-        return dict(snapshot), diag_list
-    stages["risk_evaluation"] = {
+        return {**snapshot, "stages": stages}, diag_list
+    risk_stage_info: Dict[str, Any] = {
         "status": inferred_status,
         "updated_at": order_stage.get("updated_at"),
         "revision": order_stage.get("revision", 1),
     }
-    if inferred_reason:
-        stages["risk_evaluation"]["reason_code"] = inferred_reason
+    if gate_evidence is not None:
+        risk_stage_info["reason_code"] = gate_evidence["reason_code"]
+        if gate_evidence["reason_detail"] is not None:
+            risk_stage_info["reason_detail"] = gate_evidence["reason_detail"]
+        if gate_evidence["source_event_id"]:
+            risk_stage_info["source_event_id"] = gate_evidence["source_event_id"]
+        if gate_evidence["expression_reason_code"]:
+            risk_stage_info["expression_reason_code"] = gate_evidence["expression_reason_code"]
+        if gate_evidence["missing_evidence"]:
+            risk_stage_info["missing_evidence"] = gate_evidence["missing_evidence"]
+        stages["order_submission"] = {
+            "status": "not_submitted",
+            "order_status": "not_submitted",
+            "submitted_to_broker": False,
+            "updated_at": order_stage.get("updated_at"),
+            "revision": order_stage.get("revision", 1),
+        }
+    stages["risk_evaluation"] = risk_stage_info
     raw_completeness = snapshot.get("completeness")
     completeness = dict(raw_completeness) if isinstance(raw_completeness, Mapping) else {}
     missing_stages = [
@@ -632,6 +694,12 @@ def _current_stage(snapshot: Mapping[str, Any]) -> Optional[str]:
     stages = snapshot.get("stages") or {}
     for stage in reversed(STAGES):
         if stage in stages:
+            info = stages.get(stage)
+            if isinstance(info, Mapping) and info.get("status") == "not_submitted":
+                continue
+            return stage
+    for stage in reversed(STAGES):
+        if stage in stages:
             return stage
     return None
 
@@ -641,8 +709,13 @@ _REJECTION_STAGES = ("risk_evaluation", "order_submission", "broker_acknowledgem
 
 def _flags(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]) -> Dict[str, bool]:
     stages = snapshot.get("stages") or {}
-    statuses = {info.get("status") for info in stages.values()}
+    statuses = {info.get("status") for info in stages.values() if isinstance(info, Mapping)}
     codes = {item.get("code") for item in diagnostics}
+    recon_info = stages.get("reconciliation") if isinstance(stages.get("reconciliation"), Mapping) else {}
+    recon_deferred = (
+        recon_info.get("classification") in {"runtime_health", "broker_unavailable"}
+        or recon_info.get("reason_code") in _DEFERRED_RECON_REASONS
+    )
     return {
         "waiting_human": snapshot.get("status") == "waiting_human" or "waiting_human" in statuses,
         "blocked": snapshot.get("status") == "blocked" or "blocked" in statuses,
@@ -650,8 +723,11 @@ def _flags(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, Any]]
             (stages.get(name) or {}).get("status") in {"rejected", "failed"}
             for name in _REJECTION_STAGES
         ),
-        "mismatch": snapshot.get("status") == "completed_with_variance"
-        or (stages.get("reconciliation") or {}).get("status") == "failed",
+        "mismatch": (
+            snapshot.get("status") == "completed_with_variance"
+            or recon_info.get("status") == "failed"
+        )
+        and not recon_deferred,
         "orphan": "orphan_identifier" in codes,
     }
 
@@ -723,9 +799,59 @@ _UPSTREAM_STAGES = tuple(STAGES[: STAGES.index("signal_generation")])
 # Expression choice codes describe how an order was expressed, never why it was
 # rejected; a rejection that only carries one predates the reason fields.
 _EXPRESSION_REASON_CODES = frozenset({"long_cash", "long_lever", "short_via_future", "close_leg"})
-_DEFERRED_RECON_REASONS = frozenset({"runtime_unhealthy_at_reconciliation"})
+_DEFERRED_RECON_REASONS = frozenset(
+    {
+        "runtime_unhealthy_at_reconciliation",
+        "broker_unavailable_at_reconciliation",
+        "reconciliation_deferred_runtime_unhealthy",
+        "reconciliation_deferred_broker_unavailable",
+    }
+)
 _REASON_NOT_RECORDED = "reason_not_recorded"
-_CASH_REJECT_REASONS = frozenset({"insufficient_cash", "insufficient_buying_power"})
+_CASH_REJECT_REASONS = frozenset({"insufficient_cash", "insufficient_buying_power", "insufficient_initial_margin"})
+_POSITION_REJECT_REASONS = frozenset({"insufficient_position", "sell_without_holdings"})
+_RUNTIME_HEALTH_RECON_CHECKS = frozenset(
+    {
+        "runtime_state",
+        "runtime_health_summary",
+        "queue_lag_ms",
+        "event_delivery_lag_ms",
+        "actual_metrics_presence",
+    }
+)
+_TRADE_COMPARISON_CHECKS = frozenset(
+    {
+        "broker_record",
+        "broker_fill_qty",
+        "broker_fill_price",
+        "broker_status",
+        "broker_side",
+        "broker_instrument_id",
+        "position_change",
+        "committed_snapshot_position",
+        "cash_change",
+        "committed_snapshot_cash",
+    }
+)
+_NUMERIC_COMPARISON_CHECKS = frozenset(
+    {
+        "broker_fill_qty",
+        "broker_fill_price",
+        "position_change",
+        "committed_snapshot_position",
+        "cash_change",
+        "committed_snapshot_cash",
+    }
+)
+_ACCOUNTING_VARIANCE_REASONS = frozenset(
+    {
+        "cash_variance",
+        "position_variance",
+        "broker_fill_mismatch",
+        "broker_record_missing",
+    }
+)
+_COMPARISON_TOLERANCE = 1e-6
 
 
 _PERSONA_DIRECTORY_TTL_SECONDS = 60.0
@@ -790,9 +916,10 @@ def _float_or_none(value: Any) -> Optional[float]:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _order_quantities(timeline: Sequence[Mapping[str, Any]], summary_quantity: Any) -> Tuple[Any, Optional[float]]:
@@ -819,13 +946,284 @@ def _order_quantities(timeline: Sequence[Mapping[str, Any]], summary_quantity: A
     return requested, filled
 
 
+def _rejection_evidence(event: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(event, Mapping):
+        return {
+            "reason_code": _REASON_NOT_RECORDED,
+            "reason_detail": None,
+            "expression_reason_code": None,
+            "source_event_id": None,
+            "missing_evidence": ["reject_reason"],
+            "submitted_to_broker": None,
+            "order_status": None,
+        }
+    source_event_id = _source_event_id(event)
+    expression_code: Optional[str] = None
+    for candidate in (
+        event.get("expression_reason_code"),
+        event.get("reason_code"),
+        event.get("reject_reason"),
+        event.get("risk_reason"),
+        event.get("reason"),
+        event.get("broker_submission_status"),
+    ):
+        text = str(candidate or "").strip()
+        if text in _EXPRESSION_REASON_CODES:
+            expression_code = text
+            break
+    chosen_code: Optional[str] = None
+    for candidate in (
+        event.get("reject_reason"),
+        event.get("risk_reason"),
+        event.get("reason"),
+        event.get("broker_submission_status"),
+        event.get("reason_code"),
+    ):
+        text = str(candidate or "").strip()
+        if text and text not in _EXPRESSION_REASON_CODES and text != _REASON_NOT_RECORDED:
+            chosen_code = text
+            break
+    reason_code = chosen_code or _REASON_NOT_RECORDED
+    raw_detail = event.get("reason_detail")
+    detail_map: Dict[str, Any] = dict(raw_detail) if isinstance(raw_detail, Mapping) else {}
+    for detail_key in ("required", "available", "limit"):
+        if detail_key not in detail_map and event.get(detail_key) is not None:
+            detail_map[detail_key] = event.get(detail_key)
+    if reason_code != _REASON_NOT_RECORDED or detail_map:
+        for qty_key in ("holding_quantity", "requested_quantity"):
+            if qty_key not in detail_map and event.get(qty_key) is not None:
+                detail_map[qty_key] = event.get(qty_key)
+    reason_detail: Any = (
+        detail_map
+        if detail_map
+        else (raw_detail if raw_detail not in (None, {}, []) else None)
+    )
+    missing_evidence: List[str] = [
+        str(item)
+        for item in (event.get("missing_evidence") or [])
+        if isinstance(event.get("missing_evidence"), Sequence)
+        and not isinstance(event.get("missing_evidence"), (str, bytes))
+        and str(item).strip()
+    ]
+    if reason_code == _REASON_NOT_RECORDED and "reject_reason" not in missing_evidence:
+        missing_evidence.append("reject_reason")
+    elif reason_code in _CASH_REJECT_REASONS:
+        for req_key in ("required", "available"):
+            if detail_map.get(req_key) is None and req_key not in missing_evidence:
+                missing_evidence.append(req_key)
+    elif reason_code in _POSITION_REJECT_REASONS:
+        for req_key in ("holding_quantity", "requested_quantity"):
+            if detail_map.get(req_key) is None and req_key not in missing_evidence:
+                missing_evidence.append(req_key)
+    submitted = event.get("submitted_to_broker") if isinstance(event.get("submitted_to_broker"), bool) else None
+    order_status = (
+        "not_submitted"
+        if submitted is False
+        else (str(event.get("order_status")).strip() if event.get("order_status") else None)
+    )
+    return {
+        "reason_code": reason_code,
+        "reason_detail": reason_detail,
+        "expression_reason_code": expression_code,
+        "source_event_id": source_event_id,
+        "missing_evidence": missing_evidence,
+        "submitted_to_broker": submitted,
+        "order_status": order_status,
+    }
+
+
 def _rejected_reason(event: Optional[Mapping[str, Any]]) -> Tuple[str, Any]:
-    if not event:
-        return _REASON_NOT_RECORDED, None
-    code = str(event.get("reason_code") or "").strip()
-    if not code or code in _EXPRESSION_REASON_CODES:
-        return _REASON_NOT_RECORDED, None
-    return code, event.get("reason_detail")
+    ev = _rejection_evidence(event)
+    return ev["reason_code"], ev["reason_detail"]
+
+
+def _infer_variance_reason_code(discrepancies: Sequence[Mapping[str, Any]]) -> str:
+    checks = {str(item.get("check") or "") for item in discrepancies}
+    if "broker_record" in checks:
+        return "broker_record_missing"
+    if checks & {"broker_fill_qty", "broker_fill_price", "broker_status", "broker_side", "broker_instrument_id"}:
+        return "broker_fill_mismatch"
+    if checks & {"position_change", "committed_snapshot_position"}:
+        return "position_variance"
+    if checks & {"cash_change", "committed_snapshot_cash"}:
+        return "cash_variance"
+    return "reconciliation_check_failed"
+
+
+def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    source_event_id = _source_event_id(recon)
+    raw_code = str((recon or {}).get("reason_code") or "").strip()
+    raw_detail = (recon or {}).get("reason_detail")
+    normalized_detail: Any = None
+    discrepancies: List[Dict[str, Any]] = []
+    unverified_missing: List[str] = []
+    check_names: set[str] = set()
+    has_broker_unavailable = False
+
+    if isinstance(raw_detail, Sequence) and not isinstance(raw_detail, (str, bytes)):
+        normalized_checks: List[Any] = []
+        for item in raw_detail:
+            if not isinstance(item, Mapping):
+                normalized_checks.append(item)
+                continue
+            entry = dict(item)
+            check_name = str(entry.get("check") or "").strip()
+            if check_name:
+                check_names.add(check_name)
+            status_val = str(entry.get("status") or "").strip().lower()
+            if check_name == "broker_record" and status_val == "unavailable":
+                has_broker_unavailable = True
+            if check_name in _NUMERIC_COMPARISON_CHECKS:
+                exp_num = _float_or_none(entry.get("expected"))
+                act_num = _float_or_none(entry.get("actual"))
+                if exp_num is not None and act_num is not None:
+                    diff = _float_or_none(entry.get("delta"))
+                    if diff is None:
+                        diff = _float_or_none(entry.get("difference"))
+                    if diff is None:
+                        diff = act_num - exp_num
+                    entry["difference"] = diff
+                    entry["delta"] = diff
+                    if status_val == "failed" and abs(diff) > _COMPARISON_TOLERANCE:
+                        discrepancies.append(
+                            {
+                                "check": check_name,
+                                "status": "failed",
+                                "expected": exp_num,
+                                "actual": act_num,
+                                "difference": diff,
+                                "delta": diff,
+                            }
+                        )
+                else:
+                    if status_val == "failed":
+                        entry["status"] = "unverified"
+                    entry["difference"] = None
+                    entry["delta"] = None
+                    if exp_num is None:
+                        unverified_missing.append(f"{check_name}:expected")
+                    if act_num is None:
+                        unverified_missing.append(f"{check_name}:actual")
+            elif check_name in _TRADE_COMPARISON_CHECKS:
+                exp_val = entry.get("expected")
+                act_val = entry.get("actual")
+                if status_val in {"unverified", "missing_evidence"}:
+                    for side_name, side_val in (("expected", exp_val), ("actual", act_val)):
+                        if side_val in (None, ""):
+                            unverified_missing.append(f"{check_name}:{side_name}")
+                    for m_item in (entry.get("missing_evidence") or []):
+                        if str(m_item).strip() and str(m_item) not in unverified_missing:
+                            unverified_missing.append(str(m_item))
+                elif status_val == "failed":
+                    if exp_val not in (None, "") and act_val not in (None, "") and exp_val != act_val:
+                        disc: Dict[str, Any] = {
+                            "check": check_name,
+                            "status": "failed",
+                            "expected": exp_val,
+                            "actual": act_val,
+                        }
+                        if entry.get("broker_order_id"):
+                            disc["broker_order_id"] = entry["broker_order_id"]
+                        discrepancies.append(disc)
+                    else:
+                        entry["status"] = "unverified"
+                        if exp_val in (None, ""):
+                            unverified_missing.append(f"{check_name}:expected")
+                        if act_val in (None, ""):
+                            unverified_missing.append(f"{check_name}:actual")
+            normalized_checks.append(entry)
+        normalized_detail = normalized_checks
+    elif raw_detail is not None:
+        normalized_detail = raw_detail
+
+    explicit_missing: List[str] = [
+        str(item)
+        for item in ((recon or {}).get("missing_evidence") or [])
+        if isinstance((recon or {}).get("missing_evidence"), Sequence)
+        and not isinstance((recon or {}).get("missing_evidence"), (str, bytes))
+        and str(item).strip()
+    ]
+
+    if raw_code in {"runtime_unhealthy_at_reconciliation", "reconciliation_deferred_runtime_unhealthy"} or (
+        check_names and check_names <= _RUNTIME_HEALTH_RECON_CHECKS
+    ):
+        return {
+            "kind": "reconciliation_deferred",
+            "classification": "runtime_health",
+            "accounting_variance": False,
+            "comparison_completed": False,
+            "reason_code": "runtime_unhealthy_at_reconciliation",
+            "reason_detail": normalized_detail,
+            "discrepancies": [],
+            "missing_evidence": explicit_missing,
+            "source_event_id": source_event_id,
+        }
+    if raw_code in {"broker_unavailable_at_reconciliation", "reconciliation_deferred_broker_unavailable"} or has_broker_unavailable:
+        return {
+            "kind": "reconciliation_deferred",
+            "classification": "broker_unavailable",
+            "accounting_variance": False,
+            "comparison_completed": False,
+            "reason_code": "broker_unavailable_at_reconciliation",
+            "reason_detail": normalized_detail,
+            "discrepancies": [],
+            "missing_evidence": explicit_missing,
+            "source_event_id": source_event_id,
+        }
+    if discrepancies:
+        effective_code = (
+            raw_code
+            if (raw_code and raw_code != _REASON_NOT_RECORDED)
+            else _infer_variance_reason_code(discrepancies)
+        )
+        return {
+            "kind": "variance",
+            "classification": "accounting_variance",
+            "accounting_variance": True,
+            "comparison_completed": True,
+            "reason_code": effective_code,
+            "reason_detail": normalized_detail,
+            "discrepancies": discrepancies,
+            "missing_evidence": explicit_missing,
+            "source_event_id": source_event_id,
+        }
+
+    # Unverified or missing reconciliation evidence — never report a proven accounting variance.
+    unverified_reason_code: Optional[str] = None
+    if raw_code in _ACCOUNTING_VARIANCE_REASONS:
+        unverified_reason_code = raw_code
+        effective_code = "reconciliation_evidence_incomplete"
+    elif raw_code:
+        effective_code = raw_code
+    else:
+        effective_code = _REASON_NOT_RECORDED
+
+    missing_evidence = list(explicit_missing)
+    for item in unverified_missing:
+        if item not in missing_evidence:
+            missing_evidence.append(item)
+    if not missing_evidence:
+        if effective_code == _REASON_NOT_RECORDED:
+            missing_evidence = ["reconciliation_reason", "booking_comparison"]
+        elif effective_code == "reconciliation_identity_unverified":
+            missing_evidence = ["authoritative_actual_identity"]
+        else:
+            missing_evidence = ["booking_comparison"]
+
+    result: Dict[str, Any] = {
+        "kind": "variance",
+        "classification": "unverified_evidence",
+        "accounting_variance": False,
+        "comparison_completed": False,
+        "reason_code": effective_code,
+        "reason_detail": normalized_detail,
+        "discrepancies": [],
+        "missing_evidence": missing_evidence,
+        "source_event_id": source_event_id,
+    }
+    if unverified_reason_code:
+        result["unverified_reason_code"] = unverified_reason_code
+    return result
 
 
 def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -845,9 +1243,23 @@ def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]])
         return {"kind": "no_trade", "reason_code": str(code), "reason_detail": (order_event or {}).get("reason_detail")}
     if status == "completed_with_variance" or stage_status("reconciliation") == "failed":
         recon = _event_for_stage(timeline, "reconciliation")
-        code = str((recon or {}).get("reason_code") or "").strip() or _REASON_NOT_RECORDED
-        kind = "reconciliation_deferred" if code in _DEFERRED_RECON_REASONS else "variance"
-        return {"kind": kind, "reason_code": code, "reason_detail": (recon or {}).get("reason_detail")}
+        analysis = _reconciliation_analysis(recon)
+        out: Dict[str, Any] = {
+            "kind": analysis["kind"],
+            "classification": analysis["classification"],
+            "accounting_variance": analysis["accounting_variance"],
+            "comparison_completed": analysis["comparison_completed"],
+            "reason_code": analysis["reason_code"],
+            "reason_detail": analysis["reason_detail"],
+            "discrepancies": analysis["discrepancies"],
+        }
+        if analysis.get("source_event_id"):
+            out["source_event_id"] = analysis["source_event_id"]
+        if analysis.get("missing_evidence"):
+            out["missing_evidence"] = analysis["missing_evidence"]
+        if analysis.get("unverified_reason_code"):
+            out["unverified_reason_code"] = analysis["unverified_reason_code"]
+        return out
     if status == "failed" or any(
         stage_status(name) in {"failed", "rejected"}
         for name in ("risk_evaluation", "order_submission", "broker_acknowledgement")
@@ -857,9 +1269,25 @@ def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]])
                 event = _event_for_stage(timeline, name)
                 if event is None and name == "risk_evaluation":
                     event = _event_for_stage(timeline, "order_submission")  # inferred stage
-                code, detail = _rejected_reason(event)
-                return {"kind": "rejected", "reason_code": code, "reason_detail": detail, "rejected_stage": name}
-        return {"kind": "rejected", "reason_code": _REASON_NOT_RECORDED, "reason_detail": None}
+                ev = _rejection_evidence(event)
+                out = {
+                    "kind": "rejected",
+                    "reason_code": ev["reason_code"],
+                    "reason_detail": ev["reason_detail"],
+                    "rejected_stage": name,
+                }
+                if ev["source_event_id"]:
+                    out["source_event_id"] = ev["source_event_id"]
+                if ev["submitted_to_broker"] is not None:
+                    out["submitted_to_broker"] = ev["submitted_to_broker"]
+                if ev["order_status"]:
+                    out["order_status"] = ev["order_status"]
+                if ev["expression_reason_code"]:
+                    out["expression_reason_code"] = ev["expression_reason_code"]
+                if ev["missing_evidence"]:
+                    out["missing_evidence"] = ev["missing_evidence"]
+                return out
+        return {"kind": "rejected", "reason_code": _REASON_NOT_RECORDED, "reason_detail": None, "missing_evidence": ["reject_reason"]}
     if status == "partially_filled":
         return {"kind": "open", "reason_code": "partially_filled", "reason_detail": None}
     if status in TERMINAL_STATUSES:
@@ -945,12 +1373,85 @@ def _list_row(
     }
 
 
-def _stage_events(timeline: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _stage_events(
+    timeline: Sequence[Mapping[str, Any]],
+    snapshot: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
     latest: Dict[str, Dict[str, Any]] = {}
     for event in timeline:
         stage = event.get("stage")
         if stage:
             latest[stage] = dict(event)
+            src_id = _source_event_id(event)
+            if src_id:
+                latest[stage].setdefault("source_event_id", src_id)
+    stages = (snapshot or {}).get("stages") if isinstance((snapshot or {}).get("stages"), Mapping) else {}
+    if "reconciliation" in latest and (
+        latest["reconciliation"].get("stage_status") == "failed"
+        or latest["reconciliation"].get("event_type") == "reconciliation_failed"
+    ):
+        recon_analysis = _reconciliation_analysis(latest["reconciliation"])
+        recon_ev = dict(latest["reconciliation"])
+        recon_ev["reason_code"] = recon_analysis["reason_code"]
+        recon_ev["classification"] = recon_analysis["classification"]
+        recon_ev["accounting_variance"] = recon_analysis["accounting_variance"]
+        recon_ev["comparison_completed"] = recon_analysis["comparison_completed"]
+        if recon_analysis["reason_detail"] is not None:
+            recon_ev["reason_detail"] = recon_analysis["reason_detail"]
+        if recon_analysis["discrepancies"]:
+            recon_ev["discrepancies"] = recon_analysis["discrepancies"]
+        if recon_analysis["missing_evidence"]:
+            recon_ev["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis["source_event_id"]:
+            recon_ev["source_event_id"] = recon_analysis["source_event_id"]
+        latest["reconciliation"] = recon_ev
+
+    order_ev = latest.get("order_submission")
+    is_pre_broker_risk_reject = bool(
+        isinstance(order_ev, Mapping)
+        and (
+            (
+                isinstance(stages, Mapping)
+                and (stages.get("risk_evaluation") or {}).get("status") == "rejected"
+                and (stages.get("order_submission") or {}).get("status") == "not_submitted"
+            )
+            or (
+                "risk_evaluation" not in latest
+                and _is_risk_gate_rejection(order_ev)
+                and _is_nonfill_unsubmitted_event(order_ev, check_quantity_zero=True)
+            )
+        )
+    )
+    if is_pre_broker_risk_reject and isinstance(order_ev, Mapping):
+        ev = _rejection_evidence(order_ev)
+        risk_ev = dict(order_ev)
+        risk_ev["stage"] = "risk_evaluation"
+        risk_ev["stage_status"] = "rejected"
+        risk_ev["reason_code"] = ev["reason_code"]
+        if ev["reason_detail"] is not None:
+            risk_ev["reason_detail"] = ev["reason_detail"]
+        if ev["expression_reason_code"]:
+            risk_ev["expression_reason_code"] = ev["expression_reason_code"]
+        if ev["source_event_id"]:
+            risk_ev["source_event_id"] = ev["source_event_id"]
+        if ev["missing_evidence"]:
+            risk_ev["missing_evidence"] = ev["missing_evidence"]
+        risk_ev["submitted_to_broker"] = False
+        risk_ev["order_status"] = "not_submitted"
+        latest["risk_evaluation"] = risk_ev
+
+        sub_ev = dict(order_ev)
+        sub_ev["stage"] = "order_submission"
+        sub_ev["stage_status"] = "not_submitted"
+        sub_ev["order_status"] = "not_submitted"
+        sub_ev["submitted_to_broker"] = False
+        sub_ev.pop("reason_code", None)
+        sub_ev.pop("reason_detail", None)
+        if ev["expression_reason_code"]:
+            sub_ev["expression_reason_code"] = ev["expression_reason_code"]
+        if ev["source_event_id"]:
+            sub_ev["source_event_id"] = ev["source_event_id"]
+        latest["order_submission"] = sub_ev
     return latest
 
 
@@ -987,7 +1488,7 @@ def _detail(
         **row,
         "identifiers": snapshot.get("identifiers"),
         "stages": snapshot.get("stages"),
-        "stage_events": _stage_events(projection.timeline),
+        "stage_events": _stage_events(projection.timeline, snapshot),
         "graph_edges": projection.graph_edges,
         "diagnostics": _upstream_lineage_diagnostics(diagnostics),
         "event_count": len(projection.timeline),
@@ -1054,7 +1555,10 @@ def _evidence(projection: JourneyProjection) -> Dict[str, Any]:
 
 _TIMELINE_FIELDS = (
     "event_id", "journey_id", "stage", "event_type", "stage_status", "status", "occurred_at", "recorded_at",
-    "actor", "summary", "reason_code", "input_refs", "output_refs", "evidence_refs", "policy_refs",
+    "actor", "summary", "reason_code", "reason_detail", "expression_reason_code",
+    "submitted_to_broker", "order_status", "risk_status", "risk_gate_evaluated",
+    "canonical_event_id", "source_event_id", "missing_evidence",
+    "input_refs", "output_refs", "evidence_refs", "policy_refs",
     "causation_id", "correlation_id", "payload_redaction", "schema_version",
 )
 
@@ -1064,10 +1568,51 @@ def _timeline_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     row.setdefault("status", event.get("stage_status"))
     row.setdefault("payload_redaction", "none")
     row.setdefault("schema_version", event.get("schema_version", "1"))
-    code = str(row.get("reason_code") or "").strip()
-    if code in _EXPRESSION_REASON_CODES:
-        row["reason_code"] = _REASON_NOT_RECORDED
-        row["expression_reason_code"] = code
+    src_id = _source_event_id(event)
+    if src_id:
+        row.setdefault("source_event_id", src_id)
+    if (
+        _is_risk_gate_rejection(event)
+        and _is_nonfill_unsubmitted_event(event, check_quantity_zero=True)
+        and event.get("submitted_to_broker") is False
+    ):
+        ev = _rejection_evidence(event)
+        row["stage"] = "risk_evaluation"
+        row["stage_status"] = "rejected"
+        row["status"] = "rejected"
+        row["rejected_stage"] = "risk_evaluation"
+        row["reason_code"] = ev["reason_code"]
+        if ev["reason_detail"] is not None:
+            row["reason_detail"] = ev["reason_detail"]
+        if ev["expression_reason_code"]:
+            row["expression_reason_code"] = ev["expression_reason_code"]
+        if ev["source_event_id"]:
+            row["source_event_id"] = ev["source_event_id"]
+        if ev["missing_evidence"]:
+            row["missing_evidence"] = ev["missing_evidence"]
+        row["submitted_to_broker"] = False
+        row["order_status"] = "not_submitted"
+    elif event.get("event_type") == "reconciliation_failed" or (
+        event.get("stage") == "reconciliation" and event.get("stage_status") == "failed"
+    ):
+        recon_analysis = _reconciliation_analysis(event)
+        row["reason_code"] = recon_analysis["reason_code"]
+        row["classification"] = recon_analysis["classification"]
+        row["accounting_variance"] = recon_analysis["accounting_variance"]
+        row["comparison_completed"] = recon_analysis["comparison_completed"]
+        if recon_analysis["reason_detail"] is not None:
+            row["reason_detail"] = recon_analysis["reason_detail"]
+        if recon_analysis["discrepancies"]:
+            row["discrepancies"] = recon_analysis["discrepancies"]
+        if recon_analysis["missing_evidence"]:
+            row["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis["source_event_id"]:
+            row["source_event_id"] = recon_analysis["source_event_id"]
+    else:
+        code = str(row.get("reason_code") or "").strip()
+        if code in _EXPRESSION_REASON_CODES:
+            row["reason_code"] = _REASON_NOT_RECORDED
+            row["expression_reason_code"] = code
     envelope = event.get("correlation_envelope")
     producer = envelope.get("producer") if isinstance(envelope, Mapping) else None
     if producer:
@@ -1202,7 +1747,9 @@ def _stalled_thresholds() -> Dict[str, Dict[str, int]]:
 
 
 def _attention_item(projection: JourneyProjection, *, now: datetime) -> Optional[Dict[str, Any]]:
-    snapshot = projection.snapshot
+    snapshot, eff_diagnostics = _effective_snapshot_and_diagnostics(
+        projection.snapshot, projection.diagnostics, projection.timeline
+    )
     if snapshot.get("status") in TERMINAL_STATUSES:
         return None
     stages = snapshot.get("stages") or {}
@@ -1212,7 +1759,7 @@ def _attention_item(projection: JourneyProjection, *, now: datetime) -> Optional
     threshold = _stalled_thresholds()[projection.environment].get(
         latest_stage, _stalled_thresholds()[projection.environment]["default"]
     )
-    diagnostics = [item.get("code") for item in projection.diagnostics]
+    diagnostics = [item.get("code") for item in eff_diagnostics]
     stalled = bool(updated and age >= threshold)
     if not stalled and not diagnostics:
         return None

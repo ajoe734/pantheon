@@ -217,6 +217,12 @@ _PASSTHROUGH_FIELDS = (
     "price",
     "reason_detail",
     "expression_reason_code",
+    "risk_status",
+    "risk_gate_evaluated",
+    "order_status",
+    "rejection_status",
+    "broker_submission_status",
+    "missing_evidence",
 )
 
 
@@ -225,6 +231,12 @@ logger = logging.getLogger(__name__)
 
 _EXPRESSION_REASON_CODES = frozenset(
     {"long_cash", "long_lever", "short_via_future", "close_leg"}
+)
+_CASH_MARGIN_REJECT_REASONS = frozenset(
+    {"insufficient_cash", "insufficient_buying_power", "insufficient_initial_margin"}
+)
+_POSITION_REJECT_REASONS = frozenset(
+    {"insufficient_position", "sell_without_holdings"}
 )
 
 
@@ -1106,13 +1118,12 @@ class RelationalLifecycleProjector:
             )
             if holding_qty is not None:
                 event["holding_quantity"] = holding_qty
-            if is_no_holdings_reject:
-                event["reason_code"] = "sell_without_holdings"
-                event["risk_status"] = "rejected"
-                event["submitted_to_broker"] = False
-                event["quantity"] = 0.0
-            elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
-                producer_reason = _first(
+            if is_no_holdings_reject or source.get("event_type") in {
+                "order_rejection",
+                "order_rejection_simulated",
+            }:
+                event["source_event_id"] = str(source["event_id"])
+                raw_reason_candidates = (
                     source.get("reject_reason"),
                     metadata.get("reject_reason"),
                     source.get("risk_reason"),
@@ -1121,21 +1132,49 @@ class RelationalLifecycleProjector:
                     metadata.get("reason"),
                     source.get("broker_submission_status"),
                     metadata.get("broker_submission_status"),
-                )
-                expression_code = _first(
                     source.get("reason_code"),
                     metadata.get("reason_code"),
                 )
-                if (
-                    expression_code is not None
-                    and str(expression_code) in _EXPRESSION_REASON_CODES
+                for raw_candidate in (
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                    *raw_reason_candidates,
                 ):
-                    event["expression_reason_code"] = str(expression_code)
-                    expression_code = None
-                chosen = _first(producer_reason, expression_code)
-                if chosen is not None:
-                    event["reason_code"] = str(chosen)
-                reason_detail = {}
+                    cleaned_candidate = _clean(raw_candidate)
+                    if (
+                        cleaned_candidate is not None
+                        and str(cleaned_candidate) in _EXPRESSION_REASON_CODES
+                    ):
+                        event["expression_reason_code"] = str(cleaned_candidate)
+                        break
+                if is_no_holdings_reject:
+                    event["reason_code"] = "sell_without_holdings"
+                    event["risk_status"] = "rejected"
+                    event["submitted_to_broker"] = False
+                    event["order_status"] = "not_submitted"
+                    event["quantity"] = 0.0
+                else:
+                    chosen_reason: str | None = None
+                    for raw_candidate in raw_reason_candidates:
+                        cleaned_candidate = _clean(raw_candidate)
+                        if (
+                            cleaned_candidate is not None
+                            and str(cleaned_candidate) not in _EXPRESSION_REASON_CODES
+                        ):
+                            chosen_reason = str(cleaned_candidate)
+                            break
+                    event["reason_code"] = chosen_reason or "reason_not_recorded"
+                    if (
+                        submitted_to_broker is False
+                        and not has_contradictory_fill_or_broker
+                    ):
+                        event["order_status"] = "not_submitted"
+                existing_detail = event.get("reason_detail")
+                reason_detail: dict[str, Any] = (
+                    dict(existing_detail)
+                    if isinstance(existing_detail, Mapping)
+                    else {}
+                )
                 for detail_key in (
                     "required",
                     "available",
@@ -1147,11 +1186,28 @@ class RelationalLifecycleProjector:
                         source.get(detail_key),
                         metadata.get(detail_key),
                         metrics_map.get(detail_key),
+                        reason_detail.get(detail_key),
                     )
                     if detail_value is not None:
                         reason_detail[detail_key] = detail_value
                 if reason_detail:
                     event["reason_detail"] = reason_detail
+                missing_evidence: list[str] = []
+                if event.get("reason_code") == "reason_not_recorded":
+                    missing_evidence.append("reject_reason")
+                elif event.get("reason_code") in _CASH_MARGIN_REJECT_REASONS:
+                    for req_key in ("required", "available"):
+                        if reason_detail.get(req_key) is None:
+                            missing_evidence.append(req_key)
+                elif (
+                    event.get("reason_code") in _POSITION_REJECT_REASONS
+                    and not has_contradictory_fill_or_broker
+                ):
+                    for req_key in ("holding_quantity", "requested_quantity"):
+                        if reason_detail.get(req_key) is None:
+                            missing_evidence.append(req_key)
+                if missing_evidence:
+                    event["missing_evidence"] = missing_evidence
             elif is_explicit_no_trade:
                 event["reason_code"] = str(
                     explicit_noop_reason

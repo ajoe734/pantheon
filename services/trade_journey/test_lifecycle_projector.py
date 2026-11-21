@@ -3023,7 +3023,7 @@ def test_rejection_keeps_producer_reason_not_expression_code() -> None:
     from services.trade_journey.lifecycle_projector import LifecycleProjector
 
     source = {
-        "event_id": "evt-rej-1",
+        "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
         "event_type": "order_rejection",
         "created_at": "2026-11-19T23:46:17Z",
         "reject_reason": "insufficient_cash",
@@ -3031,25 +3031,129 @@ def test_rejection_keeps_producer_reason_not_expression_code() -> None:
         "available": 100000,
         "limit": 100000,
         "requested_quantity": 452,
-        "metadata": {"reason_code": "long_cash"},
+        "submitted_to_broker": False,
+        "metadata": {
+            "reason_code": "long_cash",
+            "risk_status": "rejected",
+            "risk_gate_evaluated": True,
+        },
     }
     entry = {
         "event": source,
         "identity": {
-            "journey_id": "tj-1", "tenant_id": "t", "environment": "paper",
-            "persona_id": "p", "persona_capital_binding_id": "b",
-            "artifact_id": "a", "artifact_version": "1", "plan_id": "pl",
+            "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+            "tenant_id": "tenant-dev",
+            "environment": "paper",
+            "persona_id": "persona-6507750312870d03a241",
+            "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+            "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+            "artifact_version": "1",
+            "plan_id": "plan-persona-paper-039ad01f8bcd2b4aa466",
             "trace_id": "tr",
         },
         "source_mode": "live",
-        "sequence_no": 1,
+        "sequence_no": 3,
     }
     (event,) = LifecycleProjector._journey_events(entry)
+    assert event["source_event_id"] == "91d55953-b575-4fe8-8d39-6e0cade58d59"
+    assert event["canonical_event_id"] == "91d55953-b575-4fe8-8d39-6e0cade58d59"
     assert event["reason_code"] == "insufficient_cash"
     assert event["expression_reason_code"] == "long_cash"
+    assert event["submitted_to_broker"] is False
+    assert event["order_status"] == "not_submitted"
+    assert event["risk_status"] == "rejected"
+    assert event["risk_gate_evaluated"] is True
+    assert "missing_evidence" not in event
     assert event["reason_detail"] == {
         "required": 100034.3461,
         "available": 100000,
         "limit": 100000,
         "requested_quantity": 452,
     }
+
+
+def test_rejection_retains_failure_and_identifies_missing_producer_evidence() -> None:
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+
+    base_identity = {
+        "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "persona_id": "persona-6507750312870d03a241",
+        "persona_capital_binding_id": "pcb-1",
+        "artifact_id": "a",
+        "artifact_version": "1",
+        "plan_id": "pl",
+        "trace_id": "tr",
+    }
+    # 1. Upstream omission: only expression choice code long_cash recorded, no rejection reason
+    (omitted_reason_event,) = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+                "event_type": "order_rejection",
+                "created_at": "2026-11-19T23:46:17Z",
+                "submitted_to_broker": False,
+                "requested_quantity": 452.0,
+                "metadata": {"reason_code": "long_cash"},
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 3,
+        }
+    )
+    assert omitted_reason_event["reason_code"] == "reason_not_recorded"
+    assert omitted_reason_event["expression_reason_code"] == "long_cash"
+    assert omitted_reason_event["submitted_to_broker"] is False
+    assert omitted_reason_event["order_status"] == "not_submitted"
+    assert omitted_reason_event["missing_evidence"] == ["reject_reason"]
+
+    # 2. Cash rejection with missing required/available figures
+    (missing_cash_figures_event,) = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "evt-missing-figures",
+                "event_type": "order_rejection",
+                "created_at": "2026-11-19T23:46:17Z",
+                "reject_reason": "insufficient_cash",
+                "submitted_to_broker": False,
+                "requested_quantity": 452.0,
+                "metadata": {"reason_code": "long_cash"},
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 3,
+        }
+    )
+    assert missing_cash_figures_event["reason_code"] == "insufficient_cash"
+    assert missing_cash_figures_event["expression_reason_code"] == "long_cash"
+    assert missing_cash_figures_event["missing_evidence"] == ["required", "available"]
+
+    # 3. sell_without_holdings preserves expression_reason_code and reason_detail
+    (no_holdings_event,) = LifecycleProjector._journey_events(
+        {
+            "event": {
+                "event_id": "evt-no-holdings",
+                "event_type": "order_rejection",
+                "created_at": "2026-11-19T23:46:17Z",
+                "side": "sell",
+                "reason": "sell_without_holdings",
+                "reject_reason": "sell_without_holdings",
+                "submitted_to_broker": False,
+                "requested_quantity": 1.0,
+                "holding_quantity": 0.0,
+                "metadata": {"reason_code": "close_leg"},
+            },
+            "identity": base_identity,
+            "source_mode": "live",
+            "sequence_no": 3,
+        }
+    )
+    assert no_holdings_event["reason_code"] == "sell_without_holdings"
+    assert no_holdings_event["expression_reason_code"] == "close_leg"
+    assert no_holdings_event["order_status"] == "not_submitted"
+    assert no_holdings_event["reason_detail"] == {
+        "holding_quantity": 0.0,
+        "requested_quantity": 1.0,
+    }
+    assert "missing_evidence" not in no_holdings_event

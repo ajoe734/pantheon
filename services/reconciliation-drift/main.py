@@ -2327,12 +2327,24 @@ def _num(value: Any) -> float | None:
     return out if math.isfinite(out) else None
 
 
+_FILL_BOOKING_EVIDENCE_KEYS = (
+    "position_quantity_before",
+    "position_quantity_after",
+    "cash_before",
+    "cash_after",
+    "fill_quantity",
+    "fill_price",
+    "fill_id",
+    "source_fill_event_id",
+    "broker_order_id",
+    "ledger_committed",
+)
+
+
 def _booking_fill(identity: Dict[str, Any]) -> Dict[str, Any] | None:
     """Fill evidence carried by the committed position snapshot, or None for no-fill journeys."""
     meta = identity.get("metadata") if isinstance(identity.get("metadata"), dict) else {}
-    if _num(meta.get("position_quantity_before")) is None or _num(
-        meta.get("position_quantity_after")
-    ) is None:
+    if not any(meta.get(key) not in (None, "") for key in _FILL_BOOKING_EVIDENCE_KEYS):
         return None
     return meta
 
@@ -2341,12 +2353,19 @@ def _booking_check(
     check: str, expected: float | None, actual: float | None
 ) -> Dict[str, Any]:
     if expected is None or actual is None:
+        missing_sides: List[str] = []
+        if expected is None:
+            missing_sides.append("expected")
+        if actual is None:
+            missing_sides.append("actual")
         return {
             "check": check,
-            "status": "failed",
+            "status": "unverified",
             "expected": expected,
             "actual": actual,
             "difference": None,
+            "delta": None,
+            "missing_evidence": missing_sides,
         }
     diff = actual - expected
     return {
@@ -2355,6 +2374,7 @@ def _booking_check(
         "expected": expected,
         "actual": actual,
         "difference": diff,
+        "delta": diff,
     }
 
 
@@ -2387,39 +2407,49 @@ def _journey_booking_decision(
     # 1. broker record vs fill event
     if not broker_url:
         detail.append({"check": "broker_record", "status": "not_configured"})
+    elif not broker_order_id:
+        detail.append(
+            {
+                "check": "broker_record",
+                "status": "unverified",
+                "broker_order_id": None,
+                "expected": "broker_order_id present",
+                "actual": None,
+                "missing_evidence": ["broker_order_id"],
+            }
+        )
     else:
         order: Dict[str, Any] | None = None
-        if broker_order_id:
-            try:
-                order = fetch_paper_order(
-                    broker_url, broker_order_id, timeout_seconds=_BROKER_READ_TIMEOUT_SECONDS
-                )
-            except BrokerOrderNotFound:
-                order = None
-            except BrokerPaperError as exc:
-                snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
-                now = _strict_lifecycle_datetime(timestamp)
-                unavailable = [
-                    {
-                        "check": "broker_record",
-                        "status": "unavailable",
-                        "broker_order_id": broker_order_id,
-                        "error": str(exc),
-                    }
-                ]
-                if (
-                    snapshot_at is not None
-                    and now is not None
-                    and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
-                ):
-                    return "failed", "broker_unavailable_at_reconciliation", unavailable
-                return "defer", None, unavailable
+        try:
+            order = fetch_paper_order(
+                broker_url, broker_order_id, timeout_seconds=_BROKER_READ_TIMEOUT_SECONDS
+            )
+        except BrokerOrderNotFound:
+            order = None
+        except BrokerPaperError as exc:
+            snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
+            now = _strict_lifecycle_datetime(timestamp)
+            unavailable = [
+                {
+                    "check": "broker_record",
+                    "status": "unavailable",
+                    "broker_order_id": broker_order_id,
+                    "error": str(exc),
+                }
+            ]
+            if (
+                snapshot_at is not None
+                and now is not None
+                and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
+            ):
+                return "failed", "broker_unavailable_at_reconciliation", unavailable
+            return "defer", None, unavailable
         if order is None:
             detail.append(
                 {
                     "check": "broker_record",
                     "status": "failed",
-                    "broker_order_id": broker_order_id or None,
+                    "broker_order_id": broker_order_id,
                     "expected": "paper broker order present",
                     "actual": "missing",
                 }
@@ -2439,14 +2469,30 @@ def _journey_booking_decision(
                     str(order.get("instrument_id") or ""),
                 ),
             ):
-                broker_checks.append(
-                    {
-                        "check": name,
-                        "status": "passed" if expected == actual else "failed",
-                        "expected": expected,
-                        "actual": actual,
-                    }
-                )
+                if not expected or not actual:
+                    missing_sides = []
+                    if not expected:
+                        missing_sides.append("expected")
+                    if not actual:
+                        missing_sides.append("actual")
+                    broker_checks.append(
+                        {
+                            "check": name,
+                            "status": "unverified",
+                            "expected": expected or None,
+                            "actual": actual or None,
+                            "missing_evidence": missing_sides,
+                        }
+                    )
+                else:
+                    broker_checks.append(
+                        {
+                            "check": name,
+                            "status": "passed" if expected == actual else "failed",
+                            "expected": expected,
+                            "actual": actual,
+                        }
+                    )
             detail.extend(broker_checks)
             if any(c["status"] == "failed" for c in broker_checks):
                 failures.append("broker_fill_mismatch")
@@ -2454,7 +2500,7 @@ def _journey_booking_decision(
     # 2. position change equals the signed fill quantity
     before = _num(fill.get("position_quantity_before"))
     after = _num(fill.get("position_quantity_after"))
-    signed_qty = None if fill_qty is None else sign * fill_qty
+    signed_qty = None if (fill_qty is None or not side) else sign * fill_qty
     position = _booking_check(
         "position_change",
         signed_qty,
@@ -2493,6 +2539,8 @@ def _journey_booking_decision(
 
     if failures:
         return "failed", failures[0], detail
+    if any(c.get("status") == "unverified" for c in detail):
+        return "failed", "reconciliation_evidence_incomplete", detail
     return "completed", None, detail
 
 

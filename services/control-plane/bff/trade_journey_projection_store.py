@@ -244,7 +244,9 @@ class TradeJourneyProjectionStore:
             deferred = (
                 f"EXISTS (SELECT 1 FROM {self.schema}.journey_stages recon WHERE recon.tenant_id={self.schema}.journeys.tenant_id "
                 f"AND recon.environment={self.schema}.journeys.environment AND recon.journey_id={self.schema}.journeys.journey_id "
-                "AND recon.stage_name='reconciliation' AND recon.contract_fields ->> 'reason_code' = 'runtime_unhealthy_at_reconciliation')"
+                "AND recon.stage_name='reconciliation' AND recon.contract_fields ->> 'reason_code' IN ("
+                "'runtime_unhealthy_at_reconciliation', 'broker_unavailable_at_reconciliation', "
+                "'reconciliation_identity_unverified', 'reconciliation_evidence_incomplete'))"
             )
             if attention == "recon_mismatch":
                 clauses.append(f"(status='completed_with_variance' AND NOT {deferred})")
