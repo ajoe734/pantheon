@@ -578,6 +578,11 @@
       "focused_result": "9 tests passed, exit 0; includes sudo-required Docker and owner-store reads, expected nonempty content hash, successful cleanup and failure cleanup. Nonroot-specific cases require a nonroot test caller.",
       "provisioned_command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests tests.deployment.test_production_release.SnapshotDrillHarness",
       "provisioned_result": "27 tests passed, exit 0; provisioned with python3 scripts/dev/provision_python_distribution.py using supervisor-provided PANTHEON_DEPENDENCY_PYTHON",
+      "full_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_result": "130 tests passed in 208.279s, terminal exit 0; log /tmp/ENV-PROD-CONTROL-IMPL-001-final-production-tests.log",
+      "device_wait_check": "Executed the actual wait block against a temporary by-id directory with synthetic sleep: device appears after 3 polls -> exit 0; absent after 15 polls -> exit 3; GCLOUD_BIN set or by-id absent -> 0 polls. All four checks passed, exit 0; no real device/cloud access.",
+      "other_checks": "bash -n scripts/deploy/prod_ops.sh; JSON parse; git diff origin/dev --check; scripts/git/diff_budget.py --base origin/dev --head HEAD all passed",
+      "earlier_attempts_not_passed": "System-Python full attempt timed out (exit 124; dependencies missing). First provisioned full attempt before the fixture repair ran 130 tests with one Registry index-bootstrap connection error (exit 1). Both were superseded by the final provisioned 130-test pass, not counted as passed.",
       "proof_limit": "Fake local binaries prove controller behavior only; no hosted RPO/RTO or restore success is claimed."
     },
     "runtime_budget": {
