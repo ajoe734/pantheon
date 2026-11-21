@@ -160,12 +160,97 @@ class TestOodaPacketsPort:
         assert len(evo) == 1
         assert evo[0]["packet_id"] == "ooda-rec-1"
 
-    def test_ooda_packets_unavailable_state(self):
+    def test_ooda_packets_unavailable_state(self, monkeypatch):
+        for env_key in (
+            "PANTHEON_BFF_OODA_PACKET_STORE",
+            "PANTHEON_OODA_DATA_DIR",
+            "PANTHEON_CONTROL_PLANE_DATA_DIR",
+        ):
+            monkeypatch.delenv(env_key, raising=False)
         port = OodaPacketsPort()
         status = port.get_surface_status()
         assert status["status"] == "unavailable"
+        assert status["source"] == "missing"
         assert port.list_ooda_packets() == []
         assert port.get_ooda_packet("any") is None
+
+    @pytest.mark.parametrize("suffix", [".json", ".jsonl"])
+    def test_ooda_packets_from_configured_persona_owner_store(self, tmp_path, monkeypatch, suffix):
+        from services.control_plane.bff.core.owner_reads import selected_tenant
+        from services.control_plane.bff.ports.ooda_management import create_ooda_packets_port
+        from services.persona.cron_ooda_closure import append_ooda_packet
+
+        for env_key in ("PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"):
+            monkeypatch.delenv(env_key, raising=False)
+        store_path = tmp_path / f"owner-ooda{suffix}"
+        packet_a = {
+            "packet_id": "ooda-persona-a",
+            "loop_type": "paper_strategy",
+            "status": "decided",
+            "environment": "paper",
+            "tenant_id": "tenant-a",
+            "persona_ids": ["persona-a"],
+            "created_at": "2026-11-21T10:00:00Z",
+            "updated_at": "2026-11-21T10:01:00Z",
+            "persona_cycle": {"phase": "terminal", "harness_version": 1},
+        }
+        packet_b = {
+            **packet_a,
+            "packet_id": "ooda-persona-b-foreign",
+            "tenant_id": "tenant-b",
+        }
+        packet_live = {
+            **packet_a,
+            "packet_id": "ooda-persona-live",
+            "environment": "live",
+        }
+        for pkt in (packet_a, packet_b, packet_live):
+            append_ooda_packet(store_path, pkt)
+        before_bytes = store_path.read_bytes()
+        monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
+
+        port = create_ooda_packets_port()
+        assert port.get_surface_status() == {
+            "status": "ok",
+            "source": "store",
+            "message": None,
+        }
+        token = selected_tenant.set("tenant-a")
+        try:
+            assert [p["packet_id"] for p in port.list_ooda_packets()] == ["ooda-persona-a"]
+            assert port.get_ooda_packet("ooda-persona-a")["packet_id"] == "ooda-persona-a"
+            assert port.get_ooda_packet("ooda-persona-b-foreign") is None
+            assert port.get_ooda_packet("ooda-persona-live") is None
+            assert port.get_ooda_packet("ooda-persona-missing") is None
+        finally:
+            selected_tenant.reset(token)
+        assert store_path.read_bytes() == before_bytes
+
+    def test_ooda_packets_absent_or_unreadable_owner_store_and_injected_precedence(
+        self, tmp_path, monkeypatch
+    ):
+        for env_key in ("PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"):
+            monkeypatch.delenv(env_key, raising=False)
+        missing_path = tmp_path / "missing-ooda.json"
+        monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(missing_path))
+
+        port = OodaPacketsPort()
+        assert port.get_surface_status()["status"] == "unavailable"
+        assert port.get_surface_status()["source"] == "missing"
+
+        corrupt_path = tmp_path / "corrupt-ooda.json"
+        corrupt_path.write_text("{not-json-array", encoding="utf-8")
+        monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(corrupt_path))
+        assert port.get_surface_status()["status"] == "unavailable"
+        assert port.get_surface_status()["source"] == "unavailable"
+        assert port.list_ooda_packets() == []
+
+        injected = OodaPacketsPort(
+            records_provider=lambda: [{"packet_id": "injected-1", "status": "open"}]
+        )
+        assert injected.get_surface_status()["status"] == "ok"
+        assert injected.get_surface_status()["source"] == "service"
+        assert [p["packet_id"] for p in injected.list_ooda_packets()] == ["injected-1"]
 
 
 # ---------------------------------------------------------------------------

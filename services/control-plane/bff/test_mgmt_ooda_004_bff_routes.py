@@ -1,7 +1,10 @@
 """MGMT-OODA-004 contract tests for BFF OODA packet read routes."""
 from __future__ import annotations
 
+import json
+import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator, Optional
 
 from fastapi import FastAPI
@@ -28,6 +31,7 @@ from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from services.control_plane.bff.runtime.router import create_runtime_router
 from services.control_plane.bff.strategies.router import create_strategies_router
+from services.persona.cron_ooda_closure import append_ooda_packet
 
 # BFF-TEST-MIGRATION-CB07: DECOUPLED. As of this migration, the four route
 # groups this file exercises (/bff/runtimes/{id}/ooda, /bff/strategies/{id}/ooda,
@@ -72,32 +76,6 @@ OODA_PACKETS = [
         "updated_at": "2026-05-15T11:10:00Z",
     },
 ]
-
-
-def _normalize_ooda_packets(raw_packets: Optional[list[dict]]) -> Optional[list[dict]]:
-    if raw_packets is None:
-        return None
-    materialized: dict[str, dict] = {}
-    passthrough: list[dict] = []
-    for item in raw_packets:
-        if isinstance(item, dict) and item.get("schema_version") == "ooda_loop_packet_record.v1":
-            rec_type = item.get("record_type")
-            payload = item.get("payload", {})
-            if rec_type == "packet_snapshot":
-                pkt = dict(payload)
-                pkt.setdefault("packet_id", item.get("packet_id"))
-                materialized[str(pkt["packet_id"])] = pkt
-            elif rec_type == "stage_transition":
-                pkt = dict(payload.get("packet", {}))
-                pkt.setdefault("packet_id", item.get("packet_id"))
-                materialized[str(pkt["packet_id"])] = pkt
-        elif isinstance(item, dict):
-            pid = item.get("packet_id") or item.get("id")
-            if pid:
-                materialized[str(pid)] = item
-            else:
-                passthrough.append(item)
-    return list(materialized.values()) + passthrough
 
 
 def _require_ooda_packet_routes_enabled() -> None:
@@ -194,17 +172,23 @@ def _ooda_client(
     packets: Optional[list[dict]] = OODA_PACKETS,
 ) -> Iterator[TestClient]:
     monkeypatch.delenv("PANTHEON_OODA_PACKET_ENABLED", raising=False)
-    if packets is not None:
-        normalized = _normalize_ooda_packets(packets)
-        store = create_in_memory_read_surface_ports(
-            ooda_management_kwargs={"ooda_packets": normalized}
-        )
-        store.dataset_source = lambda ds: "service_store" if ds == "ooda_packets" else "typed_store"
-    else:
+    for env_key in ("PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"):
+        monkeypatch.delenv(env_key, raising=False)
+    with tempfile.TemporaryDirectory() as td:
+        if packets is not None:
+            store_path = Path(td) / "ooda_packets.jsonl"
+            for item in packets:
+                if isinstance(item, dict) and item.get("schema_version") == "ooda_loop_packet_record.v1":
+                    with store_path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(item, sort_keys=True) + "\n")
+                else:
+                    append_ooda_packet(store_path, item)
+            monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
+        else:
+            monkeypatch.delenv("PANTHEON_BFF_OODA_PACKET_STORE", raising=False)
         store = create_in_memory_read_surface_ports()
-        store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
-    app = _mounted_app(store)
-    yield TestClient(app, raise_server_exceptions=False)
+        app = _mounted_app(store)
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 def test_ooda_packet_list_and_detail_read_jsonl_store(monkeypatch) -> None:
@@ -219,7 +203,7 @@ def test_ooda_packet_list_and_detail_read_jsonl_store(monkeypatch) -> None:
         "ooda-packet-002",
         "ooda-packet-001",
     ]
-    assert listed_payload["meta"]["surfaces"]["ooda_packets"]["source"] == "service_store"
+    assert listed_payload["meta"]["surfaces"]["ooda_packets"]["source"] == "store"
 
     assert detail.status_code == 200, detail.text
     detail_payload = detail.json()
