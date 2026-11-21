@@ -1,0 +1,293 @@
+{
+  "accepted_release": {
+    "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+    "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+    "frontend_gate_url": "https://github.com/ajoe734/execute-plans/actions/runs/44918407417",
+    "gate": "44918407417",
+    "pair_id": "a3a38db06b52f24e57eaa69bc033e32c55bac631b466ebbf059390b2f0b6a1aa",
+    "ready": 200,
+    "root_url": "https://github.com/ajoe734/pantheon/actions/runs/44915049855",
+    "root_workflow": 44915049855
+  },
+  "coverage": {
+    "governed_market_chip_status": {
+      "taifex_market_positions": {
+        "features": false,
+        "normalized": false,
+        "session_results": {
+          "2026-11-13": {"reason": "governed_session_complete", "rows": 6, "status": "complete"},
+          "2026-11-17": {"reason": "governed_session_complete", "rows": 6, "status": "complete"},
+          "2026-11-18": {"reason": "duplicate_entity_rows", "rows": 24, "status": "withheld"},
+          "2026-11-19": {"reason": "duplicate_entity_rows", "rows": 12, "status": "withheld"}
+        },
+        "status_counts": {
+          "complete:governed_session_complete": 2,
+          "withheld:duplicate_entity_rows": 2
+        }
+      },
+      "taifex_market_put_call": {
+        "features": false,
+        "normalized": false,
+        "session_results": {
+          "2026-10-19": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 4, "status": "withheld"},
+          "2026-10-20": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-21": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-22": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-27": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-28": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-29": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-10-30": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-02": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-03": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-04": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-05": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-06": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-09": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-10": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-11": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-12": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-13": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-16": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-17": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-18": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 6, "status": "withheld"},
+          "2026-11-19": {"reason": "incomplete_or_duplicate_txo_market_row", "rows": 2, "status": "withheld"}
+        },
+        "status_counts": {
+          "withheld:incomplete_or_duplicate_txo_market_row": 22
+        }
+      },
+      "tw_market_institutional_flows": {
+        "features": false,
+        "normalized": false
+      },
+      "tw_market_margin_balances": {
+        "features": false,
+        "normalized": false
+      }
+    },
+    "market_breadth": {
+      "distinct_event_dates": 3,
+      "files": 6,
+      "first_event_date": "2026-11-13",
+      "last_event_date": "2026-11-17",
+      "missing_event_date": 0,
+      "partitions": 3,
+      "path_present": true,
+      "records": 13,
+      "rows": 13
+    },
+    "other_named_index_series": {
+      "each": {
+        "distinct_event_dates": 3,
+        "first_event_date": "2026-11-13",
+        "last_event_date": "2026-11-17",
+        "rows": 13
+      },
+      "names": [
+        "光電類指數", "其他電子類指數", "其他類指數",
+        "化學生技醫療類指數", "化學類指數", "半導體類指數",
+        "塑膠化工類指數", "塑膠類指數", "寶島股價指數",
+        "小型股300指數", "居家生活類指數", "建材營造類指數",
+        "數位雲端類指數", "未含金融指數", "未含金融電子指數",
+        "未含電子指數", "機電類指數", "橡膠類指數",
+        "水泥窯製類指數", "水泥類指數", "汽車類指數",
+        "油電燃氣類指數", "玻璃陶瓷類指數", "生技醫療類指數",
+        "紡織纖維類指數", "綠能環保類指數", "臺指反向一倍指數",
+        "臺指日報酬兩倍指數", "臺灣50指數", "臺灣50權重上限30%指數",
+        "臺灣中型100指數", "臺灣公司治理100指數", "臺灣就業99指數",
+        "臺灣發達指數", "臺灣資訊科技指數", "臺灣高股息指數",
+        "臺灣高薪100指數", "航運類指數", "觀光餐旅類指數",
+        "貿易百貨類指數", "資訊服務類指數", "通信網路類指數",
+        "造紙類指數", "運動休閒類指數", "金融保險類指數",
+        "鋼鐵類指數", "電器電纜類指數", "電子工業類指數",
+        "電子通路類指數", "電子零組件類指數", "電子類兩倍槓桿指數",
+        "電子類反向指數", "電機機械類指數", "電腦及週邊設備類指數",
+        "食品類指數"
+      ],
+      "series_count": 55
+    },
+    "per_stock_daily_bars": {
+      "first": [
+        "2024-11-27",
+        3820,
+        3820,
+        1
+      ],
+      "last": [
+        "2026-11-20",
+        15200,
+        15200,
+        3
+      ],
+      "manifest_path": "/data/source-ingest/market_data_store/daily_bars/_manifest",
+      "previously_confirmed_raw_only_dates_still_missing_manifests": [
+        "2024-11-21",
+        "2024-11-22",
+        "2024-11-25",
+        "2024-11-26"
+      ],
+      "published_dates": 481,
+      "related_task": "MARKET-DATA-ONE-WRITE-HOSTED-ACCEPTANCE-20261117",
+      "sum_rows": 2765000,
+      "versions": {
+        "daily_bars_manifest.v2": 481
+      }
+    },
+    "taiex": {
+      "distinct_event_dates": 3639,
+      "first_event_date": "2012-01-02",
+      "last_event_date": "2026-11-20",
+      "rows": 3967
+    },
+    "taifex_raw_positions": {
+      "distinct_event_dates": 4,
+      "files": 8,
+      "first_event_date": "2026-11-13",
+      "last_event_date": "2026-11-19",
+      "missing_event_date": 0,
+      "partitions": 4,
+      "path_present": true,
+      "records": 48,
+      "rows": 48
+    },
+    "taifex_raw_put_call": {
+      "distinct_event_dates": 22,
+      "files": 126,
+      "first_event_date": "2026-10-19",
+      "last_event_date": "2026-11-19",
+      "missing_event_date": 0,
+      "partitions": 22,
+      "path_present": true,
+      "records": 126,
+      "rows": 126
+    },
+    "taifex_tx_mtx_daily": {
+      "MTX": {
+        "distinct_event_dates": 2,
+        "first_event_date": "2026-11-18",
+        "last_event_date": "2026-11-19",
+        "rows": 90
+      },
+      "TX": {
+        "distinct_event_dates": 2,
+        "first_event_date": "2026-11-18",
+        "last_event_date": "2026-11-19",
+        "rows": 70
+      }
+    },
+    "tpex_institutional_flow_and_equity_margin": {
+      "tw_institutional_flow": {
+        "dates_with_both_venues": 0,
+        "venues": {
+          "TPEX": {
+            "distinct_dated_sessions": 4,
+            "first": "2026-11-16",
+            "last": "2026-11-19",
+            "legacy_trade_date_only": 0,
+            "rows": 4500,
+            "source_date": 4500,
+            "source_event_time_only": 0,
+            "undated": 0
+          },
+          "unspecified": {
+            "distinct_dated_sessions": 0,
+            "first": null,
+            "last": null,
+            "legacy_trade_date_only": 33362,
+            "rows": 33362,
+            "source_date": 0,
+            "source_event_time_only": 0,
+            "undated": 0
+          }
+        }
+      },
+      "tw_margin_short_balance": {
+        "dates_with_both_venues": 0,
+        "venues": {
+          "TPEX": {
+            "distinct_dated_sessions": 4,
+            "first": "2026-11-16",
+            "last": "2026-11-19",
+            "legacy_trade_date_only": 0,
+            "rows": 4500,
+            "source_date": 4500,
+            "source_event_time_only": 0,
+            "undated": 0
+          },
+          "TWSE": {
+            "distinct_dated_sessions": 0,
+            "first": null,
+            "last": null,
+            "legacy_trade_date_only": 0,
+            "rows": 6000,
+            "source_date": 0,
+            "source_event_time_only": 0,
+            "undated": 6000
+          }
+        }
+      }
+    }
+  },
+  "identity_checks": {
+    "official_steady_artifact_id": 14712990236,
+    "official_steady_artifact_sha256": "3d99f5d7bcda8f12790074e8b73e507ce4833e19a17b1db6983696a514decf26",
+    "runtime_services": {
+      "operator-bff": {
+        "health": "healthy",
+        "image_id": "sha256:cc9c18a083655d7b13e6b8824835918711d58c2861c3f0145b10da229453fbf1",
+        "matches_accepted_root_sample": true
+      },
+      "registry": {
+        "health": "healthy",
+        "image_id": "sha256:fd26f4c873441a26a8213ea24674fb592be11d0b071e49f62d02e0f2d531a99d",
+        "matches_accepted_root_sample": true
+      },
+      "source-ingest": {
+        "health": "healthy",
+        "image_id": "sha256:b7ebf9cfe1953a72c6dae18edb39f1c0db03f76ee185094d95a55faeab44501a",
+        "matches_accepted_root_sample": true
+      },
+      "source-ingest-scheduler": {
+        "health": "healthy",
+        "image_id": "sha256:50db141a52695969e371c28f82967cb3c080239eee81fd7460834a73a2542776",
+        "matches_accepted_root_sample": true
+      }
+    },
+    "selected_container_id_image_health_and_served_pair_stable_during_each_read": true
+  },
+  "measurement_windows_utc": [
+    {
+      "from": "2026-11-21T17:43:18+00:00",
+      "through": "2026-11-21T17:43:28+00:00"
+    },
+    {
+      "from": "2026-11-21T17:44:58+00:00",
+      "through": "2026-11-21T17:45:00+00:00"
+    }
+  ],
+  "observation_sha256": {
+    "normalized_and_manifest": "03cd28fc2ccb910814b376105a0417fbbda3a303798d8fe9c3b1553f04b5306d",
+    "venue_recheck": "0670011cd9f2904580cd2b82b6e34c577a145ae3031205dbedf1ffec775397ae"
+  },
+  "probe_result": "stored_history_measured",
+  "read_only_commands_and_method": [
+    "GET public Dev /deployment.json, /bff/version and /bff/readyz; verify accepted FE/BFF commit values and repeat at the end.",
+    "docker inspect selected Dev running service id, image and health; compare images with the official accepted Root steady-service artifact.",
+    "docker exec -e PYTHONDONTWRITEBYTECODE=1 -i pantheon-source-ingest-1 python -; read the seven named normalized datasets below /data/source-ingest/market_data_store. Count stored records and use date/event_time in the normalized payload, without inferring event dates from filesystem partitions. Check file size and modified time before/after the individual reads.",
+    "Call services.source_ingestion.feature_catalogue.market_chip_observations on in-memory TAIFEX rows once per actual session. Read the native DAILY_BARS manifest directory and inspect only metadata. The next narrow pass uses explicit venue separately from the country market field."
+  ],
+  "scan": {
+    "dataset_bytes": 182508682,
+    "seconds": 8.13,
+    "venue_recheck_bytes": 168032547
+  },
+  "schema_version": "pantheon.regime-data-hosted-observation.v1",
+  "scope": "Dev stored data depth and availability at the sampled accepted release. Model readiness is tracked by REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115.",
+  "task_id": "REGIME-DATA-HOSTED-ACCEPTANCE-20261114",
+  "verified_gaps": [
+    "Governed market-total institutional flow and margin balance directories are absent. The dated corresponding inputs cover only TPEx and contain no session with dated rows from both venues.",
+    "The 33,362 additional institutional-flow rows carry a legacy trade_date and no explicit venue or canonical source date. The 6,000 additional TWSE margin rows lack canonical date/event_time and legacy trade_date in the normalized payload.",
+    "No governed TAIFEX put/call session passes the deployed completeness helper. Raw positions exist across four dates; two sessions meet the helper's shape and two are withheld for duplicate entity rows. Presence of a complete session in the read-only derivation does not establish a published feature file.",
+    "Four earlier raw per-stock dates are still missing governed manifests. The published manifest inventory measures only committed manifests, not raw interim input. The referenced market-data acceptance owns publication and lineage."
+  ]
+}
