@@ -1,0 +1,15 @@
+{
+  "task": "SERVICE-CMD-EXEC-PID1-SIGTERM-20261120",
+  "dockerfiles_changed": ["services/channels/web","services/openclaw-gateway-adapter","services/policy-learning","services/reconciliation-drift","services/research-worker-gateway","services/research","services/search","services/source_ingestion","services/training-session"],
+  "behaviour_proof": {
+    "image": "services/source_ingestion/Dockerfile built locally",
+    "pid1_cmdline": "/usr/local/bin/python3.12 /usr/local/bin/uvicorn services.source_ingestion.main:app --host 0.0.0.0 --port 8097",
+    "docker_stop_grace_seconds": 30,
+    "docker_stop_elapsed_seconds": 0.52,
+    "exit_code": 0,
+    "sigkill_137": false
+  },
+  "contract_test": "scripts/test_service_process_signal_contract.py (7 passed; preserves Docker's implicit outer /bin/sh -c for shell-form Dockerfile CMD/ENTRYPOINT while requiring terminal exec through every shell layer or direct shell-form exec, normalizes JSON/shell Dockerfile CMD/ENTRYPOINT and list/string compose command/entrypoint forms including effective combined ENTRYPOINT+CMD and compose entrypoint+command split shell launches, rejects unsafe server shell wrappers including decoy/non-terminal exec, inner-only exec, and nested shell/subshell prefix launches, and includes collector-level regression fixtures)",
+  "ci_registration": "No inventory exemption needed: Test sweep in branch-ci.yml runs every tracked test file by default",
+  "hosted_proof": "pending: read-only check after first Root containing the change (PID 1 of pantheon-source-ingest-1 is uvicorn; next Taiwan refresh run without SIGKILL)"
+}

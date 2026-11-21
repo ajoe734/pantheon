@@ -14,4 +14,4 @@ COPY . /workspace
 ENV PORT=8097
 EXPOSE 8097
 
-CMD ["sh", "-c", "uvicorn services.source_ingestion.main:app --host 0.0.0.0 --port ${PORT:-8097}"]
+CMD ["sh", "-c", "exec uvicorn services.source_ingestion.main:app --host 0.0.0.0 --port ${PORT:-8097}"]
