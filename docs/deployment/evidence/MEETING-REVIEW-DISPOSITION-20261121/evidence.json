@@ -86,9 +86,9 @@
     "isolated_dev_acceptance_meeting_id": "mtg-dev-acceptance-review-disposition-20261121",
     "local_validation_commands": [
       {
-        "command": "pytest -q services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_persona_meetings.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py acceptance/test_meeting_review_disposition.py scripts/test_check_storage_manifest.py",
+        "command": "pytest -q services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_persona_meetings.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py acceptance/test_meeting_review_disposition.py scripts/test_check_storage_manifest.py scripts/test_dev_acceptance_stage.py",
         "status": "passed",
-        "summary": "64 passed"
+        "summary": "80 passed"
       },
       {
         "command": "python3 scripts/check_storage_manifest.py",
