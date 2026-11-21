@@ -30,6 +30,7 @@ Also preserves the 7 evolution programs routes via ``create_evolution_programs_r
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from datetime import datetime, timezone
@@ -257,6 +258,134 @@ def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[st
         return records
     requested = {s.strip().lower() for s in status_csv.split(",") if s.strip()}
     return [r for r in records if str(r.get("status") or "").lower() in requested]
+
+
+_FORBIDDEN_MUTATION_REVIEW_ALLOWED_ACTIONS: Dict[str, bool] = {
+    "canReviewMutation": False,
+    "canApproveMutation": False,
+    "canRejectMutation": False,
+    "canExecuteMutation": False,
+}
+
+
+def _is_approval_forbidden_error(exc: BaseException) -> bool:
+    for attr in ("code", "status_code", "status", "downstream_status"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int) and not isinstance(val, bool) and val == 403:
+            return True
+    return False
+
+
+def _cached_approval_read_forbidden() -> bool:
+    try:
+        from services.control_plane.bff.core.owner_reads import request_read_cache
+
+        cache = request_read_cache.get()
+    except Exception:
+        cache = None
+    if not isinstance(cache, dict):
+        return False
+    for key, entry in list(cache.items()):
+        if (
+            isinstance(key, tuple)
+            and key
+            and (
+                key[0] in {"approval_records", "pending_approval_records", "approval_records_by_ids"}
+                or (
+                    key[0] == "management_review_queue_reader"
+                    and len(key) > 1
+                    and key[1] in {"approval_decisions", "pending_approval_decisions"}
+                )
+            )
+            and isinstance(entry, tuple)
+            and len(entry) == 2
+            and entry[0] is False
+            and isinstance(entry[1], BaseException)
+            and _is_approval_forbidden_error(entry[1])
+        ):
+            return True
+    return False
+
+
+class _JournalApprovalIsolatedReadStore:
+    """Request-local proxy that isolates Governance approval owner 403s during journal hydration."""
+
+    def __init__(self, read_store: Any, *, initial_forbidden: bool = False) -> None:
+        self._read_store = read_store
+        self.approval_forbidden = bool(initial_forbidden or _cached_approval_read_forbidden())
+
+    def _read_approval(self, method_name: str, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not decision_id or not str(decision_id).strip():
+            return None
+        if self.approval_forbidden or _cached_approval_read_forbidden():
+            self.approval_forbidden = True
+            return None
+        getter = getattr(self._read_store, method_name, None)
+        if not callable(getter):
+            return None
+        try:
+            result = getter(decision_id)
+        except Exception as exc:
+            if _is_approval_forbidden_error(exc) or _cached_approval_read_forbidden():
+                self.approval_forbidden = True
+                return None
+            raise
+        if result is None and _cached_approval_read_forbidden():
+            self.approval_forbidden = True
+        return result
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_approval("get_approval_decision", decision_id)
+
+    def get_approval_decision_by_id(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_approval("get_approval_decision_by_id", decision_id)
+
+    def dataset_source(self, dataset: str) -> str:
+        if (
+            dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}
+            and (self.approval_forbidden or _cached_approval_read_forbidden())
+        ):
+            self.approval_forbidden = True
+            return "missing"
+        ds_fn = getattr(self._read_store, "dataset_source", None)
+        if not callable(ds_fn):
+            return "missing"
+        try:
+            return ds_fn(dataset)
+        except Exception as exc:
+            if (
+                dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}
+                and (_is_approval_forbidden_error(exc) or _cached_approval_read_forbidden())
+            ):
+                self.approval_forbidden = True
+                return "missing"
+            raise
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._read_store, name)
+
+
+def _fallback_approval_isolated_mutation_review_projection(
+    read_store: Any,
+    decision_id: str,
+    *,
+    identity: Any,
+    snapshot_at: str,
+    decision: Optional[Dict[str, Any]] = None,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> Optional[Dict[str, Any]]:
+    from services.control_plane.bff.governance.service import GovernanceService
+
+    service = GovernanceService(
+        read_store,
+        utc_now=utc_now_fn or _default_utc_now,
+    )
+    return service.mutation_review_projection(
+        decision_id,
+        identity=identity,
+        snapshot_at=snapshot_at,
+        decision=decision,
+    )
 
 
 def _register_evolution_programs_routes(
@@ -664,6 +793,16 @@ def create_evolution_router(
     _read_surface_meta_fn = read_surface_meta or _default_read_surface_meta
     _raise_unavailable = raise_if_read_surface_unavailable or _default_raise_if_read_surface_unavailable
     _meta_staleness_fn = meta_staleness or (lambda: None)
+    _mr_accepts_read_surface = False
+    if mutation_review_projection is not None:
+        try:
+            _mr_params = inspect.signature(mutation_review_projection).parameters.values()
+            _mr_accepts_read_surface = any(
+                p.name == "read_surface" or p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in _mr_params
+            )
+        except (TypeError, ValueError):
+            _mr_accepts_read_surface = False
 
     def _get_service() -> EvolutionService:
         if evolution_service is not None:
@@ -1113,9 +1252,27 @@ def create_evolution_router(
         )
         freeze_orders = list(getattr(read_store, "list_freeze_orders", lambda: [])() or [])
         rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
+        approval_surface_forbidden = False
+
+        def _journal_surface_status_fn(dataset: str, *, snapshot_at: str, **kwargs: Any) -> Dict[str, Any]:
+            nonlocal approval_surface_forbidden
+            if dataset == "approval_decisions" and (approval_surface_forbidden or _cached_approval_read_forbidden()):
+                approval_surface_forbidden = True
+                return _surface_status_fn(dataset, snapshot_at=snapshot_at, source="missing", **kwargs)
+            try:
+                res = _surface_status_fn(dataset, snapshot_at=snapshot_at, **kwargs)
+            except Exception as exc:
+                if dataset == "approval_decisions" and (_is_approval_forbidden_error(exc) or _cached_approval_read_forbidden()):
+                    approval_surface_forbidden = True
+                    return _surface_status_fn(dataset, snapshot_at=snapshot_at, source="missing", **kwargs)
+                raise
+            if dataset == "approval_decisions" and _cached_approval_read_forbidden():
+                approval_surface_forbidden = True
+            return res
+
         surfaces = evolution_journal_surfaces(
             snapshot_at=snapshot_at,
-            dataset_surface_status_fn=_surface_status_fn,
+            dataset_surface_status_fn=_journal_surface_status_fn,
         )
 
         items: List[Dict[str, Any]] = []
@@ -1440,20 +1597,82 @@ def create_evolution_router(
             end_idx = start_idx + page_size
             if end_idx < total:
                 next_page_token = str(end_idx)
+        journal_read_store = _JournalApprovalIsolatedReadStore(
+            read_store,
+            initial_forbidden=approval_surface_forbidden,
+        )
         for it in page_items:
             if it.get("entry_type") == "evolution_decision" and isinstance(it.get("mutation_review"), dict):
                 dec_id = str(it.get("source_id") or "")
                 raw_dec = dec_by_id.get(dec_id) or {}
                 ev_class = it.get("evidence_class") or evolution_journal_decision_evidence_class(raw_dec)
                 full_proj = None
+                item_approval_forbidden = False
                 if mutation_review_projection is not None:
-                    full_proj = mutation_review_projection(
-                        dec_id, identity=identity, snapshot_at=snapshot_at, decision=raw_dec or None
-                    )
+                    try:
+                        if _mr_accepts_read_surface:
+                            full_proj = mutation_review_projection(
+                                dec_id,
+                                identity=identity,
+                                snapshot_at=snapshot_at,
+                                decision=raw_dec or None,
+                                read_surface=journal_read_store,
+                            )
+                        elif journal_read_store.approval_forbidden:
+                            item_approval_forbidden = True
+                            full_proj = _fallback_approval_isolated_mutation_review_projection(
+                                journal_read_store,
+                                dec_id,
+                                identity=identity,
+                                snapshot_at=snapshot_at,
+                                decision=raw_dec or None,
+                                utc_now_fn=_utc_now,
+                            )
+                        else:
+                            full_proj = mutation_review_projection(
+                                dec_id,
+                                identity=identity,
+                                snapshot_at=snapshot_at,
+                                decision=raw_dec or None,
+                            )
+                    except Exception as exc:
+                        if not (_is_approval_forbidden_error(exc) or _cached_approval_read_forbidden()):
+                            raise
+                        journal_read_store.approval_forbidden = True
+                        item_approval_forbidden = True
+                        full_proj = _fallback_approval_isolated_mutation_review_projection(
+                            journal_read_store,
+                            dec_id,
+                            identity=identity,
+                            snapshot_at=snapshot_at,
+                            decision=raw_dec or None,
+                            utc_now_fn=_utc_now,
+                        )
                 if full_proj is None:
-                    app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(raw_dec.get("approval_decision_id"))
+                    app_dec = journal_read_store.get_approval_decision_by_id(raw_dec.get("approval_decision_id"))
                     full_proj = dict(it.get("mutation_review") or {})
                     full_proj["approval_decision"] = app_dec
+                if journal_read_store.approval_forbidden or item_approval_forbidden:
+                    full_proj = dict(full_proj)
+                    full_proj["approval_decision"] = None
+                    if "allowedActions" in full_proj or mutation_review_projection is not None:
+                        full_proj["allowedActions"] = dict(_FORBIDDEN_MUTATION_REVIEW_ALLOWED_ACTIONS)
+                    if "allowed_actions" in full_proj and isinstance(full_proj.get("allowed_actions"), dict):
+                        full_proj["allowed_actions"] = {k: False for k in full_proj["allowed_actions"]}
+                    if str(raw_dec.get("approval_decision_id") or "").strip():
+                        proj_meta = (
+                            dict(full_proj.get("meta") or {})
+                            if isinstance(full_proj.get("meta"), dict)
+                            else {"snapshot_at": snapshot_at}
+                        )
+                        proj_surfaces = (
+                            dict(proj_meta.get("surfaces") or {})
+                            if isinstance(proj_meta.get("surfaces"), dict)
+                            else {}
+                        )
+                        proj_surfaces["mutation_review"] = "unavailable"
+                        proj_meta["surfaces"] = proj_surfaces
+                        full_proj["meta"] = proj_meta
                 for field in ("metadata", "provenance", "origin"):
                     if field in raw_dec and field not in full_proj:
                         full_proj[field] = raw_dec[field]
@@ -1461,6 +1680,13 @@ def create_evolution_router(
                 # The decision row keeps its own record/status/summary/target;
                 # only the nested mutation_review is hydrated.
                 it["mutation_review"] = full_proj
+
+        if journal_read_store.approval_forbidden and surfaces.get("approval_decisions", {}).get("status") != "unavailable":
+            approval_surface_forbidden = True
+            surfaces = evolution_journal_surfaces(
+                snapshot_at=snapshot_at,
+                dataset_surface_status_fn=_journal_surface_status_fn,
+            )
 
         meta = _snap_meta(snapshot_at)
         meta["surfaces"] = surfaces

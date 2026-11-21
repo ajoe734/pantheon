@@ -2956,3 +2956,643 @@ def test_summary_counts_pending_reviews_once_per_decision() -> None:
         "/bff/management/evolution-journal?source_type=mutation_review&page_size=50", headers=OPERATOR_HEADERS
     ).json()
     assert by_source_type["page_info"]["total"] == 5
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121
+# --------------------------------------------------------------------------- #
+
+
+def test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """When the real Governance approval owner refuses viewer approval reads with
+    HTTP 403, GET /bff/management/evolution-journal still serves the permitted
+    history to a tenant-scoped viewer with no protected approval payload and no
+    command capability, while an authorized operator receives full approval
+    enrichment and existing owner/cross-tenant/write authorization stays enforced.
+    """
+    import io
+    import urllib.error
+    import urllib.request
+
+    from services.control_plane.bff.auth.policy import (
+        bff_error,
+        extract_identity_jwt,
+        require_operator_role,
+        require_read_role,
+    )
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.personas.service import _dataset_surface_status as persona_surface_status
+    from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+    from services.control_plane.governance.approval_decision import (
+        ApprovalDecision,
+        ApprovalDecisionStore,
+    )
+    from services.governance import main as gov_main
+    from services.governance.record_store import JsonGovernanceRecordStore
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    jwt_secret = "evo-journal-approval-isolation-secret-0123456789"
+    jwt_issuer = "evo-journal-approval-isolation-issuer"
+    jwt_audience = "bff-operators"
+    tenant_dev = "tenant-dev"
+    tenant_other = "tenant-other"
+
+    for key, val in {
+        "PANTHEON_BFF_JWT_SECRET": jwt_secret,
+        "PANTHEON_BFF_JWT_ISSUER": jwt_issuer,
+        "PANTHEON_BFF_JWT_AUDIENCE": jwt_audience,
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_MFA_REQUIRED": "false",
+        "PANTHEON_GOVERNANCE_JWT_SECRET": jwt_secret,
+        "PANTHEON_GOVERNANCE_JWT_ISSUER": jwt_issuer,
+        "PANTHEON_GOVERNANCE_JWT_AUDIENCE": jwt_audience,
+        "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance.test",
+        "PANTHEON_EVOLUTION_API_URL": "http://evolution.test",
+        "EVOLUTION_AUTH_TOKEN": "svc-token-evo-journal",
+        "PANTHEON_POSTMORTEMS_API_URL": "http://postmortems.test",
+        "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime.test",
+        "BFF_READ_SURFACE_STATE": "fresh",
+    }.items():
+        monkeypatch.setenv(key, val)
+    monkeypatch.delenv("PANTHEON_BFF_AUTH_STUB", raising=False)
+
+    def _mint_jwt(sub: str, roles: list[str], *, tenant_id: str = tenant_dev) -> str:
+        return encode_jwt_hs256(
+            {
+                "sub": sub,
+                "roles": roles,
+                "tenant_id": tenant_id,
+                "iss": jwt_issuer,
+                "aud": jwt_audience,
+                "exp": 4102444800,
+            },
+            secret=jwt_secret,
+        )
+
+    viewer_jwt = _mint_jwt("dev-viewer-1", ["viewer"], tenant_id=tenant_dev)
+    operator_jwt = _mint_jwt(
+        "dev-operator-a",
+        ["operator", "reviewer", "approver", "governance_reviewer"],
+        tenant_id=tenant_dev,
+    )
+    foreign_operator_jwt = _mint_jwt(
+        "other-operator-1",
+        ["operator", "reviewer", "approver", "governance_reviewer"],
+        tenant_id=tenant_other,
+    )
+
+    # Real Governance owner stores
+    gov_approval_store = ApprovalDecisionStore(storage_path=str(tmp_path / "gov_approvals.json"))
+    gov_freeze_store = JsonGovernanceRecordStore(
+        str(tmp_path / "gov_freezes.json"), id_fields=("freeze_order_id", "id")
+    )
+    gov_rollback_store = JsonGovernanceRecordStore(
+        str(tmp_path / "gov_rollbacks.json"), id_fields=("rollback_id", "id")
+    )
+    monkeypatch.setattr(gov_main, "store", gov_approval_store)
+    monkeypatch.setattr(gov_main, "freeze_order_store", gov_freeze_store)
+    monkeypatch.setattr(gov_main, "rollback_store", gov_rollback_store)
+
+    protected_rationale = "Confidential committee signoff rationale for tenant-dev"
+    protected_actor = "gov-committee-chair-secret"
+
+    def _seed_approval(decision_id: str, target_id: str, *, tenant_id: str, decided: bool) -> None:
+        appr = ApprovalDecision.create_proposed(
+            decision_id=decision_id,
+            tenant_id=tenant_id,
+            owner_user_id="evolution-proposer",
+            target_type="evolution_proposal",
+            target_id=target_id,
+            target_version="v1.0.0",
+            risk_level="medium",
+        )
+        appr.accept_review(actor_role="risk_owner", actor_id=protected_actor)
+        if decided:
+            appr.decide(
+                actor_role="risk_owner",
+                actor_id=protected_actor,
+                outcome="approved",
+                rationale=protected_rationale,
+            )
+        else:
+            appr.rationale = protected_rationale
+        appr.event_id = f"evt-{decision_id}"
+        gov_approval_store.put(appr)
+
+    dec_approved = {
+        **_hosted_all12_decision(
+            "evo-sweep-inc-drift-87d6930c62ee",
+            "approved",
+            created_by_id="evolution-daily-sweep",
+            created_at="2026-11-21T01:05:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-drift-87d",
+        "target_version": "v1.0.0",
+        "action_type": "freeze",
+    }
+    dec_reviewed = {
+        **_hosted_all12_decision(
+            "evo-reviewed-med-001",
+            "reviewed",
+            created_by_id="operator",
+            created_at="2026-11-21T01:04:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-reviewed-001",
+        "target_version": "v1.0.0",
+        "action_type": "freeze",
+    }
+    dec_executed = {
+        **_hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution-usera",
+            "executed",
+            created_by_id="operator",
+            created_at="2026-11-21T01:03:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-exec-001",
+        "target_version": "v1.0.0",
+        "action_type": "force_risk_off",
+    }
+    dec_canceled = {
+        **_hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution",
+            "canceled",
+            created_by_id="operator",
+            created_at="2026-11-21T01:02:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-cancel-001",
+        "target_version": "v1.0.0",
+    }
+    dec_thresh_proposed = {
+        **_threshold_signal_decision(
+            "evo-thresh-signal-001",
+            signal_type="performance_degradation",
+            decision_state="proposed",
+            created_at="2026-11-21T01:01:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "proposed_changes": {"summary": "Threshold signal retrain proposal"},
+    }
+    dec_auto_followup = {
+        **_real_hosted_incident_followup_decision(
+            "evo-sweep-agent-000b205c0ef9-0000",
+            created_at="2026-11-21T02:00:00Z",
+        ),
+        "tenant_id": tenant_dev,
+    }
+    dec_auto_severity = {
+        **_real_hosted_incident_severity_decision(
+            "evo-sweep-inc-severity-auto-001",
+            created_at="2026-11-21T02:01:00Z",
+        ),
+        "tenant_id": tenant_dev,
+    }
+
+    _seed_approval(dec_approved["approval_decision_id"], dec_approved["decision_id"], tenant_id=tenant_dev, decided=True)
+    _seed_approval(dec_reviewed["approval_decision_id"], dec_reviewed["decision_id"], tenant_id=tenant_dev, decided=False)
+    _seed_approval(dec_executed["approval_decision_id"], dec_executed["decision_id"], tenant_id=tenant_dev, decided=True)
+    _seed_approval("appr-foreign-tenant-001", "evo-foreign-001", tenant_id=tenant_other, decided=True)
+
+    gov_freeze_store.put(
+        {
+            "freeze_order_id": "fo-own-001",
+            "id": "fo-own-001",
+            "status": "active",
+            "scope": "artifact",
+            "target_id": dec_approved["target_id"],
+            "target_version": dec_approved["target_version"],
+            "evolution_decision_id": dec_approved["decision_id"],
+            "tenant_id": tenant_dev,
+            "reason": "Freeze order on drift breach",
+            "created_at": "2026-11-21T01:06:00Z",
+            "issued_at": "2026-11-21T01:06:00Z",
+        }
+    )
+    gov_rollback_store.put(
+        {
+            "rollback_id": "rb-own-001",
+            "id": "rb-own-001",
+            "runtime_id": "rt-own-001",
+            "status": "completed",
+            "action_type": "force_risk_off",
+            "evolution_decision_id": dec_executed["decision_id"],
+            "tenant_id": tenant_dev,
+            "reason": "Rollback completed",
+            "created_at": "2026-11-21T01:07:00Z",
+            "executed_at": "2026-11-21T01:07:00Z",
+        }
+    )
+
+    all_evo_decisions = [
+        dec_approved,
+        dec_reviewed,
+        dec_executed,
+        dec_canceled,
+        dec_thresh_proposed,
+        dec_auto_followup,
+        dec_auto_severity,
+    ]
+    evo_decisions_by_id = {d["decision_id"]: d for d in all_evo_decisions}
+
+    gov_client = TestClient(gov_main.app)
+    governance_approval_calls: list[dict[str, Any]] = []
+
+    class _UrlopenResp:
+        def __init__(self, status: int, content: bytes) -> None:
+            self.status = status
+            self.code = status
+            self._io = io.BytesIO(content)
+            self.headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        def read(self) -> bytes:
+            return self._io.read()
+
+        def __enter__(self) -> "_UrlopenResp":
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            return False
+
+    def _transport(req: urllib.request.Request, timeout: Optional[float] = None) -> _UrlopenResp:
+        url = req.full_url
+        method = req.get_method()
+        headers = {k: v for k, v in req.header_items()}
+        tenant = req.get_header("X-tenant-id")
+        if url.startswith("http://governance.test/"):
+            path = url[len("http://governance.test") :]
+            resp = gov_client.request(method, path, headers=headers, content=req.data)
+            if path.startswith("/api/governance/approvals"):
+                governance_approval_calls.append(
+                    {
+                        "method": method,
+                        "path": path,
+                        "status": resp.status_code,
+                        "auth": headers.get("Authorization"),
+                    }
+                )
+            if resp.status_code >= 400:
+                raise urllib.error.HTTPError(
+                    url, resp.status_code, resp.text, {}, io.BytesIO(resp.content)
+                )
+            return _UrlopenResp(resp.status_code, resp.content)
+        if url.startswith("http://evolution.test/"):
+            path = url[len("http://evolution.test") :]
+            if path == "/api/evolution/proposals":
+                items = [d for d in all_evo_decisions if d.get("tenant_id") == tenant]
+                return _UrlopenResp(200, json.dumps(items).encode("utf-8"))
+            if path.startswith("/api/evolution/proposals/"):
+                did = path.rsplit("/", 1)[-1]
+                d = evo_decisions_by_id.get(did)
+                if d is None or d.get("tenant_id") != tenant:
+                    raise urllib.error.HTTPError(url, 404, "not found", {}, io.BytesIO(b"{}"))
+                return _UrlopenResp(200, json.dumps(d).encode("utf-8"))
+        if url.startswith("http://runtime.test/"):
+            return _UrlopenResp(
+                200,
+                json.dumps(
+                    {"bindings": [{"binding_id": "rt-own-001", "runtime_id": "rt-own-001", "tenant_id": tenant_dev}]}
+                ).encode("utf-8"),
+            )
+        raise AssertionError(f"Unexpected outbound owner request: {method} {url}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _transport)
+
+    # 1. Verify the real Governance owner directly enforces read, write, and cross-tenant boundaries
+    direct_viewer_list = gov_client.get(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {viewer_jwt}"},
+    )
+    assert direct_viewer_list.status_code == 403, direct_viewer_list.text
+
+    direct_viewer_write = gov_client.post(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {viewer_jwt}", "Idempotency-Key": "idem-viewer-propose"},
+        json={
+            "tenant_id": tenant_dev,
+            "owner_user_id": "dev-viewer-1",
+            "target_type": "evolution_proposal",
+            "target_id": "evo-1",
+            "target_version": "v1",
+            "risk_level": "low",
+            "expected_version": 0,
+        },
+    )
+    assert direct_viewer_write.status_code == 403, direct_viewer_write.text
+
+    direct_operator_list = gov_client.get(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {operator_jwt}"},
+    )
+    assert direct_operator_list.status_code == 200, direct_operator_list.text
+    operator_approval_ids = {item["decision_id"] for item in direct_operator_list.json()}
+    assert operator_approval_ids == {
+        dec_approved["approval_decision_id"],
+        dec_reviewed["approval_decision_id"],
+        dec_executed["approval_decision_id"],
+    }
+    assert "appr-foreign-tenant-001" not in operator_approval_ids
+
+    direct_foreign_get = gov_client.get(
+        f"/api/governance/approvals/{dec_approved['approval_decision_id']}",
+        headers={"Authorization": f"Bearer {foreign_operator_jwt}"},
+    )
+    assert direct_foreign_get.status_code == 404, direct_foreign_get.text
+
+    # 2. Mount the real BFF evolution journal route with ReadSurfacePorts and _mutation_review_projection
+    store = create_read_surface_ports()
+    postmortems_data = [
+        {
+            "postmortem_id": "pm-published-hist-001",
+            "incident_id": "inc-hist-001",
+            "title": "Published history postmortem",
+            "status": "published",
+            "created_at": "2026-11-21T01:05:30Z",
+        },
+        {
+            "postmortem_id": "pm-draft-auto-001",
+            "incident_id": "inc-draft-001",
+            "title": "Draft auto postmortem",
+            "status": "draft",
+            "created_at": "2026-11-21T02:02:00Z",
+        },
+    ]
+    store.list_postmortems = lambda **_kw: list(postmortems_data)  # type: ignore[method-assign]
+    set_ops_console_precondition_resolvers(read_surface=lambda: store)
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.include_router(
+        create_evolution_router(
+            read_surface=store,
+            extract_identity=extract_identity_jwt,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            dataset_surface_status=lambda dataset, **kw: persona_surface_status(
+                dataset, read_store=store, **kw
+            ),
+            mutation_review_projection=_mutation_review_projection,
+        )
+    )
+
+    viewer_headers = {
+        "Authorization": f"Bearer {viewer_jwt}",
+        "X-Tenant-Id": tenant_dev,
+    }
+    operator_headers = {
+        "Authorization": f"Bearer {operator_jwt}",
+        "X-Tenant-Id": tenant_dev,
+    }
+
+    expected_history_ids = [
+        "rollback:rb-own-001",
+        "freeze_order:fo-own-001",
+        "postmortem:pm-published-hist-001",
+        f"evolution_decision:{dec_approved['decision_id']}",
+        f"evolution_decision:{dec_reviewed['decision_id']}",
+        f"evolution_decision:{dec_executed['decision_id']}",
+        f"evolution_decision:{dec_canceled['decision_id']}",
+        f"evolution_decision:{dec_thresh_proposed['decision_id']}",
+    ]
+    expected_auto_counts = {
+        "incident_followup": 1,
+        "incident_severity": 1,
+        "postmortem_draft": 1,
+        "total": 2,
+    }
+
+    with TestClient(app) as client:
+        # 3. Tenant-scoped viewer reads GET /bff/management/evolution-journal?view=history&page_size=20
+        governance_approval_calls.clear()
+        viewer_resp = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=20",
+            headers=viewer_headers,
+        )
+        assert viewer_resp.status_code == 200, viewer_resp.text
+        # Confirm the Governance approval owner was genuinely called and returned 403
+        assert len(governance_approval_calls) >= 1
+        assert all(c["status"] == 403 for c in governance_approval_calls)
+
+        viewer_body = viewer_resp.json()
+        viewer_items = viewer_body["data"]["items"]
+        assert [it["id"] for it in viewer_items] == expected_history_ids
+        assert viewer_body["page_info"] == {
+            "next_page_token": None,
+            "total": 8,
+            "page_size": 20,
+        }
+        assert viewer_body["data"]["auto_proposal_counts"] == expected_auto_counts
+        assert viewer_body["data"]["summary"]["total_items"] == 8
+        assert viewer_body["data"]["summary"]["returned_items"] == 8
+        assert viewer_body["data"]["summary"]["decision_count"] == 5
+        assert viewer_body["data"]["summary"]["mutation_review_count"] == 5
+        assert viewer_body["data"]["summary"]["postmortem_count"] == 1
+        assert viewer_body["data"]["summary"]["freeze_order_count"] == 1
+        assert viewer_body["data"]["summary"]["rollback_count"] == 1
+
+        # Honest surface reporting under existing projection conventions
+        viewer_surfaces = viewer_body["meta"]["surfaces"]
+        assert viewer_surfaces["approval_decisions"]["status"] == "unavailable"
+        assert viewer_surfaces["mutation_review"]["status"] == "degraded"
+        assert viewer_surfaces["management_evolution_journal"]["status"] == "ok"
+
+        # Viewer results contain no protected approval payload and no command capability
+        assert protected_rationale not in viewer_resp.text
+        assert protected_actor not in viewer_resp.text
+        viewer_decisions_by_id = {
+            it["source_id"]: it for it in viewer_items if it["entry_type"] == "evolution_decision"
+        }
+        assert set(viewer_decisions_by_id.keys()) == {
+            dec_approved["decision_id"],
+            dec_reviewed["decision_id"],
+            dec_executed["decision_id"],
+            dec_canceled["decision_id"],
+            dec_thresh_proposed["decision_id"],
+        }
+        for did, row in viewer_decisions_by_id.items():
+            # Base decision record and history classification are preserved
+            assert row["decision"]["decision_id"] == did
+            assert row["record"]["decision_id"] == did
+            assert row["evidence_class"] in {"incident_severity", "threshold_signal"}
+            mr = row["mutation_review"]
+            assert mr["decision_id"] == did
+            assert mr["evidence_class"] == row["evidence_class"]
+            assert mr["approval_decision"] is None
+            assert mr["allowedActions"] == {
+                "canReviewMutation": False,
+                "canApproveMutation": False,
+                "canRejectMutation": False,
+                "canExecuteMutation": False,
+            }
+            if row["decision"].get("approval_decision_id"):
+                assert mr["meta"]["surfaces"]["mutation_review"] == "unavailable"
+
+        # 4. Viewer pagination across multiple pages preserves exact order and totals
+        v_p1 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3",
+            headers=viewer_headers,
+        )
+        assert v_p1.status_code == 200
+        v_p1_body = v_p1.json()
+        assert v_p1_body["page_info"] == {"next_page_token": "3", "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p1_body["data"]["items"]] == expected_history_ids[:3]
+
+        v_p2 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3&page_token=3",
+            headers=viewer_headers,
+        )
+        assert v_p2.status_code == 200
+        v_p2_body = v_p2.json()
+        assert v_p2_body["page_info"] == {"next_page_token": "6", "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p2_body["data"]["items"]] == expected_history_ids[3:6]
+        for row in v_p2_body["data"]["items"]:
+            assert row["mutation_review"]["approval_decision"] is None
+            assert not any(row["mutation_review"]["allowedActions"].values())
+
+        v_p3 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3&page_token=6",
+            headers=viewer_headers,
+        )
+        assert v_p3.status_code == 200
+        v_p3_body = v_p3.json()
+        assert v_p3_body["page_info"] == {"next_page_token": None, "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p3_body["data"]["items"]] == expected_history_ids[6:]
+
+        # 5. Authorized operator reads the same history and receives existing approval enrichment
+        governance_approval_calls.clear()
+        op_resp = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=20",
+            headers=operator_headers,
+        )
+        assert op_resp.status_code == 200, op_resp.text
+        assert len(governance_approval_calls) >= 1
+        assert all(c["status"] == 200 for c in governance_approval_calls)
+
+        op_body = op_resp.json()
+        op_items = op_body["data"]["items"]
+        assert [it["id"] for it in op_items] == expected_history_ids
+        assert op_body["page_info"] == viewer_body["page_info"]
+        assert op_body["data"]["auto_proposal_counts"] == expected_auto_counts
+        assert op_body["data"]["summary"] == viewer_body["data"]["summary"]
+
+        op_surfaces = op_body["meta"]["surfaces"]
+        assert op_surfaces["approval_decisions"]["status"] == "ok"
+        assert op_surfaces["mutation_review"]["status"] == "ok"
+        assert op_surfaces["management_evolution_journal"]["status"] == "ok"
+
+        op_decisions_by_id = {
+            it["source_id"]: it for it in op_items if it["entry_type"] == "evolution_decision"
+        }
+        op_approved_mr = op_decisions_by_id[dec_approved["decision_id"]]["mutation_review"]
+        assert op_approved_mr["approval_decision"] is not None
+        assert op_approved_mr["approval_decision"]["decision_id"] == dec_approved["approval_decision_id"]
+        assert op_approved_mr["approval_decision"]["outcome"] == "approved"
+        assert op_approved_mr["approval_decision"]["rationale"] == protected_rationale
+        assert op_approved_mr["allowedActions"]["canExecuteMutation"] is True
+        assert op_approved_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        op_reviewed_mr = op_decisions_by_id[dec_reviewed["decision_id"]]["mutation_review"]
+        assert op_reviewed_mr["approval_decision"] is not None
+        assert op_reviewed_mr["approval_decision"]["decision_id"] == dec_reviewed["approval_decision_id"]
+        assert op_reviewed_mr["approval_decision"]["decision_state"] == "under_review"
+        assert op_reviewed_mr["allowedActions"]["canApproveMutation"] is True
+        assert op_reviewed_mr["allowedActions"]["canRejectMutation"] is True
+        assert op_reviewed_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        op_executed_mr = op_decisions_by_id[dec_executed["decision_id"]]["mutation_review"]
+        assert op_executed_mr["approval_decision"] is not None
+        assert op_executed_mr["approval_decision"]["decision_id"] == dec_executed["approval_decision_id"]
+        assert op_executed_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        # 6. Unauthorized reads, cross-tenant requests, and viewer writes remain refused
+        unauth_resp = client.get("/bff/management/evolution-journal?view=history")
+        assert unauth_resp.status_code == 401
+
+        cross_tenant_viewer = client.get(
+            "/bff/management/evolution-journal?view=history",
+            headers={"Authorization": f"Bearer {viewer_jwt}", "X-Tenant-Id": tenant_other},
+        )
+        assert cross_tenant_viewer.status_code == 403
+        assert cross_tenant_viewer.json()["error"]["code"] == "TENANT_MISMATCH"
+
+        viewer_program_create = client.post(
+            "/bff/evolution-programs",
+            headers=viewer_headers,
+            json={"name": "Viewer unauthorized write"},
+        )
+        assert viewer_program_create.status_code == 403
+
+
+def test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors() -> None:
+    """A store-level 403 on get_approval_decision is isolated during journal
+    hydration while non-403 failures still propagate rather than being masked.
+    """
+    import urllib.error
+
+    dec = _hosted_all12_decision(
+        "evo-store-403-dec-001",
+        "approved",
+        created_by_id="operator",
+        created_at="2026-11-21T03:00:00Z",
+    )
+    data = {
+        "evolution_decisions": {dec["decision_id"]: dec},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+
+    def _forbidden_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        raise urllib.error.HTTPError(
+            f"http://governance.test/api/governance/approvals/{decision_id}",
+            403,
+            "Approval read role required",
+            {},
+            None,
+        )
+
+    store.get_approval_decision = _forbidden_get_approval  # type: ignore[method-assign]
+    client = _JournalTestClient(_create_app_for_store(store), raise_server_exceptions=False)
+
+    viewer_headers = {"Authorization": "Bearer viewer-b3:viewer"}
+    resp_403 = client.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_403.status_code == 200, resp_403.text
+    body_403 = resp_403.json()
+    assert len(body_403["data"]["items"]) == 1
+    row = body_403["data"]["items"][0]
+    assert row["source_id"] == dec["decision_id"]
+    assert row["mutation_review"]["approval_decision"] is None
+    assert row["mutation_review"]["allowedActions"] == {
+        "canReviewMutation": False,
+        "canApproveMutation": False,
+        "canRejectMutation": False,
+        "canExecuteMutation": False,
+    }
+    assert row["mutation_review"]["meta"]["surfaces"]["mutation_review"] == "unavailable"
+    assert body_403["meta"]["surfaces"]["approval_decisions"]["status"] == "unavailable"
+    assert body_403["meta"]["surfaces"]["mutation_review"]["status"] == "degraded"
+
+    # Non-403 unexpected error in get_approval_decision still propagates as 500
+    def _broken_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        raise RuntimeError(f"Unexpected store corruption for {decision_id}")
+
+    store.get_approval_decision = _broken_get_approval  # type: ignore[method-assign]
+    resp_500 = client.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_500.status_code == 500
+

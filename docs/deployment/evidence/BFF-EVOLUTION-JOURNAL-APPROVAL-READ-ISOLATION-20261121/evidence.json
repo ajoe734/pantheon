@@ -1,0 +1,76 @@
+{
+  "task_id": "BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121",
+  "title": "Keep authorized Evolution history readable when approval enrichment is forbidden",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "branch": "task/BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121",
+  "review_status": "pending_independent_review",
+  "scoped_artifacts": [
+    "services/control-plane/bff/evolution/router.py",
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121/evidence.json"
+  ],
+  "hosted_incident_evidence": {
+    "acceptance_root_run": "44952879415",
+    "backend_sha": "7de795f24a6060428646a5fa558adb21bb03a692",
+    "frontend_sha": "6b70055794df42357b28f9482e46648b6306ba37",
+    "route": "GET /bff/management/evolution-journal?view=history&page_size=20",
+    "root_cause": "During page_items mutation-review hydration in services/control-plane/bff/evolution/router.py, _mutation_review_projection -> GovernanceService.mutation_review_projection -> ReadSurfacePorts.get_approval_decision fell back to ManagementReviewQueuePort._approval_decisions_reader after by_id_reader failed, re-raising the request-cached Governance approval owner HTTP 403 ('Approval read role required' on GET /api/governance/approvals) uncaught as an HTTP 500 for tenant-scoped viewers.",
+    "sanitized_artifacts": [
+      {
+        "file": "hosted-evolution-journal-403-trace.json",
+        "sha256": "6c58fb94271738382acfdd13fb47f2af1a014841bcac0608b2ccc35e4e19b611",
+        "summary": "Dev BFF traceback showing urllib.error.HTTPError 403 Forbidden from http://governance:8000/api/governance/approvals escaping _mutation_review_projection during evolution journal page hydration."
+      },
+      {
+        "file": "backend-owner-comparison.json",
+        "sha256": "867bd4725a9007e1effe522c411142478a65edb523a02b69fb2671e22313a766",
+        "summary": "Evolution owner GET /api/evolution/proposals returned HTTP 200 (2838 rows, 83 history-eligible) while Governance owner GET /api/governance/approvals returned HTTP 403 ('Approval read role required') for viewer and HTTP 200 (699 rows) for operator."
+      },
+      {
+        "file": "evolution-journal-role-comparison.json",
+        "sha256": "8d7246b3be2c1dbda12d5d7e79243da6a9584f50e886d1c71f95cf0ea51b450",
+        "summary": "BFF GET /bff/management/evolution-journal?view=history&page_size=20 returned HTTP 500 for viewer and HTTP 200 (returned: 20, total: 88, approval_decisions: ok, mutation_review: ok) for operator."
+      }
+    ]
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/evolution/router.py",
+      "summary": "Added _is_approval_forbidden_error, _cached_approval_read_forbidden, _JournalApprovalIsolatedReadStore, and _fallback_approval_isolated_mutation_review_projection. Wired bff_management_evolution_journal to pass read_surface=journal_read_store into mutation_review_projection (when supported) and isolate Governance approval owner 403 responses during optional approval surface status and mutation-review hydration. When approval enrichment is forbidden (HTTP 403), viewer rows keep their base record, history classification, summary, auto_proposal_counts, and pagination while setting mutation_review.approval_decision=None, all allowedActions to False, nested mutation_review.meta.surfaces.mutation_review='unavailable' when approval_decision_id is referenced, and top-level meta.surfaces.approval_decisions.status='unavailable' and meta.surfaces.mutation_review.status='degraded' while meta.surfaces.management_evolution_journal.status remains 'ok'."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+      "summary": "Added test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment (exercising real Governance owner FastAPI routes, JWT role enforcement, ReadSurfacePorts, and _mutation_review_projection for viewer 403 isolation, pagination, zero protected approval leakage, operator full enrichment, and unauthorized/cross-tenant/write refusal) and test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors."
+    },
+    {
+      "path": "docs/operations/problem-register.md",
+      "summary": "Recorded the Dev Root 44952879415 viewer HTTP 500 incident under RC6 WP6.4 linked to BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121, retaining hosted verification with EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "ac1_viewer_history_readable_on_approval_403": "Verified in test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment: viewer receives HTTP 200 with all 8 history items, preserved base records, evidence_class classification, multi-page pagination, meta.surfaces.approval_decisions.status=='unavailable', meta.surfaces.mutation_review.status=='degraded', meta.surfaces.management_evolution_journal.status=='ok', mutation_review.approval_decision is None, allowedActions all False, and no protected approval rationale or actor strings in response.",
+    "ac2_operator_enrichment_and_owner_boundaries_preserved": "Verified in test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment: authorized operator receives HTTP 200 with meta.surfaces.approval_decisions.status=='ok', meta.surfaces.mutation_review.status=='ok', populated mutation_review.approval_decision and allowedActions, while direct Governance owner viewer reads/writes return 403, foreign-tenant approval reads return 404, unauthenticated journal reads return 401, cross-tenant viewer journal reads return 403 TENANT_MISMATCH, and viewer writes return 403.",
+    "ac3_focused_coverage_register_entry_and_hosted_retention": "Added focused tests in services/control-plane/bff/tests/test_bff_b3_evolution_journal.py, recorded RC6 WP6.4 row in docs/operations/problem-register.md, and retained hosted acceptance verification with EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
+  },
+  "runtime_budget": {
+    "persistent_runtime_writers_added": 0,
+    "recurring_jobs_added": 0,
+    "daily_runtime_storage_growth_bytes": 0,
+    "note": "Request-scoped read isolation only; adds no recurring jobs, emitters, or persistent writers."
+  },
+  "residual_findings": [],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+      "exit_code": 0,
+      "result": "36 passed, 5 warnings in 8.69s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_evolution_journal.py services/control-plane/bff/tests/test_evolution_router.py services/control-plane/bff/tests/test_mutation_review_projection_policy.py services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "exit_code": 0,
+      "result": "93 passed, 5 warnings in 45.22s"
+    }
+  ]
+}
