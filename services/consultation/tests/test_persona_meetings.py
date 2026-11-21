@@ -2127,6 +2127,8 @@ def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_tot
     reg_calls: list[str] = []
 
     def _missing_owners(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if endpoint is None or not getattr(endpoint, "base_url", ""):
+            raise cf.OwnerUnavailable("owner_unconfigured")
         if path.startswith("/api/registry/entries/"):
             reg_calls.append(path)
             raise cf.OwnerUnavailable("http_404")
@@ -2197,10 +2199,47 @@ def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_tot
         for it in grp["items"]:
             assert len(it["excerpt"]) <= 400
             assert len(json.dumps(it["subject_fields"])) <= 400
-    total_chars = sum(
-        cf._item_char_size(it)
+    independent_huge_chars = sum(
+        len(it["excerpt"]) + len(json.dumps(it["subject_fields"], sort_keys=True))
         for grp in case_huge["groups"].values()
         for it in grp["items"]
     )
-    assert total_chars <= 12000
-    assert len(items_huge) <= 32
+    assert independent_huge_chars <= 12000
+    assert len(items_huge) <= 15
+
+    # 3. Reproduction: Owners(), four supplied groups of eight items, excerpt=x*400 and subject_fields={note:y*370}
+    case_repro, items_repro, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-budget-repro",
+        meeting_code="MT-1",
+        topic="Additive excerpt plus subject_fields budget reproduction",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file={
+            "groups": {
+                g: {
+                    "items": [
+                        {
+                            "item_id": f"{g}-item-{i}",
+                            "group": g,
+                            "excerpt": "x" * 400,
+                            "subject_fields": {"note": "y" * 370},
+                        }
+                        for i in range(8)
+                    ]
+                }
+                for g in cf.GROUPS
+            }
+        },
+        tenant_id=TENANT,
+        owners=cf.Owners(),
+    )
+    independent_repro_chars = sum(
+        len(it["excerpt"]) + len(json.dumps(it["subject_fields"], sort_keys=True))
+        for grp in case_repro["groups"].values()
+        for it in grp["items"]
+    )
+    assert independent_repro_chars <= 12000
+    assert len(items_repro) <= 15
+    assert all(case_repro["groups"][g]["truncated"] is True for g in cf.GROUPS)

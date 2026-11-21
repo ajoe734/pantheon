@@ -333,3 +333,78 @@ class CaseFileTests(unittest.TestCase):
             for item in grp["items"]:
                 self.assertLessEqual(len(item["excerpt"]), 400)
                 self.assertLessEqual(len(json.dumps(item["subject_fields"])), 400)
+
+        def heavy_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            if path.startswith("/api/registry/entries/"):
+                rid = path.rsplit("/", 1)[1]
+                return {
+                    "registry_id": rid,
+                    "strategy_id": "momentum",
+                    "approved_scope": "paper",
+                    "artifact_state": "approved",
+                    "evaluation_summary": "x" * 400,
+                    "parameters": {"note": "y" * 310},
+                }
+            if "/api/registry/strategies/" in path:
+                return [
+                    {
+                        "registry_id": f"ret-{i}",
+                        "strategy_id": "m-" + ("s" * 350),
+                        "version": "1.0",
+                        "artifact_state": "retired",
+                        "evaluation_summary": "r" * 400,
+                    }
+                    for i in range(8)
+                ]
+            if path.endswith("/strategy-pool"):
+                return {"pool_version": 4, "members": []}
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {
+                    "hits": [
+                        {
+                            "type": "institutional",
+                            "relevance_score": float(i),
+                            "entry": {
+                                "entry_id": f"mem-{i}",
+                                "memory_type": "lesson",
+                                "content": {
+                                    "summary": "m" * 400,
+                                    "tags": ["family:momentum", "negative_memory", "t:" + ("q" * 300)],
+                                },
+                            },
+                        }
+                        for i in range(8)
+                    ]
+                }
+            if path.startswith("/api/search"):
+                return {
+                    "retrieval_mode": "hybrid",
+                    "results": [
+                        {
+                            "result_id": f"s-{i}",
+                            "relevance_score": 1.0,
+                            "matched_items": [{"id": f"ev-{i}", "excerpt": "e" * 400}],
+                        }
+                        for i in range(8)
+                    ],
+                }
+            return []
+
+        with mock.patch.object(cf, "http_json", heavy_http):
+            heavy_out = cf.compose_case_file(
+                subject(member_artifact_refs=tuple(f"reg-{i}" for i in range(8)), backtest_run_refs=()),
+                OP,
+                OWNERS,
+            )
+        jsonschema.validate(heavy_out, SCHEMA)
+        independent_total = sum(
+            len(item["excerpt"]) + len(json.dumps(item["subject_fields"], sort_keys=True))
+            for grp in heavy_out["groups"].values()
+            for item in grp["items"]
+        )
+        self.assertLessEqual(independent_total, 12000)
+        self.assertTrue(any(grp["truncated"] for grp in heavy_out["groups"].values()))

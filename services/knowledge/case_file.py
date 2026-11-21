@@ -222,10 +222,8 @@ def _bound_subject_fields(subject_fields: Any, budgets: Budgets) -> dict[str, An
 def _item_char_size(item: Mapping[str, Any]) -> int:
     excerpt_len = len(str(item.get("excerpt") or ""))
     sf = item.get("subject_fields")
-    if not sf:
-        return excerpt_len
-    sf_json = json.dumps(sf, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
-    return max(excerpt_len, max(0, len(sf_json) - 2))
+    sf_json = json.dumps(sf if sf is not None else {}, sort_keys=True, default=str)
+    return excerpt_len + len(sf_json)
 
 
 def _item(group: str, kind: str, owner: str, source_id: str, excerpt: Any, *,
