@@ -16,5 +16,35 @@
     {"command": "pytest services/control-plane/persona/tests/test_pool_artifact_lister_real_registry.py", "result": "6 passed"},
     {"command": "pytest bff/tests/test_persona_enrollment_seed_integration.py bff/tests/test_persona_paper_enrollment.py persona/test_persona_strategy_pool.py persona/tests persona/test_persona_cycle_controller.py persona/test_pool_dataset_authority.py bff/test_persona_provisioning_coordinator.py", "result": "183 passed"}
   ],
-  "not_verified": "hosted deployment; hosted probe personas are assumed to match the evaluator probe rule (name/metadata), unverifiable from the worktree"
+  "not_verified": "hosted deployment; hosted probe personas are assumed to match the evaluator probe rule (name/metadata), unverifiable from the worktree",
+  "source_delivery_provenance": {
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "original_pr": 7418,
+    "original_pr_state": "MERGED",
+    "original_implementation_commit": "0102207315f72ea2eb2fe14523ac58d90ac94e8f",
+    "original_head_sha": "c0b7aba472ae8071f6131102dfa0335330671882",
+    "original_merge_commit_sha": "ab15f9e7dccb0ddfcf33701ea52895cab2d57e99",
+    "original_merged_at": "2026-11-15T19:15:41Z",
+    "historical_review_provenance": {
+      "reviewer": "Claude",
+      "github_review_id": "PRR_kwDOR5tTNs8AAAABYGYjhg",
+      "reviewed_head_sha": "c0b7aba472ae8071f6131102dfa0335330671882",
+      "submitted_at": "2026-11-15T18:52:41Z",
+      "review_bridge_intent": "b572d9594100c3ff07359a64a8bc83a0",
+      "proof_tag": "refs/tags/pantheon-review/approve/c0b7aba472ae8071f6131102dfa0335330671882",
+      "reviewer_validation_summary": "Re-ran 4 scoped test files: 66 passed. diff_budget exit 0 (prod +75, test +407, docs +20)."
+    }
+  },
+  "bookkeeping_correction": {
+    "scope": "evidence-only correction PR on current dev preserving the historical source result separately from this bookkeeping record",
+    "product_code_changed": false,
+    "current_dev_base_sha": "ca54c80d5a9e158c66b4dffd5767ca4e70e4360d",
+    "reverified_on_current_dev": [
+      {
+        "command": "pytest -q services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/tests/test_pool_artifact_lister_real_registry.py services/control-plane/bff/tests/test_persona_paper_enrollment.py services/control-plane/bff/tests/test_persona_enrollment_seed_integration.py",
+        "result": "79 passed"
+      }
+    ]
+  }
 }
