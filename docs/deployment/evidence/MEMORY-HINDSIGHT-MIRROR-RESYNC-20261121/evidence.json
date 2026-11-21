@@ -2,10 +2,10 @@
   "task_id": "MEMORY-HINDSIGHT-MIRROR-RESYNC-20261121",
   "title": "Queue burst memory bridge calls and resync canonical entries missed by Hindsight mirror",
   "owner": "Antigravity",
-  "reviewer": "Codex",
+  "reviewer": "Codex2",
   "reproduction": {
     "before_fix": "When a closed meeting writes two persona entries (p-alpha-meeting, p-beta-meeting) and one institutional meeting minute (mem-meeting-minute) together, services/memory/hindsight_index.py spawned up to MAX_MIRROR_WORKERS=4 concurrent retain threads while services/openclaw-gateway-adapter/memory_llm_bridge.py acquired its max_concurrency=2 semaphore with blocking=False and immediately returned 429 concurrency_limit. mirror_entry exhausted its 3 retries (0.5s + 1.0s = 1.5s) while the first two 1.7s LLM calls were still in flight and dropped mem-meeting-minute (retained=2, failed=1, reason=hindsight_http_429) without a catch-up mechanism.",
-    "after_fix": "MemoryLlmBridge waits up to bounded slot_wait_seconds (default 15.0s via MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS, bounded by remaining request deadline; 0.0 restores immediate non-blocking refusal) before returning 429 concurrency_limit; hindsight_index defaults PANTHEON_MEMORY_MIRROR_WORKERS=1, honours bounded HTTP 429 Retry-After in HindsightClient and mirror_entry, retains any entry that still fails immediate retries in a bounded in-memory resync map (capped at MAX_PENDING_MIRRORS=256) retried on a bounded backoff timer (at most once per 60s while pending_resync_count > 0, stopping when empty), exposes pending_resync_count via GET /api/memory/health alongside existing mirror diagnostics, and runs idempotent non-destructive catch_up_mirrors at memory service startup without calling delete_bank. All 4 concurrent burst retains against a max_concurrency=2 bridge converge to mirrored with zero dropped entries."
+    "after_fix": "MemoryLlmBridge waits up to bounded slot_wait_seconds (default 15.0s via MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS, bounded by remaining request deadline; 0.0 restores immediate non-blocking refusal) before returning 429 concurrency_limit; hindsight_index defaults PANTHEON_MEMORY_MIRROR_WORKERS=1, honours bounded HTTP 429 Retry-After in HindsightClient and mirror_entry, retains failed retains and invalidation tombstones in a bounded in-memory resync map (capped at MAX_PENDING_MIRRORS=256 entries and MAX_PENDING_RESYNC_BYTES=262144 bytes) retried through the shared bounded mirror worker pool on a non-overlapping backoff timer (at most once per 60s while pending_resync_count > 0, stopping when empty), preserves latest archive/supersede tombstones across outage+archive races so archived entries are never resurrected on recovery, exposes pending_resync_count and pending_resync_bytes via GET /api/memory/health, and runs idempotent non-destructive catch_up_mirrors at memory service startup with truthful admission counts and bounded canonical store continuation rescan for backlogs above 256 without calling delete_bank."
   },
   "scoped_artifacts": [
     "services/openclaw-gateway-adapter/memory_llm_bridge.py",
@@ -18,15 +18,19 @@
   ],
   "runtime_budget": {
     "new_persistent_writers_or_files_or_tables": 0,
-    "in_memory_resync_map_cap": 256,
-    "in_memory_resync_map_estimated_max_bytes": "< 256 KB (256 canonical entry references keyed by (bank, canonical_id))",
-    "resync_timer_cadence": "At most once per 60 seconds (exponential backoff 60s -> 120s -> 240s -> 300s cap) while pending_resync_count > 0; timer stops and cancels when pending_resync_count reaches 0",
+    "storage_manifest_registration": "not required (zero persistent files, tables, or queues added; verified by scripts/check_storage_manifest.py)",
+    "in_memory_resync_map_entry_cap": 256,
+    "in_memory_resync_map_byte_cap": 262144,
+    "in_memory_resync_map_payload_accounting": "_PENDING_RESYNC_BYTES tracks UTF-8 JSON serialized payload bytes + 128B overhead per entry; oldest-first FIFO eviction enforces both len(_PENDING_RESYNC) <= 256 and sum(_PENDING_RESYNC_BYTES) <= 262144 (256 KB); cleared on mirror completion, invalidation, rebuild, or reset; no _MIRRORED_DOCS cache retained",
+    "in_memory_tombstone_and_seen_maps_cap": "500 entries each (FAILURE_LOG_LIMIT=500, FIFO evicted via _bound_map_unlocked)",
+    "resync_timer_cadence_and_worker_routing": "At most once per 60 seconds (exponential backoff 60s -> 120s -> 240s -> 300s cap) while pending_resync_count > 0; non-overlapping passes (_RESYNC_IN_PROGRESS) route retries through the shared bounded worker pool (PANTHEON_MEMORY_MIRROR_WORKERS, default 1); timer cancels when pending_resync_count reaches 0 or on service shutdown",
+    "startup_catchup_continuation_budget": "Admits at most MAX_PENDING_MIRRORS=256 entries per pass into _PENDING and stores a single tuple reference (_CATCHUP_CONTINUATION) to rescan canonical stores on worker drain until deferred reaches 0",
     "bridge_daily_call_budget_enforced": true
   },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/openclaw-gateway-adapter/test_memory_llm_bridge.py services/memory/test_hindsight_index.py services/memory/test_main.py",
-      "result": "90 passed, 1 skipped in 12.99s"
+      "result": "94 passed, 1 skipped"
     }
   ],
   "residual_findings": [],

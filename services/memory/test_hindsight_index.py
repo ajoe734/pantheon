@@ -620,9 +620,9 @@ def test_failed_mirror_retained_in_bounded_resync_map_and_retried_by_timer_witho
     assert hs.flush_mirrors()
     assert hs.pending_resync_count() == 3
 
-    # Invalidation removes the entry from the pending resync map
-    istore.archive(mid("resync-2"), reason="no_longer_active")
+    # Successful invalidation removes the entry from the pending resync map
     client.fail = 0
+    istore.archive(mid("resync-2"), reason="no_longer_active")
     assert hs.flush_mirrors()
     assert (hs.facts_bank("t1"), mid("resync-2")) not in hs._PENDING_RESYNC
 
@@ -809,3 +809,162 @@ def test_burst_four_concurrent_retains_against_max_concurrency_two_bridge_conver
         hs.canonical_id(e) for e in entries
     }
     assert nb_client.deleted == []
+
+
+def test_outage_archive_race_preserves_tombstone_and_never_resurrects_archived_entry_on_recovery(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
+
+    class OutageClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.down = True
+
+        def retain(self, bank, items):
+            self.entered.set()
+            assert self.release.wait(5), "probe release timeout"
+            if self.down:
+                raise hs.HindsightError("hindsight_unreachable")
+            return super().retain(bank, items)
+
+        def invalidate_document(self, bank, document_id, reason):
+            if self.down:
+                raise hs.HindsightError("hindsight_unreachable")
+            return super().invalidate_document(bank, document_id, reason)
+
+    client = OutageClient()
+    hs.set_hindsight_client(client)
+    store = InstitutionalMemoryStore()
+    entry = store.create(inst(mid("archive-race")))
+    assert client.entered.wait(2)
+
+    # Archive while the failing retain is still in flight; both retain and invalidate exhaust retries during outage.
+    store.archive(entry.entry_id, reason="retired")
+    client.release.set()
+    assert hs.flush_mirrors(timeout=5)
+    assert hs.pending_resync_count() == 1
+    key = (hs.bank_for(entry), entry.entry_id)
+    assert not hs.is_indexable(hs._PENDING_RESYNC[key])
+
+    # When Hindsight recovers, resync must execute the tombstone invalidation and never re-retain the archived entry.
+    client.down = False
+    resync = hs.resync_pending_mirrors()
+    assert resync == {"retried": 1, "mirrored": 1, "failed": 0, "pending_resync_count": 0}
+    assert not store.require(entry.entry_id).is_active
+    assert not bool(client.memory_units(hs.bank_for(entry), entry.entry_id))
+    assert client.retained == []
+    assert client.invalidated == [(hs.bank_for(entry), entry.entry_id, "retired")]
+
+
+def test_catch_up_mirrors_handles_backlog_above_256_with_truthful_counts_and_bounded_continuation():
+    import threading
+
+    class Store:
+        def __init__(self, entries):
+            self.entries = entries
+
+        def list(self, **_kwargs):
+            return self.entries
+
+    class HeldClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.release = threading.Event()
+
+        def retain(self, bank, items):
+            assert self.release.wait(5), "probe release timeout"
+            return super().retain(bank, items)
+
+    client = HeldClient()
+    hs.set_hindsight_client(client)
+    entries = [inst(mid(f"capacity-{i}")) for i in range(300)]
+    report = hs.catch_up_mirrors(Store(entries), Store([]), client=client)
+
+    # Truthful admission counts while first worker is held: queue admits at most 1 in-flight + 256 pending,
+    # and defers the remaining entries to bounded canonical rescan continuation without dropping them.
+    assert report["scheduled"] <= hs.MAX_PENDING_MIRRORS + 1
+    assert report["deferred"] >= 300 - (hs.MAX_PENDING_MIRRORS + 1)
+    assert report["scheduled"] + report["deferred"] == 300
+
+    client.release.set()
+    assert hs.flush_mirrors(timeout=10)
+    assert len(client.retained) == 300
+    assert hs.pending_resync_count() == 0
+    assert hs.DIAGNOSTICS.snapshot()["counts"]["failed"] == 0
+
+
+def test_resync_pending_mirrors_routes_through_shared_worker_limit_without_overlapping_passes():
+    import threading
+
+    class ConcurrencyClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.release = threading.Event()
+            self.entered = threading.Event()
+            self.two_entered = threading.Event()
+            self.lock = threading.Lock()
+            self.active = 0
+            self.peak = 0
+
+        def retain(self, bank, items):
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                self.entered.set()
+                if self.active >= 2:
+                    self.two_entered.set()
+            try:
+                assert self.release.wait(5), "probe release timeout"
+                return super().retain(bank, items)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    client = ConcurrencyClient()
+    hs.set_hindsight_client(client)
+    hs._record_pending_resync(inst(mid("resync-worker")))
+    thread = threading.Thread(target=hs.resync_pending_mirrors)
+    thread.start()
+    assert client.entered.wait(2)
+
+    # Concurrent foreground mirror scheduling must share the single configured worker slot (peak == 1).
+    hs.schedule_mirror(inst(mid("foreground-worker")))
+    overlap = client.two_entered.wait(0.15)
+    assert not overlap
+    # Overlapping resync invocation while a pass is already in progress is a safe no-op.
+    assert hs.resync_pending_mirrors()["retried"] == 0
+
+    client.release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert hs.flush_mirrors(timeout=5)
+    assert client.peak == 1 == hs._configured_mirror_workers()
+    assert {items[0]["document_id"] for _bank, items in client.retained} == {
+        mid("resync-worker"),
+        mid("foreground-worker"),
+    }
+
+
+def test_resync_map_enforces_256kb_payload_budget_and_maintains_no_unbounded_mirrored_cache(monkeypatch):
+    monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
+    client = FakeClient()
+    for i in range(300):
+        hs.mirror_entry(inst(mid(f"cache-{i}")), client=client)
+    assert not hasattr(hs, "_MIRRORED_DOCS")
+
+    # Enforce MAX_PENDING_RESYNC_BYTES (256 KB) even when entry count is well below 256.
+    failing_client = FakeClient(fail=999)
+    hs.set_hindsight_client(failing_client)
+    large_body = "X" * (20 * 1024)  # ~20 KB per entry -> at most 12 entries fit in 256 KB
+    for i in range(25):
+        hs.mirror_entry(
+            inst(mid(f"large-{i}"), content={"headline": "large", "body": large_body, "tags": ["risk"]}),
+            client=failing_client,
+        )
+    assert hs.pending_resync_count() <= 12
+    assert 0 < hs.pending_resync_bytes() <= hs.MAX_PENDING_RESYNC_BYTES
+    assert hs.DIAGNOSTICS.snapshot()["pending_resync_bytes"] <= hs.MAX_PENDING_RESYNC_BYTES
+

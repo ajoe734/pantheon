@@ -47,6 +47,7 @@ DEFAULT_FLUSH_TIMEOUT_SECONDS = 30.0
 FAILURE_LOG_LIMIT = 500
 DEFAULT_MIRROR_WORKERS = 1
 MAX_PENDING_MIRRORS = 256
+MAX_PENDING_RESYNC_BYTES = 256 * 1024
 RESYNC_INTERVAL_SECONDS = 60.0
 MAX_RESYNC_BACKOFF_SECONDS = 300.0
 
@@ -366,6 +367,7 @@ def hindsight_client_from_env() -> Optional[HindsightClient]:
 
 _GLOBAL_CLIENT: Any = None
 _REBUILD_CLIENT: Any = None
+_RESYNC_CLIENT: Any = None
 
 
 def set_hindsight_client(client: Any) -> None:
@@ -379,6 +381,8 @@ def get_hindsight_client() -> Optional[HindsightClient]:
         return _GLOBAL_CLIENT
     if _REBUILD_CLIENT is not None:
         return _REBUILD_CLIENT
+    if _RESYNC_CLIENT is not None:
+        return _RESYNC_CLIENT
     return hindsight_client_from_env()
 
 
@@ -417,9 +421,6 @@ def forget_layers(bank: str) -> None:
     with _LAYER_LOCK:
         for key in [k for k in _LAYERED_BANKS if k[1] == bank]:
             _LAYERED_BANKS.discard(key)
-    with _IDLE:
-        for key in [k for k in list(_MIRRORED_DOCS) if k[1] == bank]:
-            _MIRRORED_DOCS.discard(key)
 
 
 # ---------------------------------------------------------------------------
@@ -430,15 +431,24 @@ def forget_layers(bank: str) -> None:
 # index I/O + retries run outside the canonical critical section.  One bounded FIFO per
 # (bank, canonical_id) keeps per-document lifecycle order (retain -> invalidate) while a
 # bounded worker pool limits background thread / queue resource usage during outages.
+# Runtime budget: zero persistent files/tables/queues; _PENDING_RESYNC is strictly capped at
+# MAX_PENDING_MIRRORS=256 entries and MAX_PENDING_RESYNC_BYTES=256 KB (262144 bytes) with
+# FIFO oldest-first eviction and cleanup on mirror completion/shutdown; no retained-doc cache.
 _PENDING: Dict[Tuple[str, str], deque] = {}
 _IN_FLIGHT: set[Tuple[str, str]] = set()
 _SEEN_RETAIN: Dict[Tuple[str, str], None] = {}
 _INVALIDATED: Dict[Tuple[str, str], Any] = {}
+_TOMBSTONES: Dict[Tuple[str, str], Any] = {}
 _PENDING_RESYNC: Dict[Tuple[str, str], Any] = {}
-_MIRRORED_DOCS: set[Tuple[int, str, str]] = set()
+_PENDING_RESYNC_BYTES: Dict[Tuple[str, str], int] = {}
+_RESYNC_WATCH: set[Tuple[str, str]] = set()
+_RESYNC_OUTCOMES: Dict[Tuple[str, str], str] = {}
+_RESYNC_IN_PROGRESS = False
 _RESYNC_TIMER: Optional[threading.Timer] = None
 _RESYNC_FAILURE_STREAK = 0
 _LAST_RESYNC_AT = 0.0
+_CATCHUP_CONTINUATION: Optional[Tuple[Any, Any, Any, set[Tuple[str, str]]]] = None
+_CATCHUP_RESCANNING = False
 _ACTIVE_WORKERS = 0
 _REBUILDING = 0
 _REBUILD_LOCK = threading.Lock()
@@ -460,9 +470,23 @@ def stop_resync_timer() -> None:
 
 
 def pending_resync_count() -> int:
-    """Number of failed active canonical entries awaiting background resync."""
+    """Number of failed canonical entries/tombstones awaiting background resync."""
     with _IDLE:
         return len(_PENDING_RESYNC)
+
+
+def pending_resync_bytes() -> int:
+    """Estimated UTF-8 JSON payload bytes held in the bounded in-memory resync map."""
+    with _IDLE:
+        return sum(_PENDING_RESYNC_BYTES.values())
+
+
+def _estimate_resync_entry_bytes(entry: Any) -> int:
+    try:
+        payload = entry.to_dict() if hasattr(entry, "to_dict") else retain_item(entry)
+        return len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) + 128
+    except Exception:
+        return 1024
 
 
 def _resync_delay_seconds_unlocked() -> float:
@@ -481,6 +505,8 @@ def _arm_resync_timer_unlocked() -> None:
     if not _PENDING_RESYNC:
         _cancel_resync_timer_unlocked()
         return
+    if _RESYNC_IN_PROGRESS:
+        return
     if _RESYNC_TIMER is not None and _RESYNC_TIMER.is_alive():
         return
     delay = _resync_delay_seconds_unlocked()
@@ -494,22 +520,56 @@ def _arm_resync_timer_unlocked() -> None:
         _RESYNC_TIMER = None
 
 
-def _record_pending_resync(entry: Any) -> None:
-    if not is_indexable(entry):
+def _set_pending_resync_unlocked(key: Tuple[str, str], entry: Any) -> None:
+    entry_bytes = _estimate_resync_entry_bytes(entry)
+    max_bytes = max(1024, int(MAX_PENDING_RESYNC_BYTES))
+    cap = max(1, int(MAX_PENDING_MIRRORS))
+    _PENDING_RESYNC.pop(key, None)
+    _PENDING_RESYNC_BYTES.pop(key, None)
+    if entry_bytes > max_bytes:
+        if not _PENDING_RESYNC:
+            _cancel_resync_timer_unlocked()
         return
+    _PENDING_RESYNC[key] = entry
+    _PENDING_RESYNC_BYTES[key] = entry_bytes
+    while len(_PENDING_RESYNC) > cap or sum(_PENDING_RESYNC_BYTES.values()) > max_bytes:
+        oldest = next(iter(_PENDING_RESYNC))
+        _PENDING_RESYNC.pop(oldest, None)
+        _PENDING_RESYNC_BYTES.pop(oldest, None)
+    _arm_resync_timer_unlocked()
+
+
+def _record_pending_resync(entry: Any) -> None:
     key = (bank_for(entry), canonical_id(entry))
+    indexable = is_indexable(entry)
     with _IDLE:
-        _PENDING_RESYNC[key] = entry
-        cap = max(1, int(MAX_PENDING_MIRRORS))
-        while len(_PENDING_RESYNC) > cap:
-            oldest = next(iter(_PENDING_RESYNC))
-            _PENDING_RESYNC.pop(oldest, None)
-        _arm_resync_timer_unlocked()
+        if indexable:
+            tombstone = _TOMBSTONES.get(key)
+            if tombstone is None:
+                queued = _PENDING.get(key, ())
+                tombstone = next((item for item in reversed(queued) if not is_indexable(item)), None)
+            if tombstone is None:
+                existing_resync = _PENDING_RESYNC.get(key)
+                if existing_resync is not None and not is_indexable(existing_resync):
+                    tombstone = existing_resync
+            if tombstone is not None:
+                _set_pending_resync_unlocked(key, tombstone)
+                return
+        else:
+            _TOMBSTONES[key] = entry
+            _bound_map_unlocked(_TOMBSTONES)
+        _set_pending_resync_unlocked(key, entry)
 
 
-def _clear_pending_resync(key: Tuple[str, str]) -> None:
+def _clear_pending_resync(key: Tuple[str, str], *, for_retain: bool = False) -> None:
     with _IDLE:
+        if for_retain:
+            tombstone = _TOMBSTONES.get(key)
+            existing = _PENDING_RESYNC.get(key)
+            if tombstone is not None or (existing is not None and not is_indexable(existing)):
+                return
         _PENDING_RESYNC.pop(key, None)
+        _PENDING_RESYNC_BYTES.pop(key, None)
         if not _PENDING_RESYNC:
             _cancel_resync_timer_unlocked()
 
@@ -530,15 +590,20 @@ class MirrorDiagnostics:
         self.reset()
 
     def reset(self) -> None:
-        global _LAST_RESYNC_AT
+        global _LAST_RESYNC_AT, _CATCHUP_CONTINUATION, _CATCHUP_RESCANNING
         with self._lock:
             self.counts = {"retained": 0, "invalidated": 0, "failed": 0, "anchor_none": 0}
             self.failures: deque = deque(maxlen=FAILURE_LOG_LIMIT)
         with _IDLE:
             _SEEN_RETAIN.clear()
             _INVALIDATED.clear()
+            _TOMBSTONES.clear()
             _PENDING_RESYNC.clear()
-            _MIRRORED_DOCS.clear()
+            _PENDING_RESYNC_BYTES.clear()
+            _RESYNC_WATCH.clear()
+            _RESYNC_OUTCOMES.clear()
+            _CATCHUP_CONTINUATION = None
+            _CATCHUP_RESCANNING = False
             _LAST_RESYNC_AT = 0.0
             _cancel_resync_timer_unlocked()
 
@@ -559,6 +624,7 @@ class MirrorDiagnostics:
             "counts": counts,
             "failures": failures,
             "pending_resync_count": pending_resync_count(),
+            "pending_resync_bytes": pending_resync_bytes(),
         }
 
 
@@ -583,17 +649,13 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
                     item = retain_item(entry)
                     ensure_layers(client, bank)
                     client.retain(bank, [item])
-                    with _IDLE:
-                        _MIRRORED_DOCS.add((id(client), bank, entry_id))
-                    _clear_pending_resync(key)
+                    _clear_pending_resync(key, for_retain=True)
                     DIAGNOSTICS.record("retained")
                     if item["tags"][0] == ANCHOR_NONE_TAG:
                         DIAGNOSTICS.record("anchor_none")
                 else:
                     client.invalidate_document(bank, entry_id, _invalidation_reason(entry))
-                    with _IDLE:
-                        _MIRRORED_DOCS.discard((id(client), bank, entry_id))
-                    _clear_pending_resync(key)
+                    _clear_pending_resync(key, for_retain=False)
                     DIAGNOSTICS.record("invalidated")
                 return {"status": "mirrored", "entry_id": entry_id, "action": action}
             except HindsightError as exc:
@@ -607,7 +669,7 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
         raise HindsightError(reason)
     except Exception as exc:  # canonical writes must survive index outages
         reason = exc.reason if isinstance(exc, HindsightError) else "hindsight_mirror_failed"
-        if action == "retain" and reason != "hindsight_unconfigured":
+        if reason != "hindsight_unconfigured":
             _record_pending_resync(entry)
         DIAGNOSTICS.failure(entry_id, action, reason)
         _LOG.warning("memory_mirror_failed entry_id=%s action=%s reason=%s", entry_id, action, reason)
@@ -623,13 +685,22 @@ def _bound_map_unlocked(mapping: Dict[Tuple[str, str], Any]) -> None:
         mapping.pop(next(iter(mapping)), None)
 
 
-def _enqueue_entry_unlocked(key: Tuple[str, str], entry: Any) -> bool:
+def _enqueue_entry_unlocked(key: Tuple[str, str], entry: Any, *, from_resync: bool = False) -> bool:
     queue = _PENDING.get(key)
     indexable = is_indexable(entry)
     if not indexable:
-        _PENDING_RESYNC.pop(key, None)
-        if not _PENDING_RESYNC:
-            _cancel_resync_timer_unlocked()
+        _TOMBSTONES[key] = entry
+        _bound_map_unlocked(_TOMBSTONES)
+        if key in _PENDING_RESYNC:
+            _set_pending_resync_unlocked(key, entry)
+    elif from_resync:
+        if key in _TOMBSTONES:
+            return False
+        existing_resync = _PENDING_RESYNC.get(key)
+        if existing_resync is not None and not is_indexable(existing_resync):
+            return False
+    else:
+        _TOMBSTONES.pop(key, None)
     if queue is None and _pending_keys_unlocked() >= max(1, MAX_PENDING_MIRRORS):
         return False
     if indexable:
@@ -661,6 +732,8 @@ def _ensure_workers_unlocked() -> List[Any]:
     if _REBUILDING:
         return []
     unclaimed = sum(1 for k, q in _PENDING.items() if k not in _IN_FLIGHT and q)
+    if unclaimed == 0 and _CATCHUP_CONTINUATION is not None and not _CATCHUP_RESCANNING:
+        unclaimed = 1
     free_workers = max(0, _ACTIVE_WORKERS - len(_IN_FLIGHT))
     needed = min(unclaimed - free_workers, _configured_mirror_workers() - _ACTIVE_WORKERS)
     for _ in range(max(0, needed)):
@@ -679,7 +752,7 @@ def _ensure_workers_unlocked() -> List[Any]:
     return []
 
 
-def schedule_mirror(entry: Any) -> None:
+def schedule_mirror(entry: Any) -> bool:
     """Queue a mirror of an already-persisted canonical entry; never blocks, never raises."""
     key = (bank_for(entry), canonical_id(entry))
     accepted = False
@@ -693,56 +766,81 @@ def schedule_mirror(entry: Any) -> None:
         entry_id = canonical_id(entry)
         DIAGNOSTICS.failure(entry_id, action, "hindsight_mirror_queue_full")
         _LOG.warning("memory_mirror_failed entry_id=%s action=%s reason=hindsight_mirror_queue_full", entry_id, action)
-        return
+        return False
     for item in failed_to_start:
         action = "retain" if is_indexable(item) else "invalidate"
-        if action == "retain" and get_hindsight_client() is not None:
+        if get_hindsight_client() is not None:
             _record_pending_resync(item)
         DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+    return not failed_to_start
 
 
 def resync_pending_mirrors(*, client: Any = None) -> dict:
-    """Retry entries in the bounded in-memory resync map without blocking writers or deleting banks."""
-    global _RESYNC_FAILURE_STREAK
+    """Retry entries in the bounded in-memory resync map through the shared bounded worker pool."""
+    global _RESYNC_FAILURE_STREAK, _RESYNC_IN_PROGRESS, _RESYNC_CLIENT
+    batch_keys: List[Tuple[str, str]] = []
+    failed_to_start: List[Any] = []
     with _IDLE:
-        if _REBUILDING:
-            _arm_resync_timer_unlocked()
+        if _REBUILDING or _RESYNC_IN_PROGRESS:
+            if _PENDING_RESYNC and not _RESYNC_IN_PROGRESS:
+                _arm_resync_timer_unlocked()
             return {"retried": 0, "mirrored": 0, "failed": 0, "pending_resync_count": len(_PENDING_RESYNC)}
-        keys = [k for k in list(_PENDING_RESYNC) if k not in _IN_FLIGHT and not _PENDING.get(k)]
-    retried = 0
-    mirrored = 0
-    failed = 0
-    for key in keys:
-        with _IDLE:
-            if _REBUILDING or key in _IN_FLIGHT or _PENDING.get(key):
+        _RESYNC_IN_PROGRESS = True
+        _RESYNC_CLIENT = client
+        for key in list(_PENDING_RESYNC):
+            if key in _IN_FLIGHT or _PENDING.get(key):
                 continue
             entry = _PENDING_RESYNC.get(key)
             if entry is None:
                 continue
-            if not is_indexable(entry):
-                _PENDING_RESYNC.pop(key, None)
-                continue
-            _IN_FLIGHT.add(key)
-        try:
-            retried += 1
-            res = mirror_entry(entry, client=client)
-            if res.get("status") == "mirrored":
-                mirrored += 1
+            if _enqueue_entry_unlocked(key, entry, from_resync=True):
+                batch_keys.append(key)
+                _RESYNC_OUTCOMES.pop(key, None)
+                _RESYNC_WATCH.add(key)
+        if batch_keys:
+            failed_to_start = _ensure_workers_unlocked()
+    try:
+        for item in failed_to_start:
+            action = "retain" if is_indexable(item) else "invalidate"
+            if (client or get_hindsight_client()) is not None:
+                _record_pending_resync(item)
+            DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+        if batch_keys and not failed_to_start:
+            deadline = time.monotonic() + DEFAULT_FLUSH_TIMEOUT_SECONDS
+            with _IDLE:
+                while any(k in _IN_FLIGHT or _PENDING.get(k) for k in batch_keys):
+                    if _REBUILDING:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    _IDLE.wait(remaining)
+                    _ensure_workers_unlocked()
+    finally:
+        with _IDLE:
+            retried = len(batch_keys)
+            mirrored = 0
+            failed = 0
+            for key in batch_keys:
+                _RESYNC_WATCH.discard(key)
+                outcome = _RESYNC_OUTCOMES.pop(key, None)
+                if outcome == "mirrored" and key not in _PENDING_RESYNC:
+                    mirrored += 1
+                else:
+                    failed += 1
+            if failed > 0 and _PENDING_RESYNC:
+                _RESYNC_FAILURE_STREAK += 1
+            elif mirrored > 0:
+                _RESYNC_FAILURE_STREAK = 0
+            _RESYNC_CLIENT = None
+            _RESYNC_IN_PROGRESS = False
+            if _PENDING_RESYNC:
+                _arm_resync_timer_unlocked()
             else:
-                failed += 1
-        finally:
-            _drain(key)
-    with _IDLE:
-        if failed > 0 and _PENDING_RESYNC:
-            _RESYNC_FAILURE_STREAK += 1
-        elif mirrored > 0:
-            _RESYNC_FAILURE_STREAK = 0
-        if _PENDING_RESYNC:
-            _arm_resync_timer_unlocked()
-        else:
-            _cancel_resync_timer_unlocked()
-        remaining = len(_PENDING_RESYNC)
-    return {"retried": retried, "mirrored": mirrored, "failed": failed, "pending_resync_count": remaining}
+                _cancel_resync_timer_unlocked()
+            remaining_count = len(_PENDING_RESYNC)
+            _IDLE.notify_all()
+    return {"retried": retried, "mirrored": mirrored, "failed": failed, "pending_resync_count": remaining_count}
 
 
 def _is_entry_mirrored(client: Any, bank: str, doc_id: str) -> bool:
@@ -750,14 +848,115 @@ def _is_entry_mirrored(client: Any, bank: str, doc_id: str) -> bool:
     with _IDLE:
         if key in _PENDING_RESYNC:
             return False
-        seen_in_client = (id(client), bank, doc_id) in _MIRRORED_DOCS
     memory_units_fn = getattr(client, "memory_units", None)
     if callable(memory_units_fn):
         try:
             return bool(memory_units_fn(bank, doc_id))
         except Exception:
             return False
-    return seen_in_client
+    return False
+
+
+def _try_schedule_catchup_entry(entry: Any) -> Tuple[str, List[Any]]:
+    key = (bank_for(entry), canonical_id(entry))
+    with _IDLE:
+        if key in _IN_FLIGHT or any(is_indexable(item) for item in _PENDING.get(key, ())):
+            return "already_queued", []
+        if not _enqueue_entry_unlocked(key, entry):
+            return "queue_full", []
+        return "scheduled", _ensure_workers_unlocked()
+
+
+def _scan_catchup_batch(
+    institutional_store: Any,
+    persona_store: Any,
+    resolved_client: Any,
+    *,
+    attempted_keys: set[Tuple[str, str]],
+    is_continuation: bool = False,
+) -> dict:
+    global _CATCHUP_CONTINUATION
+    scheduled = 0
+    deferred = 0
+    already_mirrored = 0
+    inactive_skipped = 0
+    for store in (institutional_store, persona_store):
+        if store is None:
+            continue
+        if not is_continuation:
+            archive_expired_fn = getattr(store, "archive_expired", None)
+            if callable(archive_expired_fn):
+                try:
+                    archive_expired_fn()
+                except Exception:
+                    pass
+        try:
+            entries = list(store.list(active_only=False))
+        except Exception:
+            continue
+        for entry in entries:
+            bank = bank_for(entry)
+            doc_id = canonical_id(entry)
+            key = (bank, doc_id)
+            if not is_indexable(entry):
+                inactive_skipped += 1
+                with _IDLE:
+                    _TOMBSTONES[key] = entry
+                    _bound_map_unlocked(_TOMBSTONES)
+                    existing_resync = _PENDING_RESYNC.get(key)
+                    if existing_resync is not None and is_indexable(existing_resync):
+                        _PENDING_RESYNC.pop(key, None)
+                        _PENDING_RESYNC_BYTES.pop(key, None)
+                        if not _PENDING_RESYNC:
+                            _cancel_resync_timer_unlocked()
+                continue
+            if is_continuation and key in attempted_keys:
+                continue
+            with _IDLE:
+                already_queued = (
+                    key in _IN_FLIGHT
+                    or any(is_indexable(item) for item in _PENDING.get(key, ()))
+                    or (is_continuation and key in _PENDING_RESYNC)
+                )
+            if already_queued or _is_entry_mirrored(resolved_client, bank, doc_id):
+                already_mirrored += 1
+                continue
+            if deferred > 0:
+                deferred += 1
+                continue
+            outcome, failed_to_start = _try_schedule_catchup_entry(entry)
+            for item in failed_to_start:
+                action = "retain" if is_indexable(item) else "invalidate"
+                if (resolved_client or get_hindsight_client()) is not None:
+                    _record_pending_resync(item)
+                DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+            if outcome == "scheduled" and not failed_to_start:
+                scheduled += 1
+                attempted_keys.add(key)
+            elif outcome == "already_queued":
+                already_mirrored += 1
+            else:
+                deferred += 1
+    failed_continuation_start: List[Any] = []
+    with _IDLE:
+        if deferred > 0:
+            _CATCHUP_CONTINUATION = (institutional_store, persona_store, resolved_client, attempted_keys)
+            failed_continuation_start = _ensure_workers_unlocked()
+        else:
+            _CATCHUP_CONTINUATION = None
+    for item in failed_continuation_start:
+        action = "retain" if is_indexable(item) else "invalidate"
+        if (resolved_client or get_hindsight_client()) is not None:
+            _record_pending_resync(item)
+        DIAGNOSTICS.failure(canonical_id(item), action, "hindsight_mirror_failed")
+    return {
+        "status": "ok",
+        "scheduled": scheduled,
+        "deferred": deferred,
+        "already_mirrored": already_mirrored,
+        "inactive_skipped": inactive_skipped,
+        "pending_resync_count": pending_resync_count(),
+    }
 
 
 def catch_up_mirrors(institutional_store: Any, persona_store: Any, *, client: Any = None) -> dict:
@@ -771,48 +970,18 @@ def catch_up_mirrors(institutional_store: Any, persona_store: Any, *, client: An
             "status": "skipped",
             "reason": "hindsight_unconfigured",
             "scheduled": 0,
+            "deferred": 0,
             "already_mirrored": 0,
             "inactive_skipped": 0,
             "pending_resync_count": pending_resync_count(),
         }
-    scheduled = 0
-    already_mirrored = 0
-    inactive_skipped = 0
-    for store in (institutional_store, persona_store):
-        if store is None:
-            continue
-        archive_expired_fn = getattr(store, "archive_expired", None)
-        if callable(archive_expired_fn):
-            try:
-                archive_expired_fn()
-            except Exception:
-                pass
-        try:
-            entries = list(store.list(active_only=False))
-        except Exception:
-            continue
-        for entry in entries:
-            bank = bank_for(entry)
-            doc_id = canonical_id(entry)
-            key = (bank, doc_id)
-            if not is_indexable(entry):
-                inactive_skipped += 1
-                _clear_pending_resync(key)
-                continue
-            with _IDLE:
-                already_queued = key in _IN_FLIGHT or any(is_indexable(item) for item in _PENDING.get(key, ()))
-            if already_queued or _is_entry_mirrored(resolved_client, bank, doc_id):
-                already_mirrored += 1
-                continue
-            schedule_mirror(entry)
-            scheduled += 1
-    return {
-        "status": "ok",
-        "scheduled": scheduled,
-        "already_mirrored": already_mirrored,
-        "inactive_skipped": inactive_skipped,
-        "pending_resync_count": pending_resync_count(),
-    }
+    return _scan_catchup_batch(
+        institutional_store,
+        persona_store,
+        resolved_client,
+        attempted_keys=set(),
+        is_continuation=False,
+    )
 
 
 resync_missing_mirrors = catch_up_mirrors
@@ -820,20 +989,44 @@ catch_up_unmirrored = catch_up_mirrors
 
 
 def _worker_loop() -> None:
-    global _ACTIVE_WORKERS
+    global _ACTIVE_WORKERS, _CATCHUP_RESCANNING, _CATCHUP_CONTINUATION
     while True:
+        continuation = None
         with _IDLE:
             if _REBUILDING:
                 _ACTIVE_WORKERS -= 1
                 _IDLE.notify_all()
                 return
             key = next((k for k, q in _PENDING.items() if k not in _IN_FLIGHT and q), None)
-            if key is None:
+            if key is not None:
+                _IN_FLIGHT.add(key)
+            elif _CATCHUP_CONTINUATION is not None and not _CATCHUP_RESCANNING:
+                _CATCHUP_RESCANNING = True
+                continuation = _CATCHUP_CONTINUATION
+            else:
                 _ACTIVE_WORKERS -= 1
                 _IDLE.notify_all()
                 return
-            _IN_FLIGHT.add(key)
-        _drain(key)
+        if key is not None:
+            _drain(key)
+        elif continuation is not None:
+            try:
+                istore, pstore, cclient, attempted = continuation
+                _scan_catchup_batch(
+                    istore,
+                    pstore,
+                    cclient,
+                    attempted_keys=attempted,
+                    is_continuation=True,
+                )
+            except Exception:
+                with _IDLE:
+                    _CATCHUP_CONTINUATION = None
+            finally:
+                with _IDLE:
+                    _CATCHUP_RESCANNING = False
+                    _ensure_workers_unlocked()
+                    _IDLE.notify_all()
 
 
 def _drain(key: Tuple[str, str]) -> None:
@@ -854,7 +1047,10 @@ def _drain(key: Tuple[str, str]) -> None:
                     _IDLE.notify_all()
                     return
                 entry = queue.popleft()
-            mirror_entry(entry)
+            res = mirror_entry(entry)
+            with _IDLE:
+                if key in _RESYNC_WATCH:
+                    _RESYNC_OUTCOMES[key] = res.get("status", "failed")
             if not is_indexable(entry):
                 invalidated = entry
             else:
@@ -862,9 +1058,14 @@ def _drain(key: Tuple[str, str]) -> None:
                     late_invalidated = _INVALIDATED.pop(key, None) or invalidated
                     has_queued_invalidation = any(not is_indexable(item) for item in _PENDING.get(key, ()))
                 if late_invalidated is not None and not has_queued_invalidation:
-                    mirror_entry(late_invalidated)
+                    res_inv = mirror_entry(late_invalidated)
+                    with _IDLE:
+                        if key in _RESYNC_WATCH:
+                            _RESYNC_OUTCOMES[key] = res_inv.get("status", "failed")
     except Exception:
         with _IDLE:
+            if key in _RESYNC_WATCH:
+                _RESYNC_OUTCOMES[key] = "failed"
             _PENDING.pop(key, None)
             _IN_FLIGHT.discard(key)
             _IDLE.notify_all()
@@ -874,7 +1075,7 @@ def _wait_drained(timeout: float = DEFAULT_FLUSH_TIMEOUT_SECONDS) -> bool:
     deadline = time.monotonic() + timeout
     with _IDLE:
         _ensure_workers_unlocked()
-        while _PENDING or _IN_FLIGHT:
+        while _PENDING or _IN_FLIGHT or _CATCHUP_CONTINUATION is not None or _CATCHUP_RESCANNING:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
@@ -957,6 +1158,8 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
                 with _IDLE:
                     for key in [k for k in _INVALIDATED if k[0] == bank]:
                         _INVALIDATED.pop(key, None)
+                    for key in [k for k in _TOMBSTONES if k[0] == bank]:
+                        _TOMBSTONES.pop(key, None)
                 report["banks"] += 1
                 retained = 0
                 for entry in entries:
@@ -968,8 +1171,6 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
                     except HindsightError as exc:
                         report["failures"].append({"bank": bank, "entry_id": entry_id, "reason": exc.reason})
                         continue
-                    with _IDLE:
-                        _MIRRORED_DOCS.add((id(resolved_client), bank, entry_id))
                     _clear_pending_resync((bank, entry_id))
                     retained += 1
                     report["anchor_none"] += int(item["tags"][0] == ANCHOR_NONE_TAG)
