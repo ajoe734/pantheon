@@ -43,6 +43,9 @@ class TrackingStore(MemoryPersonaProvisioningStore):
         super().__init__()
         self.checkpoints: list[str] = []
         self.checkpoint_lease_seconds: list[int] = []
+        FakeOwnerTransport._TEST_STORES.append(self)
+        if len(FakeOwnerTransport._TEST_STORES) > 64:
+            del FakeOwnerTransport._TEST_STORES[:-64]
 
     def checkpoint(self, record, *, lease_owner, lease_seconds=60):
         self.checkpoints.append(record.current_step)
@@ -73,6 +76,24 @@ class FakeOwnerTransport:
     """
 
     _TEST_STORES: list[Any] = []
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "get" in cls.__dict__:
+            raw_get = cls.__dict__["get"]
+
+            def _wrapped_get(self: FakeOwnerTransport, owner: str, path: str) -> Mapping[str, Any] | None:
+                res = raw_get(self, owner, path)
+                if (
+                    res is None
+                    and owner == "governance"
+                    and path.startswith("/api/governance/approvals/")
+                ):
+                    decision_id = path.removeprefix("/api/governance/approvals/")
+                    res = self._synthesized_fixture_pool_approval(decision_id)
+                return res
+
+            cls.get = _wrapped_get  # type: ignore[method-assign]
 
     def __init__(
         self,
@@ -182,7 +203,11 @@ class FakeOwnerTransport:
             }
         )
         tenant_id = matched_record.tenant_id
-        req_risk = str(matched_record.request_payload.get("risk") or "low").strip() or "low"
+        extracted_profile, _, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(
+            matched_record.request_payload,
+            request_hash=matched_record.request_hash,
+        )
+        req_risk = str(extracted_profile or "low").strip() or "low"
 
         return approval_snapshot(
             decision_id=decision_id,
