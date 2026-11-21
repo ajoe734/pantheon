@@ -38,11 +38,11 @@
   "changes": [
     {
       "path": "services/control-plane/bff/evolution/router.py",
-      "summary": "Added _is_approval_forbidden_error, _cached_approval_read_forbidden, _JournalApprovalIsolatedReadStore, and _fallback_approval_isolated_mutation_review_projection. Wired bff_management_evolution_journal to pass read_surface=journal_read_store into mutation_review_projection (when supported) and isolate Governance approval owner 403 responses during optional approval surface status and mutation-review hydration. When approval enrichment is forbidden (HTTP 403), viewer rows keep their base record, history classification, summary, auto_proposal_counts, and pagination while setting mutation_review.approval_decision=None, all allowedActions to False, nested mutation_review.meta.surfaces.mutation_review='unavailable' when approval_decision_id is referenced, and top-level meta.surfaces.approval_decisions.status='unavailable' and meta.surfaces.mutation_review.status='degraded' while meta.surfaces.management_evolution_journal.status remains 'ok'."
+      "summary": "Added _is_approval_forbidden_error and _JournalApprovalIsolatedReadStore, and wired bff_management_evolution_journal to pass read_surface=journal_read_store into the existing single typed mutation_review_projection (_mutation_review_projection -> GovernanceService.mutation_review_projection). Confined 403 conversion strictly to the optional Governance approval-owner read boundary (get_approval_decision / get_approval_decision_by_id / approval dataset_source) without inspect.signature branching, duplicate GovernanceService projection routes, or request_read_cache internal scanning. When approval enrichment is forbidden (HTTP 403), GovernanceService.mutation_review_projection projects approval_decision=None, all allowedActions=False, and nested mutation_review surface status 'unavailable' for review-Required decision states while top-level meta.surfaces reports approval_decisions='unavailable', mutation_review='degraded', and management_evolution_journal='ok'."
     },
     {
       "path": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
-      "summary": "Added test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment (exercising real Governance owner FastAPI routes, JWT role enforcement, ReadSurfacePorts, and _mutation_review_projection for viewer 403 isolation, pagination, zero protected approval leakage, operator full enrichment, and unauthorized/cross-tenant/write refusal) and test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors."
+      "summary": "Added test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment (exercising real Governance owner FastAPI routes, JWT role enforcement, ReadSurfacePorts, and _mutation_review_projection for viewer 403 isolation, pagination, zero protected approval leakage, operator full enrichment, and unauthorized/cross-tenant/write refusal) and test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors (verifying store-level 403 isolation, non-403 approval error propagation, and unrelated projection error propagation even when a 403 is cached in request_read_cache)."
     },
     {
       "path": "docs/operations/problem-register.md",
@@ -65,12 +65,12 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
       "exit_code": 0,
-      "result": "36 passed, 5 warnings in 8.69s"
+      "result": "36 passed, 5 warnings in 8.46s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_evolution_journal.py services/control-plane/bff/tests/test_evolution_router.py services/control-plane/bff/tests/test_mutation_review_projection_policy.py services/control-plane/bff/tests/test_bff_test_architecture.py",
       "exit_code": 0,
-      "result": "93 passed, 5 warnings in 45.22s"
+      "result": "93 passed, 5 warnings in 47.71s"
     }
   ]
 }

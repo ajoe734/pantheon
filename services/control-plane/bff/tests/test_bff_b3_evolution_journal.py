@@ -3432,8 +3432,10 @@ def test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_wh
                 "canRejectMutation": False,
                 "canExecuteMutation": False,
             }
-            if row["decision"].get("approval_decision_id"):
+            if row["decision"]["decision_state"] in {"reviewed", "approved", "executed"}:
                 assert mr["meta"]["surfaces"]["mutation_review"] == "unavailable"
+            else:
+                assert mr["meta"]["surfaces"]["mutation_review"] == "fresh"
 
         # 4. Viewer pagination across multiple pages preserves exact order and totals
         v_p1 = client.get(
@@ -3595,4 +3597,42 @@ def test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors
         headers=viewer_headers,
     )
     assert resp_500.status_code == 500
+
+    # Even when approval read fails with 403 (including a cached 403 in request_read_cache),
+    # an unrelated exception inside mutation_review_projection (e.g. get_incident) still propagates as 500
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware, cached_owner_call
+
+    dec_with_incident = {
+        **dec,
+        "linked_incident_id": "inc-unrelated-failure-001",
+    }
+    store.data["evolution_decisions"] = {dec["decision_id"]: dec_with_incident}
+
+    def _cached_forbidden_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        return cached_owner_call(
+            ("approval_records", "Bearer viewer-b3:viewer", None),
+            lambda: (_ for _ in ()).throw(
+                urllib.error.HTTPError(
+                    f"http://governance.test/api/governance/approvals/{decision_id}",
+                    403,
+                    "Approval read role required",
+                    {},
+                    None,
+                )
+            ),
+        )
+
+    def _broken_get_incident(incident_id: str) -> Optional[dict[str, Any]]:
+        raise RuntimeError(f"Unrelated incident read failure for {incident_id}")
+
+    store.get_approval_decision = _cached_forbidden_get_approval  # type: ignore[method-assign]
+    store.get_incident = _broken_get_incident  # type: ignore[method-assign]
+    app_with_cache = _create_app_for_store(store)
+    app_with_cache.add_middleware(OwnerReadContextMiddleware)
+    client_with_cache = _JournalTestClient(app_with_cache, raise_server_exceptions=False)
+    resp_unrelated_500 = client_with_cache.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_unrelated_500.status_code == 500
 
