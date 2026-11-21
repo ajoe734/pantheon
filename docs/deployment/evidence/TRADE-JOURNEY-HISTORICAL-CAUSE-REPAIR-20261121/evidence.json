@@ -1,0 +1,254 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121",
+  "title": "Recover historical paper journey causes in bounded batches from original evidence",
+  "register_classes": [
+    "RC2",
+    "RC6"
+  ],
+  "delivery_state": "pre_merge_validated_with_hosted_readonly_dry_run",
+  "hosted_dev_identity_observed": {
+    "accepted_at": "2026-11-21T16:05:11Z",
+    "backend_sha": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+    "frontend_sha": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+    "note": "AC1 requires running --apply on hosted dev only after the release containing TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121 is hosted; read-only dry-run inventory was executed against hosted dev PostgreSQL with 0 mutations (SET default_transaction_read_only = on), and full dry-run -> apply -> repeat-apply (0 rows changed) -> concurrent-revision-protected rollback -> BFF readback was verified against disposable PostgreSQL and in-memory projection stores.",
+    "release_run_id": "44915049855"
+  },
+  "hosted_dev_readonly_dry_run_inventory": {
+    "already_repaired_rows": 0,
+    "batch_size": 1000,
+    "batches_processed": 8,
+    "counts": {
+      "health_only_evaluations": 6884,
+      "irrecoverable_records": 190,
+      "proven_variances": 0,
+      "recoverable_refusals": 202
+    },
+    "environment": "paper",
+    "journeys_by_status_total": {
+      "completed": 3771,
+      "completed_with_variance": 6941,
+      "failed": 201,
+      "no_order": 36157,
+      "total": 158095,
+      "unreconciled": 111025
+    },
+    "mode": "dry_run",
+    "needs_update_rows": 7276,
+    "notable_journeys": {
+      "tj_57418ba7-ef37-5015-9b5e-b6423872da89": {
+        "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+        "classification": "health_only_evaluations",
+        "fill_id": "paper-fill-000600fb-6496-47d9-a550-1fa23449c1e2",
+        "fill_price": 218.5,
+        "fill_quantity": 1.0,
+        "missing_evidence": [
+          "position_quantity_before",
+          "position_quantity_after",
+          "fee",
+          "tax",
+          "cash_before",
+          "cash_after"
+        ],
+        "needs_update": true,
+        "next_healthy_tick_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-7f3c1be55a224fdaa36bb-48bb476d7e5e5f59",
+        "next_healthy_tick_note": "Evaluated 2026-11-16T07:03:47Z with status=ok on runtime health checks only; does not establish trade-specific accounting reconciliation.",
+        "price": 218.5,
+        "quantity": 1.0,
+        "reason_code": "reconciliation_evidence_incomplete",
+        "reason_detail": [
+          {
+            "check": "runtime_state",
+            "detail": "authoritative runtime state is degraded",
+            "observed": "degraded",
+            "status": "warning",
+            "threshold": null
+          },
+          {
+            "check": "runtime_health_summary",
+            "detail": "runtime health summary is missing or unhealthy",
+            "observed": {
+              "bridge": "not_applicable",
+              "broker": "not_applicable",
+              "paper_runtime": "degraded",
+              "telemetry": "degraded"
+            },
+            "status": "warning",
+            "threshold": null
+          },
+          {
+            "actual": null,
+            "check": "position_change",
+            "delta": null,
+            "difference": null,
+            "expected": -1.0,
+            "missing_evidence": [
+              "position_quantity_before",
+              "position_quantity_after",
+              "actual"
+            ],
+            "status": "unverified"
+          },
+          {
+            "actual": 0.0,
+            "check": "committed_snapshot_position",
+            "delta": null,
+            "difference": null,
+            "expected": null,
+            "missing_evidence": [
+              "position_quantity_after"
+            ],
+            "status": "unverified"
+          },
+          {
+            "actual": null,
+            "check": "cash_change",
+            "delta": null,
+            "difference": null,
+            "expected": null,
+            "missing_evidence": [
+              "fee",
+              "tax",
+              "cash_before",
+              "cash_after",
+              "actual"
+            ],
+            "status": "unverified"
+          },
+          {
+            "actual": 99356.5,
+            "check": "committed_snapshot_cash",
+            "delta": null,
+            "difference": null,
+            "expected": null,
+            "missing_evidence": [
+              "cash_after"
+            ],
+            "status": "unverified"
+          }
+        ],
+        "reconciliation_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-7f3c1be55a224fdaa36bb-a39cdf74492b52bb",
+        "snapshot_event_id": "8d6761c5-5ae8-5799-87bb-10302186595a",
+        "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+        "source_fill_event_id": "000600fb-6496-47d9-a550-1fa23449c1e2",
+        "stage_name": "reconciliation",
+        "submitted_to_broker": true
+      },
+      "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd": {
+        "classification": "recoverable_refusals",
+        "expression_reason_code": "long_cash",
+        "missing_evidence": null,
+        "needs_update": true,
+        "order_status": "not_submitted",
+        "quantity": 0.0,
+        "reason_code": "insufficient_cash",
+        "reason_detail": {
+          "available": 100000.0,
+          "limit": 100000.0,
+          "requested_quantity": 452.0,
+          "required": 100034.3461
+        },
+        "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+        "stage_name": "order_submission",
+        "submitted_to_broker": false
+      }
+    },
+    "recoverable_refusals_breakdown": {
+      "insufficient_cash": 1,
+      "sell_without_holdings": 7,
+      "taiwan_broker_error": 194
+    },
+    "reconciliation_failed_breakdown": {
+      "health_only_evaluations_drift_checks_only": 3,
+      "health_only_evaluations_runtime_health_checks": 6881,
+      "irrecoverable_pre_20261008_missing_drift_evaluations": 190,
+      "proven_variances": 0
+    },
+    "scanned_rows": 7276,
+    "tenant_id": "tenant-dev",
+    "updated_rows": 0
+  },
+  "repaired_bff_readback_proof": {
+    "tj_57418ba7-ef37-5015-9b5e-b6423872da89": {
+      "filled_quantity": 1.0,
+      "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "outcome": {
+        "accounting_variance": false,
+        "classification": "unverified_evidence",
+        "comparison_completed": false,
+        "discrepancies": [],
+        "kind": "variance",
+        "missing_evidence": [
+          "position_quantity_before",
+          "position_quantity_after",
+          "fee",
+          "tax",
+          "cash_before",
+          "cash_after",
+          "position_change:actual",
+          "committed_snapshot_position:expected",
+          "cash_change:actual",
+          "committed_snapshot_cash:expected"
+        ],
+        "reason_code": "reconciliation_evidence_incomplete",
+        "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+      },
+      "price": 218.5,
+      "quantity": 1.0,
+      "status": "completed_with_variance"
+    },
+    "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd": {
+      "current_stage": "risk_evaluation",
+      "filled_quantity": null,
+      "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "outcome": {
+        "expression_reason_code": "long_cash",
+        "kind": "rejected",
+        "order_status": "not_submitted",
+        "reason_code": "insufficient_cash",
+        "reason_detail": {
+          "available": 100000.0,
+          "limit": 100000.0,
+          "requested_quantity": 452.0,
+          "required": 100034.3461
+        },
+        "rejected_stage": "risk_evaluation",
+        "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+        "submitted_to_broker": false
+      },
+      "quantity": 452.0,
+      "status": "failed"
+    }
+  },
+  "runtime_storage_budget": {
+    "batch_limit": {
+      "default_batch_size": 500,
+      "default_max_batches": 100,
+      "max_batch_size": 2000
+    },
+    "persistent_storage": {
+      "cadence": "one-time / operator-invoked bounded repair",
+      "count_at_hosted_scale": "7,276 existing stage rows on hosted dev (202 order_submission|failed + 7,074 reconciliation|failed); 0 new tables or rows created",
+      "estimated_one_time_jsonb_delta_bytes": 2650000,
+      "growth_per_day_bytes": 0,
+      "per_row_delta_bytes_range": [
+        180,
+        480
+      ],
+      "reused_writer": "trade_journey_projection.journey_stages"
+    },
+    "temporary_evidence": {
+      "before_image_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_before_image.jsonl",
+      "cleanup": "automatic 7-day TTL prune on every repair invocation plus explicit --cleanup-temp CLI flag",
+      "cursor_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_cursor.json",
+      "cursor_isolation": "separate preview (paper_journey_cause_repair_preview_cursor.json) and apply (paper_journey_cause_repair_cursor.json) cursor files bound to mode, tenant_id, environment, and journey_ids scope",
+      "estimated_full_hosted_before_image_bytes": 5400000,
+      "max_before_image_bytes_cap": 16777216,
+      "max_before_image_records_cap": 25000,
+      "preview_cursor_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_preview_cursor.json",
+      "proven_variance_merge": "original proven checks from source/stage reason_detail are merged and deduplicated with reconstructed booking_checks so all discrepancies and numeric evidence are preserved across repeat apply runs (0 rows modified on repeat apply)",
+      "retention_seconds": 604800,
+      "storage_manifest_entry": "jsonl:paper_journey_cause_repair_before_image.jsonl (bound_status=bounded)"
+    }
+  }
+}

@@ -16,6 +16,7 @@ from services.control_plane.bff.deployment.ports import (
     DeploymentQueries,
 )
 from services.control_plane.bff.ports import (
+    OodaPacketsPort,
     PersonaRegistryHttpWritePort,
     RankingSnapshotReadPort,
     ReadSurfacePorts,
@@ -25,6 +26,7 @@ from services.control_plane.bff.ports import (
     create_read_surface_ports,
     create_strategy_write_owner,
 )
+from services.control_plane.bff.ports.ooda_management import create_ooda_packets_port
 from services.control_plane.bff.governance.decision_journal_write_owner import (
     DecisionJournalOwnerAdapter,
     DecisionJournalWriteOwner,
@@ -64,6 +66,7 @@ class AppDependencies:
         strategy_write_owner: Optional[StrategyWriteOwnerPort] = None,
         settings_store: Optional[SettingsStore] = None,
         decision_journal_write_owner: Optional[DecisionJournalWriteOwner] = None,
+        ooda_port: Optional[OodaPacketsPort] = None,
     ) -> AppDependencies:
         """Construct the concrete production dependencies once during startup.
 
@@ -92,9 +95,16 @@ class AppDependencies:
                 f"persona_write_owner must implement PersonaRegistryHttpWritePort, got {type(resolved_persona_write_owner)}"
             )
 
+        resolved_ooda_port = ooda_port if ooda_port is not None else create_ooda_packets_port()
+        if not isinstance(resolved_ooda_port, OodaPacketsPort):
+            raise TypeError(
+                f"ooda_port must implement OodaPacketsPort, got {type(resolved_ooda_port)}"
+            )
+
         resolved_read_surface = read_surface or create_read_surface_ports(
             persona_registry_store=resolved_persona_write_owner,
             ranking_store=resolved_ranking_write_owner._store,
+            ooda_port=resolved_ooda_port,
         )
         if not isinstance(resolved_read_surface, ReadSurfacePorts):
             raise TypeError(
