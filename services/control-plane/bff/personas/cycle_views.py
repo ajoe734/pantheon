@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import os
-from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import HTTPException
@@ -25,26 +23,16 @@ PERSONA_MEMORY_PANEL_ROLES = ("operator", "admin", "reviewer", "auditor")
 
 
 def read_cycle_records(read_store, tenant_id):
-    """Use the controller's existing decoder and the application's injected owner."""
+    """Use the controller's existing decoder through the application's shared OODA owner port."""
     port = read_store.ooda_management.ooda
     state = port.get_surface_status()
-    if state.get("source") == "missing" and any(os.getenv(k, "").strip() for k in (
-        "PANTHEON_BFF_OODA_PACKET_STORE", "PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR",
-    )):
-        from services.persona.cron_ooda_closure import resolve_ooda_packet_store_path
-        from services.persona.persona_cycle_controller import read_packets
-        path = Path(resolve_ooda_packet_store_path())
-        if not path.is_file():
-            raise CycleReadUnavailable("cycle_owner_store_missing")
-        records = list(read_packets(path).values())
-    else:
-        if state.get("status") not in {"ok", "degraded"}:
-            raise CycleReadUnavailable("cycle_owner_unavailable")
-        token = selected_tenant.set(tenant_id)
-        try:
-            records = port.list_ooda_packets()
-        finally:
-            selected_tenant.reset(token)
+    if state.get("status") not in {"ok", "degraded"}:
+        raise CycleReadUnavailable("cycle_owner_unavailable")
+    token = selected_tenant.set(tenant_id)
+    try:
+        records = port.list_ooda_packets()
+    finally:
+        selected_tenant.reset(token)
     return [p for p in records if p.get("tenant_id") == tenant_id
             and p.get("environment") == "paper" and isinstance(p.get("persona_cycle"), dict)]
 
