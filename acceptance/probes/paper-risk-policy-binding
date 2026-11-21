@@ -75,7 +75,7 @@ def policy_errors(policy):
         if value is not None and (isinstance(value, bool) or not isinstance(value, (float, int))
                                   or not math.isfinite(value) or value < 0):
             errors.append("policy_limit_invalid:" + key)
-    if "paper" not in (policy.get("allowed_stages") or []):
+    if policy.get("allowed_stages") and "paper" not in policy["allowed_stages"]:
         errors.append("policy_not_paper")
     return errors
 
@@ -97,7 +97,8 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or approval.get("decision_state") != "decided"
                 or approval.get("decision") != "approved"
                 or not approval.get("decision_id")
-                or approval.get("actor_role") != "risk_owner"
+                or approval.get("authority_status") != "authoritative"
+                or not approval.get("actor_role")
                 or not approval.get("actor_id") or not approval.get("decided_at")
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
@@ -231,9 +232,20 @@ def main():
         }).get("access_token")
         if not token:
             raise RuntimeError("access_token_missing")
+        policy_token = token
+        policy_id = os.environ.get("ACCEPTANCE_POLICY_READER_CLIENT_ID")
+        policy_secret = os.environ.get("ACCEPTANCE_POLICY_READER_CLIENT_SECRET")
+        if bool(policy_id) != bool(policy_secret):
+            raise RuntimeError("policy_reader_credentials_incomplete")
+        if policy_id:
+            policy_token = request("/bff/auth/dev-login", {
+                "grant_type": "client_credentials", "client_id": policy_id, "client_secret": policy_secret,
+            }).get("access_token")
+            if not policy_token:
+                raise RuntimeError("policy_reader_access_token_missing")
         configured = os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS")
         expected = DEFAULT_PERSONAS if configured is None else tuple(x.strip() for x in configured.split(",") if x.strip())
-        report = run(lambda path: request(path, token=token), expected)
+        report = run(lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token), expected)
     except (RuntimeError, ValueError) as exc:
         print(json.dumps({"passed": False, "failed": [str(exc)]}))
         return 1

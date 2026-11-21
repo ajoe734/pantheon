@@ -1,0 +1,643 @@
+{
+  "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14": {
+    "aggregate_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+    "aggregate_type": "trade_journey",
+    "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+    "artifact_version": "1.0.0",
+    "authority_refs": {
+      "authority_source": "runtime_binding",
+      "persona_id": "persona-6507750312870d03a241",
+      "runtime_mode": "paper",
+      "runtime_role": "pantheon-lean-paper-runtime",
+      "write_owner": "runtime-manager"
+    },
+    "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "causal_parent_id": "8d6761c5-5ae8-5799-87bb-10302186595a",
+    "correlation_envelope": {
+      "causation_event_id": "8d6761c5-5ae8-5799-87bb-10302186595a",
+      "correlation_id": "817a912c-853e-5f51-9544-d40ce8412256",
+      "environment": "paper",
+      "event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+      "event_time": "2026-11-16T06:58:29Z",
+      "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "producer": "reconciliation-drift.scheduled",
+      "producer_revision": 1,
+      "received_at": "2026-11-16T06:58:29Z",
+      "schema_version": "trade-journey-envelope/1",
+      "tenant_id": "tenant-dev",
+      "trace_id": "ab532579-66d5-5388-bae2-4ddba056b1f6"
+    },
+    "created_at": "2026-11-16T06:58:29Z",
+    "deployment_stage": "paper",
+    "environment": "paper",
+    "event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+    "event_type": "reconciliation_failed",
+    "execution_mode": "paper",
+    "ingested_seq": 13500033,
+    "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+    "loop_run_id": "lr-run-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+    "metadata": {
+      "adapter": "shioaji",
+      "as_of_trading_day": "2026-11-16",
+      "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+      "broker": "shioaji_paper",
+      "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+      "broker_submission_status": "filled",
+      "candidates": [
+        {
+          "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+          "expiry": null,
+          "fee_per_unit_per_side": 0.0,
+          "initial_margin_per_unit": 218.5,
+          "instrument_id": "eq:2317",
+          "kind": "cash_share",
+          "last_trading_day": null,
+          "liquidity": null,
+          "maintenance_margin_per_unit": 0,
+          "max_units_by_risk": 453,
+          "multiplier": 1,
+          "price": 218.5,
+          "price_basis": "stock_close_prev_session",
+          "price_date": "2026-11-16",
+          "side_capability": [
+            "long"
+          ],
+          "source_refs": [],
+          "tax_rate_per_side": 0.0,
+          "underlying": "2317",
+          "unit": 1
+        },
+        {
+          "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+          "expiry": "2026-11-18",
+          "fee_per_unit_per_side": 5.0,
+          "initial_margin_per_unit": 64935.0,
+          "instrument_id": "ssf:DHF:202611",
+          "kind": "stock_future",
+          "last_trading_day": "2026-11-18",
+          "liquidity": {
+            "open_interest": 11361,
+            "volume": 7406
+          },
+          "maintenance_margin_per_unit": 49783.5,
+          "max_units_by_risk": 0,
+          "multiplier": 2000,
+          "price": 240.5,
+          "price_basis": "futures_daily_settlement_prev_session",
+          "price_date": "2026-11-13",
+          "side_capability": [
+            "long",
+            "short"
+          ],
+          "source_refs": [
+            {
+              "contract": "DHF",
+              "contract_month": "202611",
+              "dataset": "taifex_ssf_contracts",
+              "margin_date": "2026-11-13",
+              "partition": "normalized/taifex_ssf_contracts/date=2026-11-13",
+              "price_date": "2026-11-13"
+            }
+          ],
+          "tax_rate_per_side": 2e-05,
+          "underlying": "2317",
+          "unit": 2000
+        }
+      ],
+      "candidates_considered": [
+        "eq:2317",
+        "ssf:DHF:202611"
+      ],
+      "capital_scale_pct": 0,
+      "causal_parent_id": "8d6761c5-5ae8-5799-87bb-10302186595a",
+      "contract_symbol": "2317",
+      "correlation_envelope": {
+        "causation_event_id": "8d6761c5-5ae8-5799-87bb-10302186595a",
+        "correlation_id": "817a912c-853e-5f51-9544-d40ce8412256",
+        "environment": "paper",
+        "event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+        "event_time": "2026-11-16T06:58:29Z",
+        "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+        "producer": "reconciliation-drift.scheduled",
+        "producer_revision": 1,
+        "received_at": "2026-11-16T06:58:29Z",
+        "schema_version": "trade-journey-envelope/1",
+        "tenant_id": "tenant-dev",
+        "trace_id": "ab532579-66d5-5388-bae2-4ddba056b1f6"
+      },
+      "currency": "TWD",
+      "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+      "environment": "paper",
+      "exchange": "TSE",
+      "expression_decision": {
+        "candidates_considered": [
+          "eq:2317",
+          "ssf:DHF:202611"
+        ],
+        "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+        "instrument_id": "eq:2317",
+        "policy_parameters_digest": "21506025fd1f63344919806d",
+        "policy_version": "1.0",
+        "reason_code": "close_leg",
+        "reason_text": "close open long eq:2317 before reversing to short",
+        "side": "sell",
+        "strength": 1.0,
+        "target_notional": 218.5,
+        "units": 1
+      },
+      "expression_replay_input": {
+        "book_before": {
+          "gross_notional": 218.5,
+          "positions": [
+            {
+              "direction": "LONG",
+              "instrument_id": "eq:2317",
+              "kind": "cash_share",
+              "multiplier": 1.0,
+              "notional": 218.5,
+              "underlying": "2317",
+              "units": 1
+            }
+          ]
+        },
+        "budget": {
+          "available_cash": 99138.0,
+          "equity": 99356.5,
+          "gross_limit": 198713.0,
+          "gross_used": 218.5,
+          "margin_reserved": 0.0,
+          "max_leverage": 2.0
+        },
+        "candidates": [
+          {
+            "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+            "expiry": null,
+            "fee_per_unit_per_side": 0.0,
+            "initial_margin_per_unit": 218.5,
+            "instrument_id": "eq:2317",
+            "kind": "cash_share",
+            "last_trading_day": null,
+            "liquidity": null,
+            "maintenance_margin_per_unit": 0,
+            "max_units_by_risk": 453,
+            "multiplier": 1,
+            "price": 218.5,
+            "price_basis": "stock_close_prev_session",
+            "price_date": "2026-11-16",
+            "side_capability": [
+              "long"
+            ],
+            "source_refs": [],
+            "tax_rate_per_side": 0.0,
+            "underlying": "2317",
+            "unit": 1
+          },
+          {
+            "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+            "expiry": "2026-11-18",
+            "fee_per_unit_per_side": 5.0,
+            "initial_margin_per_unit": 64935.0,
+            "instrument_id": "ssf:DHF:202611",
+            "kind": "stock_future",
+            "last_trading_day": "2026-11-18",
+            "liquidity": {
+              "open_interest": 11361,
+              "volume": 7406
+            },
+            "maintenance_margin_per_unit": 49783.5,
+            "max_units_by_risk": 0,
+            "multiplier": 2000,
+            "price": 240.5,
+            "price_basis": "futures_daily_settlement_prev_session",
+            "price_date": "2026-11-13",
+            "side_capability": [
+              "long",
+              "short"
+            ],
+            "source_refs": [
+              {
+                "contract": "DHF",
+                "contract_month": "202611",
+                "dataset": "taifex_ssf_contracts",
+                "margin_date": "2026-11-13",
+                "partition": "normalized/taifex_ssf_contracts/date=2026-11-13",
+                "price_date": "2026-11-13"
+              }
+            ],
+            "tax_rate_per_side": 2e-05,
+            "underlying": "2317",
+            "unit": 2000
+          }
+        ],
+        "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+        "parameters": {
+          "allow_pyramiding": false,
+          "close_before_reverse": true,
+          "lever_min_strength": 0.5,
+          "notional_fraction_at_full_strength": 1.0
+        },
+        "view": {
+          "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+          "direction": "SHORT",
+          "strength": 1.0,
+          "underlying": "2317"
+        }
+      },
+      "fill_id": "paper-fill-000600fb-6496-47d9-a550-1fa23449c1e2",
+      "instrument_id": "eq:2317",
+      "is_real_capital": false,
+      "is_real_order": false,
+      "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "kind": "cash_share",
+      "ledger_cash": 99356.5,
+      "ledger_committed": true,
+      "ledger_fill_count": 4,
+      "loop_run_id": "lr-run-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+      "market_price": 218.5,
+      "market_price_as_of": "2026-11-16T00:00:00Z",
+      "market_price_source": "source-ingest://snapshots/mss-44fde405960f0984064ada59",
+      "momentum": -0.09336099585062241,
+      "multiplier": 1.0,
+      "order_id": "b00575cfc62f44d18ed052dad34d23ea",
+      "order_submitted_at": "2026-11-16T06:52:09Z",
+      "order_type": "MARKET",
+      "persona_id": "persona-6507750312870d03a241",
+      "position_id": "rt-3252fa75:2317.TWSE:4",
+      "position_quantity": 0.0,
+      "price_basis": "stock_close_prev_session",
+      "price_date": "2026-11-16",
+      "quantity_type": "SHARES",
+      "reason_code": "close_leg",
+      "reconciliation_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-7f3c1be55a224fdaa36bb-a39cdf74492b52bb",
+      "reconciliation_status": "warning",
+      "reconciliation_tick_id": "scheduled:tenant-dev:2026-11-16T06:55:00Z:PT300S",
+      "requested_quantity": 1.0,
+      "risk_decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+      "risk_gate_status": "succeeded",
+      "risk_status": "succeeded",
+      "run_id": "run-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+      "runtime_binding_effective_at": "2026-11-08T18:11:07Z",
+      "runtime_package": "paper_execution_runtime",
+      "runtime_role": "pantheon-lean-paper-runtime",
+      "sec_type": "equity",
+      "sequence_no": 8,
+      "shioaji_trade_id": "b00575cfc62f44d18ed052dad34d23ea",
+      "side": "sell",
+      "signal_id": "sig-6946b513a0bb1ce4650793a4f5069b37",
+      "sim_fill_flag": true,
+      "source_fill_event_id": "000600fb-6496-47d9-a550-1fa23449c1e2",
+      "source_mode": "live",
+      "source_worker": "paper-signal-producer",
+      "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+      "strength": 1.0,
+      "submitted_to_broker": true,
+      "symbol": "2317.TWSE",
+      "tenant_id": "tenant-dev",
+      "trade_date": "2026-11-16",
+      "trade_episode_id": "b7640594-c4ba-45ff-8a39-6d6977569ead",
+      "units": 1,
+      "venue": "shioaji_paper",
+      "view_direction": "SHORT"
+    },
+    "metrics": {
+      "action": "reconciliation_failed",
+      "drift_check_count": 0,
+      "reconciliation_check_count": 6,
+      "reconciliation_status": "warning"
+    },
+    "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+    "plan_id": "plan-persona-paper-039ad01f8bcd2b4aa466",
+    "reconciliation_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+    "run_id": "run-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-6946b513a0bb1ce4650793a4",
+    "runtime_id": "rt-3252fa75",
+    "sequence_no": 8,
+    "signal_id": "sig-6946b513a0bb1ce4650793a4f5069b37",
+    "source_mode": "live",
+    "target": {
+      "artifact_type": "execution_bundle",
+      "artifact_version": "1.0.0",
+      "promotion_state": "paper",
+      "registry_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+      "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466"
+    },
+    "tenant_id": "tenant-dev",
+    "trace_id": "ab532579-66d5-5388-bae2-4ddba056b1f6"
+  },
+  "91d55953-b575-4fe8-8d39-6e0cade58d59": {
+    "aggregate_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+    "aggregate_type": "trade_journey",
+    "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+    "artifact_version": "1.2.0",
+    "authority_refs": {
+      "authority_source": "runtime_binding",
+      "persona_id": "persona-6507750312870d03a241",
+      "runtime_mode": "paper",
+      "runtime_role": "pantheon-lean-paper-runtime",
+      "write_owner": "runtime-manager"
+    },
+    "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "causal_parent_id": "7bf9116e-7f19-57ef-b519-778ef869ce3a",
+    "correlation_envelope": {
+      "causation_event_id": "7bf9116e-7f19-57ef-b519-778ef869ce3a",
+      "correlation_id": "b331c718-0ec4-5251-bc0f-0bd28349f1ba",
+      "environment": "paper",
+      "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+      "event_time": "2026-11-19T23:46:17Z",
+      "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "producer": "execution.paper_runtime",
+      "producer_revision": 1,
+      "received_at": "2026-11-19T23:46:17Z",
+      "schema_version": "trade-journey-envelope/1",
+      "tenant_id": "tenant-dev",
+      "trace_id": "a82504ab-c5c0-592d-9e5c-67e1c5bb2595"
+    },
+    "created_at": "2026-11-19T23:46:17Z",
+    "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "deployment_stage": "paper",
+    "environment": "paper",
+    "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+    "event_type": "order_rejection",
+    "execution_mode": "paper",
+    "ingested_seq": 13925169,
+    "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+    "loop_run_id": "lr-run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "metadata": {
+      "adapter": "shioaji",
+      "as_of_trading_day": "2026-11-18",
+      "available": 100000.0,
+      "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+      "broker": "shioaji_paper",
+      "broker_submission_status": "insufficient_cash",
+      "candidates": [
+        {
+          "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+          "expiry": null,
+          "fee_per_unit_per_side": 0.0,
+          "initial_margin_per_unit": 221.0,
+          "instrument_id": "eq:2317",
+          "kind": "cash_share",
+          "last_trading_day": null,
+          "liquidity": null,
+          "maintenance_margin_per_unit": 0,
+          "max_units_by_risk": 452,
+          "multiplier": 1,
+          "price": 221.0,
+          "price_basis": "stock_close_prev_session",
+          "price_date": "2026-11-18",
+          "side_capability": [
+            "long"
+          ],
+          "source_refs": [],
+          "tax_rate_per_side": 0.0,
+          "underlying": "2317",
+          "unit": 1
+        },
+        {
+          "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+          "expiry": "2026-12-16",
+          "fee_per_unit_per_side": 5.0,
+          "initial_margin_per_unit": 59400.0,
+          "instrument_id": "ssf:DHF:202612",
+          "kind": "stock_future",
+          "last_trading_day": "2026-12-16",
+          "liquidity": {
+            "open_interest": 19399,
+            "volume": 6967
+          },
+          "maintenance_margin_per_unit": 45540.0,
+          "max_units_by_risk": 0,
+          "multiplier": 2000,
+          "price": 220.0,
+          "price_basis": "futures_daily_settlement_prev_session",
+          "price_date": "2026-11-17",
+          "side_capability": [
+            "long",
+            "short"
+          ],
+          "source_refs": [
+            {
+              "contract": "DHF",
+              "contract_month": "202612",
+              "dataset": "taifex_ssf_contracts",
+              "margin_date": "2026-11-17",
+              "partition": "normalized/taifex_ssf_contracts/date=2026-11-17",
+              "price_date": "2026-11-17"
+            }
+          ],
+          "tax_rate_per_side": 2e-05,
+          "underlying": "2317",
+          "unit": 2000
+        }
+      ],
+      "candidates_considered": [
+        "eq:2317",
+        "ssf:DHF:202612"
+      ],
+      "capital_scale_pct": 0,
+      "causal_parent_id": "7bf9116e-7f19-57ef-b519-778ef869ce3a",
+      "contract_symbol": "2317",
+      "correlation_envelope": {
+        "causation_event_id": "cbf0acd1-86af-4637-ab0e-830d2c299cb4",
+        "correlation_id": "b331c718-0ec4-5251-bc0f-0bd28349f1ba",
+        "environment": "paper",
+        "event_id": "7bf9116e-7f19-57ef-b519-778ef869ce3a",
+        "event_time": "2026-11-19T23:46:15Z",
+        "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+        "producer": "execution.paper_runtime",
+        "producer_revision": 1,
+        "received_at": "2026-11-19T23:46:15Z",
+        "schema_version": "trade-journey-envelope/1",
+        "tenant_id": "tenant-dev",
+        "trace_id": "a82504ab-c5c0-592d-9e5c-67e1c5bb2595"
+      },
+      "currency": "TWD",
+      "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+      "environment": "paper",
+      "exchange": "TSE",
+      "expression_decision": {
+        "candidates_considered": [
+          "eq:2317",
+          "ssf:DHF:202612"
+        ],
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+        "instrument_id": "eq:2317",
+        "policy_parameters_digest": "21506025fd1f63344919806d",
+        "policy_version": "1.0",
+        "reason_code": "long_cash",
+        "reason_text": "long view strength=0.91324200913242 target_notional=182648.40 lowest score 82756.40 -> eq:2317 x452",
+        "side": "buy",
+        "strength": 0.91324200913242,
+        "target_notional": 182648.401826484,
+        "units": 452
+      },
+      "expression_replay_input": {
+        "book_before": {
+          "gross_notional": 0.0,
+          "positions": []
+        },
+        "budget": {
+          "available_cash": 100000.0,
+          "equity": 100000.0,
+          "gross_limit": 200000.0,
+          "gross_used": 0.0,
+          "margin_reserved": 0.0,
+          "max_leverage": 2.0
+        },
+        "candidates": [
+          {
+            "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+            "expiry": null,
+            "fee_per_unit_per_side": 0.0,
+            "initial_margin_per_unit": 221.0,
+            "instrument_id": "eq:2317",
+            "kind": "cash_share",
+            "last_trading_day": null,
+            "liquidity": null,
+            "maintenance_margin_per_unit": 0,
+            "max_units_by_risk": 452,
+            "multiplier": 1,
+            "price": 221.0,
+            "price_basis": "stock_close_prev_session",
+            "price_date": "2026-11-18",
+            "side_capability": [
+              "long"
+            ],
+            "source_refs": [],
+            "tax_rate_per_side": 0.0,
+            "underlying": "2317",
+            "unit": 1
+          },
+          {
+            "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+            "expiry": "2026-12-16",
+            "fee_per_unit_per_side": 5.0,
+            "initial_margin_per_unit": 59400.0,
+            "instrument_id": "ssf:DHF:202612",
+            "kind": "stock_future",
+            "last_trading_day": "2026-12-16",
+            "liquidity": {
+              "open_interest": 19399,
+              "volume": 6967
+            },
+            "maintenance_margin_per_unit": 45540.0,
+            "max_units_by_risk": 0,
+            "multiplier": 2000,
+            "price": 220.0,
+            "price_basis": "futures_daily_settlement_prev_session",
+            "price_date": "2026-11-17",
+            "side_capability": [
+              "long",
+              "short"
+            ],
+            "source_refs": [
+              {
+                "contract": "DHF",
+                "contract_month": "202612",
+                "dataset": "taifex_ssf_contracts",
+                "margin_date": "2026-11-17",
+                "partition": "normalized/taifex_ssf_contracts/date=2026-11-17",
+                "price_date": "2026-11-17"
+              }
+            ],
+            "tax_rate_per_side": 2e-05,
+            "underlying": "2317",
+            "unit": 2000
+          }
+        ],
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+        "parameters": {
+          "allow_pyramiding": false,
+          "close_before_reverse": true,
+          "lever_min_strength": 0.5,
+          "notional_fraction_at_full_strength": 1.0
+        },
+        "view": {
+          "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+          "direction": "LONG",
+          "strength": 0.91324200913242,
+          "underlying": "2317"
+        }
+      },
+      "instrument_id": "eq:2317",
+      "is_real_capital": false,
+      "is_real_order": false,
+      "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "kind": "cash_share",
+      "limit": 100000.0,
+      "loop_run_id": "lr-run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+      "market_price": 221.0,
+      "market_price_as_of": "2026-11-19T09:00:00+08:00",
+      "market_price_source": "source-ingest://snapshots/mss-0f800610a0b772f6fb46efa9",
+      "momentum": 0.0091324200913242,
+      "multiplier": 1,
+      "order_id": "paper-order-91d55953-b575-4fe8-8d39-6e0cade58d59",
+      "order_status": "rejected",
+      "order_submitted_at": "2026-11-19T23:46:17Z",
+      "order_type": "MARKET",
+      "persona_id": "persona-6507750312870d03a241",
+      "price_basis": "stock_close_prev_session",
+      "price_date": "2026-11-18",
+      "quantity_type": "SHARES",
+      "reason": "insufficient_cash",
+      "reason_code": "long_cash",
+      "reject_reason": "insufficient_cash",
+      "rejected_order_count": 1,
+      "rejection_status": "rejected",
+      "requested_quantity": 452.0,
+      "required": 100034.3461,
+      "risk_decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+      "risk_gate_evaluated": true,
+      "risk_reason": "insufficient_cash",
+      "risk_status": "rejected",
+      "run_id": "run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+      "runtime_binding_effective_at": "2026-11-18T06:59:58Z",
+      "runtime_package": "paper_execution_runtime",
+      "runtime_role": "pantheon-lean-paper-runtime",
+      "sec_type": "equity",
+      "sequence_no": 3,
+      "side": "buy",
+      "signal_id": "sig-7ed048e23fd14b14546cfb0902532b8a",
+      "sim_fill_flag": false,
+      "source_mode": "live",
+      "source_worker": "paper-signal-producer",
+      "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+      "strength": 0.91324200913242,
+      "submitted_to_broker": false,
+      "symbol": "2317.TWSE",
+      "tenant_id": "tenant-dev",
+      "trade_date": "2026-11-18",
+      "units": 452,
+      "venue": "shioaji_paper",
+      "view_direction": "LONG"
+    },
+    "metrics": {
+      "action": "BUY",
+      "fill_quantity": 0.0,
+      "order_quantity": 452.0,
+      "rejected_order_count": 1,
+      "requested_quantity": 452.0,
+      "submitted_to_broker": false
+    },
+    "order_id": "paper-order-91d55953-b575-4fe8-8d39-6e0cade58d59",
+    "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+    "plan_id": "plan-persona-pool-039ad01f8bcd2b4aa466-v2",
+    "risk_decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "run_id": "run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "runtime_id": "rt-3252fa75",
+    "sequence_no": 3,
+    "signal_id": "sig-7ed048e23fd14b14546cfb0902532b8a",
+    "source_mode": "live",
+    "symbol": "2317.TWSE",
+    "target": {
+      "artifact_type": "execution_bundle",
+      "artifact_version": "1.2.0",
+      "promotion_state": "paper",
+      "registry_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466"
+    },
+    "tenant_id": "tenant-dev",
+    "trace_id": "a82504ab-c5c0-592d-9e5c-67e1c5bb2595"
+  }
+}

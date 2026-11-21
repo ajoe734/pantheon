@@ -36,6 +36,7 @@ def evidence():
     approval = {"decision_id": "fixture-owner-approval", "target_type": "capital_pool_activation",
                 "target_id": "fixture-pool", "target_version": "fixture-activation-digest",
                 "tenant_id": "fixture-tenant", "decision_state": "decided", "decision": "approved",
+                "authority_status": "authoritative",
                 "actor_role": "risk_owner", "actor_id": "fixture-owner", "decided_at": "2026-11-20T00:00:00Z",
                 "metadata": {"subject": {"pool_id": "fixture-pool", "requested_risk": "low",
                                          "risk_policy_id": "fixture-policy", "risk_policy_version": "fixture-v1",
@@ -73,7 +74,7 @@ def test_missing_policy_is_distinct_from_valid_inline():
     assert "no_effective_policy" in check(payload)["personas"]["fixture-persona"]["failed"]
 
 
-@pytest.mark.parametrize("mutation", ["tenant", "version", "limits", "expired", "registry", "revoked", "conditions", "no_actor"])
+@pytest.mark.parametrize("mutation", ["tenant", "version", "limits", "expired", "registry", "revoked", "conditions", "no_actor", "unverified_authority"])
 def test_mapping_proof_cannot_be_stale_foreign_or_registry_admission(mutation):
     payload = evidence()
     approval = payload["/api/v1/approval-decisions"]["data"][0]
@@ -91,8 +92,10 @@ def test_mapping_proof_cannot_be_stale_foreign_or_registry_admission(mutation):
         approval["revoked_at"] = "2026-11-20T23:00:00Z"
     elif mutation == "conditions":
         approval["conditions"] = ["fixture unresolved condition"]
-    else:
+    elif mutation == "no_actor":
         approval["actor_id"] = None
+    else:
+        approval["authority_status"] = "unknown"
     assert not check(payload)["passed"]
 
 
@@ -165,3 +168,38 @@ def test_missing_credentials_are_skip_but_not_pass(monkeypatch, capsys):
         monkeypatch.delenv(name, raising=False)
     assert probe.main() == 77
     assert "skipped: missing" in capsys.readouterr().out
+
+
+def test_http_main_uses_policy_reader_only_for_approval_get(monkeypatch, capsys):
+    import io
+    import json
+    from urllib.parse import urlsplit
+
+    payload = evidence()
+    for key, value in {"ACCEPTANCE_BFF_URL": "https://fixture.invalid",
+                       "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer-id",
+                       "ACCEPTANCE_VIEWER_CLIENT_SECRET": "viewer-secret",
+                       "ACCEPTANCE_POLICY_READER_CLIENT_ID": "owner-id",
+                       "ACCEPTANCE_POLICY_READER_CLIENT_SECRET": "owner-secret",
+                       "ACCEPTANCE_EXPECTED_PERSONA_IDS": "fixture-persona"}.items():
+        monkeypatch.setenv(key, value)
+    calls = []
+    def open_request(request, timeout):
+        path = urlsplit(request.full_url).path
+        query = urlsplit(request.full_url).query
+        calls.append((request.get_method(), path))
+        if request.get_method() == "POST":
+            assert path == "/bff/auth/dev-login"
+            body = json.loads(request.data)
+            response = {"access_token": "owner-token" if body["client_id"] == "owner-id" else "viewer-token"}
+        else:
+            expected = "owner-token" if path == "/api/v1/approval-decisions" else "viewer-token"
+            assert request.get_header("Authorization") == "Bearer " + expected
+            response = payload[path + ("?" + query if query else "")]
+        return io.BytesIO(json.dumps(response).encode())
+    monkeypatch.setattr(probe.urllib.request, "urlopen", open_request)
+    assert probe.main() == 0
+    output = capsys.readouterr().out
+    assert '"passed": true' in output
+    assert all(secret not in output for secret in ["owner-token", "viewer-token", "viewer-secret", "owner-secret"])
+    assert sum(method == "POST" for method, path in calls) == 2
