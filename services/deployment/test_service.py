@@ -1663,5 +1663,3 @@ def test_create_plan_validates_ref_only_risk_policy_for_missing_stale_wrong_tena
     ok_payload["metadata"] = {**ok_payload.get("metadata", {}), "risk_policy_ref": "rp-plan-ref-valid"}
     ok_resp = test_client.post("/api/deployment/plans", json=ok_payload)
     assert ok_resp.status_code == 201
-
-

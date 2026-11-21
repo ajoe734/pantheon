@@ -1788,24 +1788,26 @@ def _verify_policy_owner_approval_decision(
         try:
             from services.governance import approval_authority as _gov_auth
 
-            reader_factories: list[Any] = []
-            local_factory = globals().get("configured_approval_reader")
-            if callable(local_factory):
-                reader_factories.append(local_factory)
+            domains = (
+                "capital",
+                "runtime_manager",
+                "deployment",
+                "persona_training_target",
+                "registry",
+                "evolution",
+            )
             auth_factory = getattr(_gov_auth, "configured_approval_reader", None)
-            if callable(auth_factory) and auth_factory not in reader_factories:
-                reader_factories.append(auth_factory)
-            for factory in reader_factories:
-                for domain in (
-                    "capital",
-                    "runtime_manager",
-                    "deployment",
-                    "persona_training_target",
-                    "registry",
-                    "evolution",
-                ):
+            if callable(auth_factory):
+                for domain in domains:
                     try:
-                        _add_reader(factory(domain))
+                        _add_reader(auth_factory(domain))
+                    except Exception:
+                        continue
+            local_factory = globals().get("configured_approval_reader")
+            if not readers and callable(local_factory) and local_factory is not auth_factory:
+                for domain in domains:
+                    try:
+                        _add_reader(local_factory(domain))
                     except Exception:
                         continue
         except Exception:
@@ -2936,5 +2938,4 @@ def resolve_bound_pool_risk_policy(
     if resolution.status == "missing" and resolution.source == "risk_policy_ref":
         raise RiskPolicyLoadError(f"{resolution.reason} ({resolution.reason_code})")
     raise RiskPolicyError(f"{resolution.reason} ({resolution.reason_code})")
-
 

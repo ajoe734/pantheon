@@ -1046,6 +1046,3 @@ def test_cp1_request_hash_never_bypasses_profile_mapping_and_inline_policy_uses_
             expected={"subject.risk_direction": "increase"},
             contexts=[compliant_ctx],
         )
-
-
-

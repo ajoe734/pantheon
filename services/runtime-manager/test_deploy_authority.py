@@ -808,6 +808,3 @@ def test_verify_deploy_authorities_enforces_ref_only_risk_policies_for_missing_s
             _verify(request, registry, approval, plan, bad_ref_pool, persona_binding)
         assert len(loader_calls) > before_calls
         assert loader_calls[-1] == ref_name
-
-
-

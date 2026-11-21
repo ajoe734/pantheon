@@ -1762,11 +1762,3 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
     assert events[-1].event_type == "paper_fill_simulated"
     assert algo_exec._holding("2330.TW").Quantity == 0.0
 
-
-
-
-
-
-
-
-

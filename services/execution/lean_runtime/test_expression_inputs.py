@@ -73,6 +73,34 @@ POLICY = {
 }
 
 
+def _ensure_default_pool_owner_transport(pool_snapshot: Mapping[str, Any]) -> None:
+    from services.capital import risk_policy as _rp_mod
+    from services.governance.test_approval_authority import SnapshotApprovalReader
+
+    current_http = getattr(_rp_mod, "_capital_owner_http_get_json", None)
+    if callable(current_http) and not getattr(current_http, "_pool_1_fixture_wrapped", False):
+        base_http = current_http
+
+        def _wrapped_owner_http(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+            if url.rstrip("/") in {
+                "http://capital/api/capital-pools/pool-1/approvals/apv-pool-1",
+                "http://capital:8092/api/capital-pools/pool-1/approvals/apv-pool-1",
+            }:
+                return _approval_evidence_json(pool_snapshot, decision_id="apv-pool-1")
+            return base_http(url, headers, timeout)
+
+        setattr(_wrapped_owner_http, "_pool_1_fixture_wrapped", True)
+        setattr(_rp_mod, "_capital_owner_http_get_json", _wrapped_owner_http)
+
+    if not getattr(getattr(_rp_mod, "configured_approval_reader", None), "_pool_1_fixture_reader", False):
+
+        def _fixture_approval_reader(_domain: str = "capital", **_kwargs: Any) -> Any:
+            return SnapshotApprovalReader(_approval_evidence_json(pool_snapshot, decision_id="apv-pool-1"))
+
+        setattr(_fixture_approval_reader, "_pool_1_fixture_reader", True)
+        setattr(_rp_mod, "configured_approval_reader", _fixture_approval_reader)
+
+
 def _pool(**overrides: Any) -> dict[str, Any]:
     pool: dict[str, Any] = {
         "pool_id": "pool-1",
@@ -93,7 +121,11 @@ def _pool(**overrides: Any) -> dict[str, Any]:
     pool.update(overrides)
     if "approval_digest" not in pool and isinstance(pool.get("metadata"), Mapping):
         pool["approval_digest"] = capital_pool_approval_digest(pool)
-    return json.loads(json.dumps(pool))
+    snapshot = json.loads(json.dumps(pool))
+    meta = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), Mapping) else {}
+    if snapshot.get("pool_id") == "pool-1" and meta.get("profile_mapping_approval_id") == "apv-pool-1":
+        _ensure_default_pool_owner_transport(snapshot)
+    return snapshot
 
 
 def _approval_evidence_json(

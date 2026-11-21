@@ -4030,6 +4030,3 @@ def test_coordinator_ref_only_policies_validated_on_deployment_rebinding_and_pub
     receipt_pub = coord_pub.publish_pool_envelope(pub_request)
     assert receipt_pub["envelope_artifact_id"] == "artifact-pool-envelope-v2"
     assert receipt_pub["pool_version"] == 2
-
-
-
