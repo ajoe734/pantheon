@@ -1230,3 +1230,138 @@ def test_configured_service_tokens_and_single_citation_lesson_candidate_padding(
     assert lc_get_call["headers"]["Authorization"] == f"Bearer {memory_read_jwt}"
 
 
+@pytest.mark.parametrize("failure_mode", ["missing", "unsafe_mode", "revoked_empty"])
+def test_configured_token_file_failures_fail_closed_without_alias_or_jwt_fallback(
+    owner_harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_mode: str,
+) -> None:
+    """A configured missing, unsafe, or revoked *_FILE credential must fail closed.
+
+    Even when lower-priority alias tokens and JWT signing secrets are present in
+    the environment, dispatch_proposals must record a dispatch failure and send
+    zero outbound HTTP requests rather than falling back to an alias or minting
+    a synthetic JWT.
+    """
+    from services.consultation.meeting_outputs import MeetingOutputRoutingError, _mint_jwt
+
+    alias_memory_jwt = _mint_jwt(
+        subject="pantheon-dev-consultation-memory-writer",
+        tenant_id=TENANT,
+        roles=["consultation-svc"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "alias-memory-token-must-not-be-used"},
+    )
+    alias_research_jwt = _mint_jwt(
+        subject="persona-pool-cycle",
+        tenant_id=TENANT,
+        roles=["viewer"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "alias-research-token-must-not-be-used"},
+    )
+
+    bad_mem_file = tmp_path / f"CONSULTATION_MEMORY_WRITE_TOKEN_{failure_mode}"
+    bad_res_file = tmp_path / f"PERSONA_RESEARCH_SERVICE_TOKEN_{failure_mode}"
+    if failure_mode == "unsafe_mode":
+        bad_mem_file.write_text(alias_memory_jwt, encoding="utf-8")
+        os.chmod(bad_mem_file, 0o644)
+        bad_res_file.write_text(alias_research_jwt, encoding="utf-8")
+        os.chmod(bad_res_file, 0o644)
+    elif failure_mode == "revoked_empty":
+        bad_mem_file.write_text("   \n", encoding="utf-8")
+        os.chmod(bad_mem_file, 0o600)
+        bad_res_file.write_text("", encoding="utf-8")
+        os.chmod(bad_res_file, 0o600)
+
+    # Configure higher-priority *_FILE paths to the broken files while also
+    # populating fallback aliases and JWT secrets to prove no fallback occurs.
+    monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(bad_mem_file))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", alias_memory_jwt)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", SECRET)
+
+    monkeypatch.setenv("PERSONA_RESEARCH_SERVICE_TOKEN_FILE", str(bad_res_file))
+    monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", alias_research_jwt)
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
+
+    meeting = {
+        "meeting_id": f"mtg-fail-closed-{failure_mode}",
+        "tenant_id": TENANT,
+        "proposals": [
+            {
+                "proposal_id": f"prop-fc-rd-{failure_mode}",
+                "meeting_id": f"mtg-fail-closed-{failure_mode}",
+                "kind": "research_demand",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "mandate": "momentum",
+                    "missing_datasets": [],
+                    "tried_families": ["momentum"],
+                    "short_measure": "effective_bets",
+                    "pool_version": 1,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": f"prop-fc-lc-{failure_mode}",
+                "meeting_id": f"mtg-fail-closed-{failure_mode}",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Must not mint fallback JWT when token file fails",
+                    "confidence": 0.85,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+        ],
+    }
+
+    owner_harness["call_log"].clear()
+    results = dispatch_proposals(meeting)
+    by_id = {r["proposal_id"]: r for r in results}
+
+    for pid in (f"prop-fc-rd-{failure_mode}", f"prop-fc-lc-{failure_mode}"):
+        assert by_id[pid]["status"] == "failed"
+        assert by_id[pid]["downstream_id"] is None
+        assert by_id[pid]["error"] == "Configured service credential unavailable"
+
+    # Zero HTTP requests were sent to any owner (no alias token, no minted JWT).
+    assert owner_harness["call_log"] == []
+
+    # After repairing the configured files in place with valid mode-0600 tokens,
+    # retrying dispatch_proposals succeeds and uses the file tokens.
+    bad_mem_file.write_text(alias_memory_jwt, encoding="utf-8")
+    os.chmod(bad_mem_file, 0o600)
+    bad_res_file.write_text(alias_research_jwt, encoding="utf-8")
+    os.chmod(bad_res_file, 0o600)
+
+    retry_results = dispatch_proposals(meeting)
+    retry_by_id = {r["proposal_id"]: r for r in retry_results}
+    assert retry_by_id[f"prop-fc-rd-{failure_mode}"]["status"] == "open"
+    assert retry_by_id[f"prop-fc-rd-{failure_mode}"]["error"] is None
+    assert retry_by_id[f"prop-fc-lc-{failure_mode}"]["status"] == "proposed"
+    assert retry_by_id[f"prop-fc-lc-{failure_mode}"]["error"] is None
+
+    # Configuring a broken CONSULTATION_MEMORY_READ_TOKEN_FILE also fails closed
+    # on read_downstream_status even when CONSULTATION_MEMORY_WRITE_TOKEN_FILE is valid.
+    bad_read_file = tmp_path / f"CONSULTATION_MEMORY_READ_TOKEN_{failure_mode}"
+    if failure_mode == "unsafe_mode":
+        bad_read_file.write_text(alias_memory_jwt, encoding="utf-8")
+        os.chmod(bad_read_file, 0o644)
+    elif failure_mode == "revoked_empty":
+        bad_read_file.write_text("", encoding="utf-8")
+        os.chmod(bad_read_file, 0o600)
+    monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(bad_read_file))
+
+    owner_harness["call_log"].clear()
+    with pytest.raises(MeetingOutputRoutingError, match="Configured service credential unavailable"):
+        read_downstream_status(f"prop-fc-lc-{failure_mode}")
+    assert owner_harness["call_log"] == []
+
+
+

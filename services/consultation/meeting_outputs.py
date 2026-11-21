@@ -346,10 +346,7 @@ def _mint_jwt(
 
 def _resolve_configured_token(*variables: str) -> str:
     for variable in variables:
-        try:
-            token = configured_service_token(variable)
-        except RuntimeError:
-            token = ""
+        token = configured_service_token(variable)
         if token:
             return token
     return ""
@@ -1268,15 +1265,15 @@ def dispatch_proposals(
 
         base_url = _service_base_url(kind)
         full_url = f"{base_url}{target_path}"
-        headers = _auth_headers(
-            kind=kind,
-            tenant_id=tenant_id,
-            sponsor_persona_id=sponsor_persona_id,
-            idempotency_key=idempotency_key,
-            owner_user_id=request_meta.get("owner_user_id"),
-        )
 
         try:
+            headers = _auth_headers(
+                kind=kind,
+                tenant_id=tenant_id,
+                sponsor_persona_id=sponsor_persona_id,
+                idempotency_key=idempotency_key,
+                owner_user_id=request_meta.get("owner_user_id"),
+            )
             status_code, resp_body = send("POST", full_url, headers, request_body)
             # Handle idempotent replay when an earlier attempt succeeded on the server before response loss
             if status_code == 409 and kind == "evolution_proposal":
@@ -1437,13 +1434,16 @@ def read_downstream_status(
     request_meta = dict(entry.get("request_meta") or {})
     base_url = _service_base_url(kind)
     send = _active_transport(transport)
-    headers = _auth_headers(
-        kind=kind,
-        tenant_id=tenant_id,
-        sponsor_persona_id=sponsor_persona_id,
-        owner_user_id=request_meta.get("owner_user_id"),
-        read_only=True,
-    )
+    try:
+        headers = _auth_headers(
+            kind=kind,
+            tenant_id=tenant_id,
+            sponsor_persona_id=sponsor_persona_id,
+            owner_user_id=request_meta.get("owner_user_id"),
+            read_only=True,
+        )
+    except RuntimeError as exc:
+        raise MeetingOutputRoutingError(str(exc), status_code=503) from exc
     now_iso = _iso(_utc_now(now))
 
     if kind == "research_demand":
