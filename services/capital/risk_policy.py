@@ -1726,6 +1726,13 @@ def _verify_policy_owner_approval_decision(
     for container in (pool_meta, b_map, b_meta, policy_meta, pool_sub, pool_sub_meta):
         if not isinstance(container, Mapping):
             continue
+        for exp_key in ("profile_mapping_expires_at", "approval_expires_at"):
+            raw_exp = container.get(exp_key)
+            if raw_exp not in (None, ""):
+                exp_str = _optional_text(raw_exp)
+                exp_dt = _parse_iso_timestamp(exp_str) if exp_str else None
+                if exp_dt is None or exp_dt <= now_dt:
+                    return None
         _add_ref(
             _first_text_or_none(
                 container,
@@ -1942,6 +1949,112 @@ def _verify_policy_owner_approval_decision(
 
         return evidence.decision_id
     return None
+
+
+def _caller_is_risk_reducing_order_gate() -> bool:
+    """Detect whether ``EvaluateOrderRiskGate`` is evaluating a pure position-reducing or closing order."""
+    frame = inspect.currentframe()
+    try:
+        cur = frame.f_back if frame is not None else None
+        depth = 0
+        while cur is not None and depth < 6:
+            if cur.f_code.co_name == "EvaluateOrderRiskGate":
+                f_locals = cur.f_locals
+                is_opening_or_increasing = f_locals.get("is_opening_or_increasing")
+                is_sign_reversal = f_locals.get("is_sign_reversal")
+                q_before = _optional_float(f_locals.get("q_before"))
+                q_after = _optional_float(f_locals.get("q_after"))
+                signed_order_qty = _optional_float(f_locals.get("signed_order_qty"))
+                if (
+                    is_opening_or_increasing is False
+                    and is_sign_reversal is False
+                    and q_before is not None
+                    and q_after is not None
+                    and signed_order_qty is not None
+                    and abs(q_before) > 1e-12
+                    and abs(signed_order_qty) > 1e-12
+                    and abs(q_after) < abs(q_before) - 1e-12
+                    and (
+                        (q_before > 0.0 and q_after >= -1e-12 and signed_order_qty < 0.0)
+                        or (q_before < 0.0 and q_after <= 1e-12 and signed_order_qty > 0.0)
+                    )
+                ):
+                    return True
+                return False
+            cur = cur.f_back
+            depth += 1
+        return False
+    finally:
+        del frame
+
+
+def _policy_eligible_for_governed_risk_reduction(
+    resolution: BoundPoolRiskPolicyResolution,
+    *,
+    expected_stage: str | None = None,
+    require_limits: Sequence[str] = (),
+) -> bool:
+    """Check whether an unresolved/expired owner-mapping resolution retains a valid active policy for risk reduction."""
+    if not resolution.allow_risk_reducing_actions or resolution.policy is None:
+        return False
+    if resolution.status == "unresolved_profile_mapping":
+        if resolution.reason_code != "risk_policy_profile_mapping_unapproved":
+            return False
+    elif resolution.status == "stale":
+        if resolution.reason_code != "risk_policy_stale" or "expired at " not in str(resolution.reason or ""):
+            return False
+    else:
+        return False
+
+    policy_model = resolution.policy
+    if str(policy_model.status or "").strip().lower() not in _ACTIVE_POLICY_STATUSES:
+        return False
+    if resolution.tenant_id and resolution.policy_tenant_id and resolution.tenant_id != resolution.policy_tenant_id:
+        return False
+
+    clean_stage = _optional_text(expected_stage) or _optional_text(resolution.stage) or "paper"
+    if clean_stage and policy_model.allowed_stages and clean_stage not in policy_model.allowed_stages:
+        return False
+
+    for field_name in _NON_NEGATIVE_SCALAR_LIMIT_FIELDS:
+        val = getattr(policy_model, field_name, None)
+        if val is None:
+            continue
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(float(val)):
+            return False
+        if field_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
+            return False
+        if float(val) < 0.0:
+            return False
+
+    for flex_field in _FLEX_EXPOSURE_LIMIT_FIELDS:
+        flex_val = getattr(policy_model, flex_field, None)
+        if flex_val in (None, (), {}, []):
+            continue
+        items = flex_val.items() if isinstance(flex_val, Mapping) else [(flex_field, flex_val)]
+        for _item_key, item_val in items:
+            if (
+                not isinstance(item_val, (int, float))
+                or isinstance(item_val, bool)
+                or not math.isfinite(float(item_val))
+                or float(item_val) < 0.0
+            ):
+                return False
+
+    for required_limit in require_limits:
+        limit_val = getattr(policy_model, required_limit, None)
+        if limit_val in (None, (), {}, []):
+            return False
+        if required_limit in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(limit_val) <= 0.0:
+            return False
+
+    has_positive_limit = any(
+        isinstance(getattr(policy_model, f_name, None), (int, float))
+        and not isinstance(getattr(policy_model, f_name, None), bool)
+        and float(getattr(policy_model, f_name)) > 0.0
+        for f_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS
+    )
+    return has_positive_limit
 
 
 def _extract_pool_policy_candidates(
@@ -2754,6 +2867,7 @@ def resolve_bound_pool_risk_policy(
     approval_decisions: Sequence[Any] | None = None,
     approval_reader: Any | None = None,
     as_of: str | None = None,
+    allow_risk_reducing_actions: bool | None = None,
 ) -> RiskPolicy | None:
     """Resolve and load the bound CapitalPool's active ``RiskPolicy`` (never from signal metadata)."""
     resolved_pool_obj = pool
@@ -2805,6 +2919,17 @@ def resolve_bound_pool_risk_policy(
         raise_on_error=False,
     )
     if resolution.resolved:
+        return resolution.policy
+    effective_allow_risk_reducing = (
+        allow_risk_reducing_actions
+        if allow_risk_reducing_actions is not None
+        else _caller_is_risk_reducing_order_gate()
+    )
+    if effective_allow_risk_reducing and _policy_eligible_for_governed_risk_reduction(
+        resolution,
+        expected_stage=expected_stage,
+        require_limits=require_limits,
+    ):
         return resolution.policy
     if resolution.status == "missing" and resolution.source == "unresolved":
         return None

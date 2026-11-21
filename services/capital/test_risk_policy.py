@@ -1338,6 +1338,431 @@ def test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer
             assert algo_policy.gross_limit == 2.0
 
 
+def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unresolved_and_expired_owner_mapping(
+    monkeypatch,
+) -> None:
+    import pytest
+    from services.capital.risk_policy import (
+        RiskPolicyError,
+        capital_pool_approval_digest,
+        resolve_bound_pool_risk_policy,
+        risk_policy_digest,
+    )
+    from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+    from services.governance import approval_authority
+    from services.governance.test_approval_authority import (
+        SnapshotApprovalReader,
+        approval_snapshot,
+    )
+
+    pool_id = "pool-persona-paper-review"
+    inline_policy = {
+        "risk_policy_id": f"rp-{pool_id}",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    unapproved_pool = {
+        "pool_id": pool_id,
+        "tenant_id": "tenant-dev",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "status": "active",
+        "currency": "TWD",
+        "budget": 600_000.0,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": "tenant-dev",
+            "requested_risk_profile": "low",
+            "risk_policy": dict(inline_policy),
+        },
+    }
+    unapproved_pool["approval_digest"] = capital_pool_approval_digest(unapproved_pool)
+
+    def _seeded_algo(pool_obj: dict) -> PaperExecutionAlgorithm:
+        algo = PaperExecutionAlgorithm(
+            initial_cash=600_000.0,
+            persona_binding_id="pcb-review",
+            capital_pool_id=pool_id,
+            capital_pool_reader=lambda _pid: pool_obj,
+            in_process_broker=True,
+        )
+        algo._holding("2330").Quantity = 1000.0
+        algo._instrument_positions[("pcb-review", "2330", "eq:2330")] = {
+            "persona_binding_id": "pcb-review",
+            "normalised_underlying": "2330",
+            "instrument_id": "eq:2330",
+            "symbol": "2330",
+            "kind": "cash_share",
+            "quantity": 1000.0,
+            "multiplier": 1.0,
+            "average_entry_price": 600.0,
+            "mark_price": 600.0,
+            "status": "open",
+        }
+        return algo
+
+    # 1. Unresolved owner mapping: direct resolver still fails closed, while EvaluateOrderRiskGate
+    # preserves full close and partial reduction under applicable controls and blocks opening/increase/reversal.
+    with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+        resolve_bound_pool_risk_policy(
+            capital_pool_id=pool_id,
+            pool=unapproved_pool,
+        )
+    reduced_policy = resolve_bound_pool_risk_policy(
+        capital_pool_id=pool_id,
+        pool=unapproved_pool,
+        allow_risk_reducing_actions=True,
+    )
+    assert reduced_policy is not None
+    assert reduced_policy.risk_policy_id == f"rp-{pool_id}"
+
+    algo = _seeded_algo(unapproved_pool)
+
+    # Full close: 1000 -> 0
+    full_close = algo.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=1000.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert full_close["accepted"] is True
+    assert full_close["risk_status"] == "succeeded"
+    assert full_close["reason"] is None
+    assert full_close["required"] == 0.0
+    assert full_close["limit"] == 2.0
+    close_checks = {c["check_name"]: c["observed"] for c in full_close["evaluation"]["checks"]}
+    assert close_checks["gross_exposure"] == 0.0
+    assert close_checks["net_exposure"] == 0.0
+    assert close_checks["leverage"] == 0.0
+
+    # Partial reduction: 1000 -> 600
+    partial_reduce = algo.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=400.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert partial_reduce["accepted"] is True
+    assert partial_reduce["risk_status"] == "succeeded"
+    assert partial_reduce["reason"] is None
+    partial_checks = {c["check_name"]: c["observed"] for c in partial_reduce["evaluation"]["checks"]}
+    assert 0.0 < partial_checks["gross_exposure"] <= 2.0
+    assert 0.0 < partial_checks["net_exposure"] <= 2.0
+    assert 0.0 < partial_checks["leverage"] <= 2.0
+
+    # Blocked opening on a flat instrument: 0 -> +100
+    blocked_open = algo.EvaluateOrderRiskGate(
+        symbol="2317",
+        side="buy",
+        quantity=100.0,
+        price=100.0,
+        instrument_id="eq:2317",
+        persona_binding_id="pcb-review",
+    )
+    assert blocked_open["accepted"] is False
+    assert blocked_open["risk_status"] == "rejected"
+    assert blocked_open["reason"] == "risk_policy_unavailable"
+    assert "risk_policy_profile_mapping_unapproved" in str(blocked_open["available"])
+
+    # Blocked increase on existing position: 1000 -> 1100
+    blocked_increase = algo.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="buy",
+        quantity=100.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert blocked_increase["accepted"] is False
+    assert blocked_increase["risk_status"] == "rejected"
+    assert blocked_increase["reason"] == "risk_policy_unavailable"
+    assert "risk_policy_profile_mapping_unapproved" in str(blocked_increase["available"])
+
+    # Blocked sign reversal on existing position: 1000 -> -200
+    blocked_reversal = algo.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=1200.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert blocked_reversal["accepted"] is False
+    assert blocked_reversal["risk_status"] == "rejected"
+    assert blocked_reversal["reason"] == "risk_policy_unavailable"
+    assert "risk_policy_profile_mapping_unapproved" in str(blocked_reversal["available"])
+
+    # 2. Expired owner mapping approval (both expired ApprovalDecision in owner reader and expired policy timestamp):
+    # retains full close and partial reduction under applicable controls while blocking opening/increase/reversal.
+    expired_pool = {
+        **unapproved_pool,
+        "metadata": {
+            **unapproved_pool["metadata"],
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-review-expired",
+        },
+    }
+    expired_pool["approval_digest"] = capital_pool_approval_digest(expired_pool)
+    expired_decision = approval_snapshot(
+        decision_id="apv-review-expired",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id=pool_id,
+        target_version=expired_pool["approval_digest"],
+        owner_user_id="proposer-1",
+        risk_level="low",
+        decided_at="2020-01-01T00:00:00Z",
+        recorded_at="2020-01-01T00:00:00Z",
+        expires_at="2020-01-02T00:00:00Z",
+        metadata={
+            "subject": {
+                "pool_id": pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": inline_policy["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(inline_policy),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        approval_authority,
+        "configured_approval_reader",
+        lambda domain="capital", **kw: SnapshotApprovalReader(expired_decision),
+    )
+
+    for candidate_expired_pool in (
+        expired_pool,
+        {
+            **unapproved_pool,
+            "metadata": {
+                **unapproved_pool["metadata"],
+                "risk_policy_expires_at": "2020-01-02T00:00:00Z",
+            },
+        },
+    ):
+        algo_exp = _seeded_algo(candidate_expired_pool)
+        exp_close = algo_exp.EvaluateOrderRiskGate(
+            symbol="2330",
+            side="sell",
+            quantity=1000.0,
+            price=600.0,
+            instrument_id="eq:2330",
+            persona_binding_id="pcb-review",
+        )
+        assert exp_close["accepted"] is True
+        exp_partial = algo_exp.EvaluateOrderRiskGate(
+            symbol="2330",
+            side="sell",
+            quantity=500.0,
+            price=600.0,
+            instrument_id="eq:2330",
+            persona_binding_id="pcb-review",
+        )
+        assert exp_partial["accepted"] is True
+        exp_open = algo_exp.EvaluateOrderRiskGate(
+            symbol="2317",
+            side="buy",
+            quantity=100.0,
+            price=100.0,
+            instrument_id="eq:2317",
+            persona_binding_id="pcb-review",
+        )
+        assert exp_open["accepted"] is False
+        assert exp_open["reason"] == "risk_policy_unavailable"
+        exp_inc = algo_exp.EvaluateOrderRiskGate(
+            symbol="2330",
+            side="buy",
+            quantity=100.0,
+            price=600.0,
+            instrument_id="eq:2330",
+            persona_binding_id="pcb-review",
+        )
+        assert exp_inc["accepted"] is False
+        assert exp_inc["reason"] == "risk_policy_unavailable"
+        exp_rev = algo_exp.EvaluateOrderRiskGate(
+            symbol="2330",
+            side="sell",
+            quantity=1500.0,
+            price=600.0,
+            instrument_id="eq:2330",
+            persona_binding_id="pcb-review",
+        )
+        assert exp_rev["accepted"] is False
+        assert exp_rev["reason"] == "risk_policy_unavailable"
+
+    # 3. Applicable controls remain enforced during reduction/close (asset class, single-name weight, settlement_pending,
+    # and invalid/inactive/wrong-tenant policies never bypass fail-closed checks).
+    futures_only_pool = {
+        **unapproved_pool,
+        "metadata": {
+            **unapproved_pool["metadata"],
+            "risk_policy": {
+                **inline_policy,
+                "allowed_asset_classes": ["future"],
+            },
+        },
+    }
+    algo_asset_ctrl = _seeded_algo(futures_only_pool)
+    asset_rejected = algo_asset_ctrl.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=1000.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert asset_rejected["accepted"] is False
+    assert asset_rejected["reason"] == "asset_class_not_allowed"
+
+    tight_single_name_pool = {
+        **unapproved_pool,
+        "metadata": {
+            **unapproved_pool["metadata"],
+            "risk_policy": {
+                **inline_policy,
+                "max_single_name_weight": 0.10,
+            },
+        },
+    }
+    algo_weight_ctrl = _seeded_algo(tight_single_name_pool)
+    partial_weight_rejected = algo_weight_ctrl.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=400.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert partial_weight_rejected["accepted"] is False
+    assert partial_weight_rejected["reason"] == "single_name_limit"
+    full_close_weight_ok = algo_weight_ctrl.EvaluateOrderRiskGate(
+        symbol="2330",
+        side="sell",
+        quantity=1000.0,
+        price=600.0,
+        instrument_id="eq:2330",
+        persona_binding_id="pcb-review",
+    )
+    assert full_close_weight_ok["accepted"] is True
+
+    for non_eligible_pool in (
+        {
+            **unapproved_pool,
+            "metadata": {
+                **unapproved_pool["metadata"],
+                "risk_policy": {**inline_policy, "status": "draft"},
+            },
+        },
+        {
+            **unapproved_pool,
+            "metadata": {
+                **unapproved_pool["metadata"],
+                "risk_policy": {**inline_policy, "gross_limit": -1.0},
+            },
+        },
+        {
+            **unapproved_pool,
+            "metadata": {
+                **unapproved_pool["metadata"],
+                "risk_policy": {**inline_policy, "tenant_id": "tenant-foreign"},
+            },
+        },
+    ):
+        algo_bad = _seeded_algo(non_eligible_pool)
+        bad_close = algo_bad.EvaluateOrderRiskGate(
+            symbol="2330",
+            side="sell",
+            quantity=1000.0,
+            price=600.0,
+            instrument_id="eq:2330",
+            persona_binding_id="pcb-review",
+        )
+        assert bad_close["accepted"] is False
+        assert bad_close["reason"] == "risk_policy_unavailable"
+
+    # 4. End-to-end SubmitTaiwanBrokerOrder execution on unresolved/expired owner mapping:
+    # blocks buy increase/open, executes partial reduction and full close fills.
+    events = []
+    algo_exec = PaperExecutionAlgorithm(
+        initial_cash=600_000.0,
+        event_sink=events.append,
+        persona_binding_id="pcb-review",
+        capital_pool_id=pool_id,
+        capital_pool_reader=lambda _pid: unapproved_pool,
+        in_process_broker=True,
+    )
+    algo_exec._cash = 0.0
+    algo_exec._holding("2330.TW").Quantity = 1000.0
+    algo_exec._instrument_positions[("pcb-review", "2330", "eq:2330")] = {
+        "persona_binding_id": "pcb-review",
+        "normalised_underlying": "2330",
+        "instrument_id": "eq:2330",
+        "symbol": "2330.TW",
+        "kind": "cash_share",
+        "quantity": 1000.0,
+        "multiplier": 1.0,
+        "average_entry_price": 600.0,
+        "mark_price": 600.0,
+        "status": "open",
+    }
+    algo_exec.SetCurrentSignalContext(
+        {
+            "market_price": 600.0,
+            "market_price_as_of": "2026-11-21T05:30:00Z",
+            "market_price_source": "source-ingest://snapshots/mss-2330",
+        }
+    )
+    algo_exec.SubmitTaiwanBrokerOrder(
+        "2330.TW",
+        signal_id="sig-inc-blocked",
+        side="buy",
+        quantity=100.0,
+        quantity_type="SHARES",
+        action="BUY",
+    )
+    assert events[-1].event_type == "order_rejection"
+    assert events[-1].metadata["reason"] == "risk_policy_unavailable"
+
+    algo_exec.SubmitTaiwanBrokerOrder(
+        "2330.TW",
+        signal_id="sig-partial-reduce",
+        side="sell",
+        quantity=400.0,
+        quantity_type="SHARES",
+        action="SELL",
+    )
+    assert events[-1].event_type == "paper_fill_simulated"
+    assert algo_exec._holding("2330.TW").Quantity == 600.0
+
+    algo_exec.SubmitTaiwanBrokerOrder(
+        "2330.TW",
+        signal_id="sig-full-close",
+        side="sell",
+        quantity=600.0,
+        quantity_type="SHARES",
+        action="SELL",
+    )
+    assert events[-1].event_type == "paper_fill_simulated"
+    assert algo_exec._holding("2330.TW").Quantity == 0.0
+
+
+
 
 
 
