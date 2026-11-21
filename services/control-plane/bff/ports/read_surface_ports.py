@@ -84,6 +84,7 @@ from services.control_plane.bff.ports.ooda_management import (
     OodaManagementDomainPort,
     OodaPacketsPort,
     SynthesisConflictLogsPort,
+    create_ooda_packets_port,
 )
 from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
@@ -586,6 +587,12 @@ class ReadSurfacePorts:
             if self.reconciliation_drift_reads is not None:
                 return self.reconciliation_drift_reads.get_surface_status()
             return "typed_store"
+        if dataset == "ooda_packets":
+            ooda = getattr(self.ooda_management, "ooda", None)
+            if ooda is not None and hasattr(ooda, "get_surface_status"):
+                source = ooda.get_surface_status().get("source")
+                return "missing" if source in {None, "missing"} else str(source)
+            return "missing"
         if dataset in (
             "deployment_plans",
             "personas",
@@ -1602,6 +1609,7 @@ def create_read_surface_ports(
     persona_registry_store: Optional[Any] = None,
     ranking_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
+    ooda_port: Optional[OodaPacketsPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
     persona_training: Optional[PersonaTrainingDomainPort] = None,
@@ -1632,18 +1640,21 @@ def create_read_surface_ports(
             persona_registry_store, ranking_store,
         )
     if ooda_management is None:
-        ooda_management = OodaManagementDomainPort(review_queue_port=ManagementReviewQueuePort(
-            deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
-            evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
-            approval_decisions_reader=approval_records,
-            pending_approval_decisions_reader=pending_approval_records,
-            approval_decisions_by_id_reader=approval_records_by_ids,
-            decidable_evolution_decisions_reader=(
-                (lambda: decidable_evolution_records(persona_registry_store))
-                if default_pcr
-                else None
+        ooda_management = OodaManagementDomainPort(
+            ooda_port=ooda_port or create_ooda_packets_port(),
+            review_queue_port=ManagementReviewQueuePort(
+                deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
+                evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
+                approval_decisions_reader=approval_records,
+                pending_approval_decisions_reader=pending_approval_records,
+                approval_decisions_by_id_reader=approval_records_by_ids,
+                decidable_evolution_decisions_reader=(
+                    (lambda: decidable_evolution_records(persona_registry_store))
+                    if default_pcr
+                    else None
+                ),
             ),
-        ))
+        )
     if persona_training is None:
         persona_port = (
             PersonaRegistryReadsPort(store=persona_registry_store)
@@ -1694,7 +1705,11 @@ def create_in_memory_read_surface_ports(
     ops_port = create_in_memory_operations_consultation_port(**(operations_consultation_kwargs or {}))
     pcr_port = create_in_memory_persona_capital_runtime_port(**(persona_capital_runtime_kwargs or {}))
     ooda_kw = dict(ooda_management_kwargs or {})
-    ooda_p = ooda_kw.get("ooda_port") or OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
+    ooda_p = ooda_kw.get("ooda_port") or (
+        OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
+        if ooda_kw.get("ooda_packets") is not None
+        else create_ooda_packets_port()
+    )
     scl_p = ooda_kw.get("synthesis_conflict_logs_port") or SynthesisConflictLogsPort(records_provider=lambda: list(ooda_kw.get("synthesis_conflict_logs") or []))
     rq_p = ooda_kw.get("review_queue_port") or ManagementReviewQueuePort(
         deployment_plans_reader=lambda: list(ooda_kw.get("deployment_plans") or []),
