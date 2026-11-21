@@ -42,22 +42,18 @@ def _shlex_split(text: str) -> list[str]:
         return text.split()
 
 
-def _unwrap_command_tokens(seg: str) -> list[str]:
-    tokens = _shlex_split(seg)
+def _unwrap_shell_argv(argv: list[str], *, allow_keywords: bool = False) -> list[str]:
+    tokens = list(argv)
     while tokens:
         head = tokens[0]
-        if head in LEADING_KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", head):
+        if allow_keywords and (head in LEADING_KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", head)):
             tokens.pop(0)
             continue
         cmd_name = Path(head).name
         if cmd_name == "env":
             tokens.pop(0)
-            while tokens and (
-                re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0])
-                or tokens[0].startswith("-")
-            ):
-                flag = tokens.pop(0)
-                if flag in ("-u", "-C", "-S") and tokens:
+            while tokens and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or tokens[0].startswith("-")):
+                if tokens.pop(0) in ("-u", "-C", "-S") and tokens:
                     tokens.pop(0)
             continue
         if cmd_name in ("command", "builtin", "nohup", "setsid", "busybox"):
@@ -72,6 +68,10 @@ def _unwrap_command_tokens(seg: str) -> list[str]:
             continue
         break
     return tokens
+
+
+def _unwrap_command_tokens(seg: str) -> list[str]:
+    return _unwrap_shell_argv(_shlex_split(seg), allow_keywords=True)
 
 
 def _has_subshell_or_cmd_subst(seg: str) -> bool:
@@ -106,49 +106,17 @@ def _has_subshell_or_cmd_subst(seg: str) -> bool:
 
 
 def _matches_any(rel_path: Path, patterns: list[str]) -> bool:
-    rel_posix = rel_path.as_posix()
-    name = rel_path.name
-    return any(
-        fnmatch.fnmatchcase(rel_posix, pat) or fnmatch.fnmatchcase(name, pat)
-        for pat in patterns
-    )
+    rel_posix, name = rel_path.as_posix(), rel_path.name
+    return any(fnmatch.fnmatchcase(rel_posix, pat) or fnmatch.fnmatchcase(name, pat) for pat in patterns)
 
 
 def _tracked(patterns: list[str], root: Path | None = None) -> list[Path]:
     base = ROOT if root is None else Path(root)
     if base == _DEFAULT_ROOT or (base / ".git").exists():
-        proc = subprocess.run(
-            ["git", "ls-files", *patterns],
-            cwd=base,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        proc = subprocess.run(["git", "ls-files", *patterns], cwd=base, check=False, capture_output=True, text=True)
         if proc.returncode == 0 and proc.stdout.strip():
             return [base / p for p in proc.stdout.split()]
-    return sorted(
-        p
-        for p in base.rglob("*")
-        if p.is_file() and _matches_any(p.relative_to(base), patterns)
-    )
-
-
-def _unwrap_shell_argv(argv: list[str]) -> list[str]:
-    tokens = list(argv)
-    while tokens and Path(tokens[0]).name in ("env", "command", "builtin", "nohup", "setsid", "busybox"):
-        cmd_name = Path(tokens.pop(0)).name
-        if cmd_name == "env":
-            while tokens and (
-                re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0])
-                or tokens[0].startswith("-")
-            ):
-                flag = tokens.pop(0)
-                if flag in ("-u", "-C", "-S") and tokens:
-                    tokens.pop(0)
-        else:
-            while tokens and tokens[0].startswith("-"):
-                tokens.pop(0)
-    return tokens
+    return sorted(p for p in base.rglob("*") if p.is_file() and _matches_any(p.relative_to(base), patterns))
 
 
 def _scan_shell_c(argv: list[str]) -> tuple[bool, str | None]:
@@ -313,20 +281,7 @@ def _is_exec_command(seg: str) -> bool:
         if _is_redirect_token(tok):
             i += 1
             continue
-        rest = tokens[i:]
-        while rest and Path(rest[0]).name in ("env", "command", "builtin", "nohup", "setsid", "busybox"):
-            cmd_name = Path(rest.pop(0)).name
-            if cmd_name == "env":
-                while rest and (
-                    re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", rest[0])
-                    or rest[0].startswith("-")
-                ):
-                    flag = rest.pop(0)
-                    if flag in ("-u", "-C", "-S") and rest:
-                        rest.pop(0)
-            else:
-                while rest and rest[0].startswith("-"):
-                    rest.pop(0)
+        rest = _unwrap_shell_argv(tokens[i:])
         if not rest:
             return False
         if _is_shell_token(rest[0]):
@@ -403,11 +358,8 @@ def _parse_dockerfile_instruction(raw: str) -> tuple[list[str] | None, str | Non
                 single_raw = items[0].strip() if len(items) == 1 else None
                 return _normalize_argv_list(items), single_raw
         except json.JSONDecodeError:
-            raw = raw.strip("[]").strip()
-    tokens = _shlex_split(raw)
-    if len(_split_shell_segments(raw)) == 1 and _scan_shell_c(tokens)[0]:
-        return tokens, None
-    return ["sh", "-c", raw], raw
+            pass
+    return ["sh", "-c", raw], None
 
 
 def _combine_entrypoint_and_cmd(
@@ -693,7 +645,7 @@ def test_collector_flags_shell_and_string_forms_in_isolated_fixture(tmp_path, mo
     monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
     violations = collect_violations()
     assert len(violations) == 9
-    assert any("Dockerfile: CMD sh -c without exec: uvicorn app:app" in v for v in violations)
+    assert any('Dockerfile: CMD sh -c without exec: sh -c "uvicorn app:app"' in v for v in violations)
     assert any("services/decoy/Dockerfile: ENTRYPOINT sh -c without exec:" in v for v in violations)
     assert any("services/nested/Dockerfile: ENTRYPOINT sh -c without exec: (uvicorn app:app); exec true" in v for v in violations)
     assert any("services/nested/Dockerfile: CMD sh -c without exec: sh -c 'uvicorn app:app'; exec true" in v for v in violations)
@@ -716,7 +668,9 @@ def test_collector_accepts_valid_exec_and_justified_one_shot_fixture(tmp_path):
     dockerfile_shell = tmp_path / "services" / "b" / "Dockerfile"
     dockerfile_shell.parent.mkdir(parents=True)
     dockerfile_shell.write_text(
-        'FROM python:3.12-slim\nCMD sh -c "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n',
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}\n'
+        'CMD exec sh -c "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n',
         encoding="utf-8",
     )
     compose = tmp_path / "docker-compose.yml"
@@ -734,6 +688,53 @@ def test_collector_accepts_valid_exec_and_justified_one_shot_fixture(tmp_path):
     )
     assert len(unjustified) == 1
     assert "docker-compose.yml:openclaw-data-init: command sh -c without exec:" in unjustified[0]
+
+
+def test_collector_rejects_shell_form_inner_only_exec_and_accepts_outer_exec(tmp_path):
+    bad_root = tmp_path / "bad_shell_form"
+    (bad_root / "cmd_inner").mkdir(parents=True)
+    (bad_root / "cmd_inner" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nCMD sh -c "exec python -m http.server 8765"\n',
+        encoding="utf-8",
+    )
+    (bad_root / "ep_inner").mkdir(parents=True)
+    (bad_root / "ep_inner" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT bash -ec "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n'
+        'CMD sh -c "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n',
+        encoding="utf-8",
+    )
+    (bad_root / "outer_only").mkdir(parents=True)
+    (bad_root / "outer_only" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT exec sh -c "python -m http.server 8765"\n'
+        'CMD exec sh -c "uvicorn app:app"\n',
+        encoding="utf-8",
+    )
+    bad_violations = collect_violations(root=bad_root)
+    assert len(bad_violations) == 5
+    assert any('cmd_inner/Dockerfile: CMD sh -c without exec: sh -c "exec python -m http.server 8765"' in v for v in bad_violations)
+    assert any('ep_inner/Dockerfile: ENTRYPOINT sh -c without exec: bash -ec "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"' in v for v in bad_violations)
+    assert any('ep_inner/Dockerfile: CMD sh -c without exec: sh -c "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"' in v for v in bad_violations)
+    assert any('outer_only/Dockerfile: ENTRYPOINT sh -c without exec: exec sh -c "python -m http.server 8765"' in v for v in bad_violations)
+    assert any('outer_only/Dockerfile: CMD sh -c without exec: exec sh -c "uvicorn app:app"' in v for v in bad_violations)
+
+    good_root = tmp_path / "good_shell_form"
+    (good_root / "direct_exec").mkdir(parents=True)
+    (good_root / "direct_exec" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT exec python -m http.server 8765\n'
+        'CMD mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}\n',
+        encoding="utf-8",
+    )
+    (good_root / "nested_exec").mkdir(parents=True)
+    (good_root / "nested_exec" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\n'
+        'ENTRYPOINT exec bash -ec "mkdir -p /tmp/x && exec uvicorn app:app --port ${PORT:-8000}"\n'
+        'CMD exec sh -c "exec python -m http.server 8765"\n',
+        encoding="utf-8",
+    )
+    assert collect_violations(root=good_root) == []
 
 
 def test_collector_rejects_and_accepts_split_shell_launches(tmp_path):
