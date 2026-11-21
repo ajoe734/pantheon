@@ -552,10 +552,19 @@ class DeploymentPlannerService:
                 pool={
                     "pool_id": capital_pool_id,
                     "tenant_id": tenant_id,
-                    "metadata": {"risk_policy": candidate_policy},
+                    "metadata": {
+                        **metadata,
+                        "risk_policy": candidate_policy,
+                    },
+                    **(
+                        {"approval_digest": metadata.get("approval_digest") or metadata.get("pool_approval_digest")}
+                        if (metadata.get("approval_digest") or metadata.get("pool_approval_digest"))
+                        else {}
+                    ),
                 },
                 expected_tenant_id=tenant_id,
                 expected_stage=request.target_stage.value,
+                approval_reader=self.approval_reader,
                 require_active=True,
                 require_limits=(
                     ("gross_limit",)

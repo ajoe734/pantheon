@@ -567,7 +567,7 @@ def test_capital_reads_never_borrow_the_deployment_principal(monkeypatch):
         authority._capital_request_headers("tenant-dev")
 
 
-def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_desired_state():
+def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_desired_state(monkeypatch):
     valid_policy = {
         "risk_policy_id": "paper-inline-policy:persona-loop-prod-dep-001",
         "version": "1.0",
@@ -669,5 +669,61 @@ def test_verify_deploy_authorities_enforces_bound_pool_risk_policy_and_fleet_des
     state_unmapped = fds.build_fleet_desired_state([unmapped_rb])
     assert state_unmapped.active_count == 0
     assert state_unmapped.excluded[0].exclusion_reason == "non_executable_risk_policy_profile_mapping_unapproved"
+
+    # Once canonical ApprovalEvidence for the default baseline profile mapping exists and is
+    # referenced on the RuntimeBinding metadata (with matching approval_digest), fleet projection
+    # preserves and verifies those references and admits the binding as desired.
+    from services.capital.risk_policy import risk_policy_digest as _rp_digest
+    from services.governance import approval_authority as _gov_auth
+
+    approved_baseline_policy = {**valid_policy, "risk_policy_id": "rp-pool-loop-prod-dep-001", "version": "1.0"}
+    pool_mapping_approval = approval_snapshot(
+        decision_id="apv-fleet-baseline-low-001",
+        tenant_id="tenant-unit",
+        target_type="capital_pool_activation",
+        target_id="pool-loop-prod-dep-001",
+        target_version="pool-digest-fleet-001",
+        owner_user_id="proposer-1",
+        risk_level="low",
+        decided_at="2026-07-09T00:00:00Z",
+        recorded_at="2026-07-09T00:00:00Z",
+        expires_at="2099-07-11T00:00:00Z",
+        metadata={
+            "subject": {
+                "pool_id": "pool-loop-prod-dep-001",
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": "rp-pool-loop-prod-dep-001",
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": _rp_digest(approved_baseline_policy),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    approved_rb = copy.deepcopy(base_binding)
+    approved_rb["metadata"].update(
+        {
+            "requested_risk_profile": "low",
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-fleet-baseline-low-001",
+            "approval_digest": "pool-digest-fleet-001",
+            "risk_policy": approved_baseline_policy,
+        }
+    )
+    fleet_reader = SnapshotApprovalReader(pool_mapping_approval)
+    monkeypatch.setattr(_gov_auth, "configured_approval_reader", lambda domain="runtime_manager", **kw: fleet_reader)
+    state_approved = fds.build_fleet_desired_state([approved_rb])
+    assert state_approved.active_count == 1
+    assert state_approved.excluded_count == 0
+
+    # Mismatched approval_digest on the binding fails closed during fleet projection
+    wrong_digest_rb = copy.deepcopy(approved_rb)
+    wrong_digest_rb["metadata"]["approval_digest"] = "wrong-pool-digest"
+    state_wrong_digest = fds.build_fleet_desired_state([wrong_digest_rb])
+    assert state_wrong_digest.active_count == 0
+    assert state_wrong_digest.excluded[0].exclusion_reason == "non_executable_risk_policy_profile_mapping_unapproved"
 
 

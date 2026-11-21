@@ -115,7 +115,14 @@ class FakeOwnerTransport:
     def get(self, owner: str, path: str) -> Mapping[str, Any] | None:
         self.calls.append(("GET", owner, path, None))
         value = self.objects.get((owner, path))
-        return deepcopy(value) if value is not None else None
+        if value is None:
+            return None
+        result = deepcopy(value)
+        if owner == "capital" and path.startswith("/api/capital-pools/") and isinstance(result, dict):
+            from services.capital.risk_policy import capital_pool_approval_digest
+
+            result["approval_digest"] = capital_pool_approval_digest(result)
+        return result
 
     def list(self, owner: str, path: str) -> list[Mapping[str, Any]]:
         self.calls.append(("GET", owner, path, None))
@@ -151,6 +158,10 @@ class FakeOwnerTransport:
             existing_meta = dict(binding.get("metadata") or {})
             existing_meta.update(body["metadata"])
             binding["metadata"] = existing_meta
+        if owner == "capital" and binding_path.startswith("/api/capital-pools/"):
+            from services.capital.risk_policy import capital_pool_approval_digest
+
+            binding["approval_digest"] = capital_pool_approval_digest(binding)
         return deepcopy(binding)
 
     def _owner_registry_entry(self, registry_id: str) -> dict[str, Any]:
@@ -287,6 +298,8 @@ class FakeOwnerTransport:
 
     def _apply_post(self, owner: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         if owner == "capital" and path == "/api/capital-pools":
+            from services.capital.risk_policy import capital_pool_approval_digest
+
             pool = {
                 **body,
                 # The Capital owner stamps the authenticated formal tenant.
@@ -294,6 +307,7 @@ class FakeOwnerTransport:
                 "created_at": "2026-07-15T00:00:00Z",
                 "idempotent_replay": False,
             }
+            pool["approval_digest"] = capital_pool_approval_digest(pool)
             return self._put(owner, f"/api/capital-pools/{body['pool_id']}", pool)
 
         if owner == "registry" and path == "/api/registry/strategy-specs":
@@ -3220,7 +3234,7 @@ def test_canonical_payload_and_active_runtime_binding_overlay_projection() -> No
 
 
 def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_version_changes_and_repair() -> None:
-    from services.capital.risk_policy import risk_policy_digest
+    from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
     from services.governance.test_approval_authority import approval_snapshot
 
     # 1. Minimal direct call to _resolve_requested_pool_risk_policy and ordinary risk="low", risk_policy_ref=None fail closed without any opt-in flag
@@ -3278,12 +3292,62 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     tx_ord = FakeOwnerTransport()
     coord_ord = _coordinator(store_ord, tx_ord, _schedule_receipt)
     baseline_v1 = coord_ord._default_paper_pool_risk_policy(ids_ord.capital_pool_id, version="1.0")
+    ord_candidate_pool_digest = capital_pool_approval_digest(
+        {
+            "pool_id": ids_ord.capital_pool_id,
+            "owner_id": record_ord.tenant_id,
+            "owner_type": "org",
+            "currency": coord_ord._capital_pool_currency(record_ord),
+            "budget": record_ord.request_payload.get("budget"),
+            "risk_policy_ref": None,
+            "single_runtime_enforced": True,
+            "metadata": {"risk_policy": baseline_v1},
+        }
+    )
+    # Wrong target_version fails preflight before any POST /api/capital-pools write
     tx_ord.objects[("governance", "/api/governance/approvals/apv-pool-risk-low-v1")] = approval_snapshot(
         decision_id="apv-pool-risk-low-v1",
         tenant_id=record_ord.tenant_id,
         target_type="capital_pool_activation",
         target_id=ids_ord.capital_pool_id,
-        target_version="1",
+        target_version="wrong-create-pool-digest",
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": ids_ord.capital_pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": baseline_v1["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(baseline_v1),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    res_ord_wrong_digest = coord_ord.coordinate(record_ord)
+    assert res_ord_wrong_digest.state == "failed"
+    assert res_ord_wrong_digest.error["failed_step"] == "capital_pool"
+    assert "risk_policy_profile_mapping_unapproved" in res_ord_wrong_digest.error["terminal_reason"]
+    assert tx_ord.mutations[("capital", "/api/capital-pools")] == 0
+
+    store_ord, record_ord = _record_and_store(
+        {
+            "risk": "low",
+            "risk_policy_ref": None,
+            "profile_mapping_approval_id": "apv-pool-risk-low-v1",
+        }
+    )
+    coord_ord = _coordinator(store_ord, tx_ord, _schedule_receipt)
+    tx_ord.objects[("governance", "/api/governance/approvals/apv-pool-risk-low-v1")] = approval_snapshot(
+        decision_id="apv-pool-risk-low-v1",
+        tenant_id=record_ord.tenant_id,
+        target_type="capital_pool_activation",
+        target_id=ids_ord.capital_pool_id,
+        target_version=ord_candidate_pool_digest,
         owner_user_id="proposer-1",
         risk_level="low",
         metadata={
@@ -3308,6 +3372,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     assert created_ord_pool["metadata"]["require_approved_profile_mapping"] is True
     assert created_ord_pool["metadata"]["profile_mapping_approval_id"] == "apv-pool-risk-low-v1"
     assert created_ord_pool["metadata"]["risk_policy"] == baseline_v1
+    assert res_ord.references["capital_pool"]["approval_digest"] == ord_candidate_pool_digest
 
     # 5. Repair defaults to require_approved_profile_mapping=True: missing or unapproved pool surfaces owner_decision_request without mutating
     store_rep, record_rep = _record_and_store()
@@ -3339,15 +3404,17 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     assert unapproved_repair["before_resolution"]["status"] == "missing"
     assert unapproved_repair["after_resolution"]["status"] == "unresolved_profile_mapping"
     assert unapproved_repair["owner_decision_request"]["policy_owner"] == "services/capital/risk_policy.py"
+    v1_candidate_pool_digest = unapproved_repair["owner_decision_request"]["candidate_pool_approval_digest"]
+    assert v1_candidate_pool_digest
     assert tx_rep.mutations[("capital", f"{pool_path}/status")] == 0
 
-    # Once canonical owner ApprovalDecision is in Governance, repair converges and persists profile + mapping requirement
+    # Once canonical owner ApprovalDecision bound to candidate v1 pool approval_digest is in Governance, repair converges
     tx_rep.objects[("governance", "/api/governance/approvals/apv-repair-low-v1")] = approval_snapshot(
         decision_id="apv-repair-low-v1",
         tenant_id=record_rep.tenant_id,
         target_type="capital_pool_activation",
         target_id=ids_rep.capital_pool_id,
-        target_version="1",
+        target_version=v1_candidate_pool_digest,
         owner_user_id="proposer-1",
         risk_level="low",
         metadata={
@@ -3378,6 +3445,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     assert repair_receipt["after_resolution"]["profile_mapping_status"] == "approved_profile_mapping"
     assert repair_receipt["after_resolution"]["profile_mapping_approval_id"] == "apv-repair-low-v1"
     assert repair_receipt["after_resolution"]["risk_policy_id"] == f"rp-{ids_rep.capital_pool_id}"
+    assert repair_receipt["capital_pool"]["approval_digest"] == v1_candidate_pool_digest
     assert repair_receipt["capital_pool"]["metadata"]["requested_risk_profile"] == "low"
     assert repair_receipt["capital_pool"]["metadata"]["require_approved_profile_mapping"] is True
     assert repair_receipt["capital_pool"]["metadata"]["profile_mapping_approval_id"] == "apv-repair-low-v1"
@@ -3392,7 +3460,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     assert noop_receipt["idempotent_noop"] is True
     assert tx_rep.mutations[("capital", f"{pool_path}/status")] == patches_before
 
-    # Policy version upgrade / rebinding requires owner approval for v2.0 digest and updates version and digest once approved
+    # Policy version upgrade / rebinding requires owner approval for v2.0 candidate pool digest (not old v1 pool digest)
     unapproved_v2 = coord_rep.repair_paper_pool_risk_policy(
         tenant_id=record_rep.tenant_id,
         persona_id=record_rep.persona_id,
@@ -3400,12 +3468,51 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     )
     assert unapproved_v2["repaired"] is False
     assert unapproved_v2["after_resolution"]["status"] == "unresolved_profile_mapping"
+    v2_candidate_pool_digest = unapproved_v2["owner_decision_request"]["candidate_pool_approval_digest"]
+    assert v2_candidate_pool_digest and v2_candidate_pool_digest != v1_candidate_pool_digest
+
+    # Binding v2 approval to the OLD v1 pool approval_digest fails preflight before any write
+    tx_rep.objects[("governance", "/api/governance/approvals/apv-repair-low-v2-old-digest")] = approval_snapshot(
+        decision_id="apv-repair-low-v2-old-digest",
+        tenant_id=record_rep.tenant_id,
+        target_type="capital_pool_activation",
+        target_id=ids_rep.capital_pool_id,
+        target_version=v1_candidate_pool_digest,
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": ids_rep.capital_pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": f"rp-{ids_rep.capital_pool_id}",
+                "risk_policy_version": "2.0",
+                "risk_policy_digest": unapproved_v2["owner_decision_request"]["candidate_risk_policy_digest"],
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    stale_digest_v2 = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+        risk_policy_version="2.0",
+        approval_decision_id="apv-repair-low-v2-old-digest",
+    )
+    assert stale_digest_v2["repaired"] is False
+    assert stale_digest_v2["after_resolution"]["status"] == "unresolved_profile_mapping"
+    assert tx_rep.mutations[("capital", f"{pool_path}/status")] == patches_before
+    assert tx_rep.get("capital", pool_path)["metadata"]["risk_policy"]["version"] == "1.0"
+
+    # Binding v2 approval to the candidate v2 pool approval_digest passes preflight, writes v2, and passes GET readback
     tx_rep.objects[("governance", "/api/governance/approvals/apv-repair-low-v2")] = approval_snapshot(
         decision_id="apv-repair-low-v2",
         tenant_id=record_rep.tenant_id,
         target_type="capital_pool_activation",
         target_id=ids_rep.capital_pool_id,
-        target_version="1",
+        target_version=v2_candidate_pool_digest,
         owner_user_id="proposer-1",
         risk_level="low",
         metadata={
@@ -3430,12 +3537,25 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
         approval_decision_id="apv-repair-low-v2",
     )
     assert upgraded_receipt["repaired"] is True
+    assert upgraded_receipt["capital_pool"]["approval_digest"] == v2_candidate_pool_digest
     assert upgraded_receipt["after_resolution"]["risk_policy_version"] == "2.0"
     assert upgraded_receipt["after_resolution"]["profile_mapping_approval_id"] == "apv-repair-low-v2"
     assert (
         upgraded_receipt["after_resolution"]["risk_policy_digest"]
         != noop_receipt["after_resolution"]["risk_policy_digest"]
     )
+    # Idempotent replay on v2 pool with genuine approval_digest passes without additional writes
+    patches_after_v2 = tx_rep.mutations[("capital", f"{pool_path}/status")]
+    v2_noop_receipt = coord_rep.repair_paper_pool_risk_policy(
+        tenant_id=record_rep.tenant_id,
+        persona_id=record_rep.persona_id,
+    )
+    assert v2_noop_receipt["repaired"] is False
+    assert v2_noop_receipt["idempotent_noop"] is True
+    assert v2_noop_receipt["after_resolution"]["resolved"] is True
+    assert v2_noop_receipt["after_resolution"]["risk_policy_version"] == "2.0"
+    assert v2_noop_receipt["after_resolution"]["profile_mapping_approval_id"] == "apv-repair-low-v2"
+    assert tx_rep.mutations[("capital", f"{pool_path}/status")] == patches_after_v2
 
     # Unapproved profile mapping for a different profile surfaces owner_decision_request without mutating the pool
     owner_decision_receipt = coord_rep.repair_paper_pool_risk_policy(

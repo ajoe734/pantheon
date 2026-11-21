@@ -896,6 +896,169 @@ def test_resolve_pool_risk_policy_binding_enforces_all_time_bounds_and_their_int
     assert malformed_secondary.reason_code == "risk_policy_invalid"
 
 
+def test_runtime_entry_points_enforce_profile_mapping_on_existing_pools_and_admit_approved_mapping(
+    monkeypatch,
+) -> None:
+    import pytest
+    from services.capital.risk_policy import (
+        RiskPolicyError,
+        capital_pool_approval_digest,
+        resolve_bound_pool_risk_policy,
+        resolve_pool_risk_policy_binding,
+        risk_policy_digest,
+    )
+    from services.execution.lean_runtime.expression_inputs import (
+        ExpressionInputsProvider,
+        ExpressionInputsUnavailable,
+    )
+    from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+    from services.governance import approval_authority
+    from services.governance.test_approval_authority import (
+        SnapshotApprovalReader,
+        approval_snapshot,
+    )
+
+    pool_id = "pool-persona-paper-06d4775a9b6a8f63b311"
+    baseline_v1 = {
+        "risk_policy_id": f"rp-{pool_id}",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    # Existing active pool with rp-pool-persona-paper-* inline v1 and NO mapping approval or persisted new flags
+    unapproved_existing_pool = {
+        "pool_id": pool_id,
+        "tenant_id": "tenant-dev",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "status": "active",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": "tenant-dev",
+            "risk_policy": dict(baseline_v1),
+        },
+    }
+    unapproved_existing_pool["approval_digest"] = capital_pool_approval_digest(unapproved_existing_pool)
+    runtime_binding = {
+        "binding_id": "rb-paper-existing-1",
+        "runtime_id": "rt-paper-existing-1",
+        "capital_pool_id": pool_id,
+        "deployment_mode": "paper",
+        "status": "active",
+    }
+    summary = {
+        "runtime_id": "rt-paper-existing-1",
+        "binding_id": "rb-paper-existing-1",
+        "ledger_fill_count": 0,
+        "executed_trade_count": 0,
+        "positions": None,
+    }
+
+    # 1. Unapproved existing pool fails closed across resolve_pool_risk_policy_binding,
+    # resolve_bound_pool_risk_policy, ExpressionInputsProvider, and PaperExecutionAlgorithm
+    direct_res = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=unapproved_existing_pool,
+    )
+    assert direct_res.resolved is False
+    assert direct_res.reason_code == "risk_policy_profile_mapping_unapproved"
+
+    with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+        resolve_bound_pool_risk_policy(
+            capital_pool_id=pool_id,
+            binding=runtime_binding,
+            capital_pool_reader=lambda _pid: unapproved_existing_pool,
+        )
+
+    provider_unapproved = ExpressionInputsProvider(
+        capital_pool_reader=lambda _pid: unapproved_existing_pool,
+        runtime_summary_reader=lambda _rid: summary,
+    )
+    with pytest.raises(ExpressionInputsUnavailable) as exc_info:
+        provider_unapproved(runtime_binding)
+    assert exc_info.value.missing == "risk_policy"
+    assert "risk_policy_profile_mapping_unapproved" in exc_info.value.detail
+
+    algo_unapproved = PaperExecutionAlgorithm(
+        capital_pool_id=pool_id,
+        capital_pool_reader=lambda _pid: unapproved_existing_pool,
+    )
+    with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+        algo_unapproved._resolve_active_risk_policy()
+
+    # 2. Once canonical ApprovalEvidence exists and is bound to the pool's approval_digest,
+    # all runtime entry points resolve the approved 2.0 policy
+    approved_existing_pool = {
+        **unapproved_existing_pool,
+        "metadata": {
+            **unapproved_existing_pool["metadata"],
+            "requested_risk_profile": "low",
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-runtime-low-001",
+        },
+    }
+    approved_existing_pool["approval_digest"] = capital_pool_approval_digest(approved_existing_pool)
+    valid_decision = approval_snapshot(
+        decision_id="apv-runtime-low-001",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id=pool_id,
+        target_version=approved_existing_pool["approval_digest"],
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": baseline_v1["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(baseline_v1),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    reader = SnapshotApprovalReader(valid_decision)
+    monkeypatch.setattr(approval_authority, "configured_approval_reader", lambda domain="capital", **kw: reader)
+
+    bound_policy = resolve_bound_pool_risk_policy(
+        capital_pool_id=pool_id,
+        binding=runtime_binding,
+        capital_pool_reader=lambda _pid: approved_existing_pool,
+    )
+    assert bound_policy is not None
+    assert bound_policy.risk_policy_id == f"rp-{pool_id}"
+    assert bound_policy.gross_limit == 2.0
+
+    provider_approved = ExpressionInputsProvider(
+        capital_pool_reader=lambda _pid: approved_existing_pool,
+        runtime_summary_reader=lambda _rid: summary,
+    )
+    expr_inputs = provider_approved(runtime_binding)
+    assert expr_inputs["risk_budget"]["gross_limit"] == 200000.0
+    assert expr_inputs["risk_budget"]["max_leverage"] == 2.0
+
+    algo_approved = PaperExecutionAlgorithm(
+        capital_pool_id=pool_id,
+        capital_pool_reader=lambda _pid: approved_existing_pool,
+    )
+    algo_policy = algo_approved._resolve_active_risk_policy()
+    assert algo_policy.risk_policy_id == f"rp-{pool_id}"
+    assert algo_policy.gross_limit == 2.0
+
+
+
 
 
 
