@@ -78,6 +78,8 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_role: str
     status: str
     approval_decision_id: Optional[str] = None
+    risk_policy_ref: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class CreateBindingRequest(BaseModel):
