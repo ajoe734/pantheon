@@ -3055,3 +3055,580 @@ def test_portfolio_holdings_net_realized_plus_unrealized_equals_ledger_net_pnl(m
     assert item["realized_pnl"] == -19.884
     net_total = 99980.116 - 100000.0
     assert abs(item["realized_pnl"] + item["unrealized_pnl"] - net_total) <= 0.01
+
+
+def test_portfolio_holdings_selects_serving_binding_for_shared_runtime_in_both_orders(
+    monkeypatch,
+) -> None:
+    """BFF-PORTFOLIO-SERVING-BINDING-20261121 (AC 1 & 2):
+    An active binding and retired binding sharing a runtime_id project each real
+    position once in both owner-list orders while preserving the serving
+    binding's attribution, costs, marks, currency, broker, PnL, and pagination.
+    """
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    rt_cash = "rt-544fc8c0a8f9"
+    rb_cash_retired = "rb-cash-retired-001"
+    rb_cash_active = "rb-cash-active-002"
+
+    rt_future = "rt-3b0d11e3db7c"
+    rb_future_retired = "rb-future-retired-001"
+    rb_future_active = "rb-future-active-002"
+    future_id = "ssf:SRF:202611"
+
+    store = RuntimeSummaryProjectionStore(path=None)
+    # Runtime 1 (cash share): even if the summary still carries the retired
+    # binding_id before the first post-cutover fill, owner lifecycle semantics
+    # must select the active serving binding.
+    cash_scope = {
+        "tenant_id": "pantheon-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": rt_cash,
+        "binding_id": rb_cash_retired,
+    }
+    store.project_event(
+        {
+            **cash_scope,
+            "event_id": "evt-serving-cash-fill-1",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-19T23:46:17Z",
+            "metrics": {"fill_quantity": 10.0, "fill_price": 2300.0},
+            "metadata": {
+                "symbol": "2330.TWSE",
+                "instrument_id": "eq:2330",
+                "kind": "cash_share",
+                "multiplier": 1.0,
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "fee": 32.0,
+                "tax": 0.0,
+                "ledger_cash": 76968.0,
+                "ledger_fill_count": 1,
+            },
+        }
+    )
+    cash_summary = store.project_event(
+        {
+            **cash_scope,
+            "event_id": "evt-serving-cash-pnl-1",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-20T06:00:00Z",
+            "pnl_as_of": "2026-11-20T00:00:00Z",
+            "metrics": {"pnl": 168.0, "fill_count": 1},
+            "metadata": {
+                "mark_refs": [
+                    {
+                        "symbol": "2330.TWSE",
+                        "price": 2320.0,
+                        "as_of": "2026-11-20T00:00:00Z",
+                        "source_ref": "source-ingest://snapshots/mss-2330-20261120",
+                        "observed_at": "2026-11-20T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    # Runtime 2 (stock future): projected under the active serving binding.
+    future_scope = {
+        "tenant_id": "pantheon-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": rt_future,
+        "binding_id": rb_future_active,
+    }
+    store.project_event(
+        {
+            **future_scope,
+            "event_id": "evt-serving-fut-fill-1",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-19T23:46:17Z",
+            "metrics": {"fill_quantity": 2.0, "fill_price": 97.1},
+            "metadata": {
+                "symbol": "0050.TWSE",
+                "instrument_id": future_id,
+                "kind": "stock_future",
+                "multiplier": 1000.0,
+                "contract_month": "202611",
+                "initial_margin_reserved": 17400.0,
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "fee": 16.0,
+                "tax": 3.884,
+                "ledger_cash": 99980.116,
+                "ledger_fill_count": 1,
+            },
+        }
+    )
+    future_summary = store.project_event(
+        {
+            **future_scope,
+            "event_id": "evt-serving-fut-pnl-1",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-20T06:00:00Z",
+            "pnl_as_of": "2026-11-20T00:00:00Z",
+            "metrics": {"pnl": -19.884, "fill_count": 1},
+            "metadata": {
+                "mark_refs": [
+                    {
+                        "symbol": future_id,
+                        "price": 97.1,
+                        "as_of": "2026-11-20T00:00:00Z",
+                        "source_ref": "source-ingest://snapshots/mss-0050-20261120",
+                        "observed_at": "2026-11-20T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:0050:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    cash_retired_binding = {
+        "id": rb_cash_retired,
+        "binding_id": rb_cash_retired,
+        "runtime_id": rt_cash,
+        "capital_pool_id": "pool-retired-cash",
+        "plan_id": "plan-retired-cash",
+        "persona_capital_binding_id": "pcb-retired-cash",
+        "persona_id": "persona-retired-cash",
+        "strategy_id": "strat-retired-cash",
+        "paper_ledger_id": "ledger-retired-cash",
+        "status": "retired",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    cash_active_binding = {
+        "id": rb_cash_active,
+        "binding_id": rb_cash_active,
+        "runtime_id": rt_cash,
+        "capital_pool_id": "pool-serving-cash",
+        "plan_id": "plan-serving-cash",
+        "persona_capital_binding_id": "pcb-serving-cash",
+        "persona_id": "persona-serving-cash",
+        "strategy_id": "strat-serving-cash",
+        "paper_ledger_id": "ledger-serving-cash",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    future_retired_binding = {
+        "id": rb_future_retired,
+        "binding_id": rb_future_retired,
+        "runtime_id": rt_future,
+        "capital_pool_id": "pool-retired-future",
+        "plan_id": "plan-retired-future",
+        "persona_capital_binding_id": "pcb-retired-future",
+        "persona_id": "persona-retired-future",
+        "strategy_id": "strat-retired-future",
+        "paper_ledger_id": "ledger-retired-future",
+        "status": "retired",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+    future_active_binding = {
+        "id": rb_future_active,
+        "binding_id": rb_future_active,
+        "runtime_id": rt_future,
+        "capital_pool_id": "pool-serving-future",
+        "plan_id": "plan-serving-future",
+        "persona_capital_binding_id": "pcb-serving-future",
+        "persona_id": "persona-serving-future",
+        "strategy_id": "strat-serving-future",
+        "paper_ledger_id": "ledger-serving-future",
+        "status": "active",
+        "deployment_stage": "paper",
+        "deployment_mode": "paper",
+    }
+
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-20T09:00:00Z")
+    viewer_headers = {"Authorization": "Bearer viewer-pm12:viewer"}
+
+    for runtime_order in (
+        [cash_active_binding, cash_retired_binding, future_active_binding, future_retired_binding],
+        [cash_retired_binding, cash_active_binding, future_retired_binding, future_active_binding],
+        [future_retired_binding, cash_active_binding, cash_retired_binding, future_active_binding],
+    ):
+        client = _portfolio_store(
+            monkeypatch,
+            extra_runtime_bindings=runtime_order,
+            telemetry={
+                rt_cash: cash_summary,
+                rt_future: future_summary,
+            },
+        )
+        response = client.get(
+            "/bff/management/portfolio-book/holdings",
+            headers=viewer_headers,
+            params={"runtime_id": f"{rt_cash},{rt_future}"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["data"]["items"]
+        assert len(items) == 2
+        assert len({item["holding_id"] for item in items}) == 2
+
+        summary = body["data"]["summary"]
+        assert summary["holding_count"] == 2
+        assert summary["source_row_count"] == 2
+        assert summary["runtime_count"] == 2
+        assert summary["telemetry_runtime_count"] == 2
+        assert summary["incident_count"] == 0
+        assert body["page_info"] == {"next_page_token": None, "total": 2}
+
+        by_runtime = {item["runtime_id"]: item for item in items}
+        assert set(by_runtime) == {rt_cash, rt_future}
+
+        cash_item = by_runtime[rt_cash]
+        assert cash_item["holding_id"] == f"{rt_cash}:2330.TWSE"
+        assert cash_item["capital_pool_id"] == "pool-serving-cash"
+        assert cash_item["persona_id"] == "persona-serving-cash"
+        assert cash_item["strategy_id"] == "strat-serving-cash"
+        assert cash_item["capital_scope"] == {
+            "stage": "paper",
+            "scope_kind": "paper_ledger",
+            "scope_id": "ledger-serving-cash",
+        }
+        assert cash_item["symbol"] == "2330.TWSE"
+        assert cash_item["quantity"] == 10.0
+        assert cash_item["average_price"] == 2300.0
+        assert cash_item["mark_price"] == 2320.0
+        assert cash_item["market_value"] == 23200.0
+        assert cash_item["unrealized_pnl"] == 200.0
+        assert cash_item["realized_pnl"] == -32.0
+        assert cash_item["total_pnl"] == 168.0
+        assert cash_item["currency"] == "TWD"
+        assert cash_item["broker_id"] == "shioaji_paper"
+        assert cash_item["mark_status"] == "available"
+
+        fut_item = by_runtime[rt_future]
+        assert fut_item["holding_id"] == f"{rt_future}:{future_id}"
+        assert fut_item["capital_pool_id"] == "pool-serving-future"
+        assert fut_item["persona_id"] == "persona-serving-future"
+        assert fut_item["strategy_id"] == "strat-serving-future"
+        assert fut_item["capital_scope"] == {
+            "stage": "paper",
+            "scope_kind": "paper_ledger",
+            "scope_id": "ledger-serving-future",
+        }
+        assert fut_item["symbol"] == "0050.TWSE"
+        assert fut_item["instrument_id"] == future_id
+        assert fut_item["instrument_kind"] == "stock_future"
+        assert fut_item["multiplier"] == 1000.0
+        assert fut_item["margin_reserved"] == 17400.0
+        assert fut_item["quantity"] == 2.0
+        assert fut_item["average_price"] == 97.1
+        assert fut_item["mark_price"] == 97.1
+        assert fut_item["market_value"] == 194200.0
+        assert fut_item["unrealized_pnl"] == 0.0
+        assert fut_item["realized_pnl"] == -19.884
+        assert fut_item["total_pnl"] == -19.884
+        assert fut_item["currency"] == "TWD"
+        assert fut_item["broker_id"] == "shioaji_paper"
+        assert fut_item["mark_status"] == "available"
+
+        # Verify pagination contract across the deduplicated holdings.
+        page1 = client.get(
+            "/bff/management/portfolio-book/holdings",
+            headers=viewer_headers,
+            params={"runtime_id": f"{rt_cash},{rt_future}", "page_size": 1},
+        ).json()
+        assert page1["page_info"] == {"next_page_token": "1", "total": 2}
+        assert len(page1["data"]["items"]) == 1
+
+        page2 = client.get(
+            "/bff/management/portfolio-book/holdings",
+            headers=viewer_headers,
+            params={
+                "runtime_id": f"{rt_cash},{rt_future}",
+                "page_size": 1,
+                "page_token": page1["page_info"]["next_page_token"],
+            },
+        ).json()
+        assert page2["page_info"] == {"next_page_token": None, "total": 2}
+        assert len(page2["data"]["items"]) == 1
+        assert [page1["data"]["items"][0]["holding_id"], page2["data"]["items"][0]["holding_id"]] == [
+            item["holding_id"] for item in items
+        ]
+
+
+def test_portfolio_holdings_serving_binding_preserves_terminal_only_flat_multi_instrument_and_tenant_scope(
+    monkeypatch,
+) -> None:
+    """BFF-PORTFOLIO-SERVING-BINDING-20261121 (AC 1 & 2):
+    Preserves terminal-only reported positions, terminal-only omission when
+    telemetry is absent, explicit flat books, distinct instruments on one
+    runtime, canonical status > state > lifecycle_state precedence, and tenant
+    isolation in RuntimeSummaryProjectionStore.
+    """
+    from services.control_plane.bff.pm12 import service as pm12_service
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    rt_multi = "rt-shared-multi"
+    rt_term_pos = "rt-terminal-with-pos"
+    rt_term_empty = "rt-terminal-empty"
+    rt_flat = "rt-shared-flat"
+    future_id = "ssf:QFF:202611"
+
+    store = RuntimeSummaryProjectionStore(path=None)
+    multi_scope = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "runtime_id": rt_multi,
+        "binding_id": "rb-multi-active",
+    }
+    for lfc, qty, price, meta in (
+        (
+            1,
+            -5.0,
+            2299.0,
+            {
+                "symbol": "2330.TWSE",
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "sec_type": "equity",
+            },
+        ),
+        (
+            2,
+            2.0,
+            2300.0,
+            {
+                "symbol": "2330.TWSE",
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "sec_type": "future",
+                "instrument_id": future_id,
+                "kind": "stock_future",
+                "multiplier": 100.0,
+                "contract_month": "202611",
+                "initial_margin_reserved": 92000.0,
+            },
+        ),
+    ):
+        store.project_event(
+            {
+                **multi_scope,
+                "event_id": f"evt-multi-fill-{lfc}",
+                "event_type": "paper_fill_simulated",
+                "created_at": f"2026-11-05T01:00:0{lfc}Z",
+                "metrics": {"fill_quantity": qty, "fill_price": price},
+                "metadata": {**meta, "ledger_fill_count": lfc},
+            }
+        )
+    store.project_event(
+        {
+            **multi_scope,
+            "event_id": "evt-multi-pnl",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-11-05T02:00:00Z",
+            "pnl_as_of": "2026-11-04T00:00:00Z",
+            "metrics": {"pnl": -9705.0, "fill_count": 2},
+            "metadata": {
+                "mark_refs": [
+                    {
+                        "symbol": "2330.TWSE",
+                        "price": 2240.0,
+                        "as_of": "2026-11-04T00:00:00Z",
+                        "source_ref": "source-ingest://snapshots/mss-multi",
+                        "observed_at": "2026-11-04T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    },
+                    {
+                        "symbol": future_id,
+                        "price": 2250.0,
+                        "as_of": "2026-11-04T00:00:00Z",
+                        "source_ref": "source-ingest://snapshots/mss-multi-fut",
+                        "observed_at": "2026-11-04T06:00:00Z",
+                        "lineage": {
+                            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:test"],
+                            "connector_ids": ["tw-twse-tpex-official-market"],
+                        },
+                    },
+                ]
+            },
+        }
+    )
+    # Foreign-tenant event on the same runtime_id must never leak into tenant-dev.
+    store.project_event(
+        {
+            **multi_scope,
+            "tenant_id": "tenant-other",
+            "event_id": "evt-other-tenant-fill",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-11-05T03:00:00Z",
+            "metrics": {"fill_quantity": 99.0, "fill_price": 1000.0},
+            "metadata": {
+                "symbol": "9999.TWSE",
+                "currency": "TWD",
+                "broker": "shioaji_paper",
+                "ledger_fill_count": 1,
+            },
+        }
+    )
+
+    multi_summary = store.get(rt_multi, tenant_id="tenant-dev")
+    assert multi_summary is not None
+    assert {p.get("instrument_id") or p.get("symbol") for p in multi_summary["positions"]} == {
+        "2330.TWSE",
+        future_id,
+    }
+
+    terminal_pos_summary = {
+        "runtime_id": rt_term_pos,
+        "binding_id": "rb-term-pos-2",
+        "positions": [
+            {
+                "symbol": "2317.TWSE",
+                "quantity": 3.0,
+                "average_price": 210.0,
+                "currency": "TWD",
+                "broker_id": "shioaji_paper",
+            }
+        ],
+        "position_count": 1,
+    }
+    flat_summary = {
+        "runtime_id": rt_flat,
+        "binding_id": "rb-flat-active",
+        "positions": [],
+        "position_count": 0,
+    }
+
+    # Active binding carries lower-priority state="retired" to verify canonical
+    # status > state > lifecycle_state precedence during serving selection.
+    multi_active = {
+        "id": "rb-multi-active",
+        "binding_id": "rb-multi-active",
+        "runtime_id": rt_multi,
+        "capital_pool_id": "pool-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-alpha",
+        "strategy_id": "strategy-alpha",
+        "status": "active",
+        "state": "retired",
+        "lifecycle_state": "failed",
+        "deployment_stage": "paper",
+    }
+    multi_retired = {
+        "id": "rb-multi-retired",
+        "binding_id": "rb-multi-retired",
+        "runtime_id": rt_multi,
+        "capital_pool_id": "pool-beta",
+        "persona_capital_binding_id": "binding-beta",
+        "persona_id": "persona-beta",
+        "strategy_id": "strategy-beta",
+        "status": "retired",
+        "deployment_stage": "paper",
+    }
+    term_pos_old = {
+        "id": "rb-term-pos-1",
+        "binding_id": "rb-term-pos-1",
+        "runtime_id": rt_term_pos,
+        "capital_pool_id": "pool-beta",
+        "persona_capital_binding_id": "binding-beta",
+        "persona_id": "persona-beta",
+        "strategy_id": "strategy-beta",
+        "status": "retired",
+        "deployment_stage": "paper",
+    }
+    term_pos_matching = {
+        "id": "rb-term-pos-2",
+        "binding_id": "rb-term-pos-2",
+        "runtime_id": rt_term_pos,
+        "capital_pool_id": "pool-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-alpha",
+        "strategy_id": "strategy-alpha",
+        "status": "retired",
+        "deployment_stage": "paper",
+    }
+    term_empty = {
+        "id": "rb-term-empty",
+        "binding_id": "rb-term-empty",
+        "runtime_id": rt_term_empty,
+        "capital_pool_id": "pool-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "status": "retired",
+        "deployment_stage": "paper",
+    }
+    flat_active = {
+        "id": "rb-flat-active",
+        "binding_id": "rb-flat-active",
+        "runtime_id": rt_flat,
+        "capital_pool_id": "pool-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "persona_id": "persona-alpha",
+        "strategy_id": "strategy-alpha",
+        "status": "active",
+        "deployment_stage": "paper",
+    }
+    flat_retired = {
+        "id": "rb-flat-retired",
+        "binding_id": "rb-flat-retired",
+        "runtime_id": rt_flat,
+        "capital_pool_id": "pool-beta",
+        "persona_capital_binding_id": "binding-beta",
+        "persona_id": "persona-beta",
+        "strategy_id": "strategy-beta",
+        "status": "retired",
+        "deployment_stage": "paper",
+    }
+
+    monkeypatch.setattr(pm12_service, "_default_utc_now", lambda: "2026-11-05T05:00:00Z")
+    target_ids = ",".join([rt_multi, rt_term_pos, rt_term_empty, rt_flat])
+
+    for bindings_order in (
+        [multi_active, multi_retired, term_pos_old, term_pos_matching, term_empty, flat_active, flat_retired],
+        [multi_retired, multi_active, term_pos_matching, term_pos_old, term_empty, flat_retired, flat_active],
+    ):
+        client = _portfolio_store(
+            monkeypatch,
+            extra_runtime_bindings=bindings_order,
+            telemetry={
+                rt_multi: multi_summary,
+                rt_term_pos: terminal_pos_summary,
+                rt_flat: flat_summary,
+            },
+        )
+        response = client.get(
+            "/bff/management/portfolio-book/holdings",
+            headers=HEADERS,
+            params={"runtime_id": target_ids},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["data"]["items"]
+        # 2 distinct instruments on rt_multi + 1 reported position on terminal-only rt_term_pos = 3 rows.
+        assert len(items) == 3
+        assert {item["holding_id"] for item in items} == {
+            f"{rt_multi}:2330.TWSE",
+            f"{rt_multi}:{future_id}",
+            f"{rt_term_pos}:2317.TWSE",
+        }
+        for item in items:
+            assert item["capital_pool_id"] == "pool-alpha"
+            assert item["persona_id"] == "persona-alpha"
+            assert item["strategy_id"] == "strategy-alpha"
+            assert item["symbol"] != "9999.TWSE"
+
+        summary = body["data"]["summary"]
+        assert summary["holding_count"] == 3
+        assert summary["source_row_count"] == 5
+        # rt_multi, rt_term_pos, and explicit-flat rt_flat are in coverage; omitted rt_term_empty is not.
+        assert summary["runtime_count"] == 3
+        assert summary["telemetry_runtime_count"] == 3
+        assert summary["incident_count"] == 0
+
