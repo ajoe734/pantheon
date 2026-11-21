@@ -236,6 +236,7 @@ class RuntimeBootstrapOrderGatePolicyTests(unittest.TestCase):
         "metadata": {
             "internal": True,
             "execution_context": "paper",
+            "profile_mapping_approval_id": "apv-pool-paper-env",
             "risk_policy": {
                 "risk_policy_id": "rp-pool-paper-env",
                 "version": "1.0",
@@ -248,6 +249,19 @@ class RuntimeBootstrapOrderGatePolicyTests(unittest.TestCase):
             },
         },
     }
+
+    def setUp(self) -> None:
+        from services.capital.conftest import _ApprovesWhatIsAsked
+        from services.governance import approval_authority
+
+        super().setUp()
+        patcher = patch.object(
+            approval_authority,
+            "configured_approval_reader",
+            lambda _domain="capital", **_kw: _ApprovesWhatIsAsked(),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _bootstrap_reader(self, env):
         from services.execution.lean_runtime import expression_inputs, runtime_bootstrap
