@@ -1987,10 +1987,13 @@ class PersonaProvisioningCoordinator:
                 pool={
                     "pool_id": ids.capital_pool_id,
                     "tenant_id": record.tenant_id,
+                    "risk_policy_ref": clean_ref,
                     "metadata": {"risk_policy": candidate_policy},
                 },
                 expected_tenant_id=record.tenant_id,
                 expected_stage="paper",
+                requested_profile=requested_profile,
+                require_approved_profile_mapping=require_approved_mapping,
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,
@@ -2001,6 +2004,33 @@ class PersonaProvisioningCoordinator:
                 )
             return clean_ref, candidate_policy, True
 
+        if clean_ref:
+            explicit_req_version = (
+                str(req.get("risk_policy_version") or req_meta.get("risk_policy_version") or "").strip() or None
+            )
+            ref_validation = resolve_pool_risk_policy_binding(
+                capital_pool_id=ids.capital_pool_id,
+                pool={
+                    "pool_id": ids.capital_pool_id,
+                    "tenant_id": record.tenant_id,
+                    "risk_policy_ref": clean_ref,
+                    "metadata": {"tenant_id": record.tenant_id},
+                },
+                expected_tenant_id=record.tenant_id,
+                expected_stage="paper",
+                expected_version=explicit_req_version,
+                requested_profile=requested_profile,
+                require_approved_profile_mapping=require_approved_mapping,
+                require_active=True,
+                require_limits=("gross_limit",),
+                raise_on_error=False,
+            )
+            if not ref_validation.resolved or ref_validation.policy is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"CapitalPool risk policy rejected: {ref_validation.reason} ({ref_validation.reason_code})"
+                )
+            return clean_ref, ref_validation.policy.to_dict(), True
+
         requested_version = str(
             req.get("risk_policy_version")
             or req_meta.get("risk_policy_version")
@@ -2010,13 +2040,7 @@ class PersonaProvisioningCoordinator:
             ids.capital_pool_id,
             version=requested_version,
         )
-        has_override = bool(
-            clean_ref
-            or req.get("risk_policy_version")
-            or req_meta.get("risk_policy_version")
-            or req.get("repair_risk_policy") is True
-        )
-        return clean_ref, default_policy, has_override
+        return None, default_policy, False
 
     def _coordinate_capital_pool(
         self,
@@ -2075,10 +2099,10 @@ class PersonaProvisioningCoordinator:
         def validate(receipt: Mapping[str, Any]) -> None:
             validate_envelope(receipt)
             receipt_meta = receipt.get("metadata") if isinstance(receipt.get("metadata"), Mapping) else {}
-            if "risk_policy" in receipt_meta or not receipt.get("risk_policy_ref"):
+            if "risk_policy" in receipt_meta or receipt.get("risk_policy_ref") or not receipt.get("risk_policy_ref"):
                 resolution = resolve_pool_risk_policy_binding(
                     capital_pool_id=ids.capital_pool_id,
-                    pool=receipt,
+                    pool={**receipt, "tenant_id": record.tenant_id},
                     expected_tenant_id=record.tenant_id,
                     expected_stage="paper",
                     require_active=True,
@@ -2096,7 +2120,7 @@ class PersonaProvisioningCoordinator:
             existing_meta = dict(existing.get("metadata")) if isinstance(existing.get("metadata"), Mapping) else {}
             existing_res = resolve_pool_risk_policy_binding(
                 capital_pool_id=ids.capital_pool_id,
-                pool=existing,
+                pool={**existing, "tenant_id": record.tenant_id},
                 expected_tenant_id=record.tenant_id,
                 expected_stage="paper",
                 require_active=True,
@@ -2107,8 +2131,23 @@ class PersonaProvisioningCoordinator:
                 raise PersonaProvisioningCoordinationError(
                     f"CapitalPool readback risk policy rejected: {existing_res.reason} ({existing_res.reason_code})"
                 )
+            has_existing_policy_or_markers = bool(
+                ("risk_policy" in existing_meta and existing_meta.get("risk_policy") is not None)
+                or existing.get("risk_policy_ref")
+                or any(
+                    existing_meta.get(k) not in (None, False, "")
+                    for k in (
+                        "risk_policy_stale",
+                        "risk_policy_superseded_by",
+                        "risk_policy_expires_at",
+                        "risk_policy_effective_from",
+                        "expected_risk_policy_version",
+                        "expected_risk_policy_digest",
+                    )
+                )
+            )
             needs_policy_patch = False
-            if existing_res.status == "missing" and not existing.get("risk_policy_ref"):
+            if existing_res.status == "missing" and not has_existing_policy_or_markers:
                 needs_policy_patch = True
             elif has_explicit_policy_request:
                 target_digest = risk_policy_digest(requested_policy)
@@ -4323,6 +4362,7 @@ class PersonaProvisioningCoordinator:
             expected_tenant_id=tenant_id,
             expected_stage="paper",
             requested_profile=effective_profile,
+            require_approved_profile_mapping=require_approved_profile_mapping,
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
@@ -4338,50 +4378,137 @@ class PersonaProvisioningCoordinator:
             )
         )
         if require_approved_profile_mapping and risk_policy is None and not clean_ref:
-            owner_decision_res = resolve_pool_risk_policy_binding(
-                capital_pool_id=resolved_pool_id,
-                pool={"pool_id": resolved_pool_id, "tenant_id": tenant_id, "metadata": {}},
-                expected_tenant_id=tenant_id,
-                expected_stage="paper",
-                requested_profile=effective_profile,
-                require_approved_profile_mapping=True,
-                raise_on_error=False,
+            owner_decision_res = (
+                before_resolution
+                if before_resolution.status == "unresolved_profile_mapping"
+                else resolve_pool_risk_policy_binding(
+                    capital_pool_id=resolved_pool_id,
+                    pool=pool,
+                    expected_tenant_id=tenant_id,
+                    expected_stage="paper",
+                    requested_profile=effective_profile,
+                    require_approved_profile_mapping=True,
+                    raise_on_error=False,
+                )
             )
-            return {
-                "tenant_id": tenant_id,
-                "persona_id": persona_id,
-                "capital_pool_id": resolved_pool_id,
-                "persona_capital_binding_id": resolved_binding_id,
-                "repaired": False,
-                "idempotent_noop": False,
-                "dry_run": dry_run,
-                "before_resolution": before_resolution.to_dict(),
-                "after_resolution": owner_decision_res.to_dict(),
-                "owner_decision_request": owner_decision_res.owner_decision_request,
-            }
+            if not owner_decision_res.resolved:
+                return {
+                    "tenant_id": tenant_id,
+                    "persona_id": persona_id,
+                    "capital_pool_id": resolved_pool_id,
+                    "persona_capital_binding_id": resolved_binding_id,
+                    "repaired": False,
+                    "idempotent_noop": False,
+                    "dry_run": dry_run,
+                    "before_resolution": before_resolution.to_dict(),
+                    "after_resolution": owner_decision_res.to_dict(),
+                    "owner_decision_request": owner_decision_res.owner_decision_request,
+                }
+
+        has_existing_inline_or_markers = bool(
+            ("risk_policy" in pool_meta and pool_meta.get("risk_policy") is not None)
+            or pool.get("risk_policy_ref")
+            or any(
+                pool_meta.get(k) not in (None, False, "")
+                for k in (
+                    "risk_policy_stale",
+                    "risk_policy_superseded_by",
+                    "risk_policy_expires_at",
+                    "risk_policy_effective_from",
+                    "expected_risk_policy_version",
+                    "expected_risk_policy_digest",
+                )
+            )
+        )
 
         target_policy: dict[str, Any]
+        has_authoritative_replacement = False
         if risk_policy is not None:
             if not isinstance(risk_policy, Mapping):
                 raise PersonaProvisioningCoordinationError(
                     "CapitalPool risk policy repair rejected: risk_policy must be an object (risk_policy_invalid)"
                 )
             target_policy = deepcopy(dict(risk_policy))
+            has_authoritative_replacement = True
+        elif clean_ref is not None:
+            ref_resolution = resolve_pool_risk_policy_binding(
+                capital_pool_id=resolved_pool_id,
+                pool={
+                    "pool_id": resolved_pool_id,
+                    "tenant_id": tenant_id,
+                    "risk_policy_ref": clean_ref,
+                    "metadata": {"tenant_id": tenant_id},
+                },
+                expected_tenant_id=tenant_id,
+                expected_stage="paper",
+                expected_version=risk_policy_version,
+                requested_profile=effective_profile,
+                require_approved_profile_mapping=require_approved_profile_mapping,
+                require_active=True,
+                require_limits=("gross_limit",),
+                raise_on_error=False,
+            )
+            if not ref_resolution.resolved or ref_resolution.policy is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"CapitalPool risk policy repair rejected: {ref_resolution.reason} ({ref_resolution.reason_code})"
+                )
+            target_policy = ref_resolution.policy.to_dict()
+            has_authoritative_replacement = True
         elif (
             before_resolution.resolved
             and before_resolution.policy is not None
             and isinstance(pool_meta.get("risk_policy"), Mapping)
         ):
             target_policy = deepcopy(dict(pool_meta["risk_policy"]))
-            if risk_policy_version is not None and str(risk_policy_version).strip():
+            if (
+                risk_policy_version is not None
+                and str(risk_policy_version).strip()
+                and str(risk_policy_version).strip() != str(target_policy.get("version") or "")
+            ):
+                is_default_baseline = str(before_resolution.risk_policy_id or "").startswith(
+                    ("rp-pool-", "paper-inline-policy:")
+                )
+                if not is_default_baseline or "expected_risk_policy_digest" in pool_meta:
+                    raise PersonaProvisioningCoordinationError(
+                        "CapitalPool risk policy repair rejected: version change on explicit or digest-pinned "
+                        "policy requires an authoritative replacement policy (risk_policy_stale)"
+                    )
                 target_policy["version"] = str(risk_policy_version).strip()
-        else:
+        elif before_resolution.status == "missing" and not has_existing_inline_or_markers:
             default_id = f"rp-{resolved_pool_id}"
             target_policy = self._default_paper_pool_risk_policy(
                 resolved_pool_id,
                 policy_id=default_id,
                 version=str(risk_policy_version or "1.0").strip() or "1.0",
             )
+        else:
+            raise PersonaProvisioningCoordinationError(
+                f"CapitalPool risk policy repair rejected: cannot replace or clear {before_resolution.status} "
+                f"policy without an authoritative approved replacement ({before_resolution.reason_code}): "
+                f"{before_resolution.reason}"
+            )
+
+        validation_meta = (
+            {"risk_policy": target_policy}
+            if has_authoritative_replacement
+            else {
+                **{
+                    k: pool_meta[k]
+                    for k in (
+                        "risk_policy_stale",
+                        "risk_policy_superseded_by",
+                        "risk_policy_expires_at",
+                        "risk_policy_effective_from",
+                        "expected_risk_policy_version",
+                        "expected_risk_policy_digest",
+                    )
+                    if k in pool_meta
+                },
+                "risk_policy": target_policy,
+            }
+        )
+        if has_authoritative_replacement and risk_policy_version is not None and str(risk_policy_version).strip():
+            validation_meta["expected_risk_policy_version"] = str(risk_policy_version).strip()
 
         target_validation = resolve_pool_risk_policy_binding(
             capital_pool_id=resolved_pool_id,
@@ -4389,11 +4516,12 @@ class PersonaProvisioningCoordinator:
                 "pool_id": resolved_pool_id,
                 "tenant_id": tenant_id,
                 "risk_policy_ref": clean_ref,
-                "metadata": {"risk_policy": target_policy},
+                "metadata": validation_meta,
             },
             expected_tenant_id=tenant_id,
             expected_stage="paper",
             requested_profile=effective_profile,
+            require_approved_profile_mapping=require_approved_profile_mapping,
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
@@ -4422,12 +4550,14 @@ class PersonaProvisioningCoordinator:
                 "risk_policy_repaired_by": self.actor_id,
                 "risk_policy_requested_by": requested_by,
             }
-            updated_meta.pop("risk_policy_stale", None)
-            updated_meta.pop("risk_policy_superseded_by", None)
-            updated_meta.pop("risk_policy_expires_at", None)
+            if has_authoritative_replacement:
+                updated_meta["risk_policy_stale"] = False
+                updated_meta["risk_policy_superseded_by"] = None
+                updated_meta["risk_policy_expires_at"] = None
+                updated_meta["risk_policy_effective_from"] = None
             if "expected_risk_policy_version" in updated_meta:
                 updated_meta["expected_risk_policy_version"] = str(target_policy.get("version") or "1.0")
-            if "expected_risk_policy_digest" in updated_meta:
+            if has_authoritative_replacement and "expected_risk_policy_digest" in updated_meta:
                 updated_meta["expected_risk_policy_digest"] = target_validation.risk_policy_digest
             self.transport.patch(
                 "capital",
@@ -4457,6 +4587,7 @@ class PersonaProvisioningCoordinator:
                 expected_tenant_id=tenant_id,
                 expected_stage="paper",
                 requested_profile=effective_profile,
+                require_approved_profile_mapping=require_approved_profile_mapping,
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,

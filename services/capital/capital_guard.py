@@ -221,14 +221,21 @@ class CapitalGuard:
             proposal_lines=proposal_lines, bindings=bindings,
         ):
             if str(getattr(pool, "risk_policy_ref", None) or "").strip():
-                self._require_risk_policy(pool, target_type, target_id, contexts, tenant=tenant)
+                self._require_risk_policy(
+                    pool, target_type, target_id, contexts, tenant=tenant,
+                    decision_id=decision_id, binding=binding,
+                )
             else:
                 self._require_inline_paper_risk_policy(
-                    pool, target_type, target_id, contexts, tenant=tenant, binding=binding
+                    pool, target_type, target_id, contexts, tenant=tenant,
+                    binding=binding, decision_id=decision_id,
                 )
             return
         self._require_safe_mode(pool.pool_id)
-        self._require_risk_policy(pool, target_type, target_id, contexts, tenant=tenant)
+        self._require_risk_policy(
+            pool, target_type, target_id, contexts, tenant=tenant,
+            decision_id=decision_id, binding=binding,
+        )
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -248,6 +255,7 @@ class CapitalGuard:
         *,
         tenant: str,
         binding: Any = None,
+        decision_id: Optional[str] = None,
     ) -> None:
         pool_meta = getattr(pool, "metadata", None)
         if not isinstance(pool_meta, Mapping):
@@ -282,6 +290,8 @@ class CapitalGuard:
             expected_stage="paper",
             require_active=True,
             require_limits=("gross_limit",),
+            approval_decision_id=decision_id,
+            approval_reader=self._approval_reader,
             raise_on_error=False,
         )
         if not resolution.resolved or resolution.policy is None:
@@ -320,27 +330,39 @@ class CapitalGuard:
         contexts: Sequence[Mapping[str, Any]],
         *,
         tenant: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        binding: Any = None,
     ) -> None:
         ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
         try:
             raw_loaded = self._policy_loader(ref)
             policy = RiskPolicy.from_mapping(raw_loaded)
-            policy_meta = dict(policy.metadata) if isinstance(policy.metadata, Mapping) else {}
-            pool_meta = getattr(pool, "metadata", None) if isinstance(getattr(pool, "metadata", None), Mapping) else {}
-            policy_tenant = str(policy_meta.get("tenant_id") or "").strip()
-            if tenant and policy_tenant and policy_tenant != tenant:
-                raise CapitalGuardError(
-                    f"Risk policy rejected: policy tenant {policy_tenant!r} does not match pool tenant {tenant!r} (risk_policy_wrong_tenant)"
+            binding_map = (
+                dict(binding)
+                if isinstance(binding, Mapping)
+                else (
+                    {"tenant_id": getattr(binding, "tenant_id", None)}
+                    if binding is not None and getattr(binding, "tenant_id", None)
+                    else None
                 )
-            raw_status = str(policy.status or "").strip().lower()
-            if raw_status in {"stale", "superseded", "expired"} or policy_meta.get("stale") is True or policy_meta.get("superseded_by"):
+            )
+            resolution = resolve_pool_risk_policy_binding(
+                capital_pool_id=str(getattr(pool, "pool_id", "") or ""),
+                pool=pool,
+                binding=binding_map,
+                risk_policy_ref=ref or str(policy.risk_policy_id or "risk-policy-ref"),
+                risk_policy_loader=lambda _ref: raw_loaded,
+                expected_tenant_id=tenant,
+                expected_stage=None,
+                require_active=True,
+                require_limits=(),
+                approval_decision_id=decision_id,
+                approval_reader=self._approval_reader,
+                raise_on_error=False,
+            )
+            if not resolution.resolved or resolution.policy is None:
                 raise CapitalGuardError(
-                    f"Risk policy rejected: policy {policy.risk_policy_id!r} is stale or superseded (risk_policy_stale)"
-                )
-            expected_ver = str(pool_meta.get("expected_risk_policy_version") or "").strip()
-            if expected_ver and str(policy.version) != expected_ver:
-                raise CapitalGuardError(
-                    f"Risk policy rejected: policy {policy.risk_policy_id!r} version {policy.version!r} does not match expected {expected_ver!r} (risk_policy_stale)"
+                    f"Risk policy rejected: {resolution.reason} ({resolution.reason_code})"
                 )
             for context in contexts:
                 result = RiskPolicyEvaluator().evaluate(policy, {

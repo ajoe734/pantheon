@@ -10,6 +10,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from services.capital.risk_policy import (
     POLICY_DIGEST_FIELDS,
+    POLICY_PROVENANCE_DIGEST_KEYS,
     BoundPoolRiskPolicyResolution,
     RiskPolicy,
     RiskPolicyCheck,
@@ -33,6 +34,7 @@ from services.capital.risk_policy import (
 
 __all__ = [
     "POLICY_DIGEST_FIELDS",
+    "POLICY_PROVENANCE_DIGEST_KEYS",
     "BoundPoolRiskPolicyResolution",
     "RiskPolicy",
     "RiskPolicyCheck",

@@ -3330,3 +3330,119 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
             capital_pool_id=ids_rep.capital_pool_id,
         )
 
+
+def test_coordinator_ref_only_creation_and_stale_custom_policy_repair_preserve_authoritative_contract(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+
+    # 1. Ref-only creation resolves rp-custom v2/gross=0.5 through CAPITAL_RISK_POLICY_DIR owner without synthetic v1 snapshot
+    policy_dir = tmp_path / "risk_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    custom_ref_policy = {
+        "risk_policy_id": "rp-custom",
+        "version": "2.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity"],
+        "gross_limit": 0.5,
+        "net_limit": 0.5,
+        "max_leverage": 1.0,
+        "max_single_name_weight": 0.2,
+        "max_sector_exposure": {"tech": 0.1},
+        "metadata": {"tenant_id": "tenant-a"},
+    }
+    (policy_dir / "rp-custom.json").write_text(json.dumps(custom_ref_policy), encoding="utf-8")
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+
+    store_ref, record_ref = _record_and_store({"risk_policy_ref": "rp-custom"})
+    tx_ref = FakeOwnerTransport()
+    res_ref = _coordinator(store_ref, tx_ref, _schedule_receipt).coordinate(record_ref)
+    assert res_ref.state == "provisioning", res_ref.error
+    created_ref_pool = _post_payload(tx_ref, "/api/capital-pools")
+    assert created_ref_pool["risk_policy_ref"] == "rp-custom"
+    assert created_ref_pool["metadata"]["risk_policy"]["risk_policy_id"] == "rp-custom"
+    assert created_ref_pool["metadata"]["risk_policy"]["version"] == "2.0"
+    assert created_ref_pool["metadata"]["risk_policy"]["gross_limit"] == 0.5
+    assert created_ref_pool["metadata"]["risk_policy"]["max_sector_exposure"] == {"tech": 0.1}
+
+    # 2. Repair of an expired custom inline policy WITHOUT a supplied replacement fails closed and does not replace with 2.0 default
+    store_stale, record_stale = _record_and_store()
+    ids_stale = deterministic_provisioning_ids(record_stale)
+    tx_stale = FakeOwnerTransport()
+    stale_pool_path = f"/api/capital-pools/{ids_stale.capital_pool_id}"
+    expired_custom_inline = {
+        "risk_policy_id": "rp-custom-restrictive",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity"],
+        "gross_limit": 0.5,
+        "net_limit": 0.5,
+        "max_leverage": 1.0,
+        "max_sector_exposure": {"tech": 0.1},
+        "expires_at": "2020-01-01T00:00:00Z",
+    }
+    tx_stale.objects[("capital", stale_pool_path)] = {
+        "pool_id": ids_stale.capital_pool_id,
+        "owner_id": record_stale.tenant_id,
+        "tenant_id": record_stale.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "USD",
+        "budget": 25000,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": record_stale.tenant_id,
+            "persona_id": record_stale.persona_id,
+            "risk_policy_stale": True,
+            "risk_policy": dict(expired_custom_inline),
+        },
+    }
+    coord_stale = _coordinator(store_stale, tx_stale, _schedule_receipt)
+    with pytest.raises(PersonaProvisioningCoordinationError, match="risk_policy_stale"):
+        coord_stale.repair_paper_pool_risk_policy(
+            tenant_id=record_stale.tenant_id,
+            persona_id=record_stale.persona_id,
+        )
+    assert tx_stale.mutations[("capital", f"{stale_pool_path}/status")] == 0
+    persisted_after_reject = tx_stale.objects[("capital", stale_pool_path)]
+    assert persisted_after_reject["metadata"]["risk_policy"]["risk_policy_id"] == "rp-custom-restrictive"
+    assert persisted_after_reject["metadata"]["risk_policy"]["gross_limit"] == 0.5
+    assert persisted_after_reject["metadata"]["risk_policy_stale"] is True
+
+    # 3. Repair with an authoritative replacement (via owner risk_policy_ref or explicit policy) succeeds and preserves restrictive limits
+    repaired_via_ref = coord_stale.repair_paper_pool_risk_policy(
+        tenant_id=record_stale.tenant_id,
+        persona_id=record_stale.persona_id,
+        risk_policy_ref="rp-custom",
+    )
+    assert repaired_via_ref["repaired"] is True
+    assert repaired_via_ref["after_resolution"]["resolved"] is True
+    assert repaired_via_ref["after_resolution"]["risk_policy_id"] == "rp-custom"
+    assert repaired_via_ref["after_resolution"]["risk_policy_version"] == "2.0"
+    assert repaired_via_ref["after_resolution"]["effective_limits"]["gross_limit"] == 0.5
+    assert repaired_via_ref["after_resolution"]["effective_limits"]["max_sector_exposure"] == {"tech": 0.1}
+
+    # 4. Changing max_sector_exposure tech 0.1 -> 0.9 changes digest so repair detects non-convergence and updates
+    updated_sector_policy = {
+        **custom_ref_policy,
+        "max_sector_exposure": {"tech": 0.9},
+    }
+    (policy_dir / "rp-custom.json").write_text(json.dumps(updated_sector_policy), encoding="utf-8")
+    repaired_sector = coord_stale.repair_paper_pool_risk_policy(
+        tenant_id=record_stale.tenant_id,
+        persona_id=record_stale.persona_id,
+        risk_policy_ref="rp-custom",
+    )
+    assert repaired_sector["repaired"] is True
+    assert repaired_sector["idempotent_noop"] is False
+    assert (
+        repaired_sector["after_resolution"]["risk_policy_digest"]
+        != repaired_via_ref["after_resolution"]["risk_policy_digest"]
+    )
+    assert repaired_sector["after_resolution"]["effective_limits"]["max_sector_exposure"] == {"tech": 0.9}
+
+

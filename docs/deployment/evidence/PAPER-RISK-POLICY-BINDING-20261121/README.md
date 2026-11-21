@@ -5,7 +5,7 @@
 - **Provenance Input:** `PAPER-RISK-POLICY-PROVENANCE-20261121` (`docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/`)
 - **Owner:** `Antigravity2`
 - **Reviewer:** `Codex2`
-- **Delivery State:** `merged` (pending hosted dev deploy and post-deploy acceptance probe execution under `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`)
+- **Delivery State:** open PR `#7726` (`in_review`, not yet merged or deployed to hosted dev; post-deploy hosted binding proof remains pending under `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`)
 
 ## 1. Provenance-Backed Root Causes and Implemented Repairs
 
@@ -15,36 +15,34 @@ As established by `PAPER-RISK-POLICY-PROVENANCE-20261121`:
 
 1. **Requested Profile Translation:**
    - `POST /bff/personas` accepts `risk` (or `risk_level` / `risk_profile.risk_level`) and `risk_policy_ref` / `riskPolicyRef`.
-   - `services/control-plane/bff/personas/service.py::_persona_create_canonical_payload` now normalizes `riskPolicyRef` into `risk_policy_ref` even when an explicit `"risk_policy_ref": null` key is present in the payload, and normalizes `risk` from `risk_level` / `risk_profile.risk_level` when `risk` is omitted.
+   - `services/control-plane/bff/personas/service.py::_persona_create_canonical_payload` normalizes `riskPolicyRef` into `risk_policy_ref` even when an explicit `"risk_policy_ref": null` key is present in the payload, and normalizes `risk` from `risk_level` / `risk_profile.risk_level` when `risk` is omitted.
    - During artifact construction, the persona's requested risk profile translates to `StrategyArtifact.expression_policy.risk_profile` (`execution_style`) for signal expression.
 2. **Where Effective Financial Limits and Policy Version Are Read:**
-   - Pool-level financial limits (`gross_limit`, `net_limit`, `max_leverage`, `max_single_name_weight`, `allowed_stages`, `allowed_asset_classes`, `forbidden_asset_classes`, `drawdown_actions`, `liquidity_constraints`) and `version` are owned by `services/capital/risk_policy.py` (re-exported at `services/control-plane/governance/risk_policy.py`).
+   - Pool-level financial limits (`gross_limit`, `net_limit`, `max_leverage`, `max_single_name_weight`, `max_sector_exposure`, `max_factor_exposure`, `turnover_limit`, strategy-family and correlation controls, `allowed_stages`, `allowed_asset_classes`, `forbidden_asset_classes`, `drawdown_actions`, `liquidity_constraints`) and `version` are owned by `services/capital/risk_policy.py` (re-exported at `services/control-plane/governance/risk_policy.py`).
    - At runtime, `services/execution/lean_runtime/expression_inputs.py::ExpressionInputsProvider` and `services/execution/lean_runtime/paper_runtime.py::PaperExecutionAlgorithm` call `services/capital/risk_policy.py::resolve_bound_pool_risk_policy` against the bound `CapitalPool` record (`/api/capital-pools/{pool_id}`).
    - `resolve_bound_pool_risk_policy` gives an explicit `CapitalPool.risk_policy_ref` precedence over `CapitalPool.metadata.risk_policy`, and never reads risk policy limits from signal metadata.
-3. **Whole-Pool Fallback Removal & Unapproved Profile Mapping Surfacing:**
-   - Previously, `resolve_bound_pool_risk_policy` fell back to `normalize_risk_policy(pool_obj)` when a `CapitalPool` mapping had neither `risk_policy_ref` nor `metadata.risk_policy`, turning a policy-free pool record or empty `{}` `metadata.risk_policy` into `RiskPolicy(risk_policy_id="risk-policy-inline", status="active", gross_limit=None)`.
-   - `resolve_bound_pool_risk_policy` and `resolve_pool_risk_policy_binding` now reject pool-envelope mappings without policy content (`status="missing"`, `reason_code="risk_policy_missing"`) and reject empty `{}` or malformed inline `risk_policy` objects (`status="invalid"`, `reason_code="risk_policy_invalid"`).
-   - When `require_approved_profile_mapping=True` and no explicit approved `risk_policy` or `risk_policy_ref` is bound for the requested profile label (such as `risk="low"`), `resolve_pool_risk_policy_binding` and `PersonaProvisioningCoordinator.repair_paper_pool_risk_policy` do **not** invent arbitrary numeric single-name or cash-reserve percentages; they return `status="unresolved_profile_mapping"` (`reason_code="risk_policy_profile_mapping_unapproved"`) and surface `owner_decision_request` to `services/capital/risk_policy.py`.
+3. **Whole-Pool Fallback Removal & Policy-Owner Profile Mapping Verification:**
+   - `resolve_bound_pool_risk_policy` and `resolve_pool_risk_policy_binding` reject pool-envelope mappings without policy content (`status="missing"`, `reason_code="risk_policy_missing"`) and reject empty `{}` or malformed inline `risk_policy` objects (`status="invalid"`, `reason_code="risk_policy_invalid"`).
+   - When `require_approved_profile_mapping=True` (whether on a policy-free pool or on a pool carrying an inline `rp-pool-*` / `paper-inline-policy:*` baseline), `resolve_pool_risk_policy_binding` connects to the tenant-scoped policy-owner decision readback (`_verify_policy_owner_approval_decision` via `approval_reader` / `approval_decisions` / `capital_pool_activation` `ApprovalDecision` or owner policy store readback). Unapproved baseline mappings fail closed (`resolved=False`, `status="unresolved_profile_mapping"`, `reason_code="risk_policy_profile_mapping_unapproved"`, `allow_new_or_increased_risk=False`) and surface `owner_decision_request` to `services/capital/risk_policy.py`, while genuinely approved explicit contracts resolved through the policy owner are preserved.
 
-### 1.2 Capital Guard, Approval Digest Binding, and Risk-Reducing Availability
+### 1.2 Capital Guard, Full-Contract Digest Binding, and Risk-Reducing Availability
 
-1. **Approval Digest Includes Inline Policy Digest:**
-   - `services/capital/main.py::pool_digest` now hashes `risk_policy_digest(pool.metadata["risk_policy"])` whenever an inline `metadata.risk_policy` mapping is present on a `CapitalPool`, binding `CapitalPool.approval_digest` to the exact financial policy contents while leaving pools without inline `metadata.risk_policy` byte-identical.
-2. **Fail-Closed Paper Risk-Increasing Guard (`services/capital/capital_guard.py`):**
-   - `CapitalGuard.authorize` validates inline `metadata.risk_policy` (or `risk_policy_ref`) on paper risk-increasing operations (`POST /api/capital-pools`, `PATCH /api/capital-pools/{pool_id}/status` with `status="active"`, `POST /api/bindings/{binding_id}/activate`, and risk-increasing `rebalance_apply`).
-   - Inline paper validation executes in-memory with zero external reader calls (`_policy_loader`, `_safe_mode_reader`, `_approval_reader` remain uncalled when `risk_policy_ref` is null) and rejects missing, invalid, inactive, wrong-stage, negative-limit, stale, wrong-tenant, or unmapped required policies with `403 Forbidden` (`allow_new_or_increased_risk=False`).
+1. **Full Executable Dimension & Provenance Digest (`risk_policy_digest` & `pool_digest`):**
+   - `services/capital/risk_policy.py::risk_policy_digest` hashes all executable dimensions in `POLICY_DIGEST_FIELDS` (including `max_sector_exposure`, `max_factor_exposure`, `turnover_limit`, `allowed_strategy_families`, `forbidden_strategy_families`, `max_strategy_family_concentration`, `max_target_overlap`, `max_signal_correlation`, `max_canary_capital_scale_pct`, `max_canary_gross_scale_pct`, order/TIF/liquidity/drawdown/pause/liquidation/kill-switch controls) plus approval-relevant provenance in `POLICY_PROVENANCE_DIGEST_KEYS` (`tenant_id`, `effective_from`, `effective_to`, `expires_at`, `superseded_by`, `stale`, `requested_profile`, `risk_profile`, `explicit_policy`).
+   - `services/capital/main.py::pool_digest` hashes `risk_policy_digest(pool.metadata["risk_policy"])` whenever an inline `metadata.risk_policy` mapping is present on a `CapitalPool`, binding `CapitalPool.approval_digest` and repair convergence to the full effective contract.
+2. **Fail-Closed Paper & Referenced Risk-Increasing Guard (`services/capital/capital_guard.py`):**
+   - `CapitalGuard.authorize` validates both referenced (`risk_policy_ref` via `_require_risk_policy`) and inline (`metadata.risk_policy` via `_require_inline_paper_risk_policy`) policies through the common complete validator `resolve_pool_risk_policy_binding`, enforcing expiry (`expires_at` / `effective_to`), effective window (`effective_from`), expected version/digest, tenant isolation, active status, stage, scalar/flex limits, and required profile mapping approval.
 3. **Risk-Reducing Actions Remain Available (`allow_risk_reducing_actions=True`):**
-   - Suspending or archiving a pool (`PATCH /api/capital-pools/{pool_id}/status` with `status="suspended"` or `"archived"`), suspending or revoking a binding (`PATCH /api/bindings/{binding_id}/status` with `status="suspended"` or `"revoked"`), applying a risk-decreasing rebalance, and freezing containment never call `CapitalGuard.authorize` and remain available even when a pool's risk policy is missing, invalid, stale, or wrong-tenant.
+   - Suspending or archiving a pool (`PATCH /api/capital-pools/{pool_id}/status` with `status="suspended"` or `"archived"`), suspending or revoking a binding (`PATCH /api/bindings/{binding_id}/status` with `status="suspended"` or `"revoked"`), applying a risk-decreasing rebalance, and freezing containment never call `CapitalGuard.authorize` and remain available even when a pool's inline or referenced risk policy is missing, invalid, expired, stale, or wrong-tenant.
 
-### 1.3 Lifecycle Coverage: New Pools, Existing Pools, Retries, Rebinding, Renewal, and Active `RuntimeBinding` Projection
+### 1.3 Lifecycle Coverage: New Pools, Ref-Only Creation, Existing Pools, Retries, Rebinding, Renewal, and Active `RuntimeBinding` Projection
 
 1. **Provisioning & Governed Repair (`services/control-plane/bff/persona_provisioning_coordinator.py`):**
-   - `_coordinate_capital_pool` preserves legitimate explicit `risk_policy` / `risk_policy_ref` contracts on new pool creation, repairs missing or outdated policies on existing pools during retry/rebinding via `PATCH /api/capital-pools/{pool_id}/status`, and validates the effective policy on authoritative GET readback.
-   - `publish_pool_envelope` verifies that the bound `CapitalPool`'s risk policy is resolved, active, paper-stage, and tenant-matched before creating or dispatching a replacement `DeploymentPlan`.
-   - `repair_paper_pool_risk_policy` (exposed at `POST /bff/personas/{persona_id}/provisioning/paper-capital/risk-policy`, alongside `GET /api/capital-pools/{pool_id}/risk-policy`) provides idempotent governed repair and readback for dev paper pools. Once converged, subsequent calls return `idempotent_noop=True, repaired=False` with zero `PATCH` writes.
+   - `_resolve_requested_pool_risk_policy` resolves ref-only creation (`risk_policy_ref` without inline `risk_policy`) through the policy owner (`CAPITAL_RISK_POLICY_DIR` / `load_risk_policy`) and preserves the owner's contract in `metadata.risk_policy` instead of writing a synthetic v1 `2.0` default snapshot.
+   - `repair_paper_pool_risk_policy` (exposed at `POST /bff/personas/{persona_id}/provisioning/paper-capital/risk-policy`, alongside `GET /api/capital-pools/{pool_id}/risk-policy`) repairs genuinely missing policies on legacy paper pools and applies authoritative replacements (`risk_policy` or owner-resolved `risk_policy_ref`), but refuses to replace stale, expired, invalid, or foreign policy contents with the `2.0` default or clear stale markers when no authoritative replacement is supplied. Once converged, subsequent calls return `idempotent_noop=True, repaired=False` with zero `PATCH` writes.
 2. **Historical Registry Admission Expiry vs. Ongoing Renewal Semantics:**
    - `ApprovalDecision` records with `target_type="registry_entry"` carry a 24-hour candidate admission `expires_at` window consumed when `advance_artifact_state` transitions the candidate `RegistryEntry` to `approved`. That historical admission timestamp does not revoke an already-approved running strategy artifact.
-   - Ongoing paper pool trading, rebinding, and pool-envelope renewal are governed by active `CapitalPool` status, active non-stale `RiskPolicy` (`status="active"`, matching version/digest, unexpired policy `expires_at`/`effective_to`), and `PersonaCapitalBinding` effective window (`effective_from`/`effective_to`).
+   - Ongoing paper pool trading, rebinding, and pool-envelope renewal are governed by active `CapitalPool` status, active non-stale `RiskPolicy` (`status="active"`, matching version/digest, effective window `effective_from`..`expires_at`/`effective_to`), and `PersonaCapitalBinding` effective window (`effective_from`/`effective_to`).
 3. **Active Replacement `RuntimeBinding` (`runtimeBindingId`) Projection:**
    - `services/control-plane/bff/personas/service.py::_resolve_active_runtime_binding_overlay` and `services/control-plane/bff/personas/routes/detail.py::bff_get_persona` resolve active replacement `RuntimeBinding`s (via `replacement_parent_binding_id` / `replaces_binding_id`) so `GET /bff/personas/{persona_id}` (`runtimeBindingId`) projects the active v2 pool-envelope binding instead of the retired v1 binding.
 4. **Deployment & Runtime-Manager Verification (`services/deployment/service.py`, `services/runtime-manager/deploy_authority.py`, `services/runtime-manager/fleet_desired_state.py`):**
@@ -58,15 +56,15 @@ All cases below are captured in [evidence.json](evidence.json) under `case_demon
 |---|---|---|---|---|---|
 | `missing` | `missing` | `risk_policy_missing` | `false` | `true` | Pool has neither `risk_policy_ref` nor `metadata.risk_policy`; no whole-pool fallback |
 | `invalid` | `invalid` | `risk_policy_invalid_limit` / `risk_policy_invalid` | `false` | `true` | Empty `{}`, negative/non-positive limit (`gross_limit=-1.0`), inactive status, or non-paper stage |
-| `stale` | `stale` | `risk_policy_stale` | `false` | `true` | Expired `expires_at`, `superseded_by`, or version/digest drift against expected/authoritative version |
+| `stale` | `stale` | `risk_policy_stale` | `false` | `true` | Expired `expires_at`, outside `effective_from`, `superseded_by`, or version/digest drift |
 | `wrong_tenant` | `wrong_tenant` | `risk_policy_wrong_tenant` | `false` | `true` | Policy or pool `tenant_id` (`tenant-foreign`) mismatches expected tenant (`tenant-dev`) |
-| `valid` | `valid` | `null` | `true` | `true` | Active paper baseline policy (`gross_limit=2.0`, `net_limit=2.0`, `max_leverage=2.0`, `version="1.0"`) |
-| `explicit_policy` | `valid` (`explicit_policy`) | `null` | `true` | `true` | Explicit policy contract (`rp-explicit-paper-custom` v2.1, `gross_limit=1.5`, `max_single_name_weight=0.25`) preserved |
-| `unresolved_profile_mapping` | `unresolved_profile_mapping` | `risk_policy_profile_mapping_unapproved` | `false` | `true` | Surfaces `owner_decision_request` to `services/capital/risk_policy.py` without inventing percentages |
+| `valid` | `valid` | `null` | `true` | `true` | Active paper baseline policy (`gross_limit=2.0`, `net_limit=2.0`, `max_leverage=2.0`, `version="1.0"`) when profile mapping gate is not required |
+| `explicit_policy` | `valid` (`explicit_policy`) | `null` | `true` | `true` | Explicit policy contract (`rp-explicit-paper-custom` v2.1, `gross_limit=1.5`, `max_single_name_weight=0.25`) resolved through owner and preserved |
+| `unresolved_profile_mapping` | `unresolved_profile_mapping` | `risk_policy_profile_mapping_unapproved` | `false` | `true` | Both policy-free pools and inline `rp-pool-persona-paper-*` baselines with `requested_profile="low"` and `require_approved_profile_mapping=True` fail closed and surface `owner_decision_request` without an owner `capital_pool_activation` decision |
 
-## 3. Three-Persona Dev Cohort Resolution and Probe Verification
+## 3. Three-Persona Dev Cohort Provenance Readback vs. Synthetic Approval Simulation
 
-Executed against the three enrolled dev paper personas from `PAPER-RISK-POLICY-PROVENANCE-20261121` (full output in [evidence.json](evidence.json)):
+Evaluated against the three enrolled dev paper personas captured in `PAPER-RISK-POLICY-PROVENANCE-20261121` from hosted backend `b66d17afc05e72a7010369264ecf1ca8d7f9b9e6` (full output in [evidence.json](evidence.json)):
 
 | Persona | Capital Pool ID | Policy ID & Version | Repaired `runtimeBindingId` (from stale v1 -> active v2) | Runtime `gross_limit` Budget (TWD) |
 |---|---|---|---|---|
@@ -74,8 +72,9 @@ Executed against the three enrolled dev paper personas from `PAPER-RISK-POLICY-P
 | 澄川 / `persona-6507750312870d03a241` | `pool-persona-paper-039ad01f8bcd2b4aa466` | `rp-pool-persona-paper-039ad01f8bcd2b4aa466` @ `1.0` | `rb-7f3c1be55a224fdaa36bbdd7a7532b4b` -> `rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4` | `200000.0` (`2.0 * 100000.0`) |
 | 衡岳 / `persona-ee7112a829d38b9135ac` | `pool-persona-paper-a81b4fd15944698341aa` | `rp-pool-persona-paper-a81b4fd15944698341aa` @ `1.0` | `rb-3516fc86e6f84649a499fc89f3c562b3` -> `rb-2b0df30559154a93902c209b0318d95c` | `200000.0` (`2.0 * 100000.0`) |
 
-- **Probe Run A (`probe_without_owner_mapping_approval` in `evidence.json`):** `checked=3`, `effective_policy` resolved (`policy_errors == []`) and `persona_display_binding_id == binding_id` for all 3 personas; fails closed with `required_profile_mapping_unresolved` until an authoritative `capital_pool_activation` mapping decision is recorded by the risk policy owner.
-- **Probe Run B (`probe_with_owner_mapping_approval` in `evidence.json`):** With the owner-approved `capital_pool_activation` decision bound to `pool.approval_digest` (which now includes `risk_policy_digest`), `passed=true, checked=3, failed=[]`.
+- **Actual Hosted Provenance State (`probe_without_owner_mapping_approval` in `evidence.json`):** Replaying `acceptance/probes/paper-risk-policy-binding` against the actual hosted readback (`0` matching `capital_pool_activation` profile-mapping decisions among the 697 hosted governance decisions) checks all 3 personas (`checked=3`), resolves each `effective_policy` (`policy_errors == []`) and active `runtimeBindingId`, and fails closed (`passed=false`) with `required_profile_mapping_unresolved` (matching `resolve_pool_risk_policy_binding(..., require_approved_profile_mapping=True)` returning `status="unresolved_profile_mapping"`).
+- **Local Synthetic Approval Simulation (`synthetic_probe_with_fixture_owner_mapping_approval` in `evidence.json`):** Not a hosted observation. Demonstrates in-memory that when synthetic fixture `capital_pool_activation` decisions binding `pool.approval_digest` and `risk_policy_digest` are supplied to the probe and resolver, `passed=true, checked=3, failed=[]`.
+- **Pending Hosted Post-Deploy Proof:** Live hosted dev deployment and post-deploy execution of `acceptance/probes/paper-risk-policy-binding` remain pending under `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`.
 
 ## 4. Runtime Budget & Storage Manifest Registration
 

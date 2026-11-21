@@ -691,3 +691,241 @@ def test_paper_pool_inline_policy_enforces_valid_rejects_missing_invalid_stale_w
     assert repaired_reactivate.status_code == 200
     assert repaired_reactivate.json()["status"] == "active"
 
+
+def test_ref_policy_enforces_expiry_effective_window_and_digest_and_preserves_risk_reducing_actions(
+    client, monkeypatch
+) -> None:
+    from services.capital.risk_policy import risk_policy_digest
+
+    test_client, _ = client
+    active_ref_policy = {
+        "risk_policy_id": "rp-ref-windowed",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 1.0,
+        "net_limit": 1.0,
+        "max_leverage": 1.0,
+    }
+
+    # 1. Referenced status=active policy expired in 2020 is rejected on paper pool creation
+    monkeypatch.setattr(
+        _main().capital_guard,
+        "_policy_loader",
+        lambda ref: {**active_ref_policy, "risk_policy_id": ref, "expires_at": "2020-01-01T00:00:00Z"},
+    )
+    expired_create = test_client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "admin",
+            "pool_id": "pool-ref-expired-2020",
+            "name": "Expired ref pool",
+            "owner_id": "tenant-test",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "risk_policy_ref": "rp-ref-windowed",
+            "metadata": {"execution_context": "paper"},
+        },
+    )
+    assert expired_create.status_code == 403
+    assert "risk_policy_stale" in expired_create.json()["detail"]
+
+    # 2. Referenced policy with future effective_from is rejected
+    monkeypatch.setattr(
+        _main().capital_guard,
+        "_policy_loader",
+        lambda ref: {**active_ref_policy, "risk_policy_id": ref, "effective_from": "2099-01-01T00:00:00Z"},
+    )
+    future_create = test_client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "admin",
+            "pool_id": "pool-ref-future",
+            "name": "Future ref pool",
+            "owner_id": "tenant-test",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "risk_policy_ref": "rp-ref-windowed",
+            "metadata": {"execution_context": "paper"},
+        },
+    )
+    assert future_create.status_code == 403
+    assert "risk_policy_stale" in future_create.json()["detail"]
+
+    # 3. Valid unexpired referenced policy succeeds; subsequent expiry or digest drift blocks reactivation while keeping suspend available
+    monkeypatch.setattr(
+        _main().capital_guard,
+        "_policy_loader",
+        lambda ref: {**active_ref_policy, "risk_policy_id": ref, "expires_at": "2099-01-01T00:00:00Z"},
+    )
+    valid_create = test_client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "admin",
+            "pool_id": "pool-ref-valid-then-expired",
+            "name": "Valid ref pool",
+            "owner_id": "tenant-test",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "risk_policy_ref": "rp-ref-windowed",
+            "metadata": {
+                "execution_context": "paper",
+                "expected_risk_policy_digest": risk_policy_digest(
+                    {**active_ref_policy, "expires_at": "2099-01-01T00:00:00Z"}
+                ),
+            },
+        },
+    )
+    assert valid_create.status_code == 201
+
+    # Policy subsequently expires in 2020: risk-reducing suspend succeeds, risk-increasing reactivation fails closed
+    monkeypatch.setattr(
+        _main().capital_guard,
+        "_policy_loader",
+        lambda ref: {**active_ref_policy, "risk_policy_id": ref, "expires_at": "2020-01-01T00:00:00Z"},
+    )
+    suspend_expired = test_client.patch(
+        "/api/capital-pools/pool-ref-valid-then-expired/status",
+        json={"actor_id": "control-plane-bff", "actor_role": "capital.admin", "status": "suspended"},
+    )
+    assert suspend_expired.status_code == 200
+    assert suspend_expired.json()["status"] == "suspended"
+
+    reactivate_expired = test_client.patch(
+        "/api/capital-pools/pool-ref-valid-then-expired/status",
+        json={"actor_id": "control-plane-bff", "actor_role": "capital.admin", "status": "active"},
+    )
+    assert reactivate_expired.status_code == 403
+    assert "risk_policy_stale" in reactivate_expired.json()["detail"]
+
+    # Digest drift (e.g. changing max_sector_exposure tech 0.1 -> 0.9) on referenced policy is also rejected
+    monkeypatch.setattr(
+        _main().capital_guard,
+        "_policy_loader",
+        lambda ref: {
+            **active_ref_policy,
+            "risk_policy_id": ref,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "max_sector_exposure": {"tech": 0.9},
+        },
+    )
+    reactivate_digest_drift = test_client.patch(
+        "/api/capital-pools/pool-ref-valid-then-expired/status",
+        json={"actor_id": "control-plane-bff", "actor_role": "capital.admin", "status": "active"},
+    )
+    assert reactivate_digest_drift.status_code == 403
+    assert "risk_policy_stale" in reactivate_digest_drift.json()["detail"]
+
+
+def test_capital_guard_rejects_unapproved_inline_baseline_when_profile_mapping_required_and_accepts_owner_approval(
+    client, monkeypatch
+) -> None:
+    from services.capital.risk_policy import risk_policy_digest
+
+    test_client, _ = client
+    baseline_inline = {
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    # Creating or activating with inline baseline + require_approved_profile_mapping=True and no approval fails closed
+    unapproved_create = test_client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "admin",
+            "pool_id": "pool-baseline-unapproved",
+            "name": "Unapproved baseline paper pool",
+            "owner_id": "tenant-test",
+            "owner_type": "org",
+            "status": "active",
+            "currency": "TWD",
+            "budget": 100000.0,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "execution_context": "paper",
+                "requested_risk_profile": "low",
+                "require_approved_profile_mapping": True,
+                "risk_policy": baseline_inline,
+            },
+        },
+    )
+    assert unapproved_create.status_code == 403
+    assert "risk_policy_profile_mapping_unapproved" in unapproved_create.json()["detail"]
+
+    # Creating suspended (risk-reducing/non-active) succeeds, and activation succeeds once owner approval decision is present
+    suspended_create = test_client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "admin",
+            "pool_id": "pool-baseline-approved",
+            "name": "Approved baseline paper pool",
+            "owner_id": "tenant-test",
+            "owner_type": "org",
+            "status": "suspended",
+            "currency": "TWD",
+            "budget": 100000.0,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "execution_context": "paper",
+                "requested_risk_profile": "low",
+                "require_approved_profile_mapping": True,
+                "risk_policy": baseline_inline,
+            },
+        },
+    )
+    assert suspended_create.status_code == 201
+    pool_approval_digest = suspended_create.json()["approval_digest"]
+
+    no_approval_activate = test_client.patch(
+        "/api/capital-pools/pool-baseline-approved/status",
+        json={"actor_id": "control-plane-bff", "actor_role": "capital.admin", "status": "active"},
+    )
+    assert no_approval_activate.status_code == 403
+    assert "risk_policy_profile_mapping_unapproved" in no_approval_activate.json()["detail"]
+
+    owner_decision = approval_snapshot(
+        decision_id="apv-paper-baseline-low",
+        tenant_id="tenant-test",
+        target_type="capital_pool_activation",
+        target_id="pool-baseline-approved",
+        target_version=pool_approval_digest,
+        owner_user_id="proposer-1",
+        metadata={
+            "subject": {
+                "pool_id": "pool-baseline-approved",
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": baseline_inline["risk_policy_id"],
+                "risk_policy_version": baseline_inline["version"],
+                "risk_policy_digest": risk_policy_digest(baseline_inline),
+            },
+            "approvals": VOTES,
+        },
+    )
+    monkeypatch.setattr(_main().capital_guard, "_approval_reader", SnapshotApprovalReader(owner_decision))
+    approved_activate = test_client.patch(
+        "/api/capital-pools/pool-baseline-approved/status",
+        json={
+            "actor_id": "control-plane-bff",
+            "actor_role": "capital.admin",
+            "status": "active",
+            "approval_decision_id": "apv-paper-baseline-low",
+        },
+    )
+    assert approved_activate.status_code == 200
+    assert approved_activate.json()["status"] == "active"
+
+

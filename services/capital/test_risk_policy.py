@@ -505,4 +505,191 @@ def test_resolve_pool_risk_policy_binding_covers_missing_invalid_stale_wrong_ten
     assert owner_res.owner_decision_request["requested_profile"] == "aggressive"
 
 
+def test_required_profile_mapping_fails_closed_on_inline_baseline_and_connects_owner_decision_readback() -> None:
+    from services.capital.risk_policy import (
+        RiskPolicyLoadError,
+        resolve_pool_risk_policy_binding,
+        risk_policy_digest,
+    )
+
+    baseline_policy = {
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    pool_record = {
+        "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "tenant_id": "tenant-dev",
+        "approval_digest": "pool-activation-digest-001",
+        "metadata": {
+            "tenant_id": "tenant-dev",
+            "risk_policy": dict(baseline_policy),
+        },
+    }
+
+    # 1. Baseline inline policy does NOT bypass require_approved_profile_mapping=True
+    unapproved = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
+        pool=pool_record,
+        expected_tenant_id="tenant-dev",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert unapproved.resolved is False
+    assert unapproved.status == "unresolved_profile_mapping"
+    assert unapproved.reason_code == "risk_policy_profile_mapping_unapproved"
+    assert unapproved.profile_mapping_status == "unresolved_owner_decision_required"
+    assert unapproved.allow_new_or_increased_risk is False
+    assert unapproved.allow_risk_reducing_actions is True
+    assert unapproved.owner_decision_request is not None
+    assert unapproved.owner_decision_request["requested_profile"] == "low"
+    assert (
+        unapproved.owner_decision_request["candidate_risk_policy_id"]
+        == "rp-pool-persona-paper-06d4775a9b6a8f63b311"
+    )
+
+    # 2. Connecting the tenant-scoped policy-owner ApprovalDecision resolves the profile mapping
+    valid_decision = {
+        "decision_id": "apv-owner-low-001",
+        "tenant_id": "tenant-dev",
+        "target_type": "capital_pool_activation",
+        "target_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "target_version": "pool-activation-digest-001",
+        "decision_state": "decided",
+        "decision": "approved",
+        "authority_status": "authoritative",
+        "actor_role": "risk_owner",
+        "actor_id": "risk-owner-1",
+        "decided_at": "2026-11-20T00:00:00Z",
+        "expires_at": "2026-12-20T00:00:00Z",
+        "conditions": [],
+        "revoked_at": None,
+        "superseded_by": None,
+        "metadata": {
+            "subject": {
+                "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+                "requested_risk": "low",
+                "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(baseline_policy),
+            }
+        },
+    }
+    approved_res = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
+        pool=pool_record,
+        expected_tenant_id="tenant-dev",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_decision_id="apv-owner-low-001",
+        approval_reader=type("Reader", (), {"get": lambda self, dec_id: valid_decision if dec_id == "apv-owner-low-001" else None})(),
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert approved_res.resolved is True
+    assert approved_res.status == "valid"
+    assert approved_res.profile_mapping_status == "approved_profile_mapping"
+    assert approved_res.profile_mapping_approval_id == "apv-owner-low-001"
+    assert approved_res.allow_new_or_increased_risk is True
+    assert approved_res.owner_decision_request is None
+
+    # 3. Foreign-tenant, expired, wrong-digest, or registry_entry decisions fail closed
+    for bad_dec in [
+        {**valid_decision, "tenant_id": "tenant-other"},
+        {**valid_decision, "expires_at": "2020-01-01T00:00:00Z"},
+        {**valid_decision, "target_type": "registry_entry"},
+        {
+            **valid_decision,
+            "metadata": {
+                "subject": {
+                    **valid_decision["metadata"]["subject"],
+                    "risk_policy_digest": "0" * 64,
+                }
+            },
+        },
+    ]:
+        bad_res = resolve_pool_risk_policy_binding(
+            capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
+            pool=pool_record,
+            expected_tenant_id="tenant-dev",
+            requested_profile="low",
+            require_approved_profile_mapping=True,
+            approval_decisions=[bad_dec],
+            as_of="2026-11-21T00:00:00Z",
+        )
+        assert bad_res.resolved is False
+        assert bad_res.status == "unresolved_profile_mapping"
+        assert bad_res.reason_code == "risk_policy_profile_mapping_unapproved"
+
+    # 4. Genuinely approved explicit owner contract via risk_policy_ref is preserved
+    explicit_owner_policy = {
+        "risk_policy_id": "rp-explicit-owner-v2",
+        "version": "2.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.5,
+        "net_limit": 0.5,
+        "max_leverage": 1.0,
+        "max_single_name_weight": 0.2,
+        "metadata": {"tenant_id": "tenant-dev"},
+    }
+    explicit_res = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-explicit-ref",
+        pool={
+            "pool_id": "pool-explicit-ref",
+            "tenant_id": "tenant-dev",
+            "risk_policy_ref": "rp-explicit-owner-v2",
+            "metadata": {"tenant_id": "tenant-dev"},
+        },
+        risk_policy_loader=lambda ref: explicit_owner_policy if ref == "rp-explicit-owner-v2" else (_ for _ in ()).throw(RiskPolicyLoadError(ref)),
+        expected_tenant_id="tenant-dev",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert explicit_res.resolved is True
+    assert explicit_res.status == "valid"
+    assert explicit_res.profile_mapping_status == "explicit_policy"
+    assert explicit_res.effective_limits["gross_limit"] == 0.5
+
+
+def test_risk_policy_digest_hashes_every_executable_dimension_and_provenance() -> None:
+    from services.capital.risk_policy import risk_policy_digest
+
+    base = {
+        "risk_policy_id": "rp-digest-full",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 1.0,
+        "net_limit": 1.0,
+        "max_leverage": 1.0,
+        "max_sector_exposure": {"tech": 0.1},
+    }
+    base_digest = risk_policy_digest(base)
+
+    for mutated in [
+        {**base, "max_sector_exposure": {"tech": 0.9}},
+        {**base, "max_factor_exposure": {"momentum": 0.25}},
+        {**base, "turnover_limit": 0.4},
+        {**base, "allowed_strategy_families": ["momentum"]},
+        {**base, "forbidden_strategy_families": ["martingale"]},
+        {**base, "max_strategy_family_concentration": {"momentum": 0.5}},
+        {**base, "max_target_overlap": 0.3},
+        {**base, "max_signal_correlation": 0.6},
+        {**base, "max_canary_capital_scale_pct": 10.0},
+        {**base, "max_canary_gross_scale_pct": 15.0},
+        {**base, "metadata": {"tenant_id": "tenant-a"}},
+        {**base, "metadata": {"expires_at": "2027-01-01T00:00:00Z"}},
+        {**base, "metadata": {"requested_profile": "low"}},
+    ]:
+        assert risk_policy_digest(mutated) != base_digest
+
+
+
 
