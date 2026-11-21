@@ -3564,6 +3564,27 @@ def test_postgres_cause_repair_backend_end_to_end(
                 ),
                 (
                     sell_jid,
+                    "other-fill-same-journey",
+                    "fill_management",
+                    "succeeded",
+                    2,
+                    9,
+                    {
+                        "event_id": "other-fill-same-journey:fill_management",
+                        "canonical_event_id": "other-fill-same-journey",
+                        "event_type": "paper_fill_simulated",
+                        "stage": "fill_management",
+                        "stage_status": "succeeded",
+                        "symbol": "2317.TWSE",
+                        "side": "sell",
+                        "quantity": 9.0,
+                        "price": 999.0,
+                        "fill_id": "paper-fill-other-fill-same-journey",
+                    },
+                    "fp-fill-2-pg",
+                ),
+                (
+                    sell_jid,
                     snap_eid,
                     "ledger_booking",
                     "succeeded",
@@ -3637,9 +3658,18 @@ def test_postgres_cause_repair_backend_end_to_end(
             evaluation_schema=eval_schema,
             read_only=False,
         )
-        applied = run_cause_repair(rw_backend, apply=True, work_dir=tmp_path)
+        applied = run_cause_repair(
+            rw_backend,
+            apply=True,
+            resume=True,
+            work_dir=tmp_path,
+        )
+        assert applied.scanned_rows == 2
         assert applied.updated_rows == 2
         assert applied.before_image_records == 2
+        assert applied.notable_journeys[sell_jid]["quantity"] == 1.0
+        assert applied.notable_journeys[sell_jid]["price"] == 218.5
+        assert applied.notable_journeys[sell_jid]["source_fill_event_id"] == fill_eid
 
         # Repeat apply changes 0 rows
         repeat = run_cause_repair(rw_backend, apply=True, work_dir=tmp_path)

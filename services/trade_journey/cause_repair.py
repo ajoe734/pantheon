@@ -55,6 +55,7 @@ DEFAULT_MAX_BATCHES = 100
 DEFAULT_TEMP_DIR = Path("/tmp/pantheon-journey-cause-repair")
 BEFORE_IMAGE_FILENAME = "paper_journey_cause_repair_before_image.jsonl"
 CURSOR_FILENAME = "paper_journey_cause_repair_cursor.json"
+PREVIEW_CURSOR_FILENAME = "paper_journey_cause_repair_preview_cursor.json"
 DEFAULT_MAX_BEFORE_IMAGE_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_BEFORE_IMAGE_RECORDS = 25000
 DEFAULT_TEMP_RETENTION_SECONDS = 7 * 86400
@@ -535,6 +536,140 @@ def _booking_check(
     }
 
 
+def _as_companion_stage_list(entry: Any) -> list[dict[str, Any]]:
+    if isinstance(entry, Mapping):
+        return [dict(entry)]
+    if isinstance(entry, Sequence) and not isinstance(entry, (str, bytes)):
+        return [dict(item) for item in entry if isinstance(item, Mapping)]
+    return []
+
+
+def _companion_stage_event_id(stage: Mapping[str, Any] | None) -> str:
+    if not isinstance(stage, Mapping):
+        return ""
+    cf = (
+        stage.get("contract_fields")
+        if isinstance(stage.get("contract_fields"), Mapping)
+        else {}
+    )
+    return _first_str(
+        stage.get("source_event_id"),
+        cf.get("source_event_id"),
+        cf.get("canonical_event_id"),
+    )
+
+
+def _companion_matches_snapshot_id(
+    stage: Mapping[str, Any] | None,
+    *,
+    ref_snap_eid: str,
+) -> bool:
+    if not isinstance(stage, Mapping) or not ref_snap_eid:
+        return False
+    comp_eid = _companion_stage_event_id(stage)
+    return bool(comp_eid and comp_eid == ref_snap_eid)
+
+
+def _companion_references_fill(
+    stage: Mapping[str, Any] | None,
+    *,
+    ref_fill_eid: str,
+    ref_fill_id: str,
+) -> tuple[bool, bool]:
+    """Return (is_same_fill_reference, has_id_conflict)."""
+    if not isinstance(stage, Mapping) or (not ref_fill_eid and not ref_fill_id):
+        return False, False
+    cf = (
+        stage.get("contract_fields")
+        if isinstance(stage.get("contract_fields"), Mapping)
+        else {}
+    )
+    comp_eid = _companion_stage_event_id(stage)
+    comp_fid = _clean_str(cf.get("fill_id"))
+    comp_inferred_eid = (
+        comp_fid[len("paper-fill-") :]
+        if comp_fid.startswith("paper-fill-")
+        else ""
+    )
+    ref_inferred_eid = (
+        ref_fill_id[len("paper-fill-") :]
+        if ref_fill_id.startswith("paper-fill-")
+        else ""
+    )
+    effective_ref_eid = ref_fill_eid or ref_inferred_eid
+
+    matches_eid = bool(
+        effective_ref_eid
+        and (
+            (comp_eid and comp_eid == effective_ref_eid)
+            or (comp_inferred_eid and comp_inferred_eid == effective_ref_eid)
+        )
+    )
+    matches_fid = bool(ref_fill_id and comp_fid and comp_fid == ref_fill_id)
+    if not matches_eid and not matches_fid:
+        return False, False
+
+    conflict = False
+    if effective_ref_eid and comp_eid and comp_eid != effective_ref_eid:
+        conflict = True
+    if effective_ref_eid and comp_inferred_eid and comp_inferred_eid != effective_ref_eid:
+        conflict = True
+    if ref_fill_id and comp_fid and comp_fid != ref_fill_id:
+        conflict = True
+    if comp_eid and comp_inferred_eid and comp_eid != comp_inferred_eid:
+        conflict = True
+    return True, conflict
+
+
+def _consistent_str_field(
+    field_name: str,
+    candidates: Sequence[tuple[str, Any]],
+    conflicts: list[str],
+    *,
+    case_lower: bool = False,
+) -> str:
+    values: list[str] = []
+    for _label, raw_val in candidates:
+        cleaned = _clean_str(raw_val)
+        if not cleaned:
+            continue
+        if case_lower:
+            cleaned = cleaned.lower()
+        if cleaned not in values:
+            values.append(cleaned)
+    if len(values) > 1:
+        if field_name not in conflicts:
+            conflicts.append(field_name)
+        return ""
+    return values[0] if values else ""
+
+
+def _consistent_num_field(
+    field_name: str,
+    candidates: Sequence[tuple[str, Any]],
+    conflicts: list[str],
+    *,
+    abs_nonzero: bool = False,
+    positive_only: bool = False,
+) -> float | None:
+    values: list[float] = []
+    for _label, raw_val in candidates:
+        parsed = _num(raw_val)
+        if parsed is None:
+            continue
+        if abs_nonzero and parsed != 0.0:
+            parsed = abs(parsed)
+        if positive_only and parsed <= 0.0:
+            continue
+        if not any(abs(parsed - existing) <= _BOOKING_TOLERANCE for existing in values):
+            values.append(parsed)
+    if len(values) > 1:
+        if field_name not in conflicts:
+            conflicts.append(field_name)
+        return None
+    return values[0] if values else None
+
+
 def _extract_fill_and_snapshot_evidence(
     *,
     row: CandidateStageRow,
@@ -547,16 +682,137 @@ def _extract_fill_and_snapshot_evidence(
     src = source_payload or {}
     src_meta = src.get("metadata") if isinstance(src.get("metadata"), Mapping) else {}
     src_metrics = src.get("metrics") if isinstance(src.get("metrics"), Mapping) else {}
-
-    f_stage_fields = (
-        fill_stage.get("contract_fields")
-        if isinstance(fill_stage, Mapping)
-        and isinstance(fill_stage.get("contract_fields"), Mapping)
-        else {}
+    src_env = (
+        src.get("correlation_envelope")
+        if isinstance(src.get("correlation_envelope"), Mapping)
+        else (
+            src_meta.get("correlation_envelope")
+            if isinstance(src_meta.get("correlation_envelope"), Mapping)
+            else {}
+        )
     )
-    f_pay = fill_payload or {}
-    f_meta = f_pay.get("metadata") if isinstance(f_pay.get("metadata"), Mapping) else {}
-    f_metrics = f_pay.get("metrics") if isinstance(f_pay.get("metrics"), Mapping) else {}
+
+    conflicts: list[str] = []
+    has_identity_conflict = False
+
+    def add_conflict(name: str, *, identity: bool = False) -> None:
+        nonlocal has_identity_conflict
+        if identity:
+            has_identity_conflict = True
+        if name and name not in conflicts:
+            conflicts.append(name)
+
+    src_fill_eid = _first_str(
+        src.get("source_fill_event_id"),
+        src_meta.get("source_fill_event_id"),
+    )
+    row_fill_eid = _clean_str(row.contract_fields.get("source_fill_event_id"))
+    src_fill_id = _first_str(
+        src.get("fill_id"),
+        src_meta.get("fill_id"),
+    )
+    row_fill_id = _clean_str(row.contract_fields.get("fill_id"))
+    src_snap_eid = _first_str(
+        src.get("causal_parent_id"),
+        src_meta.get("causal_parent_id"),
+        src_env.get("causation_event_id"),
+        src.get("snapshot_event_id"),
+        src_meta.get("snapshot_event_id"),
+    )
+    row_snap_eid = _clean_str(row.contract_fields.get("snapshot_event_id"))
+    src_broker_oid = _first_str(
+        src.get("broker_order_id"),
+        src_meta.get("broker_order_id"),
+    )
+    row_broker_oid = _clean_str(row.contract_fields.get("broker_order_id"))
+
+    if src_fill_eid and src_fill_id.startswith("paper-fill-"):
+        inferred_src_eid = src_fill_id[len("paper-fill-") :]
+        if inferred_src_eid and inferred_src_eid != src_fill_eid:
+            add_conflict("source_fill_event_id", identity=True)
+            add_conflict("fill_id", identity=True)
+
+    ref_fill_eid = "" if has_identity_conflict else src_fill_eid
+    ref_fill_id = "" if has_identity_conflict else src_fill_id
+    if not has_identity_conflict:
+        if not ref_fill_eid and ref_fill_id.startswith("paper-fill-"):
+            ref_fill_eid = ref_fill_id[len("paper-fill-") :]
+        if not ref_fill_eid and row_fill_eid:
+            if not (
+                ref_fill_id.startswith("paper-fill-")
+                and ref_fill_id[len("paper-fill-") :] != row_fill_eid
+            ):
+                ref_fill_eid = row_fill_eid
+        if not ref_fill_id and row_fill_id:
+            if not (
+                ref_fill_eid
+                and row_fill_id.startswith("paper-fill-")
+                and row_fill_id[len("paper-fill-") :] != ref_fill_eid
+            ):
+                ref_fill_id = row_fill_id
+        if not ref_fill_eid and ref_fill_id.startswith("paper-fill-"):
+            ref_fill_eid = ref_fill_id[len("paper-fill-") :]
+
+    ref_snap_eid = src_snap_eid or row_snap_eid
+    ref_broker_oid = src_broker_oid or row_broker_oid
+
+    # Validate snapshot_payload and snapshot_stage by exact snapshot event ID
+    if isinstance(snapshot_payload, Mapping):
+        sp_eid = _clean_str(snapshot_payload.get("event_id"))
+        if not ref_snap_eid or (sp_eid and sp_eid != ref_snap_eid):
+            snapshot_payload = None
+    else:
+        snapshot_payload = None
+
+    if not _companion_matches_snapshot_id(snapshot_stage, ref_snap_eid=ref_snap_eid):
+        snapshot_stage = None
+
+    s_pay = snapshot_payload or {}
+    s_meta = s_pay.get("metadata") if isinstance(s_pay.get("metadata"), Mapping) else {}
+    s_metrics = s_pay.get("metrics") if isinstance(s_pay.get("metrics"), Mapping) else {}
+    s_env = (
+        s_pay.get("correlation_envelope")
+        if isinstance(s_pay.get("correlation_envelope"), Mapping)
+        else (
+            s_meta.get("correlation_envelope")
+            if isinstance(s_meta.get("correlation_envelope"), Mapping)
+            else {}
+        )
+    )
+    if snapshot_payload is not None:
+        s_fill_eid = _first_str(
+            s_pay.get("source_fill_event_id"),
+            s_meta.get("source_fill_event_id"),
+            s_pay.get("causal_parent_id"),
+            s_meta.get("causal_parent_id"),
+            s_env.get("causation_event_id"),
+        )
+        s_fill_id = _first_str(s_pay.get("fill_id"), s_meta.get("fill_id"))
+        s_broker_oid = _first_str(
+            s_pay.get("broker_order_id"),
+            s_meta.get("broker_order_id"),
+        )
+        if s_fill_eid and s_fill_id.startswith("paper-fill-"):
+            s_inferred = s_fill_id[len("paper-fill-") :]
+            if s_inferred and s_inferred != s_fill_eid:
+                add_conflict("fill_id", identity=True)
+        if ref_fill_eid and s_fill_eid and s_fill_eid != ref_fill_eid:
+            add_conflict("source_fill_event_id", identity=True)
+        if ref_fill_id and s_fill_id and s_fill_id != ref_fill_id:
+            add_conflict("fill_id", identity=True)
+        if ref_broker_oid and s_broker_oid and s_broker_oid != ref_broker_oid:
+            add_conflict("broker_order_id", identity=True)
+        if not has_identity_conflict:
+            if not ref_fill_eid:
+                ref_fill_eid = s_fill_eid or (
+                    s_fill_id[len("paper-fill-") :]
+                    if s_fill_id.startswith("paper-fill-")
+                    else ""
+                )
+            if not ref_fill_id and s_fill_id:
+                ref_fill_id = s_fill_id
+            if not ref_broker_oid and s_broker_oid:
+                ref_broker_oid = s_broker_oid
 
     s_stage_fields = (
         snapshot_stage.get("contract_fields")
@@ -564,109 +820,245 @@ def _extract_fill_and_snapshot_evidence(
         and isinstance(snapshot_stage.get("contract_fields"), Mapping)
         else {}
     )
-    s_pay = snapshot_payload or {}
-    s_meta = s_pay.get("metadata") if isinstance(s_pay.get("metadata"), Mapping) else {}
-    s_metrics = s_pay.get("metrics") if isinstance(s_pay.get("metrics"), Mapping) else {}
+    if snapshot_stage is not None:
+        ss_fill_eid = _clean_str(s_stage_fields.get("source_fill_event_id"))
+        ss_fill_id = _clean_str(s_stage_fields.get("fill_id"))
+        ss_broker_oid = _clean_str(s_stage_fields.get("broker_order_id"))
+        if (
+            (ref_fill_eid and ss_fill_eid and ss_fill_eid != ref_fill_eid)
+            or (ref_fill_id and ss_fill_id and ss_fill_id != ref_fill_id)
+            or (ref_broker_oid and ss_broker_oid and ss_broker_oid != ref_broker_oid)
+        ):
+            add_conflict("snapshot_stage_identity", identity=True)
+            snapshot_stage = None
+            s_stage_fields = {}
+        elif not has_identity_conflict:
+            if not ref_fill_eid:
+                ref_fill_eid = ss_fill_eid or (
+                    ss_fill_id[len("paper-fill-") :]
+                    if ss_fill_id.startswith("paper-fill-")
+                    else ""
+                )
+            if not ref_fill_id and ss_fill_id:
+                ref_fill_id = ss_fill_id
+            if not ref_broker_oid and ss_broker_oid:
+                ref_broker_oid = ss_broker_oid
 
-    fill_event_id = _first_str(
-        f_pay.get("event_id"),
-        (fill_stage or {}).get("source_event_id") if isinstance(fill_stage, Mapping) else "",
-        src.get("source_fill_event_id"),
-        src_meta.get("source_fill_event_id"),
-        s_meta.get("source_fill_event_id"),
-        row.contract_fields.get("source_fill_event_id"),
+    # Validate fill_payload and fill_stage by exact referenced fill IDs
+    if isinstance(fill_payload, Mapping):
+        fp_eid = _clean_str(fill_payload.get("event_id"))
+        if not ref_fill_eid or (fp_eid and fp_eid != ref_fill_eid):
+            fill_payload = None
+    else:
+        fill_payload = None
+
+    if fill_stage is not None:
+        same_fill, fill_id_conflict = _companion_references_fill(
+            fill_stage,
+            ref_fill_eid=ref_fill_eid,
+            ref_fill_id=ref_fill_id,
+        )
+        if not same_fill:
+            # Unrelated companion stage from another fill in the same journey: ignore it
+            fill_stage = None
+        elif fill_id_conflict:
+            add_conflict("fill_stage_identity", identity=True)
+            fill_stage = None
+
+    f_pay = fill_payload or {}
+    f_meta = f_pay.get("metadata") if isinstance(f_pay.get("metadata"), Mapping) else {}
+    f_metrics = f_pay.get("metrics") if isinstance(f_pay.get("metrics"), Mapping) else {}
+    if fill_payload is not None:
+        f_fill_id = _first_str(f_pay.get("fill_id"), f_meta.get("fill_id"))
+        f_broker_oid = _first_str(
+            f_pay.get("broker_order_id"),
+            f_meta.get("broker_order_id"),
+        )
+        if ref_fill_id and f_fill_id and f_fill_id != ref_fill_id:
+            add_conflict("fill_id", identity=True)
+        if ref_broker_oid and f_broker_oid and f_broker_oid != ref_broker_oid:
+            add_conflict("broker_order_id", identity=True)
+        if not has_identity_conflict:
+            if not ref_fill_id and f_fill_id:
+                ref_fill_id = f_fill_id
+            if not ref_broker_oid and f_broker_oid:
+                ref_broker_oid = f_broker_oid
+
+    f_stage_fields = (
+        fill_stage.get("contract_fields")
+        if isinstance(fill_stage, Mapping)
+        and isinstance(fill_stage.get("contract_fields"), Mapping)
+        else {}
     )
-    fill_id = _first_str(
-        f_pay.get("fill_id"),
-        f_meta.get("fill_id"),
-        f_stage_fields.get("fill_id"),
-        src.get("fill_id"),
-        src_meta.get("fill_id"),
-        s_meta.get("fill_id"),
-        row.contract_fields.get("fill_id"),
+    if fill_stage is not None:
+        fs_broker_oid = _clean_str(f_stage_fields.get("broker_order_id"))
+        if ref_broker_oid and fs_broker_oid and fs_broker_oid != ref_broker_oid:
+            add_conflict("broker_order_id", identity=True)
+            fill_stage = None
+            f_stage_fields = {}
+        elif not has_identity_conflict and not ref_broker_oid and fs_broker_oid:
+            ref_broker_oid = fs_broker_oid
+
+    missing_referenced_fill = bool(
+        (ref_fill_eid or ref_fill_id) and fill_payload is None and fill_stage is None
     )
-    snapshot_event_id = _first_str(
-        s_pay.get("event_id"),
-        (snapshot_stage or {}).get("source_event_id") if isinstance(snapshot_stage, Mapping) else "",
-        src.get("causal_parent_id"),
-        src_meta.get("causal_parent_id"),
-        row.contract_fields.get("snapshot_event_id"),
+    missing_referenced_snapshot = bool(
+        ref_snap_eid and snapshot_payload is None and snapshot_stage is None
     )
-    broker_order_id = _first_str(
-        f_pay.get("broker_order_id"),
-        f_meta.get("broker_order_id"),
-        f_stage_fields.get("broker_order_id"),
-        s_pay.get("broker_order_id"),
-        s_meta.get("broker_order_id"),
-        src.get("broker_order_id"),
-        src_meta.get("broker_order_id"),
-        row.contract_fields.get("broker_order_id"),
+
+    if has_identity_conflict:
+        f_pay = {}
+        f_meta = {}
+        f_metrics = {}
+        f_stage_fields = {}
+        s_pay = {}
+        s_meta = {}
+        s_metrics = {}
+        s_stage_fields = {}
+
+    fill_event_id = "" if "source_fill_event_id" in conflicts else ref_fill_eid
+    fill_id = "" if "fill_id" in conflicts else ref_fill_id
+    snapshot_event_id = ref_snap_eid
+    broker_order_id = "" if "broker_order_id" in conflicts else ref_broker_oid
+
+    fill_qty = _consistent_num_field(
+        "fill_quantity",
+        [
+            (
+                "fill_payload",
+                _first_num(
+                    f_metrics.get("fill_quantity"),
+                    f_pay.get("fill_quantity"),
+                    f_meta.get("fill_quantity"),
+                    f_pay.get("quantity"),
+                ),
+            ),
+            (
+                "fill_stage",
+                _first_num(
+                    f_stage_fields.get("fill_quantity"),
+                    f_stage_fields.get("quantity"),
+                ),
+            ),
+            (
+                "snapshot_payload",
+                _first_num(s_meta.get("fill_quantity"), s_pay.get("fill_quantity")),
+            ),
+            ("snapshot_stage", _num(s_stage_fields.get("fill_quantity"))),
+            (
+                "source_payload",
+                _first_num(
+                    src_meta.get("fill_quantity"),
+                    src_metrics.get("fill_quantity"),
+                    src.get("fill_quantity"),
+                ),
+            ),
+        ],
+        conflicts,
+        abs_nonzero=True,
+        positive_only=True,
     )
-    raw_fill_qty = _first_num(
-        f_metrics.get("fill_quantity"),
-        f_pay.get("fill_quantity"),
-        f_meta.get("fill_quantity"),
-        f_stage_fields.get("fill_quantity"),
-        f_stage_fields.get("quantity"),
-        f_pay.get("quantity"),
-        s_meta.get("fill_quantity"),
-        src_meta.get("fill_quantity"),
-        src_metrics.get("fill_quantity"),
-        row.contract_fields.get("fill_quantity"),
+    fill_price = _consistent_num_field(
+        "fill_price",
+        [
+            (
+                "fill_payload",
+                _first_num(
+                    f_metrics.get("fill_price"),
+                    f_pay.get("fill_price"),
+                    f_meta.get("fill_price"),
+                    f_pay.get("price"),
+                ),
+            ),
+            (
+                "fill_stage",
+                _first_num(
+                    f_stage_fields.get("fill_price"),
+                    f_stage_fields.get("price"),
+                ),
+            ),
+            (
+                "snapshot_payload",
+                _first_num(s_meta.get("fill_price"), s_pay.get("fill_price")),
+            ),
+            ("snapshot_stage", _num(s_stage_fields.get("fill_price"))),
+            (
+                "source_payload",
+                _first_num(
+                    src_meta.get("fill_price"),
+                    src_metrics.get("fill_price"),
+                    src.get("fill_price"),
+                ),
+            ),
+        ],
+        conflicts,
     )
-    fill_qty = (
-        abs(raw_fill_qty)
-        if (raw_fill_qty is not None and raw_fill_qty != 0.0)
-        else raw_fill_qty
+    side = _consistent_str_field(
+        "side",
+        [
+            ("fill_payload", _first_str(f_pay.get("side"), f_meta.get("side"))),
+            ("fill_stage", f_stage_fields.get("side")),
+            ("snapshot_payload", _first_str(s_pay.get("side"), s_meta.get("side"))),
+            ("snapshot_stage", s_stage_fields.get("side")),
+            (
+                "source_payload",
+                _first_str(
+                    src.get("side"),
+                    src_meta.get("side"),
+                    row.contract_fields.get("side"),
+                ),
+            ),
+        ],
+        conflicts,
+        case_lower=True,
     )
-    fill_price = _first_num(
-        f_metrics.get("fill_price"),
-        f_pay.get("fill_price"),
-        f_meta.get("fill_price"),
-        f_stage_fields.get("fill_price"),
-        f_stage_fields.get("price"),
-        f_pay.get("price"),
-        s_meta.get("fill_price"),
-        src_meta.get("fill_price"),
-        src_metrics.get("fill_price"),
-        row.contract_fields.get("fill_price"),
+    symbol = _consistent_str_field(
+        "symbol",
+        [
+            ("fill_payload", _first_str(f_pay.get("symbol"), f_meta.get("symbol"))),
+            ("fill_stage", f_stage_fields.get("symbol")),
+            ("snapshot_payload", _first_str(s_pay.get("symbol"), s_meta.get("symbol"))),
+            ("snapshot_stage", s_stage_fields.get("symbol")),
+            (
+                "source_payload",
+                _first_str(
+                    src.get("symbol"),
+                    src_meta.get("symbol"),
+                    row.contract_fields.get("symbol"),
+                ),
+            ),
+        ],
+        conflicts,
     )
-    side = _first_str(
-        f_pay.get("side"),
-        f_meta.get("side"),
-        f_stage_fields.get("side"),
-        s_pay.get("side"),
-        s_meta.get("side"),
-        src.get("side"),
-        src_meta.get("side"),
-        row.contract_fields.get("side"),
-    ).lower()
-    symbol = _first_str(
-        f_pay.get("symbol"),
-        f_meta.get("symbol"),
-        f_stage_fields.get("symbol"),
-        s_pay.get("symbol"),
-        s_meta.get("symbol"),
-        src.get("symbol"),
-        src_meta.get("symbol"),
-        row.contract_fields.get("symbol"),
+    instrument_id = _consistent_str_field(
+        "instrument_id",
+        [
+            (
+                "fill_payload",
+                _first_str(f_pay.get("instrument_id"), f_meta.get("instrument_id")),
+            ),
+            (
+                "snapshot_payload",
+                _first_str(s_pay.get("instrument_id"), s_meta.get("instrument_id")),
+            ),
+            (
+                "source_payload",
+                _first_str(src.get("instrument_id"), src_meta.get("instrument_id")),
+            ),
+        ],
+        conflicts,
     )
-    instrument_id = _first_str(
-        f_pay.get("instrument_id"),
-        f_meta.get("instrument_id"),
-        s_pay.get("instrument_id"),
-        s_meta.get("instrument_id"),
-        src.get("instrument_id"),
-        src_meta.get("instrument_id"),
-    )
-    kind = _first_str(
-        f_pay.get("kind"),
-        f_meta.get("kind"),
-        s_pay.get("kind"),
-        s_meta.get("kind"),
-        src.get("kind"),
-        src_meta.get("kind"),
-        "cash_share",
+    kind = (
+        _consistent_str_field(
+            "kind",
+            [
+                ("fill_payload", _first_str(f_pay.get("kind"), f_meta.get("kind"))),
+                ("snapshot_payload", _first_str(s_pay.get("kind"), s_meta.get("kind"))),
+                ("source_payload", _first_str(src.get("kind"), src_meta.get("kind"))),
+            ],
+            conflicts,
+        )
+        or "cash_share"
     )
     has_explicit_multiplier = any(
         "multiplier" in container
@@ -675,88 +1067,193 @@ def _extract_fill_and_snapshot_evidence(
     if not has_explicit_multiplier:
         multiplier: float | None = 1.0
     else:
-        raw_mult = _first_num(
-            f_pay.get("multiplier"),
-            f_meta.get("multiplier"),
-            s_pay.get("multiplier"),
-            s_meta.get("multiplier"),
-            src.get("multiplier"),
-            src_meta.get("multiplier"),
+        raw_mult = _consistent_num_field(
+            "multiplier",
+            [
+                (
+                    "fill_payload",
+                    _first_num(f_pay.get("multiplier"), f_meta.get("multiplier")),
+                ),
+                (
+                    "snapshot_payload",
+                    _first_num(s_pay.get("multiplier"), s_meta.get("multiplier")),
+                ),
+                (
+                    "source_payload",
+                    _first_num(src.get("multiplier"), src_meta.get("multiplier")),
+                ),
+            ],
+            conflicts,
         )
         multiplier = raw_mult if (raw_mult is not None and raw_mult > 0.0) else None
 
-    fee = _first_num(
-        f_pay.get("fee"),
-        f_meta.get("fee"),
-        f_metrics.get("fee"),
-        s_pay.get("fee"),
-        s_meta.get("fee"),
-        s_metrics.get("fee"),
-        src.get("fee"),
-        src_meta.get("fee"),
-        src_metrics.get("fee"),
+    fee = _consistent_num_field(
+        "fee",
+        [
+            (
+                "fill_payload",
+                _first_num(f_pay.get("fee"), f_meta.get("fee"), f_metrics.get("fee")),
+            ),
+            (
+                "snapshot_payload",
+                _first_num(s_pay.get("fee"), s_meta.get("fee"), s_metrics.get("fee")),
+            ),
+            (
+                "source_payload",
+                _first_num(src.get("fee"), src_meta.get("fee"), src_metrics.get("fee")),
+            ),
+        ],
+        conflicts,
     )
-    tax = _first_num(
-        f_pay.get("tax"),
-        f_meta.get("tax"),
-        f_metrics.get("tax"),
-        s_pay.get("tax"),
-        s_meta.get("tax"),
-        s_metrics.get("tax"),
-        src.get("tax"),
-        src_meta.get("tax"),
-        src_metrics.get("tax"),
+    tax = _consistent_num_field(
+        "tax",
+        [
+            (
+                "fill_payload",
+                _first_num(f_pay.get("tax"), f_meta.get("tax"), f_metrics.get("tax")),
+            ),
+            (
+                "snapshot_payload",
+                _first_num(s_pay.get("tax"), s_meta.get("tax"), s_metrics.get("tax")),
+            ),
+            (
+                "source_payload",
+                _first_num(src.get("tax"), src_meta.get("tax"), src_metrics.get("tax")),
+            ),
+        ],
+        conflicts,
     )
-    pos_before = _first_num(
-        s_pay.get("position_quantity_before"),
-        s_meta.get("position_quantity_before"),
-        f_pay.get("position_quantity_before"),
-        f_meta.get("position_quantity_before"),
-        src.get("position_quantity_before"),
-        src_meta.get("position_quantity_before"),
+    pos_before = _consistent_num_field(
+        "position_quantity_before",
+        [
+            (
+                "snapshot_payload",
+                _first_num(
+                    s_pay.get("position_quantity_before"),
+                    s_meta.get("position_quantity_before"),
+                ),
+            ),
+            (
+                "fill_payload",
+                _first_num(
+                    f_pay.get("position_quantity_before"),
+                    f_meta.get("position_quantity_before"),
+                ),
+            ),
+            (
+                "source_payload",
+                _first_num(
+                    src.get("position_quantity_before"),
+                    src_meta.get("position_quantity_before"),
+                ),
+            ),
+        ],
+        conflicts,
     )
-    pos_after = _first_num(
-        s_pay.get("position_quantity_after"),
-        s_meta.get("position_quantity_after"),
-        f_pay.get("position_quantity_after"),
-        f_meta.get("position_quantity_after"),
-        src.get("position_quantity_after"),
-        src_meta.get("position_quantity_after"),
+    pos_after = _consistent_num_field(
+        "position_quantity_after",
+        [
+            (
+                "snapshot_payload",
+                _first_num(
+                    s_pay.get("position_quantity_after"),
+                    s_meta.get("position_quantity_after"),
+                ),
+            ),
+            (
+                "fill_payload",
+                _first_num(
+                    f_pay.get("position_quantity_after"),
+                    f_meta.get("position_quantity_after"),
+                ),
+            ),
+            (
+                "source_payload",
+                _first_num(
+                    src.get("position_quantity_after"),
+                    src_meta.get("position_quantity_after"),
+                ),
+            ),
+        ],
+        conflicts,
     )
-    cash_before = _first_num(
-        s_pay.get("cash_before"),
-        s_meta.get("cash_before"),
-        f_pay.get("cash_before"),
-        f_meta.get("cash_before"),
-        src.get("cash_before"),
-        src_meta.get("cash_before"),
+    cash_before = _consistent_num_field(
+        "cash_before",
+        [
+            (
+                "snapshot_payload",
+                _first_num(s_pay.get("cash_before"), s_meta.get("cash_before")),
+            ),
+            (
+                "fill_payload",
+                _first_num(f_pay.get("cash_before"), f_meta.get("cash_before")),
+            ),
+            (
+                "source_payload",
+                _first_num(src.get("cash_before"), src_meta.get("cash_before")),
+            ),
+        ],
+        conflicts,
     )
-    cash_after = _first_num(
-        s_pay.get("cash_after"),
-        s_meta.get("cash_after"),
-        f_pay.get("cash_after"),
-        f_meta.get("cash_after"),
-        src.get("cash_after"),
-        src_meta.get("cash_after"),
+    cash_after = _consistent_num_field(
+        "cash_after",
+        [
+            (
+                "snapshot_payload",
+                _first_num(s_pay.get("cash_after"), s_meta.get("cash_after")),
+            ),
+            (
+                "fill_payload",
+                _first_num(f_pay.get("cash_after"), f_meta.get("cash_after")),
+            ),
+            (
+                "source_payload",
+                _first_num(src.get("cash_after"), src_meta.get("cash_after")),
+            ),
+        ],
+        conflicts,
     )
-    snapshot_position_qty = _first_num(
-        s_metrics.get("position_qty"),
-        s_pay.get("position_qty"),
-        s_stage_fields.get("position_qty"),
-        src_metrics.get("position_qty"),
-        src.get("position_qty"),
+    snapshot_position_qty = _consistent_num_field(
+        "snapshot_position_qty",
+        [
+            (
+                "snapshot_payload",
+                _first_num(s_metrics.get("position_qty"), s_pay.get("position_qty")),
+            ),
+            ("snapshot_stage", _num(s_stage_fields.get("position_qty"))),
+            (
+                "source_payload",
+                _first_num(src_metrics.get("position_qty"), src.get("position_qty")),
+            ),
+        ],
+        conflicts,
     )
-    snapshot_cash = _first_num(
-        s_metrics.get("cash"),
-        s_pay.get("cash"),
-        s_stage_fields.get("cash"),
-        src_metrics.get("cash"),
-        src.get("cash"),
+    snapshot_cash = _consistent_num_field(
+        "snapshot_cash",
+        [
+            (
+                "snapshot_payload",
+                _first_num(s_metrics.get("cash"), s_pay.get("cash")),
+            ),
+            ("snapshot_stage", _num(s_stage_fields.get("cash"))),
+            (
+                "source_payload",
+                _first_num(src_metrics.get("cash"), src.get("cash")),
+            ),
+        ],
+        conflicts,
     )
+
+    if conflicts:
+        # Reject conflicting fill/snapshot evidence instead of writing untrusted fill values
+        fill_qty = None
+        fill_price = None
+
     has_fill_evidence = bool(
         fill_event_id
         or fill_id
         or broker_order_id
+        or conflicts
         or (fill_qty is not None and fill_qty > 0.0)
         or any(
             val is not None
@@ -784,6 +1281,10 @@ def _extract_fill_and_snapshot_evidence(
         "cash_after": cash_after,
         "snapshot_position_qty": snapshot_position_qty,
         "snapshot_cash": snapshot_cash,
+        "missing_referenced_fill": missing_referenced_fill,
+        "missing_referenced_snapshot": missing_referenced_snapshot,
+        "conflicting_fields": conflicts,
+        "has_identity_conflict": has_identity_conflict,
     }
 
 
@@ -818,6 +1319,9 @@ def _evaluate_booking_checks(
     kind = _clean_str(evidence.get("kind")) or "cash_share"
     multiplier = _num(evidence.get("multiplier"))
     broker_order_id = _clean_str(evidence.get("broker_order_id"))
+    conflicting_fields = [
+        _clean_str(c) for c in (evidence.get("conflicting_fields") or ()) if _clean_str(c)
+    ]
 
     checks: list[dict[str, Any]] = []
     failures: list[str] = []
@@ -826,6 +1330,31 @@ def _evaluate_booking_checks(
     def add_missing(name: str) -> None:
         if name and name not in missing_fields:
             missing_fields.append(name)
+
+    if conflicting_fields:
+        add_missing("conflicting_fill_snapshot_evidence")
+        for c_field in conflicting_fields:
+            add_missing(c_field)
+        return (
+            [
+                {
+                    "check": "position_change",
+                    "status": "unverified",
+                    "expected": None,
+                    "actual": None,
+                    "difference": None,
+                    "delta": None,
+                    "missing_evidence": list(missing_fields),
+                }
+            ],
+            [],
+            missing_fields,
+        )
+
+    if evidence.get("missing_referenced_fill"):
+        add_missing("fill_event")
+    if evidence.get("missing_referenced_snapshot"):
+        add_missing("snapshot_event")
 
     # 1. Optional read-only paper broker comparison when broker_orders is supplied
     if broker_orders is not None:
@@ -928,6 +1457,12 @@ def _evaluate_booking_checks(
     snap_pos = _num(evidence.get("snapshot_position_qty"))
     signed_qty = None if (fill_qty is None or sign is None) else sign * fill_qty
     pos_missing: list[str] = []
+    if sign is None:
+        pos_missing.append("side")
+        add_missing("side")
+    if fill_qty is None:
+        pos_missing.append("fill_quantity")
+        add_missing("fill_quantity")
     if pos_before is None:
         pos_missing.append("position_quantity_before")
         add_missing("position_quantity_before")
@@ -1065,6 +1600,41 @@ def _extract_evaluation_checks(
     return [], True
 
 
+def _reason_detail_dedup_key(item: Mapping[str, Any]) -> tuple[str, ...]:
+    check_name = _clean_str(item.get("check"))
+    detail_text = _clean_str(item.get("detail"))
+    if check_name in _TRADE_COMPARISON_CHECKS:
+        return ("trade", check_name)
+    if check_name in _RUNTIME_HEALTH_CHECKS:
+        if detail_text.startswith("evaluation drift check"):
+            return ("drift", check_name, detail_text)
+        return ("health", check_name)
+    return ("other", check_name, json.dumps(dict(item), sort_keys=True))
+
+
+def _deduplicate_reason_detail(
+    eval_checks: Sequence[Mapping[str, Any]],
+    detail_checks: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    index_by_key: dict[tuple[str, ...], int] = {}
+    for raw_item in (*eval_checks, *detail_checks):
+        if not isinstance(raw_item, Mapping):
+            continue
+        entry = dict(raw_item)
+        key = _reason_detail_dedup_key(entry)
+        existing_idx = index_by_key.get(key)
+        if existing_idx is None:
+            index_by_key[key] = len(deduped)
+            deduped.append(entry)
+        else:
+            existing_status = _clean_str(deduped[existing_idx].get("status")).lower()
+            new_status = _clean_str(entry.get("status")).lower()
+            if existing_status == "unverified" and new_status in {"failed", "passed"}:
+                deduped[existing_idx] = entry
+    return deduped
+
+
 def _has_preexisting_proven_variance(
     detail: Any,
 ) -> tuple[bool, list[dict[str, Any]], str]:
@@ -1109,7 +1679,7 @@ def _has_preexisting_proven_variance(
         code = "position_variance"
     else:
         code = "cash_variance"
-    return True, normalized, code
+    return True, _deduplicate_reason_detail((), normalized), code
 
 
 def _derive_reconciliation_repair(
@@ -1149,17 +1719,29 @@ def _derive_reconciliation_repair(
     if fill_qty is not None and fill_qty > 0.0:
         updated["quantity"] = fill_qty
         updated["fill_quantity"] = fill_qty
+    elif evidence.get("missing_referenced_fill") or evidence.get("conflicting_fields"):
+        updated.pop("quantity", None)
+        updated.pop("fill_quantity", None)
     if fill_price is not None:
         updated["price"] = fill_price
         updated["fill_price"] = fill_price
+    elif evidence.get("missing_referenced_fill") or evidence.get("conflicting_fields"):
+        updated.pop("price", None)
+        updated.pop("fill_price", None)
     if evidence.get("fill_event_id"):
         updated["source_fill_event_id"] = evidence["fill_event_id"]
+    elif "source_fill_event_id" in (evidence.get("conflicting_fields") or ()):
+        updated.pop("source_fill_event_id", None)
     if evidence.get("fill_id"):
         updated["fill_id"] = evidence["fill_id"]
+    elif "fill_id" in (evidence.get("conflicting_fields") or ()):
+        updated.pop("fill_id", None)
     if evidence.get("snapshot_event_id"):
         updated["snapshot_event_id"] = evidence["snapshot_event_id"]
     if evidence.get("broker_order_id"):
         updated["broker_order_id"] = evidence["broker_order_id"]
+    elif "broker_order_id" in (evidence.get("conflicting_fields") or ()):
+        updated.pop("broker_order_id", None)
 
     # Check if source event or stage row already carries a proven variance
     pre_proven, pre_detail, pre_code = _has_preexisting_proven_variance(
@@ -1174,7 +1756,7 @@ def _derive_reconciliation_repair(
     )
     eval_checks, eval_is_health_only = _extract_evaluation_checks(evaluation)
 
-    if booking_failures or pre_proven:
+    if not evidence.get("conflicting_fields") and (booking_failures or pre_proven):
         variance_code = booking_failures[0] if booking_failures else pre_code
         raw_src_code = _first_str(
             src.get("reason_code"),
@@ -1185,7 +1767,10 @@ def _derive_reconciliation_repair(
             raw_src_code in booking_failures or raw_src_code == pre_code
         ):
             variance_code = raw_src_code
-        combined_detail = [*eval_checks, *(booking_checks if booking_failures else pre_detail)]
+        combined_detail = _deduplicate_reason_detail(
+            eval_checks,
+            booking_checks if booking_failures else pre_detail,
+        )
         updated["reason_code"] = variance_code
         updated["reason_detail"] = combined_detail
         if missing_fields:
@@ -1207,13 +1792,17 @@ def _derive_reconciliation_repair(
         )
         if has_unverified_booking:
             updated["reason_code"] = "reconciliation_evidence_incomplete"
-            updated["reason_detail"] = [*eval_checks, *booking_checks]
+            updated["reason_detail"] = _deduplicate_reason_detail(
+                eval_checks, booking_checks
+            )
             updated["missing_evidence"] = (
                 list(missing_fields) if missing_fields else ["booking_comparison"]
             )
         else:
             updated["reason_code"] = "runtime_unhealthy_at_reconciliation"
-            updated["reason_detail"] = [*eval_checks, *booking_checks]
+            updated["reason_detail"] = _deduplicate_reason_detail(
+                eval_checks, booking_checks
+            )
             updated.pop("missing_evidence", None)
         needs_update = updated != row.contract_fields
         return StageRepairDecision(
@@ -1254,7 +1843,7 @@ class InMemoryCauseRepairBackend:
         *,
         stages: Sequence[CandidateStageRow] = (),
         telemetry_events: Mapping[str, Mapping[str, Any]] | None = None,
-        companion_stages: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+        companion_stages: Mapping[tuple[str, ...], Any] | None = None,
         drift_evaluations: Mapping[str, Mapping[str, Any]] | None = None,
         on_before_apply: Callable[[CandidateStageRow], None] | None = None,
     ) -> None:
@@ -1276,8 +1865,14 @@ class InMemoryCauseRepairBackend:
             str(k): json.loads(json.dumps(dict(v)))
             for k, v in (telemetry_events or {}).items()
         }
-        self.companion_stages: dict[tuple[str, str], dict[str, Any]] = {
-            (str(k[0]), str(k[1])): json.loads(json.dumps(dict(v)))
+        self.companion_stages: dict[tuple[str, ...], Any] = {
+            tuple(str(part) for part in k): json.loads(
+                json.dumps(
+                    dict(v)
+                    if isinstance(v, Mapping)
+                    else [dict(item) for item in v if isinstance(item, Mapping)]
+                )
+            )
             for k, v in (companion_stages or {}).items()
         }
         self.drift_evaluations: dict[str, dict[str, Any]] = {}
@@ -1332,16 +1927,61 @@ class InMemoryCauseRepairBackend:
         tenant_id: str,
         environment: str,
         journey_ids: Sequence[str],
-    ) -> dict[tuple[str, str], dict[str, Any]]:
+    ) -> dict[tuple[str, str], Any]:
         wanted = set(journey_ids)
-        out: dict[tuple[str, str], dict[str, Any]] = {}
-        for (jid, sname), stage_data in self.companion_stages.items():
-            if jid in wanted and sname in {"fill_management", "ledger_booking"}:
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for raw_key, stage_data in self.companion_stages.items():
+            if len(raw_key) < 2:
+                continue
+            jid = str(raw_key[0])
+            sname = (
+                str(raw_key[1])
+                if str(raw_key[1]) in {"fill_management", "ledger_booking"}
+                else (
+                    str(raw_key[2])
+                    if len(raw_key) >= 3
+                    and str(raw_key[2]) in {"fill_management", "ledger_booking"}
+                    else ""
+                )
+            )
+            if jid not in wanted or sname not in {"fill_management", "ledger_booking"}:
+                continue
+            for item in _as_companion_stage_list(stage_data):
                 if (
-                    stage_data.get("tenant_id", tenant_id) == tenant_id
-                    and stage_data.get("environment", environment) == environment
+                    item.get("tenant_id", tenant_id) == tenant_id
+                    and item.get("environment", environment) == environment
                 ):
-                    out[(jid, sname)] = json.loads(json.dumps(stage_data))
+                    grouped.setdefault((jid, sname), []).append(
+                        json.loads(json.dumps(item))
+                    )
+        for row in self.stages.values():
+            if (
+                row.tenant_id == tenant_id
+                and row.environment == environment
+                and row.journey_id in wanted
+                and row.stage_name in {"fill_management", "ledger_booking"}
+            ):
+                bucket = grouped.setdefault((row.journey_id, row.stage_name), [])
+                if not any(
+                    _companion_stage_event_id(existing) == row.source_event_id
+                    for existing in bucket
+                ):
+                    bucket.append(
+                        {
+                            "tenant_id": row.tenant_id,
+                            "environment": row.environment,
+                            "journey_id": row.journey_id,
+                            "stage_name": row.stage_name,
+                            "source_event_id": row.source_event_id,
+                            "stage_status": row.stage_status,
+                            "contract_fields": json.loads(
+                                json.dumps(row.contract_fields)
+                            ),
+                        }
+                    )
+        out: dict[tuple[str, str], Any] = {}
+        for key, items in grouped.items():
+            out[key] = items[0] if len(items) == 1 else items
         return out
 
     def fetch_drift_evaluations(
@@ -1629,13 +2269,12 @@ class PostgresCauseRepairBackend:
         tenant_id: str,
         environment: str,
         journey_ids: Sequence[str],
-    ) -> dict[tuple[str, str], dict[str, Any]]:
+    ) -> dict[tuple[str, str], Any]:
         clean_jids = sorted({_clean_str(jid) for jid in journey_ids if _clean_str(jid)})
         if not clean_jids:
             return {}
         query = (
-            "SELECT DISTINCT ON (journey_id, stage_name) "
-            "journey_id, stage_name, source_event_id, stage_status, contract_fields "
+            "SELECT journey_id, stage_name, source_event_id, stage_status, contract_fields "
             f"FROM {self.projection_schema}.journey_stages "
             "WHERE tenant_id = %s AND environment = %s "
             "AND journey_id = ANY(%s) "
@@ -1643,21 +2282,26 @@ class PostgresCauseRepairBackend:
             "ORDER BY journey_id, stage_name, stage_ordinal DESC, event_sequence DESC, "
             "source_ingested_seq DESC, source_event_id DESC"
         )
-        out: dict[tuple[str, str], dict[str, Any]] = {}
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
         with self._connect(force_read_only=True) as conn, conn.cursor() as cur:
             cur.execute(query, (tenant_id, environment, clean_jids))
             for r in cur.fetchall():
                 jid = str(r[0])
                 sname = str(r[1])
-                out[(jid, sname)] = {
-                    "tenant_id": tenant_id,
-                    "environment": environment,
-                    "journey_id": jid,
-                    "stage_name": sname,
-                    "source_event_id": str(r[2] or ""),
-                    "stage_status": str(r[3] or ""),
-                    "contract_fields": self._json_obj(r[4]),
-                }
+                grouped.setdefault((jid, sname), []).append(
+                    {
+                        "tenant_id": tenant_id,
+                        "environment": environment,
+                        "journey_id": jid,
+                        "stage_name": sname,
+                        "source_event_id": str(r[2] or ""),
+                        "stage_status": str(r[3] or ""),
+                        "contract_fields": self._json_obj(r[4]),
+                    }
+                )
+        out: dict[tuple[str, str], Any] = {}
+        for key, items in grouped.items():
+            out[key] = items[0] if len(items) == 1 else items
         return out
 
     def fetch_drift_evaluations(
@@ -1801,7 +2445,11 @@ def cleanup_temp_evidence(
     for item in sorted(work_dir.iterdir()):
         if not item.is_file():
             continue
-        if item.name not in {BEFORE_IMAGE_FILENAME, CURSOR_FILENAME} and not (
+        if item.name not in {
+            BEFORE_IMAGE_FILENAME,
+            CURSOR_FILENAME,
+            PREVIEW_CURSOR_FILENAME,
+        } and not (
             item.name.startswith("paper_journey_cause_repair_")
             and item.suffix in {".json", ".jsonl"}
         ):
@@ -1852,7 +2500,22 @@ def _append_before_image_record(
     return existing_records + 1, existing_bytes + len(encoded)
 
 
-def _read_cursor(path: Path, *, tenant_id: str, environment: str) -> tuple[str, str, str] | None:
+def _normalize_scope_journey_ids(
+    journey_ids: Sequence[str] | None,
+) -> list[str]:
+    if not journey_ids:
+        return []
+    return sorted({_clean_str(jid) for jid in journey_ids if _clean_str(jid)})
+
+
+def _read_cursor(
+    path: Path,
+    *,
+    tenant_id: str,
+    environment: str,
+    mode: str = "apply",
+    journey_ids: Sequence[str] | None = None,
+) -> tuple[str, str, str] | None:
     if not path.is_file():
         return None
     try:
@@ -1863,6 +2526,17 @@ def _read_cursor(path: Path, *, tenant_id: str, environment: str) -> tuple[str, 
         payload.get("tenant_id") != tenant_id
         or payload.get("environment") != environment
     ):
+        return None
+    saved_mode = _clean_str(payload.get("mode")) or "apply"
+    if saved_mode != mode:
+        return None
+    raw_saved_jids = payload.get("journey_ids")
+    saved_jids = (
+        _normalize_scope_journey_ids(raw_saved_jids)
+        if isinstance(raw_saved_jids, list)
+        else []
+    )
+    if saved_jids != _normalize_scope_journey_ids(journey_ids):
         return None
     after = payload.get("last_after_key")
     if (
@@ -1879,6 +2553,8 @@ def _write_cursor(
     *,
     tenant_id: str,
     environment: str,
+    mode: str,
+    journey_ids: Sequence[str] | None,
     after_key: tuple[str, str, str] | None,
     batches_processed: int,
     has_more: bool,
@@ -1886,8 +2562,10 @@ def _write_cursor(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": REPAIR_SCHEMA_VERSION,
+        "mode": mode,
         "tenant_id": tenant_id,
         "environment": environment,
+        "journey_ids": _normalize_scope_journey_ids(journey_ids),
         "last_after_key": list(after_key) if after_key is not None else None,
         "batches_processed": int(batches_processed),
         "has_more": bool(has_more),
@@ -1902,6 +2580,43 @@ _NOTABLE_JOURNEY_IDS = frozenset(
         "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
     }
 )
+
+
+def _select_companion_fill_stage(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    ref_fill_eid: str,
+    ref_fill_id: str,
+) -> Mapping[str, Any] | None:
+    if not ref_fill_eid and not ref_fill_id:
+        return None
+    conflicted_match: Mapping[str, Any] | None = None
+    for comp in candidates:
+        same_fill, has_conflict = _companion_references_fill(
+            comp,
+            ref_fill_eid=ref_fill_eid,
+            ref_fill_id=ref_fill_id,
+        )
+        if not same_fill:
+            continue
+        if not has_conflict:
+            return comp
+        if conflicted_match is None:
+            conflicted_match = comp
+    return conflicted_match
+
+
+def _select_companion_snapshot_stage(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    ref_snap_eid: str,
+) -> Mapping[str, Any] | None:
+    if not ref_snap_eid:
+        return None
+    for comp in candidates:
+        if _companion_matches_snapshot_id(comp, ref_snap_eid=ref_snap_eid):
+            return comp
+    return None
 
 
 def run_cause_repair(
@@ -1932,20 +2647,27 @@ def run_cause_repair(
     if int(max_batches) < 1:
         raise ValueError("max_batches must be >= 1")
 
+    mode = "apply" if apply else "dry_run"
     cleaned_files, freed_bytes = cleanup_temp_evidence(
         work_dir, retention_seconds=retention_seconds, remove_all=False
     )
     resolved_before_image = before_image_path or (work_dir / BEFORE_IMAGE_FILENAME)
-    resolved_cursor = cursor_path or (work_dir / CURSOR_FILENAME)
+    resolved_cursor = cursor_path or (
+        work_dir / (CURSOR_FILENAME if apply else PREVIEW_CURSOR_FILENAME)
+    )
 
     current_after = after_key
     if current_after is None and resume:
         current_after = _read_cursor(
-            resolved_cursor, tenant_id=clean_tenant, environment=clean_env
+            resolved_cursor,
+            tenant_id=clean_tenant,
+            environment=clean_env,
+            mode=mode,
+            journey_ids=journey_ids,
         )
 
     report = RepairRunReport(
-        mode="apply" if apply else "dry_run",
+        mode=mode,
         tenant_id=clean_tenant,
         environment=clean_env,
         batch_size=int(batch_size),
@@ -1966,6 +2688,17 @@ def run_cause_repair(
         )
         if not batch:
             report.has_more = False
+            if report.batches_processed > 0:
+                _write_cursor(
+                    resolved_cursor,
+                    tenant_id=clean_tenant,
+                    environment=clean_env,
+                    mode=mode,
+                    journey_ids=journey_ids,
+                    after_key=current_after,
+                    batches_processed=report.batches_processed,
+                    has_more=False,
+                )
             break
 
         report.batches_processed += 1
@@ -1978,10 +2711,11 @@ def run_cause_repair(
 
         # First fetch primary source events for candidate rows + companion stages
         initial_event_ids: set[str] = {r.source_event_id for r in batch if r.source_event_id}
-        for comp in companions.values():
-            comp_eid = _clean_str(comp.get("source_event_id"))
-            if comp_eid:
-                initial_event_ids.add(comp_eid)
+        for comp_entry in companions.values():
+            for comp in _as_companion_stage_list(comp_entry):
+                comp_eid = _companion_stage_event_id(comp)
+                if comp_eid:
+                    initial_event_ids.add(comp_eid)
         telemetry_map = backend.fetch_telemetry_events(event_ids=sorted(initial_event_ids))
 
         # Discover secondary fill/snapshot event IDs and evaluation IDs referenced in source payloads
@@ -1996,30 +2730,29 @@ def run_cause_repair(
                 journey_id=r.journey_id,
                 expected_event_id=r.source_event_id,
             )
-            if src_pay is None:
-                continue
             src_meta = (
                 src_pay.get("metadata")
-                if isinstance(src_pay.get("metadata"), Mapping)
+                if isinstance(src_pay, Mapping)
+                and isinstance(src_pay.get("metadata"), Mapping)
                 else {}
             )
             if r.stage_name == "reconciliation":
                 eval_id = _first_str(
-                    src_pay.get("reconciliation_evaluation_id"),
+                    (src_pay or {}).get("reconciliation_evaluation_id"),
                     src_meta.get("reconciliation_evaluation_id"),
                     r.contract_fields.get("reconciliation_evaluation_id"),
                 )
                 if eval_id:
                     eval_ids.add(eval_id)
                 fill_eid = _first_str(
-                    src_pay.get("source_fill_event_id"),
+                    (src_pay or {}).get("source_fill_event_id"),
                     src_meta.get("source_fill_event_id"),
                     r.contract_fields.get("source_fill_event_id"),
                 )
                 if fill_eid and fill_eid not in telemetry_map:
                     secondary_event_ids.add(fill_eid)
                 fill_id = _first_str(
-                    src_pay.get("fill_id"),
+                    (src_pay or {}).get("fill_id"),
                     src_meta.get("fill_id"),
                     r.contract_fields.get("fill_id"),
                 )
@@ -2028,9 +2761,13 @@ def run_cause_repair(
                     if inferred_eid and inferred_eid not in telemetry_map:
                         secondary_event_ids.add(inferred_eid)
                 snap_eid = _first_str(
-                    src_pay.get("causal_parent_id"),
+                    (src_pay or {}).get("causal_parent_id"),
                     src_meta.get("causal_parent_id"),
-                    (src_pay.get("correlation_envelope") or {}).get("causation_event_id"),
+                    ((src_pay or {}).get("correlation_envelope") or {}).get(
+                        "causation_event_id"
+                    ),
+                    (src_pay or {}).get("snapshot_event_id"),
+                    src_meta.get("snapshot_event_id"),
                     r.contract_fields.get("snapshot_event_id"),
                 )
                 if snap_eid and snap_eid not in telemetry_map:
@@ -2040,6 +2777,70 @@ def run_cause_repair(
             telemetry_map.update(
                 backend.fetch_telemetry_events(event_ids=sorted(secondary_event_ids))
             )
+
+        # Discover any fill event IDs referenced inside newly fetched snapshot payloads
+        tertiary_event_ids: set[str] = set()
+        for r in batch:
+            if r.stage_name != "reconciliation":
+                continue
+            src_pay = _verify_scoped_telemetry(
+                telemetry_map.get(r.source_event_id),
+                tenant_id=clean_tenant,
+                environment=clean_env,
+                journey_id=r.journey_id,
+                expected_event_id=r.source_event_id,
+            )
+            src_meta = (
+                src_pay.get("metadata")
+                if isinstance(src_pay, Mapping)
+                and isinstance(src_pay.get("metadata"), Mapping)
+                else {}
+            )
+            snap_eid = _first_str(
+                (src_pay or {}).get("causal_parent_id"),
+                src_meta.get("causal_parent_id"),
+                ((src_pay or {}).get("correlation_envelope") or {}).get(
+                    "causation_event_id"
+                ),
+                (src_pay or {}).get("snapshot_event_id"),
+                src_meta.get("snapshot_event_id"),
+                r.contract_fields.get("snapshot_event_id"),
+            )
+            if not snap_eid:
+                continue
+            snap_pay = _verify_scoped_telemetry(
+                telemetry_map.get(snap_eid),
+                tenant_id=clean_tenant,
+                environment=clean_env,
+                journey_id=r.journey_id,
+                expected_event_id=snap_eid,
+            )
+            if not isinstance(snap_pay, Mapping):
+                continue
+            s_meta = (
+                snap_pay.get("metadata")
+                if isinstance(snap_pay.get("metadata"), Mapping)
+                else {}
+            )
+            s_fill_eid = _first_str(
+                snap_pay.get("source_fill_event_id"),
+                s_meta.get("source_fill_event_id"),
+                snap_pay.get("causal_parent_id"),
+                s_meta.get("causal_parent_id"),
+                (snap_pay.get("correlation_envelope") or {}).get("causation_event_id"),
+            )
+            if s_fill_eid and s_fill_eid not in telemetry_map:
+                tertiary_event_ids.add(s_fill_eid)
+            s_fill_id = _first_str(snap_pay.get("fill_id"), s_meta.get("fill_id"))
+            if s_fill_id.startswith("paper-fill-"):
+                s_inferred = s_fill_id[len("paper-fill-") :]
+                if s_inferred and s_inferred not in telemetry_map:
+                    tertiary_event_ids.add(s_inferred)
+        if tertiary_event_ids:
+            telemetry_map.update(
+                backend.fetch_telemetry_events(event_ids=sorted(tertiary_event_ids))
+            )
+
         evaluations_map = (
             backend.fetch_drift_evaluations(
                 tenant_id=clean_tenant,
@@ -2070,41 +2871,14 @@ def run_cause_repair(
                     and isinstance(src_pay.get("metadata"), Mapping)
                     else {}
                 )
-                fill_stage = companions.get((r.journey_id, "fill_management"))
-                fill_eid = _first_str(
-                    (src_pay or {}).get("source_fill_event_id"),
-                    src_meta.get("source_fill_event_id"),
-                    (fill_stage or {}).get("source_event_id"),
-                    r.contract_fields.get("source_fill_event_id"),
-                )
-                if not fill_eid:
-                    raw_fid = _first_str(
-                        (src_pay or {}).get("fill_id"),
-                        src_meta.get("fill_id"),
-                        r.contract_fields.get("fill_id"),
-                    )
-                    if raw_fid.startswith("paper-fill-"):
-                        fill_eid = raw_fid[len("paper-fill-") :]
-                fill_pay = (
-                    _verify_scoped_telemetry(
-                        telemetry_map.get(fill_eid),
-                        tenant_id=clean_tenant,
-                        environment=clean_env,
-                        journey_id=r.journey_id,
-                        expected_event_id=fill_eid,
-                    )
-                    if fill_eid
-                    else None
-                )
-
-                snapshot_stage = companions.get((r.journey_id, "ledger_booking"))
                 snap_eid = _first_str(
                     (src_pay or {}).get("causal_parent_id"),
                     src_meta.get("causal_parent_id"),
                     ((src_pay or {}).get("correlation_envelope") or {}).get(
                         "causation_event_id"
                     ),
-                    (snapshot_stage or {}).get("source_event_id"),
+                    (src_pay or {}).get("snapshot_event_id"),
+                    src_meta.get("snapshot_event_id"),
                     r.contract_fields.get("snapshot_event_id"),
                 )
                 snap_pay = (
@@ -2116,6 +2890,65 @@ def run_cause_repair(
                         expected_event_id=snap_eid,
                     )
                     if snap_eid
+                    else None
+                )
+                snapshot_stage = _select_companion_snapshot_stage(
+                    _as_companion_stage_list(
+                        companions.get((r.journey_id, "ledger_booking"))
+                    ),
+                    ref_snap_eid=snap_eid,
+                )
+
+                fill_eid = _first_str(
+                    (src_pay or {}).get("source_fill_event_id"),
+                    src_meta.get("source_fill_event_id"),
+                    r.contract_fields.get("source_fill_event_id"),
+                )
+                raw_fid = _first_str(
+                    (src_pay or {}).get("fill_id"),
+                    src_meta.get("fill_id"),
+                    r.contract_fields.get("fill_id"),
+                )
+                if not fill_eid and raw_fid.startswith("paper-fill-"):
+                    fill_eid = raw_fid[len("paper-fill-") :]
+                if not fill_eid and not raw_fid and isinstance(snap_pay, Mapping):
+                    s_meta = (
+                        snap_pay.get("metadata")
+                        if isinstance(snap_pay.get("metadata"), Mapping)
+                        else {}
+                    )
+                    fill_eid = _first_str(
+                        snap_pay.get("source_fill_event_id"),
+                        s_meta.get("source_fill_event_id"),
+                        snap_pay.get("causal_parent_id"),
+                        s_meta.get("causal_parent_id"),
+                        (snap_pay.get("correlation_envelope") or {}).get(
+                            "causation_event_id"
+                        ),
+                    )
+                    raw_fid = _first_str(
+                        snap_pay.get("fill_id"),
+                        s_meta.get("fill_id"),
+                    )
+                    if not fill_eid and raw_fid.startswith("paper-fill-"):
+                        fill_eid = raw_fid[len("paper-fill-") :]
+
+                fill_stage = _select_companion_fill_stage(
+                    _as_companion_stage_list(
+                        companions.get((r.journey_id, "fill_management"))
+                    ),
+                    ref_fill_eid=fill_eid,
+                    ref_fill_id=raw_fid,
+                )
+                fill_pay = (
+                    _verify_scoped_telemetry(
+                        telemetry_map.get(fill_eid),
+                        tenant_id=clean_tenant,
+                        environment=clean_env,
+                        journey_id=r.journey_id,
+                        expected_event_id=fill_eid,
+                    )
+                    if fill_eid
                     else None
                 )
                 eval_id = _first_str(
@@ -2225,6 +3058,8 @@ def run_cause_repair(
                 resolved_cursor,
                 tenant_id=clean_tenant,
                 environment=clean_env,
+                mode=mode,
+                journey_ids=journey_ids,
                 after_key=current_after,
                 batches_processed=report.batches_processed,
                 has_more=False,
@@ -2235,6 +3070,8 @@ def run_cause_repair(
             resolved_cursor,
             tenant_id=clean_tenant,
             environment=clean_env,
+            mode=mode,
+            journey_ids=journey_ids,
             after_key=current_after,
             batches_processed=report.batches_processed,
             has_more=True,

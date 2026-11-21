@@ -1494,3 +1494,485 @@ def test_before_image_caps_and_retention_cleanup(tmp_path: Path) -> None:
         == 3
     )
 
+
+def test_dry_run_then_apply_resume_and_cursor_scope_transitions(
+    tmp_path: Path,
+) -> None:
+    # 1. Exact documented procedure: dry-run followed by apply --resume in the same work_dir
+    buy_stage, buy_tel = _build_2317_buy_refusal_fixture()
+    backend = InMemoryCauseRepairBackend(
+        stages=[buy_stage],
+        telemetry_events=buy_tel,
+    )
+
+    dry_report = run_cause_repair(backend, apply=False, work_dir=tmp_path)
+    assert dry_report.needs_update_rows == 1
+    assert dry_report.updated_rows == 0
+
+    apply_report = run_cause_repair(
+        backend,
+        apply=True,
+        resume=True,
+        work_dir=tmp_path,
+    )
+    assert apply_report.scanned_rows == 1
+    assert apply_report.updated_rows == 1
+    repaired_buy = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+            "91d55953-b575-4fe8-8d39-6e0cade58d59",
+            "order_submission",
+        )
+    ]
+    assert repaired_buy.contract_fields["reason_code"] == "insufficient_cash"
+    assert repaired_buy.contract_fields["expression_reason_code"] == "long_cash"
+
+    # Also verify mode binding even when an explicit cursor_path is shared between dry-run and apply
+    shared_cursor = tmp_path / "shared-cursor.json"
+    buy_stage2, buy_tel2 = _build_2317_buy_refusal_fixture()
+    backend2 = InMemoryCauseRepairBackend(
+        stages=[buy_stage2],
+        telemetry_events=buy_tel2,
+    )
+    dry2 = run_cause_repair(
+        backend2,
+        apply=False,
+        work_dir=tmp_path,
+        cursor_path=shared_cursor,
+    )
+    assert dry2.needs_update_rows == 1
+    apply2 = run_cause_repair(
+        backend2,
+        apply=True,
+        resume=True,
+        work_dir=tmp_path,
+        cursor_path=shared_cursor,
+    )
+    assert apply2.scanned_rows == 1
+    assert apply2.updated_rows == 1
+
+    # 2. Filtered -> full and full -> filtered inventory transitions with resume=True
+    buy_stage3, buy_tel3 = _build_2317_buy_refusal_fixture()
+    sell_stage3, sell_tel3, sell_comp3, sell_evals3 = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    scope_dir = tmp_path / "scope-transitions"
+    backend3 = InMemoryCauseRepairBackend(
+        stages=[buy_stage3, sell_stage3],
+        telemetry_events={**buy_tel3, **sell_tel3},
+        companion_stages=sell_comp3,
+        drift_evaluations=sell_evals3,
+    )
+    # Note: tj_57418ba7... (sell) sorts BEFORE tj_79726064... (buy).
+    # Running filtered apply on tj_79726064... advances the filtered cursor to the highest key.
+    filtered_apply = run_cause_repair(
+        backend3,
+        apply=True,
+        journey_ids=["tj_79726064-4cc2-5510-8e11-7f5e59ff89bd"],
+        work_dir=scope_dir,
+    )
+    assert filtered_apply.scanned_rows == 1
+    assert filtered_apply.updated_rows == 1
+
+    # Full inventory with resume=True must NOT skip tj_57418ba7... due to the prior filtered cursor
+    full_apply = run_cause_repair(
+        backend3,
+        apply=True,
+        resume=True,
+        journey_ids=None,
+        work_dir=scope_dir,
+    )
+    assert full_apply.scanned_rows == 2
+    assert full_apply.updated_rows == 1
+    assert full_apply.already_repaired_rows == 1
+
+    # Full inventory partial cursor followed by a filtered --resume run must not skip the filtered target
+    buy_stage4, buy_tel4 = _build_2317_buy_refusal_fixture()
+    sell_stage4, sell_tel4, sell_comp4, sell_evals4 = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    rev_dir = tmp_path / "full-to-filtered"
+    backend4 = InMemoryCauseRepairBackend(
+        stages=[buy_stage4, sell_stage4],
+        telemetry_events={**buy_tel4, **sell_tel4},
+        companion_stages=sell_comp4,
+        drift_evaluations=sell_evals4,
+    )
+    # Full dry-run writes cursor at tj_79726064...
+    full_dry = run_cause_repair(backend4, apply=False, work_dir=rev_dir)
+    assert full_dry.scanned_rows == 2
+    # Filtered dry-run with resume=True for tj_57418ba7... must start fresh for that filtered scope
+    filtered_dry = run_cause_repair(
+        backend4,
+        apply=False,
+        resume=True,
+        journey_ids=["tj_57418ba7-ef37-5015-9b5e-b6423872da89"],
+        work_dir=rev_dir,
+    )
+    assert filtered_dry.scanned_rows == 1
+    assert filtered_dry.needs_update_rows == 1
+
+
+def test_missing_original_fill_telemetry_does_not_substitute_unrelated_same_journey_companion(
+    tmp_path: Path,
+) -> None:
+    recon_stage, telemetry, companions, evaluations = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    journey_id = "tj_57418ba7-ef37-5015-9b5e-b6423872da89"
+    orig_fill_eid = "000600fb-6496-47d9-a550-1fa23449c1e2"
+
+    # Remove the referenced fill telemetry and set the same-journey companion to an unrelated fill
+    telemetry.pop(orig_fill_eid)
+    companions[(journey_id, "fill_management")] = {
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "journey_id": journey_id,
+        "stage_name": "fill_management",
+        "source_event_id": "other-fill-same-journey",
+        "stage_status": "succeeded",
+        "contract_fields": {
+            "event_id": "other-fill-same-journey:fill_management",
+            "canonical_event_id": "other-fill-same-journey",
+            "event_type": "paper_fill_simulated",
+            "stage": "fill_management",
+            "stage_status": "succeeded",
+            "symbol": "2317.TWSE",
+            "side": "sell",
+            "quantity": 9.0,
+            "price": 999.0,
+            "fill_id": "paper-fill-other-fill-same-journey",
+            "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+        },
+    }
+
+    backend = InMemoryCauseRepairBackend(
+        stages=[recon_stage],
+        telemetry_events=telemetry,
+        companion_stages=companions,
+        drift_evaluations=evaluations,
+    )
+    report = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert report.scanned_rows == 1
+    assert report.health_only_evaluations == 1
+    assert report.updated_rows == 1
+
+    cf = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            journey_id,
+            "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14",
+            "reconciliation",
+        )
+    ].contract_fields
+    assert cf["source_fill_event_id"] == orig_fill_eid
+    assert cf["fill_id"] == f"paper-fill-{orig_fill_eid}"
+    assert "quantity" not in cf
+    assert "fill_quantity" not in cf
+    assert "price" not in cf
+    assert "fill_price" not in cf
+    assert cf["reason_code"] == "reconciliation_evidence_incomplete"
+    assert "fill_event" in cf["missing_evidence"]
+    assert "fill_quantity" in cf["missing_evidence"]
+    assert "fill_price" in cf["missing_evidence"]
+
+
+def test_multiple_fills_in_same_journey_resolve_companions_by_exact_ids_and_reject_conflicts(
+    tmp_path: Path,
+) -> None:
+    recon1_stage, telemetry, companions, evaluations = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    journey_id = "tj_57418ba7-ef37-5015-9b5e-b6423872da89"
+    fill1_eid = "000600fb-6496-47d9-a550-1fa23449c1e2"
+    snap1_eid = "8d6761c5-5ae8-5799-87bb-10302186595a"
+    eval_id = (
+        "rdeval-sched-scheduled-tenant-dev-2026-11-16T-"
+        "rb-7f3c1be55a224fdaa36bb-a39cdf74492b52bb"
+    )
+
+    # Add a second fill + snapshot + reconciliation stage on the same journey
+    fill2_eid = "other-fill-same-journey"
+    snap2_eid = "other-snap-same-journey"
+    recon2_eid = "other-recon-same-journey"
+
+    snap2_payload = _base_telemetry_payload(
+        journey_id=journey_id,
+        event_id=snap2_eid,
+        event_type="position_snapshot",
+        sequence_no=9,
+        created_at="2026-11-16T07:10:00Z",
+        causation_event_id=fill2_eid,
+    )
+    snap2_payload.update(
+        {
+            "symbol": "2317.TWSE",
+            "side": "sell",
+            "position_qty": 0.0,
+            "metrics": {"position_qty": 0.0, "price": 999.0, "cash": 109000.0},
+        }
+    )
+    snap2_payload["metadata"].update(
+        {
+            "symbol": "2317.TWSE",
+            "side": "sell",
+            "fill_id": f"paper-fill-{fill2_eid}",
+            "source_fill_event_id": fill2_eid,
+            "broker_order_id": "broker-order-fill-2",
+            "causal_parent_id": fill2_eid,
+        }
+    )
+
+    recon2_payload = _base_telemetry_payload(
+        journey_id=journey_id,
+        event_id=recon2_eid,
+        event_type="reconciliation_failed",
+        sequence_no=10,
+        created_at="2026-11-16T07:15:00Z",
+        producer="reconciliation-drift.scheduled",
+        causation_event_id=snap2_eid,
+    )
+    recon2_payload.update({"symbol": "2317.TWSE", "side": "sell"})
+    recon2_payload["metadata"].update(
+        {
+            "symbol": "2317.TWSE",
+            "side": "sell",
+            "fill_id": f"paper-fill-{fill2_eid}",
+            "source_fill_event_id": fill2_eid,
+            "broker_order_id": "broker-order-fill-2",
+            "causal_parent_id": snap2_eid,
+            "reconciliation_status": "warning",
+            "reconciliation_evaluation_id": eval_id,
+        }
+    )
+    recon2_stage = CandidateStageRow(
+        tenant_id="tenant-dev",
+        environment="paper",
+        journey_id=journey_id,
+        source_event_id=recon2_eid,
+        stage_name="reconciliation",
+        stage_status="failed",
+        stage_ordinal=2,
+        source_ingested_seq=17309999,
+        event_sequence=10,
+        occurred_at_iso="2026-11-16T07:15:00Z",
+        recorded_at_iso="2026-11-16T07:15:00Z",
+        contract_fields={
+            "event_id": f"{recon2_eid}:reconciliation",
+            "canonical_event_id": recon2_eid,
+            "event_type": "reconciliation_failed",
+            "journey_id": journey_id,
+            "tenant_id": "tenant-dev",
+            "environment": "paper",
+            "stage": "reconciliation",
+            "stage_status": "failed",
+            "symbol": "2317.TWSE",
+            "side": "sell",
+            "fill_id": f"paper-fill-{fill2_eid}",
+            "broker_order_id": "broker-order-fill-2",
+        },
+        evidence_references=[],
+        projection_revision=6,
+        fingerprint="fp-2317-sell-recon-2",
+        journey_status="completed_with_variance",
+        journey_projection_revision=6,
+    )
+
+    # Remove fill1 telemetry so recon1 must recover from its exact companion stage while fill2 companion is also present
+    telemetry.pop(fill1_eid)
+    telemetry[snap2_eid] = {
+        "event_id": snap2_eid,
+        "event_type": "position_snapshot",
+        "created_at": "2026-11-16T07:10:00Z",
+        "payload": snap2_payload,
+    }
+    telemetry[recon2_eid] = {
+        "event_id": recon2_eid,
+        "event_type": "reconciliation_failed",
+        "created_at": "2026-11-16T07:15:00Z",
+        "payload": recon2_payload,
+    }
+
+    multi_companions = {
+        (journey_id, "fill_management"): [
+            {
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "journey_id": journey_id,
+                "stage_name": "fill_management",
+                "source_event_id": fill2_eid,
+                "stage_status": "succeeded",
+                "contract_fields": {
+                    "event_id": f"{fill2_eid}:fill_management",
+                    "canonical_event_id": fill2_eid,
+                    "stage": "fill_management",
+                    "symbol": "2317.TWSE",
+                    "side": "sell",
+                    "quantity": 9.0,
+                    "price": 999.0,
+                    "fill_id": f"paper-fill-{fill2_eid}",
+                    "broker_order_id": "broker-order-fill-2",
+                },
+            },
+            companions[(journey_id, "fill_management")],
+        ],
+        (journey_id, "ledger_booking"): [
+            {
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "journey_id": journey_id,
+                "stage_name": "ledger_booking",
+                "source_event_id": snap2_eid,
+                "stage_status": "succeeded",
+                "contract_fields": {
+                    "event_id": f"{snap2_eid}:ledger_booking",
+                    "canonical_event_id": snap2_eid,
+                    "stage": "ledger_booking",
+                    "symbol": "2317.TWSE",
+                    "side": "sell",
+                    "quantity": 0.0,
+                    "fill_id": f"paper-fill-{fill2_eid}",
+                    "broker_order_id": "broker-order-fill-2",
+                },
+            },
+            companions[(journey_id, "ledger_booking")],
+        ],
+    }
+
+    backend = InMemoryCauseRepairBackend(
+        stages=[recon1_stage, recon2_stage],
+        telemetry_events=telemetry,
+        companion_stages=multi_companions,
+        drift_evaluations=evaluations,
+    )
+    report = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert report.updated_rows == 2
+
+    cf1 = backend.stages[
+        ("tenant-dev", "paper", journey_id, recon1_stage.source_event_id, "reconciliation")
+    ].contract_fields
+    assert cf1["source_fill_event_id"] == fill1_eid
+    assert cf1["fill_id"] == f"paper-fill-{fill1_eid}"
+    assert cf1["snapshot_event_id"] == snap1_eid
+    assert cf1["quantity"] == 1.0
+    assert cf1["price"] == 218.5
+
+    cf2 = backend.stages[
+        ("tenant-dev", "paper", journey_id, recon2_eid, "reconciliation")
+    ].contract_fields
+    assert cf2["source_fill_event_id"] == fill2_eid
+    assert cf2["fill_id"] == f"paper-fill-{fill2_eid}"
+    assert cf2["snapshot_event_id"] == snap2_eid
+    assert cf2["quantity"] == 9.0
+    assert cf2["price"] == 999.0
+
+    # Now test conflicting fill/snapshot evidence: snapshot claims fill_quantity=9, fill_price=999 while fill telemetry says 1@218.5
+    c_recon, c_tel, c_comp, c_evals = _build_2317_sell_reconciliation_fixture()
+    c_tel[snap1_eid]["payload"]["metadata"]["fill_quantity"] = 9.0
+    c_tel[snap1_eid]["payload"]["metadata"]["fill_price"] = 999.0
+    conflict_backend = InMemoryCauseRepairBackend(
+        stages=[c_recon],
+        telemetry_events=c_tel,
+        companion_stages=c_comp,
+        drift_evaluations=c_evals,
+    )
+    c_report = run_cause_repair(
+        conflict_backend,
+        apply=True,
+        work_dir=tmp_path / "conflict",
+    )
+    assert c_report.updated_rows == 1
+    assert c_report.proven_variances == 0
+    assert c_report.health_only_evaluations == 1
+    c_cf = conflict_backend.stages[
+        ("tenant-dev", "paper", journey_id, c_recon.source_event_id, "reconciliation")
+    ].contract_fields
+    assert "quantity" not in c_cf
+    assert "fill_quantity" not in c_cf
+    assert "price" not in c_cf
+    assert "fill_price" not in c_cf
+    assert c_cf["reason_code"] == "reconciliation_evidence_incomplete"
+    assert "conflicting_fill_snapshot_evidence" in c_cf["missing_evidence"]
+    assert "fill_quantity" in c_cf["missing_evidence"]
+    assert "fill_price" in c_cf["missing_evidence"]
+
+
+def test_preexisting_proven_variance_idempotency_across_repeated_apply_runs(
+    tmp_path: Path,
+) -> None:
+    recon_stage, telemetry, companions, evaluations = (
+        _build_2317_sell_reconciliation_fixture()
+    )
+    seeded_fields = dict(recon_stage.contract_fields)
+    seeded_fields["reason_detail"] = [
+        {
+            "check": "cash_change",
+            "status": "failed",
+            "expected": 100.0,
+            "actual": 55.0,
+        }
+    ]
+    seeded_stage = CandidateStageRow(
+        **{
+            **recon_stage.__dict__,
+            "contract_fields": seeded_fields,
+        }
+    )
+    backend = InMemoryCauseRepairBackend(
+        stages=[seeded_stage],
+        telemetry_events=telemetry,
+        companion_stages=companions,
+        drift_evaluations=evaluations,
+    )
+
+    run1 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert run1.proven_variances == 1
+    assert run1.updated_rows == 1
+    cf1 = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            seeded_stage.journey_id,
+            seeded_stage.source_event_id,
+            "reconciliation",
+        )
+    ].contract_fields
+    assert cf1["reason_code"] == "cash_variance"
+    assert len(cf1["reason_detail"]) == 3
+
+    run2 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert run2.proven_variances == 1
+    assert run2.needs_update_rows == 0
+    assert run2.updated_rows == 0
+    assert run2.already_repaired_rows == 1
+    cf2 = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            seeded_stage.journey_id,
+            seeded_stage.source_event_id,
+            "reconciliation",
+        )
+    ].contract_fields
+    assert len(cf2["reason_detail"]) == 3
+
+    run3 = run_cause_repair(backend, apply=True, work_dir=tmp_path)
+    assert run3.proven_variances == 1
+    assert run3.needs_update_rows == 0
+    assert run3.updated_rows == 0
+    assert run3.already_repaired_rows == 1
+    cf3 = backend.stages[
+        (
+            "tenant-dev",
+            "paper",
+            seeded_stage.journey_id,
+            seeded_stage.source_event_id,
+            "reconciliation",
+        )
+    ].contract_fields
+    assert len(cf3["reason_detail"]) == 3
+
+

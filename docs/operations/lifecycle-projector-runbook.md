@@ -113,7 +113,11 @@ evidence (`public.telemetry_events` and `reconciliation_drift.drift_evaluations`
 * **Scoped joins**: Joins strictly by `(tenant_id, environment, journey_id)` and exact
   `source_event_id`, `reconciliation_evaluation_id` (using the owner store key
   `'tenant-record-' + sha256(f"{tenant_id}\0{evaluation_id}")`), `source_fill_event_id` /
-  `fill_id`, and `causal_parent_id` (`position_snapshot`).
+  `fill_id`, and `causal_parent_id` (`position_snapshot`). Companion `fill_management` and
+  `ledger_booking` stage rows are resolved strictly by exact referenced fill/snapshot IDs
+  (never substituting the latest stage in a multi-fill journey); conflicting fill/snapshot
+  evidence is rejected as unverified (`conflicting_fill_snapshot_evidence`), and missing
+  original evidence is preserved in `missing_evidence`.
 * **Immutability**: Never modifies `public.telemetry_events`,
   `public.trade_journey_action_ledger`, `reconciliation_drift.*`, ledger tables, or paper
   broker orders, and never replays trading side effects.
@@ -138,13 +142,18 @@ evidence (`public.telemetry_events` and `reconciliation_drift.drift_evaluations`
     evidence establishes a result. A subsequent healthy tick alone proves only runtime health.
   * `proven_variances`: `reconciliation | failed` rows where complete trade-specific booking
     evidence shows a discrepancy beyond `1e-6`, preserving `expected`, `actual`,
-    `difference`, `delta`, and the variance `reason_code`.
+    `difference`, `delta`, and the variance `reason_code` with normalized/deduplicated
+    `reason_detail` so repeat runs update zero already-repaired rows.
   * `irrecoverable_records`: rows whose source event or evaluation record is absent (such as
     `2026-10-07` reconciliation rows prior to `reconciliation_drift.drift_evaluations`
     persistence), preserving `reason_code="reason_not_recorded"` and `missing_evidence`.
-* **Concurrency and rollback safety**: Every stage `UPDATE` is guarded by the expected stage
-  `projection_revision`, `fingerprint`, `contract_fields`, and parent journey
-  `projection_revision`. Before modifying a row, its scoped before-image is appended to
+* **Concurrency, cursor isolation, and rollback safety**: Preview (`--dry-run`) and apply
+  (`--apply`) maintain separate cursor files (`paper_journey_cause_repair_preview_cursor.json`
+  and `paper_journey_cause_repair_cursor.json`), and cursors bind `mode`, `tenant_id`,
+  `environment`, and `journey_ids` scope so `--dry-run` followed by `--apply --resume` (or
+  filtered-to-full transitions) never skips inventory rows. Every stage `UPDATE` is guarded by
+  the expected stage `projection_revision`, `fingerprint`, `contract_fields`, and parent
+  journey `projection_revision`. Before modifying a row, its scoped before-image is appended to
   `/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_before_image.jsonl` (capped
   at `16 MiB` / `25,000` records, 7-day TTL auto-prune).
 

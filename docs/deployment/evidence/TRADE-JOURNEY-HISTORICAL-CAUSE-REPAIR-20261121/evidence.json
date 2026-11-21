@@ -241,9 +241,11 @@
       "before_image_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_before_image.jsonl",
       "cleanup": "automatic 7-day TTL prune on every repair invocation plus explicit --cleanup-temp CLI flag",
       "cursor_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_cursor.json",
+      "cursor_isolation": "separate preview (paper_journey_cause_repair_preview_cursor.json) and apply (paper_journey_cause_repair_cursor.json) cursor files bound to mode, tenant_id, environment, and journey_ids scope",
       "estimated_full_hosted_before_image_bytes": 5400000,
       "max_before_image_bytes_cap": 16777216,
       "max_before_image_records_cap": 25000,
+      "preview_cursor_file": "/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_preview_cursor.json",
       "retention_seconds": 604800,
       "storage_manifest_entry": "jsonl:paper_journey_cause_repair_before_image.jsonl (bound_status=bounded)"
     }
