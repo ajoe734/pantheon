@@ -15,10 +15,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
+from services.control_plane.bff.core.display_names import current_resolver
 from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
     selected_tenant,
 )
+
+MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000
 
 _PRIVATE_SCOPES = frozenset({
     "persona_private",
@@ -143,9 +146,9 @@ def _is_private_memory_item(item: Mapping[str, Any]) -> bool:
             return True
     if item.get("is_private") is True or item.get("private") is True:
         return True
-    for key in ("kind", "memory_type", "type"):
+    for key in ("kind", "memory_type", "type", "owner"):
         val = str(item.get(key) or "").strip().lower()
-        if val in {"private_memory", "persona_private", "persona_private_memory"}:
+        if val in {"private_memory", "persona_private", "persona_private_memory", "memory:persona_private"}:
             return True
     return False
 
@@ -380,6 +383,256 @@ def _execution_fields(raw: Mapping[str, Any]) -> Dict[str, Any]:
     return {"execution_state": es_out, "effective_status": effective}
 
 
+def _resolve_meeting_review_cause(raw: Mapping[str, Any]) -> Optional[str]:
+    """Return the stored specific synthesis review cause when present, or 'unknown' on legacy REVIEW rows."""
+    synth = raw.get("synthesis") if isinstance(raw.get("synthesis"), Mapping) else {}
+    outcome = str(
+        raw.get("outcome")
+        or synth.get("outcome")
+        or ""
+    ).strip().upper()
+    status = str(raw.get("status") or "").strip().upper()
+    is_review = outcome == "REVIEW" or status == "REVIEW"
+    for candidate in (
+        synth.get("unreadable_reason"),
+        raw.get("synthesis_unreadable_reason"),
+        raw.get("unreadable_reason"),
+        (raw.get("operator_review") or {}).get("cause")
+        if isinstance(raw.get("operator_review"), Mapping)
+        else None,
+    ):
+        val = str(candidate or "").strip()
+        if val and val.lower() not in {"none", "null", "unknown"}:
+            return val
+    if is_review:
+        return "unknown"
+    return None
+
+
+def _extract_item_ref_ids(item: Mapping[str, Any]) -> List[str]:
+    out: List[str] = []
+    for k in ("item_id", "id", "source_id", "ref_id", "entry_id", "record_id"):
+        v = str(item.get(k) or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _collect_meeting_withheld_and_visible_refs(
+    raw: Mapping[str, Any],
+    *,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
+) -> Tuple[List[str], set[str]]:
+    """Return ``(evidence_refs, withheld_ids)`` after private and trader visibility filtering."""
+    meeting_trader_id = _extract_trader_id(raw)
+
+    def _is_withheld(item: Mapping[str, Any]) -> bool:
+        if _is_private_memory_item(item):
+            return True
+        if _is_agora_or_trader_record(item):
+            rec_trader = _extract_trader_id(item, default_trader_id=meeting_trader_id)
+            if not _can_view_trader(rec_trader, is_operator=is_operator, caller_user_id=caller_user_id):
+                return True
+        return False
+
+    visible_item_ids: set[str] = set()
+    withheld_ids: set[str] = set()
+    visible_case_refs: List[str] = []
+    visible_citation_refs: List[str] = []
+    withheld_citation_refs: set[str] = set()
+
+    for item in raw.get("case_file_items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        ids = _extract_item_ref_ids(item)
+        if _is_withheld(item):
+            withheld_ids.update(ids)
+        else:
+            visible_item_ids.update(ids)
+            primary = str(item.get("item_id") or item.get("id") or item.get("source_id") or "").strip()
+            if primary:
+                visible_case_refs.append(primary)
+
+    raw_case_file = raw.get("case_file")
+    if isinstance(raw_case_file, Mapping):
+        cf_lists: List[Any] = [raw_case_file.get("items")]
+        groups = raw_case_file.get("groups")
+        if isinstance(groups, Mapping):
+            for grp in groups.values():
+                if isinstance(grp, Mapping):
+                    cf_lists.append(grp.get("items"))
+        for cf_items in cf_lists:
+            if not isinstance(cf_items, list):
+                continue
+            for item in cf_items:
+                if not isinstance(item, Mapping):
+                    continue
+                ids = _extract_item_ref_ids(item)
+                if _is_withheld(item):
+                    withheld_ids.update(ids)
+                else:
+                    visible_item_ids.update(ids)
+
+    raw_pre_read = raw.get("pre_read")
+    pre_read_entries: List[Mapping[str, Any]] = []
+    if isinstance(raw_pre_read, list):
+        pre_read_entries.extend(x for x in raw_pre_read if isinstance(x, Mapping))
+    elif isinstance(raw_pre_read, Mapping):
+        if _is_withheld(raw_pre_read):
+            withheld_ids.update(_extract_item_ref_ids(raw_pre_read))
+        for list_key in ("interpretations", "items"):
+            sub = raw_pre_read.get(list_key)
+            if isinstance(sub, list):
+                pre_read_entries.extend(x for x in sub if isinstance(x, Mapping))
+    for entry in pre_read_entries:
+        ids = _extract_item_ref_ids(entry)
+        if _is_withheld(entry):
+            withheld_ids.update(ids)
+            for cit in entry.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    withheld_ids.update(_extract_item_ref_ids(cit))
+                else:
+                    s = str(cit or "").strip()
+                    if s:
+                        withheld_citation_refs.add(s)
+        else:
+            visible_item_ids.update(ids)
+
+    attr_rec = raw.get("attribution_record")
+    if isinstance(attr_rec, Mapping) and _is_withheld(attr_rec):
+        withheld_ids.update(_extract_item_ref_ids(attr_rec))
+        if raw.get("attribution_record_id"):
+            withheld_ids.add(str(raw["attribution_record_id"]).strip())
+
+    for rec in raw.get("agora_records") or []:
+        if isinstance(rec, Mapping) and _is_withheld(rec):
+            withheld_ids.update(_extract_item_ref_ids(rec))
+
+    for rnd in raw.get("rounds") or []:
+        if not isinstance(rnd, Mapping):
+            continue
+        rnd_withheld = _is_withheld(rnd)
+        for pos in rnd.get("positions") or []:
+            if not isinstance(pos, Mapping):
+                continue
+            if rnd_withheld or _is_withheld(pos):
+                withheld_ids.update(_extract_item_ref_ids(pos))
+                for cit in pos.get("citations") or []:
+                    if isinstance(cit, Mapping):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                    else:
+                        s = str(cit or "").strip()
+                        if s:
+                            withheld_citation_refs.add(s)
+                continue
+            for cit in pos.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    if _is_withheld(cit):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                        continue
+                    s = str(cit.get("item_id") or cit.get("id") or cit.get("source_id") or "").strip()
+                else:
+                    s = str(cit or "").strip()
+                if s:
+                    visible_citation_refs.append(s)
+
+    for cit_ref in withheld_citation_refs:
+        if cit_ref not in visible_item_ids and cit_ref not in visible_citation_refs:
+            withheld_ids.add(cit_ref)
+
+    refs: List[str] = []
+    seen: set[str] = set()
+
+    def _add(val: Any) -> None:
+        if isinstance(val, Mapping):
+            if _is_withheld(val):
+                withheld_ids.update(_extract_item_ref_ids(val))
+                return
+            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or val.get("ref_id") or "").strip()
+        else:
+            s = str(val or "").strip()
+        if s and s not in withheld_ids and s not in seen:
+            seen.add(s)
+            refs.append(s)
+
+    synth = raw.get("synthesis") if isinstance(raw.get("synthesis"), Mapping) else {}
+    minutes = raw.get("minutes") if isinstance(raw.get("minutes"), Mapping) else {}
+    memo_refs = [
+        str(x).strip()
+        for x in (
+            synth.get("dissent_memo_id"),
+            minutes.get("memo_id"),
+            minutes.get("dissent_memo_id"),
+        )
+        if x and str(x).strip()
+    ]
+    memo_ref_set = set(memo_refs)
+
+    for r in raw.get("evidence_refs") or []:
+        if isinstance(r, str) and r.strip() in memo_ref_set:
+            continue
+        _add(r)
+    for r in visible_case_refs:
+        _add(r)
+    for r in visible_citation_refs:
+        _add(r)
+    for r in memo_refs:
+        _add(r)
+    return refs, withheld_ids
+
+
+def _collect_meeting_evidence_refs(
+    raw: Mapping[str, Any],
+    *,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
+) -> List[str]:
+    """Collect deduplicated non-private, caller-visible evidence/citation refs from a meeting record."""
+    refs, _ = _collect_meeting_withheld_and_visible_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
+    return refs
+
+
+def _normalize_operator_review(
+    raw_review: Any,
+    *,
+    default_cause: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_review, Mapping):
+        return None
+    status = str(raw_review.get("status") or "").strip().lower()
+    if status != "reviewed":
+        return None
+    note = str(raw_review.get("note") or raw_review.get("rationale") or "").strip()
+    reviewed_by = str(raw_review.get("reviewed_by") or "").strip()
+    reviewed_at = str(raw_review.get("reviewed_at") or "").strip()
+    stored_cause = str(
+        raw_review.get("cause")
+        or raw_review.get("unreadable_reason")
+        or ""
+    ).strip()
+    if stored_cause and stored_cause.lower() not in {"none", "null", "unknown"}:
+        cause = stored_cause
+    else:
+        cause = str(default_cause or stored_cause or "unknown").strip() or "unknown"
+    out: Dict[str, Any] = {
+        "status": "reviewed",
+        "disposition": str(raw_review.get("disposition") or "closed_no_proposal"),
+        "note": note,
+        "reviewed_by": reviewed_by,
+        "reviewed_at": reviewed_at,
+        "cause": cause,
+        "unreadable_reason": cause,
+    }
+    if raw_review.get("idempotency_key"):
+        out["idempotency_key"] = str(raw_review["idempotency_key"])
+    return out
+
+
 def shape_meeting_list_item(
     raw: Mapping[str, Any],
     *,
@@ -388,6 +641,13 @@ def shape_meeting_list_item(
 ) -> Dict[str, Any]:
     meeting_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
     meeting_trader_id = _extract_trader_id(raw)
+    review_cause = _resolve_meeting_review_cause(raw)
+    operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
+    evidence_refs = _collect_meeting_evidence_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
     participants_raw = raw.get("participants") if isinstance(raw.get("participants"), list) else []
     participants = [
         _shape_participant(
@@ -422,6 +682,10 @@ def shape_meeting_list_item(
         "meeting_type": raw.get("meeting_type") or raw.get("type"),
         "status": raw.get("status"),
         "outcome": raw.get("outcome"),
+        "synthesis_unreadable_reason": review_cause,
+        "unreadable_reason": review_cause,
+        "operator_review": operator_review,
+        "evidence_refs": evidence_refs,
         "chair_persona_id": raw.get("chair_persona_id"),
         "participants": participants,
         "participant_count": len(participants),
@@ -618,6 +882,11 @@ def shape_meeting_detail(
         pre_read = raw_pre_read
 
     # 4. Rounds & anonymised labels reveal (only to operators)
+    evidence_refs, withheld_ids = _collect_meeting_withheld_and_visible_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
     raw_rounds = raw.get("rounds") if isinstance(raw.get("rounds"), list) else []
     rounds: List[Dict[str, Any]] = []
     label_reveal: Dict[str, str] = {}
@@ -634,6 +903,18 @@ def shape_meeting_detail(
                 private_items_withheld += 1
                 continue
             p_copy = _strip_private_fields(dict(pos)) or {}
+            if isinstance(p_copy.get("citations"), list):
+                p_copy["citations"] = [
+                    c
+                    for c in p_copy["citations"]
+                    if not (
+                        (isinstance(c, str) and c.strip() in withheld_ids)
+                        or (
+                            isinstance(c, Mapping)
+                            and any(cid in withheld_ids for cid in _extract_item_ref_ids(c))
+                        )
+                    )
+                ]
             label = p_copy.get("label")
             persona_id = p_copy.get("persona_id")
             if is_operator:
@@ -663,6 +944,8 @@ def shape_meeting_detail(
         for p in raw_proposals
         if isinstance(p, Mapping)
     ]
+    review_cause = _resolve_meeting_review_cause(raw)
+    operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
     synthesis: Dict[str, Any] = _strip_private_fields(dict(raw_synthesis)) or {}
     synthesis.update({
         "proposals": shaped_proposals,
@@ -670,6 +953,9 @@ def shape_meeting_detail(
         "dissent_memo_id": raw_synthesis.get("dissent_memo_id"),
         "outcome": raw_synthesis.get("outcome") or raw.get("outcome"),
     })
+    if review_cause is not None:
+        synthesis["unreadable_reason"] = review_cause
+        synthesis["cause"] = review_cause
 
     # 6. Writebacks: never expose private memory text, only ids/status
     raw_writebacks = raw.get("writebacks") if isinstance(raw.get("writebacks"), list) else []
@@ -716,6 +1002,10 @@ def shape_meeting_detail(
         "status": raw.get("status"),
         **_execution_fields(raw),
         "outcome": raw.get("outcome") or synthesis.get("outcome"),
+        "synthesis_unreadable_reason": review_cause,
+        "unreadable_reason": review_cause,
+        "operator_review": operator_review,
+        "evidence_refs": evidence_refs,
         "chair_persona_id": raw.get("chair_persona_id"),
         "convened_by": _shape_convened_by(
             raw.get("convened_by"),
@@ -1059,9 +1349,16 @@ class MeetingsOwnerClient:
 
     def _raise_mapped_error(self, exc: ConsultationClientError, *, path: str) -> None:
         if exc.status_code == 404:
-            meeting_id = path.rsplit("/", 1)[-1]
+            clean_path = path.rstrip("/")
+            for action_suffix in ("/review", "/evidence", "/sync"):
+                if clean_path.endswith(action_suffix):
+                    clean_path = clean_path[: -len(action_suffix)]
+                    break
+            meeting_id = clean_path.rsplit("/", 1)[-1]
             raise MeetingsOwnerNotFoundError(meeting_id) from exc
-        if exc.status_code in {400, 409, 422}:
+        if exc.status_code in {400, 409, 422} or (
+            exc.status_code == 403 and isinstance(exc.payload, Mapping) and exc.payload.get("reason")
+        ):
             reason = str(
                 (exc.payload or {}).get("reason")
                 or (exc.payload or {}).get("detail")
@@ -1225,6 +1522,43 @@ class MeetingsOwnerClient:
             raise MeetingsOwnerUnavailableError("invalid_meeting_convene_response")
         return dict(raw)
 
+    def review_meeting(
+        self,
+        *,
+        meeting_id: str,
+        note: str,
+        reviewed_by: str,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_id = str(meeting_id or "").strip()
+        if not clean_id:
+            raise MeetingsOwnerNotFoundError("")
+        payload: Dict[str, Any] = {
+            "note": note,
+            "reviewed_by": reviewed_by,
+        }
+        extra_headers: Optional[Dict[str, str]] = None
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+            extra_headers = {"Idempotency-Key": idempotency_key}
+        raw = self._call(
+            "POST",
+            f"/api/consult/meetings/{quote(clean_id, safe='')}/review",
+            payload,
+            extra_headers=extra_headers,
+        )
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("operator_review"), Mapping):
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        returned_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
+        if returned_id != clean_id:
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        item_tenant = raw.get("tenant_id")
+        if item_tenant and self.tenant_id and str(item_tenant) != self.tenant_id:
+            raise MeetingsOwnerNotFoundError(clean_id)
+        if str(raw["operator_review"].get("status") or "").strip().lower() != "reviewed":
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        return dict(raw)
+
 
 def _proposal_waiting_for_operator(prop: Mapping[str, Any]) -> bool:
     if prop.get("waiting_for_operator") is True or prop.get("requires_operator") is True:
@@ -1251,11 +1585,15 @@ def project_human_inbox_meeting_items(
     meetings: Sequence[Mapping[str, Any]] = (),
     proposals: Sequence[Mapping[str, Any]] = (),
     catalogue: Optional[Mapping[str, Any]] = None,
+    include_reviewed: bool = False,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Project human-actionable meeting items into the Management Human Inbox shape.
 
     Includes:
-    1. Meetings ending in REVIEW (`outcome == "REVIEW"` or `status == "REVIEW"`).
+    1. Meetings ending in REVIEW (`outcome == "REVIEW"` or `status == "REVIEW"`) that
+       have not yet been resolved by an operator review (`operator_review.status == "reviewed"`).
     2. Due meetings refused for too few participants (`reason == "insufficient_participants"`).
     3. Proposals waiting for an operator.
     """
@@ -1282,7 +1620,29 @@ def project_human_inbox_meeting_items(
         href = f"/management/meetings/{quote(meeting_id, safe='')}"
 
         if outcome.upper() == "REVIEW" or status.upper() == "REVIEW":
+            review_cause = _resolve_meeting_review_cause(m) or "unknown"
+            op_review = _normalize_operator_review(m.get("operator_review"), default_cause=review_cause)
+            if op_review is not None and not include_reviewed:
+                continue
+            evidence_refs = _collect_meeting_evidence_refs(
+                m,
+                is_operator=is_operator,
+                caller_user_id=caller_user_id,
+            )
             inbox_id = f"meeting_review:{meeting_id}"
+            is_reviewed = op_review is not None
+            decision_history = (
+                [
+                    {
+                        "decided_at": op_review["reviewed_at"],
+                        "decided_by": op_review["reviewed_by"],
+                        "decision": "approve",
+                        "note": op_review["note"],
+                    }
+                ]
+                if op_review is not None
+                else []
+            )
             items.append({
                 "id": inbox_id,
                 "item_id": meeting_id,
@@ -1298,25 +1658,33 @@ def project_human_inbox_meeting_items(
                 "persona_id": chair,
                 "title": f"Meeting synthesis requires operator review ({m_type})",
                 "summary": f"Meeting {meeting_id} ({m_type}) ended with REVIEW synthesis and requires operator attention.",
-                "status": "pending",
-                "action_state": "pending",
+                "status": "reviewed" if is_reviewed else "pending",
+                "action_state": "resolved" if is_reviewed else "pending",
                 "outcome": "REVIEW",
                 "reason": "synthesis_review_required",
-                "blocking_reasons": ["synthesis_review_required"],
+                "unreadable_reason": review_cause,
+                "synthesis_unreadable_reason": review_cause,
+                "cause": review_cause,
+                "blocking_reasons": [] if is_reviewed else ["synthesis_review_required"],
+                "evidence_refs": evidence_refs,
+                "operator_review": op_review,
+                "decision_history": decision_history,
                 "priority": "high",
                 "risk_level": "high",
                 "required_role": "operator",
-                "can_decide": True,
-                "can_proceed": False,
+                "can_decide": not is_reviewed,
+                "can_proceed": is_reviewed,
                 "created_at": created_at,
-                "updated_at": created_at,
+                "updated_at": op_review["reviewed_at"] if op_review is not None else created_at,
                 "href": href,
                 "route": href,
                 "detail_href": href,
+                "decision_href": href,
                 "links": {
                     "manageHref": href,
                     "primaryObjectHref": href,
                     "meeting": href,
+                    "decisionHref": href,
                 },
             })
         elif (
@@ -1483,6 +1851,13 @@ def project_human_inbox_meeting_items(
             },
         })
 
+    names = current_resolver()
+    for item in items:
+        names.annotate(
+            item,
+            persona_keys=("persona_id", "sponsor_persona_id"),
+            strategy_keys=(),
+        )
     return items
 
 

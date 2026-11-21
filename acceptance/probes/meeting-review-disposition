@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+# acceptance-owner: MEETING-REVIEW-DISPOSITION-20261121
+"""Read-only release probe: closed REVIEW meetings expose cause, evidence refs, and durable operator_review disposition.
+
+Logs in as the read-only viewer (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET via /bff/auth/dev-login;
+the token stays in memory and is never printed) and checks with GET only:
+  * GET /bff/management/meetings and GET /bff/management/human-inbox?source_type=meeting are readable;
+  * Every closed REVIEW meeting detail (GET /bff/management/meetings/{meeting_id}) preserves its
+    original REVIEW synthesis, transcript/rounds, and zero proposals, exposes the operator_review
+    contract field, exposes a non-empty synthesis_unreadable_reason ('unknown' on legacy rows whose
+    stored unreadable_reason was null, or the stored specific cause when present), and exposes
+    non-empty evidence_refs when case_file_items/citations exist;
+  * Unreviewed REVIEW meetings (such as the legacy 澄川 MT-1 mtg-2c016da5651a0dc4 before operator
+    action) appear as pending meeting_review items in GET /bff/management/human-inbox with
+    unreadable_reason and evidence_refs populated;
+  * Reviewed REVIEW meetings (operator_review.status == 'reviewed', such as an isolated dev
+    acceptance record or an operator-resolved meeting) expose note, reviewed_by, reviewed_at, and
+    cause, and are no longer pending in GET /bff/management/human-inbox.
+
+This probe never mutates hosted state and never acts as the operator on the user's real item.
+Exit 0 passed, 1 failed, 77 skipped (a required variable is missing).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+MEETINGS_PATH = "/bff/management/meetings?page_size=200"
+INBOX_MEETINGS_PATH = "/bff/management/human-inbox?source_type=meeting&page_size=200"
+MAX_PAGES = 20
+
+
+def _unwrap_data(body: object) -> dict:
+    if not isinstance(body, dict):
+        return {}
+    data = body.get("data")
+    return data if isinstance(data, dict) else body
+
+
+def _rows(body: object) -> list[dict]:
+    if not isinstance(body, dict):
+        return []
+    data = body.get("data")
+    for candidate in (
+        body.get("items"),
+        data.get("items") if isinstance(data, dict) else None,
+        data if isinstance(data, list) else None,
+    ):
+        if isinstance(candidate, list):
+            return [r for r in candidate if isinstance(r, dict)]
+    return []
+
+
+def _next_cursor(body: object) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    for holder in (
+        body,
+        body.get("data") if isinstance(body.get("data"), dict) else {},
+        body.get("page_info") if isinstance(body.get("page_info"), dict) else {},
+    ):
+        if isinstance(holder, dict):
+            token = holder.get("next_cursor") or holder.get("next_page_token")
+            if isinstance(token, str) and token.strip():
+                return token.strip()
+    return None
+
+
+def _all_meetings(fetch) -> tuple[list[dict], list[str]]:
+    meetings: list[dict] = []
+    cursor: str | None = None
+    for _ in range(MAX_PAGES):
+        path = MEETINGS_PATH
+        if cursor:
+            path += "&cursor=" + urllib.parse.quote(cursor, safe="")
+        body = fetch(path)
+        if isinstance(body, dict) and str(body.get("status") or "").lower() == "unavailable":
+            return [], [f"meetings_surface_unavailable:{body.get('reason') or 'unknown'}"]
+        meetings.extend(_rows(body))
+        cursor = _next_cursor(body)
+        if not cursor:
+            return meetings, []
+    return meetings, ["meetings_pagination_exceeded"]
+
+
+def _has_underlying_citations_or_facts(detail_data: dict) -> bool:
+    for item in detail_data.get("case_file_items") or []:
+        if isinstance(item, dict) and (item.get("item_id") or item.get("source_id")):
+            return True
+    for rnd in detail_data.get("rounds") or []:
+        if isinstance(rnd, dict):
+            for pos in rnd.get("positions") or []:
+                if isinstance(pos, dict) and (pos.get("citations") or []):
+                    return True
+    synth = detail_data.get("synthesis") if isinstance(detail_data.get("synthesis"), dict) else {}
+    if synth.get("dissent_memo_id"):
+        return True
+    return False
+
+
+def check_review_meeting(
+    meeting_id: str,
+    detail_body: object,
+    inbox_by_meeting: dict[str, dict],
+) -> tuple[str, list[str]]:
+    """Validate one REVIEW meeting detail and its Human Inbox projection."""
+    failures: list[str] = []
+    if not isinstance(detail_body, dict) or str(detail_body.get("status") or "").lower() == "unavailable":
+        return "unavailable", [f"meeting_detail_unavailable:{meeting_id}"]
+
+    data = _unwrap_data(detail_body)
+    synth = data.get("synthesis") if isinstance(data.get("synthesis"), dict) else {}
+    outcome = str(data.get("outcome") or synth.get("outcome") or "").strip().upper()
+    proposals = synth.get("proposals")
+    summary = str(synth.get("summary") or "").strip()
+
+    if outcome != "REVIEW" or not isinstance(proposals, list) or len(proposals) != 0 or not summary:
+        failures.append(f"review_synthesis_corrupted:{meeting_id}")
+
+    if "operator_review" not in data and "operator_review" not in detail_body:
+        failures.append(f"operator_review_field_missing:{meeting_id}")
+
+    cause = str(
+        data.get("synthesis_unreadable_reason")
+        or data.get("unreadable_reason")
+        or synth.get("unreadable_reason")
+        or ""
+    ).strip()
+    if not cause or cause.lower() in {"none", "null"}:
+        failures.append(f"unreadable_reason_missing:{meeting_id}")
+
+    evidence_refs = data.get("evidence_refs")
+    if not isinstance(evidence_refs, list):
+        failures.append(f"evidence_refs_missing:{meeting_id}")
+        evidence_refs = []
+    elif not evidence_refs and _has_underlying_citations_or_facts(data):
+        failures.append(f"evidence_refs_empty:{meeting_id}")
+
+    op_review = data.get("operator_review")
+    inbox_item = inbox_by_meeting.get(meeting_id)
+
+    if op_review is None:
+        state_label = "pending_review"
+        if inbox_item is None:
+            failures.append(f"unreviewed_meeting_missing_from_inbox:{meeting_id}")
+        else:
+            if str(inbox_item.get("status") or "").lower() != "pending" or (
+                str(inbox_item.get("action_state") or "").lower() != "pending"
+            ):
+                failures.append(f"unreviewed_inbox_item_not_pending:{meeting_id}")
+            inbox_cause = str(
+                inbox_item.get("unreadable_reason")
+                or inbox_item.get("synthesis_unreadable_reason")
+                or inbox_item.get("cause")
+                or ""
+            ).strip()
+            if not inbox_cause or inbox_cause.lower() in {"none", "null"}:
+                failures.append(f"inbox_reason_missing:{meeting_id}")
+            inbox_ev = inbox_item.get("evidence_refs")
+            if evidence_refs and (not isinstance(inbox_ev, list) or not inbox_ev):
+                failures.append(f"inbox_evidence_refs_missing:{meeting_id}")
+    elif isinstance(op_review, dict) and str(op_review.get("status") or "").lower() == "reviewed":
+        state_label = "reviewed"
+        for req_key in ("note", "reviewed_by", "reviewed_at", "cause"):
+            if not str(op_review.get(req_key) or "").strip():
+                failures.append(f"operator_review_incomplete:{meeting_id}:{req_key}")
+        if inbox_item is not None and str(inbox_item.get("action_state") or "pending").lower() == "pending":
+            failures.append(f"reviewed_meeting_still_pending_in_inbox:{meeting_id}")
+    else:
+        state_label = "invalid_review_state"
+        failures.append(f"operator_review_invalid_shape:{meeting_id}")
+
+    return state_label, failures
+
+
+def check(fetch) -> dict:
+    failures: list[str] = []
+    meetings, list_failures = _all_meetings(fetch)
+    failures.extend(list_failures)
+
+    inbox_body = fetch(INBOX_MEETINGS_PATH)
+    inbox_meta = inbox_body.get("meta") if isinstance(inbox_body, dict) and isinstance(inbox_body.get("meta"), dict) else {}
+    meetings_surface = (inbox_meta.get("surfaces") or {}).get("meetings") if isinstance(inbox_meta.get("surfaces"), dict) else {}
+    if isinstance(meetings_surface, dict) and str(meetings_surface.get("status") or "").lower() in {"degraded", "unavailable"}:
+        failures.append(f"inbox_meetings_surface_{meetings_surface.get('status')}:{meetings_surface.get('reason') or 'unknown'}")
+
+    inbox_items = _rows(inbox_body)
+    inbox_by_meeting: dict[str, dict] = {}
+    for item in inbox_items:
+        if str(item.get("kind") or "").lower() == "meeting_review":
+            mid = str(item.get("meeting_id") or item.get("source_id") or item.get("item_id") or "").strip()
+            if mid:
+                inbox_by_meeting[mid] = item
+
+    review_meetings = [
+        m
+        for m in meetings
+        if str(m.get("outcome") or "").strip().upper() == "REVIEW"
+        or str(m.get("status") or "").strip().upper() == "REVIEW"
+    ]
+    if not review_meetings and not list_failures:
+        failures.append("no_review_meetings_found")
+
+    checked: dict[str, str] = {}
+    pending_count = 0
+    reviewed_count = 0
+    for m in review_meetings:
+        mid = str(m.get("meeting_id") or m.get("id") or "").strip()
+        if not mid:
+            continue
+        detail = fetch(f"/bff/management/meetings/{urllib.parse.quote(mid, safe='')}")
+        state_label, item_failures = check_review_meeting(mid, detail, inbox_by_meeting)
+        if state_label == "pending_review":
+            pending_count += 1
+        elif state_label == "reviewed":
+            reviewed_count += 1
+        checked[mid] = "failed" if item_failures else state_label
+        failures.extend(item_failures)
+
+    return {
+        "meetings_read": len(meetings),
+        "review_meetings_checked": len(checked),
+        "pending_review_count": pending_count,
+        "reviewed_count": reviewed_count,
+        "results": dict(sorted(checked.items())),
+        "failed": failures,
+        "passed": bool(checked) and not failures,
+    }
+
+
+def _request(request: urllib.request.Request) -> dict:
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs, tokens, or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps(
+            {
+                "grant_type": "client_credentials",
+                "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"],
+            }
+        ).encode("utf-8")
+        token = str(
+            _request(
+                urllib.request.Request(
+                    base + "/bff/auth/dev-login",
+                    data=body,
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+            ).get("access_token")
+            or ""
+        )
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = check(
+            lambda path: _request(
+                urllib.request.Request(
+                    base + path,
+                    method="GET",
+                    headers={"Authorization": "Bearer " + token},
+                )
+            )
+        )
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
