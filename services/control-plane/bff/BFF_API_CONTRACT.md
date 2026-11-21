@@ -600,12 +600,13 @@ invalidate the observation. When members differ the reason stays `cycle_pool_sna
 Pool and Research HTTP reads forward caller authorization and the authenticated
 tenant, with a maximum two-second timeout per read (or remaining request budget).
 They use `PANTHEON_PERSONA_API_URL` / `PANTHEON_RESEARCH_API_URL`, falling back to
-the respective `*_SERVICE_URL`. Cycles prefer an injected OODA owner port. When
-the production default port is unconfigured, this adapter binds the existing
-Persona owner's shared record path (`PANTHEON_BFF_OODA_PACKET_STORE`, otherwise
+the respective `*_SERVICE_URL`. Cycles, Persona cycle summaries, and OODA packet
+list/detail reads share the application's `OodaPacketsPort` (`read_store.ooda_management.ooda`).
+When no explicit store or records provider is injected, `OodaPacketsPort` binds the
+existing Persona owner's shared record path (`PANTHEON_BFF_OODA_PACKET_STORE`, otherwise
 `PANTHEON_OODA_DATA_DIR` / `PANTHEON_CONTROL_PLANE_DATA_DIR` + `ooda_packets.jsonl`)
-through the Persona owner's read-only decoder. Missing files remain unavailable;
-no default repository path or new record store is created.
+through the Persona owner's read-only decoder (`read_packets`). Missing or unreadable
+files report `unavailable`; no default repository path or new record store is created.
 BFF performs no portfolio calculations, owner writes, seed creation or
 paper/live transitions.
 
@@ -1263,3 +1264,9 @@ Fail-closed `409` (reason recorded in the publish history, previous envelope kee
 - Consultation `GET /api/consult/meetings` and `/{meeting_id}` attach `execution_state` (`status`, `attempt_count`, `max_attempts`, `last_error`, `updated_at`, matched by workflow `request_id` == `meeting_id` within the caller tenant, one tenant-scoped read per list) and `effective_status`. A triggered/convened round-0 meeting whose workflow is `dead_letter` has `effective_status = "execution_failed"` and is excluded from `status=upcoming` unless `include_failed=true`; `summary.dead_letter_count` reports how many were excluded.
 - BFF meeting list/detail pass through `execution_state`, `effective_status`, and `summary.dead_letter_count` (list `data.summary.dead_letter_count`; `open_count` excludes `execution_failed`). `MeetingsOwnerClient.list_meetings(include_failed=...)` forwards the flag; the router does not yet expose it as a query parameter.
 - Meeting rows/detail add `topic_summary` = `{kind, subject_persona_id, period, lesson_count}` parsed from `Pool evolution review for persona-... (YYYY-Www)` (`pool_evolution_review`) and `Optimisation review for persona-...: lessons:N` (`optimisation_review`); `null` for free-text topics. `topic` is unchanged.
+
+### Shared Persona OODA owner binding for packet detail and case-file reads (BFF-DECISION-CASE-FILE-OWNER-READ-20261121)
+
+- `AppDependencies.create_default` and `create_read_surface_ports` wire `OodaManagementDomainPort` with `create_ooda_packets_port()` (`OodaPacketsPort`), which binds the existing read-only Persona OODA owner decoder (`resolve_ooda_packet_store_path()` + `read_packets(path)`) when `PANTHEON_BFF_OODA_PACKET_STORE`, `PANTHEON_OODA_DATA_DIR`, or `PANTHEON_CONTROL_PLANE_DATA_DIR` is configured and no explicit `store` or `records_provider` is injected.
+- `personas/cycle_views.py` (`read_cycle_records`), `ports/persona_pool.py` (`PersonaPoolViewsPort.read`), `GET /bff/ooda/packets`, and `GET /bff/ooda/packets/{packet_id}` all resolve through the single shared `read_store.ooda_management.ooda` port, so every paper daily-cycle packet ID surfaced on `GET /bff/personas/{persona_id}` and `GET /api/v1/operator/persona-management/{persona_id}` resolves on `GET /bff/ooda/packets/{packet_id}` with `data.case_file_view` (`project_packet(data)`) and raw `persona_cycle.case_files` stripped.
+- `ReadSurfacePorts.dataset_source("ooda_packets")` reflects `ooda_management.ooda.get_surface_status()["source"]` (`"store"` / `"service"` when readable, `"missing"` when unconfigured or absent, `"unavailable"` when unreadable), preserving `meta.surfaces.ooda_packets` and `meta.surfaces.ooda_packet_detail` degradation on absent/corrupt stores and `404 RESOURCE_NOT_FOUND` on genuine missing or cross-tenant/non-paper packets.

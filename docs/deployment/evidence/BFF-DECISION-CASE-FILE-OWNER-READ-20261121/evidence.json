@@ -1,0 +1,88 @@
+{
+  "task_id": "BFF-DECISION-CASE-FILE-OWNER-READ-20261121",
+  "title": "Bind the existing Persona OODA owner for case-file reads",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "register_work_package": "RC2 WP2.3 (corrective follow-up to BFF-DECISION-CASE-FILE-VIEWS-20261113 and Persona-cycle hosted acceptance)",
+  "incident_context": {
+    "dev_root_run": "44915049855",
+    "fe_gate_run": "44918407417",
+    "served_bff_sha": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+    "served_fe_sha": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+    "owner_file_sha256": "1b07f1df6352c7a2102301ec485b261ad1370e34aceba389d3228eb20b3c0272",
+    "owner_file_bytes": 715241,
+    "owner_file_total_envelopes": 12,
+    "symptom": "Authenticated tenant-dev GET /api/v1/operator/persona-management/{id} returned 200 with 4 paper cycle packets for each of the 3 naturally enrolled trading personas, while GET /bff/ooda/packets/{id} returned 404 RESOURCE_NOT_FOUND for all 6 sampled packet IDs (including the 3 natural judge witnesses from run 44799897172 artifact 14659936770) even though the mounted owner file held all 6 under tenant-dev and paper with 1 recorded case file each.",
+    "root_cause": "AppDependencies.create_default and create_read_surface_ports constructed OodaManagementDomainPort without binding the Persona OODA owner store decoder on OodaPacketsPort, and ReadSurfacePorts.dataset_source('ooda_packets') returned a static 'typed_store' fallback instead of the OodaPacketsPort surface status. Meanwhile personas/cycle_views.py and ports/persona_pool.py each opened resolve_ooda_packet_store_path() + read_packets(path) locally when OodaPacketsPort reported source='missing'."
+  },
+  "owned_layer": "BFF OODA packet domain port, read-surface composition, bootstrap wiring, and consolidated Persona cycle/pool owner reads",
+  "not_changed": [
+    "Persona OODA packet store writer (append_ooda_packet / compact_ooda_packet_store), data format, or retention policy",
+    "Case-file composition and projection (bff/agora/committee/owner.py project_packet / project_case_file)",
+    "Authenticated tenant admission and paper/live boundaries",
+    "Public HTTP route paths and response contracts"
+  ],
+  "changes": [
+    "services/control-plane/bff/ports/ooda_management.py: bind the existing read-only Persona OODA owner decoder (resolve_ooda_packet_store_path + read_packets) in OodaPacketsPort / create_ooda_packets_port when PANTHEON_BFF_OODA_PACKET_STORE, PANTHEON_OODA_DATA_DIR, or PANTHEON_CONTROL_PLANE_DATA_DIR is configured and no explicit store or records_provider is injected; enforce paper environment alongside authenticated tenant scope on persona_cycle packets",
+    "services/control-plane/bff/ports/read_surface_ports.py: wire create_ooda_packets_port() into create_read_surface_ports and create_in_memory_read_surface_ports, and resolve ReadSurfacePorts.dataset_source('ooda_packets') from ooda_management.ooda.get_surface_status()",
+    "services/control-plane/bff/bootstrap/dependencies.py: bind and validate OodaPacketsPort (create_ooda_packets_port) in AppDependencies.create_default and pass it into create_read_surface_ports",
+    "services/control-plane/bff/personas/cycle_views.py and services/control-plane/bff/ports/persona_pool.py: remove redundant local resolve_ooda_packet_store_path/read_packets fallback blocks so Persona cycle summaries, strategy pool cycle views, and OODA list/detail routes all read through read_store.ooda_management.ooda",
+    "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py, tests/test_case_file_views.py, tests/test_ooda_management_ports.py, tests/test_persona_cycle_views.py: consolidate redundant test-local packet normalizers and dataset_source overrides and verify normal composition end-to-end",
+    "services/control-plane/bff/BFF_API_CONTRACT.md: document the shared OodaPacketsPort owner decoder binding across Persona summaries and OODA packet list/detail routes"
+  ],
+  "verification": {
+    "focused_suites": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py services/control-plane/bff/tests/test_case_file_views.py services/control-plane/bff/tests/test_ooda_management_ports.py services/control-plane/bff/tests/test_persona_cycle_views.py services/control-plane/bff/tests/test_persona_pool_views.py",
+      "test_mgmt_ooda_004_bff_routes.py": "6 passed",
+      "tests/test_ooda_management_ports.py": "18 passed",
+      "tests/test_case_file_views.py": "11 passed",
+      "tests/test_persona_cycle_views.py": "32 passed",
+      "tests/test_persona_pool_views.py": "40 passed",
+      "total": "107 passed, 0 failed"
+    },
+    "storage_manifest_guard": {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "result": "passed=true, failures=[]"
+    },
+    "covered_scenarios": [
+      "Normal BFF composition (AppDependencies.create_default -> create_read_surface_ports -> ReadSurfacePorts) resolves the same stored paper packets across GET /bff/personas/{id}, GET /api/v1/operator/persona-management/{id}, GET /bff/ooda/packets, and GET /bff/ooda/packets/{packet_id} with data.case_file_view populated and raw persona_cycle.case_files stripped",
+      "Cross-tenant isolation and spoofed X-Tenant-Id rejection (404 on Persona summary and OODA detail, empty OODA list, zero private case-file leakage)",
+      "Paper/live boundary enforcement (non-paper persona_cycle packets excluded from Persona summary, OODA list, and OODA detail)",
+      "Absent or unreadable owner store (meta.surfaces.persona_cycles, meta.surfaces.autonomy_cycles, meta.surfaces.ooda_packets, and meta.surfaces.ooda_packet_detail report status='unavailable' with degraded detail envelope)",
+      "Genuine missing packet ID when owner store is present returns 404 RESOURCE_NOT_FOUND",
+      "Injected OodaPacketsPort (OodaLoopStore, OodaJsonlAppendStore, records_provider, or explicit ooda_port) precedence over environment store path",
+      "Private-memory projection (own persona sees persona_private items; other persona has persona_private items withheld with private_items_withheld count) and byte-identical read-only owner store file before/after reads"
+    ]
+  },
+  "hosted_acceptance_check_for_coordinator": {
+    "owning_hosted_tasks": [
+      "FE-DECISION-CASE-FILE-VIEWS-20261113",
+      "PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112"
+    ],
+    "note": "Hosted acceptance remains with the existing coordinator tasks above after a Dev Root deploys this merge.",
+    "target_personas_and_six_real_packets_from_2026_11_21_evidence": [
+      {
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "natural_judge_witness_packet_id": "ooda-persona-f18d09ad03612a6c41df58704b3f85b64149e740c98e87ff36f7a5dc63ff7d32",
+        "additional_sampled_packet_id": "ooda-persona-2d3bba6f386a49e3124f36b0549a8b72d976b6d7938ae67d924040496de3453d"
+      },
+      {
+        "persona_id": "persona-ee7112a829d38b9135ac",
+        "natural_judge_witness_packet_id": "ooda-persona-c4462c5671f9cb686d8ff95c9ef0486e65e548d72391ccf70b87d8e804abad2a",
+        "additional_sampled_packet_id": "ooda-persona-e1adeccdbe2914860351fb80a8d58996a45764606209af438051e8adb4397426"
+      },
+      {
+        "persona_id": "persona-6507750312870d03a241",
+        "natural_judge_witness_packet_id": "ooda-persona-b6c33d8775a0b8a99a131ef6fb1f030936b0fc8e3036c74c865153779aac3ce2",
+        "additional_sampled_packet_id": "ooda-persona-f323181a0f972b0efcb692ea74ee6081aa4807e88d910e0644cf865e48b04b89"
+      }
+    ],
+    "read_only_same_tenant_summary_to_detail_steps": [
+      "1. Confirm served pair identity via GET /deployment.json on the dev FE origin and GET /bff/version on the dev BFF origin, and verify authenticated tenant-dev scope via GET /bff/me (HTTP 200, tenant_id='tenant-dev').",
+      "2. For each of the three trading personas (persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac, persona-6507750312870d03a241), issue an authenticated read-only GET /api/v1/operator/persona-management/{persona_id} (or GET /bff/personas/{persona_id}) with the same tenant-dev Bearer token. Confirm HTTP 200, meta.surfaces.persona_cycles.status == 'ok', and collect the displayed packet_id values from data.personaCycle.cycle.packets (including the six packet IDs above while retained in the 30-day/1000-record window).",
+      "3. Issue an authenticated read-only GET /bff/ooda/packets with the same tenant-dev token and confirm HTTP 200, meta.surfaces.ooda_packets.status == 'ok', meta.surfaces.ooda_packets.source == 'store', and that the listed packet_id set includes the displayed paper persona-cycle packets.",
+      "4. For each of the six packet IDs from step 2, issue an authenticated read-only GET /bff/ooda/packets/{packet_id} with the same tenant-dev token. Confirm HTTP 200 (no 404 RESOURCE_NOT_FOUND), data.packet_id == packet_id, meta.surfaces.ooda_packet_detail.status == 'ok', 'case_files' not in data.persona_cycle, and data.case_file_view.status == 'ok' with non-empty data.case_file_view.case_files[0].groups (each item carrying item_id, excerpt, source_owner, source_id, retrieval_mode) and data.case_file_view.decisions.",
+      "5. In an authenticated Chromium session on the served FE/BFF pair, open /management/personas/{persona_id} for one of the three trading personas, expand a cycle packet row using its case-file toggle so the browser issues GET /bff/ooda/packets/{packet_id} (HTTP 200), and confirm the rendered CaseFileViewPanel displays the case-file groups, excerpts, source IDs, retrieval modes, and decision citations."
+    ]
+  }
+}
