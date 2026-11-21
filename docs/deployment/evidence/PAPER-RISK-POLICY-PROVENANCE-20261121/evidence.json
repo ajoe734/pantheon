@@ -160,5 +160,13 @@
     "repair": "Include paper-risk-policy-binding in the expected release probe list and assert skipped/77 without credentials. No production deployment or policy behavior changed.",
     "other_failure": "Shard 10: BFF dataset surface parity test compared live timestamps generated across 13:39:40Z/13:39:41Z; source and observed values are in the linked job logs. Service suites is the aggregate failure.",
     "review": "Prior approval does not cover the new head; manifest remains pending independent review."
+  },
+  "review_admission_hold": {
+    "attempted_head": "99850f125d8259ecc4ea04f012df55de406b45ec",
+    "command_exit_code": 1,
+    "gate": "changed file scripts/test_dev_acceptance_stage.py is outside the task artifact contract",
+    "required_actor": "Human/Ops",
+    "corrective_action": "While blocked, use the existing artifact-contract command to add scripts/test_dev_acceptance_stage.py with the source-CI repair rationale, then reopen and let the supervisor dispatch fresh exact-head review. Do not impersonate Human/Ops or edit canonical JSON.",
+    "delivery_state": "published task branch / open PR; neither merged nor deployed nor accepted; no done transition"
   }
 }
