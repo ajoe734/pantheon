@@ -265,6 +265,8 @@ services:
       # Issued pool-read principal (persona_pool_reader: strategy-pool GETs only), read per request.
       CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
       PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
+      # Issued directory-read principal (viewer: GET /api/personas) for meeting roster resolution, read per request.
+      CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN}
       PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083

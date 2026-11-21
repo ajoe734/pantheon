@@ -254,19 +254,48 @@ def compute_next_due_at(last_run_at: str, cadence: str) -> str:
     return next_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_DIRECTORY_FILE_ENV = "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE"
+
+
+def _persona_directory_unavailable(detail: str) -> MeetingRefusedError:
+    return MeetingRefusedError(
+        "persona_directory_unavailable",
+        f"persona directory could not be read: {detail}",
+        status_code=503,
+    )
+
+
 def _fetch_persona_directory(tenant_id: str) -> Dict[str, Dict[str, Any]]:
+    """Read the persona owner's directory with the issued directory credential.
+
+    The credential is delivered as a file (viewer role, GET only). A directory
+    that cannot be read is refused by name; it is never an empty directory.
+    Tokens are never put into the error text.
+    """
     persona_url = (
         os.getenv("PANTHEON_PERSONA_API_URL")
         or os.getenv("PERSONA_API_URL")
         or ""
     ).strip().rstrip("/")
     if not persona_url:
-        return {}
-    token = (
-        os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
-        or os.getenv("PERSONA_SERVICE_TOKEN")
-        or ""
-    ).strip()
+        return {}  # no persona service wired; callers that need a directory refuse (see roster)
+    try:
+        from services.runtime_auth import resolve_runtime_manager_auth
+
+        if os.getenv(_DIRECTORY_FILE_ENV, "").strip():
+            token = resolve_runtime_manager_auth(
+                token_env_key="CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
+                token_file_env_key=_DIRECTORY_FILE_ENV,
+                default_token="",
+            ).token
+        else:
+            token = (
+                os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+                or os.getenv("PERSONA_SERVICE_TOKEN")
+                or ""
+            ).strip()
+    except OSError as exc:
+        raise _persona_directory_unavailable(f"credential file unreadable ({type(exc).__name__})") from exc
     headers = {"Accept": "application/json", "X-Tenant-Id": tenant_id}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -274,17 +303,19 @@ def _fetch_persona_directory(tenant_id: str) -> Dict[str, Dict[str, Any]]:
     try:
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             rows = json.loads(resp.read().decode("utf-8") or "[]")
-        if isinstance(rows, dict):
-            rows = rows.get("items") or rows.get("personas") or []
-        if not isinstance(rows, list):
-            return {}
-        return {
-            str(r.get("persona_id") or r.get("id")): dict(r)
-            for r in rows
-            if isinstance(r, Mapping) and (r.get("persona_id") or r.get("id"))
-        }
-    except Exception:
-        return {}
+    except urllib.error.HTTPError as exc:
+        raise _persona_directory_unavailable(f"http_{exc.code}") from exc
+    except Exception as exc:
+        raise _persona_directory_unavailable(type(exc).__name__) from exc
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("personas") or []
+    if not isinstance(rows, list):
+        raise _persona_directory_unavailable("unexpected response shape")
+    return {
+        str(r.get("persona_id") or r.get("id")): dict(r)
+        for r in rows
+        if isinstance(r, Mapping) and (r.get("persona_id") or r.get("id"))
+    }
 
 
 def _extract_subject_trader_id(
@@ -601,6 +632,8 @@ def resolve_and_validate_roster(
                     persona_id=subject_persona_id,
                     meeting_type=meeting_code,
                 )
+            if not directory:
+                raise _persona_directory_unavailable("persona directory is empty or not configured")
             if subject_persona_id not in directory:
                 raise MeetingRefusedError(
                     "subject_persona_not_found",

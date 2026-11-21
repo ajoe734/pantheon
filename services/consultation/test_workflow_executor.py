@@ -927,3 +927,96 @@ def test_memory_read_identity_never_empty_roles(monkeypatch):
     monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", raising=False)
     _t, actor, roles = wf.memory_read_identity()
     assert actor and roles
+
+
+# --- CONSULTATION-WRITEBACK-PROBE-AND-PERSONA-DIRECTORY-20261120 -------------
+
+def _memory_double(monkeypatch, *, roles, verified_tenant=TENANT):
+    """Mirror of memory-svc writeback_learn_feedback: authority/tenant check, then validation."""
+    seen = []
+
+    def request(url, *, method, timeout_seconds, headers, payload=None):
+        assert url.endswith("/api/memory/writebacks/learn-feedback") and method == "POST"
+        seen.append(dict(payload or {}))
+        authority = str((payload or {}).get("write_authority") or "")
+        if not ({authority, "operator", "admin", "system", "memory-writer"} & set(roles)):
+            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        if (payload or {}).get("tenant_id") and payload["tenant_id"] != verified_tenant:
+            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+        if not payload.get("source_event_type"):  # validation: nothing is written
+            raise urllib.error.HTTPError(url, 422, "Unprocessable", {}, None)
+        raise AssertionError("probe must never reach a write")
+
+    monkeypatch.setattr(wf, "_json_request", request)
+    monkeypatch.setattr(wf, "_memory_headers", lambda: {"Authorization": "Bearer x"})
+    wf._WRITEBACK_PROBE_CACHE.clear()
+    return seen
+
+
+def _wb_config(tmp_path):
+    return ExecutorConfig(
+        api_url="http://x", tenant_id=TENANT, api_token="t", provider_url="http://p", provider_token="t",
+        provider_service_actor="a", handoff_sink_url="", handoff_token="", worker_id="w",
+        state_path=str(tmp_path / "s.sqlite3"), memory_url="http://memory")
+
+
+def test_writeback_probe_passes_authority_check_and_is_rejected_only_by_validation(tmp_path, monkeypatch):
+    seen = _memory_double(monkeypatch, roles=["consultation-svc"])
+    wf._probe_writeback_identity(_wb_config(tmp_path))
+    assert seen == [{"write_authority": "consultation-svc", "tenant_id": TENANT}]
+
+    # The previous empty payload is refused by the authority check, as hosted.
+    monkeypatch.setattr(wf, "_json_request", lambda *a, **k: (_ for _ in ()).throw(
+        urllib.error.HTTPError("u", 403, "Forbidden", {}, None)))
+    wf._WRITEBACK_PROBE_CACHE.clear()
+    with pytest.raises(urllib.error.HTTPError):
+        wf._probe_writeback_identity(_wb_config(tmp_path))
+
+
+def test_writeback_probe_refuses_when_identity_lacks_authority(tmp_path, monkeypatch):
+    _memory_double(monkeypatch, roles=["persona-svc"])
+    with pytest.raises(urllib.error.HTTPError):
+        wf._probe_writeback_identity(_wb_config(tmp_path))
+
+
+def test_writeback_probe_runs_at_most_once_per_interval_while_candidates_exist(tmp_path, monkeypatch):
+    seen = _memory_double(monkeypatch, roles=["persona-svc"])  # refused: the worst case
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(wf.time, "monotonic", lambda: clock["t"])
+    config = _wb_config(tmp_path)
+    for _ in range(60):  # 60 executor ticks of 15 s = 15 minutes
+        with pytest.raises(Exception):
+            wf._probe_writeback_identity(config)
+        clock["t"] += 15
+    assert len(seen) == 1
+    clock["t"] += wf.WRITEBACK_PROBE_INTERVAL_SECONDS
+    with pytest.raises(Exception):
+        wf._probe_writeback_identity(config)
+    assert len(seen) == 2
+    per_day = 86400 / wf.WRITEBACK_PROBE_INTERVAL_SECONDS
+    assert per_day == 96 < 5760
+
+
+def test_hosted_writeback_dead_letters_are_redriven_once_probe_passes(tmp_path, monkeypatch):
+    config, _ = _recovery_env(monkeypatch, tmp_path, auth_ok={"v": True}, ensure_ok={"v": True})
+    config = replace(config, memory_url="http://memory")
+    roles = ["persona-svc"]
+    seen = _memory_double(monkeypatch, roles=roles)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(wf.time, "monotonic", lambda: clock["t"])
+    state = WorkflowStateStore(config.state_path)
+    ids = ["mtg-0f7fa4993625ca47", "mtg-1f38c1a87b17344a", "mtg-16d42d0b44dfeab5"]
+    for rid in ids:
+        _dead(state, rid, _WB, replays=1)
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == [] and out["probe_failed"]
+    roles[:] = ["consultation-svc"]  # the issued principal is now in place
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert out["redriven"] == []  # still inside the interval: no new request
+    clock["t"] += wf.WRITEBACK_PROBE_INTERVAL_SECONDS
+    out = wf.recover_dead_letters(config=config, state=state, provider=None)
+    assert sorted(out["redriven"]) == sorted(ids)
+    assert len(seen) == 2
+    while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
+        state.complete(claim, memo_id="m", handoff_id="h")
+    assert state.counts(tenant_id=TENANT)["dead_letter"] == 0
