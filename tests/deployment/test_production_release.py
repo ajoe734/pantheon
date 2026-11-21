@@ -3335,11 +3335,14 @@ tool="$(basename "$0")"; echo "$tool $*" >> "$S/calls.log"
 all="$*"
 disk_arg() { local a=("$@"); set -- $all; while [[ $# -gt 0 ]]; do [[ "$1" == --disk ]] && { echo "$2"; return; }; shift; done; }
 case "$tool" in
-  sudo) exec "$@" ;;
+  sudo) export FAKE_VIA_SUDO=1; exec "$@" ;;
+  find) [[ "${FAKE_REQUIRE_SUDO_READS:-}" != 1 || "${FAKE_VIA_SUDO:-}" == 1 ]] || exit 77
+        exec "$FAKE_REAL_FIND" "$@" ;;
   mount) [[ "${FAIL:-}" == mount_readonly ]] && exit 32; [[ "$all" == *"-o ro,noload"* ]] || exit 33
          cp -a "$S/content/." "${@: -1}/" ;;
   umount) rm -rf "$1"/* 2>/dev/null; exit 0 ;;
   gcloud)
+    [[ "${FAKE_VIA_SUDO:-}" != 1 ]] || exit 78  # OSLogin credentials belong to the caller.
     case "$all" in
       "config get-value project") echo "${FAKE_PROJECT:-prod-proj}" ;;
       "compute disks describe pantheon-prod-control-data"*"resourcePolicies"*) cat "$S/disk_policies" 2>/dev/null; exit 0 ;;
@@ -3353,11 +3356,14 @@ case "$tool" in
       "compute instances detach-disk"*) rm -f "$S/attached/$(disk_arg)" ;;
       "compute snapshots list"*) cat "$S/snapshot" 2>/dev/null ;;
       "compute resource-policies describe"*) [[ -f "$S/policy.json" ]] && cat "$S/policy.json" || exit 1 ;;
-      "compute resource-policies create"*) echo "$all" >> "$S/mutations.log"
+      "compute resource-policies create"*)
+        for arg in "$@"; do [[ "$arg" == --labels || "$arg" == --labels=* ]] && exit 2; done
+        echo "$all" >> "$S/mutations.log"
         echo '{"snapshotSchedulePolicy":{"schedule":{"hourlySchedule":{"hoursInCycle":1}},"retentionPolicy":{"maxRetentionDays":3}}}' > "$S/policy.json" ;;
       *) echo "unexpected gcloud: $all" >&2; exit 99 ;;
     esac ;;
   docker)
+    [[ "${FAKE_REQUIRE_SUDO_DOCKER:-}" != 1 || "${FAKE_VIA_SUDO:-}" == 1 ]] || exit 77
     case "$1" in
       ps) if [[ "$all" == *compose.service=postgres* ]]; then echo live; else n="${all##*name=^}"; n="${n%\$}"; [[ -e "$S/ctr/$n" ]] && echo "$n"; fi; exit 0 ;;
       network) case "$2" in
@@ -3396,7 +3402,7 @@ class SnapshotDrillHarness(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("gcloud", "docker", "sudo", "mount", "umount"):
+        for tool in ("gcloud", "docker", "sudo", "mount", "umount", "find"):
             (self.bin / tool).write_text(FAKE_SNAP_BIN)
             (self.bin / tool).chmod(0o755)
         self.state = self.tmp / "state"
@@ -3414,6 +3420,8 @@ class SnapshotDrillHarness(unittest.TestCase):
         self.mnt, self.tmpbase = self.tmp / "mnt", self.tmp / "vtmp"
         self.mnt.mkdir(); self.tmpbase.mkdir()
         self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_STATE": str(self.state),
+                    "GCLOUD_BIN": str(self.bin / "gcloud"), "DOCKER_BIN": str(self.bin / "docker"),
+                    "FAKE_REAL_FIND": shutil.which("find"),
                     "PROD_GCP_PROJECT_ID": "prod-proj", "PROD_GCP_ZONE": "asia-east1-b",
                     "PROD_DATA_DISK": "pantheon-prod-control-data", "PROD_VM_NAME": "prod-vm",
                     "PROD_RPO_SECONDS": "3600", "PROD_RTO_SECONDS": "1800", "PROD_DATA_MOUNT": str(self.data_mount),
@@ -3422,6 +3430,7 @@ class SnapshotDrillHarness(unittest.TestCase):
                     "PROD_DRILL_MNT_BASE": str(self.mnt), "PROD_DRILL_TMP_BASE": str(self.tmpbase)}
         self.env.pop("CLOUDSDK_CORE_PROJECT", None)
         self.env.pop("FAIL", None)
+        self.env.pop("FAKE_VIA_SUDO", None)
 
     def snapshot(self, age_seconds):
         import datetime as dt
@@ -3458,7 +3467,7 @@ class SnapshotDrillHarness(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         mutations = (self.state / "mutations.log").read_text()
         for needle in ("--hourly-schedule=1", "--max-retention-days=3", "--on-source-disk-delete=keep-auto-snapshots",
-                       "--storage-location asia-east1", "--region asia-east1", "environment=production,managed_by=pantheon",
+                       "--storage-location asia-east1", "--region asia-east1", "--snapshot-labels=environment=production,managed_by=pantheon",
                        "add-resource-policies pantheon-prod-control-data"):
             self.assertIn(needle, mutations)
         before = mutations
@@ -3515,6 +3524,35 @@ class SnapshotDrillHarness(unittest.TestCase):
         self.assertNotRegex(run, r"PASSWORD|dsn|://")
         self.assert_live_untouched()
         self.assertNotIn("pwd", r.stdout.lower())
+
+    @unittest.skipIf(os.geteuid() == 0, "OSLogin sudo path requires a non-root caller")
+    def test_drill_nonroot_privileges_cover_docker_hashes_and_cleanup(self):
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, FAKE_REQUIRE_SUDO_DOCKER="1", FAKE_REQUIRE_SUDO_READS="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        res = self.assert_clean(r.stdout)
+        self.assertTrue(res["checks"]["owner_store_manifest_equal"])
+        entries = "".join(
+            f"{hashlib.sha256(d.encode()).hexdigest()}  {d}/f.dat\n"
+            for d in sorted(("bff", "runtime", "governance", "product"))
+        )
+        self.assertEqual(res["checks"]["owner_store_manifest_sha256"],
+                         "sha256:" + hashlib.sha256(entries.encode()).hexdigest())
+        calls = self.calls().splitlines()
+        docker_calls = [line for line in calls if line.startswith("docker ")]
+        self.assertTrue(docker_calls)
+        for line in docker_calls:
+            self.assertIn("sudo " + str(self.bin / "docker") + line[len("docker"):], calls)
+        self.assertIn("sudo bash -o pipefail -c", self.calls())
+        self.assert_live_untouched()
+
+    @unittest.skipIf(os.geteuid() == 0, "OSLogin sudo path requires a non-root caller")
+    def test_drill_nonroot_privileges_cover_failure_cleanup(self):
+        self.snapshot(60)
+        r = self.run_script(self.DRILL, FAKE_REQUIRE_SUDO_DOCKER="1", FAIL="start_postgres")
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertEqual(self.assert_clean(r.stdout)["failed_stage"], "start_postgres")
+        self.assert_live_untouched()
 
     def test_drill_over_budget_fails_but_still_cleans_up(self):
         self.snapshot(3601 + 5)
