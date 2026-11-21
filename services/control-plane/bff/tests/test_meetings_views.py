@@ -418,6 +418,64 @@ def meetings_stack(monkeypatch: pytest.MonkeyPatch):
             res.status = 202
             return res
 
+        if req.method == "POST" and u.path.startswith("/api/consult/meetings/") and u.path.endswith("/review"):
+            meeting_id = u.path[: -len("/review")].rsplit("/", 1)[-1]
+            if meeting_id not in state["details"]:
+                raise HTTPError(
+                    req.full_url,
+                    404,
+                    "Not Found",
+                    {},
+                    io.BytesIO(json.dumps({"detail": "Persona meeting not found"}).encode("utf-8")),
+                )
+            detail = state["details"][meeting_id]
+            synth = detail.get("synthesis") or {}
+            outcome = str(detail.get("outcome") or synth.get("outcome") or "").upper()
+            if str(detail.get("status") or "").lower() not in {"closed", "completed"} or outcome != "REVIEW":
+                raise HTTPError(
+                    req.full_url,
+                    409,
+                    "Conflict",
+                    {},
+                    io.BytesIO(
+                        json.dumps({"detail": "meeting_not_in_review", "reason": "meeting_not_in_review"}).encode("utf-8")
+                    ),
+                )
+            note = str((body or {}).get("note") or "").strip()
+            reviewed_by = str((body or {}).get("reviewed_by") or "").strip()
+            existing_rev = detail.get("operator_review")
+            if isinstance(existing_rev, dict) and existing_rev.get("status") == "reviewed":
+                if existing_rev.get("reviewed_by") == reviewed_by and existing_rev.get("note") == note:
+                    replayed_detail = {**detail, "replayed": True}
+                    res = io.BytesIO(json.dumps(replayed_detail).encode("utf-8"))
+                    res.status = 200
+                    return res
+                raise HTTPError(
+                    req.full_url,
+                    409,
+                    "Conflict",
+                    {},
+                    io.BytesIO(
+                        json.dumps(
+                            {"detail": "meeting_already_reviewed", "reason": "meeting_already_reviewed"}
+                        ).encode("utf-8")
+                    ),
+                )
+            cause = str(synth.get("unreadable_reason") or detail.get("synthesis_unreadable_reason") or "unknown")
+            detail["operator_review"] = {
+                "status": "reviewed",
+                "disposition": "closed_no_proposal",
+                "note": note,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": "2026-11-21T12:15:00Z",
+                "cause": cause,
+                "unreadable_reason": cause,
+            }
+            out_detail = {**detail, "replayed": False}
+            res = io.BytesIO(json.dumps(out_detail).encode("utf-8"))
+            res.status = 200
+            return res
+
         raise AssertionError(f"Unhandled request {req.method} {u.path}")
 
     monkeypatch.setattr("urllib.request.urlopen", transport)
@@ -606,6 +664,12 @@ def test_private_memory_never_returned_and_trader_identity_and_label_visibility(
     assert bob_data["attribution_record"] is None
     assert bob_data["anonymised_labels_revealed"] is False
     assert bob_data["label_reveal"] is None
+    assert "cf-private-leak-1" not in op_data["evidence_refs"]
+    assert "cf-private-leak-1" not in alice_data["evidence_refs"]
+    assert "cf-private-leak-1" not in bob_data["evidence_refs"]
+    assert "cf-agora-lock-1" in op_data["evidence_refs"]
+    assert "cf-agora-lock-1" in alice_data["evidence_refs"]
+    assert "cf-agora-lock-1" not in bob_data["evidence_refs"]
 
 
 def test_operator_convene_route_write_gated_and_forwards_idempotency_key(meetings_stack):
@@ -711,6 +775,163 @@ def test_200_meetings_reads_complete_within_management_gate_budget(meetings_stac
         assert len(calls) == 1, f"{route} must make exactly 1 owner HTTP call, made {len(calls)}"
 
 
+def test_operator_review_route_enforces_role_tenant_validation_idempotency_and_failure_distinction(
+    meetings_stack,
+):
+    client, calls, state = meetings_stack
+
+    # Configure mtg-002 as a closed REVIEW meeting with legacy null unreadable_reason
+    state["details"]["mtg-002"]["status"] = "closed"
+    state["details"]["mtg-002"]["outcome"] = "REVIEW"
+    state["details"]["mtg-002"]["synthesis"] = {
+        "proposals": [],
+        "tally": {"voting": False, "binding": False, "by_stance": {"request_more_research": 2}},
+        "dissent_memo_id": "memo-dissent-002",
+        "outcome": "REVIEW",
+        "unreadable_reason": None,
+        "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+    }
+
+    # 1. Unauthenticated -> 401
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            json={"note": "Unauthenticated attempt"},
+        ).status_code
+        == 401
+    )
+
+    # 2. Disallowed roles (viewer, trader) -> 403
+    for non_op_role in (["viewer"], ["trader"]):
+        denied = client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=make_headers("user-1", roles=non_op_role),
+            json={"note": "Role denied attempt"},
+        )
+        assert denied.status_code == 403, denied.text
+
+    # 3. Cross-tenant header mismatch -> 403
+    cross_tenant_hdrs = {
+        **make_headers("op-alice", tenant="tenant-a", roles=["operator"]),
+        "X-Tenant-Id": "tenant-b",
+    }
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=cross_tenant_hdrs,
+            json={"note": "Cross-tenant attempt"},
+        ).status_code
+        == 403
+    )
+
+    # 4. Empty note or oversize note (>2000 chars) -> 422
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=make_headers("op-alice", roles=["operator"]),
+            json={"note": "   "},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=make_headers("op-alice", roles=["operator"]),
+            json={"note": "n" * 2001},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=make_headers("op-alice", roles=["operator"]),
+            json={"note": "澄" * 2001},
+        ).status_code
+        == 422
+    )
+
+    # 5. Non-REVIEW meeting (mtg-001 has PROPOSALS_ISSUED) -> 409
+    non_review = client.post(
+        "/bff/management/meetings/mtg-001/review",
+        headers=make_headers("op-alice", roles=["operator"]),
+        json={"note": "Trying to review a non-REVIEW meeting"},
+    )
+    assert non_review.status_code == 409, non_review.text
+    assert non_review.json()["error"]["code"] == "RESOURCE_CONFLICT"
+
+    # 6. Unknown meeting_id -> 404
+    not_found = client.post(
+        "/bff/management/meetings/mtg-unknown-404/review",
+        headers=make_headers("op-alice", roles=["operator"]),
+        json={"note": "Missing meeting"},
+    )
+    assert not_found.status_code == 404, not_found.text
+
+    # 7. Failed write when consultation owner is offline -> 503 (distinguishes failed writes from success)
+    state["offline"] = True
+    failed_write = client.post(
+        "/bff/management/meetings/mtg-002/review",
+        headers=make_headers("op-alice", roles=["operator"]),
+        json={"note": "Attempt during outage"},
+    )
+    assert failed_write.status_code == 503
+    state["offline"] = False
+
+    # 8. Valid operator review succeeds, persists operator_review, and preserves original synthesis & 0 proposals
+    calls.clear()
+    note = "Two participants requested more research twice; closed review with zero proposals."
+    ok = client.post(
+        "/bff/management/meetings/mtg-002/review",
+        headers=make_headers("op-alice", roles=["operator"], idempotency_key="idem-rev-002"),
+        json={"note": note},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["replayed"] is False
+    assert body["operator_review"] == {
+        "status": "reviewed",
+        "disposition": "closed_no_proposal",
+        "note": note,
+        "reviewed_by": "op-alice",
+        "reviewed_at": "2026-11-21T12:15:00Z",
+        "cause": "unknown",
+        "unreadable_reason": "unknown",
+    }
+    assert body["data"]["operator_review"] == body["operator_review"]
+    assert body["data"]["outcome"] == "REVIEW"
+    assert body["data"]["synthesis"]["outcome"] == "REVIEW"
+    assert body["data"]["synthesis"]["proposals"] == []
+    assert body["data"]["synthesis"]["unreadable_reason"] == "unknown"
+    assert "cf-shared-1" in body["data"]["evidence_refs"]
+
+    # 9. Fresh GET detail returns the persisted operator_review
+    detail_get = client.get(
+        "/bff/management/meetings/mtg-002",
+        headers=make_headers("op-alice", roles=["operator"]),
+    )
+    assert detail_get.status_code == 200
+    assert detail_get.json()["data"]["operator_review"] == body["operator_review"]
+
+    # 10. Repeated identical submission returns the same disposition (replayed=True)
+    replay = client.post(
+        "/bff/management/meetings/mtg-002/review",
+        headers=make_headers("op-alice", roles=["operator"]),
+        json={"note": note},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["operator_review"] == body["operator_review"]
+
+    # 11. Concurrent/conflicting submission by another operator returns 409 without overwriting op-alice
+    conflict = client.post(
+        "/bff/management/meetings/mtg-002/review",
+        headers=make_headers("op-bob", roles=["operator"]),
+        json={"note": "Other operator trying to overwrite"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "RESOURCE_CONFLICT"
+
+
 def test_app_factory_mounts_meetings_routes():
     app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
     route_set = get_canonical_bff_route_set(app)
@@ -720,7 +941,9 @@ def test_app_factory_mounts_meetings_routes():
         ("GET", "/bff/management/meetings/catalogue"),
         ("GET", "/bff/management/meetings/{meeting_id}"),
         ("POST", "/bff/management/meetings"),
+        ("POST", "/bff/management/meetings/{meeting_id}/review"),
         ("GET", "/bff/meetings"),
         ("POST", "/bff/meetings"),
+        ("POST", "/bff/meetings/{meeting_id}/review"),
     ):
         assert expected in route_set, f"Missing mounted route {expected}"
