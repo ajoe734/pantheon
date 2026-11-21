@@ -1824,26 +1824,56 @@ def _probe_case_file_credentials(config: ExecutorConfig) -> None:
             raise
 
 
+WRITEBACK_PROBE_INTERVAL_SECONDS = 900.0
+# (tenant, memory_url) -> (checked monotonic seconds, error text or "" when healthy)
+_WRITEBACK_PROBE_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+
+
+def _writeback_probe_interval() -> float:
+    raw = os.getenv("CONSULTATION_WRITEBACK_PROBE_INTERVAL_SECONDS", "").strip()
+    try:
+        return max(float(raw), 0.0) if raw else WRITEBACK_PROBE_INTERVAL_SECONDS
+    except ValueError:
+        return WRITEBACK_PROBE_INTERVAL_SECONDS
+
+
 def _probe_writeback_identity(config: ExecutorConfig) -> None:
     """Authenticate to the memory writeback with the consultation write identity.
 
-    An intentionally empty payload is rejected by validation (400/422) after
-    authentication, so nothing is written; 401/403, 5xx or no transport fails.
+    The payload names write_authority consultation-svc and the executor tenant,
+    so it passes memory-svc's identity, authority and tenant checks, and is then
+    rejected by validation (400/422, no source_event_*) so nothing is written.
+    401/403, 5xx or no transport fails. The request is made at most once per
+    probe interval; between probes the last answer is returned without a request.
     """
     if not config.memory_url:
         raise WorkflowBlocked("memory writeback address is not configured")
+    key = (config.tenant_id, config.memory_url)
+    now = time.monotonic()
+    cached = _WRITEBACK_PROBE_CACHE.get(key)
+    if cached is not None and now - cached[0] < _writeback_probe_interval():
+        if cached[1]:
+            raise WorkflowBlocked(cached[1])
+        return
     try:
         _json_request(
             config.memory_url + "/api/memory/writebacks/learn-feedback",
             method="POST",
             timeout_seconds=config.timeout_seconds,
             headers=_memory_headers(),
-            payload={},
+            payload={"write_authority": "consultation-svc", "tenant_id": config.tenant_id},
         )
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 404, 409, 422):
+            _WRITEBACK_PROBE_CACHE[key] = (now, "")
             return
+        _WRITEBACK_PROBE_CACHE[key] = (now, _error_detail(exc)[:300])
         raise
+    except Exception as exc:
+        _WRITEBACK_PROBE_CACHE[key] = (now, _error_detail(exc)[:300])
+        raise
+    # A 2xx would mean a write happened; still an answer from the identity check.
+    _WRITEBACK_PROBE_CACHE[key] = (now, "")
 
 
 def _request_persona_ids(config: ExecutorConfig, request_id: str) -> list[str]:
