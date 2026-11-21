@@ -115,6 +115,21 @@
       "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
       "exit_code": 0,
       "result": "57 passed, 3 warnings in 43.38s; unchanged source, does not resolve clock-dependent residual"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_policy_binding.py acceptance/test_meeting_review_disposition.py",
+      "exit_code": 0,
+      "result": "47 passed, 1 warning in 5.74s on combined #7718 + #7719 source tree"
+    },
+    {
+      "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "exit_code": 0,
+      "result": "57 passed, 3 warnings in 44.14s on composition anchor 635a91204; RC1 live-clock residual remains"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head 635a9120473f6ffe13fe396e170b4751847b5834",
+      "exit_code": 0,
+      "result": "No evidence-cap violations; production +257, tests +215/-1, docs/evidence +1982"
     }
   ],
   "verified_deployed_source_hashes": {
@@ -168,5 +183,14 @@
     "required_actor": "Human/Ops",
     "corrective_action": "While blocked, use the existing artifact-contract command to add scripts/test_dev_acceptance_stage.py with the source-CI repair rationale, then reopen and let the supervisor dispatch fresh exact-head review. Do not impersonate Human/Ops or edit canonical JSON.",
     "delivery_state": "published task branch / open PR; neither merged nor deployed nor accepted; no done transition"
+  },
+  "dev_composition": {
+    "base_commit": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+    "base_pr": 7718,
+    "composition_anchor": "635a9120473f6ffe13fe396e170b4751847b5834",
+    "resolution": "Both meeting-review-disposition and paper-risk-policy-binding are expected in the shipped release probes; risk probe skipped/77 assertion, persona-day exclusion and original release verdict assertion retained.",
+    "artifact_contract": "Human/Ops admitted scripts/test_dev_acceptance_stage.py on 2026-11-21T13:54:56Z and reopened the original task. The prior review_admission_hold below is historical and resolved by that canonical contract revision.",
+    "review": "Fresh Antigravity exact-head review is required. Previous head checks and approval do not cover this composition.",
+    "ci": "Required CI must be read on the final published head; no previous-head result is claimed for it."
   }
 }

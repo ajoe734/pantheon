@@ -278,6 +278,17 @@ required; the earlier approval is not reused.
 
 ## Handoff and residual dispositions
 
+After #7718 merged at `20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c`,
+composition anchor `635a9120473f6ffe13fe396e170b4751847b5834` resolved
+the shared probe-list assertion with both `meeting-review-disposition` and
+`paper-risk-policy-binding`. It retains the risk probe's skip/77 check,
+persona-day exclusion and original release verdict check. The combined stage,
+policy and meeting probe tests passed 47 tests in 5.74 s; the unchanged BFF
+composition file passed 57 in 44.14 s. The RC1 live-clock residual still applies.
+Human/Ops admitted the focused stage-test path to this original task's artifact
+contract and reopened it; the earlier manifest admission hold is historical.
+The final published head needs fresh required CI and Antigravity review.
+
 The existing Capital/risk policy owner must decide whether `low` maps to an
 existing approved profile/version or whether these exact inline policies are
 explicitly applicable, and which optional single-name/reserve dimensions that
