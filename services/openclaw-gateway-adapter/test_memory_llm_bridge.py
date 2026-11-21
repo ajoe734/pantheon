@@ -98,7 +98,7 @@ def test_budget_persists_in_state_file(tmp_path):
 
 
 def test_concurrency_limit_refuses_with_429():
-    bridge = _bridge(max_concurrency=1)
+    bridge = _bridge(max_concurrency=1, slot_wait_seconds=0.0)
     entered, release = threading.Event(), threading.Event()
 
     def slow(messages, instruction, remaining):
@@ -113,6 +113,73 @@ def test_concurrency_limit_refuses_with_429():
     release.set()
     t.join()
     assert resp.status_code == 429 and not calls
+    assert resp.body["error"]["code"] == "concurrency_limit"
+
+    # With bounded slot_wait_seconds > 0, timeout after wait still returns 429 concurrency_limit.
+    timed_bridge = _bridge(max_concurrency=1, slot_wait_seconds=0.05)
+    entered2, release2 = threading.Event(), threading.Event()
+
+    def slow2(messages, instruction, remaining):
+        entered2.set()
+        release2.wait(5)
+        return {"text": "{\"facts\": []}", "usage": None}
+
+    t2 = threading.Thread(target=lambda: _call(timed_bridge, invoke=slow2))
+    t2.start()
+    assert entered2.wait(5)
+    resp2, calls2 = _call(timed_bridge)
+    release2.set()
+    t2.join()
+    assert resp2.status_code == 429 and not calls2
+    assert resp2.body["error"]["code"] == "concurrency_limit"
+
+
+def test_concurrency_limit_waits_for_slot_and_serves_four_concurrent_calls(monkeypatch):
+    monkeypatch.delenv("MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS", raising=False)
+    assert BridgeConfig.from_env().slot_wait_seconds == 15.0
+    monkeypatch.setenv("MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS", "0")
+    assert BridgeConfig.from_env().slot_wait_seconds == 0.0
+    monkeypatch.setenv("MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS", "7.5")
+    assert BridgeConfig.from_env().slot_wait_seconds == 7.5
+
+    bridge = _bridge(max_concurrency=2, slot_wait_seconds=5.0)
+    two_in_flight = threading.Event()
+    release_first_wave = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+    results = [None] * 4
+
+    def staged_invoke(messages, instruction, remaining):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            if active == 2:
+                two_in_flight.set()
+        try:
+            release_first_wave.wait(5)
+            return {"text": "{\"facts\": []}", "usage": {"prompt_tokens": 4, "completion_tokens": 2}}
+        finally:
+            with lock:
+                active -= 1
+
+    threads = [
+        threading.Thread(target=lambda idx=i: results.__setitem__(idx, _call(bridge, invoke=staged_invoke)[0]))
+        for i in range(4)
+    ]
+    for t in threads[:2]:
+        t.start()
+    assert two_in_flight.wait(5)
+    for t in threads[2:]:
+        t.start()
+    threading.Event().wait(0.05)
+    release_first_wave.set()
+    for t in threads:
+        t.join(timeout=5)
+    assert peak == 2
+    assert [r.status_code for r in results] == [200, 200, 200, 200]
+    assert [e["outcome"] for e in bridge.telemetry] == ["ok", "ok", "ok", "ok"]
 
 
 def test_upstream_quota_and_timeout_and_bad_answers():
