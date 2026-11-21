@@ -164,3 +164,125 @@ class CaseFileTests(unittest.TestCase):
             a = cf.compose_case_file(subject(), OP, OWNERS, now=fixed)
             b = cf.compose_case_file(subject(), OP, OWNERS, now=fixed)
         self.assertEqual(a, b)
+
+    def test_hosted_member_entry_pool_weights_and_zero_observation_virtual_book_facts(self):
+        ref = "artifact-persona-paper-039ad01f8bcd2b4aa466"
+        pid = "persona-2448c7053e33ea48da47"
+        binding_id = "pcb-persona-paper-039ad01f8bcd2b4aa466"
+        hosted_entry = {
+            "registry_id": ref,
+            "artifact_type": "execution_bundle",
+            "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+            "version": "1.0.0",
+            "artifact_state": "approved",
+            "owner_tenant": "t1",
+            "metadata": {
+                "market": "TW",
+                "tenant_id": "t1",
+                "persona_id": pid,
+                "execution_context": "paper",
+                "persona_capital_binding_id": binding_id,
+                "strategy_artifact": {
+                    "artifact_id": ref,
+                    "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+                    "version": "1.0.0",
+                    "strategy_logic": {
+                        "kind": "close_to_close_momentum",
+                        "positive_action": "BUY",
+                        "non_positive_action": "SELL",
+                    },
+                    "parameters": {
+                        "market": "TW",
+                        "symbols": ["2330.TWSE"],
+                        "data_source": "source-ingest:tw_price_daily",
+                        "bar_frequency": "1d",
+                        "lookback_bars": 2,
+                        "momentum_threshold": 0.0,
+                        "order_quantity": 1,
+                        "quantity_type": "SHARES",
+                        "zero_momentum_action": "SELL",
+                        "strength_scale_k": 1.0,
+                        "strength_floor_momentum": 0.01,
+                    },
+                },
+            },
+        }
+        hosted_pool = {
+            "pool_version": 4,
+            "persona_id": pid,
+            "tenant_id": "t1",
+            "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+            "members": [
+                {
+                    "artifact_ref": ref,
+                    "stage": "active",
+                    "risk_weight": 1.0,
+                    "checksum": "sha256:" + "d" * 64,
+                }
+            ],
+            "decision": {
+                "action": "reweight",
+                "status": "refused",
+                "reasons": ["virtual_book_source_missing"],
+                "health": {
+                    "demand_reasons": ["health_inputs_unknown"],
+                    "effective_bets": {"status": "unknown", "value": None, "reason": "health_window_missing_or_invalid"},
+                },
+            },
+        }
+        hosted_telemetry = {
+            "summaries": [
+                {
+                    "persona_capital_binding_id": binding_id,
+                    "tenant_id": "t1",
+                    "member_virtual_books": [
+                        {
+                            "member_id": ref,
+                            "artifact_id": ref,
+                            "observation_count": 0,
+                            "total_return": 0.0,
+                            "sharpe_ratio": None,
+                            "sharpe_undefined_reason": "insufficient_or_constant_returns",
+                            "max_drawdown": 0.0,
+                            "marks_complete": False,
+                        }
+                    ],
+                }
+            ]
+        }
+        sub = cf.Subject(
+            decision_type="consult",
+            persona_id=pid,
+            tenant_id="t1",
+            strategy_family="MT-1",
+            member_artifact_refs=(ref,),
+        )
+        out = compose(
+            sub,
+            caller=OP,
+            overrides={
+                f"/api/registry/entries/{ref}": hosted_entry,
+                f"/api/personas/{pid}/strategy-pool/versions": {"versions": [], "refusals": []},
+                f"/api/personas/{pid}/strategy-pool": hosted_pool,
+                "/api/telemetry/runtime-summaries": hosted_telemetry,
+            },
+        )
+        jsonschema.validate(out, SCHEMA)
+        facts = out["groups"]["facts"]
+        by_kind = {i["kind"]: json.loads(i["excerpt"]) for i in facts["items"]}
+        self.assertEqual(by_kind["registry_entry"]["strategy_family"], "close_to_close_momentum")
+        self.assertEqual(by_kind["registry_entry"]["approved_scope"], "paper")
+        self.assertEqual(by_kind["registry_entry"]["parameters"]["lookback_bars"], 2)
+        self.assertEqual(by_kind["registry_entry"]["parameters"]["symbols"], ["2330.TWSE"])
+        self.assertEqual(by_kind["strategy_pool"]["pool_version"], 4)
+        self.assertEqual(
+            by_kind["strategy_pool"]["members"],
+            [{"artifact_ref": ref, "stage": "active", "risk_weight": 1.0}],
+        )
+        self.assertIn("virtual_book_source_missing", by_kind["strategy_pool"]["pool_health"]["unavailable_reason"])
+        self.assertEqual(by_kind["member_virtual_book"]["observation_count"], 0)
+        self.assertIn("zero_observations", by_kind["member_virtual_book"]["unavailable_reason"])
+        self.assertIn(
+            {"owner": f"telemetry:virtual_book:{ref}", "reason": "zero_observations:insufficient_or_constant_returns"},
+            facts["unavailable"],
+        )

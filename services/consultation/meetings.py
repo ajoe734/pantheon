@@ -875,8 +875,15 @@ def compose_meeting_case_file(
     attribution_record: Optional[Mapping[str, Any]],
     supplied_case_file: Optional[Mapping[str, Any]],
     tenant_id: str,
+    chair_persona_id: Optional[str] = None,
+    convened_by: Optional[Mapping[str, Any]] = None,
+    owners: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Compose and validate the shared case file for a deliberative meeting."""
+    from dataclasses import replace
+    from services.knowledge import case_file as decision_case
+    from .workflow_executor import memory_read_identity
+
     resolved_attr: Optional[Dict[str, Any]] = (
         dict(attribution_record) if isinstance(attribution_record, Mapping) else None
     )
@@ -916,9 +923,9 @@ def compose_meeting_case_file(
                 attribution_record_id or f"attr-{meeting_id}"
             )
 
-    items: List[Dict[str, Any]] = []
+    supplied_items: List[Dict[str, Any]] = []
     if isinstance(supplied_case_file, Mapping):
-        for group_name, group_val in (supplied_case_file.get("groups") or {}).items():
+        for _group_name, group_val in (supplied_case_file.get("groups") or {}).items():
             if isinstance(group_val, Mapping):
                 for raw_item in group_val.get("items") or []:
                     if isinstance(raw_item, Mapping):
@@ -931,7 +938,7 @@ def compose_meeting_case_file(
                                 "private memory cannot enter a persona meeting case file",
                                 meeting_type=meeting_code,
                             )
-                        items.append(dict(raw_item))
+                        supplied_items.append(dict(raw_item))
         for raw_item in supplied_case_file.get("items") or []:
             if isinstance(raw_item, Mapping):
                 if (
@@ -943,14 +950,155 @@ def compose_meeting_case_file(
                         "private memory cannot enter a persona meeting case file",
                         meeting_type=meeting_code,
                     )
-                items.append(dict(raw_item))
+                supplied_items.append(dict(raw_item))
 
-    # Add attribution record item for MT-4
+    explicit_items: List[Dict[str, Any]] = []
+    string_refs: List[str] = []
+    for idx, ref in enumerate(evidence_refs or []):
+        if isinstance(ref, Mapping):
+            ref_id = str(ref.get("item_id") or ref.get("id") or ref.get("source_id") or f"evidence:ref:{idx + 1}").strip()
+            if (
+                ref.get("memory_layer") == "persona_private"
+                or ref.get("relevance_scope") == "persona_private"
+            ):
+                raise MeetingRefusedError(
+                    "private_memory_forbidden",
+                    "private memory cannot enter a persona meeting case file",
+                    meeting_type=meeting_code,
+                )
+            raw_excerpt = ref.get("excerpt") if ref.get("excerpt") is not None else ref.get("description")
+            if raw_excerpt is not None and str(raw_excerpt).strip() and str(raw_excerpt).strip() != ref_id:
+                explicit_items.append(
+                    {
+                        "item_id": ref_id,
+                        "group": str(ref.get("group") or "evidence"),
+                        "kind": str(ref.get("kind") or ref.get("evidence_type") or "evidence_ref"),
+                        "source_owner": str(ref.get("source_owner") or "consultation"),
+                        "source_id": str(ref.get("source_id") or ref_id),
+                        "excerpt": str(raw_excerpt).strip(),
+                        "retrieval_score": ref.get("retrieval_score"),
+                        "retrieval_mode": str(ref.get("retrieval_mode") or "supplied"),
+                        "subject_fields": dict(ref.get("subject_fields") or {}),
+                    }
+                )
+            else:
+                target_ref = str(ref.get("source_id") or ref_id).strip()
+                if target_ref:
+                    string_refs.append(target_ref)
+        else:
+            ref_str = str(ref).strip()
+            if ref_str:
+                string_refs.append(ref_str)
+
+    sref = str(subject_ref or "").strip()
+    if sref.startswith("persona:"):
+        subject_persona_id = sref[len("persona:"):].strip()
+    elif sref and not sref.startswith(("trader:", "agora_user:", "user:", "iso-week:", "attr-")):
+        subject_persona_id = sref
+    elif chair_persona_id and str(chair_persona_id).strip():
+        subject_persona_id = str(chair_persona_id).strip()
+    elif (
+        isinstance(convened_by, Mapping)
+        and str(convened_by.get("kind") or "").strip() == "persona"
+        and str(convened_by.get("id") or "").strip()
+    ):
+        subject_persona_id = str(convened_by["id"]).strip()
+    else:
+        subject_persona_id = "general"
+
+    eff_owners = owners if isinstance(owners, decision_case.Owners) else decision_case.Owners.from_env()
+    mem_token, read_actor_id, read_actor_roles = memory_read_identity()
+    if eff_owners.memory is not None and not eff_owners.memory.token and mem_token:
+        eff_owners = replace(
+            eff_owners,
+            memory=decision_case.OwnerEndpoint(eff_owners.memory.base_url, mem_token),
+        )
+    caller = decision_case.Caller(
+        actor_id=read_actor_id or "consultation-svc",
+        actor_roles=tuple(read_actor_roles) or ("consultation_session",),
+        session_id=f"meeting-{meeting_id}",
+        # Shared meeting case file: never a private persona caller (AC3)
+        persona_id="",
+    )
+    shared_case = decision_case.compose_case_file(
+        decision_case.Subject(
+            decision_type="consult",
+            persona_id=subject_persona_id or "general",
+            tenant_id=tenant_id or "default",
+            strategy_family=meeting_code or "consult",
+            member_artifact_refs=tuple(dict.fromkeys(string_refs)),
+        ),
+        caller,
+        eff_owners,
+    )
+
+    for grp in (shared_case.get("groups") or {}).values():
+        if isinstance(grp, Mapping):
+            for it in grp.get("items") or []:
+                if isinstance(it, Mapping) and (
+                    it.get("memory_layer") == "persona_private"
+                    or it.get("relevance_scope") == "persona_private"
+                ):
+                    raise MeetingRefusedError(
+                        "private_memory_forbidden",
+                        "private memory cannot enter a persona meeting case file",
+                        meeting_type=meeting_code,
+                    )
+
+    groups = {k: copy.deepcopy(v) for k, v in (shared_case.get("groups") or {}).items()}
+    facts_group = dict(groups.get("facts") or {"status": "empty", "items": [], "truncated": False, "unavailable": []})
+    facts_items: List[Dict[str, Any]] = list(facts_group.get("items") or [])
+    facts_unavail: List[Dict[str, Any]] = list(facts_group.get("unavailable") or [])
+    unavail_by_owner = {
+        str(u.get("owner") or ""): str(u.get("reason") or "unavailable")
+        for u in facts_unavail
+        if isinstance(u, Mapping)
+    }
+    resolved_registry_refs = {
+        str(i.get("source_id") or "")
+        for i in facts_items
+        if isinstance(i, Mapping) and i.get("kind") == "registry_entry"
+    }
+
+    # Unresolvable refs stay in the case file with a named unavailable reason instead of an excerpt equal to the ref id (AC2)
+    for ref_str in dict.fromkeys(string_refs):
+        if ref_str not in resolved_registry_refs:
+            reason = unavail_by_owner.get(f"registry:{ref_str}") or "registry_entry_unavailable"
+            unavail_item = {
+                "item_id": f"facts:registry_entry:{ref_str}",
+                "group": "facts",
+                "kind": "registry_entry",
+                "source_owner": "registry",
+                "source_id": ref_str,
+                "status": "unavailable",
+                "unavailable_reason": reason,
+                "excerpt": json.dumps(
+                    {
+                        "ref": ref_str,
+                        "status": "unavailable",
+                        "unavailable_reason": f"registry:{ref_str}:{reason}",
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+                "retrieval_score": None,
+                "retrieval_mode": "owner_read",
+                "subject_fields": {"unavailable_reason": reason},
+            }
+            if not any(existing.get("item_id") == unavail_item["item_id"] for existing in facts_items):
+                facts_items.append(unavail_item)
+
+    for item in [*supplied_items, *explicit_items]:
+        if not any(existing.get("item_id") == item.get("item_id") for existing in facts_items):
+            facts_items.append(item)
+
+    # Add attribution record item for MT-4 at index 0
     if resolved_attr is not None:
         attr_id = str(resolved_attr["attribution_record_id"])
         attr_item_id = f"facts:attribution_record:{attr_id}"
-        if not any(i.get("item_id") in {attr_item_id, attr_id} for i in items):
-            items.insert(
+        if not any(i.get("item_id") in {attr_item_id, attr_id} for i in facts_items):
+            facts_items.insert(
                 0,
                 {
                     "item_id": attr_item_id,
@@ -967,48 +1115,10 @@ def compose_meeting_case_file(
                 },
             )
 
-    # Add explicit evidence_refs as case file items
-    for idx, ref in enumerate(evidence_refs or []):
-        if isinstance(ref, Mapping):
-            ref_id = str(ref.get("item_id") or ref.get("id") or f"evidence:ref:{idx + 1}")
-            if (
-                ref.get("memory_layer") == "persona_private"
-                or ref.get("relevance_scope") == "persona_private"
-            ):
-                raise MeetingRefusedError(
-                    "private_memory_forbidden",
-                    "private memory cannot enter a persona meeting case file",
-                    meeting_type=meeting_code,
-                )
-            item = {
-                "item_id": ref_id,
-                "group": str(ref.get("group") or "evidence"),
-                "kind": str(ref.get("kind") or ref.get("evidence_type") or "evidence_ref"),
-                "source_owner": str(ref.get("source_owner") or "consultation"),
-                "source_id": str(ref.get("source_id") or ref_id),
-                "excerpt": str(ref.get("excerpt") or ref.get("description") or ref_id),
-                "subject_fields": dict(ref.get("subject_fields") or {}),
-            }
-        else:
-            ref_str = str(ref).strip()
-            if not ref_str:
-                continue
-            item = {
-                "item_id": ref_str,
-                "group": "facts",
-                "kind": "evidence_ref",
-                "source_owner": "consultation",
-                "source_id": ref_str,
-                "excerpt": f"Evidence {ref_str} for {topic}",
-                "subject_fields": {},
-            }
-        if not any(existing.get("item_id") == item["item_id"] for existing in items):
-            items.append(item)
-
     # Ensure at least one baseline topic fact item exists in the shared case file
-    if not items:
+    if not facts_items:
         default_item_id = f"facts:meeting_topic:{meeting_id}"
-        items.append(
+        facts_items.append(
             {
                 "item_id": default_item_id,
                 "group": "facts",
@@ -1020,45 +1130,80 @@ def compose_meeting_case_file(
             }
         )
 
-    case_body: Dict[str, Any] = {
-        "schema_version": "decision_case_file.v1",
-        "meeting_id": meeting_id,
-        "meeting_type": meeting_code,
-        "tenant_id": tenant_id,
-        "subject": {
+    facts_group["items"] = facts_items
+    facts_group["unavailable"] = facts_unavail
+    facts_group["status"] = "partial" if (facts_unavail and facts_items) else ("ok" if facts_items else "unavailable")
+    if facts_group["status"] != "unavailable":
+        facts_group.pop("reason", None)
+    groups["facts"] = facts_group
+
+    lessons_group = dict(groups.get("lessons") or {"status": "empty", "items": [], "truncated": False, "unavailable": []})
+    lessons_unavail = [
+        u
+        for u in (lessons_group.get("unavailable") or [])
+        if not (isinstance(u, Mapping) and u.get("owner") == "memory:persona_private" and u.get("expected"))
+    ]
+    lessons_group["unavailable"] = lessons_unavail
+    if not lessons_group.get("items"):
+        lessons_group["status"] = "unavailable" if lessons_unavail else "empty"
+    elif lessons_unavail:
+        lessons_group["status"] = "partial"
+    else:
+        lessons_group["status"] = "ok"
+    if lessons_group["status"] == "unavailable":
+        lessons_group["reason"] = "; ".join(f"{u['owner']}:{u['reason']}" for u in lessons_unavail)
+    else:
+        lessons_group.pop("reason", None)
+    groups["lessons"] = lessons_group
+
+    all_items: List[Dict[str, Any]] = []
+    for g_name in decision_case.GROUPS:
+        for it in (groups.get(g_name) or {}).get("items") or []:
+            if isinstance(it, Mapping) and not any(x.get("item_id") == it.get("item_id") for x in all_items):
+                all_items.append(dict(it))
+
+    subject_body = dict(shared_case.get("subject") or {})
+    subject_body.update(
+        {
             "decision_type": "consult",
             "meeting_type": meeting_code,
             "subject_ref": subject_ref or meeting_id,
             "tenant_id": tenant_id,
-        },
+        }
+    )
+    lesson_q = dict(shared_case.get("lesson_query") or {})
+    base_q = str(lesson_q.get("query") or "").strip()
+    base_tags = list(lesson_q.get("tags") or [])
+    if f"meeting:{meeting_code}" not in base_tags:
+        base_tags.append(f"meeting:{meeting_code}")
+
+    case_body: Dict[str, Any] = {
+        "schema_version": "decision_case_file.v1",
+        "composed_at": shared_case.get("composed_at"),
+        "meeting_id": meeting_id,
+        "meeting_type": meeting_code,
+        "tenant_id": tenant_id,
+        "subject": subject_body,
+        "caller": shared_case.get("caller") or {"actor_id": caller.actor_id, "is_subject_persona": False},
         "lesson_query": {
-            "query": f"{meeting_code} {topic} {subject_ref or ''}".strip(),
-            "tags": [f"meeting:{meeting_code}"],
+            "query": f"{meeting_code} {topic} {subject_ref or ''} {base_q}".strip(),
+            "tags": base_tags,
         },
-        "groups": {
-            "facts": {
-                "status": "ok",
-                "items": items,
-                "truncated": False,
-                "unavailable": [],
-            },
-            "similar_history": {"status": "empty", "items": [], "truncated": False, "unavailable": []},
-            "lessons": {"status": "empty", "items": [], "truncated": False, "unavailable": []},
-            "evidence": {"status": "empty", "items": [], "truncated": False, "unavailable": []},
-        },
+        "budgets": shared_case.get("budgets"),
+        "groups": groups,
         "execution_may_read": False,
     }
     if resolved_attr is not None:
         case_body["attribution_record"] = resolved_attr
     digest = hashlib.sha256(
-        json.dumps(case_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        json.dumps(case_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
     ).hexdigest()
     case_file = {
         "case_file_id": f"casefile-{digest[:24]}",
         "digest": digest,
         **case_body,
     }
-    return case_file, items, resolved_attr
+    return case_file, all_items, resolved_attr
 
 
 def build_participant_pre_read(
@@ -1339,6 +1484,73 @@ def read_downstream_status(proposal_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _classify_synthesis_unreadable_reason(
+    raw_synthesis: Any = None,
+    exc: Optional[BaseException] = None,
+) -> str:
+    """Classify why a chair synthesis is empty or unreadable (AC5):
+    model_output_missing | parse_failure (raw_length=<N>) | timeout.
+    """
+    if exc is not None:
+        msg = str(exc)
+        low = msg.lower()
+        tname = type(exc).__name__.lower()
+        if (
+            isinstance(exc, TimeoutError)
+            or isinstance(getattr(exc, "reason", None), TimeoutError)
+            or "timeout" in low
+            or "timed out" in low
+            or "timeout" in tname
+        ):
+            return "timeout"
+        if isinstance(exc, json.JSONDecodeError):
+            return f"parse_failure (raw_length={len(exc.doc or '')})"
+        raw_len_attr = getattr(exc, "raw_length", None)
+        if raw_len_attr is not None:
+            return f"parse_failure (raw_length={int(raw_len_attr)})"
+        raw_txt_attr = getattr(exc, "raw_output", None) or getattr(exc, "raw_text", None)
+        if raw_txt_attr is not None:
+            return f"parse_failure (raw_length={len(str(raw_txt_attr))})"
+        m = re.search(r"raw_length[=:]\s*(\d+)", msg)
+        if m:
+            return f"parse_failure (raw_length={int(m.group(1))})"
+        if any(tok in low for tok in ("did not complete", "model_output_missing", "output missing", "empty")):
+            return "model_output_missing"
+        return f"parse_failure (raw_length={len(msg)})"
+
+    if isinstance(raw_synthesis, Mapping):
+        explicit = str(
+            raw_synthesis.get("unreadable_reason")
+            or raw_synthesis.get("failure_reason")
+            or raw_synthesis.get("cause")
+            or ""
+        ).strip()
+        if explicit:
+            if "timeout" in explicit.lower() or "timed out" in explicit.lower():
+                return "timeout"
+            if "parse_failure" in explicit or "model_output_missing" in explicit:
+                return explicit
+            if "raw_length" in raw_synthesis and "raw_length" not in explicit:
+                return f"parse_failure (raw_length={int(raw_synthesis['raw_length'])})"
+            return explicit
+        if raw_synthesis.get("timeout") is True:
+            return "timeout"
+        if raw_synthesis.get("unreadable") is True:
+            raw_txt = raw_synthesis.get("raw_output") if raw_synthesis.get("raw_output") is not None else raw_synthesis.get("raw_text")
+            if raw_synthesis.get("raw_length") is not None:
+                raw_len = int(raw_synthesis["raw_length"])
+            elif raw_txt is not None:
+                raw_len = len(str(raw_txt))
+            else:
+                raw_len = 0
+            return f"parse_failure (raw_length={raw_len})"
+        return "model_output_missing"
+
+    if raw_synthesis is None:
+        return "model_output_missing"
+    return f"parse_failure (raw_length={len(str(raw_synthesis))})"
+
+
 def validate_and_build_synthesis(
     *,
     meeting_id: str,
@@ -1377,7 +1589,7 @@ def validate_and_build_synthesis(
         "participant_count": len(final_positions),
     }
 
-    # Check if raw_synthesis is missing/empty/unreadable (AC3)
+    # Check if raw_synthesis is missing/empty/unreadable (AC3 & AC5)
     if (
         not isinstance(raw_synthesis, Mapping)
         or not raw_synthesis
@@ -1388,21 +1600,30 @@ def validate_and_build_synthesis(
             and raw_synthesis.get("proposals") is None
         )
     ):
+        is_declared_review = (
+            isinstance(raw_synthesis, Mapping)
+            and raw_synthesis.get("unreadable") is not True
+            and str(raw_synthesis.get("outcome") or "").strip().upper() == "REVIEW"
+            and bool(str(raw_synthesis.get("summary") or "").strip())
+        )
+        if is_declared_review:
+            return {
+                "proposals": [],
+                "tally": tally,
+                "dissent_memo_id": None,
+                "outcome": "REVIEW",
+                "summary": str(raw_synthesis.get("summary")).strip(),
+                "voting": False,
+                "rejected_proposals": [],
+            }
+        cause = _classify_synthesis_unreadable_reason(raw_synthesis)
         return {
             "proposals": [],
             "tally": tally,
             "dissent_memo_id": None,
             "outcome": "REVIEW",
-            # A chair that itself answers REVIEW with a readable summary (for example when both
-            # stances are request_more_research) is an expected outcome, not an unreadable one.
-            "summary": (
-                str(raw_synthesis.get("summary")).strip()
-                if isinstance(raw_synthesis, Mapping)
-                and raw_synthesis.get("unreadable") is not True
-                and str(raw_synthesis.get("outcome") or "").strip().upper() == "REVIEW"
-                and str(raw_synthesis.get("summary") or "").strip()
-                else "Synthesis empty or unreadable; recorded as REVIEW with no proposal."
-            ),
+            "unreadable_reason": cause,
+            "summary": f"Synthesis empty or unreadable ({cause}); recorded as REVIEW with no proposal.",
             "voting": False,
             "rejected_proposals": [],
         }
@@ -1417,12 +1638,15 @@ def validate_and_build_synthesis(
 
     raw_proposals = raw_synthesis.get("proposals")
     if not isinstance(raw_proposals, list):
+        raw_len = len(json.dumps(dict(raw_synthesis), sort_keys=True, default=str))
+        cause = f"parse_failure (raw_length={raw_len})"
         return {
             "proposals": [],
             "tally": tally,
             "dissent_memo_id": None,
             "outcome": "REVIEW",
-            "summary": "Synthesis proposals field malformed; recorded as REVIEW with no proposal.",
+            "unreadable_reason": cause,
+            "summary": f"Synthesis proposals field malformed ({cause}); recorded as REVIEW with no proposal.",
             "voting": False,
             "rejected_proposals": [],
         }
@@ -1750,6 +1974,8 @@ def convene_persona_meeting(
             attribution_record=payload.get("attribution_record") or meta.get("attribution_record"),
             supplied_case_file=payload.get("case_file") or meta.get("case_file"),
             tenant_id=tenant_id,
+            chair_persona_id=chair_persona_id,
+            convened_by=convened_by,
         )
     except MeetingRefusedError as exc:
         refusal_persona = exc.persona_id or convener_id
@@ -2146,17 +2372,27 @@ def execute_persona_meeting(
     # Step 2: Compose / verify shared case file and participant pre-read
     case_file = dict(meeting.get("case_file") or {})
     case_file_items = list(meeting.get("case_file_items") or [])
-    if not case_file_items:
+    legacy_unresolved_refs = [
+        str(i.get("source_id") or i.get("item_id") or "").strip()
+        for i in case_file_items
+        if isinstance(i, Mapping)
+        and i.get("kind") == "evidence_ref"
+        and i.get("source_owner") == "consultation"
+        and str(i.get("source_id") or i.get("item_id") or "").strip()
+    ]
+    if not case_file_items or legacy_unresolved_refs:
         case_file, case_file_items, resolved_attr = compose_meeting_case_file(
             meeting_id=meeting_id,
             meeting_code=meeting_code,
             topic=topic,
             subject_ref=meeting.get("subject_ref"),
-            evidence_refs=[],
+            evidence_refs=legacy_unresolved_refs,
             attribution_record_id=meeting.get("attribution_record_id"),
             attribution_record=meeting.get("attribution_record"),
-            supplied_case_file=case_file,
+            supplied_case_file=None if legacy_unresolved_refs else case_file,
             tenant_id=tenant_id,
+            chair_persona_id=chair_persona_id,
+            convened_by=meeting.get("convened_by"),
         )
         meeting["case_file"] = case_file
         meeting["case_file_items"] = case_file_items
@@ -2183,7 +2419,10 @@ def execute_persona_meeting(
     store.put_meeting(meeting)
 
     allowed_case_ids = {
-        str(item["item_id"]) for item in case_file_items if item.get("item_id")
+        str(cid)
+        for item in case_file_items
+        for cid in (item.get("item_id"), item.get("source_id"))
+        if cid
     }
     if meeting.get("attribution_record_id"):
         allowed_case_ids.add(str(meeting["attribution_record_id"]))
@@ -2194,7 +2433,11 @@ def execute_persona_meeting(
     preread_by_persona: Dict[str, Dict[str, Any]] = {
         str(pr["persona_id"]): pr for pr in pre_read
     }
-    default_case_id = next(iter(sorted(allowed_case_ids)), f"facts:meeting_topic:{meeting_id}")
+    default_case_id = (
+        str(case_file_items[0]["item_id"])
+        if case_file_items and case_file_items[0].get("item_id")
+        else next(iter(sorted(allowed_case_ids)), f"facts:meeting_topic:{meeting_id}")
+    )
 
     # Assign participants on backing ConsultRequest for memo qualification
     for p in participants:
@@ -2487,8 +2730,33 @@ def execute_persona_meeting(
         ev_content = dict(synth_contrib.event_content or {})
         if isinstance(ev_content.get("synthesis"), Mapping):
             raw_synthesis = dict(ev_content["synthesis"])
+            if (
+                not str(raw_synthesis.get("summary") or "").strip()
+                and raw_synthesis.get("unreadable") is not True
+                and (raw_synthesis.get("proposals") is not None or raw_synthesis.get("outcome"))
+                and str(synth_contrib.summary or "").strip()
+            ):
+                raw_synthesis["summary"] = synth_contrib.summary
+        elif ev_content.get("synthesis") is not None:
+            raw_txt = str(ev_content.get("synthesis"))
+            raw_synthesis = {
+                "unreadable": True,
+                "unreadable_reason": f"parse_failure (raw_length={len(raw_txt)})",
+                "raw_length": len(raw_txt),
+            }
         elif ev_content.get("unreadable") is True:
-            raw_synthesis = {"unreadable": True}
+            raw_txt = ev_content.get("raw_output") if ev_content.get("raw_output") is not None else ev_content.get("raw_text")
+            raw_len = (
+                int(ev_content["raw_length"])
+                if ev_content.get("raw_length") is not None
+                else (len(str(raw_txt)) if raw_txt is not None else 0)
+            )
+            raw_synthesis = {
+                "unreadable": True,
+                "unreadable_reason": ev_content.get("unreadable_reason")
+                or f"parse_failure (raw_length={raw_len})",
+                "raw_length": raw_len,
+            }
         else:
             # Build synthesis from event_content proposals or round proposals
             collected_proposals = list(ev_content.get("proposals") or [])
@@ -2503,9 +2771,10 @@ def execute_persona_meeting(
                 "outcome": ev_content.get("outcome"),
                 "unreadable": ev_content.get("unreadable", False),
             }
-    except Exception:
-        # Provider returned unreadable/malformed synthesis -> REVIEW with no proposal (AC3)
-        raw_synthesis = {"unreadable": True}
+    except Exception as exc:
+        # Provider returned unreadable/malformed/timed-out synthesis -> REVIEW with named cause (AC3 & AC5)
+        cause = _classify_synthesis_unreadable_reason(exc=exc)
+        raw_synthesis = {"unreadable": True, "unreadable_reason": cause}
 
     synthesis = validate_and_build_synthesis(
         meeting_id=meeting_id,
@@ -2519,6 +2788,10 @@ def execute_persona_meeting(
         allowed_case_ids=allowed_case_ids,
         chair_preread_ids=preread_ids_by_persona.get(chair_persona_id, set()),
     )
+    if synthesis.get("unreadable_reason"):
+        meeting["synthesis_unreadable_reason"] = synthesis["unreadable_reason"]
+    else:
+        meeting.pop("synthesis_unreadable_reason", None)
 
     # Step 8: Record & publish Dissent Memo + Summary Memo in store
     now_closed = utc_now()

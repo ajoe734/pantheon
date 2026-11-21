@@ -97,6 +97,7 @@ class _AdapterModelDouble:
                 "persona-alpha",
                 "persona-beta",
                 "persona-gamma",
+                "persona-2448c7053e33ea48da47",
                 "persona-risk-officer",
                 "persona-red-team",
                 "agora-advisor-macro",
@@ -120,6 +121,7 @@ class _AdapterModelDouble:
             "persona-alpha",
             "persona-beta",
             "persona-gamma",
+            "persona-2448c7053e33ea48da47",
             "persona-risk-officer",
             "persona-red-team",
             "agora-advisor-macro",
@@ -1443,3 +1445,372 @@ def test_directory_unconfigured_or_unreachable_is_refused_by_name(monkeypatch):
     with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
         meetings_mod._fetch_persona_directory("tenant-dev")
     assert exc.value.reason == "persona_directory_unavailable"
+
+
+# --- MEETING-CASE-FILE-RESOLVES-MEMBER-FACTS-20261120 ------------------------
+
+def test_unresolvable_ref_stays_in_meeting_case_file_with_named_unavailable_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    ref = "artifact-missing-404"
+
+    def _not_found(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path.startswith("/api/registry/entries/"):
+            raise cf.OwnerUnavailable("http_404:not_found")
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _not_found)
+    owners = cf.Owners(
+        registry=cf.OwnerEndpoint("http://registry"),
+        pool=cf.OwnerEndpoint("http://persona"),
+    )
+    case_file, items, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-unresolvable-1",
+        meeting_code="MT-1",
+        topic="Pool evolution review",
+        subject_ref="persona:persona-2448c7053e33ea48da47",
+        evidence_refs=[ref],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    reg_items = [i for i in items if i["source_id"] == ref]
+    assert len(reg_items) == 1
+    item = reg_items[0]
+    assert item["status"] == "unavailable"
+    assert item["unavailable_reason"] == "http_404:not_found"
+    assert item["excerpt"] != ref
+    assert f"Evidence {ref}" not in item["excerpt"]
+    parsed_excerpt = json.loads(item["excerpt"])
+    assert parsed_excerpt["ref"] == ref
+    assert parsed_excerpt["status"] == "unavailable"
+    assert "http_404:not_found" in parsed_excerpt["unavailable_reason"]
+    assert {
+        "owner": f"registry:{ref}",
+        "reason": "http_404:not_found",
+    } in case_file["groups"]["facts"]["unavailable"]
+
+
+def test_private_persona_memory_never_enters_meeting_case_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    pid = "persona-2448c7053e33ea48da47"
+
+    def _memory_with_private(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path.startswith("/api/memory/retrieve"):
+            return {
+                "hits": [
+                    {
+                        "type": "persona",
+                        "relevance_score": 2.0,
+                        "entry": {
+                            "memory_id": "pmem-secret-1",
+                            "persona_id": pid,
+                            "relevance_scope": "persona_private",
+                            "content": {"summary": "private secret sizing note"},
+                        },
+                    },
+                    {
+                        "type": "persona",
+                        "relevance_score": 1.0,
+                        "entry": {
+                            "memory_id": "pmem-committee-1",
+                            "persona_id": pid,
+                            "relevance_scope": "persona_and_committee",
+                            "content": {"summary": "shared committee lesson"},
+                        },
+                    },
+                ]
+            }
+        if path.endswith("/strategy-pool"):
+            return {"pool_version": 4, "members": []}
+        return {}
+
+    monkeypatch.setattr(cf, "http_json", _memory_with_private)
+    owners = cf.Owners(
+        pool=cf.OwnerEndpoint("http://persona"),
+        memory=cf.OwnerEndpoint("http://memory", "tok"),
+    )
+    case_file, items, _ = meetings_mod.compose_meeting_case_file(
+        meeting_id="mtg-priv-check",
+        meeting_code="MT-1",
+        topic="Pool evolution review",
+        subject_ref=f"persona:{pid}",
+        evidence_refs=[],
+        attribution_record_id=None,
+        attribution_record=None,
+        supplied_case_file=None,
+        tenant_id=TENANT,
+        owners=owners,
+    )
+    lesson_ids = {i["source_id"] for i in case_file["groups"]["lessons"]["items"]}
+    assert "pmem-committee-1" in lesson_ids
+    assert "pmem-secret-1" not in lesson_ids
+    assert "private secret sizing note" not in json.dumps(case_file)
+    assert all(i.get("relevance_scope") != "persona_private" for i in items)
+
+    for bad_kw in (
+        {"evidence_refs": [{"item_id": "p1", "relevance_scope": "persona_private", "excerpt": "secret"}]},
+        {"supplied_case_file": {"items": [{"item_id": "p2", "memory_layer": "persona_private", "excerpt": "secret"}]}},
+    ):
+        with pytest.raises(meetings_mod.MeetingRefusedError) as exc:
+            meetings_mod.compose_meeting_case_file(
+                meeting_id="mtg-priv-refused",
+                meeting_code="MT-1",
+                topic="Pool evolution review",
+                subject_ref=f"persona:{pid}",
+                evidence_refs=bad_kw.get("evidence_refs", []),
+                attribution_record_id=None,
+                attribution_record=None,
+                supplied_case_file=bad_kw.get("supplied_case_file"),
+                tenant_id=TENANT,
+                owners=owners,
+            )
+        assert exc.value.reason == "private_memory_forbidden"
+
+
+def test_hosted_shape_mt1_resolves_member_facts_pool_v4_and_zero_observation_book_into_participant_prompts(
+    stack: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.knowledge import case_file as cf
+
+    client: ConsultationServiceClient = stack["client"]
+    double: _AdapterModelDouble = stack["double"]
+    pid = "persona-2448c7053e33ea48da47"
+    ref = "artifact-persona-paper-039ad01f8bcd2b4aa466"
+    binding_id = "pcb-persona-paper-039ad01f8bcd2b4aa466"
+
+    hosted_entry = {
+        "registry_id": ref,
+        "artifact_type": "execution_bundle",
+        "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+        "version": "1.0.0",
+        "artifact_state": "approved",
+        "owner_tenant": TENANT,
+        "metadata": {
+            "market": "TW",
+            "tenant_id": TENANT,
+            "persona_id": pid,
+            "execution_context": "paper",
+            "persona_capital_binding_id": binding_id,
+            "strategy_artifact": {
+                "artifact_id": ref,
+                "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+                "version": "1.0.0",
+                "strategy_logic": {
+                    "kind": "close_to_close_momentum",
+                    "positive_action": "BUY",
+                    "non_positive_action": "SELL",
+                    "lookback_parameter": "lookback_bars",
+                    "threshold_parameter": "momentum_threshold",
+                },
+                "parameters": {
+                    "market": "TW",
+                    "symbols": ["2330.TWSE"],
+                    "data_source": "source-ingest:tw_price_daily",
+                    "bar_frequency": "1d",
+                    "lookback_bars": 2,
+                    "momentum_threshold": 0.0,
+                    "order_quantity": 1,
+                    "quantity_type": "SHARES",
+                    "zero_momentum_action": "SELL",
+                    "strength_scale_k": 1.0,
+                    "strength_floor_momentum": 0.01,
+                },
+            },
+        },
+    }
+    hosted_pool = {
+        "schema_version": "persona_strategy_pool.v1",
+        "tenant_id": TENANT,
+        "persona_id": pid,
+        "pool_version": 4,
+        "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+        "members": [
+            {
+                "artifact_ref": ref,
+                "stage": "active",
+                "risk_weight": 1.0,
+                "baseline_ref": "apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
+                "checksum": "sha256:" + "a" * 64,
+            }
+        ],
+        "decision": {
+            "action": "reweight",
+            "status": "refused",
+            "reasons": ["virtual_book_source_missing"],
+            "health": {
+                "window_trading_days": 20,
+                "demand_reasons": ["health_inputs_unknown"],
+                "effective_bets": {
+                    "status": "unknown",
+                    "value": None,
+                    "reason": "health_window_missing_or_invalid",
+                },
+            },
+        },
+    }
+    hosted_telemetry = {
+        "summaries": [
+            {
+                "runtime_id": "rt-persona-paper-039ad01f8bcd2b4aa466",
+                "tenant_id": TENANT,
+                "deployment_stage": "paper",
+                "persona_capital_binding_id": binding_id,
+                "member_virtual_books": [
+                    {
+                        "member_id": ref,
+                        "artifact_id": ref,
+                        "version": "1.0.0",
+                        "observation_count": 0,
+                        "total_return": 0.0,
+                        "sharpe_ratio": None,
+                        "sharpe_undefined_reason": "insufficient_or_constant_returns",
+                        "max_drawdown": 0.0,
+                        "marks_complete": False,
+                        "as_of": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    real_http_json = cf.http_json
+
+    def _owner_double(endpoint: Any, path: str, **kwargs: Any) -> Any:
+        if path == f"/api/registry/entries/{ref}":
+            return hosted_entry
+        if path == f"/api/personas/{pid}/strategy-pool":
+            return hosted_pool
+        if path == f"/api/personas/{pid}/strategy-pool/versions":
+            return {"versions": [hosted_pool], "refusals": []}
+        if path == "/api/telemetry/runtime-summaries":
+            return hosted_telemetry
+        return real_http_json(endpoint, path, **kwargs)
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", stack["adapter_url"])
+    monkeypatch.setattr(cf, "http_json", _owner_double)
+
+    double.calls.clear()
+    created = client.open_persona_meeting(
+        meeting_type="MT-1",
+        topic=f"Pool evolution review for {pid} (2026-W47)",
+        convened_by={"kind": "persona", "id": pid},
+        subject_ref=f"persona:{pid}",
+        participants=[pid, "persona-risk-officer"],
+        evidence_refs=[ref],
+        iso_week="2026-W47",
+    )
+    mtg_id = created["meeting_id"]
+    tick_res = _tick(stack)
+    assert tick_res["errors"] == [], tick_res
+    assert tick_res["completed"] == 1, tick_res
+
+    detail = client.get_meeting(mtg_id)
+    assert detail is not None and detail["status"] == "closed"
+    fact_items = {i["kind"]: i for i in detail["case_file"]["groups"]["facts"]["items"]}
+    assert {"registry_entry", "strategy_pool", "member_virtual_book"} <= set(fact_items)
+
+    mtg_calls = [c for c in double.calls if c["request_id"] == mtg_id]
+    assert len(mtg_calls) == 5  # 2 participants x 2 rounds + 1 chair synthesis
+    for call in mtg_calls:
+        prompt = call["prompt"]
+        # Registry entry resolved facts: strategy family, approved scope, rule parameters
+        assert "close_to_close_momentum" in prompt
+        assert '"approved_scope":"paper"' in prompt
+        assert '"lookback_bars":2' in prompt
+        assert '"2330.TWSE"' in prompt
+        # Pool version 4 membership and weights + pool health unavailable reason
+        assert '"pool_version":4' in prompt
+        assert '"risk_weight":1.0' in prompt
+        assert "virtual_book_source_missing" in prompt
+        assert "health_window_missing_or_invalid" in prompt
+        # Virtual book with zero observations + unavailable reason
+        assert '"observation_count":0' in prompt
+        assert "zero_observations:insufficient_or_constant_returns" in prompt
+
+
+def test_chair_synthesis_records_why_empty_or_unreadable_cause_on_meeting(
+    tmp_path: Path,
+) -> None:
+    store = ConsultationStore(str(tmp_path / "synth_causes"))
+    wf_state = WorkflowStateStore(tmp_path / "synth_causes.sqlite3")
+
+    def _run_with_synth_behavior(idx: int, synth_fn: Any) -> dict[str, Any]:
+        created, _ = meetings_mod.convene_persona_meeting(
+            store=store,
+            workflow_state=wf_state,
+            tenant_id=TENANT,
+            payload={
+                "meeting_type": "MT-1",
+                "topic": f"Synthesis cause test {idx}",
+                "convened_by": {"kind": "persona", "id": "persona-alpha"},
+                "participants": ["persona-alpha", "persona-risk-officer"],
+                "iso_week": f"2026-W{10 + idx}",
+            },
+        )
+        mid = created["meeting_id"]
+
+        class _Prov:
+            def obtain(self, *, tenant_id: str, request: Mapping[str, Any], participant_scope: str = "") -> Any:
+                if participant_scope.endswith(":synthesis"):
+                    return synth_fn(mid)
+                cid = request["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+                return SimpleNamespace(
+                    summary="round position",
+                    recommendation="request_more_research",
+                    confidence=0.7,
+                    event_content={
+                        "stance": "request_more_research",
+                        "confidence": 0.7,
+                        "citations": [cid],
+                        "claims": [{"claim": "need facts", "evidence_refs": [cid]}],
+                    },
+                    evidence=[{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{mid}/{cid}"}],
+                )
+
+        return meetings_mod.execute_persona_meeting(
+            store=store,
+            meeting_id=mid,
+            tenant_id=TENANT,
+            provider=_Prov(),
+        )
+
+    # 1. Model output missing
+    m_missing = _run_with_synth_behavior(
+        1,
+        lambda _mid: (_ for _ in ()).throw(RuntimeError("OpenClaw persona agent did not complete")),
+    )
+    assert m_missing["outcome"] == "REVIEW"
+    assert m_missing["synthesis"]["unreadable_reason"] == "model_output_missing"
+    assert m_missing["synthesis_unreadable_reason"] == "model_output_missing"
+    assert "model_output_missing" in m_missing["synthesis"]["summary"]
+
+    # 2. Parse failure with raw length
+    m_parse = _run_with_synth_behavior(
+        2,
+        lambda _mid: (_ for _ in ()).throw(json.JSONDecodeError("Expecting value", "NOT-VALID-JSON", 0)),
+    )
+    assert m_parse["outcome"] == "REVIEW"
+    assert m_parse["synthesis"]["unreadable_reason"] == "parse_failure (raw_length=14)"
+    assert m_parse["synthesis_unreadable_reason"] == "parse_failure (raw_length=14)"
+    assert "parse_failure (raw_length=14)" in m_parse["synthesis"]["summary"]
+
+    # 3. Timeout
+    m_timeout = _run_with_synth_behavior(
+        3,
+        lambda _mid: (_ for _ in ()).throw(TimeoutError("provider transport timed out after 30s")),
+    )
+    assert m_timeout["outcome"] == "REVIEW"
+    assert m_timeout["synthesis"]["unreadable_reason"] == "timeout"
+    assert m_timeout["synthesis_unreadable_reason"] == "timeout"
+    assert "timeout" in m_timeout["synthesis"]["summary"]

@@ -23,7 +23,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
@@ -246,20 +246,235 @@ def subject_anchors(subject: Subject) -> list:
 
 # ---- facts (owner APIs only) -------------------------------------------------
 
-def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> None:
+_PLACEHOLDER_FAMILIES = frozenset({"consult", "MT-1", "MT-2", "MT-3", "MT-4", "MT-5", "MT-6"})
+
+
+def _summarize_registry_entry(raw: Any, budgets: Budgets) -> tuple[str, dict, dict]:
+    e = raw.get("entry", raw) if isinstance(raw, Mapping) else {}
+    if isinstance(e, Mapping) and isinstance(e.get("data"), Mapping):
+        e = e["data"]
+    if not isinstance(e, Mapping) or not (
+        e.get("strategy_id")
+        or e.get("artifact_type")
+        or e.get("registry_id")
+        or isinstance((e.get("metadata") or {}).get("strategy_artifact"), Mapping)
+    ):
+        raise OwnerUnavailable("registry_entry_empty_or_invalid")
+    meta = e.get("metadata") if isinstance(e.get("metadata"), Mapping) else {}
+    art = (
+        meta.get("strategy_artifact")
+        if isinstance(meta.get("strategy_artifact"), Mapping)
+        else (e.get("strategy_artifact") if isinstance(e.get("strategy_artifact"), Mapping) else {})
+    )
+    logic = (
+        art.get("strategy_logic")
+        if isinstance(art.get("strategy_logic"), Mapping)
+        else (e.get("strategy_logic") if isinstance(e.get("strategy_logic"), Mapping) else {})
+    )
+    params = (
+        art.get("parameters")
+        if isinstance(art.get("parameters"), Mapping)
+        else (e.get("parameters") if isinstance(e.get("parameters"), Mapping) else {})
+    )
+    strategy_id = e.get("strategy_id") or art.get("strategy_id")
+    strategy_family = (
+        e.get("strategy_family")
+        or meta.get("strategy_family")
+        or logic.get("kind")
+        or strategy_id
+    )
+    dep_summary = e.get("deployment_summary") if isinstance(e.get("deployment_summary"), Mapping) else {}
+    approved_scope = (
+        e.get("approved_scope")
+        or meta.get("approved_scope")
+        or meta.get("execution_context")
+        or (raw.get("deployment_stage") if isinstance(raw, Mapping) else None)
+        or dep_summary.get("current_stage")
+    )
+    clean_params = {k: v for k, v in sorted(params.items()) if k != "pool_digest"}
+    summary: dict[str, Any] = {
+        "strategy_id": strategy_id,
+        "strategy_family": strategy_family,
+        "approved_scope": approved_scope,
+        "artifact_state": e.get("artifact_state"),
+        "artifact_type": e.get("artifact_type"),
+        "version": e.get("version") or art.get("version"),
+    }
+    if logic:
+        logic_summary = {
+            k: v
+            for k, v in sorted(logic.items())
+            if k in ("kind", "positive_action", "non_positive_action")
+        }
+        if logic_summary and set(logic_summary) - {"kind"}:
+            summary["strategy_logic"] = logic_summary
+    if clean_params:
+        summary["parameters"] = dict(clean_params)
+    if e.get("evaluation_summary") is not None:
+        summary["evaluation_summary"] = e.get("evaluation_summary")
+    if e.get("replication_success") is not None:
+        summary["replication_success"] = e.get("replication_success")
+    summary = {k: v for k, v in summary.items() if v is not None}
+    s = json.dumps(summary, separators=(",", ":"), ensure_ascii=False, default=str)
+    if len(s) > budgets.max_excerpt_chars and isinstance(summary.get("parameters"), dict):
+        for drop_p in ("data_source", "quantity_type"):
+            summary["parameters"].pop(drop_p, None)
+            s = json.dumps(summary, separators=(",", ":"), ensure_ascii=False, default=str)
+            if len(s) <= budgets.max_excerpt_chars:
+                break
+    if len(s) > budgets.max_excerpt_chars:
+        for drop_k in ("strategy_logic", "artifact_type", "version"):
+            summary.pop(drop_k, None)
+            s = json.dumps(summary, separators=(",", ":"), ensure_ascii=False, default=str)
+            if len(s) <= budgets.max_excerpt_chars:
+                break
+    subject_fields: dict[str, Any] = {"strategy_id": strategy_id}
+    if strategy_family:
+        subject_fields["strategy_family"] = strategy_family
+    if approved_scope:
+        subject_fields["approved_scope"] = approved_scope
+    if clean_params:
+        subject_fields["parameters"] = dict(clean_params)
+    return s, subject_fields, dict(e)
+
+
+def _summarize_strategy_pool(pool: Any, budgets: Budgets) -> tuple[str, dict]:
+    if not isinstance(pool, Mapping):
+        return _clip(pool, budgets.max_excerpt_chars), {}
+    members = []
+    for m in pool.get("members") or []:
+        if isinstance(m, Mapping):
+            item: dict[str, Any] = {
+                "artifact_ref": m.get("artifact_ref") or m.get("member_id") or m.get("artifact_id"),
+                "stage": m.get("stage"),
+                "risk_weight": m.get("risk_weight"),
+            }
+            if m.get("removal_reason"):
+                item["removal_reason"] = m.get("removal_reason")
+            members.append({k: v for k, v in item.items() if v is not None})
+        else:
+            members.append(m)
+    dec = pool.get("decision") if isinstance(pool.get("decision"), Mapping) else {}
+    raw_health = (
+        pool.get("pool_health")
+        if isinstance(pool.get("pool_health"), Mapping)
+        else (
+            pool.get("health")
+            if isinstance(pool.get("health"), Mapping)
+            else (dec.get("health") if isinstance(dec.get("health"), Mapping) else None)
+        )
+    )
+    health_summary: Optional[dict[str, Any]] = None
+    if isinstance(raw_health, Mapping):
+        metric_keys = ("effective_bets", "idle_day_share", "gross_utilisation", "drawdown_utilisation")
+        reasons = list(
+            dict.fromkeys(
+                str(r)
+                for r in [
+                    *(raw_health.get("demand_reasons") or []),
+                    *(dec.get("reasons") or []),
+                    *(
+                        raw_health[k].get("reason")
+                        for k in metric_keys
+                        if isinstance(raw_health.get(k), Mapping) and raw_health[k].get("reason")
+                    ),
+                    raw_health.get("unavailable_reason"),
+                    raw_health.get("reason"),
+                ]
+                if r
+            )
+        )
+        known = {
+            k: raw_health[k].get("value")
+            for k in metric_keys
+            if isinstance(raw_health.get(k), Mapping) and raw_health[k].get("status") == "known"
+        }
+        if known:
+            health_summary = {"status": "known", "metrics": known}
+            if reasons:
+                health_summary["reasons"] = reasons
+        else:
+            health_summary = {
+                "status": str(raw_health.get("status") or "unavailable"),
+                "unavailable_reason": "; ".join(reasons) or "pool_health_unknown",
+            }
+    elif dec.get("reasons") or pool.get("unavailable_reason"):
+        reasons = [str(r) for r in (dec.get("reasons") or []) if r]
+        if pool.get("unavailable_reason"):
+            reasons.append(str(pool["unavailable_reason"]))
+        health_summary = {
+            "status": str(dec.get("status") or "unavailable"),
+            "unavailable_reason": "; ".join(dict.fromkeys(reasons)) or "pool_health_unavailable",
+        }
+    out: dict[str, Any] = {
+        "pool_version": pool.get("pool_version"),
+        "members": members,
+    }
+    if health_summary is not None:
+        out["pool_health"] = health_summary
+    if pool.get("change_reason"):
+        out["change_reason"] = pool.get("change_reason")
+    subj_fields = dict(out)
+    s = json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str)
+    if len(s) > budgets.max_excerpt_chars and "change_reason" in out:
+        out.pop("change_reason", None)
+        s = json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str)
+    return s, subj_fields
+
+
+def _summarize_virtual_book(b: Any, mid: Any, budgets: Budgets) -> tuple[str, Optional[str], dict]:
+    if not isinstance(b, Mapping):
+        return _clip(b, budgets.max_excerpt_chars), None, {}
+    net = b.get("net_of_costs") if isinstance(b.get("net_of_costs"), Mapping) else {}
+    obs_count = b.get("observation_count")
+    if obs_count is None and "observation_count" in net:
+        obs_count = net.get("observation_count")
+    if obs_count is None and isinstance(b.get("observations"), list):
+        obs_count = len(b["observations"])
+    if obs_count == 0 or b.get("status") == "unavailable" or b.get("unavailable_reason"):
+        raw_reason = (
+            b.get("unavailable_reason")
+            or b.get("reason")
+            or net.get("unavailable_reason")
+            or b.get("sharpe_undefined_reason")
+            or net.get("sharpe_undefined_reason")
+            or "zero_observations"
+        )
+        reason = str(raw_reason)
+        if obs_count == 0 and "zero_observations" not in reason:
+            reason = f"zero_observations:{reason}" if reason else "zero_observations"
+        out: dict[str, Any] = {
+            "member_id": str(mid),
+            "observation_count": 0 if obs_count is None else int(obs_count),
+            "status": "unavailable",
+            "unavailable_reason": reason,
+        }
+        for k in ("total_return", "sharpe_ratio", "max_drawdown", "marks_complete", "as_of"):
+            val = net.get(k) if k in net else b.get(k)
+            if k in b or k in net:
+                out[k] = val
+        return json.dumps(out, separators=(",", ":"), ensure_ascii=False, default=str), reason, dict(out)
+    bulky = {"return_series", "returns", "fills", "fill_gaps", "dates", "underlyings", "envelope_checksum", "checksum"}
+    if any(k in b for k in bulky):
+        compact = {k: v for k, v in b.items() if k not in bulky}
+        if isinstance(compact.get("net_of_costs"), Mapping):
+            compact["net_of_costs"] = {k: v for k, v in compact["net_of_costs"].items() if k not in bulky}
+        return json.dumps(compact, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str), None, dict(compact)
+    return _clip(b, budgets.max_excerpt_chars), None, dict(b)
+
+
+def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Subject:
     tenant = subject.tenant_id
     q = urllib.parse.quote
+    resolved_entries: list[dict] = []
     for ref in subject.member_artifact_refs:
         try:
-            e = http_json(owners.registry, f"/api/registry/entries/{q(ref, safe='')}", tenant_id=tenant)
-            e = e.get("entry", e) if isinstance(e, dict) else {}
-            g.items.append(_item("facts", "registry_entry", "registry", ref, {
-                "artifact_type": e.get("artifact_type"), "strategy_id": e.get("strategy_id"),
-                "version": e.get("version"), "artifact_state": e.get("artifact_state"),
-                "evaluation_summary": e.get("evaluation_summary"),
-                "replication_success": e.get("replication_success")},
+            raw = http_json(owners.registry, f"/api/registry/entries/{q(ref, safe='')}", tenant_id=tenant)
+            excerpt, subj_fields, e = _summarize_registry_entry(raw, budgets)
+            resolved_entries.append(e)
+            g.items.append(_item("facts", "registry_entry", "registry", ref, excerpt,
                 score=None, mode="owner_read", budgets=budgets,
-                subject_fields={"strategy_id": e.get("strategy_id")}))
+                subject_fields=subj_fields))
         except OwnerUnavailable as exc:
             g.missing(f"registry:{ref}", exc.reason)
     for run in subject.backtest_run_refs:
@@ -274,31 +489,83 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Non
             g.missing(f"research:{run}", exc.reason)
     try:
         pool = http_json(owners.pool, f"/api/personas/{q(subject.persona_id, safe='')}/strategy-pool", tenant_id=tenant)
+        pool_excerpt, pool_subj = _summarize_strategy_pool(pool, budgets)
         g.items.append(_item("facts", "strategy_pool", "persona",
                              f"{subject.persona_id}@{(pool or {}).get('pool_version', 'current')}",
-                             pool, score=None, mode="owner_read", budgets=budgets))
+                             pool_excerpt, score=None, mode="owner_read", budgets=budgets,
+                             subject_fields=pool_subj))
     except OwnerUnavailable as exc:
         g.missing("persona_pool", exc.reason)
-    if subject.persona_capital_binding_id:
+    binding_id = subject.persona_capital_binding_id
+    if not binding_id and resolved_entries:
+        bindings = {
+            str((e.get("metadata") or {}).get("persona_capital_binding_id") or "").strip()
+            for e in resolved_entries
+            if isinstance(e.get("metadata"), Mapping)
+            and str((e.get("metadata") or {}).get("persona_capital_binding_id") or "").strip()
+            and (e.get("metadata") or {}).get("persona_id") in (None, "", subject.persona_id)
+            and e.get("owner_tenant", e.get("tenant_id")) in (None, "", tenant, "__builtin__")
+        }
+        if len(bindings) == 1:
+            binding_id = next(iter(bindings))
+            subject = replace(subject, persona_capital_binding_id=binding_id)
+    if resolved_entries and subject.decision_type == "consult" and subject.strategy_family in _PLACEHOLDER_FAMILIES:
+        families = []
+        underlyings = list(subject.underlyings)
+        instrument_class = subject.instrument_class
+        for e in resolved_entries:
+            meta = e.get("metadata") if isinstance(e.get("metadata"), Mapping) else {}
+            art = meta.get("strategy_artifact") if isinstance(meta.get("strategy_artifact"), Mapping) else {}
+            fam = str(e.get("strategy_id") or art.get("strategy_id") or "").strip()
+            if fam and fam not in families:
+                families.append(fam)
+            params = art.get("parameters") if isinstance(art.get("parameters"), Mapping) else {}
+            for u in list(meta.get("underlyings") or []) + [str(s).split(".")[0] for s in (params.get("symbols") or []) if s]:
+                u_str = str(u).strip()
+                if u_str and u_str not in underlyings:
+                    underlyings.append(u_str)
+            if not instrument_class and meta.get("instrument_class"):
+                instrument_class = str(meta["instrument_class"])
+        if families:
+            subject = replace(
+                subject,
+                strategy_family=families[0],
+                strategy_families=tuple(families[1:]) if len(families) > 1 else subject.strategy_families,
+                underlyings=tuple(underlyings),
+                instrument_class=instrument_class,
+            )
+    if binding_id:
         try:
             payload = http_json(owners.telemetry, "/api/telemetry/runtime-summaries", tenant_id=tenant)
             rows = [r for r in (payload or {}).get("summaries", [])
-                    if r.get("persona_capital_binding_id") == subject.persona_capital_binding_id
+                    if r.get("persona_capital_binding_id") == binding_id
                     and r.get("tenant_id") == tenant]
             if len(rows) != 1:
                 g.missing("telemetry", "own_paper_telemetry_missing_or_ambiguous")
             else:
                 wanted = set(subject.member_artifact_refs)
+                seen_books: set[str] = set()
                 for b in rows[0].get("member_virtual_books") or []:
                     mid = b.get("member_id") or b.get("artifact_id")
                     if wanted and mid not in wanted and b.get("artifact_id") not in wanted:
                         continue
-                    g.items.append(_item("facts", "member_virtual_book", "telemetry", mid, b,
-                                         score=None, mode="owner_read", budgets=budgets))
+                    seen_books.add(str(mid))
+                    if b.get("artifact_id"):
+                        seen_books.add(str(b["artifact_id"]))
+                    book_excerpt, unavail_reason, book_subj = _summarize_virtual_book(b, mid, budgets)
+                    g.items.append(_item("facts", "member_virtual_book", "telemetry", mid, book_excerpt,
+                                         score=None, mode="owner_read", budgets=budgets,
+                                         subject_fields=book_subj))
+                    if unavail_reason:
+                        g.missing(f"telemetry:virtual_book:{mid}", unavail_reason)
+                for ref in subject.member_artifact_refs:
+                    if ref not in seen_books:
+                        g.missing(f"telemetry:virtual_book:{ref}", "virtual_book_source_missing")
         except OwnerUnavailable as exc:
             g.missing("telemetry", exc.reason)
     else:
         g.missing("telemetry", "persona_capital_binding_id_not_supplied")
+    return subject
 
 
 # ---- memory ------------------------------------------------------------------
@@ -484,7 +751,7 @@ def compose_case_file(subject: Subject, caller: Caller, owners: Owners, *,
     """Compose a schema-valid case file; raises CaseFileError when the subject is unusable."""
     _validate(subject, caller)
     groups = {n: _Group(n) for n in GROUPS}
-    _facts(subject, owners, budgets, groups["facts"])
+    subject = _facts(subject, owners, budgets, groups["facts"]) or subject
     _history(subject, caller, owners, budgets, groups["similar_history"])
     _lessons(subject, caller, owners, budgets, groups["lessons"])
     _evidence(subject, caller, owners, budgets, groups["evidence"])
