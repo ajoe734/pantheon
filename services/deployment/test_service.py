@@ -1578,3 +1578,34 @@ def test_retirement_replay_denied_on_plan_tenant_mismatch(client):
     assert denied.status_code in {400, 403, 404}
     dlq = test_client.get("/api/deployment/outbox", params={"status": "dead_lettered"})
     assert [r["event"]["event_id"] for r in dlq.json()] == [event_id]
+
+
+def test_create_plan_rejects_wrong_tenant_stale_and_invalid_inline_risk_policy(client):
+    test_client, _ = client
+    valid_policy = {
+        "risk_policy_id": "rp-plan-paper-01",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    for idx, (bad_policy, expected_code) in enumerate(
+        [
+            ({}, "risk_policy_invalid"),
+            ({**valid_policy, "gross_limit": -1.0}, "risk_policy_invalid_limit"),
+            ({**valid_policy, "tenant_id": "tenant-foreign"}, "risk_policy_wrong_tenant"),
+            ({**valid_policy, "status": "superseded"}, "risk_policy_stale"),
+        ]
+    ):
+        payload = _plan_payload(
+            plan_id=f"plan-paper-bad-policy-{idx}",
+            current_stage="none",
+            target_stage="paper",
+        )
+        payload["metadata"] = {**payload.get("metadata", {}), "risk_policy": bad_policy}
+        response = test_client.post("/api/deployment/plans", json=payload)
+        assert response.status_code == 422
+        assert expected_code in response.json()["detail"]
+

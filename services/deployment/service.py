@@ -536,6 +536,39 @@ class DeploymentPlannerService:
         if request.plan_id and self.plan_store.get(request.plan_id) is not None:
             raise DeploymentPlanError(f"DeploymentPlan '{request.plan_id}' already exists")
 
+        has_inline_meta_policy = "risk_policy" in metadata
+        if request.risk_policy is not None or has_inline_meta_policy:
+            from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+            candidate_policy = (
+                request.risk_policy if request.risk_policy is not None else metadata.get("risk_policy")
+            )
+            if candidate_policy is None:
+                raise DeploymentPlanError(
+                    "RiskPolicy rejected: metadata.risk_policy is null or missing (risk_policy_missing)"
+                )
+            policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=capital_pool_id,
+                pool={
+                    "pool_id": capital_pool_id,
+                    "tenant_id": tenant_id,
+                    "metadata": {"risk_policy": candidate_policy},
+                },
+                expected_tenant_id=tenant_id,
+                expected_stage=request.target_stage.value,
+                require_active=True,
+                require_limits=(
+                    ("gross_limit",)
+                    if request.target_stage.value == "paper" and has_inline_meta_policy and request.risk_policy is None
+                    else ()
+                ),
+                raise_on_error=False,
+            )
+            if not policy_res.resolved:
+                raise DeploymentPlanError(
+                    f"RiskPolicy rejected: {policy_res.reason} ({policy_res.reason_code})"
+                )
+
         schedule_window = (
             ScheduleWindow(**request.schedule_window.model_dump())
             if request.schedule_window is not None

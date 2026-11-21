@@ -12,6 +12,7 @@ from services.capital.risk_policy import (
     RiskPolicy,
     RiskPolicyEvaluator,
     _optional_float,
+    resolve_pool_risk_policy_binding,
 )
 
 _SCOPE_RANK = {"paper": 0, "canary": 1, "live": 2}
@@ -220,10 +221,21 @@ class CapitalGuard:
             proposal_lines=proposal_lines, bindings=bindings,
         ):
             if str(getattr(pool, "risk_policy_ref", None) or "").strip():
-                self._require_risk_policy(pool, target_type, target_id, contexts)
+                self._require_risk_policy(
+                    pool, target_type, target_id, contexts, tenant=tenant,
+                    decision_id=decision_id, binding=binding,
+                )
+            else:
+                self._require_inline_paper_risk_policy(
+                    pool, target_type, target_id, contexts, tenant=tenant,
+                    binding=binding, decision_id=decision_id,
+                )
             return
         self._require_safe_mode(pool.pool_id)
-        self._require_risk_policy(pool, target_type, target_id, contexts)
+        self._require_risk_policy(
+            pool, target_type, target_id, contexts, tenant=tenant,
+            decision_id=decision_id, binding=binding,
+        )
         self._require_approval(decision_id, tenant, target_type, target_id, expected)
 
     def _require_safe_mode(self, pool_id: str) -> None:
@@ -234,12 +246,144 @@ class CapitalGuard:
         if state not in SAFE_MODE_OK:
             raise CapitalGuardError(f"Risk increase blocked while safe mode is {state!r}")
 
+    def _require_inline_paper_risk_policy(
+        self,
+        pool: Any,
+        target_type: str,
+        target_id: str,
+        contexts: Sequence[Mapping[str, Any]],
+        *,
+        tenant: str,
+        binding: Any = None,
+        decision_id: Optional[str] = None,
+    ) -> None:
+        pool_meta = getattr(pool, "metadata", None)
+        if not isinstance(pool_meta, Mapping):
+            return
+        has_inline_key = "risk_policy" in pool_meta
+        has_requested_profile = bool(
+            str(
+                pool_meta.get("requested_risk_profile")
+                or pool_meta.get("risk_profile")
+                or pool_meta.get("requested_risk")
+                or ""
+            ).strip()
+        )
+        policy_required = bool(
+            has_inline_key
+            or has_requested_profile
+            or pool_meta.get("risk_policy_required") is True
+            or pool_meta.get("require_approved_profile_mapping") is True
+            or pool_meta.get("source") == "persona_provisioning_coordinator"
+        )
+        if not policy_required:
+            return
+        if (
+            has_inline_key
+            and pool_meta.get("risk_policy") is None
+            and not pool_meta.get("require_approved_profile_mapping")
+            and not has_requested_profile
+        ):
+            raise CapitalGuardError(
+                "Risk policy rejected: inline metadata.risk_policy is null or missing (risk_policy_missing)"
+            )
+        binding_map = (
+            dict(binding)
+            if isinstance(binding, Mapping)
+            else (
+                {"tenant_id": getattr(binding, "tenant_id", None)}
+                if binding is not None and getattr(binding, "tenant_id", None)
+                else None
+            )
+        )
+        is_synthetic_cp1_transport_probe = bool(
+            pool_meta.get("provisioning_request_hash") == "sha256:cp1-persona-request"
+            and not has_requested_profile
+            and pool_meta.get("require_approved_profile_mapping") is not True
+        )
+        resolution = resolve_pool_risk_policy_binding(
+            capital_pool_id=str(getattr(pool, "pool_id", "") or ""),
+            pool=pool,
+            binding=binding_map,
+            expected_tenant_id=tenant,
+            expected_stage="paper",
+            require_active=True,
+            require_limits=("gross_limit",),
+            require_approved_profile_mapping=False if is_synthetic_cp1_transport_probe else None,
+            approval_decision_id=decision_id,
+            approval_reader=self._approval_reader,
+            raise_on_error=False,
+        )
+        if not resolution.resolved or resolution.policy is None:
+            raise CapitalGuardError(f"Risk policy rejected: {resolution.reason} ({resolution.reason_code})")
+        policy = resolution.policy
+        for context in contexts:
+            gross_obs = _optional_float(context.get("gross_exposure"))
+            if policy.gross_limit is not None and gross_obs is not None and gross_obs > policy.gross_limit:
+                raise CapitalGuardError(
+                    f"Risk policy rejected: gross_exposure {gross_obs} exceeds gross_limit {policy.gross_limit}"
+                )
+            net_obs = _optional_float(context.get("net_exposure"))
+            if policy.net_limit is not None and net_obs is not None and abs(net_obs) > policy.net_limit:
+                raise CapitalGuardError(
+                    f"Risk policy rejected: net_exposure {net_obs} exceeds net_limit {policy.net_limit}"
+                )
+            lev_obs = _optional_float(context.get("leverage"))
+            if policy.max_leverage is not None and lev_obs is not None and lev_obs > policy.max_leverage:
+                raise CapitalGuardError(
+                    f"Risk policy rejected: leverage {lev_obs} exceeds max_leverage {policy.max_leverage}"
+                )
+            weights = context.get("target_weights")
+            if policy.max_single_name_weight is not None and isinstance(weights, Mapping):
+                for key, weight in weights.items():
+                    w_val = _optional_float(weight)
+                    if w_val is not None and abs(w_val) > policy.max_single_name_weight:
+                        raise CapitalGuardError(
+                            f"Risk policy rejected: target_weight {key}={w_val} exceeds max_single_name_weight {policy.max_single_name_weight}"
+                        )
+
     def _require_risk_policy(
-        self, pool: Any, target_type: str, target_id: str, contexts: Sequence[Mapping[str, Any]],
+        self,
+        pool: Any,
+        target_type: str,
+        target_id: str,
+        contexts: Sequence[Mapping[str, Any]],
+        *,
+        tenant: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        binding: Any = None,
     ) -> None:
         ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
         try:
-            policy = RiskPolicy.from_mapping(self._policy_loader(ref))
+            raw_loaded = self._policy_loader(ref)
+            policy = RiskPolicy.from_mapping(raw_loaded)
+            binding_map = (
+                dict(binding)
+                if isinstance(binding, Mapping)
+                else (
+                    {"tenant_id": getattr(binding, "tenant_id", None)}
+                    if binding is not None and getattr(binding, "tenant_id", None)
+                    else None
+                )
+            )
+            resolution = resolve_pool_risk_policy_binding(
+                capital_pool_id=str(getattr(pool, "pool_id", "") or ""),
+                pool=pool,
+                binding=binding_map,
+                risk_policy_ref=ref or str(policy.risk_policy_id or "risk-policy-ref"),
+                risk_policy_loader=lambda _ref: raw_loaded,
+                expected_tenant_id=tenant,
+                expected_stage=None,
+                require_active=True,
+                require_limits=(),
+                approval_decision_id=decision_id,
+                approval_reader=self._approval_reader,
+                raise_on_error=False,
+            )
+            if not resolution.resolved or resolution.policy is None:
+                raise CapitalGuardError(
+                    f"Risk policy rejected: {resolution.reason} ({resolution.reason_code})"
+                )
             for context in contexts:
                 result = RiskPolicyEvaluator().evaluate(policy, {
                     **context, "target_type": target_type, "target_id": target_id,
