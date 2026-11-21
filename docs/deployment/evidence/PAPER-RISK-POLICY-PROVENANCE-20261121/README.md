@@ -255,6 +255,27 @@ Parsed equality against that commit was checked for all three files, so the
 same source events, tenant owner receipts, inline policies, active bindings
 and frozen artifacts remain available to the next task.
 
+## CI return and repair
+
+PR #7719 was returned from head `aff0c4f874ba` after required CI run
+[44909662859](https://github.com/ajoe734/pantheon/actions/runs/44909662859)
+failed. Shard 11's acceptance-stage regression hardcoded the previous probe
+list; this task's new executable was correctly discovered but absent from that
+expectation. The repair adds it and explicitly asserts `skipped` / exit 77
+without credentials. The stage and policy-probe tests pass: 43 in 1.34 s.
+Neither the production stage nor the financial-policy audit was changed.
+
+Shard 10 also exposed an unrelated BFF parity-test clock dependency:
+`test_dataset_surface_status_full_app_parity[unavailable]` compared separate
+live timestamps of `13:39:40Z` and `13:39:41Z`
+([job log](https://github.com/ajoe734/pantheon/actions/runs/44909662859/job/136862690396)).
+The unchanged full BFF composition file passed 57 tests in 43.38 s locally.
+This remains a residual finding for the coordinator to attach to RC1's
+existing required-test clock-determinism class; a passing rerun does not fix
+the dependency. No BFF test or runtime files were changed. The aggregate
+Service suites failure follows the two failed shards. New head review is
+required; the earlier approval is not reused.
+
 ## Handoff and residual dispositions
 
 The existing Capital/risk policy owner must decide whether `low` maps to an

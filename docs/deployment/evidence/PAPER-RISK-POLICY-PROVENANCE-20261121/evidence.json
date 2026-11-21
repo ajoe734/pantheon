@@ -68,6 +68,12 @@
       "class": "RC6",
       "disposition": "existing TRADE-JOURNEY-FAILURE-CAUSE-20261121 and TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121 own projection/history changes",
       "finding": "immutable rejection source carries insufficient_cash and submitted_to_broker=false while reason_code=long_cash; historical health-only reconciliation source is also captured"
+    },
+    {
+      "class": "RC1",
+      "finding": "services/control-plane/bff/tests/test_bff_main_composition.py::test_dataset_surface_status_full_app_parity[unavailable] uses separate live clocks; shard 10 failed solely on last_known_at differing by one second in job 136862690396. The unchanged local full file passed 57 tests.",
+      "disposition": "Coordinator to attach to the existing required-test wall-clock determinism class in RC1 (TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119); BFF test repair is outside this provenance task. A passing rerun does not resolve the clock dependency.",
+      "evidence": "https://github.com/ajoe734/pantheon/actions/runs/44909662859/job/136862690396"
     }
   ],
   "review_status": "pending_independent_review",
@@ -99,6 +105,16 @@
       "command": "Validate evidence_compaction original/compacted/canonical SHA-256 values and parsed equality using git show source_commit:path plus Python json/hashlib",
       "exit_code": 0,
       "result": "All three complete readbacks equal the reviewed originals; 353/266/294 lines; all evidence JSON parses; 14 files totaling 125089 bytes at compaction anchor, under 200 KiB cap"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "43 passed in 1.34s after CI probe-list repair"
+    },
+    {
+      "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "exit_code": 0,
+      "result": "57 passed, 3 warnings in 43.38s; unchanged source, does not resolve clock-dependent residual"
     }
   ],
   "verified_deployed_source_hashes": {
@@ -136,5 +152,13 @@
         "canonical_content_sha256": "fac60d0aeb166151ed1e089137d7a55b7291a1153260c71768b21a3a6b21c450"
       }
     }
+  },
+  "ci_repair": {
+    "returned_head": "aff0c4f874ba1c436fd30bd6cb7fabee24f8b2c0",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/44909662859",
+    "source_failure": "Shard 11: scripts/test_dev_acceptance_stage.py hardcoded the prior release probe list and omitted this task's newly discovered probe. Reproduced locally (1 failed, 15 passed).",
+    "repair": "Include paper-risk-policy-binding in the expected release probe list and assert skipped/77 without credentials. No production deployment or policy behavior changed.",
+    "other_failure": "Shard 10: BFF dataset surface parity test compared live timestamps generated across 13:39:40Z/13:39:41Z; source and observed values are in the linked job logs. Service suites is the aggregate failure.",
+    "review": "Prior approval does not cover the new head; manifest remains pending independent review."
   }
 }
