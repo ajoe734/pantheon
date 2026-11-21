@@ -3270,3 +3270,393 @@ def test_failure_cause_fields_are_not_persisted_on_normal_fill_or_snapshot_stage
     assert "risk_status" not in recon_failed_event
     assert "broker_submission_status" not in recon_failed_event
 
+
+def test_postgres_cause_repair_backend_end_to_end(
+    relational_postgres_dsn: str,
+    tmp_path: Path,
+) -> None:
+    import psycopg  # type: ignore[import]
+    from services.trade_journey.cause_repair import (
+        BEFORE_IMAGE_FILENAME,
+        PostgresCauseRepairBackend,
+        evaluation_storage_record_id,
+        run_cause_repair,
+        run_cause_rollback,
+    )
+
+    source_schema = f"test_src_repair_{uuid.uuid4().hex[:8]}"
+    eval_schema = f"test_eval_repair_{uuid.uuid4().hex[:8]}"
+    proj_schema = f"test_proj_repair_{uuid.uuid4().hex[:8]}"
+
+    with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f'CREATE SCHEMA "{source_schema}"')
+        cur.execute(f'CREATE SCHEMA "{eval_schema}"')
+        cur.execute(
+            f'''CREATE TABLE "{source_schema}".telemetry_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                payload JSONB NOT NULL
+            )'''
+        )
+        cur.execute(
+            f'''CREATE TABLE "{eval_schema}".drift_evaluations (
+                record_id TEXT PRIMARY KEY,
+                payload JSONB NOT NULL
+            )'''
+        )
+
+    store = ProjectionStore(relational_postgres_dsn, schema=proj_schema, bootstrap=True)
+    assert store is not None
+
+    buy_jid = "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd"
+    buy_eid = "91d55953-b575-4fe8-8d39-6e0cade58d59"
+    sell_jid = "tj_57418ba7-ef37-5015-9b5e-b6423872da89"
+    recon_eid = "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+    fill_eid = "000600fb-6496-47d9-a550-1fa23449c1e2"
+    snap_eid = "8d6761c5-5ae8-5799-87bb-10302186595a"
+    eval_id = (
+        "rdeval-sched-scheduled-tenant-dev-2026-11-16T-"
+        "rb-7f3c1be55a224fdaa36bb-a39cdf74492b52bb"
+    )
+
+    try:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            # Insert source telemetry events
+            buy_payload = {
+                "event_id": buy_eid,
+                "event_type": "order_rejection",
+                "created_at": "2026-11-19T23:46:17Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "symbol": "2317.TWSE",
+                "side": "buy",
+                "price": 221.0,
+                "quantity": 0.0,
+                "correlation_envelope": {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": buy_jid,
+                    "correlation_id": "c1",
+                    "trace_id": "t1",
+                    "event_id": buy_eid,
+                    "causation_event_id": "p1",
+                    "producer": "execution.paper_runtime",
+                    "event_time": "2026-11-19T23:46:17Z",
+                    "received_at": "2026-11-19T23:46:17Z",
+                    "producer_revision": 1,
+                },
+                "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": buy_jid,
+                    "sequence_no": 4,
+                    "reason_code": "long_cash",
+                    "reject_reason": "insufficient_cash",
+                    "required": 100034.3461,
+                    "available": 100000.0,
+                    "limit": 100000.0,
+                    "requested_quantity": 452.0,
+                    "submitted_to_broker": False,
+                    "risk_status": "rejected",
+                    "risk_gate_evaluated": True,
+                },
+            }
+            fill_payload = {
+                "event_id": fill_eid,
+                "event_type": "paper_fill_simulated",
+                "created_at": "2026-11-16T06:52:09Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "symbol": "2317.TWSE",
+                "side": "sell",
+                "metrics": {"fill_quantity": 1.0, "fill_price": 218.5},
+                "correlation_envelope": {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "correlation_id": "c2",
+                    "trace_id": "t2",
+                    "event_id": fill_eid,
+                    "causation_event_id": "p2",
+                    "producer": "execution.paper_runtime",
+                    "event_time": "2026-11-16T06:52:09Z",
+                    "received_at": "2026-11-16T06:52:09Z",
+                    "producer_revision": 1,
+                },
+                "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "fill_id": f"paper-fill-{fill_eid}",
+                    "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+                    "submitted_to_broker": True,
+                },
+            }
+            snap_payload = {
+                "event_id": snap_eid,
+                "event_type": "position_snapshot",
+                "created_at": "2026-11-16T06:52:09Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "symbol": "2317.TWSE",
+                "side": "sell",
+                "position_qty": 0.0,
+                "metrics": {"position_qty": 0.0, "price": 218.5, "cash": 100217.5331375},
+                "correlation_envelope": {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "correlation_id": "c2",
+                    "trace_id": "t2",
+                    "event_id": snap_eid,
+                    "causation_event_id": fill_eid,
+                    "producer": "execution.paper_runtime",
+                    "event_time": "2026-11-16T06:52:09Z",
+                    "received_at": "2026-11-16T06:52:09Z",
+                    "producer_revision": 1,
+                },
+                "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "source_fill_event_id": fill_eid,
+                    "fill_id": f"paper-fill-{fill_eid}",
+                    "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+                },
+            }
+            recon_payload = {
+                "event_id": recon_eid,
+                "event_type": "reconciliation_failed",
+                "created_at": "2026-11-16T06:58:28Z",
+                "tenant_id": "tenant-dev",
+                "environment": "paper",
+                "symbol": "2317.TWSE",
+                "side": "sell",
+                "correlation_envelope": {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "correlation_id": "c2",
+                    "trace_id": "t2",
+                    "event_id": recon_eid,
+                    "causation_event_id": snap_eid,
+                    "producer": "reconciliation-drift.scheduled",
+                    "event_time": "2026-11-16T06:58:28Z",
+                    "received_at": "2026-11-16T06:58:28Z",
+                    "producer_revision": 1,
+                },
+                "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "environment": "paper",
+                    "journey_id": sell_jid,
+                    "source_fill_event_id": fill_eid,
+                    "fill_id": f"paper-fill-{fill_eid}",
+                    "causal_parent_id": snap_eid,
+                    "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+                    "reconciliation_evaluation_id": eval_id,
+                },
+            }
+            for ev_pay in (buy_payload, fill_payload, snap_payload, recon_payload):
+                cur.execute(
+                    f'INSERT INTO "{source_schema}".telemetry_events (event_id, event_type, created_at, payload) VALUES (%s, %s, %s::timestamptz, %s::jsonb)',
+                    (
+                        ev_pay["event_id"],
+                        ev_pay["event_type"],
+                        ev_pay["created_at"],
+                        json.dumps(ev_pay),
+                    ),
+                )
+
+            eval_payload = {
+                "id": eval_id,
+                "evaluation_id": eval_id,
+                "tenant_id": "tenant-dev",
+                "binding_id": "rb-7f3c1be55a224fdaa36bb7514e0aa536",
+                "status": "warning",
+                "reconciliation_checks": [
+                    {
+                        "check": "runtime_state",
+                        "status": "warning",
+                        "detail": "observed runtime state must remain active",
+                        "observed": "recovering",
+                        "threshold": "active",
+                    },
+                    {
+                        "check": "runtime_health_summary",
+                        "status": "warning",
+                        "detail": "runtime telemetry health summary must remain ok",
+                        "observed": "degraded",
+                        "threshold": "ok",
+                    },
+                ],
+            }
+            cur.execute(
+                f'INSERT INTO "{eval_schema}".drift_evaluations (record_id, payload) VALUES (%s, %s::jsonb)',
+                (
+                    evaluation_storage_record_id("tenant-dev", eval_id),
+                    json.dumps(eval_payload),
+                ),
+            )
+
+            # Seed journeys and pre-repair journey_stages rows
+            for jid, jstatus in ((buy_jid, "failed"), (sell_jid, "completed_with_variance")):
+                cur.execute(
+                    f"""INSERT INTO {proj_schema}.journeys (
+                        tenant_id, environment, journey_id, status, stage_coverage,
+                        is_terminal, first_occurred_at, last_occurred_at, first_ingested_seq,
+                        last_ingested_seq, current_identity_summary, evidence_summary,
+                        diagnostic_summary, loop_run_id, projection_revision, created_at, updated_at
+                    ) VALUES (
+                        'tenant-dev', 'paper', %s, %s, '{{}}'::jsonb,
+                        true, '2026-11-16T06:52:09Z'::timestamptz, '2026-11-19T23:46:17Z'::timestamptz, 1,
+                        10, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, 'lr-1', 1,
+                        '2026-11-16T06:52:09Z'::timestamptz, '2026-11-19T23:46:17Z'::timestamptz
+                    )""",
+                    (jid, jstatus),
+                )
+
+            stage_seeds = [
+                (
+                    buy_jid,
+                    buy_eid,
+                    "order_submission",
+                    "failed",
+                    1,
+                    4,
+                    {
+                        "event_id": f"{buy_eid}:order_submission",
+                        "canonical_event_id": buy_eid,
+                        "event_type": "order_rejection",
+                        "stage": "order_submission",
+                        "stage_status": "failed",
+                        "symbol": "2317.TWSE",
+                        "side": "buy",
+                        "price": 221.0,
+                        "quantity": 0.0,
+                        "reason_code": "long_cash",
+                    },
+                    "fp-buy-pg",
+                ),
+                (
+                    sell_jid,
+                    fill_eid,
+                    "fill_management",
+                    "succeeded",
+                    1,
+                    5,
+                    {
+                        "event_id": f"{fill_eid}:fill_management",
+                        "canonical_event_id": fill_eid,
+                        "event_type": "paper_fill_simulated",
+                        "stage": "fill_management",
+                        "stage_status": "succeeded",
+                        "symbol": "2317.TWSE",
+                        "side": "sell",
+                        "quantity": 1.0,
+                        "price": 218.5,
+                    },
+                    "fp-fill-pg",
+                ),
+                (
+                    sell_jid,
+                    snap_eid,
+                    "ledger_booking",
+                    "succeeded",
+                    1,
+                    6,
+                    {
+                        "event_id": f"{snap_eid}:ledger_booking",
+                        "canonical_event_id": snap_eid,
+                        "event_type": "position_snapshot",
+                        "stage": "ledger_booking",
+                        "stage_status": "succeeded",
+                        "symbol": "2317.TWSE",
+                        "side": "sell",
+                        "quantity": 0.0,
+                    },
+                    "fp-snap-pg",
+                ),
+                (
+                    sell_jid,
+                    recon_eid,
+                    "reconciliation",
+                    "failed",
+                    1,
+                    7,
+                    {
+                        "event_id": f"{recon_eid}:reconciliation",
+                        "canonical_event_id": recon_eid,
+                        "event_type": "reconciliation_failed",
+                        "stage": "reconciliation",
+                        "stage_status": "failed",
+                        "symbol": "2317.TWSE",
+                        "side": "sell",
+                    },
+                    "fp-recon-pg",
+                ),
+            ]
+            for jid, eid, sname, sstatus, sord, eseq, cf, fp in stage_seeds:
+                cur.execute(
+                    f"""INSERT INTO {proj_schema}.journey_stages (
+                        tenant_id, environment, journey_id, source_event_id, stage_name,
+                        stage_status, stage_ordinal, source_ingested_seq, event_sequence,
+                        occurred_at, recorded_at, contract_fields, evidence_references,
+                        projection_revision, fingerprint
+                    ) VALUES (
+                        'tenant-dev', 'paper', %s, %s, %s,
+                        %s, %s, %s, %s,
+                        '2026-11-16T06:58:28Z'::timestamptz, '2026-11-16T06:58:28Z'::timestamptz,
+                        %s::jsonb, '[]'::jsonb, 1, %s
+                    )""",
+                    (jid, eid, sname, sstatus, sord, eseq, eseq, json.dumps(cf), fp),
+                )
+
+        ro_backend = PostgresCauseRepairBackend(
+            relational_postgres_dsn,
+            projection_schema=proj_schema,
+            source_schema=source_schema,
+            evaluation_schema=eval_schema,
+            read_only=True,
+        )
+        dry = run_cause_repair(ro_backend, apply=False, work_dir=tmp_path)
+        assert dry.scanned_rows == 2
+        assert dry.recoverable_refusals == 1
+        assert dry.health_only_evaluations == 1
+        assert dry.needs_update_rows == 2
+        assert dry.updated_rows == 0
+
+        rw_backend = PostgresCauseRepairBackend(
+            relational_postgres_dsn,
+            projection_schema=proj_schema,
+            source_schema=source_schema,
+            evaluation_schema=eval_schema,
+            read_only=False,
+        )
+        applied = run_cause_repair(rw_backend, apply=True, work_dir=tmp_path)
+        assert applied.updated_rows == 2
+        assert applied.before_image_records == 2
+
+        # Repeat apply changes 0 rows
+        repeat = run_cause_repair(rw_backend, apply=True, work_dir=tmp_path)
+        assert repeat.updated_rows == 0
+        assert repeat.already_repaired_rows == 2
+
+        # Rollback restores pre-repair contract_fields and revision=1
+        rolled_back = run_cause_rollback(
+            rw_backend,
+            before_image_path=tmp_path / BEFORE_IMAGE_FILENAME,
+        )
+        assert rolled_back.rolled_back_rows == 2
+        assert rolled_back.skipped_concurrent_revision == 0
+    finally:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{source_schema}" CASCADE')
+            cur.execute(f'DROP SCHEMA IF EXISTS "{eval_schema}" CASCADE')
+            cur.execute(f"DROP SCHEMA IF EXISTS {proj_schema} CASCADE")
+
+

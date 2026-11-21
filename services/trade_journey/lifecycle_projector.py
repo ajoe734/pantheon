@@ -2349,6 +2349,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     for command in ("backfill", "replay"):
         child = subparsers.add_parser(command)
         child.add_argument("--input", type=Path, required=True)
+    repair_parser = subparsers.add_parser("repair-causes")
+    from services.trade_journey.cause_repair import (
+        configure_cli_parser as _configure_repair_cli_parser,
+        run_from_cli_args as _run_repair_from_cli_args,
+    )
+
+    _configure_repair_cli_parser(repair_parser)
     args = parser.parse_args(argv)
     if args.command == "run":
         return asyncio.run(run_worker())
@@ -2360,6 +2367,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_batches=args.max_batches,
             statement_timeout_ms=args.statement_timeout_ms,
         )
+    if args.command == "repair-causes":
+        return _run_repair_from_cli_args(args)
     return _backfill(args.input, mode=args.command)
 
 
