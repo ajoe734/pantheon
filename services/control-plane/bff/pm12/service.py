@@ -971,12 +971,14 @@ def _management_portfolio_holding_entry(
         )
         or ""
     )
+    runtime_metadata = _management_nested_dict(runtime, "metadata")
     persona_id = str(
         _management_first_non_empty(
             _management_dict_value(position, "persona_id"),
             _management_dict_value(runtime, "persona_id"),
             _management_dict_value(plan_dict, "persona_id"),
             _management_dict_value(binding_dict, "persona_id"),
+            _management_dict_value(runtime_metadata, "persona_id"),
         )
         or ""
     )
@@ -986,6 +988,7 @@ def _management_portfolio_holding_entry(
             _management_dict_value(runtime, "strategy_id", "strategy_ref"),
             _management_dict_value(plan_dict, "strategy_id", "strategy_ref"),
             _management_dict_value(binding_dict, "strategy_id"),
+            _management_dict_value(runtime_metadata, "strategy_id", "strategy_ref"),
         )
         or ""
     )
@@ -1191,7 +1194,9 @@ def _management_portfolio_holding_entry(
         _management_first_non_empty(
             position.get("deployment_stage"),
             runtime.get("deployment_stage"),
+            runtime.get("deployment_mode"),
             plan_dict.get("deployment_stage"),
+            plan_dict.get("target_stage"),
             "paper",
         )
     )
@@ -2118,9 +2123,74 @@ def _management_telemetry_is_explicit_flat(telemetry: Dict[str, Any]) -> bool:
     )
 
 
+_SERVING_RUNTIME_BINDING_STATUSES = frozenset({"active", "running", "healthy", "bound"})
+
+
 def _management_runtime_is_terminal(runtime: Dict[str, Any]) -> bool:
     """Authoritative lifecycle: the telemetry owner intentionally omits these runtimes."""
     return _management_normalized_status(runtime) in TERMINAL_RUNTIME_BINDING_STATUSES
+
+
+def _management_runtime_binding_selection_key(
+    runtime: Dict[str, Any],
+    telemetry: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, int, float]:
+    status = _management_normalized_status(runtime)
+    if _management_runtime_is_terminal(runtime):
+        lifecycle_rank = 2
+    elif status in _SERVING_RUNTIME_BINDING_STATUSES:
+        lifecycle_rank = 0
+    else:
+        lifecycle_rank = 1
+
+    telemetry_dict = telemetry if isinstance(telemetry, dict) else {}
+    telemetry_binding_id = _management_record_id(telemetry_dict, "binding_id", "runtime_binding_id")
+    runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+    binding_mismatch = (
+        0
+        if telemetry_binding_id and runtime_binding_id == telemetry_binding_id
+        else 1
+    )
+
+    stamp = _audit_datetime(
+        _management_first_non_empty(
+            runtime.get("effective_at"),
+            runtime.get("updated_at"),
+            runtime.get("created_at"),
+            runtime.get("retired_at"),
+        )
+    )
+    recency = -stamp.timestamp() if stamp is not None else 0.0
+    return (lifecycle_rank, binding_mismatch, recency)
+
+
+def _management_select_serving_runtime_bindings(
+    runtime_bindings: List[Dict[str, Any]],
+    telemetry_by_runtime_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Select one serving RuntimeBinding per runtime_id using owner lifecycle semantics."""
+    telemetry_map = telemetry_by_runtime_id or {}
+    selected_by_rid: Dict[str, Dict[str, Any]] = {}
+    ordered_keys: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+    for runtime in runtime_bindings:
+        if not isinstance(runtime, dict):
+            continue
+        rid = _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not rid:
+            ordered_keys.append(("", runtime))
+            continue
+        telemetry = telemetry_map.get(rid)
+        if rid not in selected_by_rid:
+            selected_by_rid[rid] = runtime
+            ordered_keys.append((rid, None))
+            continue
+        current = selected_by_rid[rid]
+        if _management_runtime_binding_selection_key(runtime, telemetry) < _management_runtime_binding_selection_key(current, telemetry):
+            selected_by_rid[rid] = runtime
+    return [
+        selected_by_rid[rid] if rid else (fallback or {})
+        for rid, fallback in ordered_keys
+    ]
 
 
 def _pm12_portfolio_book_holdings_response(
@@ -2145,12 +2215,16 @@ def _pm12_portfolio_book_holdings_response(
     pools_by_id = {str(p.get("pool_id") or p.get("id") or "").strip(): p for p in capital_pools}
 
     telemetry_by_runtime_id = _management_portfolio_telemetry_snapshot(read_store, runtime_bindings)
+    serving_runtime_bindings = _management_select_serving_runtime_bindings(
+        runtime_bindings,
+        telemetry_by_runtime_id,
+    )
 
     holding_items: List[Dict[str, Any]] = []
     # Runtimes with an explicitly flat book contribute coverage/diagnostics
     # but never a holding row; they are filtered exactly like holdings.
     flat_runtime_items: List[Dict[str, Any]] = []
-    for runtime in runtime_bindings:
+    for runtime in serving_runtime_bindings:
         rid = str(runtime.get("runtime_id") or runtime.get("id") or runtime.get("binding_id") or "").strip()
         telemetry = telemetry_by_runtime_id.get(rid, {})
         # Terminal runtimes are omitted from current telemetry by contract; that
