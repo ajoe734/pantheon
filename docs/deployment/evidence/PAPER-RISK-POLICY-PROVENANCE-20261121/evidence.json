@@ -1,0 +1,196 @@
+{
+  "acceptance_budget": {
+    "cadence": "on demand or existing post-switch acceptance runner; no new recurring job",
+    "cleanup": "no hosted temporary artifact; tokens stay in memory; local /tmp captures disposable after reviewed evidence committed",
+    "daily_runtime_storage_growth_bytes": 0,
+    "evidence": "task-scoped static repository evidence only; collector stdout, no hosted files; any local capture explicitly operator-managed",
+    "hosted_expected_personas": 3,
+    "http_timeout_seconds": 15,
+    "max_expected_personas": 10,
+    "max_requests": 24,
+    "max_response_bytes": 8388608,
+    "max_rows_per_owner_list": 2000,
+    "max_wall_seconds": 180,
+    "persistent_runtime_writers_added": 0,
+    "static_evidence_cap_bytes": 204800,
+    "static_evidence_file_count": 14
+  },
+  "finding": "Executable inline policies exist for all three trading personas; requested low profile has no proven approved financial-policy mapping. No runtime settings changed.",
+  "hosted_pair": {
+    "acceptance_run": "44861265420",
+    "accepted_at": "2026-11-21T04:59:29Z",
+    "backendSha": "b66d17afc05e72a7010369264ecf1ca8d7f9b9e6",
+    "frontendSha": "9f3793aa7094d250d48b8f73f34ee10a52f6e2ce",
+    "source": "hosted dev-root/acceptance/latest.json; docker image revision labels also matched BFF and producer"
+  },
+  "hosted_probe": {
+    "viewer": {
+      "checked": 3,
+      "exit_code": 1,
+      "file": "probe-hosted-viewer.json",
+      "note": "approval owner requires an additional read identity (403 with viewer)"
+    },
+    "with_policy_reader": {
+      "approval_rows": 697,
+      "checked": 3,
+      "exit_code": 1,
+      "file": "probe-hosted-owner.json",
+      "note": "existing viewer for product reads and existing risk-owner for approval GET only; all three mappings unresolved"
+    }
+  },
+  "limits_of_evidence": [
+    "Original HTTP wire request was not retained here: normalized payload proves null ref, not omission versus explicit null; deployed normalization preserves explicit ref and does not map risk labels.",
+    "Approved profile proof matcher is an audit evidence requirement over existing governance subjects; its positive controls are synthetic, not a new runtime mapping contract or approved financial values.",
+    "Public BFF has no authoritative referenced-policy loader; CLI fails closed for references, while injected deployed owner loaders are covered by tests. The current three policies are inline.",
+    "No new hosted fills, policy repair, release deployment or end-to-end acceptance is claimed."
+  ],
+  "next_task_input": "README.md and owner/runtime/inventory/event/replay JSON files; existing binding owner must obtain an explicit approved profile mapping or explicit policy applicability decision before changing limits",
+  "owner": "Codex2",
+  "policy_mapping_verdict": "unresolved_required_mapping",
+  "probe_source_sha256": "bf1d979f0dcdd8353334ba0060c877f37f75fdb76a9b830ab641b9963f7f646a",
+  "residual_findings": [
+    {
+      "class": "RC2",
+      "disposition": "attached to existing persona-loop/policy-binding work package; probe follows runtime-manager active binding",
+      "finding": "persona detail runtimeBindingId remains the original binding although runtime-manager serves a pool-envelope v2 replacement"
+    },
+    {
+      "class": "RC2",
+      "disposition": "PAPER-RISK-POLICY-BINDING-20261121; existing capital/risk policy owner must decide mapping/version/approval and optional limits; no new percentages invented",
+      "finding": "configured Capital policy-file roots absent and no financial-profile mapping subject found in 697 governance decisions; capital activation digest excludes metadata.risk_policy"
+    },
+    {
+      "class": "RC2",
+      "disposition": "PAPER-RISK-POLICY-BINDING-20261121 to assess renewal semantics; no claim that existing runtime must be revoked",
+      "finding": "the captured registry admission approval has an expired expires_at; it is historical artifact-admission evidence, not proof of a current financial-profile approval"
+    },
+    {
+      "class": "RC6",
+      "disposition": "existing TRADE-JOURNEY-FAILURE-CAUSE-20261121 and TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121 own projection/history changes",
+      "finding": "immutable rejection source carries insufficient_cash and submitted_to_broker=false while reason_code=long_cash; historical health-only reconciliation source is also captured"
+    },
+    {
+      "class": "RC1",
+      "finding": "services/control-plane/bff/tests/test_bff_main_composition.py::test_dataset_surface_status_full_app_parity[unavailable] uses separate live clocks; shard 10 failed solely on last_known_at differing by one second in job 136862690396. The unchanged local full file passed 57 tests.",
+      "disposition": "Coordinator to attach to the existing required-test wall-clock determinism class in RC1 (TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261119); BFF test repair is outside this provenance task. A passing rerun does not resolve the clock dependency.",
+      "evidence": "https://github.com/ajoe734/pantheon/actions/runs/44909662859/job/136862690396"
+    }
+  ],
+  "review_status": "pending_independent_review",
+  "reviewer": "Antigravity",
+  "scope": "read-only provenance, failing hosted audit, regression controls and RC2/RC6 register linkage",
+  "task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "27 passed in 0.60s after final probe and transport controls"
+    },
+    {
+      "command": "timeout 180s ssh ... docker exec -i pantheon-paper-signal-producer-1 python3 - < replay_hosted.py",
+      "exit_code": 0,
+      "result": "451 shares; fee-inclusive cash 99813.031175; remaining 186.968825; original source event, no order submission"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "27 passed in 0.61s after evidence compaction; probe and test source unchanged"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base ca54c80d5a9e158c66b4dffd5767ca4e70e4360d --head 558e870be",
+      "exit_code": 0,
+      "result": "No evidence-cap violations; production +257, tests +205, docs/evidence +1914 at compaction anchor"
+    },
+    {
+      "command": "Validate evidence_compaction original/compacted/canonical SHA-256 values and parsed equality using git show source_commit:path plus Python json/hashlib",
+      "exit_code": 0,
+      "result": "All three complete readbacks equal the reviewed originals; 353/266/294 lines; all evidence JSON parses; 14 files totaling 125089 bytes at compaction anchor, under 200 KiB cap"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "43 passed in 1.34s after CI probe-list repair"
+    },
+    {
+      "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "exit_code": 0,
+      "result": "57 passed, 3 warnings in 43.38s; unchanged source, does not resolve clock-dependent residual"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_policy_binding.py acceptance/test_meeting_review_disposition.py",
+      "exit_code": 0,
+      "result": "47 passed, 1 warning in 5.74s on combined #7718 + #7719 source tree"
+    },
+    {
+      "command": "timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "exit_code": 0,
+      "result": "57 passed, 3 warnings in 44.14s on composition anchor 635a91204; RC1 live-clock residual remains"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head 635a9120473f6ffe13fe396e170b4751847b5834",
+      "exit_code": 0,
+      "result": "No evidence-cap violations; production +257, tests +215/-1, docs/evidence +1982"
+    }
+  ],
+  "verified_deployed_source_hashes": {
+    "services/capital/capital_guard.py": "553bd35d54e598a18b6ba860fd8fc25b34ac9aea292e55c1228bd8e0db41bb01",
+    "services/capital/risk_policy.py": "0f38cbebf00ea5ca1a7fafc8ec291d1a2df0af28ba2c97e52c228e7a07948959",
+    "services/control-plane/bff/persona_provisioning_coordinator.py": "c4f62bd31190dc923583365b8c5771a8e8b26b2d9ef4ebb12bd7678068b923ef",
+    "services/control-plane/bff/personas/service.py": "f2040650b906373d955eac845b27dd817bc54773bb13195cf51c6b916cb2bb4e"
+  },
+  "evidence_compaction": {
+    "source_commit": "4209dbe755f38269d5fb4e46022ec3c837487c94",
+    "source_location": "git show <source_commit>:docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/<filename>",
+    "format": "JSON containers at depth 4 are compact; all values and hierarchy retained without selection or redaction",
+    "canonical_digest_encoding": "SHA-256 over UTF-8 json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(comma, colon)), no trailing newline",
+    "semantic_equality_verified": true,
+    "files": {
+      "historical-events.json": {
+        "original_bytes_sha256": "41175d7ffa5bc47e3435689d269d2507ea0507f625890f567206d2ca670afda2",
+        "original_lines": 643,
+        "compacted_bytes_sha256": "a05b0b811e014afd449e68c8087efdfbfdf3d28596f8503d93a9f7ad63fd3ffb",
+        "compacted_lines": 353,
+        "canonical_content_sha256": "2f9d27141c3c95d04ba189c825c1e72b0f1b9d7369e987ac21c0b207b2d5b102"
+      },
+      "owner-readback.json": {
+        "original_bytes_sha256": "983716cb49161b808df805a59998f50d3d798a626c4ebd4455c843840350f339",
+        "original_lines": 431,
+        "compacted_bytes_sha256": "22490badd08f7fd13025bf35c98f31c8d81acbce4530a660785cf311aa0b9af2",
+        "compacted_lines": 266,
+        "canonical_content_sha256": "bed9a768958854a331eee4a6dbf92d3f15149d8a3f5581f37632f3d83c25b915"
+      },
+      "runtime-readback.json": {
+        "original_bytes_sha256": "750f42cd9a780db9b1d8dc97692dedcf807232013268a81bf78d8830bd3a9eae",
+        "original_lines": 1248,
+        "compacted_bytes_sha256": "4d71d13bacb92cd037dcc2e98c3c4f30c03dc8fbef0887f526d38947c186a1f2",
+        "compacted_lines": 294,
+        "canonical_content_sha256": "fac60d0aeb166151ed1e089137d7a55b7291a1153260c71768b21a3a6b21c450"
+      }
+    }
+  },
+  "ci_repair": {
+    "returned_head": "aff0c4f874ba1c436fd30bd6cb7fabee24f8b2c0",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/44909662859",
+    "source_failure": "Shard 11: scripts/test_dev_acceptance_stage.py hardcoded the prior release probe list and omitted this task's newly discovered probe. Reproduced locally (1 failed, 15 passed).",
+    "repair": "Include paper-risk-policy-binding in the expected release probe list and assert skipped/77 without credentials. No production deployment or policy behavior changed.",
+    "other_failure": "Shard 10: BFF dataset surface parity test compared live timestamps generated across 13:39:40Z/13:39:41Z; source and observed values are in the linked job logs. Service suites is the aggregate failure.",
+    "review": "Prior approval does not cover the new head; manifest remains pending independent review."
+  },
+  "review_admission_hold": {
+    "attempted_head": "99850f125d8259ecc4ea04f012df55de406b45ec",
+    "command_exit_code": 1,
+    "gate": "changed file scripts/test_dev_acceptance_stage.py is outside the task artifact contract",
+    "required_actor": "Human/Ops",
+    "corrective_action": "While blocked, use the existing artifact-contract command to add scripts/test_dev_acceptance_stage.py with the source-CI repair rationale, then reopen and let the supervisor dispatch fresh exact-head review. Do not impersonate Human/Ops or edit canonical JSON.",
+    "delivery_state": "published task branch / open PR; neither merged nor deployed nor accepted; no done transition"
+  },
+  "dev_composition": {
+    "base_commit": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+    "base_pr": 7718,
+    "composition_anchor": "635a9120473f6ffe13fe396e170b4751847b5834",
+    "resolution": "Both meeting-review-disposition and paper-risk-policy-binding are expected in the shipped release probes; risk probe skipped/77 assertion, persona-day exclusion and original release verdict assertion retained.",
+    "artifact_contract": "Human/Ops admitted scripts/test_dev_acceptance_stage.py on 2026-11-21T13:54:56Z and reopened the original task. The prior review_admission_hold below is historical and resolved by that canonical contract revision.",
+    "review": "Fresh Antigravity exact-head review is required. Previous head checks and approval do not cover this composition.",
+    "ci": "Required CI must be read on the final published head; no previous-head result is claimed for it."
+  }
+}

@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+# acceptance-owner: PAPER-RISK-POLICY-PROVENANCE-20261121
+"""Bounded GET-only policy provenance audit (apart from viewer token exchange).
+
+Exit 0: every expected persona has a resolved policy and proven profile mapping;
+1: unresolved/invalid evidence; 77: missing authentication configuration.
+No policy is created, inferred from a label, or activated. See task README for
+the currently absent owner mapping and the deliberately failing hosted result.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+
+DEFAULT_PERSONAS = (
+    "persona-2448c7053e33ea48da47",
+    "persona-6507750312870d03a241",
+    "persona-ee7112a829d38b9135ac",
+)
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+MAX_BYTES = 8 * 1024 * 1024
+MAX_ROWS = 2000
+MAX_REQUESTS = 24
+MAX_SECONDS = 180
+
+
+def data(body):
+    return body.get("data", body) if isinstance(body, dict) else body
+
+
+def policy_digest(policy):
+    return hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=True).encode()).hexdigest()
+
+
+def effective_policy(pool, referenced_policy_reader=None):
+    """Follow owner ref precedence. A null ref can have a valid inline policy.
+
+    A referenced policy needs an authoritative loader; a nearby inline policy
+    cannot substitute for an unreadable reference. The public BFF currently
+    exposes no referenced-policy readback, so the CLI fails closed for that case.
+    """
+    ref = pool.get("risk_policy_ref")
+    if ref:
+        if referenced_policy_reader is None:
+            raise ValueError("referenced_policy_owner_readback_unavailable")
+        return referenced_policy_reader(ref), "reference"
+    policy = pool.get("risk_policy") or (pool.get("metadata") or {}).get("risk_policy")
+    if not isinstance(policy, dict) or not policy:
+        raise ValueError("no_effective_policy")
+    return policy, "inline"
+
+
+def policy_errors(policy):
+    errors = []
+    if not isinstance(policy, dict):
+        return ["malformed_policy"]
+    if not policy.get("risk_policy_id") or not policy.get("version"):
+        errors.append("policy_identity_or_version_missing")
+    if policy.get("status") != "active":
+        errors.append("policy_not_active")
+    # gross_limit is required by the deployed expression input assembler.
+    if policy.get("gross_limit") is None:
+        errors.append("policy_gross_limit_missing")
+    for key in ("gross_limit", "net_limit", "max_leverage", "max_single_name_weight"):
+        value = policy.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (float, int))
+                                  or not math.isfinite(value) or value < 0):
+            errors.append("policy_limit_invalid:" + key)
+    if policy.get("allowed_stages") and "paper" not in policy["allowed_stages"]:
+        errors.append("policy_not_paper")
+    return errors
+
+
+def approved_mapping(approvals, persona, pool, policy, now):
+    """Look for explicit owner proof in existing governance decision subjects.
+
+    These are audit evidence requirements, not a new runtime mapping contract.
+    No such subject was found on hosted. Registry admission risk_level=low and
+    pool activation digests alone do not bind the financial policy contents.
+    """
+    for approval in approvals:
+        subject = (approval.get("metadata") or {}).get("subject") or {}
+        if (approval.get("tenant_id") != persona.get("tenantId")
+                or approval.get("target_type") != "capital_pool_activation"
+                or approval.get("target_id") != pool.get("pool_id")
+                or not pool.get("approval_digest")
+                or approval.get("target_version") != pool["approval_digest"]
+                or approval.get("decision_state") != "decided"
+                or approval.get("decision") != "approved"
+                or not approval.get("decision_id")
+                or approval.get("authority_status") != "authoritative"
+                or not approval.get("actor_role")
+                or not approval.get("actor_id") or not approval.get("decided_at")
+                or approval.get("conditions") or approval.get("revoked_at")
+                or approval.get("superseded_by")
+                or subject.get("pool_id") != pool.get("pool_id")
+                or subject.get("requested_risk") != persona.get("risk")
+                or subject.get("risk_policy_id") != policy.get("risk_policy_id")
+                or subject.get("risk_policy_version") != policy.get("version")
+                or subject.get("risk_policy_digest") != policy_digest(policy)):
+            continue
+        expiry = approval.get("expires_at")
+        if expiry:
+            try:
+                if datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= now:
+                    continue
+            except (ValueError, TypeError):
+                continue
+        return approval["decision_id"]
+    return None
+
+
+def rows(body):
+    value = data(body)
+    if not isinstance(value, list) or len(value) > MAX_ROWS or any(not isinstance(x, dict) for x in value):
+        raise ValueError("owner_collection_invalid_or_over_budget")
+    return value
+
+
+def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None):
+    now = now or datetime.now(timezone.utc)
+    expected = tuple(expected)
+    report = {"checked": 0, "expected": len(expected), "personas": {}, "failed": [],
+              "observed_at": now.isoformat()}
+    if not expected or len(expected) > 10 or len(set(expected)) != len(expected):
+        report.update(passed=False, failed=["expected_personas_empty_duplicate_or_over_budget"])
+        return report
+    bindings = rows(fetch("/api/v1/runtime-bindings?deployment_mode=paper"))
+    try:
+        approvals = rows(fetch("/api/v1/approval-decisions"))
+        report["approval_rows"] = len(approvals)
+    except (RuntimeError, ValueError) as exc:
+        approvals = []
+        report["mapping_source_error"] = str(exc)
+    for pid in expected:
+        failures = []
+        result = {"failed": failures}
+        report["personas"][pid] = result
+        try:
+            persona = data(fetch("/bff/personas/" + urllib.parse.quote(pid, safe="")))
+            if not isinstance(persona, dict) or persona.get("id") != pid:
+                raise ValueError("persona_identity_missing")
+            if (persona.get("ownerLifecycleState") != "paper_owner"
+                    or persona.get("capitalMode") != "paper"
+                    or persona.get("is_probe") is True
+                    or str(persona.get("name") or "").startswith(("Pantheon Dev Paper Release", "probe-", "test-"))):
+                raise ValueError("expected_persona_not_trading")
+            tenant = persona.get("tenantId")
+            active = [b for b in bindings if b.get("status") == "active"
+                      and (b.get("metadata") or {}).get("persona_id") == pid
+                      and (b.get("metadata") or {}).get("tenant_id") == tenant]
+            if not tenant or len(active) != 1:
+                raise ValueError("active_tenant_binding_missing_or_ambiguous")
+            binding = active[0]
+            pool_id = binding.get("capital_pool_id")
+            if not isinstance(pool_id, str) or not pool_id:
+                raise ValueError("binding_pool_missing")
+            pool = data(fetch("/bff/capital-pools/" + urllib.parse.quote(pool_id, safe="")))
+            if (pool.get("pool_id") != pool_id or pool.get("tenant_id") != tenant
+                    or pool.get("owner_id") != tenant or pool.get("status") != "active"
+                    or (pool.get("metadata") or {}).get("persona_id") != pid):
+                raise ValueError("pool_owner_identity_or_status_invalid")
+            report["checked"] += 1
+            result.update(name=persona.get("name"), tenant_id=tenant, requested_risk=persona.get("risk"),
+                          runtime_id=binding.get("runtime_id"), binding_id=binding.get("binding_id"),
+                          pool_id=pool_id, artifact_id=binding.get("artifact_id"),
+                          artifact_version=binding.get("artifact_version"), risk_policy_ref=pool.get("risk_policy_ref"),
+                          persona_display_binding_id=persona.get("runtimeBindingId"))
+            policy, origin = effective_policy(pool, referenced_policy_reader)
+            failures.extend(policy_errors(policy))
+            result.update(policy_origin=origin, effective_policy=policy)
+            if origin == "reference" and policy.get("risk_policy_id") != pool.get("risk_policy_ref"):
+                failures.append("referenced_policy_identity_mismatch")
+            mapping = approved_mapping(approvals, persona, pool, policy, now)
+            result["profile_mapping_approval"] = mapping
+            if not persona.get("risk") or not mapping:
+                failures.append("required_profile_mapping_unresolved")
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            failures.append(str(exc))
+        report["failed"].extend(pid + ":" + f for f in failures)
+    if not report["checked"]:
+        report["failed"].append("no_expected_personas_checked")
+    report["passed"] = report["checked"] == len(expected) and not report["failed"]
+    return report
+
+
+def main():
+    missing = [key for key in REQUIRED if not os.environ.get(key, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    deadline, requests = time.monotonic() + MAX_SECONDS, 0
+
+    def request(path, body=None, token=None):
+        nonlocal requests
+        requests += 1
+        remaining = deadline - time.monotonic()
+        if requests > MAX_REQUESTS or remaining <= 0:
+            raise RuntimeError("probe_budget_exceeded")
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body else None,
+                                     method="POST" if body else "GET", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
+                payload = response.read(MAX_BYTES + 1)
+            if len(payload) > MAX_BYTES:
+                raise RuntimeError("response_size_exceeded")
+            return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError("http_" + str(exc.code)) from None
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("request_failed:" + type(exc).__name__) from None
+
+    try:
+        token = request("/bff/auth/dev-login", {
+            "grant_type": "client_credentials", "client_id": os.environ[REQUIRED[1]],
+            "client_secret": os.environ[REQUIRED[2]],
+        }).get("access_token")
+        if not token:
+            raise RuntimeError("access_token_missing")
+        policy_token = token
+        policy_id = os.environ.get("ACCEPTANCE_POLICY_READER_CLIENT_ID")
+        policy_secret = os.environ.get("ACCEPTANCE_POLICY_READER_CLIENT_SECRET")
+        if bool(policy_id) != bool(policy_secret):
+            raise RuntimeError("policy_reader_credentials_incomplete")
+        if policy_id:
+            policy_token = request("/bff/auth/dev-login", {
+                "grant_type": "client_credentials", "client_id": policy_id, "client_secret": policy_secret,
+            }).get("access_token")
+            if not policy_token:
+                raise RuntimeError("policy_reader_access_token_missing")
+        configured = os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS")
+        expected = DEFAULT_PERSONAS if configured is None else tuple(x.strip() for x in configured.split(",") if x.strip())
+        report = run(lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token), expected)
+    except (RuntimeError, ValueError) as exc:
+        print(json.dumps({"passed": False, "failed": [str(exc)]}))
+        return 1
+    print(json.dumps(report, sort_keys=True, ensure_ascii=False))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
