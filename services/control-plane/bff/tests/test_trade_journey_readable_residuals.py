@@ -820,6 +820,62 @@ def test_reconciliation_discrepancy_validates_delta_and_preserves_conflicting_ev
     assert "cash_change:conflicting_delta" in same_check_row["outcome"]["missing_evidence"]
 
 
+def test_producer_to_projector_to_bff_omitted_or_invalid_fee_and_tax():
+    """Trace producer -> LifecycleProjector -> BFF surfaces when ledger fee/tax is omitted or invalid."""
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+
+    recon_dir = Path(__file__).resolve().parents[4] / "services" / "reconciliation-drift"
+    for sys_path_entry in (str(recon_dir), str(recon_dir / "tests")):
+        if sys_path_entry not in __import__("sys").path:
+            __import__("sys").path.insert(0, sys_path_entry)
+    from test_journey_booking_reconciliation import BROKER_ORDER, _run as _run_booking, _summary as _booking_summary
+
+    personas = {"persona-6507750312870d03a241": {"name": "澄川｜2317 台股 Paper 學習 R2", "is_probe": False}}
+
+    for deleted_keys, expected_missing in (
+        (("fee",), ["fee"]),
+        (("tax",), ["tax"]),
+        (("fee", "tax"), ["fee", "tax"]),
+    ):
+        summary = _booking_summary()
+        for key in deleted_keys:
+            del summary["last_lifecycle_identity"]["metadata"][key]
+        (producer_event, reason), _ = _run_booking(summary, order=BROKER_ORDER)
+        assert reason is None and producer_event is not None
+        assert producer_event["event_type"] == "reconciliation_failed"
+        assert producer_event["reason_code"] == "reconciliation_evidence_incomplete"
+        projected_stage = LifecycleProjector._journey_events(
+            {
+                "event": producer_event,
+                "identity": LifecycleProjector._identity(producer_event),
+                "source_mode": "live",
+                "sequence_no": int(producer_event["sequence_no"]),
+            }
+        )[0]
+        proj = _tj_57418ba7_projection(projected_stage)
+        detail = tj._detail(proj, now=NOW, personas=personas)
+        assert detail["outcome"]["kind"] == "variance"
+        assert detail["outcome"]["classification"] == "unverified_evidence"
+        assert detail["outcome"]["accounting_variance"] is False
+        assert detail["outcome"]["comparison_completed"] is False
+        assert detail["outcome"]["reason_code"] == "reconciliation_evidence_incomplete"
+        assert detail["outcome"]["discrepancies"] == []
+        assert detail["outcome"]["missing_evidence"] == expected_missing
+        assert detail["stages"]["reconciliation"]["classification"] == "unverified_evidence"
+        assert detail["stages"]["reconciliation"]["accounting_variance"] is False
+        assert detail["stages"]["reconciliation"]["comparison_completed"] is False
+        assert detail["stages"]["reconciliation"]["reason_code"] == "reconciliation_evidence_incomplete"
+        assert detail["stages"]["reconciliation"]["missing_evidence"] == expected_missing
+        assert detail["stage_events"]["reconciliation"]["missing_evidence"] == expected_missing
+        tl_item = tj._timeline_event(proj.timeline[-1])
+        assert tl_item["classification"] == "unverified_evidence"
+        assert tl_item["accounting_variance"] is False
+        assert tl_item["comparison_completed"] is False
+        assert tl_item["reason_code"] == "reconciliation_evidence_incomplete"
+        assert tl_item["missing_evidence"] == expected_missing
+
+
+
 
 def _ephemeral_postgres_dsn():
     import os
@@ -920,6 +976,57 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
                 "identity": LifecycleProjector._identity(mixed_producer_event),
                 "source_mode": "live",
                 "sequence_no": int(mixed_producer_event["sequence_no"]),
+            }
+        )[0]
+
+        no_fee_summary = _booking_summary()
+        del no_fee_summary["last_lifecycle_identity"]["metadata"]["fee"]
+        (no_fee_producer_event, no_fee_reason), _ = _run_booking(
+            no_fee_summary,
+            order=BROKER_ORDER,
+        )
+        assert no_fee_reason is None and no_fee_producer_event is not None
+        no_fee_projected_stage = LifecycleProjector._journey_events(
+            {
+                "event": no_fee_producer_event,
+                "identity": LifecycleProjector._identity(no_fee_producer_event),
+                "source_mode": "live",
+                "sequence_no": int(no_fee_producer_event["sequence_no"]),
+            }
+        )[0]
+
+        no_tax_summary = _booking_summary()
+        del no_tax_summary["last_lifecycle_identity"]["metadata"]["tax"]
+        (no_tax_producer_event, no_tax_reason), _ = _run_booking(
+            no_tax_summary,
+            order=BROKER_ORDER,
+        )
+        assert no_tax_reason is None and no_tax_producer_event is not None
+        no_tax_projected_stage = LifecycleProjector._journey_events(
+            {
+                "event": no_tax_producer_event,
+                "identity": LifecycleProjector._identity(no_tax_producer_event),
+                "source_mode": "live",
+                "sequence_no": int(no_tax_producer_event["sequence_no"]),
+            }
+        )[0]
+
+        mixed_no_fee_summary = _booking_summary(
+            meta_overrides={"position_quantity_after": 1.0},
+            metrics_overrides={"position_qty": 1.0},
+        )
+        del mixed_no_fee_summary["last_lifecycle_identity"]["metadata"]["fee"]
+        (mixed_no_fee_producer_event, mixed_no_fee_reason), _ = _run_booking(
+            mixed_no_fee_summary,
+            order=BROKER_ORDER,
+        )
+        assert mixed_no_fee_reason is None and mixed_no_fee_producer_event is not None
+        mixed_no_fee_projected_stage = LifecycleProjector._journey_events(
+            {
+                "event": mixed_no_fee_producer_event,
+                "identity": LifecycleProjector._identity(mixed_no_fee_producer_event),
+                "source_mode": "live",
+                "sequence_no": int(mixed_no_fee_producer_event["sequence_no"]),
             }
         )[0]
 
@@ -1055,6 +1162,33 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
                 "failed",
                 mixed_projected_stage,
             ),
+            # 9. omitted_fee: producer -> projector event with deleted metadata.fee -> unverified_evidence with missing_evidence=['fee']
+            (
+                "tj_omitted_fee",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                no_fee_projected_stage,
+            ),
+            # 10. omitted_tax: producer -> projector event with deleted metadata.tax -> unverified_evidence with missing_evidence=['tax']
+            (
+                "tj_omitted_tax",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                no_tax_projected_stage,
+            ),
+            # 11. mixed_position_variance_and_omitted_fee: producer -> projector event with proven position_change mismatch + omitted metadata.fee
+            (
+                "tj_mixed_position_variance_and_omitted_fee",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                mixed_no_fee_projected_stage,
+            ),
         ]
 
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
@@ -1091,11 +1225,58 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         unfiltered_res = client.get("/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50", headers=headers)
         assert unfiltered_res.status_code == 200
         unfiltered_body = unfiltered_res.json()
-        assert unfiltered_body["page_info"]["total"] == 8
+        assert unfiltered_body["page_info"]["total"] == 11
         by_id = {r["journey_id"]: r for r in unfiltered_body["data"]["items"]}
         for def_id in ("tj_historical_runtime", "tj_historical_broker", "tj_deferred_alias_runtime", "tj_deferred_alias_broker"):
             assert by_id[def_id]["outcome"]["kind"] == "reconciliation_deferred", def_id
             assert by_id[def_id]["flags"]["mismatch"] is False, def_id
+        for omitted_id, missing_field in (("tj_omitted_fee", "fee"), ("tj_omitted_tax", "tax")):
+            omitted_row = by_id[omitted_id]
+            assert omitted_row["outcome"]["kind"] == "variance"
+            assert omitted_row["outcome"]["classification"] == "unverified_evidence"
+            assert omitted_row["outcome"]["accounting_variance"] is False
+            assert omitted_row["outcome"]["comparison_completed"] is False
+            assert omitted_row["outcome"]["reason_code"] == "reconciliation_evidence_incomplete"
+            assert omitted_row["outcome"]["discrepancies"] == []
+            assert omitted_row["outcome"]["missing_evidence"] == [missing_field]
+            omitted_detail = client.get(
+                f"/bff/management/trade-journeys/{omitted_id}?tenant_id=tenant-dev&environment=paper",
+                headers=headers,
+            ).json()["data"]
+            assert omitted_detail["stages"]["reconciliation"]["classification"] == "unverified_evidence"
+            assert omitted_detail["stages"]["reconciliation"]["accounting_variance"] is False
+            assert omitted_detail["stages"]["reconciliation"]["comparison_completed"] is False
+            assert omitted_detail["stages"]["reconciliation"]["reason_code"] == "reconciliation_evidence_incomplete"
+            assert omitted_detail["stages"]["reconciliation"]["missing_evidence"] == [missing_field]
+            assert omitted_detail["stage_events"]["reconciliation"]["missing_evidence"] == [missing_field]
+            omitted_tl = client.get(
+                f"/bff/management/trade-journeys/{omitted_id}/timeline?tenant_id=tenant-dev&environment=paper",
+                headers=headers,
+            ).json()["data"]["items"][-1]
+            assert omitted_tl["classification"] == "unverified_evidence"
+            assert omitted_tl["accounting_variance"] is False
+            assert omitted_tl["comparison_completed"] is False
+            assert omitted_tl["reason_code"] == "reconciliation_evidence_incomplete"
+            assert omitted_tl["missing_evidence"] == [missing_field]
+
+        mixed_no_fee_row = by_id["tj_mixed_position_variance_and_omitted_fee"]
+        assert mixed_no_fee_row["outcome"]["kind"] == "variance"
+        assert mixed_no_fee_row["outcome"]["classification"] == "accounting_variance"
+        assert mixed_no_fee_row["outcome"]["accounting_variance"] is True
+        assert mixed_no_fee_row["outcome"]["comparison_completed"] is True
+        assert mixed_no_fee_row["outcome"]["reason_code"] == "position_variance"
+        assert mixed_no_fee_row["outcome"]["discrepancies"] == [
+            {
+                "check": "position_change",
+                "status": "failed",
+                "expected": -1.0,
+                "actual": 0.0,
+                "difference": 1.0,
+                "delta": 1.0,
+            }
+        ]
+        assert mixed_no_fee_row["outcome"]["missing_evidence"] == ["fee"]
+
         mixed_row = by_id["tj_mixed_proven_and_unverified"]
         assert mixed_row["outcome"]["kind"] == "variance"
         assert mixed_row["outcome"]["classification"] == "accounting_variance"
@@ -1150,9 +1331,10 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         assert mismatch_ids == {
             "tj_proven_variance",
             "tj_mixed_proven_and_unverified",
+            "tj_mixed_position_variance_and_omitted_fee",
             "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
         }
-        assert mismatch_body["page_info"]["total"] == 3
+        assert mismatch_body["page_info"]["total"] == 4
 
         attention_res = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50&attention=attention",
@@ -1164,10 +1346,11 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         assert attention_ids == {
             "tj_proven_variance",
             "tj_mixed_proven_and_unverified",
+            "tj_mixed_position_variance_and_omitted_fee",
             "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
             "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
         }
-        assert attention_body["page_info"]["total"] == 4
+        assert attention_body["page_info"]["total"] == 5
 
         # Verify the release acceptance probe passes against the real database-backed BFF responses
         probe_path = Path(__file__).resolve().parents[4] / "acceptance" / "probes" / "trade-journey-readable"
@@ -1176,7 +1359,7 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         loader.exec_module(probe_mod)
         probe_report = probe_mod.check(lambda path: client.get(path, headers=headers).json())
         assert probe_report["passed"] is True, probe_report
-        assert probe_report["total"] == 8 and probe_report["recon_mismatch_total"] == 3
+        assert probe_report["total"] == 11 and probe_report["recon_mismatch_total"] == 4
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")

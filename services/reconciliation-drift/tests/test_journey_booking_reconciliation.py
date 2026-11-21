@@ -283,3 +283,75 @@ def test_mixed_proven_cash_variance_and_unverified_snapshot_position_preserves_v
     assert detail["committed_snapshot_position"]["actual"] is None
     assert detail["committed_snapshot_position"]["missing_evidence"] == ["actual"]
 
+
+def test_missing_or_invalid_fee_and_tax_leave_cash_change_unverified_and_preserve_explicit_zero() -> None:
+    # 1. Deleting only metadata.fee or setting invalid fee leaves cash_change unverified with ["fee"]
+    for bad_fee in ("__delete__", None, "", "invalid", True):
+        summary_no_fee = _summary()
+        if bad_fee == "__delete__":
+            del summary_no_fee["last_lifecycle_identity"]["metadata"]["fee"]
+        else:
+            summary_no_fee["last_lifecycle_identity"]["metadata"]["fee"] = bad_fee
+        (event_no_fee, reason_no_fee), _ = _run(summary_no_fee, order=BROKER_ORDER)
+        assert reason_no_fee is None
+        detail_no_fee = _failed(event_no_fee, "reconciliation_evidence_incomplete")
+        assert detail_no_fee["cash_change"]["status"] == "unverified"
+        assert detail_no_fee["cash_change"]["expected"] is None
+        assert detail_no_fee["cash_change"]["actual"] == pytest.approx(2206.0)
+        assert detail_no_fee["cash_change"]["difference"] is None
+        assert detail_no_fee["cash_change"]["delta"] is None
+        assert detail_no_fee["cash_change"]["missing_evidence"] == ["fee"]
+
+    # 2. Deleting only metadata.tax or setting invalid tax leaves cash_change unverified with ["tax"]
+    for bad_tax in ("__delete__", None, "", "invalid", False):
+        summary_no_tax = _summary()
+        if bad_tax == "__delete__":
+            del summary_no_tax["last_lifecycle_identity"]["metadata"]["tax"]
+        else:
+            summary_no_tax["last_lifecycle_identity"]["metadata"]["tax"] = bad_tax
+        (event_no_tax, reason_no_tax), _ = _run(summary_no_tax, order=BROKER_ORDER)
+        assert reason_no_tax is None
+        detail_no_tax = _failed(event_no_tax, "reconciliation_evidence_incomplete")
+        assert detail_no_tax["cash_change"]["status"] == "unverified"
+        assert detail_no_tax["cash_change"]["expected"] is None
+        assert detail_no_tax["cash_change"]["actual"] == pytest.approx(2206.0)
+        assert detail_no_tax["cash_change"]["difference"] is None
+        assert detail_no_tax["cash_change"]["delta"] is None
+        assert detail_no_tax["cash_change"]["missing_evidence"] == ["tax"]
+
+    # 3. Deleting both metadata.fee and metadata.tax lists ["fee", "tax"]
+    summary_no_both = _summary()
+    del summary_no_both["last_lifecycle_identity"]["metadata"]["fee"]
+    del summary_no_both["last_lifecycle_identity"]["metadata"]["tax"]
+    (event_no_both, _), _ = _run(summary_no_both, order=BROKER_ORDER)
+    detail_no_both = _failed(event_no_both, "reconciliation_evidence_incomplete")
+    assert detail_no_both["cash_change"]["status"] == "unverified"
+    assert detail_no_both["cash_change"]["missing_evidence"] == ["fee", "tax"]
+
+    # 4. Explicit zero fee and tax (0 or 0.0) are valid and complete the cash comparison
+    zero_summary = _summary(
+        meta_overrides={"fee": 0.0, "tax": 0.0, "cash_after": 102215.0},
+        metrics_overrides={"cash": 102215.0},
+    )
+    (zero_event, zero_reason), _ = _run(zero_summary, order=BROKER_ORDER)
+    assert zero_reason is None
+    assert zero_event["event_type"] == "reconciliation_completed"
+    zero_detail = {d["check"]: d for d in zero_event["reason_detail"]}
+    assert zero_detail["cash_change"]["status"] == "passed"
+    assert zero_detail["cash_change"]["expected"] == pytest.approx(2215.0)
+    assert zero_detail["cash_change"]["actual"] == pytest.approx(2215.0)
+
+    # 5. Mixed genuine mismatch (position_variance or committed_snapshot_cash) with missing fee
+    mixed_pos_no_fee = _summary(
+        meta_overrides={"position_quantity_after": 1.0},
+        metrics_overrides={"position_qty": 1.0},
+    )
+    del mixed_pos_no_fee["last_lifecycle_identity"]["metadata"]["fee"]
+    (mixed_pos_event, _), _ = _run(mixed_pos_no_fee, order=BROKER_ORDER)
+    mixed_pos_detail = _failed(mixed_pos_event, "position_variance")
+    assert mixed_pos_detail["position_change"]["status"] == "failed"
+    assert mixed_pos_detail["position_change"]["delta"] == pytest.approx(1.0)
+    assert mixed_pos_detail["cash_change"]["status"] == "unverified"
+    assert mixed_pos_detail["cash_change"]["missing_evidence"] == ["fee"]
+
+

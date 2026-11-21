@@ -1128,10 +1128,14 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                             for m_item in (entry.get("missing_evidence") or []):
                                 m_str = str(m_item).strip()
                                 if m_str:
-                                    qual = m_str if ":" in m_str else f"{check_name}:{m_str}"
+                                    qual = f"{check_name}:{m_str}" if m_str in {"expected", "actual"} else m_str
                                     if qual not in unverified_missing:
                                         unverified_missing.append(qual)
-                            if not any(m.startswith(f"{check_name}:") for m in unverified_missing):
+                            if not any(
+                                m.startswith(f"{check_name}:")
+                                or m in {str(x).strip() for x in (entry.get("missing_evidence") or [])}
+                                for m in unverified_missing
+                            ):
                                 unverified_missing.append(f"{check_name}:unverified")
                     else:
                         diff = (
@@ -1158,10 +1162,22 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                         entry["status"] = "unverified"
                     entry["difference"] = None
                     entry["delta"] = None
-                    if exp_num is None:
-                        unverified_missing.append(f"{check_name}:expected")
-                    if act_num is None:
-                        unverified_missing.append(f"{check_name}:actual")
+                    entry_missing: List[str] = [
+                        str(m_item).strip()
+                        for m_item in (entry.get("missing_evidence") or [])
+                        if isinstance(entry.get("missing_evidence"), Sequence)
+                        and not isinstance(entry.get("missing_evidence"), (str, bytes))
+                        and str(m_item).strip()
+                    ]
+                    has_expected_field = any(m != "actual" for m in entry_missing)
+                    if exp_num is None and not has_expected_field:
+                        entry_missing.append("expected")
+                    if act_num is None and "actual" not in entry_missing:
+                        entry_missing.append("actual")
+                    for m_str in entry_missing:
+                        qual = f"{check_name}:{m_str}" if m_str in {"expected", "actual"} else m_str
+                        if qual not in unverified_missing:
+                            unverified_missing.append(qual)
             elif check_name in _TRADE_COMPARISON_CHECKS:
                 exp_val = entry.get("expected")
                 act_val = entry.get("actual")

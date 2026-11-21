@@ -2349,13 +2349,20 @@ def _booking_fill(identity: Dict[str, Any]) -> Dict[str, Any] | None:
 
 
 def _booking_check(
-    check: str, expected: float | None, actual: float | None
+    check: str,
+    expected: float | None,
+    actual: float | None,
+    *,
+    missing_fields: Sequence[str] = (),
 ) -> Dict[str, Any]:
     if expected is None or actual is None:
         missing_sides: List[str] = []
-        if expected is None:
+        for field in missing_fields:
+            if field and field not in missing_sides:
+                missing_sides.append(field)
+        if expected is None and not missing_fields:
             missing_sides.append("expected")
-        if actual is None:
+        if actual is None and "actual" not in missing_sides:
             missing_sides.append("actual")
         return {
             "check": check,
@@ -2394,11 +2401,15 @@ def _journey_booking_decision(
     if fill is None:
         return None
     side = str(fill.get("side") or "").strip().lower()
-    sign = -1.0 if side == "sell" else 1.0
+    sign = -1.0 if side == "sell" else (1.0 if side == "buy" else None)
     fill_qty = _num(fill.get("fill_quantity"))
     fill_price = _num(fill.get("fill_price"))
     kind = str(fill.get("kind") or "cash_share")
-    multiplier = _num(fill.get("multiplier")) or 1.0
+    if "multiplier" not in fill:
+        multiplier: float | None = 1.0
+    else:
+        parsed_mult = _num(fill.get("multiplier"))
+        multiplier = parsed_mult if (parsed_mult is not None and parsed_mult > 0.0) else None
     broker_order_id = str(fill.get("broker_order_id") or "").strip()
     detail: List[Dict[str, Any]] = []
     failures: List[str] = []
@@ -2499,7 +2510,7 @@ def _journey_booking_decision(
     # 2. position change equals the signed fill quantity
     before = _num(fill.get("position_quantity_before"))
     after = _num(fill.get("position_quantity_after"))
-    signed_qty = None if (fill_qty is None or not side) else sign * fill_qty
+    signed_qty = None if (fill_qty is None or sign is None) else sign * fill_qty
     position = _booking_check(
         "position_change",
         signed_qty,
@@ -2517,17 +2528,37 @@ def _journey_booking_decision(
     if kind == "cash_share":
         cash_before = _num(fill.get("cash_before"))
         cash_after = _num(fill.get("cash_after"))
-        fee = _num(fill.get("fee")) or 0.0
-        tax = _num(fill.get("tax")) or 0.0
+        fee = _num(fill.get("fee"))
+        tax = _num(fill.get("tax"))
+        cash_missing_fields: List[str] = []
+        if sign is None:
+            cash_missing_fields.append("side")
+        if fill_qty is None:
+            cash_missing_fields.append("fill_quantity")
+        if fill_price is None:
+            cash_missing_fields.append("fill_price")
+        if multiplier is None:
+            cash_missing_fields.append("multiplier")
+        if fee is None:
+            cash_missing_fields.append("fee")
+        if tax is None:
+            cash_missing_fields.append("tax")
         expected_cash = (
             None
-            if signed_qty is None or fill_price is None
+            if (
+                signed_qty is None
+                or fill_price is None
+                or multiplier is None
+                or fee is None
+                or tax is None
+            )
             else -(signed_qty * fill_price * multiplier) - fee - tax
         )
         cash = _booking_check(
             "cash_change",
             expected_cash,
             None if cash_before is None or cash_after is None else cash_after - cash_before,
+            missing_fields=cash_missing_fields,
         )
         snap_cash = _booking_check(
             "committed_snapshot_cash", cash_after, _num(snap_metrics.get("cash"))
