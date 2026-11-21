@@ -408,3 +408,64 @@ class CaseFileTests(unittest.TestCase):
         )
         self.assertLessEqual(independent_total, 12000)
         self.assertTrue(any(grp["truncated"] for grp in heavy_out["groups"].values()))
+
+        def unicode_and_escaped_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            if path.startswith("/api/registry/entries/reg-zh"):
+                return {
+                    "registry_id": "reg-zh",
+                    "strategy_id": "策略-" + ("中" * 20000),
+                    "approved_scope": "paper",
+                    "artifact_state": "approved",
+                    "parameters": {"note": "中" * 20000},
+                }
+            if path.startswith("/api/registry/entries/reg-esc"):
+                return {
+                    "registry_id": "reg-esc",
+                    "strategy_id": "strat-" + ('"' * 20000),
+                    "approved_scope": "scope-" + ("\\" * 20000),
+                    "artifact_state": "approved",
+                    "parameters": {"note": '"' * 20000},
+                }
+            if path.endswith("/strategy-pool"):
+                return {
+                    "pool_version": 4,
+                    "unavailable_reason": "原因-" + ("中" * 20000) + ('"' * 20000),
+                    "members": [],
+                }
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {
+                    "hits": [
+                        {
+                            "type": "institutional",
+                            "relevance_score": 1.0,
+                            "entry": {
+                                "entry_id": "mem-zh-esc",
+                                "memory_type": "lesson-" + ('"' * 20000),
+                                "content": {
+                                    "summary": "中" * 1000,
+                                    "tags": ["family:momentum", "中" * 20000, '"' * 20000],
+                                },
+                            },
+                        }
+                    ]
+                }
+            if path.startswith("/api/search"):
+                return {"retrieval_mode": "hybrid", "results": []}
+            return []
+
+        with mock.patch.object(cf, "http_json", unicode_and_escaped_http):
+            ue_out = cf.compose_case_file(
+                subject(member_artifact_refs=("reg-zh", "reg-esc"), backtest_run_refs=()),
+                OP,
+                OWNERS,
+            )
+        jsonschema.validate(ue_out, SCHEMA)
+        for grp in ue_out["groups"].values():
+            for item in grp["items"]:
+                self.assertLessEqual(len(item["excerpt"]), 400)
+                self.assertLessEqual(len(json.dumps(item["subject_fields"], sort_keys=True)), 400)
+                self.assertTrue(item["subject_fields"])

@@ -2243,3 +2243,34 @@ def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_tot
     assert independent_repro_chars <= 12000
     assert len(items_repro) <= 15
     assert all(case_repro["groups"][g]["truncated"] is True for g in cf.GROUPS)
+
+    # 4. Unicode (20000 Chinese chars) and escaped strings (20000 double quotes / backslashes) fit <=400 serialized chars
+    for label, huge_note in (("zh", "中" * 20000), ("quotes", '"' * 20000), ("backslashes", "\\" * 20000)):
+        case_ue, items_ue, _ = meetings_mod.compose_meeting_case_file(
+            meeting_id=f"mtg-budget-{label}",
+            meeting_code="MT-1",
+            topic=f"Unicode and escaped subject_fields cap test {label}",
+            subject_ref="persona:persona-2448c7053e33ea48da47",
+            evidence_refs=[
+                {
+                    "item_id": f"explicit-{label}",
+                    "excerpt": "explicit item with oversized unicode/escaped subject_fields",
+                    "subject_fields": {"note": huge_note},
+                }
+            ],
+            attribution_record_id=None,
+            attribution_record=None,
+            supplied_case_file=None,
+            tenant_id=TENANT,
+            owners=cf.Owners(),
+        )
+        by_id_ue = {it["item_id"]: it for it in items_ue}
+        explicit_it = by_id_ue[f"explicit-{label}"]
+        serialized_sf = json.dumps(explicit_it["subject_fields"], sort_keys=True)
+        assert len(serialized_sf) <= 400, (label, len(serialized_sf))
+        assert explicit_it["subject_fields"]["note"].startswith(huge_note[0])
+        assert explicit_it["subject_fields"]["note"].endswith("…")
+        for grp in case_ue["groups"].values():
+            for it in grp["items"]:
+                assert len(it["excerpt"]) <= 400
+                assert len(json.dumps(it["subject_fields"], sort_keys=True)) <= 400

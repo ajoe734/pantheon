@@ -164,59 +164,84 @@ def _clip(text: Any, limit: int) -> str:
     return s if len(s) <= limit else s[: max(0, limit - 1)] + "…"
 
 
+def _clip_for_json(text: Any, limit: int) -> Optional[str]:
+    if limit < 2:
+        return None
+    s = text if isinstance(text, str) else json.dumps(text, sort_keys=True, default=str, ensure_ascii=False)
+    s = " ".join(s.split())
+    if len(json.dumps(s, sort_keys=True, default=str)) <= limit:
+        return s
+    if not s or len(json.dumps(s[:1] + "…", sort_keys=True, default=str)) > limit:
+        return None
+    lo, hi = 1, min(len(s), limit)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(json.dumps(s[:mid] + "…", sort_keys=True, default=str)) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+    return s[:lo] + "…"
+
+
 def _bound_subject_value(val: Any, limit: int, max_items: int, depth: int = 0) -> Any:
+    if val is None or limit < 1:
+        return None
     if isinstance(val, (int, float, bool)):
-        return val
-    if isinstance(val, str):
-        return _clip(val, limit)
-    if depth >= 2:
-        return _clip(str(val), limit)
+        return val if len(json.dumps(val, sort_keys=True, default=str)) <= limit else _clip_for_json(str(val), limit)
+    if isinstance(val, str) or depth >= 3:
+        return _clip_for_json(val if isinstance(val, str) else str(val), limit)
     if isinstance(val, (list, tuple)):
+        if len(json.dumps([], sort_keys=True, default=str)) > limit:
+            return None
         out_list: list[Any] = []
         for x in list(val)[:max_items]:
             if x is None:
                 continue
-            nx = _bound_subject_value(x, limit, max_items, depth + 1)
+            overhead = len(json.dumps([*out_list, None], sort_keys=True, default=str)) - 4
+            avail = limit - overhead
+            if avail < 1:
+                break
+            nx = _bound_subject_value(x, avail, max_items, depth + 1)
+            if nx is None:
+                continue
             if len(json.dumps([*out_list, nx], sort_keys=True, default=str)) <= limit:
                 out_list.append(nx)
-            else:
-                break
+        if val and not out_list:
+            return None
         return out_list
     if isinstance(val, Mapping):
+        if len(json.dumps({}, sort_keys=True, default=str)) > limit:
+            return None
         nested: dict[str, Any] = {}
+        key_limit = min(64, max(14, limit // 2))
         for mk, mv in val.items():
             if mv is None:
                 continue
-            nk = _clip(str(mk), min(64, limit))
-            nv = _bound_subject_value(mv, limit, max_items, depth + 1)
+            nk = _clip_for_json(str(mk), key_limit)
+            if not nk or nk in nested:
+                continue
+            overhead = len(json.dumps({**nested, nk: None}, sort_keys=True, default=str)) - 4
+            avail = limit - overhead
+            if avail < 1:
+                continue
+            nv = _bound_subject_value(mv, avail, max_items, depth + 1)
+            if nv is None:
+                continue
             cand = {**nested, nk: nv}
             if len(json.dumps(cand, sort_keys=True, default=str)) <= limit:
                 nested = cand
+        if val and not nested:
+            return None
         return nested
-    return _clip(str(val), limit)
+    return _clip_for_json(str(val), limit)
 
 
 def _bound_subject_fields(subject_fields: Any, budgets: Budgets) -> dict[str, Any]:
     if not isinstance(subject_fields, Mapping) or not subject_fields:
         return {}
     limit = max(2, int(budgets.max_excerpt_chars))
-    out: dict[str, Any] = {}
-    for raw_k, raw_v in subject_fields.items():
-        if raw_v is None:
-            continue
-        k = _clip(str(raw_k), min(64, limit))
-        v = _bound_subject_value(raw_v, limit, budgets.max_items_per_group)
-        candidate = {**out, k: v}
-        encoded = json.dumps(candidate, sort_keys=True, default=str)
-        if len(encoded) <= limit:
-            out = candidate
-        elif isinstance(v, str):
-            overhead = len(json.dumps({**out, k: "…"}, sort_keys=True, default=str))
-            avail = limit - overhead + 1
-            if avail > 1:
-                out[k] = _clip(v, avail)
-            break
-    return out
+    res = _bound_subject_value(subject_fields, limit, budgets.max_items_per_group, depth=0)
+    return res if isinstance(res, dict) and len(json.dumps(res, sort_keys=True, default=str)) <= limit else {}
 
 
 def _item_char_size(item: Mapping[str, Any]) -> int:
