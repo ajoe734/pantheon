@@ -101,7 +101,7 @@
             "kind": "variance",
             "accounting_variance": true,
             "comparison_completed": true,
-            "condition": "At least one trade-specific check completed with both expected and actual present, failed beyond tolerance (1e-6), and has no conflicting supplied delta/difference/status across any check, populating discrepancies with check, expected, actual, delta, and difference."
+            "condition": "At least one trade-specific check independently completed with both expected and actual present, failed beyond tolerance (1e-6), and has no conflicting supplied delta/difference/status on that check, populating discrepancies with check, expected, actual, delta, and difference. Any unrelated check that lacks inputs or has conflicting evidence is downgraded to status='unverified' and retained in missing_evidence without clearing proven discrepancies."
           },
           "runtime_health": {
             "kind": "reconciliation_deferred",

@@ -544,6 +544,8 @@ def _effective_snapshot_and_diagnostics(
             recon_stage["discrepancies"] = recon_analysis["discrepancies"]
         if recon_analysis["missing_evidence"]:
             recon_stage["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis.get("unverified_reason_code"):
+            recon_stage["unverified_reason_code"] = recon_analysis["unverified_reason_code"]
         if recon_analysis["source_event_id"]:
             recon_stage["source_event_id"] = recon_analysis["source_event_id"]
         stages["reconciliation"] = recon_stage
@@ -1040,6 +1042,20 @@ def _rejected_reason(event: Optional[Mapping[str, Any]]) -> Tuple[str, Any]:
     return ev["reason_code"], ev["reason_detail"]
 
 
+def _supported_variance_reason_codes(discrepancies: Sequence[Mapping[str, Any]]) -> set[str]:
+    checks = {str(item.get("check") or "") for item in discrepancies}
+    supported: set[str] = set()
+    if "broker_record" in checks:
+        supported.add("broker_record_missing")
+    if checks & {"broker_fill_qty", "broker_fill_price", "broker_status", "broker_side", "broker_instrument_id"}:
+        supported.add("broker_fill_mismatch")
+    if checks & {"position_change", "committed_snapshot_position"}:
+        supported.add("position_variance")
+    if checks & {"cash_change", "committed_snapshot_cash"}:
+        supported.add("cash_variance")
+    return supported
+
+
 def _infer_variance_reason_code(discrepancies: Sequence[Mapping[str, Any]]) -> str:
     checks = {str(item.get("check") or "") for item in discrepancies}
     if "broker_record" in checks:
@@ -1060,9 +1076,9 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
     normalized_detail: Any = None
     discrepancies: List[Dict[str, Any]] = []
     unverified_missing: List[str] = []
+    unverified_checks: set[str] = set()
     check_names: set[str] = set()
     has_broker_unavailable = False
-    has_conflicting_evidence = False
 
     if isinstance(raw_detail, Sequence) and not isinstance(raw_detail, (str, bytes)):
         normalized_checks: List[Any] = []
@@ -1100,7 +1116,7 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                     )
                     explicit_unverified = status_val in {"unverified", "missing_evidence"}
                     if delta_conflict or diff_conflict or status_conflict or explicit_unverified:
-                        has_conflicting_evidence = True
+                        unverified_checks.add(check_name)
                         entry["status"] = "unverified"
                         if delta_conflict:
                             unverified_missing.append(f"{check_name}:conflicting_delta")
@@ -1110,8 +1126,11 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                             unverified_missing.append(f"{check_name}:conflicting_status")
                         if explicit_unverified and not (delta_conflict or diff_conflict or status_conflict):
                             for m_item in (entry.get("missing_evidence") or []):
-                                if str(m_item).strip() and str(m_item) not in unverified_missing:
-                                    unverified_missing.append(str(m_item))
+                                m_str = str(m_item).strip()
+                                if m_str:
+                                    qual = m_str if ":" in m_str else f"{check_name}:{m_str}"
+                                    if qual not in unverified_missing:
+                                        unverified_missing.append(qual)
                             if not any(m.startswith(f"{check_name}:") for m in unverified_missing):
                                 unverified_missing.append(f"{check_name}:unverified")
                     else:
@@ -1134,7 +1153,8 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                                 }
                             )
                 else:
-                    if status_val == "failed":
+                    unverified_checks.add(check_name)
+                    if status_val in {"failed", "passed", ""}:
                         entry["status"] = "unverified"
                     entry["difference"] = None
                     entry["delta"] = None
@@ -1146,12 +1166,17 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                 exp_val = entry.get("expected")
                 act_val = entry.get("actual")
                 if status_val in {"unverified", "missing_evidence"}:
+                    unverified_checks.add(check_name)
                     for side_name, side_val in (("expected", exp_val), ("actual", act_val)):
                         if side_val in (None, ""):
                             unverified_missing.append(f"{check_name}:{side_name}")
                     for m_item in (entry.get("missing_evidence") or []):
-                        if str(m_item).strip() and str(m_item) not in unverified_missing:
-                            unverified_missing.append(str(m_item))
+                        m_str = str(m_item).strip()
+                        if not m_str:
+                            continue
+                        qual = f"{check_name}:{m_str}" if m_str in {"expected", "actual"} else m_str
+                        if qual not in unverified_missing:
+                            unverified_missing.append(qual)
                 elif status_val == "failed":
                     if exp_val not in (None, "") and act_val not in (None, "") and exp_val != act_val:
                         disc: Dict[str, Any] = {
@@ -1164,7 +1189,7 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                             disc["broker_order_id"] = entry["broker_order_id"]
                         discrepancies.append(disc)
                     else:
-                        has_conflicting_evidence = True
+                        unverified_checks.add(check_name)
                         entry["status"] = "unverified"
                         if exp_val in (None, ""):
                             unverified_missing.append(f"{check_name}:expected")
@@ -1173,13 +1198,18 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                         if exp_val not in (None, "") and act_val not in (None, "") and exp_val == act_val:
                             unverified_missing.append(f"{check_name}:conflicting_status")
                 elif status_val == "passed" and exp_val not in (None, "") and act_val not in (None, "") and exp_val != act_val:
-                    has_conflicting_evidence = True
+                    unverified_checks.add(check_name)
                     entry["status"] = "unverified"
                     unverified_missing.append(f"{check_name}:conflicting_status")
             normalized_checks.append(entry)
         normalized_detail = normalized_checks
     elif raw_detail is not None:
         normalized_detail = raw_detail
+
+    if unverified_checks:
+        discrepancies = [
+            disc for disc in discrepancies if str(disc.get("check") or "") not in unverified_checks
+        ]
 
     explicit_missing: List[str] = [
         str(item)
@@ -1188,6 +1218,10 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
         and not isinstance((recon or {}).get("missing_evidence"), (str, bytes))
         and str(item).strip()
     ]
+    missing_evidence = list(explicit_missing)
+    for item in unverified_missing:
+        if item not in missing_evidence:
+            missing_evidence.append(item)
 
     if raw_code in {"runtime_unhealthy_at_reconciliation", "reconciliation_deferred_runtime_unhealthy"} or (
         check_names and check_names <= _RUNTIME_HEALTH_RECON_CHECKS
@@ -1215,13 +1249,24 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
             "missing_evidence": explicit_missing,
             "source_event_id": source_event_id,
         }
-    if discrepancies and not has_conflicting_evidence and not unverified_missing:
-        effective_code = (
-            raw_code
-            if (raw_code and raw_code != _REASON_NOT_RECORDED)
-            else _infer_variance_reason_code(discrepancies)
-        )
-        return {
+    if discrepancies:
+        supported_codes = _supported_variance_reason_codes(discrepancies)
+        unverified_reason_code: Optional[str] = None
+        if raw_code in _ACCOUNTING_VARIANCE_REASONS:
+            if raw_code in supported_codes:
+                effective_code = raw_code
+            else:
+                unverified_reason_code = raw_code
+                effective_code = _infer_variance_reason_code(discrepancies)
+        elif raw_code and raw_code not in {
+            _REASON_NOT_RECORDED,
+            "reconciliation_evidence_incomplete",
+            "reconciliation_failed",
+        }:
+            effective_code = raw_code
+        else:
+            effective_code = _infer_variance_reason_code(discrepancies)
+        proven_result: Dict[str, Any] = {
             "kind": "variance",
             "classification": "accounting_variance",
             "accounting_variance": True,
@@ -1229,12 +1274,15 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
             "reason_code": effective_code,
             "reason_detail": normalized_detail,
             "discrepancies": discrepancies,
-            "missing_evidence": explicit_missing,
+            "missing_evidence": missing_evidence,
             "source_event_id": source_event_id,
         }
+        if unverified_reason_code:
+            proven_result["unverified_reason_code"] = unverified_reason_code
+        return proven_result
 
     # Unverified or missing reconciliation evidence — never report a proven accounting variance.
-    unverified_reason_code: Optional[str] = None
+    unverified_reason_code = None
     if raw_code in _ACCOUNTING_VARIANCE_REASONS:
         unverified_reason_code = raw_code
         effective_code = "reconciliation_evidence_incomplete"
@@ -1243,10 +1291,6 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
     else:
         effective_code = _REASON_NOT_RECORDED
 
-    missing_evidence = list(explicit_missing)
-    for item in unverified_missing:
-        if item not in missing_evidence:
-            missing_evidence.append(item)
     if not missing_evidence:
         if effective_code == _REASON_NOT_RECORDED:
             missing_evidence = ["reconciliation_reason", "booking_comparison"]
@@ -1447,6 +1491,8 @@ def _stage_events(
             recon_ev["discrepancies"] = recon_analysis["discrepancies"]
         if recon_analysis["missing_evidence"]:
             recon_ev["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis.get("unverified_reason_code"):
+            recon_ev["unverified_reason_code"] = recon_analysis["unverified_reason_code"]
         if recon_analysis["source_event_id"]:
             recon_ev["source_event_id"] = recon_analysis["source_event_id"]
         latest["reconciliation"] = recon_ev
@@ -1651,6 +1697,8 @@ def _timeline_event(event: Mapping[str, Any]) -> Dict[str, Any]:
             row["discrepancies"] = recon_analysis["discrepancies"]
         if recon_analysis["missing_evidence"]:
             row["missing_evidence"] = recon_analysis["missing_evidence"]
+        if recon_analysis.get("unverified_reason_code"):
+            row["unverified_reason_code"] = recon_analysis["unverified_reason_code"]
         if recon_analysis["source_event_id"]:
             row["source_event_id"] = recon_analysis["source_event_id"]
     else:

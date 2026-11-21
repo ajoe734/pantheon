@@ -246,3 +246,22 @@ def test_recorded_tj_57418ba7_sell_reconciliation_with_complete_and_incomplete_e
     assert cash_change["actual"] == pytest.approx(172.5331375)
     assert cash_change["delta"] == pytest.approx(-45.0)
     assert cash_change["difference"] == pytest.approx(-45.0)
+
+
+def test_mixed_proven_cash_variance_and_unverified_snapshot_position_preserves_variance() -> None:
+    mixed_summary = _summary(
+        meta_overrides={"cash_after": 102161.0},
+        metrics_overrides={"position_qty": None, "cash": 102161.0},
+    )
+    (event, reason), _ = _run(mixed_summary, order=BROKER_ORDER)
+    assert reason is None
+    detail = _failed(event, "cash_variance")
+    assert detail["cash_change"]["status"] == "failed"
+    assert detail["cash_change"]["expected"] == pytest.approx(2206.0)
+    assert detail["cash_change"]["actual"] == pytest.approx(2161.0)
+    assert detail["cash_change"]["difference"] == pytest.approx(-45.0)
+    assert detail["cash_change"]["delta"] == pytest.approx(-45.0)
+    assert detail["committed_snapshot_position"]["status"] == "unverified"
+    assert detail["committed_snapshot_position"]["actual"] is None
+    assert detail["committed_snapshot_position"]["missing_evidence"] == ["actual"]
+

@@ -695,6 +695,131 @@ def test_reconciliation_discrepancy_validates_delta_and_preserves_conflicting_ev
         }
     ]
 
+    # 4. Mixed proven mismatch on cash_change plus unrelated unverified/conflicting checks on position checks
+    for mixed_override, expected_missing, expected_unverified_code in (
+        (
+            {
+                "reason_code": "cash_variance",
+                "reason_detail": [
+                    {
+                        "check": "position_change",
+                        "status": "passed",
+                        "expected": -1.0,
+                        "actual": -1.0,
+                        "difference": 0.0,
+                        "delta": 0.0,
+                    },
+                    {
+                        "check": "committed_snapshot_position",
+                        "status": "unverified",
+                        "expected": 0.0,
+                        "actual": None,
+                        "difference": None,
+                        "delta": None,
+                        "missing_evidence": ["actual"],
+                    },
+                    {
+                        "check": "cash_change",
+                        "status": "failed",
+                        "expected": 2206.0,
+                        "actual": 2161.0,
+                        "difference": -45.0,
+                        "delta": -45.0,
+                    },
+                ],
+            },
+            ["committed_snapshot_position:actual"],
+            None,
+        ),
+        (
+            {
+                "reason_code": "position_variance",
+                "reason_detail": [
+                    {
+                        "check": "position_change",
+                        "status": "failed",
+                        "expected": -1.0,
+                        "actual": -1.0,
+                        "delta": 1.0,
+                    },
+                    {
+                        "check": "cash_change",
+                        "status": "failed",
+                        "expected": 2206.0,
+                        "actual": 2161.0,
+                        "difference": -45.0,
+                        "delta": -45.0,
+                    },
+                ],
+            },
+            ["position_change:conflicting_delta"],
+            "position_variance",
+        ),
+    ):
+        mixed_proj = _tj_57418ba7_projection(mixed_override)
+        mixed_detail = tj._detail(mixed_proj, now=NOW, personas=personas)
+        assert mixed_detail["outcome"]["kind"] == "variance"
+        assert mixed_detail["outcome"]["classification"] == "accounting_variance"
+        assert mixed_detail["outcome"]["accounting_variance"] is True
+        assert mixed_detail["outcome"]["comparison_completed"] is True
+        assert mixed_detail["outcome"]["reason_code"] == "cash_variance"
+        assert mixed_detail["outcome"].get("unverified_reason_code") == expected_unverified_code
+        assert mixed_detail["outcome"]["discrepancies"] == [
+            {
+                "check": "cash_change",
+                "status": "failed",
+                "expected": 2206.0,
+                "actual": 2161.0,
+                "difference": -45.0,
+                "delta": -45.0,
+            }
+        ]
+        assert mixed_detail["outcome"]["missing_evidence"] == expected_missing
+        assert mixed_detail["stages"]["reconciliation"]["classification"] == "accounting_variance"
+        assert mixed_detail["stages"]["reconciliation"]["accounting_variance"] is True
+        assert mixed_detail["stages"]["reconciliation"]["reason_code"] == "cash_variance"
+        assert mixed_detail["stages"]["reconciliation"]["missing_evidence"] == expected_missing
+        assert mixed_detail["stage_events"]["reconciliation"]["reason_code"] == "cash_variance"
+        assert mixed_detail["stage_events"]["reconciliation"]["missing_evidence"] == expected_missing
+        mixed_tl = tj._timeline_event(mixed_proj.timeline[-1])
+        assert mixed_tl["classification"] == "accounting_variance"
+        assert mixed_tl["accounting_variance"] is True
+        assert mixed_tl["comparison_completed"] is True
+        assert mixed_tl["reason_code"] == "cash_variance"
+        assert mixed_tl["discrepancies"][0]["delta"] == -45.0
+        assert mixed_tl["missing_evidence"] == expected_missing
+
+    # 5. Conflicting evidence on the SAME check disqualifies that check even if duplicated
+    same_check_conflict_proj = _tj_57418ba7_projection(
+        {
+            "reason_code": "cash_variance",
+            "reason_detail": [
+                {
+                    "check": "cash_change",
+                    "status": "failed",
+                    "expected": 2206.0,
+                    "actual": 2161.0,
+                    "difference": -45.0,
+                    "delta": -45.0,
+                },
+                {
+                    "check": "cash_change",
+                    "status": "failed",
+                    "expected": 2206.0,
+                    "actual": 2161.0,
+                    "delta": 0.0,
+                },
+            ],
+        }
+    )
+    same_check_row = tj._list_row(same_check_conflict_proj, now=NOW, personas=personas)
+    assert same_check_row["outcome"]["classification"] == "unverified_evidence"
+    assert same_check_row["outcome"]["accounting_variance"] is False
+    assert same_check_row["outcome"]["comparison_completed"] is False
+    assert same_check_row["outcome"]["discrepancies"] == []
+    assert "cash_change:conflicting_delta" in same_check_row["outcome"]["missing_evidence"]
+
+
 
 def _ephemeral_postgres_dsn():
     import os
@@ -773,6 +898,30 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
         summary = json.dumps({"identifiers": {"persona_id": ["persona-6507750312870d03a241"]}})
         recon_cov = json.dumps({"reconciliation": {"status": "failed"}})
+
+        from services.trade_journey.lifecycle_projector import LifecycleProjector
+        recon_dir = Path(__file__).resolve().parents[4] / "services" / "reconciliation-drift"
+        for sys_path_entry in (str(recon_dir), str(recon_dir / "tests")):
+            if sys_path_entry not in __import__("sys").path:
+                __import__("sys").path.insert(0, sys_path_entry)
+        from test_journey_booking_reconciliation import BROKER_ORDER, _run as _run_booking, _summary as _booking_summary
+
+        (mixed_producer_event, mixed_reason), _ = _run_booking(
+            _booking_summary(
+                meta_overrides={"cash_after": 102161.0},
+                metrics_overrides={"position_qty": None, "cash": 102161.0},
+            ),
+            order=BROKER_ORDER,
+        )
+        assert mixed_reason is None and mixed_producer_event is not None
+        mixed_projected_stage = LifecycleProjector._journey_events(
+            {
+                "event": mixed_producer_event,
+                "identity": LifecycleProjector._identity(mixed_producer_event),
+                "source_mode": "live",
+                "sequence_no": int(mixed_producer_event["sequence_no"]),
+            }
+        )[0]
 
         rows = [
             # 1. historical_runtime: no reason_code, runtime_state failed in reason_detail -> reconciliation_deferred
@@ -897,6 +1046,15 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
                     },
                 },
             ),
+            # 8. mixed_proven_and_unverified: producer -> projector event with proven cash_change mismatch + unverified committed_snapshot_position
+            (
+                "tj_mixed_proven_and_unverified",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                mixed_projected_stage,
+            ),
         ]
 
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
@@ -933,11 +1091,54 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         unfiltered_res = client.get("/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50", headers=headers)
         assert unfiltered_res.status_code == 200
         unfiltered_body = unfiltered_res.json()
-        assert unfiltered_body["page_info"]["total"] == 7
+        assert unfiltered_body["page_info"]["total"] == 8
         by_id = {r["journey_id"]: r for r in unfiltered_body["data"]["items"]}
         for def_id in ("tj_historical_runtime", "tj_historical_broker", "tj_deferred_alias_runtime", "tj_deferred_alias_broker"):
             assert by_id[def_id]["outcome"]["kind"] == "reconciliation_deferred", def_id
             assert by_id[def_id]["flags"]["mismatch"] is False, def_id
+        mixed_row = by_id["tj_mixed_proven_and_unverified"]
+        assert mixed_row["outcome"]["kind"] == "variance"
+        assert mixed_row["outcome"]["classification"] == "accounting_variance"
+        assert mixed_row["outcome"]["accounting_variance"] is True
+        assert mixed_row["outcome"]["comparison_completed"] is True
+        assert mixed_row["outcome"]["reason_code"] == "cash_variance"
+        assert mixed_row["outcome"]["discrepancies"] == [
+            {
+                "check": "cash_change",
+                "status": "failed",
+                "expected": 2206.0,
+                "actual": 2161.0,
+                "difference": -45.0,
+                "delta": -45.0,
+            }
+        ]
+        assert mixed_row["outcome"]["missing_evidence"] == ["committed_snapshot_position:actual"]
+        assert mixed_row["flags"]["mismatch"] is True
+
+        mixed_detail_res = client.get(
+            "/bff/management/trade-journeys/tj_mixed_proven_and_unverified?tenant_id=tenant-dev&environment=paper",
+            headers=headers,
+        )
+        assert mixed_detail_res.status_code == 200
+        mixed_detail_data = mixed_detail_res.json()["data"]
+        assert mixed_detail_data["stages"]["reconciliation"]["accounting_variance"] is True
+        assert mixed_detail_data["stages"]["reconciliation"]["reason_code"] == "cash_variance"
+        assert mixed_detail_data["stages"]["reconciliation"]["missing_evidence"] == ["committed_snapshot_position:actual"]
+        assert mixed_detail_data["stage_events"]["reconciliation"]["discrepancies"][0]["delta"] == -45.0
+        assert mixed_detail_data["stage_events"]["reconciliation"]["missing_evidence"] == ["committed_snapshot_position:actual"]
+
+        mixed_tl_res = client.get(
+            "/bff/management/trade-journeys/tj_mixed_proven_and_unverified/timeline?tenant_id=tenant-dev&environment=paper",
+            headers=headers,
+        )
+        assert mixed_tl_res.status_code == 200
+        mixed_tl_item = mixed_tl_res.json()["data"]["items"][-1]
+        assert mixed_tl_item["classification"] == "accounting_variance"
+        assert mixed_tl_item["accounting_variance"] is True
+        assert mixed_tl_item["comparison_completed"] is True
+        assert mixed_tl_item["reason_code"] == "cash_variance"
+        assert mixed_tl_item["discrepancies"][0]["delta"] == -45.0
+        assert mixed_tl_item["missing_evidence"] == ["committed_snapshot_position:actual"]
 
         mismatch_res = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50&attention=recon_mismatch",
@@ -946,8 +1147,12 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         assert mismatch_res.status_code == 200
         mismatch_body = mismatch_res.json()
         mismatch_ids = {r["journey_id"] for r in mismatch_body["data"]["items"]}
-        assert mismatch_ids == {"tj_proven_variance", "tj_57418ba7-ef37-5015-9b5e-b6423872da89"}
-        assert mismatch_body["page_info"]["total"] == 2
+        assert mismatch_ids == {
+            "tj_proven_variance",
+            "tj_mixed_proven_and_unverified",
+            "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+        }
+        assert mismatch_body["page_info"]["total"] == 3
 
         attention_res = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50&attention=attention",
@@ -958,10 +1163,11 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         attention_ids = {r["journey_id"] for r in attention_body["data"]["items"]}
         assert attention_ids == {
             "tj_proven_variance",
+            "tj_mixed_proven_and_unverified",
             "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
             "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
         }
-        assert attention_body["page_info"]["total"] == 3
+        assert attention_body["page_info"]["total"] == 4
 
         # Verify the release acceptance probe passes against the real database-backed BFF responses
         probe_path = Path(__file__).resolve().parents[4] / "acceptance" / "probes" / "trade-journey-readable"
@@ -970,7 +1176,7 @@ def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_mod
         loader.exec_module(probe_mod)
         probe_report = probe_mod.check(lambda path: client.get(path, headers=headers).json())
         assert probe_report["passed"] is True, probe_report
-        assert probe_report["total"] == 7 and probe_report["recon_mismatch_total"] == 2
+        assert probe_report["total"] == 8 and probe_report["recon_mismatch_total"] == 3
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
