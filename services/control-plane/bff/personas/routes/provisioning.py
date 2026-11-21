@@ -65,7 +65,8 @@ class PaperPoolRiskPolicyRepairRequest(BaseModel):
     risk_policy_ref: Optional[str] = Field(default=None, max_length=128)
     risk_policy: Optional[Dict[str, Any]] = None
     risk_policy_version: Optional[str] = Field(default=None, max_length=64)
-    require_approved_profile_mapping: bool = False
+    approval_decision_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+    require_approved_profile_mapping: bool = True
     dry_run: bool = False
 
 

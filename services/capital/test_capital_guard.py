@@ -839,32 +839,38 @@ def test_capital_guard_rejects_unapproved_inline_baseline_when_profile_mapping_r
         "net_limit": 2.0,
         "max_leverage": 2.0,
     }
-    # Creating or activating with inline baseline + require_approved_profile_mapping=True and no approval fails closed
-    unapproved_create = test_client.post(
-        "/api/capital-pools",
-        json={
-            "actor_id": "control-plane-bff",
-            "actor_role": "admin",
-            "pool_id": "pool-baseline-unapproved",
-            "name": "Unapproved baseline paper pool",
-            "owner_id": "tenant-test",
-            "owner_type": "org",
-            "status": "active",
-            "currency": "TWD",
-            "budget": 100000.0,
-            "single_runtime_enforced": True,
-            "metadata": {
-                "execution_context": "paper",
-                "requested_risk_profile": "low",
-                "require_approved_profile_mapping": True,
-                "risk_policy": baseline_inline,
-            },
+    # Creating or activating with inline rp-pool-... baseline (with or without opt-in flag) and no owner approval fails closed
+    for meta_payload in [
+        {
+            "execution_context": "paper",
+            "requested_risk_profile": "low",
+            "risk_policy": baseline_inline,
         },
-    )
-    assert unapproved_create.status_code == 403
-    assert "risk_policy_profile_mapping_unapproved" in unapproved_create.json()["detail"]
+        {
+            "execution_context": "paper",
+            "risk_policy": baseline_inline,
+        },
+    ]:
+        unapproved_create = test_client.post(
+            "/api/capital-pools",
+            json={
+                "actor_id": "control-plane-bff",
+                "actor_role": "admin",
+                "pool_id": "pool-baseline-unapproved",
+                "name": "Unapproved baseline paper pool",
+                "owner_id": "tenant-test",
+                "owner_type": "org",
+                "status": "active",
+                "currency": "TWD",
+                "budget": 100000.0,
+                "single_runtime_enforced": True,
+                "metadata": meta_payload,
+            },
+        )
+        assert unapproved_create.status_code == 403
+        assert "risk_policy_profile_mapping_unapproved" in unapproved_create.json()["detail"]
 
-    # Creating suspended (risk-reducing/non-active) succeeds, and activation succeeds once owner approval decision is present
+    # Creating suspended (risk-reducing/non-active) without opt-in flag succeeds, and activation succeeds once canonical owner approval decision is present
     suspended_create = test_client.post(
         "/api/capital-pools",
         json={
@@ -881,7 +887,6 @@ def test_capital_guard_rejects_unapproved_inline_baseline_when_profile_mapping_r
             "metadata": {
                 "execution_context": "paper",
                 "requested_risk_profile": "low",
-                "require_approved_profile_mapping": True,
                 "risk_policy": baseline_inline,
             },
         },

@@ -493,10 +493,17 @@ def verify_deploy_authorities(
         or "risk_policy" in pool_meta
         or pool_meta.get("risk_policy_required") is True
         or pool_meta.get("require_approved_profile_mapping") is True
+        or bool(str(pool_meta.get("requested_risk_profile") or "").strip())
         or pool_meta.get("source") == "persona_provisioning_coordinator"
     )
     if has_pool_policy_claim:
-        if "risk_policy" in pool_meta and pool_meta.get("risk_policy") is None and not capital_pool.get("risk_policy_ref"):
+        if (
+            "risk_policy" in pool_meta
+            and pool_meta.get("risk_policy") is None
+            and not capital_pool.get("risk_policy_ref")
+            and not pool_meta.get("require_approved_profile_mapping")
+            and not str(pool_meta.get("requested_risk_profile") or "").strip()
+        ):
             pool_mismatches.append("risk_policy risk_policy_missing: inline metadata.risk_policy is null or missing")
         else:
             pool_policy_res = resolve_pool_risk_policy_binding(
@@ -504,6 +511,7 @@ def verify_deploy_authorities(
                 pool=capital_pool,
                 expected_tenant_id=str(plan_metadata.get("tenant_id") or "").strip() or None,
                 expected_stage=target_stage,
+                approval_reader=approval_reader,
                 require_active=True,
                 require_limits=("gross_limit",),
                 as_of=observed_at.isoformat().replace("+00:00", "Z"),

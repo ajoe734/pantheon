@@ -321,8 +321,14 @@ def _execution_projection_exclusion_reason(
     if not isinstance(market_data_policy, Mapping):
         return "non_executable_missing_market_data_policy"
 
-    has_explicit_risk_policy = "risk_policy" in binding_dict or "risk_policy" in metadata
-    if has_explicit_risk_policy or metadata.get("risk_policy_required") is True:
+    has_explicit_risk_policy = (
+        "risk_policy" in binding_dict
+        or "risk_policy" in metadata
+        or metadata.get("risk_policy_required") is True
+        or metadata.get("require_approved_profile_mapping") is True
+        or bool(str(metadata.get("requested_risk_profile") or "").strip())
+    )
+    if has_explicit_risk_policy:
         from services.capital.risk_policy import resolve_pool_risk_policy_binding
 
         inline_policy = (
@@ -333,6 +339,8 @@ def _execution_projection_exclusion_reason(
         if inline_policy is None and not (
             binding_dict.get("risk_policy_ref") or metadata.get("risk_policy_ref")
         ):
+            if metadata.get("require_approved_profile_mapping") is True or str(metadata.get("requested_risk_profile") or "").strip():
+                return "non_executable_risk_policy_profile_mapping_unapproved"
             return "non_executable_risk_policy_missing"
         if inline_policy is not None:
             res = resolve_pool_risk_policy_binding(
@@ -340,7 +348,19 @@ def _execution_projection_exclusion_reason(
                 pool={
                     "pool_id": str(binding_dict.get("capital_pool_id") or ""),
                     "tenant_id": metadata.get("tenant_id"),
-                    "metadata": {"risk_policy": inline_policy},
+                    "metadata": {
+                        "risk_policy": inline_policy,
+                        **(
+                            {"requested_risk_profile": metadata.get("requested_risk_profile")}
+                            if metadata.get("requested_risk_profile")
+                            else {}
+                        ),
+                        **(
+                            {"require_approved_profile_mapping": True}
+                            if metadata.get("require_approved_profile_mapping") is True
+                            else {}
+                        ),
+                    },
                 },
                 expected_tenant_id=str(metadata.get("tenant_id") or "").strip() or None,
                 expected_stage=str(binding_dict.get("deployment_mode") or "paper").strip() or "paper",

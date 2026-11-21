@@ -366,7 +366,7 @@ def test_resolve_pool_risk_policy_binding_covers_missing_invalid_stale_wrong_ten
     )
     assert valid_res.resolved is True
     assert valid_res.status == "valid"
-    assert valid_res.profile_mapping_status == "default_paper_baseline"
+    assert valid_res.profile_mapping_status == "explicit_policy"
     assert valid_res.risk_policy_id == "paper-inline-policy:persona-alpha"
     assert valid_res.risk_policy_version == "1.0"
     assert valid_res.risk_policy_digest == risk_policy_digest(valid_inline_policy)
@@ -532,13 +532,25 @@ def test_required_profile_mapping_fails_closed_on_inline_baseline_and_connects_o
         },
     }
 
-    # 1. Baseline inline policy does NOT bypass require_approved_profile_mapping=True
+    # 1. Baseline inline policy fails closed on the normal path WITHOUT any opt-in flag
+    unapproved_default_call = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
+        pool=pool_record,
+        expected_tenant_id="tenant-dev",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert unapproved_default_call.resolved is False
+    assert unapproved_default_call.status == "unresolved_profile_mapping"
+    assert unapproved_default_call.reason_code == "risk_policy_profile_mapping_unapproved"
+    assert unapproved_default_call.profile_mapping_status == "unresolved_owner_decision_required"
+    assert unapproved_default_call.allow_new_or_increased_risk is False
+    assert unapproved_default_call.allow_risk_reducing_actions is True
+
     unapproved = resolve_pool_risk_policy_binding(
         capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
         pool=pool_record,
         expected_tenant_id="tenant-dev",
         requested_profile="low",
-        require_approved_profile_mapping=True,
         as_of="2026-11-21T00:00:00Z",
     )
     assert unapproved.resolved is False
@@ -554,41 +566,42 @@ def test_required_profile_mapping_fails_closed_on_inline_baseline_and_connects_o
         == "rp-pool-persona-paper-06d4775a9b6a8f63b311"
     )
 
-    # 2. Connecting the tenant-scoped policy-owner ApprovalDecision resolves the profile mapping
-    valid_decision = {
-        "decision_id": "apv-owner-low-001",
-        "tenant_id": "tenant-dev",
-        "target_type": "capital_pool_activation",
-        "target_id": "pool-persona-paper-06d4775a9b6a8f63b311",
-        "target_version": "pool-activation-digest-001",
-        "decision_state": "decided",
-        "decision": "approved",
-        "authority_status": "authoritative",
-        "actor_role": "risk_owner",
-        "actor_id": "risk-owner-1",
-        "decided_at": "2026-11-20T00:00:00Z",
-        "expires_at": "2026-12-20T00:00:00Z",
-        "conditions": [],
-        "revoked_at": None,
-        "superseded_by": None,
-        "metadata": {
+    # 2. Connecting the canonical tenant-scoped policy-owner ApprovalDecision via owner reader resolves the profile mapping
+    from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
+
+    valid_decision = approval_snapshot(
+        decision_id="apv-owner-low-001",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id="pool-persona-paper-06d4775a9b6a8f63b311",
+        target_version="pool-activation-digest-001",
+        owner_user_id="proposer-1",
+        risk_level="low",
+        decided_at="2026-11-20T00:00:00Z",
+        recorded_at="2026-11-20T00:00:00Z",
+        expires_at="2026-12-20T00:00:00Z",
+        metadata={
             "subject": {
                 "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+                "risk_direction": "increase",
                 "requested_risk": "low",
                 "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
                 "risk_policy_version": "1.0",
                 "risk_policy_digest": risk_policy_digest(baseline_policy),
-            }
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
         },
-    }
+    )
     approved_res = resolve_pool_risk_policy_binding(
         capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
         pool=pool_record,
         expected_tenant_id="tenant-dev",
         requested_profile="low",
-        require_approved_profile_mapping=True,
         approval_decision_id="apv-owner-low-001",
-        approval_reader=type("Reader", (), {"get": lambda self, dec_id: valid_decision if dec_id == "apv-owner-low-001" else None})(),
+        approval_reader=SnapshotApprovalReader(valid_decision),
         as_of="2026-11-21T00:00:00Z",
     )
     assert approved_res.resolved is True
@@ -598,33 +611,103 @@ def test_required_profile_mapping_fails_closed_on_inline_baseline_and_connects_o
     assert approved_res.allow_new_or_increased_risk is True
     assert approved_res.owner_decision_request is None
 
-    # 3. Foreign-tenant, expired, wrong-digest, or registry_entry decisions fail closed
-    for bad_dec in [
-        {**valid_decision, "tenant_id": "tenant-other"},
-        {**valid_decision, "expires_at": "2020-01-01T00:00:00Z"},
-        {**valid_decision, "target_type": "registry_entry"},
+    # 3. Attached metadata approval dictionaries are treated only as references and never accepted without canonical owner store readback
+    empty_reader = type("EmptyReader", (), {"get": lambda self, dec_id: None})()
+    for attached_payload in [
         {
-            **valid_decision,
-            "metadata": {
-                "subject": {
-                    **valid_decision["metadata"]["subject"],
-                    "risk_policy_digest": "0" * 64,
-                }
-            },
+            "decision_id": "not-in-owner-store",
+            "tenant_id": "tenant-dev",
+            "target_type": "capital_pool_activation",
+            "target_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+            "decision_state": "decided",
+            "decision": "approved",
+            "authority_status": "authoritative",
+            "actor_role": "unauthorized-role",
+            "metadata": {"subject": dict(valid_decision["metadata"]["subject"])},
         },
+        dict(valid_decision),
     ]:
-        bad_res = resolve_pool_risk_policy_binding(
+        spoofed_pool = {
+            **pool_record,
+            "metadata": {
+                **pool_record["metadata"],
+                "profile_mapping_approval": attached_payload,
+            },
+        }
+        spoofed_res = resolve_pool_risk_policy_binding(
             capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
-            pool=pool_record,
+            pool=spoofed_pool,
             expected_tenant_id="tenant-dev",
             requested_profile="low",
-            require_approved_profile_mapping=True,
-            approval_decisions=[bad_dec],
+            approval_reader=empty_reader,
+            as_of="2026-11-21T00:00:00Z",
+        )
+        assert spoofed_res.resolved is False
+        assert spoofed_res.status == "unresolved_profile_mapping"
+        assert spoofed_res.reason_code == "risk_policy_profile_mapping_unapproved"
+        assert spoofed_res.allow_new_or_increased_risk is False
+
+    # 4. Canonical owner reader records that fail ApprovalEvidence.require_valid or usage scope fail closed
+    for bad_dec, extra_pool_meta in [
+        ({**valid_decision, "tenant_id": "tenant-other"}, {}),
+        ({**valid_decision, "expires_at": "2020-01-01T00:00:00Z"}, {}),
+        ({**valid_decision, "expires_at": None}, {}),
+        ({**valid_decision, "controller_record_ref": None}, {}),
+        ({**valid_decision, "recorded_at": None}, {}),
+        ({**valid_decision, "actor_role": "unauthorized-role"}, {}),
+        ({**valid_decision, "revoked_at": "2026-11-20T12:00:00Z"}, {}),
+        ({**valid_decision, "superseded_by": "apv-owner-low-002"}, {}),
+        ({**valid_decision, "target_type": "registry_entry"}, {}),
+        (
+            {
+                **valid_decision,
+                "metadata": {
+                    **valid_decision["metadata"],
+                    "subject": {
+                        **valid_decision["metadata"]["subject"],
+                        "risk_policy_digest": "0" * 64,
+                    },
+                },
+            },
+            {},
+        ),
+        (
+            {
+                **valid_decision,
+                "authorization_scope": {
+                    "principal_subject": "pantheon-dev-paper-provisioner",
+                    "allowed_environments": ["dev"],
+                    "allowed_target_stages": ["paper"],
+                    "allowed_execution_contexts": ["paper"],
+                    "allowed_risk_levels": ["low"],
+                    "max_capital_scale_pct": 0.0,
+                    "forbid_live": True,
+                    "forbid_real_capital": True,
+                },
+            },
+            {"environment": "prod"},
+        ),
+    ]:
+        bad_reader = type("BadReader", (), {"get": lambda self, dec_id, d=bad_dec: d if dec_id == "apv-owner-low-001" else None})()
+        bad_res = resolve_pool_risk_policy_binding(
+            capital_pool_id="pool-persona-paper-06d4775a9b6a8f63b311",
+            pool={
+                **pool_record,
+                "metadata": {
+                    **pool_record["metadata"],
+                    **extra_pool_meta,
+                },
+            },
+            expected_tenant_id="tenant-dev",
+            requested_profile="low",
+            approval_decision_id="apv-owner-low-001",
+            approval_reader=bad_reader,
             as_of="2026-11-21T00:00:00Z",
         )
         assert bad_res.resolved is False
         assert bad_res.status == "unresolved_profile_mapping"
         assert bad_res.reason_code == "risk_policy_profile_mapping_unapproved"
+        assert bad_res.allow_new_or_increased_risk is False
 
     # 4. Genuinely approved explicit owner contract via risk_policy_ref is preserved
     explicit_owner_policy = {
@@ -689,6 +772,129 @@ def test_risk_policy_digest_hashes_every_executable_dimension_and_provenance() -
         {**base, "metadata": {"requested_profile": "low"}},
     ]:
         assert risk_policy_digest(mutated) != base_digest
+
+
+def test_resolve_pool_risk_policy_binding_enforces_all_time_bounds_and_their_intersection() -> None:
+    from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+    base_explicit = {
+        "risk_policy_id": "rp-window-intersection",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 1.0,
+        "net_limit": 1.0,
+        "max_leverage": 1.0,
+    }
+
+    # 1. Policy expires_at=2099-01-01 with effective_to=2020-01-01 must fail closed as stale
+    dual_policy_upper = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-dual-upper",
+        pool={
+            "pool_id": "pool-dual-upper",
+            "tenant_id": "tenant-a",
+            "metadata": {
+                "risk_policy": {
+                    **base_explicit,
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "effective_to": "2020-01-01T00:00:00Z",
+                }
+            },
+        },
+        expected_tenant_id="tenant-a",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert dual_policy_upper.resolved is False
+    assert dual_policy_upper.status == "stale"
+    assert dual_policy_upper.reason_code == "risk_policy_stale"
+    assert dual_policy_upper.allow_new_or_increased_risk is False
+    assert dual_policy_upper.allow_risk_reducing_actions is True
+
+    # 2. Policy expires_at=2099-01-01 with pool risk_policy_expires_at=2020-01-01 must fail closed as stale
+    policy_vs_pool_upper = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-vs-policy-upper",
+        pool={
+            "pool_id": "pool-vs-policy-upper",
+            "tenant_id": "tenant-a",
+            "metadata": {
+                "risk_policy_expires_at": "2020-01-01T00:00:00Z",
+                "risk_policy": {
+                    **base_explicit,
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            },
+        },
+        expected_tenant_id="tenant-a",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert policy_vs_pool_upper.resolved is False
+    assert policy_vs_pool_upper.status == "stale"
+    assert policy_vs_pool_upper.reason_code == "risk_policy_stale"
+
+    # 3. Policy effective_from=2020-01-01 with pool risk_policy_effective_from=2099-01-01 must fail closed as stale
+    policy_vs_pool_lower = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-vs-policy-lower",
+        pool={
+            "pool_id": "pool-vs-policy-lower",
+            "tenant_id": "tenant-a",
+            "metadata": {
+                "risk_policy_effective_from": "2099-01-01T00:00:00Z",
+                "risk_policy": {
+                    **base_explicit,
+                    "effective_from": "2020-01-01T00:00:00Z",
+                },
+            },
+        },
+        expected_tenant_id="tenant-a",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert policy_vs_pool_lower.resolved is False
+    assert policy_vs_pool_lower.status == "stale"
+    assert policy_vs_pool_lower.reason_code == "risk_policy_stale"
+
+    # 4. Empty intersection (max(effective_from) >= min(expires_at/effective_to)) fails closed as invalid
+    empty_intersection = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-empty-intersection",
+        pool={
+            "pool_id": "pool-empty-intersection",
+            "tenant_id": "tenant-a",
+            "metadata": {
+                "risk_policy_expires_at": "2026-05-01T00:00:00Z",
+                "risk_policy": {
+                    **base_explicit,
+                    "effective_from": "2026-06-01T00:00:00Z",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            },
+        },
+        expected_tenant_id="tenant-a",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert empty_intersection.resolved is False
+    assert empty_intersection.status == "invalid"
+    assert empty_intersection.reason_code == "risk_policy_invalid"
+
+    # 5. Malformed secondary time bound is not hidden by a valid primary time bound
+    malformed_secondary = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-malformed-secondary",
+        pool={
+            "pool_id": "pool-malformed-secondary",
+            "tenant_id": "tenant-a",
+            "metadata": {
+                "risk_policy": {
+                    **base_explicit,
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "effective_to": "not-an-iso-timestamp",
+                }
+            },
+        },
+        expected_tenant_id="tenant-a",
+        as_of="2026-11-21T00:00:00Z",
+    )
+    assert malformed_secondary.resolved is False
+    assert malformed_secondary.status == "invalid"
+    assert malformed_secondary.reason_code == "risk_policy_invalid"
+
 
 
 

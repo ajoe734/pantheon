@@ -1341,10 +1341,26 @@ class BoundPoolRiskPolicyResolution:
         return payload
 
 
+def _extract_decision_id_reference(item: Any) -> str | None:
+    if isinstance(item, str):
+        return _optional_text(item)
+    if isinstance(item, Mapping):
+        return _first_text_or_none(
+            item,
+            "decision_id",
+            "approval_decision_id",
+            "profile_mapping_approval_id",
+        )
+    if hasattr(item, "decision_id"):
+        return _optional_text(getattr(item, "decision_id", None))
+    return None
+
+
 def _verify_policy_owner_approval_decision(
     *,
     resolved_pool_id: str,
     effective_tenant_id: str | None,
+    clean_stage: str | None,
     clean_profile: str | None,
     policy_model: RiskPolicy,
     computed_digest: str,
@@ -1360,54 +1376,62 @@ def _verify_policy_owner_approval_decision(
     approval_reader: Any | None,
     now_dt: datetime,
 ) -> str | None:
-    """Verify a tenant-scoped policy-owner ApprovalDecision binding the pool and RiskPolicy."""
-    candidates: list[Any] = []
-    if approval_decision is not None:
-        candidates.append(approval_decision)
-    if approval_decisions is not None and not isinstance(approval_decisions, (str, bytes)):
-        candidates.extend(approval_decisions)
-    for container in (pool_meta, b_meta, policy_meta):
-        attached = container.get("profile_mapping_approval") or container.get("approval_decision")
-        if attached is not None and (isinstance(attached, Mapping) or hasattr(attached, "model_dump")):
-            candidates.append(attached)
-        attached_list = container.get("approval_decisions")
-        if isinstance(attached_list, Sequence) and not isinstance(attached_list, (str, bytes)):
-            candidates.extend(attached_list)
+    """Verify a tenant-scoped policy-owner ApprovalDecision via canonical owner readback and ApprovalEvidence.require_valid."""
+    candidate_ids: list[str] = []
 
-    candidate_decision_id = (
-        _optional_text(approval_decision_id)
-        or (
-            _first_text_or_none(pool_obj, "approval_decision_id", "profile_mapping_approval_id")
-            if isinstance(pool_obj, Mapping)
-            else (
-                _optional_text(getattr(pool_obj, "approval_decision_id", None))
-                or _optional_text(getattr(pool_obj, "profile_mapping_approval_id", None))
+    def _add_ref(ref_candidate: Any) -> None:
+        dec_ref = _extract_decision_id_reference(ref_candidate)
+        if dec_ref and dec_ref not in candidate_ids:
+            candidate_ids.append(dec_ref)
+
+    _add_ref(approval_decision_id)
+    _add_ref(approval_decision)
+    if approval_decisions is not None and not isinstance(approval_decisions, (str, bytes)):
+        for item in approval_decisions:
+            _add_ref(item)
+
+    if isinstance(pool_obj, Mapping):
+        _add_ref(_first_text_or_none(pool_obj, "approval_decision_id", "profile_mapping_approval_id"))
+    elif pool_obj is not None:
+        _add_ref(getattr(pool_obj, "approval_decision_id", None))
+        _add_ref(getattr(pool_obj, "profile_mapping_approval_id", None))
+
+    for container in (pool_meta, b_map, b_meta, policy_meta):
+        if not isinstance(container, Mapping):
+            continue
+        _add_ref(
+            _first_text_or_none(
+                container,
+                "profile_mapping_approval_id",
+                "approval_decision_id",
+                "decision_id",
             )
         )
-        or _first_text_or_none(pool_meta, "profile_mapping_approval_id", "approval_decision_id")
-        or _first_text_or_none(b_map, "approval_decision_id", "profile_mapping_approval_id", "decision_id")
-        or _first_text_or_none(b_meta, "profile_mapping_approval_id", "approval_decision_id")
-        or _first_text_or_none(policy_meta, "profile_mapping_approval_id", "approval_decision_id")
-    )
-    if candidate_decision_id:
-        reader = approval_reader
-        if reader is None and os.getenv("CAPITAL_GOVERNANCE_BASE_URL", "").strip():
-            try:
-                from services.governance.approval_authority import configured_approval_reader
+        for attached_key in ("profile_mapping_approval", "approval_decision"):
+            attached = container.get(attached_key)
+            if attached is not None:
+                _add_ref(attached)
+        attached_list = container.get("approval_decisions")
+        if isinstance(attached_list, Sequence) and not isinstance(attached_list, (str, bytes)):
+            for item in attached_list:
+                _add_ref(item)
 
-                reader = configured_approval_reader("capital")
-            except Exception:
-                reader = None
-        if reader is not None and hasattr(reader, "get"):
-            try:
-                loaded_ev = reader.get(candidate_decision_id)
-                if loaded_ev is not None:
-                    candidates.append(loaded_ev)
-            except Exception:
-                pass
-
-    if not candidates:
+    if not candidate_ids or not effective_tenant_id or not resolved_pool_id:
         return None
+
+    reader = approval_reader
+    if reader is None and os.getenv("CAPITAL_GOVERNANCE_BASE_URL", "").strip():
+        try:
+            from services.governance.approval_authority import configured_approval_reader
+
+            reader = configured_approval_reader("capital")
+        except Exception:
+            reader = None
+    if reader is None:
+        return None
+
+    from services.governance.approval_authority import ApprovalEvidence
+    from services.governance.paper_approval_scope import ApprovalUsageContext, current_environment
 
     pool_approval_digest = (
         _first_text_or_none(pool_obj, "approval_digest")
@@ -1425,42 +1449,75 @@ def _verify_policy_owner_approval_decision(
         except Exception:
             pass
 
-    for cand in candidates:
-        if hasattr(cand, "model_dump"):
-            try:
-                d = cand.model_dump()
-            except Exception:
-                continue
-        elif isinstance(cand, Mapping):
-            d = dict(cand)
-        else:
+    target_stage_val = clean_stage or "paper"
+    raw_scale = pool_meta.get("capital_scale_pct")
+    if raw_scale is not None and isinstance(raw_scale, (int, float)) and not isinstance(raw_scale, bool):
+        scale_pct = float(raw_scale)
+    else:
+        scale_pct = 0.0 if target_stage_val == "paper" else 100.0
+    env_name = (
+        str(pool_meta.get("environment") or b_meta.get("environment") or "").strip().lower()
+        or current_environment()
+        or "dev"
+    )
+    usage_ctx = ApprovalUsageContext(
+        environment=env_name,
+        target_stage=target_stage_val,
+        capital_scale_pct=scale_pct,
+    )
+
+    for cand_id in candidate_ids:
+        try:
+            if hasattr(reader, "get"):
+                loaded_ev = reader.get(cand_id)
+            elif callable(reader):
+                loaded_ev = reader(cand_id)
+            else:
+                loaded_ev = None
+        except Exception:
+            loaded_ev = None
+        if loaded_ev is None:
             continue
 
+        try:
+            if isinstance(loaded_ev, ApprovalEvidence):
+                evidence = loaded_ev
+            elif isinstance(loaded_ev, Mapping):
+                evidence = ApprovalEvidence.model_validate(dict(loaded_ev))
+            elif hasattr(loaded_ev, "model_dump"):
+                evidence = ApprovalEvidence.model_validate(loaded_ev.model_dump())
+            else:
+                continue
+        except Exception:
+            continue
+
+        if evidence.decision_id != cand_id:
+            continue
+
+        expected_binding: dict[str, Any] = {
+            "tenant_id": effective_tenant_id,
+            "target_type": "capital_pool_activation",
+            "target_id": resolved_pool_id,
+            "subject.pool_id": resolved_pool_id,
+            "subject.risk_policy_id": policy_model.risk_policy_id,
+            "subject.risk_policy_version": str(policy_model.version),
+        }
+        if pool_approval_digest:
+            expected_binding["target_version"] = pool_approval_digest
+
+        try:
+            evidence.require_valid(
+                expected=expected_binding,
+                now=now_dt,
+                usage_context=usage_ctx,
+            )
+        except Exception:
+            continue
+
+        d = evidence.model_dump()
         meta = d.get("metadata") if isinstance(d.get("metadata"), Mapping) else {}
         subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
-        dec_id = _optional_text(d.get("decision_id"))
-        if (
-            not effective_tenant_id
-            or d.get("tenant_id") != effective_tenant_id
-            or d.get("target_type") != "capital_pool_activation"
-            or d.get("target_id") != resolved_pool_id
-            or not _optional_text(d.get("target_version"))
-            or (pool_approval_digest and d.get("target_version") != pool_approval_digest)
-            or d.get("decision_state") != "decided"
-            or d.get("decision") != "approved"
-            or not dec_id
-            or d.get("authority_status") != "authoritative"
-            or not _optional_text(d.get("actor_role"))
-            or not _optional_text(d.get("actor_id"))
-            or not _optional_text(d.get("decided_at"))
-            or d.get("conditions")
-            or d.get("revoked_at")
-            or d.get("superseded_by")
-            or subject.get("pool_id") != resolved_pool_id
-            or subject.get("risk_policy_id") != policy_model.risk_policy_id
-            or str(subject.get("risk_policy_version") or "") != str(policy_model.version)
-            or _optional_text(subject.get("risk_policy_digest")) not in valid_digests
-        ):
+        if _optional_text(subject.get("risk_policy_digest")) not in valid_digests:
             continue
         subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
         if clean_profile:
@@ -1469,17 +1526,7 @@ def _verify_policy_owner_approval_decision(
         elif not subj_risk:
             continue
 
-        expiry_str = _optional_text(d.get("expires_at"))
-        if expiry_str:
-            exp_dt = _parse_iso_timestamp(expiry_str)
-            if exp_dt is None or exp_dt <= now_dt:
-                continue
-        if hasattr(cand, "require_valid") and _optional_text(d.get("controller_record_ref")):
-            try:
-                cand.require_valid(now=now_dt)
-            except Exception:
-                continue
-        return dec_id
+        return evidence.decision_id
     return None
 
 
@@ -1553,7 +1600,7 @@ def resolve_pool_risk_policy_binding(
     require_active: bool = True,
     require_limits: Sequence[str] = ("gross_limit",),
     requested_profile: str | None = None,
-    require_approved_profile_mapping: bool = False,
+    require_approved_profile_mapping: bool | None = None,
     approval_decision_id: str | None = None,
     approval_decision: Any | None = None,
     approval_decisions: Sequence[Any] | None = None,
@@ -1628,13 +1675,19 @@ def resolve_pool_risk_policy_binding(
     clean_stage = _optional_text(expected_stage)
     clean_profile = (
         _optional_text(requested_profile)
-        or _first_text_or_none(pool_meta, "requested_risk_profile", "risk_profile", "requested_risk")
-        or _first_text_or_none(b_meta, "requested_risk_profile", "risk_profile", "requested_risk")
+        or (
+            _first_text_or_none(pool_obj, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+            if isinstance(pool_obj, Mapping)
+            else None
+        )
+        or _first_text_or_none(pool_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+        or _first_text_or_none(b_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
     )
     needs_approved_mapping = bool(
-        require_approved_profile_mapping
+        require_approved_profile_mapping is True
         or pool_meta.get("require_approved_profile_mapping") is True
         or b_meta.get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and clean_profile is not None)
     )
 
     def _fail(
@@ -1865,58 +1918,119 @@ def resolve_pool_risk_policy_binding(
         )
 
     now_dt = _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
-    effective_from_raw = _first_text_or_none(policy_meta, "effective_from") or _first_text_or_none(
-        pool_meta, "risk_policy_effective_from"
+    raw_policy_meta = (
+        dict(policy_model.metadata)
+        if isinstance(policy_model.metadata, Mapping)
+        else {}
     )
-    effective_from_dt: datetime | None = None
-    if effective_from_raw:
-        effective_from_dt = _parse_iso_timestamp(effective_from_raw)
-        if effective_from_dt is None:
+    lower_bound_sources: list[tuple[str, Any]] = []
+    if isinstance(raw_policy_mapping, Mapping):
+        lower_bound_sources.append(("policy.effective_from", raw_policy_mapping.get("effective_from")))
+    lower_bound_sources.extend(
+        [
+            ("policy.metadata.effective_from", raw_policy_meta.get("effective_from")),
+            ("policy_meta.effective_from", policy_meta.get("effective_from")),
+            ("pool.metadata.risk_policy_effective_from", pool_meta.get("risk_policy_effective_from")),
+            ("pool.metadata.effective_from", pool_meta.get("effective_from")),
+            ("binding.effective_from", b_map.get("effective_from")),
+            ("binding.metadata.risk_policy_effective_from", b_meta.get("risk_policy_effective_from")),
+            ("binding.metadata.effective_from", b_meta.get("effective_from")),
+        ]
+    )
+    parsed_lower_bounds: list[tuple[str, str, datetime]] = []
+    for label_name, raw_val in lower_bound_sources:
+        if raw_val in (None, ""):
+            continue
+        raw_str = _optional_text(raw_val)
+        parsed_dt = _parse_iso_timestamp(raw_str) if raw_str else None
+        if parsed_dt is None:
             return _fail(
                 "invalid",
                 "risk_policy_invalid",
-                f"Risk policy {policy_model.risk_policy_id!r} has malformed effective_from timestamp {effective_from_raw!r}",
+                f"Risk policy {policy_model.risk_policy_id!r} has malformed effective_from timestamp {raw_val!r} ({label_name})",
                 policy_obj=policy_model,
                 policy_tenant=policy_tenant_id,
             )
-        if effective_from_dt > now_dt:
-            return _fail(
-                "stale",
-                "risk_policy_stale",
-                f"Risk policy {policy_model.risk_policy_id!r} is outside its effective window (effective_from={effective_from_raw})",
-                policy_obj=policy_model,
-                policy_tenant=policy_tenant_id,
-            )
+        assert raw_str is not None
+        parsed_lower_bounds.append((label_name, raw_str, parsed_dt))
 
-    expiry_raw = _first_text_or_none(policy_meta, "expires_at", "effective_to") or _first_text_or_none(
-        pool_meta, "risk_policy_expires_at"
+    upper_bound_sources: list[tuple[str, Any]] = []
+    if isinstance(raw_policy_mapping, Mapping):
+        upper_bound_sources.extend(
+            [
+                ("policy.expires_at", raw_policy_mapping.get("expires_at")),
+                ("policy.effective_to", raw_policy_mapping.get("effective_to")),
+            ]
+        )
+    upper_bound_sources.extend(
+        [
+            ("policy.metadata.expires_at", raw_policy_meta.get("expires_at")),
+            ("policy.metadata.effective_to", raw_policy_meta.get("effective_to")),
+            ("policy_meta.expires_at", policy_meta.get("expires_at")),
+            ("policy_meta.effective_to", policy_meta.get("effective_to")),
+            ("pool.metadata.risk_policy_expires_at", pool_meta.get("risk_policy_expires_at")),
+            ("pool.metadata.risk_policy_effective_to", pool_meta.get("risk_policy_effective_to")),
+            ("pool.metadata.expires_at", pool_meta.get("expires_at")),
+            ("pool.metadata.effective_to", pool_meta.get("effective_to")),
+            ("binding.expires_at", b_map.get("expires_at")),
+            ("binding.effective_to", b_map.get("effective_to")),
+            ("binding.metadata.risk_policy_expires_at", b_meta.get("risk_policy_expires_at")),
+            ("binding.metadata.risk_policy_effective_to", b_meta.get("risk_policy_effective_to")),
+            ("binding.metadata.expires_at", b_meta.get("expires_at")),
+            ("binding.metadata.effective_to", b_meta.get("effective_to")),
+        ]
     )
-    if expiry_raw:
-        expiry_dt = _parse_iso_timestamp(expiry_raw)
-        if expiry_dt is None:
+    parsed_upper_bounds: list[tuple[str, str, datetime]] = []
+    for label_name, raw_val in upper_bound_sources:
+        if raw_val in (None, ""):
+            continue
+        raw_str = _optional_text(raw_val)
+        parsed_dt = _parse_iso_timestamp(raw_str) if raw_str else None
+        if parsed_dt is None:
             return _fail(
                 "invalid",
                 "risk_policy_invalid",
-                f"Risk policy {policy_model.risk_policy_id!r} has malformed expiration timestamp {expiry_raw!r}",
+                f"Risk policy {policy_model.risk_policy_id!r} has malformed expiration timestamp {raw_val!r} ({label_name})",
                 policy_obj=policy_model,
                 policy_tenant=policy_tenant_id,
             )
-        if effective_from_dt is not None and expiry_dt <= effective_from_dt:
-            return _fail(
-                "invalid",
-                "risk_policy_invalid",
-                f"Risk policy {policy_model.risk_policy_id!r} has invalid effective window ({effective_from_raw}..{expiry_raw})",
-                policy_obj=policy_model,
-                policy_tenant=policy_tenant_id,
-            )
-        if expiry_dt <= now_dt:
-            return _fail(
-                "stale",
-                "risk_policy_stale",
-                f"Risk policy {policy_model.risk_policy_id!r} expired at {expiry_raw}",
-                policy_obj=policy_model,
-                policy_tenant=policy_tenant_id,
-            )
+        assert raw_str is not None
+        parsed_upper_bounds.append((label_name, raw_str, parsed_dt))
+
+    effective_from_dt: datetime | None = None
+    effective_from_raw: str | None = None
+    if parsed_lower_bounds:
+        _, effective_from_raw, effective_from_dt = max(parsed_lower_bounds, key=lambda item: item[2])
+
+    expiry_dt: datetime | None = None
+    expiry_raw: str | None = None
+    if parsed_upper_bounds:
+        _, expiry_raw, expiry_dt = min(parsed_upper_bounds, key=lambda item: item[2])
+
+    if effective_from_dt is not None and expiry_dt is not None and expiry_dt <= effective_from_dt:
+        return _fail(
+            "invalid",
+            "risk_policy_invalid",
+            f"Risk policy {policy_model.risk_policy_id!r} has invalid effective window ({effective_from_raw}..{expiry_raw})",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    if effective_from_dt is not None and effective_from_dt > now_dt:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} is outside its effective window (effective_from={effective_from_raw})",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
+    if expiry_dt is not None and expiry_dt <= now_dt:
+        return _fail(
+            "stale",
+            "risk_policy_stale",
+            f"Risk policy {policy_model.risk_policy_id!r} expired at {expiry_raw}",
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+        )
 
     target_expected_version = (
         _optional_text(expected_version)
@@ -2049,13 +2163,23 @@ def resolve_pool_risk_policy_binding(
                 policy_tenant=policy_tenant_id,
             )
 
+    if not clean_profile:
+        clean_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
     is_default_inline_id = (
-        str(policy_model.risk_policy_id).startswith(("paper-inline-policy:", "rp-pool-"))
+        str(policy_model.risk_policy_id).startswith("rp-pool-")
+        or (bool(resolved_pool_id) and str(policy_model.risk_policy_id) == f"rp-{resolved_pool_id}")
         or policy_meta.get("default_paper_baseline") is True
+        or pool_meta.get("default_paper_baseline") is True
+    )
+    needs_approved_mapping = bool(
+        needs_approved_mapping
+        or policy_meta.get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and (clean_profile is not None or is_default_inline_id))
     )
     verified_decision_id = _verify_policy_owner_approval_decision(
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
+        clean_stage=clean_stage,
         clean_profile=clean_profile,
         policy_model=policy_model,
         computed_digest=computed_digest,
@@ -2193,6 +2317,7 @@ def resolve_bound_pool_risk_policy(
         expected_digest=expected_digest,
         require_active=require_active,
         require_limits=require_limits,
+        require_approved_profile_mapping=False,
         raise_on_error=False,
     )
     if resolution.resolved:

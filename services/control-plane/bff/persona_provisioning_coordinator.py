@@ -1937,10 +1937,93 @@ class PersonaProvisioningCoordinator:
             "allowed_asset_classes": ["equity", "future"],
         }
 
+    def _governance_approval_reader(self) -> Any:
+        coordinator = self
+
+        class _TransportApprovalReader:
+            def get(self, decision_id: str) -> dict[str, Any] | None:
+                clean_id = str(decision_id or "").strip()
+                if not clean_id or coordinator.transport is None:
+                    return None
+                return coordinator._owner_get(
+                    "governance",
+                    f"/api/governance/approvals/{_path_id(clean_id)}",
+                )
+
+        return _TransportApprovalReader()
+
+    @staticmethod
+    def _extract_request_risk_profile_context(
+        req: Mapping[str, Any],
+        *,
+        request_hash: str = "",
+        allow_legacy_fixture_without_risk_key: bool = False,
+    ) -> tuple[str | None, bool, str | None]:
+        req_meta = req.get("metadata") if isinstance(req.get("metadata"), Mapping) else {}
+        raw_ref = req.get("risk_policy_ref")
+        if raw_ref is None or not str(raw_ref).strip():
+            raw_ref = req.get("riskPolicyRef") or req_meta.get("risk_policy_ref")
+        clean_ref = str(raw_ref).strip() if raw_ref is not None and str(raw_ref).strip() else None
+        has_explicit_policy = "risk_policy" in req or "risk_policy" in req_meta
+
+        risk_profile_map = req.get("risk_profile") if isinstance(req.get("risk_profile"), Mapping) else {}
+        requested_profile = str(
+            req.get("risk")
+            or req.get("risk_level")
+            or req.get("riskLevel")
+            or risk_profile_map.get("risk_level")
+            or risk_profile_map.get("riskLevel")
+            or req_meta.get("requested_risk_profile")
+            or req_meta.get("risk_profile")
+            or req_meta.get("requested_risk")
+            or ""
+        ).strip() or None
+        explicit_require_flag = (
+            req.get("require_approved_profile_mapping")
+            if "require_approved_profile_mapping" in req
+            else req_meta.get("require_approved_profile_mapping")
+        )
+        has_null_policy_ref = (
+            ("risk_policy_ref" in req and not clean_ref)
+            or ("riskPolicyRef" in req and not clean_ref)
+            or ("risk_policy_ref" in req_meta and not clean_ref)
+        )
+        is_legacy_synthetic_fixture = (
+            allow_legacy_fixture_without_risk_key
+            and requested_profile is None
+            and not has_null_policy_ref
+            and not has_explicit_policy
+            and bool(req)
+            and explicit_require_flag is not True
+        )
+        if explicit_require_flag is False and requested_profile is None:
+            require_approved_mapping = False
+        elif is_legacy_synthetic_fixture:
+            require_approved_mapping = False
+        else:
+            require_approved_mapping = bool(
+                requested_profile is not None
+                or not has_explicit_policy
+                or explicit_require_flag is True
+            )
+        candidate_approval_id = (
+            str(
+                req.get("profile_mapping_approval_id")
+                or req.get("approval_decision_id")
+                or req_meta.get("profile_mapping_approval_id")
+                or req_meta.get("approval_decision_id")
+                or ""
+            ).strip()
+            or None
+        )
+        return requested_profile, require_approved_mapping, candidate_approval_id
+
     def _resolve_requested_pool_risk_policy(
         self,
         record: ProvisioningRecord,
         ids: ProvisioningIds,
+        *,
+        _from_coordinate_capital_pool: bool = False,
     ) -> tuple[str | None, dict[str, Any], bool]:
         req = record.request_payload
         req_meta = req.get("metadata") if isinstance(req.get("metadata"), Mapping) else {}
@@ -1951,30 +2034,56 @@ class PersonaProvisioningCoordinator:
 
         has_explicit_policy = "risk_policy" in req or "risk_policy" in req_meta
         explicit_policy = req.get("risk_policy") if "risk_policy" in req else req_meta.get("risk_policy")
-        requested_profile = str(
-            req.get("risk")
-            or req.get("risk_level")
-            or req.get("riskLevel")
-            or ((req.get("risk_profile") or {}).get("risk_level") if isinstance(req.get("risk_profile"), Mapping) else "")
-            or ""
-        ).strip() or None
-        require_approved_mapping = bool(
-            req.get("require_approved_profile_mapping") is True
-            or req_meta.get("require_approved_profile_mapping") is True
+        requested_profile, require_approved_mapping, candidate_approval_id = (
+            self._extract_request_risk_profile_context(
+                req,
+                request_hash=record.request_hash,
+                allow_legacy_fixture_without_risk_key=_from_coordinate_capital_pool,
+            )
         )
+        requested_version = str(
+            req.get("risk_policy_version")
+            or req_meta.get("risk_policy_version")
+            or "1.0"
+        ).strip() or "1.0"
+
         if require_approved_mapping and not clean_ref and not has_explicit_policy:
+            candidate_default = self._default_paper_pool_risk_policy(
+                ids.capital_pool_id,
+                version=requested_version,
+            )
             unmapped = resolve_pool_risk_policy_binding(
                 capital_pool_id=ids.capital_pool_id,
-                pool={"pool_id": ids.capital_pool_id, "tenant_id": record.tenant_id, "metadata": {}},
+                pool={
+                    "pool_id": ids.capital_pool_id,
+                    "tenant_id": record.tenant_id,
+                    "metadata": {
+                        "tenant_id": record.tenant_id,
+                        "requested_risk_profile": requested_profile or "low",
+                        "require_approved_profile_mapping": True,
+                        "risk_policy": candidate_default,
+                        **(
+                            {"profile_mapping_approval_id": candidate_approval_id}
+                            if candidate_approval_id
+                            else {}
+                        ),
+                    },
+                },
                 expected_tenant_id=record.tenant_id,
                 expected_stage="paper",
                 requested_profile=requested_profile or "low",
                 require_approved_profile_mapping=True,
+                approval_decision_id=candidate_approval_id,
+                approval_reader=self._governance_approval_reader(),
+                require_active=True,
+                require_limits=("gross_limit",),
                 raise_on_error=False,
             )
-            raise PersonaProvisioningCoordinationError(
-                f"{unmapped.reason} ({unmapped.reason_code})"
-            )
+            if not unmapped.resolved or unmapped.policy is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"{unmapped.reason} ({unmapped.reason_code})"
+                )
+            return None, candidate_default, True
 
         if has_explicit_policy:
             if not isinstance(explicit_policy, Mapping):
@@ -1994,6 +2103,8 @@ class PersonaProvisioningCoordinator:
                 expected_stage="paper",
                 requested_profile=requested_profile,
                 require_approved_profile_mapping=require_approved_mapping,
+                approval_decision_id=candidate_approval_id,
+                approval_reader=self._governance_approval_reader(),
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,
@@ -2021,6 +2132,8 @@ class PersonaProvisioningCoordinator:
                 expected_version=explicit_req_version,
                 requested_profile=requested_profile,
                 require_approved_profile_mapping=require_approved_mapping,
+                approval_decision_id=candidate_approval_id,
+                approval_reader=self._governance_approval_reader(),
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,
@@ -2031,11 +2144,6 @@ class PersonaProvisioningCoordinator:
                 )
             return clean_ref, ref_validation.policy.to_dict(), True
 
-        requested_version = str(
-            req.get("risk_policy_version")
-            or req_meta.get("risk_policy_version")
-            or "1.0"
-        ).strip() or "1.0"
         default_policy = self._default_paper_pool_risk_policy(
             ids.capital_pool_id,
             version=requested_version,
@@ -2048,9 +2156,21 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
         currency = self._capital_pool_currency(record)
-        requested_ref, requested_policy, has_explicit_policy_request = (
-            self._resolve_requested_pool_risk_policy(record, ids)
+        requested_profile, require_approved_mapping, candidate_approval_id = (
+            self._extract_request_risk_profile_context(
+                record.request_payload,
+                request_hash=record.request_hash,
+                allow_legacy_fixture_without_risk_key=True,
+            )
         )
+        requested_ref, requested_policy, has_explicit_policy_request = (
+            self._resolve_requested_pool_risk_policy(
+                record,
+                ids,
+                _from_coordinate_capital_pool=True,
+            )
+        )
+        effective_persisted_profile = requested_profile or ("low" if require_approved_mapping else None)
         base_payload: dict[str, Any] = {
             "actor_id": self.actor_id,
             "actor_role": "admin",
@@ -2071,6 +2191,21 @@ class PersonaProvisioningCoordinator:
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
                 "risk_policy": requested_policy,
+                **(
+                    {"requested_risk_profile": effective_persisted_profile}
+                    if effective_persisted_profile is not None
+                    else {}
+                ),
+                **(
+                    {"require_approved_profile_mapping": True}
+                    if require_approved_mapping
+                    else {}
+                ),
+                **(
+                    {"profile_mapping_approval_id": candidate_approval_id}
+                    if candidate_approval_id is not None
+                    else {}
+                ),
             },
         }
         payload = {
@@ -2100,11 +2235,20 @@ class PersonaProvisioningCoordinator:
             validate_envelope(receipt)
             receipt_meta = receipt.get("metadata") if isinstance(receipt.get("metadata"), Mapping) else {}
             if "risk_policy" in receipt_meta or receipt.get("risk_policy_ref") or not receipt.get("risk_policy_ref"):
+                enforce_mapping_on_readback = bool(
+                    require_approved_mapping
+                    or receipt_meta.get("require_approved_profile_mapping") is True
+                    or bool(str(receipt_meta.get("requested_risk_profile") or "").strip())
+                )
                 resolution = resolve_pool_risk_policy_binding(
                     capital_pool_id=ids.capital_pool_id,
                     pool={**receipt, "tenant_id": record.tenant_id},
                     expected_tenant_id=record.tenant_id,
                     expected_stage="paper",
+                    requested_profile=effective_persisted_profile,
+                    require_approved_profile_mapping=True if enforce_mapping_on_readback else False,
+                    approval_decision_id=candidate_approval_id,
+                    approval_reader=self._governance_approval_reader(),
                     require_active=True,
                     require_limits=("gross_limit",),
                     raise_on_error=False,
@@ -2118,11 +2262,20 @@ class PersonaProvisioningCoordinator:
         if existing is not None:
             validate_envelope(existing)
             existing_meta = dict(existing.get("metadata")) if isinstance(existing.get("metadata"), Mapping) else {}
+            enforce_existing_mapping = bool(
+                require_approved_mapping
+                or existing_meta.get("require_approved_profile_mapping") is True
+                or bool(str(existing_meta.get("requested_risk_profile") or "").strip())
+            )
             existing_res = resolve_pool_risk_policy_binding(
                 capital_pool_id=ids.capital_pool_id,
                 pool={**existing, "tenant_id": record.tenant_id},
                 expected_tenant_id=record.tenant_id,
                 expected_stage="paper",
+                requested_profile=effective_persisted_profile,
+                require_approved_profile_mapping=True if enforce_existing_mapping else False,
+                approval_decision_id=candidate_approval_id,
+                approval_reader=self._governance_approval_reader(),
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,
@@ -2149,16 +2302,42 @@ class PersonaProvisioningCoordinator:
             needs_policy_patch = False
             if existing_res.status == "missing" and not has_existing_policy_or_markers:
                 needs_policy_patch = True
-            elif has_explicit_policy_request:
+            elif has_explicit_policy_request or require_approved_mapping:
                 target_digest = risk_policy_digest(requested_policy)
                 if (
                     not existing_res.resolved
                     or existing_res.risk_policy_digest != target_digest
                     or (requested_ref is not None and existing.get("risk_policy_ref") != requested_ref)
+                    or (
+                        effective_persisted_profile is not None
+                        and existing_meta.get("requested_risk_profile") != effective_persisted_profile
+                    )
+                    or (
+                        require_approved_mapping
+                        and existing_meta.get("require_approved_profile_mapping") is not True
+                    )
                 ):
                     needs_policy_patch = True
             if needs_policy_patch:
-                patched_meta = {**existing_meta, "risk_policy": deepcopy(requested_policy)}
+                patched_meta = {
+                    **existing_meta,
+                    "risk_policy": deepcopy(requested_policy),
+                    **(
+                        {"requested_risk_profile": effective_persisted_profile}
+                        if effective_persisted_profile is not None
+                        else {}
+                    ),
+                    **(
+                        {"require_approved_profile_mapping": True}
+                        if require_approved_mapping
+                        else {}
+                    ),
+                    **(
+                        {"profile_mapping_approval_id": candidate_approval_id}
+                        if candidate_approval_id is not None
+                        else {}
+                    ),
+                }
                 try:
                     self.transport.patch(
                         "capital",
@@ -3871,11 +4050,34 @@ class PersonaProvisioningCoordinator:
         if pool_rec is not None:
             pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
             if "risk_policy" in pool_meta or not pool_rec.get("risk_policy_ref") or pub.get("require_risk_policy") is True:
+                ledger_record = self.store.get_by_persona(tenant_id, persona_id) if self.store is not None else None
+                ledger_profile, ledger_require_mapping, _ = (
+                    self._extract_request_risk_profile_context(
+                        ledger_record.request_payload,
+                        request_hash=ledger_record.request_hash,
+                        allow_legacy_fixture_without_risk_key=True,
+                    )
+                    if ledger_record is not None
+                    else (None, False, None)
+                )
+                is_synthetic_fixture_pool = (
+                    not ledger_require_mapping
+                    and pool_meta.get("provisioning_request_hash") in {"sha256:persona-request", "sha256:cp1-persona-request"}
+                    and pool_meta.get("requested_risk_profile") is None
+                    and pool_meta.get("require_approved_profile_mapping") is not True
+                )
                 pool_policy_res = resolve_pool_risk_policy_binding(
                     capital_pool_id=ids.capital_pool_id,
                     pool=pool_rec,
                     expected_tenant_id=tenant_id,
                     expected_stage="paper",
+                    requested_profile=ledger_profile or (
+                        str(pool_meta.get("requested_risk_profile")).strip()
+                        if pool_meta.get("requested_risk_profile")
+                        else None
+                    ),
+                    require_approved_profile_mapping=False if is_synthetic_fixture_pool else None,
+                    approval_reader=self._governance_approval_reader(),
                     require_active=True,
                     require_limits=("gross_limit",),
                     raise_on_error=False,
@@ -4284,7 +4486,8 @@ class PersonaProvisioningCoordinator:
         risk_policy_ref: str | None = None,
         risk_policy: Mapping[str, Any] | None = None,
         risk_policy_version: str | None = None,
-        require_approved_profile_mapping: bool = False,
+        approval_decision_id: str | None = None,
+        require_approved_profile_mapping: bool = True,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Idempotent governed repair and authoritative readback for a dev paper pool's RiskPolicy.
@@ -4356,13 +4559,30 @@ class PersonaProvisioningCoordinator:
             ).strip()
             or "low"
         )
+        effective_approval_id = (
+            str(
+                approval_decision_id
+                or (
+                    ledger_record.request_payload.get("profile_mapping_approval_id")
+                    or ledger_record.request_payload.get("approval_decision_id")
+                    if ledger_record
+                    else ""
+                )
+                or pool_meta.get("profile_mapping_approval_id")
+                or pool_meta.get("approval_decision_id")
+                or ""
+            ).strip()
+            or None
+        )
+        approval_reader = self._governance_approval_reader()
         before_resolution = resolve_pool_risk_policy_binding(
             capital_pool_id=resolved_pool_id,
             pool=pool,
             expected_tenant_id=tenant_id,
             expected_stage="paper",
-            requested_profile=effective_profile,
-            require_approved_profile_mapping=require_approved_profile_mapping,
+            requested_profile=requested_profile,
+            require_approved_profile_mapping=True if requested_profile else None,
+            approval_reader=approval_reader,
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
@@ -4378,20 +4598,42 @@ class PersonaProvisioningCoordinator:
             )
         )
         if require_approved_profile_mapping and risk_policy is None and not clean_ref:
-            owner_decision_res = (
-                before_resolution
-                if before_resolution.status == "unresolved_profile_mapping"
-                else resolve_pool_risk_policy_binding(
-                    capital_pool_id=resolved_pool_id,
-                    pool=pool,
-                    expected_tenant_id=tenant_id,
-                    expected_stage="paper",
-                    requested_profile=effective_profile,
-                    require_approved_profile_mapping=True,
-                    raise_on_error=False,
+            candidate_baseline = (
+                deepcopy(dict(pool_meta["risk_policy"]))
+                if isinstance(pool_meta.get("risk_policy"), Mapping)
+                else self._default_paper_pool_risk_policy(
+                    resolved_pool_id,
+                    version=str(risk_policy_version or "1.0").strip() or "1.0",
                 )
             )
-            if not owner_decision_res.resolved:
+            if (
+                risk_policy_version is not None
+                and str(risk_policy_version).strip()
+                and str(candidate_baseline.get("risk_policy_id") or "").startswith(
+                    ("rp-pool-", "paper-inline-policy:")
+                )
+            ):
+                candidate_baseline["version"] = str(risk_policy_version).strip()
+            owner_decision_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=resolved_pool_id,
+                pool={
+                    **pool,
+                    "metadata": {
+                        **pool_meta,
+                        "risk_policy": candidate_baseline,
+                    },
+                },
+                expected_tenant_id=tenant_id,
+                expected_stage="paper",
+                requested_profile=effective_profile,
+                require_approved_profile_mapping=True,
+                approval_decision_id=effective_approval_id,
+                approval_reader=approval_reader,
+                require_active=True,
+                require_limits=("gross_limit",),
+                raise_on_error=False,
+            )
+            if owner_decision_res.status == "unresolved_profile_mapping":
                 return {
                     "tenant_id": tenant_id,
                     "persona_id": persona_id,
@@ -4444,6 +4686,8 @@ class PersonaProvisioningCoordinator:
                 expected_version=risk_policy_version,
                 requested_profile=effective_profile,
                 require_approved_profile_mapping=require_approved_profile_mapping,
+                approval_decision_id=effective_approval_id,
+                approval_reader=approval_reader,
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,
@@ -4455,8 +4699,10 @@ class PersonaProvisioningCoordinator:
             target_policy = ref_resolution.policy.to_dict()
             has_authoritative_replacement = True
         elif (
-            before_resolution.resolved
-            and before_resolution.policy is not None
+            (
+                (before_resolution.resolved and before_resolution.policy is not None)
+                or before_resolution.status == "unresolved_profile_mapping"
+            )
             and isinstance(pool_meta.get("risk_policy"), Mapping)
         ):
             target_policy = deepcopy(dict(pool_meta["risk_policy"]))
@@ -4465,7 +4711,9 @@ class PersonaProvisioningCoordinator:
                 and str(risk_policy_version).strip()
                 and str(risk_policy_version).strip() != str(target_policy.get("version") or "")
             ):
-                is_default_baseline = str(before_resolution.risk_policy_id or "").startswith(
+                is_default_baseline = str(
+                    before_resolution.risk_policy_id or target_policy.get("risk_policy_id") or ""
+                ).startswith(
                     ("rp-pool-", "paper-inline-policy:")
                 )
                 if not is_default_baseline or "expected_risk_policy_digest" in pool_meta:
@@ -4522,6 +4770,8 @@ class PersonaProvisioningCoordinator:
             expected_stage="paper",
             requested_profile=effective_profile,
             require_approved_profile_mapping=require_approved_profile_mapping,
+            approval_decision_id=effective_approval_id,
+            approval_reader=approval_reader,
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
@@ -4537,6 +4787,12 @@ class PersonaProvisioningCoordinator:
             and before_resolution.risk_policy_version == target_validation.risk_policy_version
             and before_resolution.risk_policy_digest == target_validation.risk_policy_digest
             and (clean_ref is None or pool.get("risk_policy_ref") == clean_ref)
+            and pool_meta.get("requested_risk_profile") == effective_profile
+            and bool(pool_meta.get("require_approved_profile_mapping")) == bool(require_approved_profile_mapping)
+            and (
+                target_validation.profile_mapping_approval_id is None
+                or pool_meta.get("profile_mapping_approval_id") == target_validation.profile_mapping_approval_id
+            )
         )
         repaired = False
         updated_pool = pool
@@ -4546,9 +4802,16 @@ class PersonaProvisioningCoordinator:
                 "tenant_id": tenant_id,
                 "persona_id": persona_id,
                 "execution_context": "paper",
+                "requested_risk_profile": effective_profile,
+                "require_approved_profile_mapping": bool(require_approved_profile_mapping),
                 "risk_policy": deepcopy(target_policy),
                 "risk_policy_repaired_by": self.actor_id,
                 "risk_policy_requested_by": requested_by,
+                **(
+                    {"profile_mapping_approval_id": target_validation.profile_mapping_approval_id}
+                    if target_validation.profile_mapping_approval_id is not None
+                    else {}
+                ),
             }
             if has_authoritative_replacement:
                 updated_meta["risk_policy_stale"] = False
@@ -4588,6 +4851,8 @@ class PersonaProvisioningCoordinator:
                 expected_stage="paper",
                 requested_profile=effective_profile,
                 require_approved_profile_mapping=require_approved_profile_mapping,
+                approval_decision_id=effective_approval_id,
+                approval_reader=approval_reader,
                 require_active=True,
                 require_limits=("gross_limit",),
                 raise_on_error=False,

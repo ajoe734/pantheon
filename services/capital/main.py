@@ -416,6 +416,7 @@ class CapitalBoundaryService:
             risk_policy_loader=capital_guard._policy_loader,
             expected_tenant_id=_tenant_of(pool),
             expected_stage=expected_stage or "paper",
+            approval_reader=capital_guard._approval_reader,
             require_active=True,
             require_limits=("gross_limit",),
             raise_on_error=False,
