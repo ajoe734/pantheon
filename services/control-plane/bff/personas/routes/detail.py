@@ -26,6 +26,7 @@ from ..service import (
     _project_persona_dto,
     _project_persona_fleet_item,
     _project_persona_management_operational_surface,
+    _resolve_active_runtime_binding_overlay,
     _retrieve_canonical_persona_memory,
     _routed_strategies_for_persona,
     build_persona_runtime_profile,
@@ -586,9 +587,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     "Persona not found",
                     f"Persona {persona_id} does not exist",
                 )
+            rb_overlay = _resolve_active_runtime_binding_overlay(raw)
             dto = _project_persona_dto(
                 raw,
-                overlay=None,
+                overlay=rb_overlay or None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
             )
             containment = _service.get_persona_containment(persona_id)

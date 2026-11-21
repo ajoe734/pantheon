@@ -13,6 +13,7 @@ from ..service import (
     PersonaAdvisoryAdmissionError,
     PersonaProvisioningCoordinationError,
     ensure_chain_paper_capital,
+    repair_paper_pool_risk_policy,
     retire_chain_paper_capital,
     _bff_me_tenant_payload,
     _evaluate_persona_provisioning_status,
@@ -53,6 +54,20 @@ class ChainPaperCapitalRetireRequest(BaseModel):
     capital_pool_id: str = Field(pattern=_ID_PATTERN)
     binding_id: str = Field(pattern=_ID_PATTERN)
     chain_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+
+
+class PaperPoolRiskPolicyRepairRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capital_pool_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+    binding_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+    requested_profile: Optional[str] = Field(default=None, max_length=64)
+    risk_policy_ref: Optional[str] = Field(default=None, max_length=128)
+    risk_policy: Optional[Dict[str, Any]] = None
+    risk_policy_version: Optional[str] = Field(default=None, max_length=64)
+    approval_decision_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+    require_approved_profile_mapping: bool = True
+    dry_run: bool = False
 
 
 def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
@@ -224,6 +239,29 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
                 retire_chain_paper_capital,
                 tenant_id,
                 persona_id,
+                **body.model_dump(),
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise _chain_capital_failure(exc) from exc
+        return {"data": data, "meta": {"snapshot_at": utc_now()}}
+
+    @router.post("/bff/personas/{persona_id}/provisioning/paper-capital/risk-policy")
+    async def bff_repair_persona_paper_pool_risk_policy(
+        persona_id: str,
+        body: PaperPoolRiskPolicyRepairRequest,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """Idempotent governed repair and readback for a dev paper pool's bound RiskPolicy."""
+
+        identity = _extract_identity(authorization)
+        _require_operator_role(identity)
+        tenant_id = _chain_capital_persona(identity, persona_id)
+        try:
+            data = await asyncio.to_thread(
+                repair_paper_pool_risk_policy,
+                tenant_id,
+                persona_id,
+                requested_by=str(identity.operator_id),
                 **body.model_dump(),
             )
         except PersonaProvisioningCoordinationError as exc:
