@@ -98,3 +98,96 @@ Expected hosted result after deployment (from the 2026-11-04 baseline of 147,149
 row beside a terminal journey.
 
 Verify after deployment: `SELECT status, count(*) FROM trade_journey_projection.journeys GROUP BY 1` and the same on `trade_journey_projection.loop_runs` (statuses must match).
+
+## Historical paper journey cause repair (`TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121`)
+
+Historical `order_submission | failed` (`order_rejection` / `order_rejection_simulated`) and
+`reconciliation | failed` (`reconciliation_failed`) rows projected before
+`TRADE-JOURNEY-FAILURE-CAUSE-20261121` are repaired in bounded batches from immutable source
+evidence (`public.telemetry_events` and `reconciliation_drift.drift_evaluations`) via
+`scripts/repair_paper_journey_causes.py` (or
+`python3 -m services.trade_journey.lifecycle_projector repair-causes`).
+
+### Invariants and scope
+
+* **Scoped joins**: Joins strictly by `(tenant_id, environment, journey_id)` and exact
+  `source_event_id`, `reconciliation_evaluation_id` (using the owner store key
+  `'tenant-record-' + sha256(f"{tenant_id}\0{evaluation_id}")`), `source_fill_event_id` /
+  `fill_id`, and `causal_parent_id` (`position_snapshot`). Companion `fill_management` and
+  `ledger_booking` stage rows are resolved strictly by exact referenced fill/snapshot IDs
+  (never substituting the latest stage in a multi-fill journey); conflicting fill/snapshot
+  evidence is rejected as unverified (`conflicting_fill_snapshot_evidence`), and missing
+  original evidence is preserved in `missing_evidence`.
+* **Immutability**: Never modifies `public.telemetry_events`,
+  `public.trade_journey_action_ledger`, `reconciliation_drift.*`, ledger tables, or paper
+  broker orders, and never replays trading side effects.
+* **Classification buckets**:
+  * `recoverable_refusals`: `order_submission | failed` rows whose source event yields a
+    concrete non-expression rejection reason (`insufficient_cash`, `sell_without_holdings`,
+    `taiwan_broker_error`, etc.) and threshold/submission details (including the 2317 buy
+    refusal `tj_79726064-4cc2-5510-8e11-7f5e59ff89bd`, event
+    `91d55953-b575-4fe8-8d39-6e0cade58d59` with `required=100034.3461`,
+    `available=100000.0`, `submitted_to_broker=false`, `order_status="not_submitted"`).
+  * `health_only_evaluations`: `reconciliation | failed` rows whose joined evaluation in
+    `reconciliation_drift.drift_evaluations` contains only runtime-health or drift checks
+    with no proven trade-specific booking discrepancy. On fill journeys (including the 2317
+    sell `tj_57418ba7-ef37-5015-9b5e-b6423872da89`, recon event
+    `48c946c8-39d1-52bd-b1a1-ce72dc7f6e14`, fill event
+    `000600fb-6496-47d9-a550-1fa23449c1e2`, snapshot
+    `8d6761c5-5ae8-5799-87bb-10302186595a`, evaluation
+    `rdeval-sched-scheduled-tenant-dev-2026-11-16T-rb-7f3c1be55a224fdaa36bb-a39cdf74492b52bb`),
+    restores the recorded fill (`1 @ 218.5`) and its health warning as unverified accounting
+    (`reason_code="reconciliation_evidence_incomplete"`, `classification="unverified_evidence"`,
+    `accounting_variance=false`, `comparison_completed=false`) until actual trade-specific
+    evidence establishes a result. A subsequent healthy tick alone proves only runtime health.
+  * `proven_variances`: `reconciliation | failed` rows where complete trade-specific booking
+    evidence shows a discrepancy beyond `1e-6`, preserving `expected`, `actual`,
+    `difference`, `delta`, and the variance `reason_code` with normalized/deduplicated
+    `reason_detail` so repeat runs update zero already-repaired rows.
+  * `irrecoverable_records`: rows whose source event or evaluation record is absent (such as
+    `2026-10-07` reconciliation rows prior to `reconciliation_drift.drift_evaluations`
+    persistence), preserving `reason_code="reason_not_recorded"` and `missing_evidence`.
+* **Concurrency, cursor isolation, and rollback safety**: Preview (`--dry-run`) and apply
+  (`--apply`) maintain separate cursor files (`paper_journey_cause_repair_preview_cursor.json`
+  and `paper_journey_cause_repair_cursor.json`), and cursors bind `mode`, `tenant_id`,
+  `environment`, and `journey_ids` scope so `--dry-run` followed by `--apply --resume` (or
+  filtered-to-full transitions) never skips inventory rows. Every stage `UPDATE` is guarded by
+  the expected stage `projection_revision`, `fingerprint`, `contract_fields`, and parent
+  journey `projection_revision`. Before modifying a row, its scoped before-image is appended to
+  `/tmp/pantheon-journey-cause-repair/paper_journey_cause_repair_before_image.jsonl` (capped
+  at `16 MiB` / `25,000` records, 7-day TTL auto-prune).
+
+### Operator procedure (after version is hosted on dev)
+
+1. **Dry-run inventory (read-only transaction)**:
+   ```bash
+   python3 scripts/repair_paper_journey_causes.py \
+     --tenant-id tenant-dev --environment paper \
+     --batch-size 500 --max-batches 20 --dry-run \
+     --output /tmp/pantheon-journey-cause-repair/dry-run-report.json
+   ```
+2. **Bounded resumable apply**:
+   ```bash
+   python3 scripts/repair_paper_journey_causes.py \
+     --tenant-id tenant-dev --environment paper \
+     --batch-size 500 --max-batches 20 --apply --resume \
+     --output /tmp/pantheon-journey-cause-repair/apply-report.json
+   ```
+3. **Verify repeat run changes zero already-repaired rows**:
+   ```bash
+   python3 scripts/repair_paper_journey_causes.py \
+     --tenant-id tenant-dev --environment paper \
+     --batch-size 500 --max-batches 20 --apply \
+     --output /tmp/pantheon-journey-cause-repair/repeat-report.json
+   ```
+   Confirm `updated_rows == 0` and `needs_update_rows == 0`.
+4. **Rollback (if needed) or cleanup temporary before-image evidence**:
+   ```bash
+   # Rollback (protects any revision subsequently advanced by the live projector):
+   python3 scripts/repair_paper_journey_causes.py \
+     --tenant-id tenant-dev --environment paper --rollback
+
+   # Clean up temporary before-image and cursor files after verification:
+   python3 scripts/repair_paper_journey_causes.py --cleanup-temp
+   ```
+
