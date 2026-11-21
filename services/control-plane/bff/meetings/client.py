@@ -146,9 +146,9 @@ def _is_private_memory_item(item: Mapping[str, Any]) -> bool:
             return True
     if item.get("is_private") is True or item.get("private") is True:
         return True
-    for key in ("kind", "memory_type", "type"):
+    for key in ("kind", "memory_type", "type", "owner"):
         val = str(item.get(key) or "").strip().lower()
-        if val in {"private_memory", "persona_private", "persona_private_memory"}:
+        if val in {"private_memory", "persona_private", "persona_private_memory", "memory:persona_private"}:
             return True
     return False
 
@@ -409,41 +409,191 @@ def _resolve_meeting_review_cause(raw: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _collect_meeting_evidence_refs(raw: Mapping[str, Any]) -> List[str]:
-    """Collect deduplicated non-private evidence/citation refs from a meeting record."""
+def _extract_item_ref_ids(item: Mapping[str, Any]) -> List[str]:
+    out: List[str] = []
+    for k in ("item_id", "id", "source_id", "ref_id", "entry_id", "record_id"):
+        v = str(item.get(k) or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _collect_meeting_withheld_and_visible_refs(
+    raw: Mapping[str, Any],
+    *,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
+) -> Tuple[List[str], set[str]]:
+    """Return ``(evidence_refs, withheld_ids)`` after private and trader visibility filtering."""
+    meeting_trader_id = _extract_trader_id(raw)
+
+    def _is_withheld(item: Mapping[str, Any]) -> bool:
+        if _is_private_memory_item(item):
+            return True
+        if _is_agora_or_trader_record(item):
+            rec_trader = _extract_trader_id(item, default_trader_id=meeting_trader_id)
+            if not _can_view_trader(rec_trader, is_operator=is_operator, caller_user_id=caller_user_id):
+                return True
+        return False
+
+    visible_item_ids: set[str] = set()
+    withheld_ids: set[str] = set()
+    visible_case_refs: List[str] = []
+    visible_citation_refs: List[str] = []
+    withheld_citation_refs: set[str] = set()
+
+    for item in raw.get("case_file_items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        ids = _extract_item_ref_ids(item)
+        if _is_withheld(item):
+            withheld_ids.update(ids)
+        else:
+            visible_item_ids.update(ids)
+            primary = str(item.get("item_id") or item.get("id") or item.get("source_id") or "").strip()
+            if primary:
+                visible_case_refs.append(primary)
+
+    raw_case_file = raw.get("case_file")
+    if isinstance(raw_case_file, Mapping):
+        cf_lists: List[Any] = [raw_case_file.get("items")]
+        groups = raw_case_file.get("groups")
+        if isinstance(groups, Mapping):
+            for grp in groups.values():
+                if isinstance(grp, Mapping):
+                    cf_lists.append(grp.get("items"))
+        for cf_items in cf_lists:
+            if not isinstance(cf_items, list):
+                continue
+            for item in cf_items:
+                if not isinstance(item, Mapping):
+                    continue
+                ids = _extract_item_ref_ids(item)
+                if _is_withheld(item):
+                    withheld_ids.update(ids)
+                else:
+                    visible_item_ids.update(ids)
+
+    raw_pre_read = raw.get("pre_read")
+    pre_read_entries: List[Mapping[str, Any]] = []
+    if isinstance(raw_pre_read, list):
+        pre_read_entries.extend(x for x in raw_pre_read if isinstance(x, Mapping))
+    elif isinstance(raw_pre_read, Mapping):
+        if _is_withheld(raw_pre_read):
+            withheld_ids.update(_extract_item_ref_ids(raw_pre_read))
+        for list_key in ("interpretations", "items"):
+            sub = raw_pre_read.get(list_key)
+            if isinstance(sub, list):
+                pre_read_entries.extend(x for x in sub if isinstance(x, Mapping))
+    for entry in pre_read_entries:
+        ids = _extract_item_ref_ids(entry)
+        if _is_withheld(entry):
+            withheld_ids.update(ids)
+            for cit in entry.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    withheld_ids.update(_extract_item_ref_ids(cit))
+                else:
+                    s = str(cit or "").strip()
+                    if s:
+                        withheld_citation_refs.add(s)
+        else:
+            visible_item_ids.update(ids)
+
+    attr_rec = raw.get("attribution_record")
+    if isinstance(attr_rec, Mapping) and _is_withheld(attr_rec):
+        withheld_ids.update(_extract_item_ref_ids(attr_rec))
+        if raw.get("attribution_record_id"):
+            withheld_ids.add(str(raw["attribution_record_id"]).strip())
+
+    for rec in raw.get("agora_records") or []:
+        if isinstance(rec, Mapping) and _is_withheld(rec):
+            withheld_ids.update(_extract_item_ref_ids(rec))
+
+    for rnd in raw.get("rounds") or []:
+        if not isinstance(rnd, Mapping):
+            continue
+        rnd_withheld = _is_withheld(rnd)
+        for pos in rnd.get("positions") or []:
+            if not isinstance(pos, Mapping):
+                continue
+            if rnd_withheld or _is_withheld(pos):
+                withheld_ids.update(_extract_item_ref_ids(pos))
+                for cit in pos.get("citations") or []:
+                    if isinstance(cit, Mapping):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                    else:
+                        s = str(cit or "").strip()
+                        if s:
+                            withheld_citation_refs.add(s)
+                continue
+            for cit in pos.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    if _is_withheld(cit):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                        continue
+                    s = str(cit.get("item_id") or cit.get("id") or cit.get("source_id") or "").strip()
+                else:
+                    s = str(cit or "").strip()
+                if s:
+                    visible_citation_refs.append(s)
+
+    for cit_ref in withheld_citation_refs:
+        if cit_ref not in visible_item_ids and cit_ref not in visible_citation_refs:
+            withheld_ids.add(cit_ref)
+
     refs: List[str] = []
     seen: set[str] = set()
 
     def _add(val: Any) -> None:
         if isinstance(val, Mapping):
-            if _is_private_memory_item(val):
+            if _is_withheld(val):
+                withheld_ids.update(_extract_item_ref_ids(val))
                 return
-            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or "").strip()
+            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or val.get("ref_id") or "").strip()
         else:
             s = str(val or "").strip()
-        if s and s not in seen:
+        if s and s not in withheld_ids and s not in seen:
             seen.add(s)
             refs.append(s)
 
-    for r in raw.get("evidence_refs") or []:
-        _add(r)
-    for item in raw.get("case_file_items") or []:
-        if isinstance(item, Mapping) and not _is_private_memory_item(item):
-            _add(item.get("item_id") or item.get("source_id"))
-    for rnd in raw.get("rounds") or []:
-        if isinstance(rnd, Mapping):
-            for pos in rnd.get("positions") or []:
-                if isinstance(pos, Mapping) and not _is_private_memory_item(pos):
-                    for cit in pos.get("citations") or []:
-                        _add(cit)
     synth = raw.get("synthesis") if isinstance(raw.get("synthesis"), Mapping) else {}
-    if synth.get("dissent_memo_id"):
-        _add(synth.get("dissent_memo_id"))
     minutes = raw.get("minutes") if isinstance(raw.get("minutes"), Mapping) else {}
-    if minutes.get("memo_id"):
-        _add(minutes.get("memo_id"))
-    if minutes.get("dissent_memo_id"):
-        _add(minutes.get("dissent_memo_id"))
+    memo_refs = [
+        str(x).strip()
+        for x in (
+            synth.get("dissent_memo_id"),
+            minutes.get("memo_id"),
+            minutes.get("dissent_memo_id"),
+        )
+        if x and str(x).strip()
+    ]
+    memo_ref_set = set(memo_refs)
+
+    for r in raw.get("evidence_refs") or []:
+        if isinstance(r, str) and r.strip() in memo_ref_set:
+            continue
+        _add(r)
+    for r in visible_case_refs:
+        _add(r)
+    for r in visible_citation_refs:
+        _add(r)
+    for r in memo_refs:
+        _add(r)
+    return refs, withheld_ids
+
+
+def _collect_meeting_evidence_refs(
+    raw: Mapping[str, Any],
+    *,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
+) -> List[str]:
+    """Collect deduplicated non-private, caller-visible evidence/citation refs from a meeting record."""
+    refs, _ = _collect_meeting_withheld_and_visible_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
     return refs
 
 
@@ -493,7 +643,11 @@ def shape_meeting_list_item(
     meeting_trader_id = _extract_trader_id(raw)
     review_cause = _resolve_meeting_review_cause(raw)
     operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
-    evidence_refs = _collect_meeting_evidence_refs(raw)
+    evidence_refs = _collect_meeting_evidence_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
     participants_raw = raw.get("participants") if isinstance(raw.get("participants"), list) else []
     participants = [
         _shape_participant(
@@ -728,6 +882,11 @@ def shape_meeting_detail(
         pre_read = raw_pre_read
 
     # 4. Rounds & anonymised labels reveal (only to operators)
+    evidence_refs, withheld_ids = _collect_meeting_withheld_and_visible_refs(
+        raw,
+        is_operator=is_operator,
+        caller_user_id=caller_user_id,
+    )
     raw_rounds = raw.get("rounds") if isinstance(raw.get("rounds"), list) else []
     rounds: List[Dict[str, Any]] = []
     label_reveal: Dict[str, str] = {}
@@ -744,6 +903,18 @@ def shape_meeting_detail(
                 private_items_withheld += 1
                 continue
             p_copy = _strip_private_fields(dict(pos)) or {}
+            if isinstance(p_copy.get("citations"), list):
+                p_copy["citations"] = [
+                    c
+                    for c in p_copy["citations"]
+                    if not (
+                        (isinstance(c, str) and c.strip() in withheld_ids)
+                        or (
+                            isinstance(c, Mapping)
+                            and any(cid in withheld_ids for cid in _extract_item_ref_ids(c))
+                        )
+                    )
+                ]
             label = p_copy.get("label")
             persona_id = p_copy.get("persona_id")
             if is_operator:
@@ -775,7 +946,6 @@ def shape_meeting_detail(
     ]
     review_cause = _resolve_meeting_review_cause(raw)
     operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
-    evidence_refs = _collect_meeting_evidence_refs(raw)
     synthesis: Dict[str, Any] = _strip_private_fields(dict(raw_synthesis)) or {}
     synthesis.update({
         "proposals": shaped_proposals,
@@ -1416,6 +1586,8 @@ def project_human_inbox_meeting_items(
     proposals: Sequence[Mapping[str, Any]] = (),
     catalogue: Optional[Mapping[str, Any]] = None,
     include_reviewed: bool = False,
+    is_operator: bool = True,
+    caller_user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Project human-actionable meeting items into the Management Human Inbox shape.
 
@@ -1452,7 +1624,11 @@ def project_human_inbox_meeting_items(
             op_review = _normalize_operator_review(m.get("operator_review"), default_cause=review_cause)
             if op_review is not None and not include_reviewed:
                 continue
-            evidence_refs = _collect_meeting_evidence_refs(m)
+            evidence_refs = _collect_meeting_evidence_refs(
+                m,
+                is_operator=is_operator,
+                caller_user_id=caller_user_id,
+            )
             inbox_id = f"meeting_review:{meeting_id}"
             is_reviewed = op_review is not None
             decision_history = (

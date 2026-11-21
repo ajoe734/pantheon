@@ -597,3 +597,219 @@ def test_operator_review_route_persists_disposition_survives_restart_and_enforce
     assert after_restart["outcome"] == "REVIEW"
     assert after_restart["synthesis"]["proposals"] == []
     assert len(after_restart["rounds"]) == 2
+
+
+def test_operator_review_partial_write_failures_restart_concurrency_and_unicode_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", SERVICE_TOKEN)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", TENANT)
+    data_dir = tmp_path / "domain_recovery"
+    consultation_main.store = ConsultationStore(str(data_dir))
+    consultation_main.workflow_state = WorkflowStateStore(tmp_path / "wf_recovery.sqlite3")
+    consultation_main.meeting_provider = None
+    consultation_main.auto_run_meetings = False
+    http = TestClient(consultation_main.app, raise_server_exceptions=False)
+
+    def _seed_review_meeting(mid: str) -> None:
+        consultation_main.store.put_meeting(
+            {
+                "meeting_id": mid,
+                "tenant_id": TENANT,
+                "meeting_type": "MT-1",
+                "meeting_code": "MT-1",
+                "topic": f"Failure recovery test {mid}",
+                "status": "closed",
+                "outcome": "REVIEW",
+                "chair_persona_id": "persona-2448c7053e33ea48da47",
+                "convened_by": {"kind": "persona", "id": "persona-2448c7053e33ea48da47"},
+                "participants": [{"persona_id": "persona-2448c7053e33ea48da47", "role": "chair"}],
+                "round": 2,
+                "case_file_items": [{"item_id": "facts:pool:1", "excerpt": "Pool Sharpe 1.2"}],
+                "rounds": [{"round": 1, "positions": []}],
+                "synthesis": {
+                    "proposals": [],
+                    "outcome": "REVIEW",
+                    "unreadable_reason": None,
+                    "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+                },
+                "trace_id": f"trace-{mid}",
+            }
+        )
+
+    def _review_lifecycle_events(mid: str) -> list[dict[str, Any]]:
+        import json as _json
+
+        events = []
+        for raw_line in consultation_main.store.lifecycle_log_path.read_text(encoding="utf-8").splitlines():
+            if not raw_line.strip():
+                continue
+            ev = _json.loads(raw_line)
+            if ev.get("record_type") == "persona_meeting" and ev.get("record_id") == mid:
+                op_rev = (ev.get("payload") or {}).get("operator_review")
+                if isinstance(op_rev, dict) and op_rev.get("status") == "reviewed":
+                    events.append(ev)
+        return events
+
+    def _review_outbox_records(mid: str) -> list[Any]:
+        out = []
+        for rec in consultation_main.store.outbox.load():
+            payload = getattr(rec.event, "payload", None) or {}
+            if payload.get("record_type") == "persona_meeting" and payload.get("record_id") == mid:
+                op_rev = (payload.get("payload") or {}).get("operator_review")
+                if isinstance(op_rev, dict) and op_rev.get("status") == "reviewed":
+                    out.append(rec)
+        return out
+
+    op_alice_hdrs = {**_headers("idem-rec-alice"), "X-Pantheon-Service-Actor": "bff:op-alice"}
+    op_bob_hdrs = {**_headers("idem-rec-bob"), "X-Pantheon-Service-Actor": "bff:op-bob"}
+
+    # --- Case 1: Inject one outbox.append OSError ---
+    _seed_review_meeting("mtg-fail-outbox-1")
+    real_outbox_append = consultation_main.store.outbox.append
+    outbox_calls = {"n": 0}
+
+    def _fail_outbox_once(record: Any) -> None:
+        outbox_calls["n"] += 1
+        if outbox_calls["n"] == 1:
+            raise OSError("simulated outbox disk full on first review commit")
+        real_outbox_append(record)
+
+    monkeypatch.setattr(consultation_main.store.outbox, "append", _fail_outbox_once)
+
+    r1_outbox = http.post(
+        "/api/consult/meetings/mtg-fail-outbox-1/review",
+        json={"note": "Outbox recovery rationale", "reviewed_by": "op-alice"},
+        headers=op_alice_hdrs,
+    )
+    assert r1_outbox.status_code == 500
+    assert len(_review_lifecycle_events("mtg-fail-outbox-1")) == 1
+    first_ts = _review_lifecycle_events("mtg-fail-outbox-1")[0]["payload"]["operator_review"]["reviewed_at"]
+    assert len(_review_outbox_records("mtg-fail-outbox-1")) == 0
+    assert len(consultation_main.store.list_audit_for_request("mtg-fail-outbox-1")) == 0
+
+    # Conflicting operator during partial state is rejected with 409 and cannot overwrite op-alice
+    r_conflict_outbox = http.post(
+        "/api/consult/meetings/mtg-fail-outbox-1/review",
+        json={"note": "Bob trying to hijack partial review", "reviewed_by": "op-bob"},
+        headers=op_bob_hdrs,
+    )
+    assert r_conflict_outbox.status_code == 409
+
+    # Identical retry recovers outbox + audit without writing a second review lifecycle event
+    r2_outbox = http.post(
+        "/api/consult/meetings/mtg-fail-outbox-1/review",
+        json={"note": "Outbox recovery rationale", "reviewed_by": "op-alice"},
+        headers=op_alice_hdrs,
+    )
+    assert r2_outbox.status_code == 200, r2_outbox.text
+    b2_outbox = r2_outbox.json()
+    assert b2_outbox["operator_review"]["reviewed_by"] == "op-alice"
+    assert b2_outbox["operator_review"]["reviewed_at"] == first_ts
+    assert len(_review_lifecycle_events("mtg-fail-outbox-1")) == 1
+    assert len(_review_outbox_records("mtg-fail-outbox-1")) == 1
+    assert len(consultation_main.store.list_audit_for_request("mtg-fail-outbox-1")) == 1
+
+    monkeypatch.setattr(consultation_main.store.outbox, "append", real_outbox_append)
+
+    # --- Case 2: Inject one append_audit OSError (plus process restart before retry) ---
+    _seed_review_meeting("mtg-fail-audit-1")
+    real_append_audit = consultation_main.store.append_audit
+    audit_calls = {"n": 0}
+
+    def _fail_audit_once(event: Any) -> None:
+        audit_calls["n"] += 1
+        if audit_calls["n"] == 1:
+            raise OSError("simulated audit log I/O failure on first review commit")
+        real_append_audit(event)
+
+    monkeypatch.setattr(consultation_main.store, "append_audit", _fail_audit_once)
+
+    r1_audit = http.post(
+        "/api/consult/meetings/mtg-fail-audit-1/review",
+        json={"note": "Audit recovery rationale", "reviewed_by": "op-alice"},
+        headers=op_alice_hdrs,
+    )
+    assert r1_audit.status_code == 500
+    assert len(_review_lifecycle_events("mtg-fail-audit-1")) == 1
+    audit_first_ts = _review_lifecycle_events("mtg-fail-audit-1")[0]["payload"]["operator_review"]["reviewed_at"]
+    assert len(_review_outbox_records("mtg-fail-audit-1")) == 1
+    assert len(consultation_main.store.list_audit_for_request("mtg-fail-audit-1")) == 0
+
+    # Simulate process restart before retry
+    consultation_main.store = ConsultationStore(str(data_dir))
+
+    r2_audit = http.post(
+        "/api/consult/meetings/mtg-fail-audit-1/review",
+        json={"note": "Audit recovery rationale", "reviewed_by": "op-alice"},
+        headers=op_alice_hdrs,
+    )
+    assert r2_audit.status_code == 200, r2_audit.text
+    b2_audit = r2_audit.json()
+    assert b2_audit["replayed"] is True
+    assert b2_audit["operator_review"]["reviewed_by"] == "op-alice"
+    assert b2_audit["operator_review"]["reviewed_at"] == audit_first_ts
+    assert len(_review_lifecycle_events("mtg-fail-audit-1")) == 1
+    assert len(_review_outbox_records("mtg-fail-audit-1")) == 1
+    audits = consultation_main.store.list_audit_for_request("mtg-fail-audit-1")
+    assert len(audits) == 1
+    assert audits[0].action == "meeting_review_recorded"
+    assert audits[0].actor_ref.actor_id == "op-alice"
+
+    # --- Case 3: Concurrent identical and conflicting requests ---
+    _seed_review_meeting("mtg-concurrent-1")
+
+    def _attempt(idx: int) -> tuple[int, str]:
+        is_alice = idx % 2 == 0
+        actor = "op-alice" if is_alice else "op-bob"
+        note_val = "Concurrent winning review rationale" if is_alice else "Concurrent conflicting rationale"
+        resp = http.post(
+            "/api/consult/meetings/mtg-concurrent-1/review",
+            json={"note": note_val, "reviewed_by": actor},
+            headers={**_headers(f"idem-conc-{idx}"), "X-Pantheon-Service-Actor": f"bff:{actor}"},
+        )
+        return resp.status_code, (resp.json().get("operator_review") or {}).get("reviewed_by", "")
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        outcomes = list(pool.map(_attempt, range(6)))
+
+    ok_actors = {actor for code, actor in outcomes if code == 200}
+    conflict_codes = [code for code, _ in outcomes if code == 409]
+    assert len(ok_actors) == 1
+    assert len(conflict_codes) == 3
+    assert len(_review_lifecycle_events("mtg-concurrent-1")) == 1
+    assert len(_review_outbox_records("mtg-concurrent-1")) == 1
+    assert len(consultation_main.store.list_audit_for_request("mtg-concurrent-1")) == 1
+
+    # --- Case 4: Unicode 2000-character boundaries (ASCII, Chinese, 4-byte Emoji, and 2001 rejection) ---
+    for idx, valid_note in enumerate(
+        (
+            "a" * 2000,
+            "澄" * 2000,
+            "📈" * 2000,
+        ),
+        start=1,
+    ):
+        mid = f"mtg-unicode-ok-{idx}"
+        _seed_review_meeting(mid)
+        u_resp = http.post(
+            f"/api/consult/meetings/{mid}/review",
+            json={"note": valid_note, "reviewed_by": "op-alice"},
+            headers=op_alice_hdrs,
+        )
+        assert u_resp.status_code == 200, (idx, u_resp.text)
+        assert u_resp.json()["operator_review"]["note"] == valid_note
+
+    _seed_review_meeting("mtg-unicode-too-long")
+    for invalid_note in ("a" * 2001, "澄" * 2001, "📈" * 2001):
+        too_long_resp = http.post(
+            "/api/consult/meetings/mtg-unicode-too-long/review",
+            json={"note": invalid_note, "reviewed_by": "op-alice"},
+            headers=op_alice_hdrs,
+        )
+        assert too_long_resp.status_code == 422
+        assert too_long_resp.json()["reason"] == "review_note_too_long"

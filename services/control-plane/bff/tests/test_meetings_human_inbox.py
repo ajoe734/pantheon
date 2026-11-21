@@ -285,7 +285,22 @@ def test_human_inbox_review_meeting_exposes_cause_and_evidence_and_leaves_pendin
             "outcome": "REVIEW",
             "chair_persona_id": "persona-2448c7053e33ea48da47",
             "participants": [{"persona_id": "persona-2448c7053e33ea48da47", "role": "chair", "origin": "institutional"}],
-            "case_file_items": [{"item_id": "facts:pool:persona-2448c7053e33ea48da47:v1"}],
+            "case_file_items": [
+                {"item_id": "facts:pool:persona-2448c7053e33ea48da47:v1"},
+                {"item_id": "secret-private-inbox-item", "scope": "private"},
+            ],
+            "rounds": [
+                {
+                    "round": 1,
+                    "positions": [
+                        {
+                            "persona_id": "persona-2448c7053e33ea48da47",
+                            "is_private": True,
+                            "citations": ["secret-private-inbox-pos-ref"],
+                        }
+                    ],
+                }
+            ],
             "synthesis": {
                 "proposals": [],
                 "outcome": "REVIEW",

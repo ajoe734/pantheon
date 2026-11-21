@@ -43,6 +43,7 @@ from services.persona import consult_triggers
 from .models import (
     ActorRef,
     AuthorType,
+    ConsultAuditEvent,
     ConsultEvidenceAttachment,
     ConsultFinding,
     ConsultMemo,
@@ -2340,44 +2341,291 @@ def _resolve_meeting_review_cause(meeting: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _collect_meeting_evidence_refs(meeting: Mapping[str, Any]) -> List[str]:
-    """Collect deduplicated non-private evidence/citation refs for a meeting."""
+_MEETING_PRIVATE_SCOPES = frozenset({
+    "persona_private",
+    "private",
+    "private_user",
+    "user_private",
+})
+_MEETING_PRIVATE_KIND_VALUES = frozenset({
+    "private_memory",
+    "persona_private",
+    "persona_private_memory",
+    "memory:persona_private",
+})
+
+
+def _is_private_meeting_item(item: Mapping[str, Any]) -> bool:
+    for key in ("relevance_scope", "memory_layer", "scope", "visibility_scope", "memory_scope"):
+        val = str(item.get(key) or "").strip().lower()
+        if val in _MEETING_PRIVATE_SCOPES:
+            return True
+    if item.get("is_private") is True or item.get("private") is True:
+        return True
+    for key in ("kind", "memory_type", "type", "owner"):
+        val = str(item.get(key) or "").strip().lower()
+        if val in _MEETING_PRIVATE_KIND_VALUES:
+            return True
+    return False
+
+
+def _is_agora_or_trader_meeting_record(item: Mapping[str, Any]) -> bool:
+    if str(item.get("source_owner") or "").strip().lower() == "agora":
+        return True
+    if str(item.get("origin") or "").strip().lower() in {"agora", "agora_advisor", "private_servant"}:
+        return True
+    if str(item.get("provenance") or "").strip().lower() == "agora":
+        return True
+    if str(item.get("kind") or "").strip().lower().startswith("agora"):
+        return True
+    if str(item.get("subject_kind") or "").strip().lower() in {"trader", "agora_user"}:
+        return True
+    if any(
+        k in item
+        for k in (
+            "agora_user_id",
+            "agoraUserId",
+            "trader_id",
+            "traderId",
+            "account_id",
+            "accountId",
+            "broker_ids",
+            "brokerIds",
+            "raw_text",
+        )
+    ):
+        return True
+    return False
+
+
+def _extract_meeting_trader_id(
+    item: Mapping[str, Any],
+    default_trader_id: Optional[str] = None,
+) -> Optional[str]:
+    for key in ("agora_user_id", "agoraUserId", "trader_id", "traderId", "user_id", "userId"):
+        val = str(item.get(key) or "").strip()
+        if val:
+            return val
+    if str(item.get("subject_kind") or "").strip().lower() in {"trader", "agora_user"}:
+        val = str(item.get("subject_id") or "").strip()
+        if val:
+            return val
+    subject_ref = item.get("subject_ref")
+    if isinstance(subject_ref, Mapping):
+        if str(subject_ref.get("kind") or "").strip().lower() in {"trader", "agora_user"}:
+            val = str(
+                subject_ref.get("id")
+                or subject_ref.get("agora_user_id")
+                or subject_ref.get("trader_id")
+                or ""
+            ).strip()
+            if val:
+                return val
+    elif isinstance(subject_ref, str) and subject_ref.startswith(("trader:", "agora_user:", "user:")):
+        val = subject_ref.split(":", 1)[1].strip()
+        if val:
+            return val
+    convened_by = item.get("convened_by")
+    if isinstance(convened_by, Mapping):
+        if str(convened_by.get("kind") or "").strip().lower() in {"trader", "agora_user"}:
+            val = str(
+                convened_by.get("id")
+                or convened_by.get("agora_user_id")
+                or convened_by.get("trader_id")
+                or ""
+            ).strip()
+            if val:
+                return val
+    return default_trader_id
+
+
+def _can_view_meeting_trader(
+    trader_id: Optional[str],
+    *,
+    is_operator: bool,
+    caller_user_id: Optional[str],
+) -> bool:
+    if is_operator:
+        return True
+    if trader_id and caller_user_id and str(trader_id).strip() == str(caller_user_id).strip():
+        return True
+    return False
+
+
+def _extract_item_ref_ids(item: Mapping[str, Any]) -> List[str]:
+    out: List[str] = []
+    for k in ("item_id", "id", "source_id", "ref_id", "entry_id", "record_id"):
+        v = str(item.get(k) or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _collect_meeting_evidence_refs(
+    meeting: Mapping[str, Any],
+    *,
+    is_operator: bool = False,
+    caller_user_id: Optional[str] = None,
+) -> List[str]:
+    """Collect deduplicated non-private, caller-visible evidence/citation refs for a meeting."""
+    meeting_trader_id = _extract_meeting_trader_id(meeting)
+
+    def _is_withheld(item: Mapping[str, Any]) -> bool:
+        if _is_private_meeting_item(item):
+            return True
+        if _is_agora_or_trader_meeting_record(item):
+            rec_trader = _extract_meeting_trader_id(item, default_trader_id=meeting_trader_id)
+            if not _can_view_meeting_trader(
+                rec_trader,
+                is_operator=is_operator,
+                caller_user_id=caller_user_id,
+            ):
+                return True
+        return False
+
+    visible_item_ids: set[str] = set()
+    withheld_ids: set[str] = set()
+    visible_case_refs: List[str] = []
+    visible_citation_refs: List[str] = []
+    withheld_citation_refs: set[str] = set()
+
+    for item in meeting.get("case_file_items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        ids = _extract_item_ref_ids(item)
+        if _is_withheld(item):
+            withheld_ids.update(ids)
+        else:
+            visible_item_ids.update(ids)
+            primary = str(item.get("item_id") or item.get("id") or item.get("source_id") or "").strip()
+            if primary:
+                visible_case_refs.append(primary)
+
+    raw_case_file = meeting.get("case_file")
+    if isinstance(raw_case_file, Mapping):
+        cf_lists: List[Any] = [raw_case_file.get("items")]
+        groups = raw_case_file.get("groups")
+        if isinstance(groups, Mapping):
+            for grp in groups.values():
+                if isinstance(grp, Mapping):
+                    cf_lists.append(grp.get("items"))
+        for cf_items in cf_lists:
+            if not isinstance(cf_items, list):
+                continue
+            for item in cf_items:
+                if not isinstance(item, Mapping):
+                    continue
+                ids = _extract_item_ref_ids(item)
+                if _is_withheld(item):
+                    withheld_ids.update(ids)
+                else:
+                    visible_item_ids.update(ids)
+
+    raw_pre_read = meeting.get("pre_read")
+    pre_read_entries: List[Mapping[str, Any]] = []
+    if isinstance(raw_pre_read, list):
+        pre_read_entries.extend(x for x in raw_pre_read if isinstance(x, Mapping))
+    elif isinstance(raw_pre_read, Mapping):
+        if _is_withheld(raw_pre_read):
+            withheld_ids.update(_extract_item_ref_ids(raw_pre_read))
+        for list_key in ("interpretations", "items"):
+            sub = raw_pre_read.get(list_key)
+            if isinstance(sub, list):
+                pre_read_entries.extend(x for x in sub if isinstance(x, Mapping))
+    for entry in pre_read_entries:
+        ids = _extract_item_ref_ids(entry)
+        if _is_withheld(entry):
+            withheld_ids.update(ids)
+            for cit in entry.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    withheld_ids.update(_extract_item_ref_ids(cit))
+                else:
+                    s = str(cit or "").strip()
+                    if s:
+                        withheld_citation_refs.add(s)
+        else:
+            visible_item_ids.update(ids)
+
+    attr_rec = meeting.get("attribution_record")
+    if isinstance(attr_rec, Mapping) and _is_withheld(attr_rec):
+        withheld_ids.update(_extract_item_ref_ids(attr_rec))
+        if meeting.get("attribution_record_id"):
+            withheld_ids.add(str(meeting["attribution_record_id"]).strip())
+
+    for rec in meeting.get("agora_records") or []:
+        if isinstance(rec, Mapping) and _is_withheld(rec):
+            withheld_ids.update(_extract_item_ref_ids(rec))
+
+    for rnd in meeting.get("rounds") or []:
+        if not isinstance(rnd, Mapping):
+            continue
+        rnd_withheld = _is_withheld(rnd)
+        for pos in rnd.get("positions") or []:
+            if not isinstance(pos, Mapping):
+                continue
+            if rnd_withheld or _is_withheld(pos):
+                withheld_ids.update(_extract_item_ref_ids(pos))
+                for cit in pos.get("citations") or []:
+                    if isinstance(cit, Mapping):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                    else:
+                        s = str(cit or "").strip()
+                        if s:
+                            withheld_citation_refs.add(s)
+                continue
+            for cit in pos.get("citations") or []:
+                if isinstance(cit, Mapping):
+                    if _is_withheld(cit):
+                        withheld_ids.update(_extract_item_ref_ids(cit))
+                        continue
+                    s = str(cit.get("item_id") or cit.get("id") or cit.get("source_id") or "").strip()
+                else:
+                    s = str(cit or "").strip()
+                if s:
+                    visible_citation_refs.append(s)
+
+    for cit_ref in withheld_citation_refs:
+        if cit_ref not in visible_item_ids and cit_ref not in visible_citation_refs:
+            withheld_ids.add(cit_ref)
+
     refs: List[str] = []
     seen: set[str] = set()
 
     def _add(val: Any) -> None:
         if isinstance(val, Mapping):
-            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or "").strip()
+            if _is_withheld(val):
+                withheld_ids.update(_extract_item_ref_ids(val))
+                return
+            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or val.get("ref_id") or "").strip()
         else:
             s = str(val or "").strip()
-        if s and s not in seen:
+        if s and s not in withheld_ids and s not in seen:
             seen.add(s)
             refs.append(s)
 
-    for r in meeting.get("evidence_refs") or []:
-        _add(r)
-    for item in meeting.get("case_file_items") or []:
-        if isinstance(item, Mapping):
-            if (
-                str(item.get("memory_layer") or "").strip().lower() == "persona_private"
-                or str(item.get("relevance_scope") or "").strip().lower() == "persona_private"
-            ):
-                continue
-            _add(item.get("item_id") or item.get("source_id"))
-    for rnd in meeting.get("rounds") or []:
-        if isinstance(rnd, Mapping):
-            for pos in rnd.get("positions") or []:
-                if isinstance(pos, Mapping):
-                    for cit in pos.get("citations") or []:
-                        _add(cit)
     synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
-    if synth.get("dissent_memo_id"):
-        _add(synth.get("dissent_memo_id"))
     minutes = meeting.get("minutes") if isinstance(meeting.get("minutes"), Mapping) else {}
-    if minutes.get("memo_id"):
-        _add(minutes.get("memo_id"))
-    if minutes.get("dissent_memo_id"):
-        _add(minutes.get("dissent_memo_id"))
+    memo_refs = [
+        str(x).strip()
+        for x in (
+            synth.get("dissent_memo_id"),
+            minutes.get("memo_id"),
+            minutes.get("dissent_memo_id"),
+        )
+        if x and str(x).strip()
+    ]
+    memo_ref_set = set(memo_refs)
+
+    for r in meeting.get("evidence_refs") or []:
+        if isinstance(r, str) and r.strip() in memo_ref_set:
+            continue
+        _add(r)
+    for r in visible_case_refs:
+        _add(r)
+    for r in visible_citation_refs:
+        _add(r)
+    for r in memo_refs:
+        _add(r)
     return refs
 
 
@@ -2417,6 +2665,54 @@ def _normalize_operator_review(
     return out
 
 
+def _ensure_meeting_review_audit(
+    store: Any,
+    *,
+    meeting: Mapping[str, Any],
+    operator_id: str,
+    service_actor_id: Optional[str] = None,
+) -> None:
+    if not (hasattr(store, "list_audit_for_request") and hasattr(store, "append_audit")):
+        return
+    meeting_id = str(meeting["meeting_id"])
+    for ev in store.list_audit_for_request(meeting_id):
+        if getattr(ev, "action", None) == "meeting_review_recorded":
+            return
+    op_review = meeting.get("operator_review") if isinstance(meeting.get("operator_review"), Mapping) else {}
+    effective_operator = str(op_review.get("reviewed_by") or operator_id).strip() or operator_id
+    review_ts = str(op_review.get("reviewed_at") or "").strip() or utc_now()
+    digest_src = json.dumps(
+        {
+            "meeting_id": meeting_id,
+            "reviewed_by": effective_operator,
+            "reviewed_at": review_ts,
+            "note": str(op_review.get("note") or ""),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    ).encode("utf-8")
+    payload_hash = hashlib.sha256(digest_src).hexdigest()
+    audit_id = f"aud-mrev-{hashlib.sha256(f'{meeting_id}:{effective_operator}'.encode('utf-8')).hexdigest()[:12]}"
+    service_actor_ref = (
+        {"actor_type": "service", "actor_id": service_actor_id}
+        if service_actor_id
+        else None
+    )
+    event = ConsultAuditEvent(
+        audit_id=audit_id,
+        request_id=meeting_id,
+        actor_ref={"actor_type": "operator", "actor_id": effective_operator},
+        service_actor_ref=service_actor_ref,
+        action="meeting_review_recorded",
+        before_state="REVIEW:pending",
+        after_state="REVIEW:reviewed",
+        payload_hash=payload_hash,
+        trace_id=str(meeting.get("trace_id") or meeting_id),
+        timestamp=review_ts,
+    )
+    store.append_audit(event)
+
+
 def record_meeting_operator_review(
     *,
     store: Any,
@@ -2426,108 +2722,149 @@ def record_meeting_operator_review(
     note: str,
     reviewed_at: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    service_actor_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], bool]:
     """Persist an authenticated operator's review disposition on a closed REVIEW meeting.
 
     Preserves the original REVIEW synthesis, transcript/rounds, and zero proposals.
     Repeated identical submissions return ``(meeting, True)`` without creating duplicate
-    writes; conflicting submissions by another operator or with a different note raise
-    409 ``MeetingRefusedError("meeting_already_reviewed")``.
+    writes; partial write failures across lifecycle, outbox, and audit are recoverably
+    idempotent on retry while preserving the first actor and timestamp. Conflicting
+    submissions by another operator or with a different note raise 409
+    ``MeetingRefusedError("meeting_already_reviewed")``.
     """
+    from contextlib import nullcontext
     from .store import MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS
 
-    meeting = store.get_meeting(meeting_id)
-    if not meeting or str(meeting.get("tenant_id") or "default") != tenant_id:
-        raise KeyError(meeting_id)
+    lock = getattr(store, "_lock", None)
+    ctx = lock if lock is not None else nullcontext()
+    with ctx:
+        meeting = store.get_meeting(meeting_id)
+        if not meeting or str(meeting.get("tenant_id") or "default") != tenant_id:
+            raise KeyError(meeting_id)
 
-    operator_id = str(reviewed_by or "").strip()
-    if not operator_id:
-        raise MeetingRefusedError(
-            "operator_required",
-            "reviewed_by operator identity is required",
-            status_code=403,
-            meeting_id=meeting_id,
-        )
-
-    clean_note = str(note or "").strip()
-    if not clean_note:
-        raise MeetingRefusedError(
-            "review_note_required",
-            "A non-empty operator review note is required",
-            status_code=422,
-            meeting_id=meeting_id,
-        )
-    if len(clean_note) > MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS:
-        raise MeetingRefusedError(
-            "review_note_too_long",
-            f"Operator review note exceeds {MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} characters",
-            status_code=422,
-            meeting_id=meeting_id,
-        )
-
-    status = str(meeting.get("status") or "").strip().lower()
-    synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
-    outcome = str(meeting.get("outcome") or synth.get("outcome") or "").strip().upper()
-    if status not in {"closed", "completed", "review"} or outcome != "REVIEW":
-        raise MeetingRefusedError(
-            "meeting_not_in_review",
-            f"Meeting {meeting_id} (status={meeting.get('status')!r}, outcome={meeting.get('outcome')!r}) "
-            "is not a closed REVIEW meeting",
-            status_code=409,
-            meeting_id=meeting_id,
-        )
-    if len(synth.get("proposals") or []) > 0:
-        raise MeetingRefusedError(
-            "meeting_has_proposals",
-            f"Meeting {meeting_id} issued proposals and cannot be closed as a zero-proposal synthesis review",
-            status_code=409,
-            meeting_id=meeting_id,
-        )
-
-    cause = _resolve_meeting_review_cause(meeting) or "unknown"
-    existing_review = _normalize_operator_review(meeting.get("operator_review"), default_cause=cause)
-    if existing_review is not None:
-        if existing_review["reviewed_by"] == operator_id and existing_review["note"] == clean_note:
-            return meeting, True
-        raise MeetingRefusedError(
-            "meeting_already_reviewed",
-            f"Meeting {meeting_id} has already been reviewed by {existing_review['reviewed_by']}",
-            status_code=409,
-            meeting_id=meeting_id,
-        )
-
-    eff_reviewed_at = str(reviewed_at or "").strip() or utc_now()
-    clean_idem = str(idempotency_key or "").strip() or None
-    review_record: Dict[str, Any] = {
-        "status": "reviewed",
-        "disposition": "closed_no_proposal",
-        "note": clean_note,
-        "reviewed_by": operator_id,
-        "reviewed_at": eff_reviewed_at,
-        "cause": cause,
-        "unreadable_reason": cause,
-    }
-    if clean_idem:
-        review_record["idempotency_key"] = clean_idem
-
-    meeting["operator_review"] = review_record
-    try:
-        store.put_meeting(meeting)
-    except ValueError as exc:
-        if "immutable" in str(exc).lower():
+        operator_id = str(reviewed_by or "").strip()
+        if not operator_id:
             raise MeetingRefusedError(
-                "meeting_already_reviewed",
-                str(exc),
+                "operator_required",
+                "reviewed_by operator identity is required",
+                status_code=403,
+                meeting_id=meeting_id,
+            )
+
+        clean_note = str(note or "").strip()
+        if not clean_note:
+            raise MeetingRefusedError(
+                "review_note_required",
+                "A non-empty operator review note is required",
+                status_code=422,
+                meeting_id=meeting_id,
+            )
+        if len(clean_note) > MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS:
+            raise MeetingRefusedError(
+                "review_note_too_long",
+                f"Operator review note exceeds {MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} characters",
+                status_code=422,
+                meeting_id=meeting_id,
+            )
+
+        status = str(meeting.get("status") or "").strip().lower()
+        synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
+        outcome = str(meeting.get("outcome") or synth.get("outcome") or "").strip().upper()
+        if status not in {"closed", "completed", "review"} or outcome != "REVIEW":
+            raise MeetingRefusedError(
+                "meeting_not_in_review",
+                f"Meeting {meeting_id} (status={meeting.get('status')!r}, outcome={meeting.get('outcome')!r}) "
+                "is not a closed REVIEW meeting",
                 status_code=409,
                 meeting_id=meeting_id,
+            )
+        if len(synth.get("proposals") or []) > 0:
+            raise MeetingRefusedError(
+                "meeting_has_proposals",
+                f"Meeting {meeting_id} issued proposals and cannot be closed as a zero-proposal synthesis review",
+                status_code=409,
+                meeting_id=meeting_id,
+            )
+
+        cause = _resolve_meeting_review_cause(meeting) or "unknown"
+        pending_map = getattr(store, "_pending_meeting_reviews", None)
+        if not isinstance(pending_map, dict):
+            pending_map = {}
+
+        existing_review = _normalize_operator_review(meeting.get("operator_review"), default_cause=cause)
+        if existing_review is not None:
+            if existing_review["reviewed_by"] != operator_id or existing_review["note"] != clean_note:
+                raise MeetingRefusedError(
+                    "meeting_already_reviewed",
+                    f"Meeting {meeting_id} has already been reviewed by {existing_review['reviewed_by']}",
+                    status_code=409,
+                    meeting_id=meeting_id,
+                )
+            meeting["operator_review"] = existing_review
+            store.put_meeting(meeting)
+            _ensure_meeting_review_audit(
+                store,
+                meeting=meeting,
+                operator_id=operator_id,
+                service_actor_id=service_actor_id,
+            )
+            pending_map.pop(meeting_id, None)
+            return meeting, True
+
+        staged_review = _normalize_operator_review(pending_map.get(meeting_id), default_cause=cause)
+        if staged_review is not None:
+            if staged_review["reviewed_by"] != operator_id or staged_review["note"] != clean_note:
+                raise MeetingRefusedError(
+                    "meeting_already_reviewed",
+                    f"Meeting {meeting_id} has already been reviewed by {staged_review['reviewed_by']}",
+                    status_code=409,
+                    meeting_id=meeting_id,
+                )
+            review_record = dict(staged_review)
+        else:
+            eff_reviewed_at = str(reviewed_at or "").strip() or utc_now()
+            clean_idem = str(idempotency_key or "").strip() or None
+            review_record = {
+                "status": "reviewed",
+                "disposition": "closed_no_proposal",
+                "note": clean_note,
+                "reviewed_by": operator_id,
+                "reviewed_at": eff_reviewed_at,
+                "cause": cause,
+                "unreadable_reason": cause,
+            }
+            if clean_idem:
+                review_record["idempotency_key"] = clean_idem
+            pending_map[meeting_id] = copy.deepcopy(review_record)
+
+        meeting["operator_review"] = review_record
+        try:
+            store.put_meeting(meeting)
+        except ValueError as exc:
+            pending_map.pop(meeting_id, None)
+            if "immutable" in str(exc).lower():
+                raise MeetingRefusedError(
+                    "meeting_already_reviewed",
+                    str(exc),
+                    status_code=409,
+                    meeting_id=meeting_id,
+                ) from exc
+            raise MeetingRefusedError(
+                "invalid_operator_review",
+                str(exc),
+                status_code=422,
+                meeting_id=meeting_id,
             ) from exc
-        raise MeetingRefusedError(
-            "invalid_operator_review",
-            str(exc),
-            status_code=422,
-            meeting_id=meeting_id,
-        ) from exc
-    return meeting, False
+
+        _ensure_meeting_review_audit(
+            store,
+            meeting=meeting,
+            operator_id=operator_id,
+            service_actor_id=service_actor_id,
+        )
+        pending_map.pop(meeting_id, None)
+        return meeting, False
 
 
 def _write_meeting_memory(

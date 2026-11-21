@@ -26,7 +26,7 @@
       "POST /bff/meetings/{meeting_id}/review"
     ],
     "request_body": {
-      "note": "string (required, trimmed non-empty, <= 2000 characters)"
+      "note": "string (required, trimmed non-empty, <= 2000 Unicode characters; serialized operator_review object <= 16384 UTF-8 bytes so 2000 ASCII, CJK, or 4-byte emoji characters are accepted with HTTP 200 and >2000 characters rejected with HTTP 422 review_note_too_long)"
     },
     "operator_review_shape": {
       "status": "pending | reviewed",
@@ -37,31 +37,36 @@
       "cause": "string ('unknown' on legacy rows without stored cause; specific stored cause when present)",
       "unreadable_reason": "string | null"
     },
+    "privacy_and_trader_visibility": {
+      "private_memory_withholding": "Consistent _is_private_meeting_item / _is_private_memory_item filtering across source (list_meetings_view, get_meeting_detail_view) and BFF (shape_meeting_list_item, shape_meeting_detail, project_human_inbox_meeting_items) checks all private scope keys (relevance_scope, memory_layer, scope, visibility_scope, memory_scope), boolean flags (is_private, private), and private kind/type/owner markers on case_file_items, case_file groups, pre_read, round positions, agora_records, attribution_record, and evidence_refs, stripping withheld item IDs and private position citations before flattening evidence_refs.",
+      "trader_scope_filtering": "Agora/trader-scoped records and private_servant round positions are withheld from flattened source list/detail evidence_refs by default and included in BFF shaped detail/list/inbox evidence_refs and round citations only for operators (is_operator=True) or the owning trader (caller_user_id == trader_id)."
+    },
     "human_inbox_projection": {
       "pending_before_review": "meeting_review:{meeting_id} projected in GET /bff/management/human-inbox with status='pending', gate='meeting_review', can_proceed=false, evidence_refs, and unreadable_reason/cause context",
       "after_review": "meeting_review:{meeting_id} leaves the pending GET /bff/management/human-inbox queue while GET /bff/management/meetings/{meeting_id} and GET /bff/meetings/{meeting_id} return operator_review.status='reviewed' and preserve outcome='REVIEW', synthesis, transcript/rounds, and proposals=[]"
     },
     "concurrency_and_idempotency": {
-      "identical_retry": "HTTP 200 with identical operator_review and replayed=true (zero duplicate lifecycle/audit/outbox writes)",
+      "identical_retry": "HTTP 200 with identical operator_review (preserving first reviewed_by and reviewed_at) and replayed=true (zero duplicate lifecycle/audit/outbox writes)",
+      "partial_write_failure_recovery": "If outbox.append or append_audit raises an OSError after the lifecycle event is written (or across a process restart), in-memory and replayed state preserves the first operator and timestamp, rejects conflicting operators with HTTP 409, and an identical retry repairs the missing outbox record (via _has_outbox_for_lifecycle_event) and/or missing audit record (via _ensure_meeting_review_audit) leaving exactly 1 review lifecycle event, 1 outbox record, and 1 meeting_review_recorded audit event",
       "conflicting_retry_or_other_operator": "HTTP 409 meeting_already_reviewed",
-      "non_review_or_unclosed_meeting": "HTTP 409 meeting_review_not_applicable",
-      "wrong_tenant": "HTTP 403 tenant_scope_mismatch / BFF_ERR_TENANT_SCOPE",
+      "non_review_or_unclosed_meeting": "HTTP 409 meeting_not_in_review",
+      "wrong_tenant": "HTTP 403 tenant_scope_mismatch / BFF_ERR_TENANT_SCOPE (404 when meeting_id is in another tenant)",
       "viewer_or_non_operator_role": "HTTP 403 insufficient_role / BFF_ERR_FORBIDDEN"
     }
   },
   "runtime_storage_budget": {
     "new_recurring_jobs": 0,
     "new_persistent_stores": 0,
-    "existing_storage_owner": "services/consultation/store.py (ConsultationStore)",
+    "existing_storage_owner": "services/consultation/store.py (ConsultationStore / PostgresConsultationStore)",
     "cadence": "On-demand authenticated operator action only. At hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week total), at most 1 non-replayed review write can occur per closed REVIEW meeting.",
     "per_record_byte_cap": {
       "note_max_chars": 2000,
-      "operator_review_object_max_bytes": 4096,
+      "operator_review_object_max_bytes": 16384,
       "enforced_by": "services/consultation/store.py::_validate_meeting_operator_review_write"
     },
-    "count_cap": "At most 1 persisted operator_review state transition, 1 ConsultAuditEvent (action='meeting_review_recorded'), and 1 ConsultOutboxRecord (topic='consult.meeting.updated') per closed REVIEW meeting. Identical retries short-circuit as replayed=true without calling put_meeting or append_audit; conflicting writes are rejected by both record_meeting_operator_review and ConsultationStore._validate_meeting_operator_review_write.",
-    "growth_per_day_at_hosted_scale": "With 3 enrolled trading personas (<= 9 meetings/week, ~1.3 meetings/day), even if 100% of meetings closed with outcome=REVIEW, operator review writes add <= 1.3 lifecycle snapshot updates (<= 4 KB delta each), <= 1.3 audit rows (~400 B each), and <= 1.3 outbox rows (~2 KB each), totaling < 10 KB/day across existing JSONL/Postgres stores.",
-    "retention_and_cleanup": "Persisted in-place on the existing meeting lifecycle record in consult_lifecycle_events.jsonl / consult_svc.lifecycle_events and audited in consult_audit.jsonl / consult_svc.audit_events. Outbox notifications in consult_outbox.jsonl / consult_svc.outbox_records are drained by the existing outbox publisher; duplicate no-op put_meeting writes are suppressed in ConsultationStore.put_meeting.",
+    "count_cap": "At most 1 persisted operator_review lifecycle upsert, 1 ConsultAuditEvent (action='meeting_review_recorded'), and 1 OutboxRecord (idempotency_key='consult-lifecycle:<event_id>') per closed REVIEW meeting. Identical retries verify outbox and audit presence and short-circuit as replayed=true without duplicate writes; conflicting writes are rejected by both record_meeting_operator_review and ConsultationStore._validate_meeting_operator_review_write.",
+    "growth_per_day_at_hosted_scale": "With 3 enrolled trading personas (<= 9 meetings/week, ~1.3 meetings/day), each persona_meeting lifecycle upsert and outbox envelope stores a full meeting snapshot (~15-40 KB base snapshot, up to ~45-56 KB with a max 2000-char Unicode operator_review <= 16 KB). Even if 100% of meetings closed with outcome=REVIEW, operator review dispositions add at most ~1.3 full-snapshot lifecycle upserts/day (~20-75 KB/day worst case), ~1.3 full-snapshot outbox records/day (~20-75 KB/day worst case), and ~1.3 compact audit rows/day (~400-600 B each, < 1 KB/day).",
+    "retention_and_cleanup": "Whole-writer historical row/byte retention and compaction for the existing append-only consultation JSONL journals and SQL tables remain tracked as unreviewed under RC3 WP3.1 (startup replay into in-memory state and duplicate suppression do not delete or compact historical lines/rows on disk). For this incremental field, unchanged put_meeting writes and idempotent operator_review retries are suppressed before appending a new lifecycle, outbox, or audit record.",
     "storage_manifest_entries": [
       "jsonl:consult_lifecycle_events.jsonl",
       "jsonl:consult_audit.jsonl",
@@ -83,12 +88,12 @@
       {
         "command": "pytest -q services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_persona_meetings.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py acceptance/test_meeting_review_disposition.py scripts/test_check_storage_manifest.py",
         "status": "passed",
-        "summary": "62 passed"
+        "summary": "64 passed"
       },
       {
         "command": "python3 scripts/check_storage_manifest.py",
         "status": "passed",
-        "summary": "passed=true, failures=[], bounded=25"
+        "summary": "passed=true, failures=[], bounded=16, unreviewed=336"
       },
       {
         "command": "python3 scripts/ci_test_inventory.py check",

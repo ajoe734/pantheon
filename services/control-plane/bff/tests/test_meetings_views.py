@@ -664,6 +664,12 @@ def test_private_memory_never_returned_and_trader_identity_and_label_visibility(
     assert bob_data["attribution_record"] is None
     assert bob_data["anonymised_labels_revealed"] is False
     assert bob_data["label_reveal"] is None
+    assert "cf-private-leak-1" not in op_data["evidence_refs"]
+    assert "cf-private-leak-1" not in alice_data["evidence_refs"]
+    assert "cf-private-leak-1" not in bob_data["evidence_refs"]
+    assert "cf-agora-lock-1" in op_data["evidence_refs"]
+    assert "cf-agora-lock-1" in alice_data["evidence_refs"]
+    assert "cf-agora-lock-1" not in bob_data["evidence_refs"]
 
 
 def test_operator_convene_route_write_gated_and_forwards_idempotency_key(meetings_stack):
@@ -832,6 +838,14 @@ def test_operator_review_route_enforces_role_tenant_validation_idempotency_and_f
             "/bff/management/meetings/mtg-002/review",
             headers=make_headers("op-alice", roles=["operator"]),
             json={"note": "n" * 2001},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/bff/management/meetings/mtg-002/review",
+            headers=make_headers("op-alice", roles=["operator"]),
+            json={"note": "澄" * 2001},
         ).status_code
         == 422
     )

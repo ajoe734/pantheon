@@ -1787,17 +1787,8 @@ def post_persona_meeting_operator_review(
                 note=note_text,
                 reviewed_at=req.reviewed_at,
                 idempotency_key=eff_idem,
+                service_actor_id=CONSULTATION_SERVICE_ACTOR.actor_id if identity.actor_type == "service" else None,
             )
-            if not replayed:
-                _emit_audit(
-                    action="meeting_review_recorded",
-                    request_id=meeting_id,
-                    actor_ref=ActorRef(actor_type="operator", actor_id=operator_id),
-                    service_actor_ref=CONSULTATION_SERVICE_ACTOR if identity.actor_type == "service" else None,
-                    trace_id=str(updated.get("trace_id") or meeting_id),
-                    before_state="REVIEW:pending",
-                    after_state="REVIEW:reviewed",
-                )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Persona meeting not found") from exc
         except MeetingRefusedError as exc:

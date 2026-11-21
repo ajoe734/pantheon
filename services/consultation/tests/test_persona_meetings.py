@@ -2383,3 +2383,182 @@ def test_operator_review_disposition_exposes_specific_cause_when_stored_and_unkn
     assert updated_legacy["operator_review"]["status"] == "reviewed"
     assert updated_legacy["operator_review"]["cause"] == "unknown"
     assert updated_legacy["operator_review"]["unreadable_reason"] == "unknown"
+
+
+def test_evidence_refs_withholds_all_private_and_unauthorized_trader_refs_across_source_list_detail_inbox(
+    tmp_path: Path,
+) -> None:
+    from services.control_plane.bff.meetings.client import (
+        project_human_inbox_meeting_items,
+        shape_meeting_detail,
+        shape_meeting_list,
+    )
+
+    store = ConsultationStore(str(tmp_path / "privacy_evidence_store"))
+
+    # 1. Exact reviewer isolated repro: only private case items & private round positions
+    isolated_id = "mtg-isolated-private-repro"
+    store.put_meeting(
+        {
+            "meeting_id": isolated_id,
+            "tenant_id": TENANT,
+            "meeting_type": "MT-1",
+            "topic": "Isolated private evidence repro",
+            "status": "closed",
+            "outcome": "REVIEW",
+            "chair_persona_id": "persona-alpha",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": [{"persona_id": "persona-alpha", "role": "chair"}],
+            "round": 1,
+            "case_file_items": [
+                {"item_id": "secret-private-item", "scope": "private", "excerpt": "private scope item"},
+                {"item_id": "secret-private-flag", "is_private": True, "excerpt": "is_private flag item"},
+                {"item_id": "secret-private-kind", "kind": "private_memory", "excerpt": "private kind item"},
+                {"item_id": "secret-private-vis", "visibility_scope": "user_private", "excerpt": "user_private item"},
+                {"item_id": "secret-private-memscope", "memory_scope": "private_user", "excerpt": "private_user item"},
+            ],
+            "rounds": [
+                {
+                    "round": 1,
+                    "positions": [
+                        {
+                            "persona_id": "persona-alpha",
+                            "role": "chair",
+                            "is_private": True,
+                            "citations": ["secret-private-position-ref"],
+                        },
+                        {
+                            "persona_id": "persona-beta",
+                            "role": "participant",
+                            "scope": "private",
+                            "citations": ["secret-private-scope-pos-ref"],
+                        },
+                    ],
+                }
+            ],
+            "synthesis": {"proposals": [], "outcome": "REVIEW", "unreadable_reason": None},
+        }
+    )
+
+    source_detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=isolated_id)
+    assert source_detail is not None
+    assert source_detail["evidence_refs"] == []
+
+    shaped_detail = shape_meeting_detail(
+        source_detail,
+        is_operator=True,
+        caller_user_id="op-alice",
+        snapshot_at="2026-11-21T12:00:00Z",
+    )
+    assert shaped_detail["case_file_items"] == []
+    assert shaped_detail["rounds"][0]["positions"] == []
+    assert shaped_detail["evidence_refs"] == []
+
+    source_list = meetings_mod.list_meetings_view(store, tenant_id=TENANT)
+    assert source_list["items"][0]["evidence_refs"] == []
+    shaped_list = shape_meeting_list(
+        source_list,
+        is_operator=True,
+        caller_user_id="op-alice",
+        snapshot_at="2026-11-21T12:00:00Z",
+    )
+    assert shaped_list["items"][0]["evidence_refs"] == []
+
+    inbox_items = project_human_inbox_meeting_items(
+        snapshot_at="2026-11-21T12:00:00Z",
+        meetings=[source_detail],
+    )
+    assert inbox_items[0]["evidence_refs"] == []
+
+    # 2. Mixed shared, private, and trader-scoped items across operator, owning trader, and other trader
+    mixed_id = "mtg-mixed-visibility"
+    store.put_meeting(
+        {
+            "meeting_id": mixed_id,
+            "tenant_id": TENANT,
+            "meeting_type": "MT-4",
+            "topic": "Trader attribution visibility test",
+            "status": "closed",
+            "outcome": "REVIEW",
+            "chair_persona_id": "persona-alpha",
+            "convened_by": {"kind": "agora_user", "id": "trader-alice", "agora_user_id": "trader-alice"},
+            "subject_ref": {"kind": "trader", "id": "trader-alice"},
+            "participants": [{"persona_id": "persona-alpha", "role": "chair"}],
+            "round": 1,
+            "case_file_items": [
+                {"item_id": "cf-shared-public", "relevance_scope": "committee"},
+                {"item_id": "cf-private-hidden", "scope": "private"},
+                {
+                    "item_id": "cf-trader-alice-only",
+                    "source_owner": "agora",
+                    "trader_id": "trader-alice",
+                    "agora_user_id": "trader-alice",
+                },
+            ],
+            "rounds": [
+                {
+                    "round": 1,
+                    "positions": [
+                        {
+                            "persona_id": "persona-alpha",
+                            "role": "chair",
+                            "citations": ["cf-shared-public", "cf-trader-alice-only", "cf-private-hidden"],
+                        },
+                        {
+                            "persona_id": "servant-alice",
+                            "origin": "private_servant",
+                            "trader_id": "trader-alice",
+                            "citations": ["cit-trader-alice-servant"],
+                        },
+                        {
+                            "persona_id": "persona-secret",
+                            "is_private": True,
+                            "citations": ["cit-private-only"],
+                        },
+                    ],
+                }
+            ],
+            "synthesis": {"proposals": [], "outcome": "REVIEW", "dissent_memo_id": "memo-dissent-mixed"},
+        }
+    )
+
+    mixed_source = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=mixed_id)
+    assert mixed_source is not None
+    for forbidden_private in ("cf-private-hidden", "cit-private-only"):
+        assert forbidden_private not in mixed_source["evidence_refs"]
+
+    op_shaped = shape_meeting_detail(
+        mixed_source,
+        is_operator=True,
+        caller_user_id="op-alice",
+        snapshot_at="2026-11-21T12:00:00Z",
+    )
+    assert op_shaped["evidence_refs"] == [
+        "cf-shared-public",
+        "cf-trader-alice-only",
+        "cit-trader-alice-servant",
+        "memo-dissent-mixed",
+    ]
+
+    alice_shaped = shape_meeting_detail(
+        mixed_source,
+        is_operator=False,
+        caller_user_id="trader-alice",
+        snapshot_at="2026-11-21T12:00:00Z",
+    )
+    assert alice_shaped["evidence_refs"] == [
+        "cf-shared-public",
+        "cf-trader-alice-only",
+        "cit-trader-alice-servant",
+        "memo-dissent-mixed",
+    ]
+
+    bob_shaped = shape_meeting_detail(
+        mixed_source,
+        is_operator=False,
+        caller_user_id="trader-bob",
+        snapshot_at="2026-11-21T12:00:00Z",
+    )
+    assert bob_shaped["evidence_refs"] == ["cf-shared-public", "memo-dissent-mixed"]
+    assert "cf-trader-alice-only" not in bob_shaped["rounds"][0]["positions"][0]["citations"]
+    assert "cf-private-hidden" not in bob_shaped["rounds"][0]["positions"][0]["citations"]

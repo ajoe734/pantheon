@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from services.foundation import EventEnvelope, JsonlOutboxStore, OutboxRecord, TraceContext
 from services.foundation.types import ActorRef as FoundationActorRef
@@ -26,7 +27,7 @@ from .models import (
 CONSULT_LIFECYCLE_EVENT_SCHEMA_VERSION = "consult_lifecycle_event.v1"
 CONSULTATION_SERVICE_ACTOR_ID = "consultation-svc"
 MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000
-MEETING_OPERATOR_REVIEW_MAX_BYTES = 4096
+MEETING_OPERATOR_REVIEW_MAX_BYTES = 16384
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -50,6 +51,13 @@ def _validate_meeting_operator_review_write(
             raise ValueError(
                 f"meeting operator_review note must be 1..{MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} chars"
             )
+        reviewed_by = str(incoming_review.get("reviewed_by") or "").strip()
+        if not reviewed_by or len(reviewed_by) > 256:
+            raise ValueError("meeting operator_review reviewed_by must be 1..256 chars")
+        for key in ("status", "disposition", "reviewed_at", "cause", "unreadable_reason", "idempotency_key"):
+            val = incoming_review.get(key)
+            if val is not None and len(str(val)) > 256:
+                raise ValueError(f"meeting operator_review {key} exceeds 256 chars")
         encoded = json.dumps(incoming_review, ensure_ascii=False, sort_keys=True).encode("utf-8")
         if len(encoded) > MEETING_OPERATOR_REVIEW_MAX_BYTES:
             raise ValueError(
@@ -119,6 +127,9 @@ class ConsultationStore:
         self._meetings: Dict[str, Dict[str, Any]] = {}
         self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
         self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
+        self._last_lifecycle_event_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._pending_meeting_reviews: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
         self._next_sequence_no = 1
 
         if self.lifecycle_log_path.exists():
@@ -213,6 +224,7 @@ class ConsultationStore:
         payload = dict(event.get("payload", {}))
         if event.get("operation") != "upsert" or not record_id:
             return
+        self._last_lifecycle_event_by_key[(str(record_type), record_id)] = _model_copy(event)
         if record_type == "request":
             self._requests[record_id] = _model_from_data(ConsultRequest, payload)
         elif record_type == "memo":
@@ -231,6 +243,20 @@ class ConsultationStore:
             self._meeting_schedules[record_id] = _model_copy(payload)
         elif record_type == "meeting_refusal":
             self._meeting_refusals[record_id] = _model_copy(payload)
+
+    def _has_outbox_for_lifecycle_event(self, lifecycle_event: Dict[str, Any]) -> bool:
+        target_event_id = str(lifecycle_event.get("event_id") or "").strip()
+        if not target_event_id:
+            return False
+        target_idem = f"consult-lifecycle:{target_event_id}"
+        for rec in self.outbox.load():
+            ev = getattr(rec, "event", None)
+            if getattr(ev, "idempotency_key", None) == target_idem:
+                return True
+            payload = getattr(ev, "payload", None)
+            if isinstance(payload, dict) and str(payload.get("event_id") or "") == target_event_id:
+                return True
+        return False
 
     def _append_lifecycle_event(
         self,
@@ -252,8 +278,9 @@ class ConsultationStore:
             "payload": payload,
         }
         self._append_jsonl(self.lifecycle_log_path, event)
-        self._append_outbox_event(event)
         self._next_sequence_no += 1
+        self._apply_lifecycle_event(event)
+        self._append_outbox_event(event)
 
     def _append_outbox_event(self, lifecycle_event: Dict[str, Any]) -> None:
         trace_id = str(lifecycle_event["trace_id"])
@@ -462,37 +489,43 @@ class ConsultationStore:
     # --- Audit ---
 
     def append_audit(self, event: ConsultAuditEvent) -> None:
-        with self.audit_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(_model_json(event) + "\n")
+        with self._lock:
+            with self.audit_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(_model_json(event) + "\n")
 
     def list_audit_for_request(self, request_id: str) -> List[ConsultAuditEvent]:
-        if not self.audit_log_path.exists():
-            return []
-        events: List[ConsultAuditEvent] = []
-        with self.audit_log_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                event = _model_from_data(ConsultAuditEvent, json.loads(line))
-                if event.request_id == request_id:
-                    events.append(event)
-        return events
+        with self._lock:
+            if not self.audit_log_path.exists():
+                return []
+            events: List[ConsultAuditEvent] = []
+            with self.audit_log_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    event = _model_from_data(ConsultAuditEvent, json.loads(line))
+                    if event.request_id == request_id:
+                        events.append(event)
+            return events
 
     # --- Deliberative Persona Meetings ---
 
     def put_meeting(self, meeting: Dict[str, Any]) -> None:
-        meeting_id = str(meeting["meeting_id"])
-        trace_id = str(meeting.get("trace_id") or meeting_id)
-        saved = _model_copy(dict(meeting))
-        existing = self._meetings.get(meeting_id)
-        _validate_meeting_operator_review_write(existing, saved)
-        if existing is not None and existing == saved:
-            return
-        self._append_lifecycle_event(
-            record_type="persona_meeting",
-            record_id=meeting_id,
-            trace_id=trace_id,
-            payload=saved,
-        )
-        self._meetings[meeting_id] = saved
+        with self._lock:
+            meeting_id = str(meeting["meeting_id"])
+            trace_id = str(meeting.get("trace_id") or meeting_id)
+            saved = _model_copy(dict(meeting))
+            existing = self._meetings.get(meeting_id)
+            _validate_meeting_operator_review_write(existing, saved)
+            if existing is not None and existing == saved:
+                last_event = self._last_lifecycle_event_by_key.get(("persona_meeting", meeting_id))
+                if last_event is not None and not self._has_outbox_for_lifecycle_event(last_event):
+                    self._append_outbox_event(last_event)
+                return
+            self._append_lifecycle_event(
+                record_type="persona_meeting",
+                record_id=meeting_id,
+                trace_id=trace_id,
+                payload=saved,
+            )
+            self._meetings[meeting_id] = saved
 
     def get_meeting(self, meeting_id: str) -> Optional[Dict[str, Any]]:
         meeting = self._meetings.get(meeting_id)
@@ -599,6 +632,9 @@ class PostgresConsultationStore(ConsultationStore):
         self._meetings: Dict[str, Dict[str, Any]] = {}
         self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
         self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
+        self._last_lifecycle_event_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._pending_meeting_reviews: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
         self._next_sequence_no = 1
         if bootstrap:
             self._bootstrap()
@@ -710,6 +746,7 @@ class PostgresConsultationStore(ConsultationStore):
         self._meetings.clear()
         self._meeting_schedules.clear()
         self._meeting_refusals.clear()
+        self._last_lifecycle_event_by_key.clear()
         self._next_sequence_no = 1
         with self._connect() as conn:
             cursor = conn.execute(
@@ -767,8 +804,9 @@ class PostgresConsultationStore(ConsultationStore):
                 event,
             ),
         )
-        self._append_outbox_event(event)
         self._next_sequence_no += 1
+        self._apply_lifecycle_event(event)
+        self._append_outbox_event(event)
 
     def put_memo(self, memo: ConsultMemo) -> None:
         existing = self._memos.get(memo.memo_id)
