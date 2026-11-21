@@ -133,7 +133,7 @@ def _tracked(patterns: list[str], root: Path | None = None) -> list[Path]:
     )
 
 
-def _extract_shell_c_script(argv: list[str]) -> str | None:
+def _unwrap_shell_argv(argv: list[str]) -> list[str]:
     tokens = list(argv)
     while tokens and Path(tokens[0]).name in ("env", "command", "builtin", "nohup", "setsid", "busybox"):
         cmd_name = Path(tokens.pop(0)).name
@@ -148,24 +148,46 @@ def _extract_shell_c_script(argv: list[str]) -> str | None:
         else:
             while tokens and tokens[0].startswith("-"):
                 tokens.pop(0)
-    if len(tokens) < 3 or not _is_shell_token(tokens[0]):
-        return None
+    return tokens
+
+
+def _scan_shell_c(argv: list[str]) -> tuple[bool, str | None]:
+    tokens = _unwrap_shell_argv(argv)
+    if not tokens or not _is_shell_token(tokens[0]):
+        return False, None
     i = 1
     while i < len(tokens):
         tok = tokens[i]
-        if tok == "-o" and i + 1 < len(tokens):
+        if tok in ("-o", "+o") and i + 1 < len(tokens):
             i += 2
             continue
+        if tok == "--":
+            i += 1
+            break
         if tok.startswith("--"):
             i += 1
             continue
         if tok.startswith("-") and len(tok) > 1:
-            if "c" in tok[1:] and i + 1 < len(tokens):
-                return tokens[i + 1].strip()
+            if "c" in tok[1:]:
+                if i + 1 < len(tokens):
+                    return True, tokens[i + 1].strip()
+                return True, None
             i += 1
             continue
         break
-    return None
+    return False, None
+
+
+def _is_shell_c_prefix(argv: list[str]) -> bool:
+    has_c, script = _scan_shell_c(argv)
+    return has_c and script is None
+
+
+def _extract_shell_c_script(argv: list[str]) -> str | None:
+    has_c, script = _scan_shell_c(argv)
+    if not has_c:
+        return None
+    return "" if script is None else script
 
 
 def _split_shell_segments(script: str) -> list[tuple[str | None, str]]:
@@ -349,7 +371,7 @@ def shell_c_violation(argv: list[str]) -> str | None:
         return None
     segments = _split_shell_segments(script)
     if not segments:
-        return script
+        return script or " ".join(argv)
     final_op, final_seg = segments[-1]
     if final_op not in (None, ";", "\n", "&&") or not _is_exec_command(final_seg):
         return script
@@ -363,37 +385,139 @@ def _normalize_argv_list(items: list[str]) -> list[str]:
     if len(items) == 1 and " " in items[0].strip():
         raw = items[0].strip()
         tokens = _shlex_split(raw)
-        if len(_split_shell_segments(raw)) > 1 and _extract_shell_c_script(tokens) is not None:
-            return ["sh", "-c", raw]
-        return tokens
+        if _scan_shell_c(tokens)[0]:
+            if len(_split_shell_segments(raw)) > 1:
+                return ["sh", "-c", raw]
+            return tokens
     return items
 
 
-def _dockerfile_exec_forms(path: Path):
+def _parse_dockerfile_instruction(raw: str) -> tuple[list[str] | None, str | None]:
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                if not parsed:
+                    return None, None
+                items = [str(v) for v in parsed]
+                single_raw = items[0].strip() if len(items) == 1 else None
+                return _normalize_argv_list(items), single_raw
+        except json.JSONDecodeError:
+            raw = raw.strip("[]").strip()
+    tokens = _shlex_split(raw)
+    if len(_split_shell_segments(raw)) == 1 and _scan_shell_c(tokens)[0]:
+        return tokens, None
+    return ["sh", "-c", raw], raw
+
+
+def _combine_entrypoint_and_cmd(
+    ep_argv: list[str],
+    cmd_argv: list[str],
+    cmd_raw: str | None = None,
+) -> list[str]:
+    if _is_shell_c_prefix(ep_argv) and cmd_raw is not None:
+        return [*ep_argv, cmd_raw]
+    return [*ep_argv, *cmd_argv]
+
+
+def _emit_stage_forms(
+    ep: tuple[list[str], str | None] | None,
+    cmd: tuple[list[str], str | None] | None,
+    ep_label: str,
+    cmd_label: str,
+):
+    if ep is not None and cmd is None:
+        yield ep_label, ep[0]
+        return
+    if ep is None and cmd is not None:
+        yield cmd_label, cmd[0]
+        return
+    if ep is None or cmd is None:
+        return
+    ep_argv, _ = ep
+    cmd_argv, cmd_raw = cmd
+    ep_has_c, ep_script = _scan_shell_c(ep_argv)
+    if ep_has_c and ep_script is not None:
+        yield ep_label, ep_argv
+        yield cmd_label, cmd_argv
+        return
+    combined = _combine_entrypoint_and_cmd(ep_argv, cmd_argv, cmd_raw)
+    if _is_shell_c_prefix(ep_argv) or (_scan_shell_c(combined)[0] and not _scan_shell_c(cmd_argv)[0]):
+        yield f"{ep_label}+{cmd_label}", combined
+        return
+    yield ep_label, ep_argv
+    yield cmd_label, cmd_argv
+
+
+def _dockerfile_stages(path: Path):
     lines = [
         line
         for line in path.read_text(encoding="utf-8").splitlines()
         if not re.match(r"^\s*#", line)
     ]
     text = re.sub(r"\\\s*\n", " ", "\n".join(lines))
-    for m in re.finditer(r"^\s*(CMD|ENTRYPOINT)\s+(.+?)\s*$", text, re.M | re.I):
+    stages: list[dict[str, object]] = []
+    aliases: dict[str, tuple[tuple[list[str], str | None] | None, tuple[list[str], str | None] | None]] = {}
+    current: dict[str, object] | None = None
+    for m in re.finditer(r"^\s*(FROM|CMD|ENTRYPOINT)\s+(.+?)\s*$", text, re.M | re.I):
         kind = m.group(1).upper()
         raw = m.group(2).strip()
         if not raw:
             continue
-        if raw.startswith("["):
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    yield kind, _normalize_argv_list([str(v) for v in parsed])
-                    continue
-            except json.JSONDecodeError:
-                raw = raw.strip("[]").strip()
-        tokens = _shlex_split(raw)
-        if len(_split_shell_segments(raw)) == 1 and _extract_shell_c_script(tokens) is not None:
-            yield kind, tokens
-        else:
-            yield kind, ["sh", "-c", raw]
+        if kind == "FROM":
+            if current is not None:
+                stages.append(current)
+                alias = current.get("alias")
+                if isinstance(alias, str):
+                    aliases[alias] = (current.get("ep"), current.get("cmd"))  # type: ignore[assignment]
+            from_tokens = [t for t in _shlex_split(raw) if not t.startswith("--")]
+            base_ref = from_tokens[0].lower() if from_tokens else ""
+            stage_alias = (
+                from_tokens[2].lower()
+                if len(from_tokens) >= 3 and from_tokens[1].lower() == "as"
+                else None
+            )
+            inh_ep, inh_cmd = aliases.get(base_ref, (None, None))
+            current = {
+                "alias": stage_alias,
+                "base": base_ref,
+                "ep": inh_ep,
+                "cmd": inh_cmd,
+                "overridden": [],
+            }
+            continue
+        if current is None:
+            current = {"alias": None, "base": "", "ep": None, "cmd": None, "overridden": []}
+        argv, single_raw = _parse_dockerfile_instruction(raw)
+        slot = "ep" if kind == "ENTRYPOINT" else "cmd"
+        prev = current.get(slot)
+        if prev is not None and not (slot == "ep" and _is_shell_c_prefix(prev[0])):  # type: ignore[index]
+            current["overridden"].append((kind, prev[0]))  # type: ignore[attr-defined,index]
+        current[slot] = (argv, single_raw) if argv is not None else None
+    if current is not None:
+        stages.append(current)
+    return stages
+
+
+def _dockerfile_exec_forms(path: Path):
+    stages = _dockerfile_stages(path)
+    inherited_bases = {str(s.get("base")) for s in stages if s.get("base")}
+    for idx, stage in enumerate(stages):
+        for kind, argv in stage["overridden"]:  # type: ignore[union-attr]
+            yield kind, argv
+        alias = stage.get("alias")
+        ep = stage.get("ep")
+        cmd = stage.get("cmd")
+        if (
+            idx < len(stages) - 1
+            and isinstance(alias, str)
+            and alias in inherited_bases
+            and ep is not None
+            and cmd is None
+            and _is_shell_c_prefix(ep[0])  # type: ignore[index]
+        ):
+            continue
+        yield from _emit_stage_forms(ep, cmd, "ENTRYPOINT", "CMD")  # type: ignore[arg-type]
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -411,20 +535,60 @@ def _any_tag(loader, suffix, node):
 _ComposeLoader.add_multi_constructor("!", _any_tag)
 
 
+def _parse_compose_value(val: object) -> tuple[list[str], str | None] | None:
+    if isinstance(val, list):
+        if not val:
+            return None
+        items = [str(v) for v in val]
+        single_raw = items[0].strip() if len(items) == 1 else None
+        return _normalize_argv_list(items), single_raw
+    if isinstance(val, str):
+        raw = val.strip()
+        if not raw:
+            return None
+        tokens = _shlex_split(raw)
+        if len(_split_shell_segments(raw)) > 1 and _scan_shell_c(tokens)[0]:
+            return ["sh", "-c", raw], raw
+        return tokens, raw
+    return None
+
+
+def _resolve_compose_dockerfile_ep(
+    compose_path: Path,
+    svc: Mapping[str, object],
+) -> tuple[list[str], str | None] | None:
+    build_cfg = svc.get("build")
+    df_path: Path | None = None
+    if isinstance(build_cfg, str) and build_cfg.strip():
+        df_path = compose_path.parent / build_cfg.strip() / "Dockerfile"
+    elif isinstance(build_cfg, Mapping):
+        ctx = compose_path.parent / str(build_cfg.get("context") or ".")
+        df_name = str(build_cfg.get("dockerfile") or "Dockerfile")
+        df_path = ctx / df_name
+    if df_path is not None and df_path.is_file():
+        stages = _dockerfile_stages(df_path)
+        if stages:
+            ep = stages[-1].get("ep")
+            if isinstance(ep, tuple):
+                return ep  # type: ignore[return-value]
+    return None
+
+
 def _compose_argvs(path: Path):
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=_ComposeLoader) or {}
     for name, svc in (data.get("services") or {}).items():
-        for key in ("command", "entrypoint"):
-            val = (svc or {}).get(key)
-            if isinstance(val, list) and val:
-                yield name, key, _normalize_argv_list([str(v) for v in val])
-            elif isinstance(val, str) and val.strip():
-                raw = val.strip()
-                tokens = _shlex_split(raw)
-                if len(_split_shell_segments(raw)) > 1 and _extract_shell_c_script(tokens) is not None:
-                    yield name, key, ["sh", "-c", raw]
-                else:
-                    yield name, key, tokens
+        if not isinstance(svc, Mapping):
+            continue
+        ep = _parse_compose_value(svc.get("entrypoint"))
+        cmd = _parse_compose_value(svc.get("command"))
+        if ep is None and cmd is not None:
+            df_ep = _resolve_compose_dockerfile_ep(path, svc)
+            if df_ep is not None and not (_scan_shell_c(df_ep[0])[0] and _scan_shell_c(df_ep[0])[1] is not None):
+                ep = df_ep
+        yield from (
+            (name, key, argv)
+            for key, argv in _emit_stage_forms(ep, cmd, "entrypoint", "command")
+        )
 
 
 def collect_violations(
@@ -489,6 +653,7 @@ def test_detector_flags_and_accepts():
     assert shell_c_violation(["sh", "-c", "exec >/dev/null; uvicorn app:app"])
     assert shell_c_violation(["sh", "-c", "exec sh -c 'uvicorn app:app'"])
     assert shell_c_violation(["sh", "-c", "my-daemon & true; exec wait"])
+    assert shell_c_violation(["sh", "-c"])
     assert not shell_c_violation(["sh", "-c", "exec uvicorn a:b --port ${PORT:-1}"])
     assert not shell_c_violation(["sh", "-ec", "mkdir -p /tmp/x && exec uvicorn a:b"])
     assert not shell_c_violation(["sh", "-c", "exec sh -c 'mkdir -p /tmp/x && exec uvicorn a:b'"])
@@ -569,4 +734,64 @@ def test_collector_accepts_valid_exec_and_justified_one_shot_fixture(tmp_path):
     )
     assert len(unjustified) == 1
     assert "docker-compose.yml:openclaw-data-init: command sh -c without exec:" in unjustified[0]
+
+
+def test_collector_rejects_and_accepts_split_shell_launches(tmp_path):
+    bad_root = tmp_path / "bad"
+    (bad_root / "services" / "split_c").mkdir(parents=True)
+    (bad_root / "services" / "split_c" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["sh", "-c"]\nCMD ["uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    (bad_root / "services" / "split_ec").mkdir(parents=True)
+    (bad_root / "services" / "split_ec" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["bash", "-ec"]\nCMD ["mkdir -p /tmp/x && uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    (bad_root / "services" / "split_flag").mkdir(parents=True)
+    (bad_root / "services" / "split_flag" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["sh"]\nCMD ["-c", "uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    (bad_root / "docker-compose.yml").write_text(
+        "services:\n"
+        '  split-list:\n    entrypoint: ["sh", "-c"]\n    command: ["uvicorn app:app"]\n'
+        '  split-str:\n    entrypoint: sh -c\n    command: "mkdir -p /tmp/x && uvicorn app:app"\n'
+        '  split-flag:\n    entrypoint: ["bash"]\n    command: ["-c", "uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    bad_violations = collect_violations(root=bad_root)
+    assert len(bad_violations) == 6
+    assert any("services/split_c/Dockerfile: ENTRYPOINT+CMD sh -c without exec: uvicorn app:app" in v for v in bad_violations)
+    assert any("services/split_ec/Dockerfile: ENTRYPOINT+CMD sh -c without exec: mkdir -p /tmp/x && uvicorn app:app" in v for v in bad_violations)
+    assert any("services/split_flag/Dockerfile: ENTRYPOINT+CMD sh -c without exec: uvicorn app:app" in v for v in bad_violations)
+    assert any("docker-compose.yml:split-list: entrypoint+command sh -c without exec: uvicorn app:app" in v for v in bad_violations)
+    assert any("docker-compose.yml:split-str: entrypoint+command sh -c without exec: mkdir -p /tmp/x && uvicorn app:app" in v for v in bad_violations)
+    assert any("docker-compose.yml:split-flag: entrypoint+command sh -c without exec: uvicorn app:app" in v for v in bad_violations)
+
+    good_root = tmp_path / "good"
+    (good_root / "services" / "split_c").mkdir(parents=True)
+    (good_root / "services" / "split_c" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["sh", "-c"]\nCMD ["exec uvicorn app:app --port ${PORT:-8000}"]\n',
+        encoding="utf-8",
+    )
+    (good_root / "services" / "split_ec").mkdir(parents=True)
+    (good_root / "services" / "split_ec" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["bash", "-ec"]\nCMD ["mkdir -p /tmp/x && exec uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    (good_root / "services" / "split_flag").mkdir(parents=True)
+    (good_root / "services" / "split_flag" / "Dockerfile").write_text(
+        'FROM python:3.12-slim\nENTRYPOINT ["sh"]\nCMD ["-c", "exec uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    (good_root / "docker-compose.yml").write_text(
+        "services:\n"
+        '  split-list:\n    entrypoint: ["sh", "-c"]\n    command: ["exec uvicorn app:app"]\n'
+        '  split-str:\n    entrypoint: sh -c\n    command: "mkdir -p /tmp/x && exec uvicorn app:app"\n'
+        '  split-flag:\n    entrypoint: ["bash"]\n    command: ["-c", "exec uvicorn app:app"]\n',
+        encoding="utf-8",
+    )
+    assert collect_violations(root=good_root) == []
+
 
