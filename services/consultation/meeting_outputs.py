@@ -36,6 +36,7 @@ from services.consultation.sponsor_decision_bridge import (
     validate_sponsor_persona,
 )
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.service_token_file import configured_service_token
 
 SUPPORTED_PROPOSAL_KINDS: frozenset[str] = frozenset(
     {
@@ -343,6 +344,17 @@ def _mint_jwt(
     return encode_jwt_hs256(claims, secret=secret)
 
 
+def _resolve_configured_token(*variables: str) -> str:
+    for variable in variables:
+        try:
+            token = configured_service_token(variable)
+        except RuntimeError:
+            token = ""
+        if token:
+            return token
+    return ""
+
+
 def _auth_headers(
     *,
     kind: str,
@@ -350,6 +362,7 @@ def _auth_headers(
     sponsor_persona_id: str | None,
     idempotency_key: str | None = None,
     owner_user_id: str | None = None,
+    read_only: bool = False,
 ) -> dict[str, str]:
     headers: dict[str, str] = {"X-Tenant-Id": tenant_id}
     if idempotency_key:
@@ -359,7 +372,10 @@ def _auth_headers(
         headers["X-Actor-Id"] = sponsor_persona_id
 
     if kind == "research_demand":
-        static_token = os.getenv("PERSONA_RESEARCH_SERVICE_TOKEN", "").strip()
+        static_token = _resolve_configured_token(
+            "PERSONA_RESEARCH_SERVICE_TOKEN",
+            "PANTHEON_RESEARCH_SERVICE_TOKEN",
+        )
         if static_token:
             headers["Authorization"] = f"Bearer {static_token}"
             return headers
@@ -455,6 +471,21 @@ def _auth_headers(
         return headers
 
     if kind == "lesson_candidate":
+        static_token = (
+            _resolve_configured_token(
+                "CONSULTATION_MEMORY_READ_TOKEN",
+                "CONSULTATION_MEMORY_WRITE_TOKEN",
+                "PANTHEON_MEMORY_AUTH_TOKEN",
+            )
+            if read_only
+            else _resolve_configured_token(
+                "CONSULTATION_MEMORY_WRITE_TOKEN",
+                "PANTHEON_MEMORY_AUTH_TOKEN",
+            )
+        )
+        if static_token:
+            headers["Authorization"] = f"Bearer {static_token}"
+            return headers
         secret = (
             os.getenv("PANTHEON_MEMORY_JWT_SECRET")
             or os.getenv("PERSONA_JWT_SECRET")
@@ -762,8 +793,21 @@ def _build_outbound_request(
         assert sponsor_persona_id is not None
         lc_id = _as_uuid_str(payload.get("lesson_candidate_id") or proposal_id, "lesson_candidate")
         ref_id = _as_uuid_str(payload.get("reflection_id") or f"{meeting_id}:{proposal_id}", "reflection")
-        raw_episodes = list(payload.get("trade_episode_ids") or citations or [f"ep-{proposal_id}-1", f"ep-{proposal_id}-2", f"ep-{proposal_id}-3"])
-        episode_ids = [_as_uuid_str(ep.get("id") if isinstance(ep, Mapping) else ep, "episode") for ep in raw_episodes]
+        supplied_episodes = payload.get("trade_episode_ids")
+        has_supplied_episodes = isinstance(supplied_episodes, list) and len(supplied_episodes) > 0
+        raw_episodes = list(supplied_episodes) if has_supplied_episodes else list(citations or [])
+        episode_ids: list[str] = []
+        for ep in raw_episodes:
+            uid = _as_uuid_str(ep.get("id") if isinstance(ep, Mapping) else ep, "episode")
+            if uid not in episode_ids:
+                episode_ids.append(uid)
+        if not has_supplied_episodes:
+            pad_idx = 1
+            while len(episode_ids) < 3:
+                uid = _as_uuid_str(f"ep-{meeting_id}-{proposal_id}-{pad_idx}", "episode")
+                if uid not in episode_ids:
+                    episode_ids.append(uid)
+                pad_idx += 1
         expiry = str(payload.get("expiry") or _iso(now + timedelta(days=30)))
         created_at = str(payload.get("created_at") or now_iso)
         lesson_body = {
@@ -1243,7 +1287,14 @@ def dispatch_proposals(
                 status_code, resp_body = send("GET", f"{base_url}/api/governance/approvals/{dec_id}", headers, None)
             elif status_code == 422 and kind == "lesson_candidate" and "already exists" in json.dumps(resp_body):
                 lc_id = urllib.parse.quote(str(request_meta["lesson_candidate_id"]), safe="")
-                status_code, resp_body = send("GET", f"{base_url}/api/memory/trade-lessons/{lc_id}", headers, None)
+                read_headers = _auth_headers(
+                    kind=kind,
+                    tenant_id=tenant_id,
+                    sponsor_persona_id=sponsor_persona_id,
+                    owner_user_id=request_meta.get("owner_user_id"),
+                    read_only=True,
+                )
+                status_code, resp_body = send("GET", f"{base_url}/api/memory/trade-lessons/{lc_id}", read_headers, None)
 
             if status_code >= 400:
                 raise MeetingOutputRoutingError(
@@ -1391,6 +1442,7 @@ def read_downstream_status(
         tenant_id=tenant_id,
         sponsor_persona_id=sponsor_persona_id,
         owner_user_id=request_meta.get("owner_user_id"),
+        read_only=True,
     )
     now_iso = _iso(_utc_now(now))
 

@@ -469,3 +469,124 @@ class CaseFileTests(unittest.TestCase):
                 self.assertLessEqual(len(item["excerpt"]), 400)
                 self.assertLessEqual(len(json.dumps(item["subject_fields"], sort_keys=True)), 400)
                 self.assertTrue(item["subject_fields"])
+
+    def test_consult_empty_member_refs_resolves_active_pool_members_and_binds_search_jwt_identity(self):
+        from scripts.issue_dev_paper_principals import issue_environment
+        from scripts.test_issue_dev_paper_principals import configured
+
+        values = issue_environment(configured())
+        search_jwt = values["PANTHEON_SEARCH_SERVICE_TOKEN"]
+        ref = "artifact-persona-paper-039ad01f8bcd2b4aa466"
+        pid = "persona-2448c7053e33ea48da47"
+        binding_id = "pcb-persona-paper-039ad01f8bcd2b4aa466"
+        hosted_entry = {
+            "registry_id": ref,
+            "artifact_type": "execution_bundle",
+            "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+            "version": "1.0.0",
+            "artifact_state": "approved",
+            "owner_tenant": "tenant-dev",
+            "metadata": {
+                "market": "TW",
+                "tenant_id": "tenant-dev",
+                "persona_id": pid,
+                "execution_context": "paper",
+                "persona_capital_binding_id": binding_id,
+                "strategy_artifact": {
+                    "artifact_id": ref,
+                    "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+                    "version": "1.0.0",
+                    "strategy_logic": {
+                        "kind": "close_to_close_momentum",
+                        "positive_action": "BUY",
+                        "non_positive_action": "SELL",
+                    },
+                    "parameters": {"market": "TW", "symbols": ["2330.TWSE"], "lookback_bars": 2},
+                },
+            },
+        }
+        hosted_pool = {
+            "pool_version": 4,
+            "persona_id": pid,
+            "tenant_id": "tenant-dev",
+            "members": [
+                {"artifact_ref": ref, "stage": "active", "risk_weight": 1.0},
+                {"artifact_ref": "artifact-removed-old", "stage": "removed", "risk_weight": 0.0},
+            ],
+        }
+        hosted_telemetry = {
+            "summaries": [
+                {
+                    "persona_capital_binding_id": binding_id,
+                    "tenant_id": "tenant-dev",
+                    "member_virtual_books": [
+                        {
+                            "member_id": ref,
+                            "artifact_id": ref,
+                            "observation_count": 5,
+                            "total_return": 0.012,
+                            "sharpe_ratio": 1.4,
+                            "max_drawdown": 0.004,
+                            "marks_complete": True,
+                        }
+                    ],
+                }
+            ]
+        }
+        seen_search_bodies: list[dict] = []
+
+        def fake_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            if path == f"/api/personas/{pid}/strategy-pool":
+                return hosted_pool
+            if path == f"/api/registry/entries/{ref}":
+                return hosted_entry
+            if path == "/api/telemetry/runtime-summaries":
+                return hosted_telemetry
+            if path == "/api/search/v2/query":
+                seen_search_bodies.append(dict(body or {}))
+                return {"retrieval_mode": "hybrid", "results": []}
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {"hits": []}
+            return []
+
+        owners = cf.Owners(
+            registry=cf.OwnerEndpoint("http://registry"),
+            research=cf.OwnerEndpoint("http://research"),
+            pool=cf.OwnerEndpoint("http://persona"),
+            telemetry=cf.OwnerEndpoint("http://telemetry", values["CONSULTATION_TELEMETRY_READ_TOKEN"]),
+            memory=cf.OwnerEndpoint("http://memory", values["CONSULTATION_MEMORY_READ_TOKEN"]),
+            search=cf.OwnerEndpoint("http://search", search_jwt),
+        )
+        mem_caller = cf.Caller(
+            actor_id="pantheon-dev-consultation-memory-reader",
+            actor_roles=("consultation_session",),
+            session_id="meeting-mtg-1",
+            persona_id="",
+        )
+        sub = cf.Subject(
+            decision_type="consult",
+            persona_id=pid,
+            tenant_id="tenant-dev",
+            strategy_family="MT-1",
+            member_artifact_refs=(),
+        )
+        with mock.patch.object(cf, "http_json", fake_http):
+            out = cf.compose_case_file(sub, mem_caller, owners)
+
+        jsonschema.validate(out, SCHEMA)
+        # 1. Active pool member ref was resolved from Registry even though member_artifact_refs started empty
+        self.assertEqual(out["subject"]["member_artifact_refs"], [ref])
+        self.assertEqual(out["subject"]["strategy_family"], "strategy-persona-039ad01f8bcd2b4aa466")
+        self.assertEqual(out["subject"]["underlyings"], ["2330"])
+        facts_kinds = {i["kind"]: i for i in out["groups"]["facts"]["items"]}
+        self.assertIn("registry_entry", facts_kinds)
+        self.assertIn("member_virtual_book", facts_kinds)
+        self.assertEqual(facts_kinds["registry_entry"]["source_id"], ref)
+        self.assertEqual(facts_kinds["member_virtual_book"]["source_id"], ref)
+
+        # 2. Search query bound actor_ref and role_refs to PANTHEON_SEARCH_SERVICE_TOKEN JWT claims
+        self.assertEqual(len(seen_search_bodies), 1)
+        self.assertEqual(seen_search_bodies[0]["actor_ref"], "persona_cycle_controller")
+        self.assertEqual(seen_search_bodies[0]["role_refs"], ["researcher", "persona_session"])

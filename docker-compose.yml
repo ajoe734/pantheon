@@ -271,6 +271,9 @@ services:
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
+      # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
+      CONSULTATION_TELEMETRY_READ_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
       # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this

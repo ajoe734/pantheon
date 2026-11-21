@@ -885,3 +885,25 @@ def test_consultation_memory_read_principal_is_read_only_and_distinct_from_write
     assert env["PANTHEON_MEMORY_READ_ACTOR_ROLES"] == "consultation_session"
     # Hosted-shaped config: nothing in compose leaves the case-file caller empty.
     assert env.get("PANTHEON_MEMORY_ACTOR_ID", "x") and env.get("PANTHEON_MEMORY_ACTOR_ROLES", "x")
+
+
+def test_consultation_telemetry_read_principal_is_viewer_only_file_delivered_and_mounted():
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_TELEMETRY_READ_TOKEN"
+    assert variable in CONSUMER_FILES["consultation-svc"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "pantheon-dev-consultation-telemetry-reader"
+    assert claims["roles"] == ["viewer"] and claims["scope"] == "pantheon:dev-owner-read"
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert not {"service", "operator", "admin", "reviewer"} & set(claims["roles"])
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    assert "PANTHEON_TELEMETRY_SERVICE_TOKEN" not in values
+    revoked = issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert revoked[variable] == ""
+    env = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
+    assert env[variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert env["PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")

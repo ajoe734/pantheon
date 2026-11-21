@@ -1121,3 +1121,112 @@ def test_downstream_gates_unchanged_even_when_payload_requests_approved_or_appli
     assert str(getattr(gov_record.decision_state, "value", gov_record.decision_state)) == "proposed"
     assert gov_record.decision is None
 
+
+def test_configured_service_tokens_and_single_citation_lesson_candidate_padding(
+    owner_harness: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.consultation.meeting_outputs import _mint_jwt
+
+    # Mint distinct service tokens and verify dispatch uses them instead of minting fallback JWTs
+    research_jwt = _mint_jwt(
+        subject="persona-pool-cycle",
+        tenant_id=TENANT,
+        roles=["viewer", "service"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"sponsor_persona_id": SPONSOR, "marker": "from-pantheon-research-service-token"},
+    )
+    memory_write_jwt = _mint_jwt(
+        subject="pantheon-dev-consultation-memory-writer",
+        tenant_id=TENANT,
+        roles=["consultation-svc"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "from-consultation-memory-write-token-file"},
+    )
+    memory_read_jwt = _mint_jwt(
+        subject="pantheon-dev-consultation-memory-reader",
+        tenant_id=TENANT,
+        roles=["consultation_session"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "from-consultation-memory-read-token-file"},
+    )
+
+    write_file = tmp_path / "CONSULTATION_MEMORY_WRITE_TOKEN"
+    write_file.write_text(memory_write_jwt, encoding="utf-8")
+    os.chmod(write_file, 0o600)
+    read_file = tmp_path / "CONSULTATION_MEMORY_READ_TOKEN"
+    read_file.write_text(memory_read_jwt, encoding="utf-8")
+    os.chmod(read_file, 0o600)
+
+    monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", research_jwt)
+    monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(write_file))
+    monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
+
+    meeting = {
+        "meeting_id": "mtg-hosted-tokens-001",
+        "tenant_id": TENANT,
+        "proposals": [
+            {
+                "proposal_id": "prop-hosted-rd-1",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "research_demand",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "mandate": "momentum",
+                    "missing_datasets": [],
+                    "tried_families": ["momentum"],
+                    "short_measure": "effective_bets",
+                    "pool_version": 1,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-1",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Single-citation meeting synthesis lesson candidate",
+                    "confidence": 0.84,
+                },
+                # Single case-file citation and no trade_episode_ids in payload
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+        ],
+    }
+
+    owner_harness["call_log"].clear()
+    results = dispatch_proposals(meeting)
+    by_id = {r["proposal_id"]: r for r in results}
+    assert by_id["prop-hosted-rd-1"]["error"] is None
+    assert by_id["prop-hosted-rd-1"]["status"] == "open"
+    assert by_id["prop-hosted-lc-1"]["error"] is None
+    assert by_id["prop-hosted-lc-1"]["status"] == "proposed"
+
+    rd_call = next(c for c in owner_harness["call_log"] if c["path"] == "/api/research/persona-demands" and c["method"] == "POST")
+    assert rd_call["headers"]["Authorization"] == f"Bearer {research_jwt}"
+    lc_call = next(c for c in owner_harness["call_log"] if c["path"] == "/api/memory/trade-lessons" and c["method"] == "POST")
+    assert lc_call["headers"]["Authorization"] == f"Bearer {memory_write_jwt}"
+
+    lc_id = by_id["prop-hosted-lc-1"]["downstream_id"]
+    lc_record = owner_harness["lesson_gov_service"].store.get(lc_id)
+    assert lc_record is not None
+    assert len(lc_record["trade_episode_ids"]) == 3
+    assert len(set(lc_record["trade_episode_ids"])) == 3
+
+    # Live readback succeeds using CONSULTATION_MEMORY_READ_TOKEN_FILE
+    live_lc = read_downstream_status("prop-hosted-lc-1")
+    assert live_lc["status"] == "proposed"
+    assert live_lc["downstream_id"] == lc_id
+    lc_get_call = next(c for c in owner_harness["call_log"] if c["path"].startswith("/api/memory/trade-lessons/") and c["method"] == "GET")
+    assert lc_get_call["headers"]["Authorization"] == f"Bearer {memory_read_jwt}"
+
+

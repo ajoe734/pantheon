@@ -192,7 +192,100 @@ def test_materialization_records_query_and_tags_and_sends_tags_to_memory_plane(t
             memory_api_url="http://memory", persona_id=PERSONA_ID, workspace=str(tmp_path / "ws"),
             query="momentum 2330", tags=["family:momentum", "underlying:2330"])
     assert "tags=family%3Amomentum" in seen["url"] and "query=momentum+2330" in seen["url"]
+    assert "session_persona_id=persona-alpha" in seen["url"]
     assert result.to_dict()["retrieval"]["tags"] == ["family:momentum", "underlying:2330"]
     context = json.loads((tmp_path / "ws" / "memory" / "context.json").read_text(encoding="utf-8"))
     assert context["retrieval"]["query"] == "momentum 2330"
     assert context["retrieval"]["tags"] == ["family:momentum", "underlying:2330"]
+
+
+def test_fetch_canonical_memory_sends_session_persona_id_and_passes_real_memory_and_governance_authz(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from integrations.openclaw.persona_memory_bridge import fetch_canonical_memory
+    from scripts.issue_dev_paper_principals import issue_environment
+    from scripts.test_issue_dev_paper_principals import KEY, configured
+    from services.memory import main as memory_main
+
+    values = issue_environment(configured())
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "pers.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_AUDIENCE", "isolated-audience")
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+
+    client = TestClient(memory_main.app)
+    seen_urls: list[str] = []
+
+    class _ClientResponse:
+        def __init__(self, body_bytes: bytes) -> None:
+            self._body = body_bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def forward_to_real_memory_app(request, timeout):
+        seen_urls.append(request.full_url)
+        path_and_query = request.full_url.split("http://memory", 1)[1]
+        resp = client.get(path_and_query, headers=dict(request.header_items()))
+        assert resp.status_code == 200, f"Unexpected {resp.status_code}: {resp.text}"
+        return _ClientResponse(resp.content)
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", forward_to_real_memory_app):
+        # 1. consultation_session principal (CONSULTATION_MEMORY_READ_TOKEN) with scope='both'
+        consult_res = fetch_canonical_memory(
+            "http://memory",
+            persona_id=PERSONA_ID,
+            actor_id="pantheon-dev-consultation-memory-reader",
+            actor_roles=["consultation_session"],
+            session_id="preread-mtg-1-persona-alpha",
+            scope="both",
+            query="weekly review",
+            limit=12,
+            auth_token=values["CONSULTATION_MEMORY_READ_TOKEN"],
+        )
+        assert consult_res["authz"]["allowed"] is True
+        assert "session_persona_id=persona-alpha" in seen_urls[-1]
+
+        # 2. persona_memory_reader principal (OPENCLAW_ADAPTER_MEMORY_TOKEN) with scope='persona'
+        adapter_res = fetch_canonical_memory(
+            "http://memory",
+            persona_id=PERSONA_ID,
+            actor_id="openclaw-persona-sync",
+            actor_roles=["persona_memory_reader"],
+            session_id="sync-persona-alpha",
+            scope="persona",
+            query="weekly review",
+            limit=8,
+            auth_token=values["OPENCLAW_ADAPTER_MEMORY_TOKEN"],
+            session_persona_id=PERSONA_ID,
+        )
+        assert adapter_res["authz"]["allowed"] is True
+        assert "session_persona_id=persona-alpha" in seen_urls[-1]
+
+        # 3. institutional scope does not inject session_persona_id
+        inst_res = fetch_canonical_memory(
+            "http://memory",
+            persona_id="",
+            actor_id="pantheon-dev-consultation-memory-reader",
+            actor_roles=["consultation_session"],
+            session_id="inst-only",
+            scope="institutional",
+            query="weekly review",
+            limit=8,
+            auth_token=values["CONSULTATION_MEMORY_READ_TOKEN"],
+        )
+        assert inst_res["authz"]["allowed"] is True
+        assert "session_persona_id=" not in seen_urls[-1]

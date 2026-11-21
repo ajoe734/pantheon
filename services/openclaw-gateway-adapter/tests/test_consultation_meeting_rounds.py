@@ -364,3 +364,164 @@ def test_private_memory_in_case_file_or_pre_read_is_refused(tmp_path: Path) -> N
     assert resp.status_code == 502
     assert "private memory cannot enter" in resp.json()["reason"]
     assert not double.invoked_agents
+
+
+def _extract_prompt_schema(prompt: str) -> dict[str, Any]:
+    marker = "satisfying this JSON schema:\n"
+    schema_line = prompt.split(marker, 1)[1].splitlines()[0]
+    return json.loads(schema_line)
+
+
+def test_round_1_round_2_and_chair_synthesis_prompt_schemas_validate_meeting_fields_and_fenced_json(
+    tmp_path: Path,
+) -> None:
+    import jsonschema
+
+    # 1. Round 1 prompt schema explicitly allows stance, citations, proposals, accepted, disputed, changed
+    r1_double = _ProviderDouble(
+        event_content_override={
+            "stance": "approve_with_conditions",
+            "confidence": 0.85,
+            "citations": ["facts:item:1"],
+            "claims": [{"claim": "Independent round 1 position", "evidence_refs": ["facts:item:1"]}],
+            "summary_evidence_refs": ["facts:item:1"],
+            "proposals": [
+                {
+                    "proposal_id": "prop-r1-1",
+                    "kind": "research_demand",
+                    "sponsor_persona_id": "persona-alpha",
+                    "citations": ["facts:item:1"],
+                    "payload": {"mandate": "momentum"},
+                }
+            ],
+        }
+    )
+    r1_resp = _post_turn(
+        r1_double,
+        tmp_path,
+        idem_key="schema-r1",
+        meeting={"meeting_id": "mtg-1", "meeting_type": "MT-1", "round": 1},
+    )
+    assert r1_resp.status_code == 200, r1_resp.text
+    r1_schema = _extract_prompt_schema(r1_double.prompts[0])
+    r1_ec_schema = r1_schema["properties"]["event_content"]
+    assert set(r1_ec_schema["required"]) >= {"stance", "citations", "claims", "summary_evidence_refs"}
+    for field in ("stance", "citations", "proposals", "accepted", "disputed", "changed"):
+        assert field in r1_ec_schema["properties"]
+    r1_contrib = dict(r1_resp.json()["contribution"])
+    r1_contrib.pop("author_type", None)
+    r1_contrib["event_content"] = dict(r1_contrib["event_content"])
+    r1_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(r1_contrib, r1_schema)
+
+    # 2. Round 2 prompt schema requires accepted, disputed, changed alongside stance, citations, claims, summary_evidence_refs
+    r2_double = _ProviderDouble()
+    r2_resp = _post_turn(
+        r2_double,
+        tmp_path,
+        idem_key="schema-r2",
+        meeting={
+            "meeting_id": "mtg-1",
+            "meeting_type": "MT-1",
+            "round": 2,
+            "prior_round_positions": [
+                {
+                    "label": "role:chair|style:momentum#1",
+                    "role": "chair",
+                    "style": "momentum",
+                    "stance": "approve",
+                    "confidence": 0.8,
+                    "citations": ["facts:item:1"],
+                }
+            ],
+        },
+    )
+    assert r2_resp.status_code == 200, r2_resp.text
+    r2_schema = _extract_prompt_schema(r2_double.prompts[0])
+    r2_ec_schema = r2_schema["properties"]["event_content"]
+    assert set(r2_ec_schema["required"]) == {
+        "stance",
+        "citations",
+        "claims",
+        "summary_evidence_refs",
+        "accepted",
+        "disputed",
+        "changed",
+    }
+    r2_contrib = dict(r2_resp.json()["contribution"])
+    r2_contrib.pop("author_type", None)
+    r2_contrib["event_content"] = dict(r2_contrib["event_content"])
+    r2_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(r2_contrib, r2_schema)
+
+    # 3. Chair synthesis turn schema requires synthesis={summary, outcome, proposals} and _persona_response strips markdown code fences
+    class _FencedSynthesisDouble(_ProviderDouble):
+        def invoke(self, prompt: str, **kwargs: Any) -> Any:
+            base = super().invoke(prompt, **kwargs)
+            raw_json = base.output["json_events"][0]["item"]["text"]
+            fenced = f"```json\n{raw_json}\n```\n"
+            return SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": kwargs.get("agent_id"),
+                    "json_events": [{"item": {"text": fenced}}],
+                },
+            )
+
+    synth_double = _FencedSynthesisDouble(
+        event_content_override={
+            "claims": [{"claim": "Chair synthesis conclusion", "evidence_refs": ["facts:item:1"]}],
+            "summary_evidence_refs": ["facts:item:1"],
+            "synthesis": {
+                "summary": "Chair synthesis with one sponsored research demand proposal",
+                "outcome": "proposals_issued",
+                "proposals": [
+                    {
+                        "proposal_id": "prop-mtg-1-1",
+                        "kind": "research_demand",
+                        "sponsor_persona_id": "persona-alpha",
+                        "citations": ["facts:item:1"],
+                        "payload": {
+                            "mandate": "momentum",
+                            "missing_datasets": [],
+                            "tried_families": ["momentum"],
+                            "short_measure": "effective_bets",
+                            "pool_version": 1,
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    synth_resp = _post_turn(
+        synth_double,
+        tmp_path,
+        idem_key="schema-synth-fenced",
+        meeting={
+            "meeting_id": "mtg-1",
+            "meeting_type": "MT-1",
+            "round": "synthesis",
+            "phase": "synthesis",
+        },
+    )
+    assert synth_resp.status_code == 200, synth_resp.text
+    synth_schema = _extract_prompt_schema(synth_double.prompts[0])
+    synth_ec_schema = synth_schema["properties"]["event_content"]
+    assert "synthesis" in synth_ec_schema["required"]
+    synth_obj_schema = synth_ec_schema["properties"]["synthesis"]
+    assert set(synth_obj_schema["required"]) == {"summary", "outcome", "proposals"}
+    assert set(synth_obj_schema["properties"]["outcome"]["enum"]) == {
+        "proposals_issued",
+        "completed_no_proposal",
+        "no_testable_hypothesis",
+    }
+    synth_contrib = dict(synth_resp.json()["contribution"])
+    assert synth_contrib["event_content"]["synthesis"]["outcome"] == "proposals_issued"
+    assert (
+        synth_contrib["event_content"]["synthesis"]["proposals"][0]["sponsor_persona_id"]
+        == "persona-alpha"
+    )
+    synth_contrib.pop("author_type", None)
+    synth_contrib["event_content"] = dict(synth_contrib["event_content"])
+    synth_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(synth_contrib, synth_schema)
