@@ -576,7 +576,405 @@ def test_recon_mismatch_sql_excludes_broker_unavailable_and_unverified_reasons()
     for deferred_code in (
         "runtime_unhealthy_at_reconciliation",
         "broker_unavailable_at_reconciliation",
+        "reconciliation_deferred_runtime_unhealthy",
+        "reconciliation_deferred_broker_unavailable",
         "reconciliation_identity_unverified",
         "reconciliation_evidence_incomplete",
+        "runtime_state",
+        "broker_record",
     ):
         assert deferred_code in sql
+
+
+def test_reconciliation_discrepancy_validates_delta_and_preserves_conflicting_evidence_as_unverified():
+    personas = {"persona-6507750312870d03a241": {"name": "澄川｜2317 台股 Paper 學習 R2", "is_probe": False}}
+
+    # 1. False-positive case: expected == actual (100 vs 100), but conflicting delta=-45 or difference=-45 is supplied
+    for bad_key in ("delta", "difference"):
+        false_pos_proj = _tj_57418ba7_projection(
+            {
+                "reason_code": "cash_variance",
+                "reason_detail": [
+                    {
+                        "check": "cash_change",
+                        "status": "failed",
+                        "expected": 100.0,
+                        "actual": 100.0,
+                        bad_key: -45.0,
+                    }
+                ],
+            }
+        )
+        false_pos_row = tj._list_row(false_pos_proj, now=NOW, personas=personas)
+        assert false_pos_row["outcome"]["kind"] == "variance"
+        assert false_pos_row["outcome"]["classification"] == "unverified_evidence"
+        assert false_pos_row["outcome"]["accounting_variance"] is False
+        assert false_pos_row["outcome"]["comparison_completed"] is False
+        assert false_pos_row["outcome"]["reason_code"] == "reconciliation_evidence_incomplete"
+        assert false_pos_row["outcome"]["unverified_reason_code"] == "cash_variance"
+        assert false_pos_row["outcome"]["discrepancies"] == []
+        assert f"cash_change:conflicting_{bad_key}" in false_pos_row["outcome"]["missing_evidence"]
+        preserved_check = false_pos_row["outcome"]["reason_detail"][0]
+        assert preserved_check["status"] == "unverified"
+        assert preserved_check["expected"] == 100.0
+        assert preserved_check["actual"] == 100.0
+        assert preserved_check[bad_key] == -45.0
+
+    # 2. Suppressed genuine mismatch case: actual - expected == -45.0, but conflicting delta=0.0 or status='passed' is supplied
+    for suppressed_check, expected_missing in (
+        (
+            {
+                "check": "cash_change",
+                "status": "failed",
+                "expected": 217.5331375,
+                "actual": 172.5331375,
+                "delta": 0.0,
+            },
+            "cash_change:conflicting_delta",
+        ),
+        (
+            {
+                "check": "cash_change",
+                "status": "failed",
+                "expected": 217.5331375,
+                "actual": 172.5331375,
+                "difference": 0.0,
+            },
+            "cash_change:conflicting_difference",
+        ),
+        (
+            {
+                "check": "cash_change",
+                "status": "passed",
+                "expected": 217.5331375,
+                "actual": 172.5331375,
+            },
+            "cash_change:conflicting_status",
+        ),
+    ):
+        suppressed_proj = _tj_57418ba7_projection(
+            {
+                "reason_code": "cash_variance",
+                "reason_detail": [suppressed_check],
+            }
+        )
+        suppressed_row = tj._list_row(suppressed_proj, now=NOW, personas=personas)
+        assert suppressed_row["outcome"]["classification"] == "unverified_evidence"
+        assert suppressed_row["outcome"]["accounting_variance"] is False
+        assert suppressed_row["outcome"]["comparison_completed"] is False
+        assert suppressed_row["outcome"]["discrepancies"] == []
+        assert expected_missing in suppressed_row["outcome"]["missing_evidence"]
+        assert suppressed_row["outcome"]["reason_detail"][0]["status"] == "unverified"
+
+    # 3. Recomputed genuine mismatch when delta and difference are omitted
+    recomputed_proj = _tj_57418ba7_projection(
+        {
+            "reason_code": "cash_variance",
+            "reason_detail": [
+                {
+                    "check": "cash_change",
+                    "status": "failed",
+                    "expected": 217.5331375,
+                    "actual": 172.5331375,
+                }
+            ],
+        }
+    )
+    recomputed_row = tj._list_row(recomputed_proj, now=NOW, personas=personas)
+    assert recomputed_row["outcome"]["classification"] == "accounting_variance"
+    assert recomputed_row["outcome"]["accounting_variance"] is True
+    assert recomputed_row["outcome"]["comparison_completed"] is True
+    assert recomputed_row["outcome"]["discrepancies"] == [
+        {
+            "check": "cash_change",
+            "status": "failed",
+            "expected": 217.5331375,
+            "actual": 172.5331375,
+            "difference": -45.0,
+            "delta": -45.0,
+        }
+    ]
+
+
+def _ephemeral_postgres_dsn():
+    import os
+    import shutil
+    import socket
+    import subprocess
+    import time
+    import uuid
+    import pytest
+
+    explicit = os.getenv("TEST_DATABASE_URL")
+    if explicit:
+        yield explicit
+        return
+    if shutil.which("docker") is None:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker is not available")
+    probe = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0:
+        pytest.skip("TEST_DATABASE_URL is not set and Docker daemon is not reachable")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+    cname = f"pantheon-tj-bff-{uuid.uuid4().hex[:10]}"
+    started = subprocess.run(
+        [
+            "docker", "run", "--rm", "-d", "--name", cname,
+            "-e", "POSTGRES_PASSWORD=postgres",
+            "-e", "POSTGRES_USER=postgres",
+            "-e", "POSTGRES_DB=postgres",
+            "-p", f"127.0.0.1:{port}:5432",
+            "postgres:16-alpine",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if started.returncode != 0:
+        pytest.skip(f"Failed to start PostgreSQL container: {started.stderr}")
+    dsn = f"postgresql://postgres:postgres@127.0.0.1:{port}/postgres"
+    import psycopg  # type: ignore[import]
+
+    deadline = time.monotonic() + 15.0
+    connected = False
+    while time.monotonic() < deadline:
+        try:
+            with psycopg.connect(dsn, connect_timeout=1):
+                connected = True
+                break
+        except Exception:
+            time.sleep(0.2)
+    if not connected:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
+        pytest.skip("PostgreSQL container did not become healthy in time")
+    try:
+        yield dsn
+    finally:
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
+
+
+def test_database_backed_recon_mismatch_and_attention_routes_align_with_read_model_and_acceptance_probe():
+    """Database-backed regression over PostgreSQL TradeJourneyProjectionStore for historical deferred shapes."""
+    from importlib.machinery import SourceFileLoader
+    from importlib.util import module_from_spec, spec_from_loader
+    import uuid
+    import psycopg  # type: ignore[import]
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.models import OperatorIdentity
+    from services.trade_journey.projection_store import ProjectionStore
+
+    gen = _ephemeral_postgres_dsn()
+    dsn = next(gen)
+    schema = f"test_tj_recon_{uuid.uuid4().hex[:8]}"
+    try:
+        ProjectionStore(dsn, schema=schema, bootstrap=True)
+        now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+        summary = json.dumps({"identifiers": {"persona_id": ["persona-6507750312870d03a241"]}})
+        recon_cov = json.dumps({"reconciliation": {"status": "failed"}})
+
+        rows = [
+            # 1. historical_runtime: no reason_code, runtime_state failed in reason_detail -> reconciliation_deferred
+            (
+                "tj_historical_runtime",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                    "reason_detail": [{"check": "runtime_state", "status": "failed", "detail": "runtime stopped"}],
+                },
+            ),
+            # 2. historical_broker: generic reason_code=reconciliation_failed + broker_record unavailable -> reconciliation_deferred
+            (
+                "tj_historical_broker",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                    "reason_code": "reconciliation_failed",
+                    "reason_detail": [{"check": "broker_record", "status": "unavailable", "error": "503"}],
+                },
+            ),
+            # 3. deferred_alias_runtime: reason_code=reconciliation_deferred_runtime_unhealthy -> reconciliation_deferred
+            (
+                "tj_deferred_alias_runtime",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                    "reason_code": "reconciliation_deferred_runtime_unhealthy",
+                },
+            ),
+            # 4. deferred_alias_broker: reason_code=reconciliation_deferred_broker_unavailable -> reconciliation_deferred
+            (
+                "tj_deferred_alias_broker",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                    "reason_code": "reconciliation_deferred_broker_unavailable",
+                },
+            ),
+            # 5. proven_variance: completed trade-specific cash_change comparison -> accounting_variance
+            (
+                "tj_proven_variance",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                    "reason_code": "cash_variance",
+                    "reason_detail": [
+                        {
+                            "check": "cash_change",
+                            "status": "failed",
+                            "expected": 217.5331375,
+                            "actual": 172.5331375,
+                            "difference": -45.0,
+                            "delta": -45.0,
+                        }
+                    ],
+                },
+            ),
+            # 6. unverified_historical: recorded tj_57418ba7 with no reason_code/reason_detail -> unverified_evidence variance
+            (
+                "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+                "completed_with_variance",
+                recon_cov,
+                "reconciliation",
+                "failed",
+                {
+                    "stage": "reconciliation",
+                    "event_type": "reconciliation_failed",
+                    "stage_status": "failed",
+                },
+            ),
+            # 7. pre_broker_reject: recorded tj_79726064 pre-broker risk rejection
+            (
+                "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+                "failed",
+                json.dumps(
+                    {
+                        "signal_generation": {"status": "succeeded"},
+                        "trade_decision": {"status": "succeeded"},
+                        "order_submission": {"status": "failed"},
+                    }
+                ),
+                "order_submission",
+                "failed",
+                {
+                    "stage": "order_submission",
+                    "event_type": "order_rejection",
+                    "stage_status": "failed",
+                    "submitted_to_broker": False,
+                    "reason_code": "insufficient_cash",
+                    "expression_reason_code": "long_cash",
+                    "reason_detail": {
+                        "required": 100034.3461,
+                        "available": 100000.0,
+                        "limit": 100000.0,
+                        "requested_quantity": 452.0,
+                    },
+                },
+            ),
+        ]
+
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+            for idx, (jid, j_status, cov_json, st_name, st_status, c_fields) in enumerate(rows, start=1):
+                cur.execute(
+                    f"INSERT INTO {schema}.journeys "
+                    "(tenant_id, environment, journey_id, status, stage_coverage, is_terminal, "
+                    "first_occurred_at, last_occurred_at, first_ingested_seq, last_ingested_seq, "
+                    "current_identity_summary, projection_revision, created_at, updated_at) "
+                    "VALUES ('tenant-dev', 'paper', %s, %s, %s::jsonb, true, %s, %s, %s, %s, %s::jsonb, 1, %s, %s)",
+                    (jid, j_status, cov_json, now, now, idx, idx, summary, now, now),
+                )
+                cur.execute(
+                    f"INSERT INTO {schema}.journey_stages "
+                    "(tenant_id, environment, journey_id, source_event_id, stage_name, stage_status, "
+                    "stage_ordinal, source_ingested_seq, event_sequence, occurred_at, recorded_at, contract_fields) "
+                    "VALUES ('tenant-dev', 'paper', %s, %s, %s, %s, 8, %s, 1, %s, %s, %s::jsonb)",
+                    (jid, f"evt-{idx}", st_name, st_status, idx, now, now, json.dumps(c_fields)),
+                )
+
+        reader = TradeJourneyProjectionStore(dsn, schema=schema, token_secret="s" * 16)
+        app = FastAPI()
+        app.include_router(
+            tj.create_trade_journeys_router(
+                extract_identity=lambda auth, *a, **kw: OperatorIdentity(operator_id="op-1", roles=["operator"], claims={"tenant_ids": ["tenant-dev"]}),
+                require_read_role=lambda identity: None,
+                get_projection_reader=lambda: reader,
+                list_personas=lambda: [{"persona_id": "persona-6507750312870d03a241", "name": "澄川｜2317 台股 Paper 學習 R2"}],
+            )
+        )
+        client = TestClient(app)
+        headers = {"Authorization": "Bearer op-1:operator:tenant-dev"}
+
+        unfiltered_res = client.get("/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50", headers=headers)
+        assert unfiltered_res.status_code == 200
+        unfiltered_body = unfiltered_res.json()
+        assert unfiltered_body["page_info"]["total"] == 7
+        by_id = {r["journey_id"]: r for r in unfiltered_body["data"]["items"]}
+        for def_id in ("tj_historical_runtime", "tj_historical_broker", "tj_deferred_alias_runtime", "tj_deferred_alias_broker"):
+            assert by_id[def_id]["outcome"]["kind"] == "reconciliation_deferred", def_id
+            assert by_id[def_id]["flags"]["mismatch"] is False, def_id
+
+        mismatch_res = client.get(
+            "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50&attention=recon_mismatch",
+            headers=headers,
+        )
+        assert mismatch_res.status_code == 200
+        mismatch_body = mismatch_res.json()
+        mismatch_ids = {r["journey_id"] for r in mismatch_body["data"]["items"]}
+        assert mismatch_ids == {"tj_proven_variance", "tj_57418ba7-ef37-5015-9b5e-b6423872da89"}
+        assert mismatch_body["page_info"]["total"] == 2
+
+        attention_res = client.get(
+            "/bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&page_size=50&attention=attention",
+            headers=headers,
+        )
+        assert attention_res.status_code == 200
+        attention_body = attention_res.json()
+        attention_ids = {r["journey_id"] for r in attention_body["data"]["items"]}
+        assert attention_ids == {
+            "tj_proven_variance",
+            "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+            "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+        }
+        assert attention_body["page_info"]["total"] == 3
+
+        # Verify the release acceptance probe passes against the real database-backed BFF responses
+        probe_path = Path(__file__).resolve().parents[4] / "acceptance" / "probes" / "trade-journey-readable"
+        loader = SourceFileLoader("trade_journey_readable_probe_db_test", str(probe_path))
+        probe_mod = module_from_spec(spec_from_loader(loader.name, loader))
+        loader.exec_module(probe_mod)
+        probe_report = probe_mod.check(lambda path: client.get(path, headers=headers).json())
+        assert probe_report["passed"] is True, probe_report
+        assert probe_report["total"] == 7 and probe_report["recon_mismatch_total"] == 2
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        try:
+            next(gen)
+        except StopIteration:
+            pass

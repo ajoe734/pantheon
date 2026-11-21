@@ -67,6 +67,28 @@ def _is_deferred_reconciliation(row) -> bool:
     )
 
 
+def _valid_discrepancy(item: object) -> bool:
+    if not isinstance(item, dict) or not str(item.get("check") or "").strip():
+        return False
+    exp = item.get("expected")
+    act = item.get("actual")
+    if exp is None or act is None or isinstance(exp, bool) or isinstance(act, bool):
+        return False
+    if isinstance(exp, (int, float)) and isinstance(act, (int, float)):
+        computed = float(act) - float(exp)
+        if abs(computed) <= 1e-6:
+            return False
+        for key in ("delta", "difference"):
+            val = item.get(key)
+            if val is not None:
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
+                    return False
+                if abs(float(val) - computed) > 1e-6:
+                    return False
+        return True
+    return exp != act
+
+
 def _claims_accounting_variance_without_discrepancy(row) -> bool:
     outcome = row.get("outcome")
     if not isinstance(outcome, dict):
@@ -76,13 +98,7 @@ def _claims_accounting_variance_without_discrepancy(row) -> bool:
     discrepancies = outcome.get("discrepancies")
     if not isinstance(discrepancies, list) or not discrepancies:
         return True
-    return not all(
-        isinstance(item, dict)
-        and bool(str(item.get("check") or "").strip())
-        and item.get("expected") is not None
-        and item.get("actual") is not None
-        for item in discrepancies
-    )
+    return not all(_valid_discrepancy(item) for item in discrepancies)
 
 
 def check(fetch) -> dict:

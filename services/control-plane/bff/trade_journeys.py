@@ -527,10 +527,13 @@ def _effective_snapshot_and_diagnostics(
     diag_list: List[Dict[str, Any]] = [
         dict(item) for item in diagnostics if isinstance(item, Mapping)
     ]
-    if "reconciliation" in stages and (stages.get("reconciliation") or {}).get("status") == "failed":
+    if (
+        ("reconciliation" in stages and (stages.get("reconciliation") or {}).get("status") in {"failed", "completed_with_variance"})
+        or (snapshot.get("status") == "completed_with_variance" and _event_for_stage(timeline, "reconciliation") is not None)
+    ):
         recon_event = _event_for_stage(timeline, "reconciliation")
         recon_analysis = _reconciliation_analysis(recon_event)
-        recon_stage = dict(stages["reconciliation"])
+        recon_stage = dict(stages.get("reconciliation") or {"status": "failed"})
         recon_stage["reason_code"] = recon_analysis["reason_code"]
         recon_stage["classification"] = recon_analysis["classification"]
         recon_stage["accounting_variance"] = recon_analysis["accounting_variance"]
@@ -1059,6 +1062,7 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
     unverified_missing: List[str] = []
     check_names: set[str] = set()
     has_broker_unavailable = False
+    has_conflicting_evidence = False
 
     if isinstance(raw_detail, Sequence) and not isinstance(raw_detail, (str, bytes)):
         normalized_checks: List[Any] = []
@@ -1067,34 +1071,68 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                 normalized_checks.append(item)
                 continue
             entry = dict(item)
-            check_name = str(entry.get("check") or "").strip()
+            raw_check = entry.get("check")
+            check_name = raw_check.strip() if isinstance(raw_check, str) else ""
             if check_name:
                 check_names.add(check_name)
-            status_val = str(entry.get("status") or "").strip().lower()
+            raw_status = entry.get("status")
+            status_val = raw_status.strip().lower() if isinstance(raw_status, str) else ""
             if check_name == "broker_record" and status_val == "unavailable":
                 has_broker_unavailable = True
             if check_name in _NUMERIC_COMPARISON_CHECKS:
                 exp_num = _float_or_none(entry.get("expected"))
                 act_num = _float_or_none(entry.get("actual"))
                 if exp_num is not None and act_num is not None:
-                    diff = _float_or_none(entry.get("delta"))
-                    if diff is None:
-                        diff = _float_or_none(entry.get("difference"))
-                    if diff is None:
-                        diff = act_num - exp_num
-                    entry["difference"] = diff
-                    entry["delta"] = diff
-                    if status_val == "failed" and abs(diff) > _COMPARISON_TOLERANCE:
-                        discrepancies.append(
-                            {
-                                "check": check_name,
-                                "status": "failed",
-                                "expected": exp_num,
-                                "actual": act_num,
-                                "difference": diff,
-                                "delta": diff,
-                            }
+                    computed_diff = act_num - exp_num
+                    has_raw_delta = "delta" in entry and entry.get("delta") is not None
+                    has_raw_diff = "difference" in entry and entry.get("difference") is not None
+                    supplied_delta = _float_or_none(entry.get("delta")) if has_raw_delta else None
+                    supplied_diff = _float_or_none(entry.get("difference")) if has_raw_diff else None
+                    delta_conflict = has_raw_delta and (
+                        supplied_delta is None or abs(supplied_delta - computed_diff) > _COMPARISON_TOLERANCE
+                    )
+                    diff_conflict = has_raw_diff and (
+                        supplied_diff is None or abs(supplied_diff - computed_diff) > _COMPARISON_TOLERANCE
+                    )
+                    status_conflict = (
+                        (status_val == "failed" and abs(computed_diff) <= _COMPARISON_TOLERANCE)
+                        or (status_val == "passed" and abs(computed_diff) > _COMPARISON_TOLERANCE)
+                    )
+                    explicit_unverified = status_val in {"unverified", "missing_evidence"}
+                    if delta_conflict or diff_conflict or status_conflict or explicit_unverified:
+                        has_conflicting_evidence = True
+                        entry["status"] = "unverified"
+                        if delta_conflict:
+                            unverified_missing.append(f"{check_name}:conflicting_delta")
+                        if diff_conflict:
+                            unverified_missing.append(f"{check_name}:conflicting_difference")
+                        if status_conflict and not (delta_conflict or diff_conflict):
+                            unverified_missing.append(f"{check_name}:conflicting_status")
+                        if explicit_unverified and not (delta_conflict or diff_conflict or status_conflict):
+                            for m_item in (entry.get("missing_evidence") or []):
+                                if str(m_item).strip() and str(m_item) not in unverified_missing:
+                                    unverified_missing.append(str(m_item))
+                            if not any(m.startswith(f"{check_name}:") for m in unverified_missing):
+                                unverified_missing.append(f"{check_name}:unverified")
+                    else:
+                        diff = (
+                            supplied_delta
+                            if supplied_delta is not None
+                            else (supplied_diff if supplied_diff is not None else computed_diff)
                         )
+                        entry["difference"] = diff
+                        entry["delta"] = diff
+                        if status_val == "failed" and abs(diff) > _COMPARISON_TOLERANCE:
+                            discrepancies.append(
+                                {
+                                    "check": check_name,
+                                    "status": "failed",
+                                    "expected": exp_num,
+                                    "actual": act_num,
+                                    "difference": diff,
+                                    "delta": diff,
+                                }
+                            )
                 else:
                     if status_val == "failed":
                         entry["status"] = "unverified"
@@ -1126,11 +1164,18 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
                             disc["broker_order_id"] = entry["broker_order_id"]
                         discrepancies.append(disc)
                     else:
+                        has_conflicting_evidence = True
                         entry["status"] = "unverified"
                         if exp_val in (None, ""):
                             unverified_missing.append(f"{check_name}:expected")
                         if act_val in (None, ""):
                             unverified_missing.append(f"{check_name}:actual")
+                        if exp_val not in (None, "") and act_val not in (None, "") and exp_val == act_val:
+                            unverified_missing.append(f"{check_name}:conflicting_status")
+                elif status_val == "passed" and exp_val not in (None, "") and act_val not in (None, "") and exp_val != act_val:
+                    has_conflicting_evidence = True
+                    entry["status"] = "unverified"
+                    unverified_missing.append(f"{check_name}:conflicting_status")
             normalized_checks.append(entry)
         normalized_detail = normalized_checks
     elif raw_detail is not None:
@@ -1170,7 +1215,7 @@ def _reconciliation_analysis(recon: Optional[Mapping[str, Any]]) -> Dict[str, An
             "missing_evidence": explicit_missing,
             "source_event_id": source_event_id,
         }
-    if discrepancies:
+    if discrepancies and not has_conflicting_evidence and not unverified_missing:
         effective_code = (
             raw_code
             if (raw_code and raw_code != _REASON_NOT_RECORDED)

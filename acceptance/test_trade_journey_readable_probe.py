@@ -147,3 +147,17 @@ def test_fails_when_deferred_reconciliation_or_unproven_accounting_variance_is_r
     }
     report3 = probe.check(fetcher([row("tj_a", "n")], [proven_row], 2, 1))
     assert report3["passed"] is True
+
+    conflicting_delta_row = {
+        **row("tj_conflicting_delta", "澄川"),
+        "status": "completed_with_variance",
+        "outcome": {
+            "kind": "variance",
+            "classification": "accounting_variance",
+            "accounting_variance": True,
+            "reason_code": "cash_variance",
+            "discrepancies": [{"check": "cash_change", "expected": 100.0, "actual": 100.0, "delta": -45.0}],
+        },
+    }
+    report4 = probe.check(fetcher([row("tj_a", "n")], [conflicting_delta_row], 2, 1))
+    assert "accounting_variance_missing_discrepancy:tj_conflicting_delta" in report4["failed"]

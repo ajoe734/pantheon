@@ -105,10 +105,46 @@ class InMemoryPostgresProjectionReader:
         stalled = filters.get("stalled")
         waiting_human = filters.get("waiting_human")
         reconciliation_state = filters.get("reconciliation_state")
+        attention = filters.get("attention")
+        exclude_persona_ids = set(filters.get("exclude_persona_ids") or [])
         date_from = filters.get("date_from")
         date_to = filters.get("date_to")
 
         q_journey_only = bool(filters.get("q_journey_only"))
+
+        def _match_attention(proj, row):
+            if not attention:
+                return True
+            row_status = proj.snapshot.get("status")
+            stages = proj.snapshot.get("stages") or {}
+            broker_failed = (stages.get("broker_acknowledgement") or {}).get("status") in {"failed", "rejected"}
+            recon_ev = tj._event_for_stage(proj.timeline, "reconciliation")
+            raw_recon_code = str((recon_ev or {}).get("reason_code") or "").strip()
+            recon_analysis = tj._reconciliation_analysis(recon_ev) if recon_ev is not None else {}
+            deferred = (
+                raw_recon_code in {
+                    "runtime_unhealthy_at_reconciliation",
+                    "broker_unavailable_at_reconciliation",
+                    "reconciliation_deferred_runtime_unhealthy",
+                    "reconciliation_deferred_broker_unavailable",
+                    "reconciliation_identity_unverified",
+                    "reconciliation_evidence_incomplete",
+                }
+                or recon_analysis.get("kind") == "reconciliation_deferred"
+            )
+            if attention == "recon_mismatch":
+                return row_status == "completed_with_variance" and not deferred
+            if attention == "partial_fill":
+                return row_status == "partially_filled"
+            if attention == "broker_reject":
+                return row_status == "failed" and broker_failed
+            if attention == "risk_reject":
+                return row_status == "failed" and not broker_failed
+            if attention == "attention":
+                return row_status in {"failed", "partially_filled"} or (
+                    row_status == "completed_with_variance" and not deferred
+                )
+            return False
 
         def _match_q(proj, query):
             if query is None:
@@ -145,6 +181,8 @@ class InMemoryPostgresProjectionReader:
             and (decision_id is None or row.get("decision_id") == decision_id)
             and (order_id is None or row.get("order_id") == order_id)
             and (broker_order_id is None or row.get("broker_order_id") == broker_order_id)
+            and (not exclude_persona_ids or row.get("persona_id") not in exclude_persona_ids)
+            and _match_attention(p, row)
             and _match_q(p, q)
         ]
 
