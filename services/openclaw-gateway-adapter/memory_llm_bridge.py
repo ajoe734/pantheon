@@ -44,6 +44,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class BridgeConfig:
     enabled: bool
@@ -53,6 +63,7 @@ class BridgeConfig:
     max_concurrency: int = 2
     daily_budget: int = 500
     retry_after_seconds: int = 60
+    slot_wait_seconds: float = 15.0
     state_path: str = ""
 
     @classmethod
@@ -65,6 +76,7 @@ class BridgeConfig:
             max_concurrency=max(1, _env_int("MEMORY_LLM_BRIDGE_MAX_CONCURRENCY", 2)),
             daily_budget=max(0, _env_int("MEMORY_LLM_BRIDGE_DAILY_BUDGET", 500)),
             retry_after_seconds=max(1, _env_int("MEMORY_LLM_BRIDGE_RETRY_AFTER_SECONDS", 60)),
+            slot_wait_seconds=max(0.0, _env_float("MEMORY_LLM_BRIDGE_SLOT_WAIT_SECONDS", 15.0)),
             state_path=os.getenv("MEMORY_LLM_BRIDGE_STATE_PATH", ""),
         )
 
@@ -250,7 +262,17 @@ class MemoryLlmBridge:
         clean = [{"role": m["role"], "content": _message_text(m["content"])} for m in messages]
 
         # Budget and concurrency refusals are rate-limit responses (Hindsight defers).
-        if not self._slots.acquire(blocking=False):
+        deadline = started + self.config.deadline_seconds
+        slot_wait = min(
+            max(0.0, float(self.config.slot_wait_seconds)),
+            max(0.0, deadline - self._clock()),
+        )
+        acquired = (
+            self._slots.acquire(blocking=True, timeout=slot_wait)
+            if slot_wait > 0.0
+            else self._slots.acquire(blocking=False)
+        )
+        if not acquired:
             self._record(operation, started, "refused", reason="concurrency_limit")
             return _error(429, "concurrency_limit", "too many concurrent memory index calls",
                           retry_after=self.config.retry_after_seconds)
@@ -259,7 +281,6 @@ class MemoryLlmBridge:
                 self._record(operation, started, "refused", reason="daily_budget_exhausted")
                 return _error(429, "daily_budget_exhausted", "daily memory index call budget is exhausted",
                               retry_after=self.config.retry_after_seconds)
-            deadline = started + self.config.deadline_seconds
             try:
                 verify_policy(self.config.agent_id, deadline)
             except Exception as exc:  # policy missing/mismatched/unavailable: deny before dispatch

@@ -164,3 +164,308 @@ class CaseFileTests(unittest.TestCase):
             a = cf.compose_case_file(subject(), OP, OWNERS, now=fixed)
             b = cf.compose_case_file(subject(), OP, OWNERS, now=fixed)
         self.assertEqual(a, b)
+
+    def test_hosted_member_entry_pool_weights_and_zero_observation_virtual_book_facts(self):
+        ref = "artifact-persona-paper-039ad01f8bcd2b4aa466"
+        pid = "persona-2448c7053e33ea48da47"
+        binding_id = "pcb-persona-paper-039ad01f8bcd2b4aa466"
+        hosted_entry = {
+            "registry_id": ref,
+            "artifact_type": "execution_bundle",
+            "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+            "version": "1.0.0",
+            "artifact_state": "approved",
+            "owner_tenant": "t1",
+            "metadata": {
+                "market": "TW",
+                "tenant_id": "t1",
+                "persona_id": pid,
+                "execution_context": "paper",
+                "persona_capital_binding_id": binding_id,
+                "strategy_artifact": {
+                    "artifact_id": ref,
+                    "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+                    "version": "1.0.0",
+                    "strategy_logic": {
+                        "kind": "close_to_close_momentum",
+                        "positive_action": "BUY",
+                        "non_positive_action": "SELL",
+                    },
+                    "parameters": {
+                        "market": "TW",
+                        "symbols": ["2330.TWSE"],
+                        "data_source": "source-ingest:tw_price_daily",
+                        "bar_frequency": "1d",
+                        "lookback_bars": 2,
+                        "momentum_threshold": 0.0,
+                        "order_quantity": 1,
+                        "quantity_type": "SHARES",
+                        "zero_momentum_action": "SELL",
+                        "strength_scale_k": 1.0,
+                        "strength_floor_momentum": 0.01,
+                    },
+                },
+            },
+        }
+        hosted_pool = {
+            "pool_version": 4,
+            "persona_id": pid,
+            "tenant_id": "t1",
+            "change_reason": "paper pool reweight: refused; virtual_book_source_missing",
+            "members": [
+                {
+                    "artifact_ref": ref,
+                    "stage": "active",
+                    "risk_weight": 1.0,
+                    "checksum": "sha256:" + "d" * 64,
+                }
+            ],
+            "decision": {
+                "action": "reweight",
+                "status": "refused",
+                "reasons": ["virtual_book_source_missing"],
+                "health": {
+                    "demand_reasons": ["health_inputs_unknown"],
+                    "effective_bets": {"status": "unknown", "value": None, "reason": "health_window_missing_or_invalid"},
+                },
+            },
+        }
+        hosted_telemetry = {
+            "summaries": [
+                {
+                    "persona_capital_binding_id": binding_id,
+                    "tenant_id": "t1",
+                    "member_virtual_books": [
+                        {
+                            "member_id": ref,
+                            "artifact_id": ref,
+                            "observation_count": 0,
+                            "total_return": 0.0,
+                            "sharpe_ratio": None,
+                            "sharpe_undefined_reason": "insufficient_or_constant_returns",
+                            "max_drawdown": 0.0,
+                            "marks_complete": False,
+                        }
+                    ],
+                }
+            ]
+        }
+        sub = cf.Subject(
+            decision_type="consult",
+            persona_id=pid,
+            tenant_id="t1",
+            strategy_family="MT-1",
+            member_artifact_refs=(ref,),
+        )
+        out = compose(
+            sub,
+            caller=OP,
+            overrides={
+                f"/api/registry/entries/{ref}": hosted_entry,
+                f"/api/personas/{pid}/strategy-pool/versions": {"versions": [], "refusals": []},
+                f"/api/personas/{pid}/strategy-pool": hosted_pool,
+                "/api/telemetry/runtime-summaries": hosted_telemetry,
+            },
+        )
+        jsonschema.validate(out, SCHEMA)
+        facts = out["groups"]["facts"]
+        by_kind = {i["kind"]: json.loads(i["excerpt"]) for i in facts["items"]}
+        self.assertEqual(by_kind["registry_entry"]["strategy_family"], "close_to_close_momentum")
+        self.assertEqual(by_kind["registry_entry"]["approved_scope"], "paper")
+        self.assertEqual(by_kind["registry_entry"]["parameters"]["lookback_bars"], 2)
+        self.assertEqual(by_kind["registry_entry"]["parameters"]["symbols"], ["2330.TWSE"])
+        self.assertEqual(by_kind["strategy_pool"]["pool_version"], 4)
+        self.assertEqual(
+            by_kind["strategy_pool"]["members"],
+            [{"artifact_ref": ref, "stage": "active", "risk_weight": 1.0}],
+        )
+        self.assertIn("virtual_book_source_missing", by_kind["strategy_pool"]["pool_health"]["unavailable_reason"])
+        self.assertEqual(by_kind["member_virtual_book"]["observation_count"], 0)
+        self.assertIn("zero_observations", by_kind["member_virtual_book"]["unavailable_reason"])
+        self.assertIn(
+            {"owner": f"telemetry:virtual_book:{ref}", "reason": "zero_observations:insufficient_or_constant_returns"},
+            facts["unavailable"],
+        )
+
+    def test_bounded_owner_reads_and_structured_subject_fields(self):
+        calls = []
+
+        def tracking_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            calls.append(path)
+            if path.startswith("/api/registry/entries/"):
+                raise cf.OwnerUnavailable("http_404")
+            if "owner-binding" in path:
+                return {"status": "done", "gate_verdict": {"passed": True}}
+            if path.endswith("/strategy-pool"):
+                return {
+                    "pool_version": 4,
+                    "change_reason": "z" * 1000,
+                    "members": [{"artifact_ref": f"m-{i}", "stage": "active", "risk_weight": 0.1} for i in range(20)],
+                }
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {"hits": []}
+            if path.startswith("/api/search"):
+                return {"retrieval_mode": "hybrid", "results": []}
+            return []
+
+        many_sub = subject(
+            member_artifact_refs=tuple(f"reg-{i}" for i in range(20)),
+            backtest_run_refs=tuple(f"bt-{i}" for i in range(20)),
+            strategy_families=tuple(f"fam-{i}" for i in range(20)),
+        )
+        with mock.patch.object(cf, "http_json", tracking_http):
+            out = cf.compose_case_file(many_sub, OP, OWNERS)
+        jsonschema.validate(out, SCHEMA)
+        reg_reads = [p for p in calls if p.startswith("/api/registry/entries/")]
+        bt_reads = [p for p in calls if "owner-binding" in p]
+        fam_reads = [p for p in calls if "/api/registry/strategies/" in p]
+        self.assertEqual(len(reg_reads), 8)
+        self.assertEqual(len(bt_reads), 8)
+        self.assertEqual(len(fam_reads), 8)
+        facts = out["groups"]["facts"]
+        self.assertTrue(facts["truncated"])
+        self.assertLessEqual(len(facts["items"]), 8)
+        for grp in out["groups"].values():
+            for item in grp["items"]:
+                self.assertLessEqual(len(item["excerpt"]), 400)
+                self.assertLessEqual(len(json.dumps(item["subject_fields"])), 400)
+
+        def heavy_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            if path.startswith("/api/registry/entries/"):
+                rid = path.rsplit("/", 1)[1]
+                return {
+                    "registry_id": rid,
+                    "strategy_id": "momentum",
+                    "approved_scope": "paper",
+                    "artifact_state": "approved",
+                    "evaluation_summary": "x" * 400,
+                    "parameters": {"note": "y" * 310},
+                }
+            if "/api/registry/strategies/" in path:
+                return [
+                    {
+                        "registry_id": f"ret-{i}",
+                        "strategy_id": "m-" + ("s" * 350),
+                        "version": "1.0",
+                        "artifact_state": "retired",
+                        "evaluation_summary": "r" * 400,
+                    }
+                    for i in range(8)
+                ]
+            if path.endswith("/strategy-pool"):
+                return {"pool_version": 4, "members": []}
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {
+                    "hits": [
+                        {
+                            "type": "institutional",
+                            "relevance_score": float(i),
+                            "entry": {
+                                "entry_id": f"mem-{i}",
+                                "memory_type": "lesson",
+                                "content": {
+                                    "summary": "m" * 400,
+                                    "tags": ["family:momentum", "negative_memory", "t:" + ("q" * 300)],
+                                },
+                            },
+                        }
+                        for i in range(8)
+                    ]
+                }
+            if path.startswith("/api/search"):
+                return {
+                    "retrieval_mode": "hybrid",
+                    "results": [
+                        {
+                            "result_id": f"s-{i}",
+                            "relevance_score": 1.0,
+                            "matched_items": [{"id": f"ev-{i}", "excerpt": "e" * 400}],
+                        }
+                        for i in range(8)
+                    ],
+                }
+            return []
+
+        with mock.patch.object(cf, "http_json", heavy_http):
+            heavy_out = cf.compose_case_file(
+                subject(member_artifact_refs=tuple(f"reg-{i}" for i in range(8)), backtest_run_refs=()),
+                OP,
+                OWNERS,
+            )
+        jsonschema.validate(heavy_out, SCHEMA)
+        independent_total = sum(
+            len(item["excerpt"]) + len(json.dumps(item["subject_fields"], sort_keys=True))
+            for grp in heavy_out["groups"].values()
+            for item in grp["items"]
+        )
+        self.assertLessEqual(independent_total, 12000)
+        self.assertTrue(any(grp["truncated"] for grp in heavy_out["groups"].values()))
+
+        def unicode_and_escaped_http(endpoint, path, *, tenant_id, method="GET", body=None, params=None, timeout=10.0):
+            if path.startswith("/api/registry/entries/reg-zh"):
+                return {
+                    "registry_id": "reg-zh",
+                    "strategy_id": "策略-" + ("中" * 20000),
+                    "approved_scope": "paper",
+                    "artifact_state": "approved",
+                    "parameters": {"note": "中" * 20000},
+                }
+            if path.startswith("/api/registry/entries/reg-esc"):
+                return {
+                    "registry_id": "reg-esc",
+                    "strategy_id": "strat-" + ('"' * 20000),
+                    "approved_scope": "scope-" + ("\\" * 20000),
+                    "artifact_state": "approved",
+                    "parameters": {"note": '"' * 20000},
+                }
+            if path.endswith("/strategy-pool"):
+                return {
+                    "pool_version": 4,
+                    "unavailable_reason": "原因-" + ("中" * 20000) + ('"' * 20000),
+                    "members": [],
+                }
+            if path.endswith("/versions"):
+                return {"versions": [], "refusals": []}
+            if path.startswith("/api/telemetry"):
+                return {"summaries": []}
+            if path.startswith("/api/memory/retrieve"):
+                return {
+                    "hits": [
+                        {
+                            "type": "institutional",
+                            "relevance_score": 1.0,
+                            "entry": {
+                                "entry_id": "mem-zh-esc",
+                                "memory_type": "lesson-" + ('"' * 20000),
+                                "content": {
+                                    "summary": "中" * 1000,
+                                    "tags": ["family:momentum", "中" * 20000, '"' * 20000],
+                                },
+                            },
+                        }
+                    ]
+                }
+            if path.startswith("/api/search"):
+                return {"retrieval_mode": "hybrid", "results": []}
+            return []
+
+        with mock.patch.object(cf, "http_json", unicode_and_escaped_http):
+            ue_out = cf.compose_case_file(
+                subject(member_artifact_refs=("reg-zh", "reg-esc"), backtest_run_refs=()),
+                OP,
+                OWNERS,
+            )
+        jsonschema.validate(ue_out, SCHEMA)
+        for grp in ue_out["groups"].values():
+            for item in grp["items"]:
+                self.assertLessEqual(len(item["excerpt"]), 400)
+                self.assertLessEqual(len(json.dumps(item["subject_fields"], sort_keys=True)), 400)
+                self.assertTrue(item["subject_fields"])

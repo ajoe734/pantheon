@@ -496,6 +496,8 @@ def test_container_entrypoint_mounts_consultation_route() -> None:
     dockerfile = (_ADAPTER_DIR / "Dockerfile").read_text(encoding="utf-8")
     command = json.loads(next(line[4:] for line in dockerfile.splitlines() if line.startswith("CMD ")))
     argv = shlex.split(command[2])
+    if argv and argv[0] == "exec":
+        argv = argv[1:]
     assert argv[0] == "uvicorn"
     result = subprocess.run(
         [
