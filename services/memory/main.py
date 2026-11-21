@@ -1,6 +1,7 @@
 """HTTP facade for the canonical memory stores."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import os
 import uuid
 import json
@@ -8,7 +9,7 @@ from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import FastAPI, HTTPException, Query, Response, Header
 from pydantic import BaseModel, ConfigDict
@@ -248,7 +249,51 @@ def _authenticate_memory_request(
         raise HTTPException(status_code=401, detail="Unauthorized: a verified operator JWT is required")
     return ctx
 
-app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
+def startup_hindsight_catch_up(*, background: bool = False) -> Dict[str, Any]:
+    """Non-destructive startup catch-up when Hindsight is configured (never deletes banks)."""
+    client = hs.get_hindsight_client()
+    if client is None:
+        return {
+            "status": "skipped",
+            "reason": "hindsight_unconfigured",
+            "scheduled": 0,
+            "deferred": 0,
+            "already_mirrored": 0,
+            "inactive_skipped": 0,
+            "pending_resync_count": hs.pending_resync_count(),
+        }
+    if background:
+        store_fn = _store
+        persona_store_fn = _persona_store
+        inst_path = _store_path()
+        persona_path = _persona_store_path()
+
+        def _lazy_store() -> Any:
+            if store_fn is _default_store:
+                inst_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_institutional_memory_store(inst_path)
+            return store_fn()
+
+        def _lazy_persona_store() -> Any:
+            if persona_store_fn is _default_persona_store:
+                persona_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_persona_memory_store(persona_path)
+            return persona_store_fn()
+
+        return hs.schedule_catch_up_mirrors(_lazy_store, _lazy_persona_store, client=client)
+    return hs.catch_up_mirrors(_store(), _persona_store(), client=client)
+
+
+@asynccontextmanager
+async def memory_lifespan(_: FastAPI):
+    startup_hindsight_catch_up(background=True)
+    try:
+        yield
+    finally:
+        hs.stop_resync_timer()
+
+
+app = FastAPI(title="Pantheon Memory Service", version="0.1.0", lifespan=memory_lifespan)
 STORE_BACKEND = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("memory")
 register_fastapi_health_routes(
@@ -260,6 +305,8 @@ register_fastapi_health_routes(
         "persona_store_path": str(_persona_store_path()),
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+        "pending_resync_count": hs.pending_resync_count(),
+        "mirror": hs.DIAGNOSTICS.snapshot(),
     },
 )
 
@@ -286,10 +333,16 @@ def _store() -> InstitutionalMemoryStore:
     return build_institutional_memory_store(path)
 
 
+_default_store = _store
+
+
 def _persona_store() -> PersonaMemoryStore:
     path = _persona_store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     return build_persona_memory_store(path)
+
+
+_default_persona_store = _persona_store
 
 
 def _candidate_store_path() -> Path:
@@ -458,6 +511,22 @@ def _authorize_memory_retrieve(
 @app.get("/__health__")
 async def health():
     return {"status": "ok", "service": "memory"}
+
+
+@app.get("/api/memory/health")
+async def memory_health():
+    mirror_snap = hs.DIAGNOSTICS.snapshot()
+    return {
+        "status": "ok",
+        "service": "memory",
+        "hindsight_configured": hs.get_hindsight_client() is not None,
+        "llm_layers": hs.llm_layers(),
+        "pending_resync_count": mirror_snap["pending_resync_count"],
+        "pending_resync_bytes": mirror_snap["pending_resync_bytes"],
+        "counts": mirror_snap["counts"],
+        "failures": mirror_snap["failures"],
+        "mirror": mirror_snap,
+    }
 
 
 @app.post("/api/memory/entries", status_code=201)

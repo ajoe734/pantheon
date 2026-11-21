@@ -1232,3 +1232,230 @@ def test_bridge_refusal_on_layer_config_never_fails_a_canonical_write(monkeypatc
     monkeypatch.setenv(hs.LLM_LAYERS_ENV, "true")
     result = hs.mirror_entry(institution(tenant_id="tenant-alpha"), client=Refusing())
     assert result["status"] == "failed" and result["reason"] == "hindsight_http_429"
+    hs.DIAGNOSTICS.reset()
+
+
+def test_memory_health_exposes_pending_resync_count_and_mirror_diagnostics(memory_client, monkeypatch):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import FakeClient
+
+    monkeypatch.setattr(hs.time, "sleep", lambda *_: None)
+    hs.flush_mirrors()
+    hs.DIAGNOSTICS.reset()
+    client = FakeClient(fail=99)
+    hs.set_hindsight_client(client)
+    try:
+        resp = memory_client.post("/api/memory/entries", json=_payload())
+        assert resp.status_code == 201, resp.text
+        assert hs.flush_mirrors()
+
+        health_resp = memory_client.get("/api/memory/health")
+        assert health_resp.status_code == 200, health_resp.text
+        body = health_resp.json()
+        assert body["status"] == "ok" and body["service"] == "memory"
+        assert body["pending_resync_count"] == 1
+        assert body["counts"]["failed"] == 1
+        assert body["failures"][0]["entry_id"] == "mem-11111111-1111-1111-1111-111111111111"
+        assert body["mirror"]["pending_resync_count"] == 1
+
+        # After Hindsight recovers and resync runs, pending_resync_count drops to 0.
+        client.fail = 0
+        hs.resync_pending_mirrors()
+        recovered = memory_client.get("/api/memory/health").json()
+        assert recovered["pending_resync_count"] == 0
+        assert recovered["counts"]["retained"] == 1
+    finally:
+        hs.stop_resync_timer()
+        hs.flush_mirrors()
+        hs.DIAGNOSTICS.reset()
+        hs.set_hindsight_client(None)
+
+
+def test_startup_catch_up_schedules_unmirrored_active_entries_without_deleting_banks(tmp_path, monkeypatch):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import FakeClient
+
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst-startup.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-startup.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    hs.flush_mirrors()
+    hs.DIAGNOSTICS.reset()
+    hs.set_hindsight_client(None)
+
+    # Write canonical entries while Hindsight is unconfigured.
+    unconfigured_client = TestClient(main.app)
+    assert unconfigured_client.post("/api/memory/entries", json=_payload()).status_code == 201
+    assert unconfigured_client.post("/api/memory/persona-entries", json=_persona_payload()).status_code == 201
+    assert hs.flush_mirrors()
+
+    client = FakeClient()
+    hs.set_hindsight_client(client)
+    hs.DIAGNOSTICS.reset()
+    try:
+        with TestClient(main.app) as started_client:
+            assert hs.flush_mirrors()
+            health_body = started_client.get("/api/memory/health").json()
+            assert health_body["pending_resync_count"] == 0
+            assert health_body["counts"]["retained"] == 2
+        assert client.deleted == []
+        assert {items[0]["document_id"] for _bank, items in client.retained} == {
+            "mem-11111111-1111-1111-1111-111111111111",
+            "pmem-11111111-1111-1111-1111-111111111111",
+        }
+        # Idempotent second startup pass schedules 0 entries and never calls delete_bank.
+        second = main.startup_hindsight_catch_up()
+        assert second["scheduled"] == 0 and second["already_mirrored"] == 2
+        assert client.deleted == []
+    finally:
+        hs.stop_resync_timer()
+        hs.flush_mirrors()
+        hs.DIAGNOSTICS.reset()
+        hs.set_hindsight_client(None)
+
+
+def test_lifespan_yields_and_allows_health_and_canonical_writes_when_hindsight_is_slow_or_unavailable(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import FakeClient, inst, mid
+
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst-slow-startup.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-slow-startup.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    hs.stop_resync_timer()
+    hs.flush_mirrors()
+    hs.DIAGNOSTICS.reset()
+    hs.set_hindsight_client(None)
+
+    # Pre-populate one canonical entry before startup.
+    main._store().create(inst(mid("review-slow-startup")))
+    assert hs.flush_mirrors()
+
+    class HeldLookup(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def memory_units(self, bank, doc_id):
+            self.entered.set()
+            assert self.release.wait(5), "held lookup release timeout"
+            return []
+
+    client = HeldLookup()
+    hs.set_hindsight_client(client)
+    hs.DIAGNOSTICS.reset()
+    startup_yielded = threading.Event()
+    write_completed = threading.Event()
+    errors: list[Exception] = []
+
+    def run_lifespan():
+        async def _inner():
+            async with main.memory_lifespan(main.app):
+                startup_yielded.set()
+                health_res = await main.memory_health()
+                assert health_res["status"] == "ok"
+                saved = main._store().create(inst(mid("write-during-held-startup")))
+                assert saved.entry_id == mid("write-during-held-startup")
+                write_completed.set()
+
+        try:
+            asyncio.run(_inner())
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+
+    thread = threading.Thread(target=run_lifespan)
+    thread.start()
+    try:
+        assert client.entered.wait(2)
+        assert startup_yielded.wait(0.25)
+        assert write_completed.wait(0.5)
+    finally:
+        client.release.set()
+        thread.join(3)
+    try:
+        assert not thread.is_alive()
+        assert not errors
+        assert hs.flush_mirrors(timeout=5)
+        assert {items[0]["document_id"] for _bank, items in client.retained} == {
+            mid("review-slow-startup"),
+            mid("write-during-held-startup"),
+        }
+    finally:
+        hs.stop_resync_timer()
+        hs.flush_mirrors()
+        hs.DIAGNOSTICS.reset()
+        hs.set_hindsight_client(None)
+
+
+def test_meeting_close_writeback_burst_converges_against_max_concurrency_two_bridge(memory_client, monkeypatch):
+    from services.memory import hindsight_index as hs
+    from services.memory.test_hindsight_index import FakeClient
+
+    adapter_dir = str(Path(__file__).resolve().parents[1] / "openclaw-gateway-adapter")
+    if adapter_dir not in sys.path:
+        sys.path.insert(0, adapter_dir)
+    from memory_llm_bridge import BridgeConfig, MemoryLlmBridge
+
+    hs.flush_mirrors()
+    hs.DIAGNOSTICS.reset()
+    bridge = MemoryLlmBridge(
+        BridgeConfig(
+            enabled=True,
+            token="meeting-burst-token",
+            max_concurrency=2,
+            daily_budget=500,
+            retry_after_seconds=1,
+            slot_wait_seconds=5.0,
+        )
+    )
+
+    class BridgeClient(FakeClient):
+        def retain(self, bank, items):
+            def slow_invoke(messages, instruction, remaining):
+                time.sleep(0.05)
+                return {"text": "{\"facts\": []}", "usage": {"prompt_tokens": 6, "completion_tokens": 2}}
+
+            resp = bridge.handle(
+                authorization="Bearer meeting-burst-token",
+                body={
+                    "model": "memory-index",
+                    "messages": [{"role": "user", "content": items[0]["content"]}],
+                    "response_format": {"type": "json_object"},
+                },
+                operation_header="retain",
+                invoke=slow_invoke,
+                verify_policy=lambda _agent, _deadline: None,
+            )
+            if resp.status_code != 200:
+                raise hs.HindsightError(f"hindsight_http_{resp.status_code}", str(resp.body))
+            return super().retain(bank, items)
+
+    client = BridgeClient()
+    hs.set_hindsight_client(client)
+    try:
+        # 3-entry meeting-close writeback (2 persona entries + 1 institutional entry) + 1 institutional entry = 4 entries
+        wb_resp = memory_client.post("/api/memory/writebacks/learn-feedback", json=_learn_feedback_payload())
+        assert wb_resp.status_code == 201, wb_resp.text
+        extra_resp = memory_client.post("/api/memory/entries", json=_payload())
+        assert extra_resp.status_code == 201, extra_resp.text
+        assert hs.flush_mirrors(timeout=10.0)
+
+        wb_data = wb_resp.json()
+        expected_ids = set(wb_data["persona_memory_ids"]) | {
+            wb_data["institutional_entry_id"],
+            "mem-11111111-1111-1111-1111-111111111111",
+        }
+        assert len(expected_ids) == 4
+        assert {items[0]["document_id"] for _bank, items in client.retained} == expected_ids
+        health_body = memory_client.get("/api/memory/health").json()
+        assert health_body["pending_resync_count"] == 0
+        assert health_body["counts"]["failed"] == 0
+        assert health_body["counts"]["retained"] == 4
+    finally:
+        hs.stop_resync_timer()
+        hs.flush_mirrors()
+        hs.DIAGNOSTICS.reset()
+        hs.set_hindsight_client(None)
