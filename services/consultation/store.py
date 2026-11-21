@@ -25,7 +25,36 @@ from .models import (
 
 CONSULT_LIFECYCLE_EVENT_SCHEMA_VERSION = "consult_lifecycle_event.v1"
 CONSULTATION_SERVICE_ACTOR_ID = "consultation-svc"
+MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000
+MEETING_OPERATOR_REVIEW_MAX_BYTES = 4096
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_meeting_operator_review_write(
+    existing: Optional[Dict[str, Any]],
+    incoming: Dict[str, Any],
+) -> None:
+    existing_review = existing.get("operator_review") if isinstance(existing, dict) else None
+    incoming_review = incoming.get("operator_review")
+    if (
+        isinstance(existing_review, dict)
+        and str(existing_review.get("status") or "").strip().lower() == "reviewed"
+    ):
+        if incoming_review != existing_review:
+            raise ValueError("Persisted meeting operator_review is immutable")
+    if incoming_review is not None:
+        if not isinstance(incoming_review, dict):
+            raise ValueError("meeting operator_review must be a dict")
+        note = str(incoming_review.get("note") or "").strip()
+        if not note or len(note) > MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS:
+            raise ValueError(
+                f"meeting operator_review note must be 1..{MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} chars"
+            )
+        encoded = json.dumps(incoming_review, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        if len(encoded) > MEETING_OPERATOR_REVIEW_MAX_BYTES:
+            raise ValueError(
+                f"meeting operator_review exceeds {MEETING_OPERATOR_REVIEW_MAX_BYTES} bytes"
+            )
 
 
 def _quote_pg(identifier: str) -> str:
@@ -453,6 +482,10 @@ class ConsultationStore:
         meeting_id = str(meeting["meeting_id"])
         trace_id = str(meeting.get("trace_id") or meeting_id)
         saved = _model_copy(dict(meeting))
+        existing = self._meetings.get(meeting_id)
+        _validate_meeting_operator_review_write(existing, saved)
+        if existing is not None and existing == saved:
+            return
         self._append_lifecycle_event(
             record_type="persona_meeting",
             record_id=meeting_id,

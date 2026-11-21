@@ -15,10 +15,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
+from services.control_plane.bff.core.display_names import current_resolver
 from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
     selected_tenant,
 )
+
+MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000
 
 _PRIVATE_SCOPES = frozenset({
     "persona_private",
@@ -380,6 +383,106 @@ def _execution_fields(raw: Mapping[str, Any]) -> Dict[str, Any]:
     return {"execution_state": es_out, "effective_status": effective}
 
 
+def _resolve_meeting_review_cause(raw: Mapping[str, Any]) -> Optional[str]:
+    """Return the stored specific synthesis review cause when present, or 'unknown' on legacy REVIEW rows."""
+    synth = raw.get("synthesis") if isinstance(raw.get("synthesis"), Mapping) else {}
+    outcome = str(
+        raw.get("outcome")
+        or synth.get("outcome")
+        or ""
+    ).strip().upper()
+    status = str(raw.get("status") or "").strip().upper()
+    is_review = outcome == "REVIEW" or status == "REVIEW"
+    for candidate in (
+        synth.get("unreadable_reason"),
+        raw.get("synthesis_unreadable_reason"),
+        raw.get("unreadable_reason"),
+        (raw.get("operator_review") or {}).get("cause")
+        if isinstance(raw.get("operator_review"), Mapping)
+        else None,
+    ):
+        val = str(candidate or "").strip()
+        if val and val.lower() not in {"none", "null", "unknown"}:
+            return val
+    if is_review:
+        return "unknown"
+    return None
+
+
+def _collect_meeting_evidence_refs(raw: Mapping[str, Any]) -> List[str]:
+    """Collect deduplicated non-private evidence/citation refs from a meeting record."""
+    refs: List[str] = []
+    seen: set[str] = set()
+
+    def _add(val: Any) -> None:
+        if isinstance(val, Mapping):
+            if _is_private_memory_item(val):
+                return
+            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or "").strip()
+        else:
+            s = str(val or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            refs.append(s)
+
+    for r in raw.get("evidence_refs") or []:
+        _add(r)
+    for item in raw.get("case_file_items") or []:
+        if isinstance(item, Mapping) and not _is_private_memory_item(item):
+            _add(item.get("item_id") or item.get("source_id"))
+    for rnd in raw.get("rounds") or []:
+        if isinstance(rnd, Mapping):
+            for pos in rnd.get("positions") or []:
+                if isinstance(pos, Mapping) and not _is_private_memory_item(pos):
+                    for cit in pos.get("citations") or []:
+                        _add(cit)
+    synth = raw.get("synthesis") if isinstance(raw.get("synthesis"), Mapping) else {}
+    if synth.get("dissent_memo_id"):
+        _add(synth.get("dissent_memo_id"))
+    minutes = raw.get("minutes") if isinstance(raw.get("minutes"), Mapping) else {}
+    if minutes.get("memo_id"):
+        _add(minutes.get("memo_id"))
+    if minutes.get("dissent_memo_id"):
+        _add(minutes.get("dissent_memo_id"))
+    return refs
+
+
+def _normalize_operator_review(
+    raw_review: Any,
+    *,
+    default_cause: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_review, Mapping):
+        return None
+    status = str(raw_review.get("status") or "").strip().lower()
+    if status != "reviewed":
+        return None
+    note = str(raw_review.get("note") or raw_review.get("rationale") or "").strip()
+    reviewed_by = str(raw_review.get("reviewed_by") or "").strip()
+    reviewed_at = str(raw_review.get("reviewed_at") or "").strip()
+    stored_cause = str(
+        raw_review.get("cause")
+        or raw_review.get("unreadable_reason")
+        or ""
+    ).strip()
+    if stored_cause and stored_cause.lower() not in {"none", "null", "unknown"}:
+        cause = stored_cause
+    else:
+        cause = str(default_cause or stored_cause or "unknown").strip() or "unknown"
+    out: Dict[str, Any] = {
+        "status": "reviewed",
+        "disposition": str(raw_review.get("disposition") or "closed_no_proposal"),
+        "note": note,
+        "reviewed_by": reviewed_by,
+        "reviewed_at": reviewed_at,
+        "cause": cause,
+        "unreadable_reason": cause,
+    }
+    if raw_review.get("idempotency_key"):
+        out["idempotency_key"] = str(raw_review["idempotency_key"])
+    return out
+
+
 def shape_meeting_list_item(
     raw: Mapping[str, Any],
     *,
@@ -388,6 +491,9 @@ def shape_meeting_list_item(
 ) -> Dict[str, Any]:
     meeting_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
     meeting_trader_id = _extract_trader_id(raw)
+    review_cause = _resolve_meeting_review_cause(raw)
+    operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
+    evidence_refs = _collect_meeting_evidence_refs(raw)
     participants_raw = raw.get("participants") if isinstance(raw.get("participants"), list) else []
     participants = [
         _shape_participant(
@@ -422,6 +528,10 @@ def shape_meeting_list_item(
         "meeting_type": raw.get("meeting_type") or raw.get("type"),
         "status": raw.get("status"),
         "outcome": raw.get("outcome"),
+        "synthesis_unreadable_reason": review_cause,
+        "unreadable_reason": review_cause,
+        "operator_review": operator_review,
+        "evidence_refs": evidence_refs,
         "chair_persona_id": raw.get("chair_persona_id"),
         "participants": participants,
         "participant_count": len(participants),
@@ -663,6 +773,9 @@ def shape_meeting_detail(
         for p in raw_proposals
         if isinstance(p, Mapping)
     ]
+    review_cause = _resolve_meeting_review_cause(raw)
+    operator_review = _normalize_operator_review(raw.get("operator_review"), default_cause=review_cause)
+    evidence_refs = _collect_meeting_evidence_refs(raw)
     synthesis: Dict[str, Any] = _strip_private_fields(dict(raw_synthesis)) or {}
     synthesis.update({
         "proposals": shaped_proposals,
@@ -670,6 +783,9 @@ def shape_meeting_detail(
         "dissent_memo_id": raw_synthesis.get("dissent_memo_id"),
         "outcome": raw_synthesis.get("outcome") or raw.get("outcome"),
     })
+    if review_cause is not None:
+        synthesis["unreadable_reason"] = review_cause
+        synthesis["cause"] = review_cause
 
     # 6. Writebacks: never expose private memory text, only ids/status
     raw_writebacks = raw.get("writebacks") if isinstance(raw.get("writebacks"), list) else []
@@ -716,6 +832,10 @@ def shape_meeting_detail(
         "status": raw.get("status"),
         **_execution_fields(raw),
         "outcome": raw.get("outcome") or synthesis.get("outcome"),
+        "synthesis_unreadable_reason": review_cause,
+        "unreadable_reason": review_cause,
+        "operator_review": operator_review,
+        "evidence_refs": evidence_refs,
         "chair_persona_id": raw.get("chair_persona_id"),
         "convened_by": _shape_convened_by(
             raw.get("convened_by"),
@@ -1059,9 +1179,16 @@ class MeetingsOwnerClient:
 
     def _raise_mapped_error(self, exc: ConsultationClientError, *, path: str) -> None:
         if exc.status_code == 404:
-            meeting_id = path.rsplit("/", 1)[-1]
+            clean_path = path.rstrip("/")
+            for action_suffix in ("/review", "/evidence", "/sync"):
+                if clean_path.endswith(action_suffix):
+                    clean_path = clean_path[: -len(action_suffix)]
+                    break
+            meeting_id = clean_path.rsplit("/", 1)[-1]
             raise MeetingsOwnerNotFoundError(meeting_id) from exc
-        if exc.status_code in {400, 409, 422}:
+        if exc.status_code in {400, 409, 422} or (
+            exc.status_code == 403 and isinstance(exc.payload, Mapping) and exc.payload.get("reason")
+        ):
             reason = str(
                 (exc.payload or {}).get("reason")
                 or (exc.payload or {}).get("detail")
@@ -1225,6 +1352,43 @@ class MeetingsOwnerClient:
             raise MeetingsOwnerUnavailableError("invalid_meeting_convene_response")
         return dict(raw)
 
+    def review_meeting(
+        self,
+        *,
+        meeting_id: str,
+        note: str,
+        reviewed_by: str,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_id = str(meeting_id or "").strip()
+        if not clean_id:
+            raise MeetingsOwnerNotFoundError("")
+        payload: Dict[str, Any] = {
+            "note": note,
+            "reviewed_by": reviewed_by,
+        }
+        extra_headers: Optional[Dict[str, str]] = None
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+            extra_headers = {"Idempotency-Key": idempotency_key}
+        raw = self._call(
+            "POST",
+            f"/api/consult/meetings/{quote(clean_id, safe='')}/review",
+            payload,
+            extra_headers=extra_headers,
+        )
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("operator_review"), Mapping):
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        returned_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
+        if returned_id != clean_id:
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        item_tenant = raw.get("tenant_id")
+        if item_tenant and self.tenant_id and str(item_tenant) != self.tenant_id:
+            raise MeetingsOwnerNotFoundError(clean_id)
+        if str(raw["operator_review"].get("status") or "").strip().lower() != "reviewed":
+            raise MeetingsOwnerUnavailableError("invalid_meeting_review_response")
+        return dict(raw)
+
 
 def _proposal_waiting_for_operator(prop: Mapping[str, Any]) -> bool:
     if prop.get("waiting_for_operator") is True or prop.get("requires_operator") is True:
@@ -1251,11 +1415,13 @@ def project_human_inbox_meeting_items(
     meetings: Sequence[Mapping[str, Any]] = (),
     proposals: Sequence[Mapping[str, Any]] = (),
     catalogue: Optional[Mapping[str, Any]] = None,
+    include_reviewed: bool = False,
 ) -> List[Dict[str, Any]]:
     """Project human-actionable meeting items into the Management Human Inbox shape.
 
     Includes:
-    1. Meetings ending in REVIEW (`outcome == "REVIEW"` or `status == "REVIEW"`).
+    1. Meetings ending in REVIEW (`outcome == "REVIEW"` or `status == "REVIEW"`) that
+       have not yet been resolved by an operator review (`operator_review.status == "reviewed"`).
     2. Due meetings refused for too few participants (`reason == "insufficient_participants"`).
     3. Proposals waiting for an operator.
     """
@@ -1282,7 +1448,25 @@ def project_human_inbox_meeting_items(
         href = f"/management/meetings/{quote(meeting_id, safe='')}"
 
         if outcome.upper() == "REVIEW" or status.upper() == "REVIEW":
+            review_cause = _resolve_meeting_review_cause(m) or "unknown"
+            op_review = _normalize_operator_review(m.get("operator_review"), default_cause=review_cause)
+            if op_review is not None and not include_reviewed:
+                continue
+            evidence_refs = _collect_meeting_evidence_refs(m)
             inbox_id = f"meeting_review:{meeting_id}"
+            is_reviewed = op_review is not None
+            decision_history = (
+                [
+                    {
+                        "decided_at": op_review["reviewed_at"],
+                        "decided_by": op_review["reviewed_by"],
+                        "decision": "approve",
+                        "note": op_review["note"],
+                    }
+                ]
+                if op_review is not None
+                else []
+            )
             items.append({
                 "id": inbox_id,
                 "item_id": meeting_id,
@@ -1298,25 +1482,33 @@ def project_human_inbox_meeting_items(
                 "persona_id": chair,
                 "title": f"Meeting synthesis requires operator review ({m_type})",
                 "summary": f"Meeting {meeting_id} ({m_type}) ended with REVIEW synthesis and requires operator attention.",
-                "status": "pending",
-                "action_state": "pending",
+                "status": "reviewed" if is_reviewed else "pending",
+                "action_state": "resolved" if is_reviewed else "pending",
                 "outcome": "REVIEW",
                 "reason": "synthesis_review_required",
-                "blocking_reasons": ["synthesis_review_required"],
+                "unreadable_reason": review_cause,
+                "synthesis_unreadable_reason": review_cause,
+                "cause": review_cause,
+                "blocking_reasons": [] if is_reviewed else ["synthesis_review_required"],
+                "evidence_refs": evidence_refs,
+                "operator_review": op_review,
+                "decision_history": decision_history,
                 "priority": "high",
                 "risk_level": "high",
                 "required_role": "operator",
-                "can_decide": True,
-                "can_proceed": False,
+                "can_decide": not is_reviewed,
+                "can_proceed": is_reviewed,
                 "created_at": created_at,
-                "updated_at": created_at,
+                "updated_at": op_review["reviewed_at"] if op_review is not None else created_at,
                 "href": href,
                 "route": href,
                 "detail_href": href,
+                "decision_href": href,
                 "links": {
                     "manageHref": href,
                     "primaryObjectHref": href,
                     "meeting": href,
+                    "decisionHref": href,
                 },
             })
         elif (
@@ -1483,6 +1675,13 @@ def project_human_inbox_meeting_items(
             },
         })
 
+    names = current_resolver()
+    for item in items:
+        names.annotate(
+            item,
+            persona_keys=("persona_id", "sponsor_persona_id"),
+            strategy_keys=(),
+        )
     return items
 
 

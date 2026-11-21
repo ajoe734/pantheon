@@ -2314,6 +2314,222 @@ def record_chair_new_evidence(
     return meeting
 
 
+def _resolve_meeting_review_cause(meeting: Mapping[str, Any]) -> Optional[str]:
+    """Return the stored specific synthesis review cause when present, or 'unknown' on legacy REVIEW rows."""
+    synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
+    outcome = str(
+        meeting.get("outcome")
+        or synth.get("outcome")
+        or ""
+    ).strip().upper()
+    status = str(meeting.get("status") or "").strip().upper()
+    is_review = outcome == "REVIEW" or status == "REVIEW"
+    for candidate in (
+        synth.get("unreadable_reason"),
+        meeting.get("synthesis_unreadable_reason"),
+        meeting.get("unreadable_reason"),
+        (meeting.get("operator_review") or {}).get("cause")
+        if isinstance(meeting.get("operator_review"), Mapping)
+        else None,
+    ):
+        val = str(candidate or "").strip()
+        if val and val.lower() not in {"none", "null", "unknown"}:
+            return val
+    if is_review:
+        return "unknown"
+    return None
+
+
+def _collect_meeting_evidence_refs(meeting: Mapping[str, Any]) -> List[str]:
+    """Collect deduplicated non-private evidence/citation refs for a meeting."""
+    refs: List[str] = []
+    seen: set[str] = set()
+
+    def _add(val: Any) -> None:
+        if isinstance(val, Mapping):
+            s = str(val.get("item_id") or val.get("id") or val.get("source_id") or "").strip()
+        else:
+            s = str(val or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            refs.append(s)
+
+    for r in meeting.get("evidence_refs") or []:
+        _add(r)
+    for item in meeting.get("case_file_items") or []:
+        if isinstance(item, Mapping):
+            if (
+                str(item.get("memory_layer") or "").strip().lower() == "persona_private"
+                or str(item.get("relevance_scope") or "").strip().lower() == "persona_private"
+            ):
+                continue
+            _add(item.get("item_id") or item.get("source_id"))
+    for rnd in meeting.get("rounds") or []:
+        if isinstance(rnd, Mapping):
+            for pos in rnd.get("positions") or []:
+                if isinstance(pos, Mapping):
+                    for cit in pos.get("citations") or []:
+                        _add(cit)
+    synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
+    if synth.get("dissent_memo_id"):
+        _add(synth.get("dissent_memo_id"))
+    minutes = meeting.get("minutes") if isinstance(meeting.get("minutes"), Mapping) else {}
+    if minutes.get("memo_id"):
+        _add(minutes.get("memo_id"))
+    if minutes.get("dissent_memo_id"):
+        _add(minutes.get("dissent_memo_id"))
+    return refs
+
+
+def _normalize_operator_review(
+    raw_review: Any,
+    *,
+    default_cause: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_review, Mapping):
+        return None
+    status = str(raw_review.get("status") or "").strip().lower()
+    if status != "reviewed":
+        return None
+    note = str(raw_review.get("note") or raw_review.get("rationale") or "").strip()
+    reviewed_by = str(raw_review.get("reviewed_by") or "").strip()
+    reviewed_at = str(raw_review.get("reviewed_at") or "").strip()
+    stored_cause = str(
+        raw_review.get("cause")
+        or raw_review.get("unreadable_reason")
+        or ""
+    ).strip()
+    if stored_cause and stored_cause.lower() not in {"none", "null", "unknown"}:
+        cause = stored_cause
+    else:
+        cause = str(default_cause or stored_cause or "unknown").strip() or "unknown"
+    out: Dict[str, Any] = {
+        "status": "reviewed",
+        "disposition": str(raw_review.get("disposition") or "closed_no_proposal"),
+        "note": note,
+        "reviewed_by": reviewed_by,
+        "reviewed_at": reviewed_at,
+        "cause": cause,
+        "unreadable_reason": cause,
+    }
+    if raw_review.get("idempotency_key"):
+        out["idempotency_key"] = str(raw_review["idempotency_key"])
+    return out
+
+
+def record_meeting_operator_review(
+    *,
+    store: Any,
+    tenant_id: str,
+    meeting_id: str,
+    reviewed_by: str,
+    note: str,
+    reviewed_at: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+) -> Tuple[Dict[str, Any], bool]:
+    """Persist an authenticated operator's review disposition on a closed REVIEW meeting.
+
+    Preserves the original REVIEW synthesis, transcript/rounds, and zero proposals.
+    Repeated identical submissions return ``(meeting, True)`` without creating duplicate
+    writes; conflicting submissions by another operator or with a different note raise
+    409 ``MeetingRefusedError("meeting_already_reviewed")``.
+    """
+    from .store import MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS
+
+    meeting = store.get_meeting(meeting_id)
+    if not meeting or str(meeting.get("tenant_id") or "default") != tenant_id:
+        raise KeyError(meeting_id)
+
+    operator_id = str(reviewed_by or "").strip()
+    if not operator_id:
+        raise MeetingRefusedError(
+            "operator_required",
+            "reviewed_by operator identity is required",
+            status_code=403,
+            meeting_id=meeting_id,
+        )
+
+    clean_note = str(note or "").strip()
+    if not clean_note:
+        raise MeetingRefusedError(
+            "review_note_required",
+            "A non-empty operator review note is required",
+            status_code=422,
+            meeting_id=meeting_id,
+        )
+    if len(clean_note) > MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS:
+        raise MeetingRefusedError(
+            "review_note_too_long",
+            f"Operator review note exceeds {MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} characters",
+            status_code=422,
+            meeting_id=meeting_id,
+        )
+
+    status = str(meeting.get("status") or "").strip().lower()
+    synth = meeting.get("synthesis") if isinstance(meeting.get("synthesis"), Mapping) else {}
+    outcome = str(meeting.get("outcome") or synth.get("outcome") or "").strip().upper()
+    if status not in {"closed", "completed", "review"} or outcome != "REVIEW":
+        raise MeetingRefusedError(
+            "meeting_not_in_review",
+            f"Meeting {meeting_id} (status={meeting.get('status')!r}, outcome={meeting.get('outcome')!r}) "
+            "is not a closed REVIEW meeting",
+            status_code=409,
+            meeting_id=meeting_id,
+        )
+    if len(synth.get("proposals") or []) > 0:
+        raise MeetingRefusedError(
+            "meeting_has_proposals",
+            f"Meeting {meeting_id} issued proposals and cannot be closed as a zero-proposal synthesis review",
+            status_code=409,
+            meeting_id=meeting_id,
+        )
+
+    cause = _resolve_meeting_review_cause(meeting) or "unknown"
+    existing_review = _normalize_operator_review(meeting.get("operator_review"), default_cause=cause)
+    if existing_review is not None:
+        if existing_review["reviewed_by"] == operator_id and existing_review["note"] == clean_note:
+            return meeting, True
+        raise MeetingRefusedError(
+            "meeting_already_reviewed",
+            f"Meeting {meeting_id} has already been reviewed by {existing_review['reviewed_by']}",
+            status_code=409,
+            meeting_id=meeting_id,
+        )
+
+    eff_reviewed_at = str(reviewed_at or "").strip() or utc_now()
+    clean_idem = str(idempotency_key or "").strip() or None
+    review_record: Dict[str, Any] = {
+        "status": "reviewed",
+        "disposition": "closed_no_proposal",
+        "note": clean_note,
+        "reviewed_by": operator_id,
+        "reviewed_at": eff_reviewed_at,
+        "cause": cause,
+        "unreadable_reason": cause,
+    }
+    if clean_idem:
+        review_record["idempotency_key"] = clean_idem
+
+    meeting["operator_review"] = review_record
+    try:
+        store.put_meeting(meeting)
+    except ValueError as exc:
+        if "immutable" in str(exc).lower():
+            raise MeetingRefusedError(
+                "meeting_already_reviewed",
+                str(exc),
+                status_code=409,
+                meeting_id=meeting_id,
+            ) from exc
+        raise MeetingRefusedError(
+            "invalid_operator_review",
+            str(exc),
+            status_code=422,
+            meeting_id=meeting_id,
+        ) from exc
+    return meeting, False
+
+
 def _write_meeting_memory(
     *,
     tenant_id: str,
@@ -3298,28 +3514,35 @@ def list_meetings_view(
         else None
     )
 
-    items = [
-        {
-            "execution_state": exec_states.get(str(m["meeting_id"])),
-            "effective_status": _effective_status(m, exec_states.get(str(m["meeting_id"]))),
-            "meeting_id": str(m["meeting_id"]),
-            "meeting_type": str(m["meeting_type"]),
-            "topic": str(m.get("topic") or ""),
-            "status": str(m.get("status") or "convened"),
-            "outcome": m.get("outcome"),
-            "chair_persona_id": str(m.get("chair_persona_id") or ""),
-            "convened_by": dict(m.get("convened_by") or {}),
-            "subject_ref": m.get("subject_ref"),
-            "attribution_record_id": m.get("attribution_record_id"),
-            "participants": [
-                _format_participant_summary(p) for p in (m.get("participants") or [])
-            ],
-            "round": int(m.get("round") or 0),
-            "created_at": m.get("created_at"),
-            "closed_at": m.get("closed_at"),
-        }
-        for m in sliced
-    ]
+    items = []
+    for m in sliced:
+        cause = _resolve_meeting_review_cause(m)
+        op_review = _normalize_operator_review(m.get("operator_review"), default_cause=cause)
+        items.append(
+            {
+                "execution_state": exec_states.get(str(m["meeting_id"])),
+                "effective_status": _effective_status(m, exec_states.get(str(m["meeting_id"]))),
+                "meeting_id": str(m["meeting_id"]),
+                "meeting_type": str(m["meeting_type"]),
+                "topic": str(m.get("topic") or ""),
+                "status": str(m.get("status") or "convened"),
+                "outcome": m.get("outcome"),
+                "synthesis_unreadable_reason": cause,
+                "unreadable_reason": cause,
+                "operator_review": op_review,
+                "evidence_refs": _collect_meeting_evidence_refs(m),
+                "chair_persona_id": str(m.get("chair_persona_id") or ""),
+                "convened_by": dict(m.get("convened_by") or {}),
+                "subject_ref": m.get("subject_ref"),
+                "attribution_record_id": m.get("attribution_record_id"),
+                "participants": [
+                    _format_participant_summary(p) for p in (m.get("participants") or [])
+                ],
+                "round": int(m.get("round") or 0),
+                "created_at": m.get("created_at"),
+                "closed_at": m.get("closed_at"),
+            }
+        )
     return {
         "items": items,
         "next_cursor": next_cursor,
@@ -3348,8 +3571,16 @@ def get_meeting_detail_view(
     detail["participants"] = [
         _format_participant_summary(p) for p in (m.get("participants") or [])
     ]
+    cause = _resolve_meeting_review_cause(m)
+    detail["synthesis_unreadable_reason"] = cause
+    detail["unreadable_reason"] = cause
+    detail["operator_review"] = _normalize_operator_review(m.get("operator_review"), default_cause=cause)
+    detail["evidence_refs"] = _collect_meeting_evidence_refs(m)
     # Ensure live downstream status is reflected on synthesis.proposals
     synth = dict(detail.get("synthesis") or {})
+    if cause is not None:
+        synth["unreadable_reason"] = cause
+        synth["cause"] = cause
     proposals = list(synth.get("proposals") or [])
     for prop in proposals:
         if not isinstance(prop, dict):

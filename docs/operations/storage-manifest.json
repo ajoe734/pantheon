@@ -290,34 +290,42 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one ConsultAuditEvent row (~350-450 bytes) per non-replayed state transition; for meeting operator review (action=meeting_review_recorded), at most 1 audit row per closed REVIEW meeting (repeated identical submissions are idempotent replays and emit 0 audit rows; persisted operator_review is immutable via _validate_meeting_operator_review_write)",
+   "cleanup": "append-only audit journal bounded by consultation request/meeting cadence (<= 3 meetings per trading persona per ISO week); idempotent retries and duplicate submissions are suppressed before append_audit",
+   "growth_driver": "consultation lifecycle and operator review audit events (at most 1 meeting_review_recorded event per closed REVIEW meeting)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day and at most 1 operator review audit row (~400 B) per closed REVIEW meeting (< 2 KB/day)",
    "kind": "jsonl",
    "name": "consult_audit.jsonl",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 3 persona meetings per trading persona per ISO week (weekly_persona_budget_exceeded in check_meeting_budgets) and at most 1 operator_review upsert per closed REVIEW meeting (note <= 2000 chars, operator_review <= 4096 bytes enforced by _validate_meeting_operator_review_write; repeated identical submissions and unchanged put_meeting calls write 0 lifecycle events; persisted operator_review is immutable)",
+   "cleanup": "replayed into in-memory key-value map by record_id on startup; duplicate/unchanged put_meeting writes and repeated identical operator reviews are suppressed before _append_lifecycle_event",
+   "growth_driver": "consultation lifecycle upserts (persona_meeting convene, rounds, close, and at most one operator_review disposition per closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day (~4-6 lifecycle upserts per meeting, ~8-16 KB each) plus at most 1 operator_review upsert per REVIEW meeting (~300-2400 B review payload inside one persona_meeting upsert, <= 16 KB/day average)",
    "kind": "jsonl",
    "name": "consult_lifecycle_events.jsonl",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",
@@ -335,19 +343,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "1-to-1 with consult_lifecycle_events.jsonl upserts; at most 1 outbox record per meeting operator_review disposition (note <= 2000 chars, operator_review <= 4096 bytes; unchanged put_meeting writes and repeated identical reviews emit 0 outbox records)",
+   "cleanup": "unchanged put_meeting writes and idempotent operator_review replays are suppressed before _append_outbox_event",
+   "growth_driver": "consultation lifecycle outbox envelopes emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day plus at most 1 outbox record per operator_review disposition (<= 16 KB/day average)",
    "kind": "jsonl",
    "name": "consult_outbox.jsonl",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",
@@ -3647,34 +3659,42 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one ConsultAuditEvent row (~350-450 bytes) per non-replayed state transition; for meeting operator review (action=meeting_review_recorded), at most 1 audit row per closed REVIEW meeting (repeated identical submissions are idempotent replays and emit 0 audit rows; persisted operator_review is immutable via _validate_meeting_operator_review_write)",
+   "cleanup": "append-only audit table bounded by consultation request/meeting cadence (<= 3 meetings per trading persona per ISO week); idempotent retries and duplicate submissions are suppressed before append_audit",
+   "growth_driver": "consultation lifecycle and operator review audit events (at most 1 meeting_review_recorded event per closed REVIEW meeting)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day and at most 1 operator review audit row (~400 B) per closed REVIEW meeting (< 2 KB/day)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.audit_table}",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 3 persona meetings per trading persona per ISO week (weekly_persona_budget_exceeded in check_meeting_budgets) and at most 1 operator_review upsert per closed REVIEW meeting (note <= 2000 chars, operator_review <= 4096 bytes enforced by _validate_meeting_operator_review_write; repeated identical submissions and unchanged put_meeting calls write 0 lifecycle rows; persisted operator_review is immutable)",
+   "cleanup": "replayed into in-memory key-value map by record_id on startup/reload; duplicate/unchanged put_meeting writes and repeated identical operator reviews are suppressed before _append_lifecycle_event",
+   "growth_driver": "consultation lifecycle upserts (persona_meeting convene, rounds, close, and at most one operator_review disposition per closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day (~4-6 lifecycle upserts per meeting, ~8-16 KB each) plus at most 1 operator_review upsert per REVIEW meeting (~300-2400 B review payload inside one persona_meeting upsert, <= 16 KB/day average)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.lifecycle_table}",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",
@@ -3692,19 +3712,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "1-to-1 with consult_svc.lifecycle_events upserts; at most 1 outbox record per meeting operator_review disposition (note <= 2000 chars, operator_review <= 4096 bytes; unchanged put_meeting writes and repeated identical reviews emit 0 outbox rows)",
+   "cleanup": "unchanged put_meeting writes and idempotent operator_review replays are suppressed before _append_outbox_event",
+   "growth_driver": "consultation lifecycle outbox envelopes emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day plus at most 1 outbox record per operator_review disposition (<= 16 KB/day average)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.outbox_table}",
    "owner": "consultation",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",
@@ -4760,34 +4784,42 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one ConsultAuditEvent row (~350-450 bytes) per non-replayed state transition; for meeting operator review (action=meeting_review_recorded), at most 1 audit row per closed REVIEW meeting (repeated identical submissions are idempotent replays and emit 0 audit rows; persisted operator_review is immutable via _validate_meeting_operator_review_write)",
+   "cleanup": "append-only audit table bounded by consultation request/meeting cadence (<= 3 meetings per trading persona per ISO week); idempotent retries and duplicate submissions are suppressed before append_audit",
+   "growth_driver": "consultation lifecycle and operator review audit events (at most 1 meeting_review_recorded event per closed REVIEW meeting)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day and at most 1 operator review audit row (~400 B) per closed REVIEW meeting (< 2 KB/day)",
    "kind": "schema_table",
    "name": "consult_svc.audit_events",
    "owner": "schema:consult_svc",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 3 persona meetings per trading persona per ISO week (weekly_persona_budget_exceeded in check_meeting_budgets) and at most 1 operator_review upsert per closed REVIEW meeting (note <= 2000 chars, operator_review <= 4096 bytes enforced by _validate_meeting_operator_review_write; repeated identical submissions and unchanged put_meeting calls write 0 lifecycle rows; persisted operator_review is immutable)",
+   "cleanup": "replayed into in-memory key-value map by record_id on startup/reload; duplicate/unchanged put_meeting writes and repeated identical operator reviews are suppressed before _append_lifecycle_event",
+   "growth_driver": "consultation lifecycle upserts (persona_meeting convene, rounds, close, and at most one operator_review disposition per closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day (~4-6 lifecycle upserts per meeting, ~8-16 KB each) plus at most 1 operator_review upsert per REVIEW meeting (~300-2400 B review payload inside one persona_meeting upsert, <= 16 KB/day average)",
    "kind": "schema_table",
    "name": "consult_svc.lifecycle_events",
    "owner": "schema:consult_svc",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",
@@ -4805,19 +4837,23 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "1-to-1 with consult_svc.lifecycle_events upserts; at most 1 outbox record per meeting operator_review disposition (note <= 2000 chars, operator_review <= 4096 bytes; unchanged put_meeting writes and repeated identical reviews emit 0 outbox rows)",
+   "cleanup": "unchanged put_meeting writes and idempotent operator_review replays are suppressed before _append_outbox_event",
+   "growth_driver": "consultation lifecycle outbox envelopes emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "at hosted scale (3 enrolled trading personas, <= 9 meetings/week): <= 1-2 meetings/day plus at most 1 outbox record per operator_review disposition (<= 16 KB/day average)",
    "kind": "schema_table",
    "name": "consult_svc.outbox_records",
    "owner": "schema:consult_svc",
    "readers": [
     "services/consultation/store.py"
    ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "register_class": "RC2",
+   "task": "MEETING-REVIEW-DISPOSITION-20261121"
   },
   {
    "bound_status": "unreviewed",

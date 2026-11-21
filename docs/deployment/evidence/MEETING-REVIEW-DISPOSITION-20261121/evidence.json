@@ -1,0 +1,100 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task_id": "MEETING-REVIEW-DISPOSITION-20261121",
+  "paired_frontend_task_id": "FE-MEETING-REVIEW-DISPOSITION-20261121",
+  "register_class": "RC2",
+  "title": "Let an operator resolve a closed meeting synthesis review and read the durable result",
+  "incident": {
+    "meeting_id": "mtg-2c016da5651a0dc4",
+    "meeting_code": "MT-1",
+    "persona_id": "persona-2448c7053e33ea48da47",
+    "persona_name": "澄川",
+    "closed_at": "2026-11-20T17:40:52Z",
+    "status": "closed",
+    "outcome": "REVIEW",
+    "rounds": 2,
+    "proposals_count": 0,
+    "stored_synthesis": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+    "stored_unreadable_reason": null,
+    "legacy_cause_fallback": "unknown",
+    "problem_register_doc": "docs/operations/problem-register.md"
+  },
+  "contracts": {
+    "source_owner_endpoint": "POST /api/consult/meetings/{meeting_id}/review",
+    "public_bff_endpoints": [
+      "POST /bff/management/meetings/{meeting_id}/review",
+      "POST /bff/meetings/{meeting_id}/review"
+    ],
+    "request_body": {
+      "note": "string (required, trimmed non-empty, <= 2000 characters)"
+    },
+    "operator_review_shape": {
+      "status": "pending | reviewed",
+      "disposition": "closed_no_proposal | null",
+      "note": "string | null",
+      "reviewed_by": "string | null",
+      "reviewed_at": "ISO-8601 UTC timestamp | null",
+      "cause": "string ('unknown' on legacy rows without stored cause; specific stored cause when present)",
+      "unreadable_reason": "string | null"
+    },
+    "human_inbox_projection": {
+      "pending_before_review": "meeting_review:{meeting_id} projected in GET /bff/management/human-inbox with status='pending', gate='meeting_review', can_proceed=false, evidence_refs, and unreadable_reason/cause context",
+      "after_review": "meeting_review:{meeting_id} leaves the pending GET /bff/management/human-inbox queue while GET /bff/management/meetings/{meeting_id} and GET /bff/meetings/{meeting_id} return operator_review.status='reviewed' and preserve outcome='REVIEW', synthesis, transcript/rounds, and proposals=[]"
+    },
+    "concurrency_and_idempotency": {
+      "identical_retry": "HTTP 200 with identical operator_review and replayed=true (zero duplicate lifecycle/audit/outbox writes)",
+      "conflicting_retry_or_other_operator": "HTTP 409 meeting_already_reviewed",
+      "non_review_or_unclosed_meeting": "HTTP 409 meeting_review_not_applicable",
+      "wrong_tenant": "HTTP 403 tenant_scope_mismatch / BFF_ERR_TENANT_SCOPE",
+      "viewer_or_non_operator_role": "HTTP 403 insufficient_role / BFF_ERR_FORBIDDEN"
+    }
+  },
+  "runtime_storage_budget": {
+    "new_recurring_jobs": 0,
+    "new_persistent_stores": 0,
+    "existing_storage_owner": "services/consultation/store.py (ConsultationStore)",
+    "cadence": "On-demand authenticated operator action only. At hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week total), at most 1 non-replayed review write can occur per closed REVIEW meeting.",
+    "per_record_byte_cap": {
+      "note_max_chars": 2000,
+      "operator_review_object_max_bytes": 4096,
+      "enforced_by": "services/consultation/store.py::_validate_meeting_operator_review_write"
+    },
+    "count_cap": "At most 1 persisted operator_review state transition, 1 ConsultAuditEvent (action='meeting_review_recorded'), and 1 ConsultOutboxRecord (topic='consult.meeting.updated') per closed REVIEW meeting. Identical retries short-circuit as replayed=true without calling put_meeting or append_audit; conflicting writes are rejected by both record_meeting_operator_review and ConsultationStore._validate_meeting_operator_review_write.",
+    "growth_per_day_at_hosted_scale": "With 3 enrolled trading personas (<= 9 meetings/week, ~1.3 meetings/day), even if 100% of meetings closed with outcome=REVIEW, operator review writes add <= 1.3 lifecycle snapshot updates (<= 4 KB delta each), <= 1.3 audit rows (~400 B each), and <= 1.3 outbox rows (~2 KB each), totaling < 10 KB/day across existing JSONL/Postgres stores.",
+    "retention_and_cleanup": "Persisted in-place on the existing meeting lifecycle record in consult_lifecycle_events.jsonl / consult_svc.lifecycle_events and audited in consult_audit.jsonl / consult_svc.audit_events. Outbox notifications in consult_outbox.jsonl / consult_svc.outbox_records are drained by the existing outbox publisher; duplicate no-op put_meeting writes are suppressed in ConsultationStore.put_meeting.",
+    "storage_manifest_entries": [
+      "jsonl:consult_lifecycle_events.jsonl",
+      "jsonl:consult_audit.jsonl",
+      "jsonl:consult_outbox.jsonl",
+      "table:services/consultation/store.py::{self.lifecycle_table}",
+      "table:services/consultation/store.py::{self.audit_table}",
+      "table:services/consultation/store.py::{self.outbox_table}",
+      "schema_table:consult_svc.lifecycle_events",
+      "schema_table:consult_svc.audit_events",
+      "schema_table:consult_svc.outbox_records"
+    ]
+  },
+  "acceptance_probes_and_tests": {
+    "read_only_hosted_probe": "acceptance/probes/meeting-review-disposition",
+    "read_only_probe_guarantee": "Uses GET-only viewer endpoints (/bff/management/meetings, /bff/management/meetings/{id}, /bff/meetings/{id}, /bff/management/human-inbox) and never sends POST /review or mutates the user's real meeting mtg-2c016da5651a0dc4.",
+    "focused_isolated_dev_acceptance_command": "pytest -q acceptance/test_meeting_review_disposition.py -k isolated_dev_acceptance_write_and_readback",
+    "isolated_dev_acceptance_meeting_id": "mtg-dev-acceptance-review-disposition-20261121",
+    "local_validation_commands": [
+      {
+        "command": "pytest -q services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_persona_meetings.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py acceptance/test_meeting_review_disposition.py scripts/test_check_storage_manifest.py",
+        "status": "passed",
+        "summary": "62 passed"
+      },
+      {
+        "command": "python3 scripts/check_storage_manifest.py",
+        "status": "passed",
+        "summary": "passed=true, failures=[], bounded=25"
+      },
+      {
+        "command": "python3 scripts/ci_test_inventory.py check",
+        "status": "passed",
+        "summary": "test inventory ok"
+      }
+    ]
+  }
+}

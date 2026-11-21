@@ -365,3 +365,235 @@ def test_budgets_and_insufficient_participants_refusals(client: TestClient) -> N
 
     # Verify unknown meeting_id returns 404
     assert client.get("/api/consult/meetings/mtg-does-not-exist", headers=_headers()).status_code == 404
+
+
+def test_operator_review_route_persists_disposition_survives_restart_and_enforces_guards(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    # 1. Seed a legacy closed REVIEW meeting (null unreadable_reason, 2 rounds, 0 proposals)
+    legacy_review_mtg = {
+        "meeting_id": "mtg-2c016da5651a0dc4",
+        "tenant_id": TENANT,
+        "meeting_type": "MT-1",
+        "meeting_code": "MT-1",
+        "meeting_slug": "weekly_pool_evolution_review",
+        "topic": "Pool evolution review for persona-2448c7053e33ea48da47 (2026-W47)",
+        "status": "closed",
+        "outcome": "REVIEW",
+        "chair_persona_id": "persona-2448c7053e33ea48da47",
+        "convened_by": {"kind": "persona", "id": "persona-2448c7053e33ea48da47"},
+        "participants": [
+            {"persona_id": "persona-2448c7053e33ea48da47", "role": "chair", "origin": "institutional"},
+            {"persona_id": "persona-risk-officer", "role": "risk_reviewer", "origin": "institutional"},
+        ],
+        "round": 2,
+        "created_at": "2026-11-20T17:38:10Z",
+        "closed_at": "2026-11-20T17:40:52Z",
+        "case_file_items": [
+            {
+                "item_id": "facts:pool:persona-2448c7053e33ea48da47:v1",
+                "group": "facts",
+                "kind": "pool_snapshot",
+                "source_owner": "persona",
+                "excerpt": "Pool v1 active member",
+            }
+        ],
+        "rounds": [
+            {
+                "round": 1,
+                "positions": [
+                    {
+                        "label": "role:chair|style:momentum#1",
+                        "persona_id": "persona-2448c7053e33ea48da47",
+                        "role": "chair",
+                        "stance": "request_more_research",
+                        "confidence": 0.62,
+                        "citations": ["facts:pool:persona-2448c7053e33ea48da47:v1"],
+                    }
+                ],
+            },
+            {
+                "round": 2,
+                "positions": [
+                    {
+                        "label": "role:risk_reviewer|style:risk_governance#2",
+                        "persona_id": "persona-risk-officer",
+                        "role": "risk_reviewer",
+                        "stance": "request_more_research",
+                        "confidence": 0.74,
+                        "citations": ["facts:pool:persona-2448c7053e33ea48da47:v1"],
+                    }
+                ],
+            },
+        ],
+        "synthesis": {
+            "proposals": [],
+            "tally": {"voting": False, "binding": False, "by_stance": {"request_more_research": 2}, "mean_confidence": 0.68},
+            "dissent_memo_id": "mem-dissent-mtg-2c016da5651a0dc4",
+            "outcome": "REVIEW",
+            "unreadable_reason": None,
+            "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+            "voting": False,
+        },
+        "trace_id": "trace-mtg-2c016da5651a0dc4",
+    }
+    consultation_main.store.put_meeting(legacy_review_mtg)
+
+    # Also seed a closed non-REVIEW meeting
+    non_review_mtg = {
+        **legacy_review_mtg,
+        "meeting_id": "mtg-proposals-issued-01",
+        "outcome": "proposals_issued",
+        "synthesis": {
+            "proposals": [{"proposal_id": "prop-1", "kind": "research_demand"}],
+            "outcome": "proposals_issued",
+            "summary": "Issued 1 research demand",
+        },
+    }
+    consultation_main.store.put_meeting(non_review_mtg)
+
+    # 2. Legacy detail exposes cause as 'unknown', operator_review as None, and actual evidence_refs
+    pre_detail = client.get("/api/consult/meetings/mtg-2c016da5651a0dc4", headers=_headers()).json()
+    assert pre_detail["operator_review"] is None
+    assert pre_detail["synthesis_unreadable_reason"] == "unknown"
+    assert pre_detail["synthesis"]["unreadable_reason"] == "unknown"
+    assert "facts:pool:persona-2448c7053e33ea48da47:v1" in pre_detail["evidence_refs"]
+    assert "mem-dissent-mtg-2c016da5651a0dc4" in pre_detail["evidence_refs"]
+
+    # 3. Reject other tenants (404 when meeting not in caller tenant, 403 on payload tenant mismatch)
+    assert (
+        client.post(
+            "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+            json={"note": "Cross-tenant attempt", "reviewed_by": "op-1"},
+            headers=_headers(tenant="other-tenant"),
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+            json={"note": "Mismatch payload tenant", "reviewed_by": "op-1", "tenant_id": "other-tenant"},
+            headers=_headers(),
+        ).status_code
+        == 403
+    )
+
+    # 4. Reject disallowed roles (viewer, trader, persona) and spoofed bff:<operator_id>
+    for bad_actor in ("persona:persona-alpha", "bff:viewer", "bff:trader"):
+        bad_hdrs = {**_headers(), "X-Pantheon-Service-Actor": bad_actor}
+        assert (
+            client.post(
+                "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+                json={"note": "Disallowed actor"},
+                headers=bad_hdrs,
+            ).status_code
+            == 403
+        )
+    spoof_hdrs = {**_headers(), "X-Pantheon-Service-Actor": "bff:op-alice"}
+    assert (
+        client.post(
+            "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+            json={"note": "Spoofed reviewer", "reviewed_by": "op-bob"},
+            headers=spoof_hdrs,
+        ).status_code
+        == 403
+    )
+
+    # 5. Reject non-REVIEW meetings (409) and empty or >2000-char notes (422)
+    op_hdrs = {**_headers("idem-rev-1"), "X-Pantheon-Service-Actor": "bff:op-alice"}
+    non_rev_resp = client.post(
+        "/api/consult/meetings/mtg-proposals-issued-01/review",
+        json={"note": "Cannot review non-REVIEW meeting", "reviewed_by": "op-alice"},
+        headers=op_hdrs,
+    )
+    assert non_rev_resp.status_code == 409
+    assert non_rev_resp.json()["reason"] == "meeting_not_in_review"
+
+    assert (
+        client.post(
+            "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+            json={"note": "   ", "reviewed_by": "op-alice"},
+            headers=op_hdrs,
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+            json={"note": "x" * 2001, "reviewed_by": "op-alice"},
+            headers=op_hdrs,
+        ).status_code
+        == 422
+    )
+
+    # 6. Valid operator review persists and records cause='unknown' on legacy data
+    note = "Both participants requested more research twice; closed review with zero proposals."
+    ok_resp = client.post(
+        "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+        json={"note": note, "reviewed_by": "op-alice"},
+        headers=op_hdrs,
+    )
+    assert ok_resp.status_code == 200, ok_resp.text
+    reviewed = ok_resp.json()
+    assert reviewed["replayed"] is False
+    assert reviewed["operator_review"]["status"] == "reviewed"
+    assert reviewed["operator_review"]["disposition"] == "closed_no_proposal"
+    assert reviewed["operator_review"]["note"] == note
+    assert reviewed["operator_review"]["reviewed_by"] == "op-alice"
+    assert reviewed["operator_review"]["reviewed_at"]
+    assert reviewed["operator_review"]["cause"] == "unknown"
+    assert reviewed["outcome"] == "REVIEW"
+    assert reviewed["synthesis"]["outcome"] == "REVIEW"
+    assert reviewed["synthesis"]["proposals"] == []
+    assert reviewed["synthesis"]["summary"] == "Synthesis empty or unreadable; recorded as REVIEW with no proposal."
+    assert len(reviewed["rounds"]) == 2
+
+    lifecycle_lines_after_first = len(
+        consultation_main.store.lifecycle_log_path.read_text(encoding="utf-8").splitlines()
+    )
+    audit_events_after_first = len(
+        consultation_main.store.list_audit_for_request("mtg-2c016da5651a0dc4")
+    )
+    assert audit_events_after_first == 1
+
+    # 7. Repeated identical submission returns the exact same disposition and writes 0 new events
+    replay_resp = client.post(
+        "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+        json={"note": note, "reviewed_by": "op-alice"},
+        headers={**_headers("idem-rev-2"), "X-Pantheon-Service-Actor": "bff:op-alice"},
+    )
+    assert replay_resp.status_code == 200
+    replayed = replay_resp.json()
+    assert replayed["replayed"] is True
+    assert replayed["operator_review"] == reviewed["operator_review"]
+    assert (
+        len(consultation_main.store.lifecycle_log_path.read_text(encoding="utf-8").splitlines())
+        == lifecycle_lines_after_first
+    )
+    assert len(consultation_main.store.list_audit_for_request("mtg-2c016da5651a0dc4")) == 1
+
+    # 8. Concurrent/conflicting submission by another operator or with a different note returns 409 without overwriting
+    conflict_other_op = client.post(
+        "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+        json={"note": note, "reviewed_by": "op-bob"},
+        headers={**_headers("idem-conflict-op"), "X-Pantheon-Service-Actor": "bff:op-bob"},
+    )
+    assert conflict_other_op.status_code == 409
+    assert conflict_other_op.json()["reason"] == "meeting_already_reviewed"
+
+    conflict_diff_note = client.post(
+        "/api/consult/meetings/mtg-2c016da5651a0dc4/review",
+        json={"note": "Attempt to overwrite rationale", "reviewed_by": "op-alice"},
+        headers=op_hdrs,
+    )
+    assert conflict_diff_note.status_code == 409
+    assert conflict_diff_note.json()["reason"] == "meeting_already_reviewed"
+
+    # 9. Survives process restart (fresh ConsultationStore reload from disk)
+    consultation_main.store = ConsultationStore(str(tmp_path / "domain"))
+    after_restart = client.get("/api/consult/meetings/mtg-2c016da5651a0dc4", headers=_headers()).json()
+    assert after_restart["operator_review"] == reviewed["operator_review"]
+    assert after_restart["outcome"] == "REVIEW"
+    assert after_restart["synthesis"]["proposals"] == []
+    assert len(after_restart["rounds"]) == 2

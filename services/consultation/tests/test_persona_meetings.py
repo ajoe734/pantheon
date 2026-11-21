@@ -2274,3 +2274,112 @@ def test_meeting_case_file_enforces_bounded_owner_reads_and_item_excerpt_and_tot
             for it in grp["items"]:
                 assert len(it["excerpt"]) <= 400
                 assert len(json.dumps(it["subject_fields"], sort_keys=True)) <= 400
+
+
+def test_operator_review_disposition_exposes_specific_cause_when_stored_and_unknown_on_legacy(
+    tmp_path: Path,
+) -> None:
+    store = ConsultationStore(str(tmp_path / "review_cause_store"))
+    wf_state = WorkflowStateStore(tmp_path / "review_cause_wf.sqlite3")
+
+    # 1. Fresh REVIEW meeting with stored specific cause ('timeout')
+    created, _ = meetings_mod.convene_persona_meeting(
+        store=store,
+        workflow_state=wf_state,
+        tenant_id=TENANT,
+        payload={
+            "meeting_type": "MT-1",
+            "topic": "Specific cause review disposition test",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": ["persona-alpha", "persona-risk-officer"],
+            "iso_week": "2026-W48",
+        },
+    )
+    fresh_id = created["meeting_id"]
+
+    class _TimeoutSynthProv:
+        def obtain(self, *, tenant_id: str, request: Mapping[str, Any], participant_scope: str = "") -> Any:
+            if participant_scope.endswith(":synthesis"):
+                raise TimeoutError("synthesis provider timed out after 30s")
+            cid = request["case_file"]["groups"]["facts"]["items"][0]["item_id"]
+            return SimpleNamespace(
+                summary="round position",
+                recommendation="request_more_research",
+                confidence=0.7,
+                event_content={
+                    "stance": "request_more_research",
+                    "confidence": 0.7,
+                    "citations": [cid],
+                    "claims": [{"claim": "need more research", "evidence_refs": [cid]}],
+                },
+                evidence=[{"id": cid, "evidence_type": "meeting_evidence", "link": f"artifact://{fresh_id}/{cid}"}],
+            )
+
+    meetings_mod.execute_persona_meeting(
+        store=store,
+        meeting_id=fresh_id,
+        tenant_id=TENANT,
+        provider=_TimeoutSynthProv(),
+    )
+
+    fresh_detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=fresh_id)
+    assert fresh_detail is not None
+    assert fresh_detail["outcome"] == "REVIEW"
+    assert fresh_detail["synthesis_unreadable_reason"] == "timeout"
+    assert fresh_detail["synthesis"]["unreadable_reason"] == "timeout"
+    assert fresh_detail["operator_review"] is None
+    assert fresh_detail["evidence_refs"]
+
+    updated_fresh, replayed_fresh = meetings_mod.record_meeting_operator_review(
+        store=store,
+        tenant_id=TENANT,
+        meeting_id=fresh_id,
+        reviewed_by="op-reviewer",
+        note="Confirmed synthesis timeout; closed review with no proposal.",
+    )
+    assert replayed_fresh is False
+    assert updated_fresh["operator_review"]["status"] == "reviewed"
+    assert updated_fresh["operator_review"]["cause"] == "timeout"
+    assert updated_fresh["operator_review"]["unreadable_reason"] == "timeout"
+
+    # 2. Legacy REVIEW meeting with null unreadable_reason records and exposes cause='unknown'
+    legacy_id = "mtg-legacy-null-cause"
+    store.put_meeting(
+        {
+            "meeting_id": legacy_id,
+            "tenant_id": TENANT,
+            "meeting_type": "MT-1",
+            "topic": "Legacy REVIEW meeting without stored unreadable_reason",
+            "status": "closed",
+            "outcome": "REVIEW",
+            "chair_persona_id": "persona-alpha",
+            "convened_by": {"kind": "persona", "id": "persona-alpha"},
+            "participants": [{"persona_id": "persona-alpha", "role": "chair"}],
+            "round": 2,
+            "case_file_items": [{"item_id": "facts:legacy:1", "excerpt": "Legacy fact"}],
+            "rounds": [],
+            "synthesis": {
+                "proposals": [],
+                "outcome": "REVIEW",
+                "unreadable_reason": None,
+                "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+            },
+        }
+    )
+    legacy_detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=legacy_id)
+    assert legacy_detail is not None
+    assert legacy_detail["synthesis_unreadable_reason"] == "unknown"
+    assert legacy_detail["synthesis"]["unreadable_reason"] == "unknown"
+    assert legacy_detail["evidence_refs"] == ["facts:legacy:1"]
+
+    updated_legacy, replayed_legacy = meetings_mod.record_meeting_operator_review(
+        store=store,
+        tenant_id=TENANT,
+        meeting_id=legacy_id,
+        reviewed_by="op-reviewer",
+        note="Reviewed legacy REVIEW meeting; cause not stored on legacy record.",
+    )
+    assert replayed_legacy is False
+    assert updated_legacy["operator_review"]["status"] == "reviewed"
+    assert updated_legacy["operator_review"]["cause"] == "unknown"
+    assert updated_legacy["operator_review"]["unreadable_reason"] == "unknown"
