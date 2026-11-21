@@ -210,7 +210,7 @@ failed = store.checkpoint(failed, lease_owner='prior-worker', lease_seconds=60)
 store.release(failed, lease_owner='prior-worker', lease_seconds=60)
 
 # Wire second store instance into personas service to prove shared durable backing
-transport = FakeOwnerTransport()
+transport = FakeOwnerTransport(seed_pool_policy_approval=True)
 store2 = MemoryPersonaProvisioningStore(backend=backend)
 personas_service._PERSONA_PROVISIONING_STORE = store2
 personas_service._PersonaOwnerHttpTransport = lambda **kwargs: transport
@@ -365,7 +365,7 @@ failed.compensation = None
 failed = store.checkpoint(failed, lease_owner='prior-worker', lease_seconds=60)
 store.release(failed, lease_owner='prior-worker', lease_seconds=60)
 
-transport = FakeOwnerTransport()
+transport = FakeOwnerTransport(seed_pool_policy_approval=True)
 store2 = MemoryPersonaProvisioningStore(backend=backend)
 personas_service._PERSONA_PROVISIONING_STORE = store2
 personas_service._PersonaOwnerHttpTransport = lambda **kwargs: transport

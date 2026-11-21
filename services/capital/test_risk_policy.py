@@ -1057,6 +1057,41 @@ def test_runtime_entry_points_enforce_profile_mapping_on_existing_pools_and_admi
     assert algo_policy.risk_policy_id == f"rp-{pool_id}"
     assert algo_policy.gross_limit == 2.0
 
+    # 3. Fixture pool IDs (pool-1/rp-pool-1, pool-rb-expr/rp-pool-rb-expr, pool-paper-env/rp-pool-paper-env)
+    # have no hardcoded bypass: without approval, both resolve_pool_risk_policy_binding and resolve_bound_pool_risk_policy fail closed
+    for fixture_pool_id in ("pool-1", "pool-rb-expr", "pool-paper-env"):
+        unapproved_fixture_pool = {
+            "pool_id": fixture_pool_id,
+            "status": "active",
+            "currency": "TWD",
+            "budget": 100000.0,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "risk_policy": {
+                    "risk_policy_id": f"rp-{fixture_pool_id}",
+                    "version": "1.0",
+                    "status": "active",
+                    "allowed_stages": ["paper"],
+                    "gross_limit": 2.0,
+                    "net_limit": 2.0,
+                    "max_leverage": 2.0,
+                    "allowed_asset_classes": ["equity", "future"],
+                },
+            },
+        }
+        fixture_res = resolve_pool_risk_policy_binding(
+            capital_pool_id=fixture_pool_id,
+            pool=unapproved_fixture_pool,
+        )
+        assert fixture_res.resolved is False
+        assert fixture_res.reason_code == "risk_policy_profile_mapping_unapproved"
+        with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+            resolve_bound_pool_risk_policy(
+                capital_pool_id=fixture_pool_id,
+                pool=unapproved_fixture_pool,
+            )
+
+
 
 
 

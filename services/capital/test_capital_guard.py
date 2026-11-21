@@ -934,3 +934,118 @@ def test_capital_guard_rejects_unapproved_inline_baseline_when_profile_mapping_r
     assert approved_activate.json()["status"] == "active"
 
 
+def test_cp1_request_hash_never_bypasses_profile_mapping_and_inline_policy_uses_canonical_evaluator() -> None:
+    # 1. provisioning_request_hash=sha256:cp1-persona-request (or sha256:persona-request) never bypasses
+    # approved profile mapping requirement for rp-pool-* baseline policies
+    review_policy = {
+        "risk_policy_id": "rp-pool-persona-paper-review",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    for req_hash in (None, "sha256:cp1-persona-request", "sha256:persona-request"):
+        meta = {"execution_context": "paper", "risk_policy": dict(review_policy)}
+        if req_hash is not None:
+            meta["provisioning_request_hash"] = req_hash
+        pool = SimpleNamespace(
+            pool_id="pool-persona-paper-review",
+            tenant_id="tenant-a",
+            risk_policy_ref=None,
+            metadata=meta,
+        )
+        with pytest.raises(CapitalGuardError, match="risk_policy_profile_mapping_unapproved"):
+            CapitalGuard().authorize(
+                pool=pool,
+                tenant_id="tenant-a",
+                decision_id=None,
+                target_type="capital_pool_activation",
+                target_id="pool-persona-paper-review",
+                expected={"subject.risk_direction": "increase"},
+            )
+
+    # 2. Inline and referenced policies apply the exact same RiskPolicyEvaluator controls and required-observation enforcement
+    explicit_policy = {
+        "risk_policy_id": "rp-explicit-sector-asset-v1",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity"],
+        "gross_limit": 2.0,
+        "max_sector_exposure": {"tech": 0.1},
+    }
+    inline_pool = SimpleNamespace(
+        pool_id="pool-inline-eval",
+        tenant_id="tenant-a",
+        risk_policy_ref=None,
+        metadata={"execution_context": "paper", "risk_policy": dict(explicit_policy)},
+    )
+    ref_pool = SimpleNamespace(
+        pool_id="pool-ref-eval",
+        tenant_id="tenant-a",
+        risk_policy_ref="rp-explicit-sector-asset-v1",
+        metadata={"execution_context": "paper"},
+    )
+    guard = CapitalGuard(policy_loader=lambda _ref: dict(explicit_policy))
+
+    violating_ctx = {
+        "stage": "paper",
+        "asset_classes": ["crypto"],
+        "gross_exposure": 0.5,
+        "sector_exposures": {"tech": 0.9},
+    }
+    for candidate_pool in (inline_pool, ref_pool):
+        with pytest.raises(CapitalGuardError) as exc_info:
+            guard.authorize(
+                pool=candidate_pool,
+                tenant_id="tenant-a",
+                decision_id=None,
+                target_type="capital_pool_activation",
+                target_id=candidate_pool.pool_id,
+                expected={"subject.risk_direction": "increase"},
+                contexts=[violating_ctx],
+            )
+        msg = str(exc_info.value)
+        assert "asset class 'crypto' is not in RiskPolicy allowed_asset_classes" in msg
+        assert "sector_exposure tech=0.9 exceeds RiskPolicy limit 0.1" in msg
+
+    # Missing required observations (asset_classes or sector_exposures omitted) also fail closed on both paths
+    for missing_ctx, expected_fact in [
+        ({"stage": "paper", "gross_exposure": 0.5, "sector_exposures": {"tech": 0.05}}, "asset_classes unavailable"),
+        ({"stage": "paper", "gross_exposure": 0.5, "asset_classes": ["equity"]}, "sector_exposures unavailable"),
+    ]:
+        for candidate_pool in (inline_pool, ref_pool):
+            with pytest.raises(CapitalGuardError, match=expected_fact):
+                guard.authorize(
+                    pool=candidate_pool,
+                    tenant_id="tenant-a",
+                    decision_id=None,
+                    target_type="capital_pool_activation",
+                    target_id=candidate_pool.pool_id,
+                    expected={"subject.risk_direction": "increase"},
+                    contexts=[missing_ctx],
+                )
+
+    # Compliant observations succeed on both paths
+    compliant_ctx = {
+        "stage": "paper",
+        "asset_classes": ["equity"],
+        "gross_exposure": 0.5,
+        "sector_exposures": {"tech": 0.05},
+    }
+    for candidate_pool in (inline_pool, ref_pool):
+        guard.authorize(
+            pool=candidate_pool,
+            tenant_id="tenant-a",
+            decision_id=None,
+            target_type="capital_pool_activation",
+            target_id=candidate_pool.pool_id,
+            expected={"subject.risk_direction": "increase"},
+            contexts=[compliant_ctx],
+        )
+
+
+

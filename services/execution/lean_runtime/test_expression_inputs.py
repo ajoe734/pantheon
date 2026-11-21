@@ -66,13 +66,20 @@ POLICY = {
 
 
 def _pool(**overrides: Any) -> dict[str, Any]:
+    from services.capital.conftest import _ApprovesWhatIsAsked
+
     pool = {
         "pool_id": "pool-1",
+        "tenant_id": "default",
         "status": "active",
         "currency": "TWD",
         "budget": 100000.0,
         "single_runtime_enforced": True,
-        "metadata": {"risk_policy": dict(POLICY)},
+        "metadata": {
+            "risk_policy": dict(POLICY),
+            "profile_mapping_approval_id": "apv-pool-1",
+            "approval_reader": _ApprovesWhatIsAsked(),
+        },
     }
     pool.update(overrides)
     return pool

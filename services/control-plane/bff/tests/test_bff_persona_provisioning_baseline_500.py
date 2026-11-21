@@ -220,7 +220,9 @@ def _build_test_client(read_store, cmd_store=None, raise_server_exceptions=True,
 def _setup_mock_services(monkeypatch, transport=None):
     monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
     if transport is None:
-        transport = FakeOwnerTransport()
+        transport = FakeOwnerTransport(seed_pool_policy_approval=True)
+    else:
+        transport.seed_pool_policy_approval = True
     store = MemoryPersonaProvisioningStore()
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
     monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: store)

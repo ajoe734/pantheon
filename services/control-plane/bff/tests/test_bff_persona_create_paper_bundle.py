@@ -32,7 +32,7 @@ def _isolate_persona_create_service_clients(monkeypatch):
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
-    transport = FakeOwnerTransport()
+    transport = FakeOwnerTransport(seed_pool_policy_approval=True)
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(personas_service, "_PersonaOwnerHttpTransport", lambda *a, **kw: transport)
     monkeypatch.setattr(personas_service, "_register_persona_cron_required", _schedule_receipt)

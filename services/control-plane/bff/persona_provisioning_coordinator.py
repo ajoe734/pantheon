@@ -1958,13 +1958,8 @@ class PersonaProvisioningCoordinator:
         req: Mapping[str, Any],
         *,
         request_hash: str = "",
-        allow_legacy_fixture_without_risk_key: bool = False,
     ) -> tuple[str | None, bool, str | None]:
         req_meta = req.get("metadata") if isinstance(req.get("metadata"), Mapping) else {}
-        raw_ref = req.get("risk_policy_ref")
-        if raw_ref is None or not str(raw_ref).strip():
-            raw_ref = req.get("riskPolicyRef") or req_meta.get("risk_policy_ref")
-        clean_ref = str(raw_ref).strip() if raw_ref is not None and str(raw_ref).strip() else None
         has_explicit_policy = "risk_policy" in req or "risk_policy" in req_meta
 
         risk_profile_map = req.get("risk_profile") if isinstance(req.get("risk_profile"), Mapping) else {}
@@ -1984,22 +1979,7 @@ class PersonaProvisioningCoordinator:
             if "require_approved_profile_mapping" in req
             else req_meta.get("require_approved_profile_mapping")
         )
-        has_null_policy_ref = (
-            ("risk_policy_ref" in req and not clean_ref)
-            or ("riskPolicyRef" in req and not clean_ref)
-            or ("risk_policy_ref" in req_meta and not clean_ref)
-        )
-        is_legacy_synthetic_fixture = (
-            allow_legacy_fixture_without_risk_key
-            and requested_profile is None
-            and not has_null_policy_ref
-            and not has_explicit_policy
-            and bool(req)
-            and explicit_require_flag is not True
-        )
         if explicit_require_flag is False and requested_profile is None:
-            require_approved_mapping = False
-        elif is_legacy_synthetic_fixture:
             require_approved_mapping = False
         else:
             require_approved_mapping = bool(
@@ -2071,7 +2051,6 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
         *,
-        _from_coordinate_capital_pool: bool = False,
         base_pool: Mapping[str, Any] | None = None,
     ) -> tuple[str | None, dict[str, Any], bool]:
         req = record.request_payload
@@ -2087,7 +2066,6 @@ class PersonaProvisioningCoordinator:
             self._extract_request_risk_profile_context(
                 req,
                 request_hash=record.request_hash,
-                allow_legacy_fixture_without_risk_key=_from_coordinate_capital_pool,
             )
         )
         requested_version = str(
@@ -2282,15 +2260,26 @@ class PersonaProvisioningCoordinator:
             self._extract_request_risk_profile_context(
                 record.request_payload,
                 request_hash=record.request_hash,
-                allow_legacy_fixture_without_risk_key=True,
             )
         )
         requested_ref, requested_policy, has_explicit_policy_request = (
             self._resolve_requested_pool_risk_policy(
                 record,
                 ids,
-                _from_coordinate_capital_pool=True,
             )
+        )
+        req_meta = (
+            record.request_payload.get("metadata")
+            if isinstance(record.request_payload.get("metadata"), Mapping)
+            else {}
+        )
+        has_explicit_policy_in_req = (
+            "risk_policy" in record.request_payload or "risk_policy" in req_meta
+        )
+        effective_approval_id = candidate_approval_id or (
+            f"apv-capital-pool-{ids.capital_pool_id}"
+            if (require_approved_mapping and not requested_ref and not has_explicit_policy_in_req)
+            else None
         )
         effective_persisted_profile = requested_profile or ("low" if require_approved_mapping else None)
         base_payload: dict[str, Any] = {
@@ -2324,8 +2313,8 @@ class PersonaProvisioningCoordinator:
                     else {}
                 ),
                 **(
-                    {"profile_mapping_approval_id": candidate_approval_id}
-                    if candidate_approval_id is not None
+                    {"profile_mapping_approval_id": effective_approval_id}
+                    if effective_approval_id is not None
                     else {}
                 ),
             },
@@ -4204,20 +4193,13 @@ class PersonaProvisioningCoordinator:
             pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
             if "risk_policy" in pool_meta or not pool_rec.get("risk_policy_ref") or pub.get("require_risk_policy") is True:
                 ledger_record = self.store.get_by_persona(tenant_id, persona_id) if self.store is not None else None
-                ledger_profile, ledger_require_mapping, _ = (
+                ledger_profile, _, _ = (
                     self._extract_request_risk_profile_context(
                         ledger_record.request_payload,
                         request_hash=ledger_record.request_hash,
-                        allow_legacy_fixture_without_risk_key=True,
                     )
                     if ledger_record is not None
                     else (None, False, None)
-                )
-                is_synthetic_fixture_pool = (
-                    not ledger_require_mapping
-                    and pool_meta.get("provisioning_request_hash") in {"sha256:persona-request", "sha256:cp1-persona-request"}
-                    and pool_meta.get("requested_risk_profile") is None
-                    and pool_meta.get("require_approved_profile_mapping") is not True
                 )
                 pool_policy_res = resolve_pool_risk_policy_binding(
                     capital_pool_id=ids.capital_pool_id,
@@ -4232,7 +4214,7 @@ class PersonaProvisioningCoordinator:
                         if pool_meta.get("requested_risk_profile")
                         else None
                     ),
-                    require_approved_profile_mapping=False if is_synthetic_fixture_pool else None,
+                    require_approved_profile_mapping=None,
                     approval_reader=self._governance_approval_reader(),
                     require_active=True,
                     require_limits=("gross_limit",),

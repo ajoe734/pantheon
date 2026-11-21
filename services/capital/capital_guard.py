@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from services.governance.approval_authority import ApprovalInvalid, configured_approval_reader
 from services.capital.risk_policy import (
     RiskPolicy,
+    RiskPolicyError,
     RiskPolicyEvaluator,
     _optional_float,
     resolve_pool_risk_policy_binding,
@@ -202,6 +203,14 @@ class CapitalGuard:
         self._safe_mode_reader = safe_mode_reader or read_safe_mode
         self._policy_loader = policy_loader or load_risk_policy
 
+    def _effective_approval_reader(self) -> Any:
+        if self._approval_reader is not None:
+            return self._approval_reader
+        try:
+            return configured_approval_reader("capital")
+        except Exception:
+            return None
+
     def authorize(
         self, *, pool: Any, tenant_id: Optional[str], decision_id: Optional[str], target_type: str, target_id: str,
         expected: Mapping[str, Any], contexts: Sequence[Mapping[str, Any]] = (), binding: Any = None,
@@ -296,11 +305,6 @@ class CapitalGuard:
                 else None
             )
         )
-        is_synthetic_cp1_transport_probe = bool(
-            pool_meta.get("provisioning_request_hash") == "sha256:cp1-persona-request"
-            and not has_requested_profile
-            and pool_meta.get("require_approved_profile_mapping") is not True
-        )
         resolution = resolve_pool_risk_policy_binding(
             capital_pool_id=str(getattr(pool, "pool_id", "") or ""),
             pool=pool,
@@ -309,38 +313,32 @@ class CapitalGuard:
             expected_stage="paper",
             require_active=True,
             require_limits=("gross_limit",),
-            require_approved_profile_mapping=False if is_synthetic_cp1_transport_probe else None,
+            require_approved_profile_mapping=None,
             approval_decision_id=decision_id,
-            approval_reader=self._approval_reader,
+            approval_reader=self._effective_approval_reader(),
             raise_on_error=False,
         )
         if not resolution.resolved or resolution.policy is None:
             raise CapitalGuardError(f"Risk policy rejected: {resolution.reason} ({resolution.reason_code})")
         policy = resolution.policy
-        for context in contexts:
-            gross_obs = _optional_float(context.get("gross_exposure"))
-            if policy.gross_limit is not None and gross_obs is not None and gross_obs > policy.gross_limit:
-                raise CapitalGuardError(
-                    f"Risk policy rejected: gross_exposure {gross_obs} exceeds gross_limit {policy.gross_limit}"
+        try:
+            for context in contexts:
+                result = RiskPolicyEvaluator().evaluate(
+                    policy,
+                    {
+                        **context,
+                        "target_type": target_type,
+                        "target_id": target_id,
+                        "capital_pool_id": str(getattr(pool, "pool_id", "") or ""),
+                        "risk_policy_ref": policy.risk_policy_id,
+                    },
                 )
-            net_obs = _optional_float(context.get("net_exposure"))
-            if policy.net_limit is not None and net_obs is not None and abs(net_obs) > policy.net_limit:
-                raise CapitalGuardError(
-                    f"Risk policy rejected: net_exposure {net_obs} exceeds net_limit {policy.net_limit}"
-                )
-            lev_obs = _optional_float(context.get("leverage"))
-            if policy.max_leverage is not None and lev_obs is not None and lev_obs > policy.max_leverage:
-                raise CapitalGuardError(
-                    f"Risk policy rejected: leverage {lev_obs} exceeds max_leverage {policy.max_leverage}"
-                )
-            weights = context.get("target_weights")
-            if policy.max_single_name_weight is not None and isinstance(weights, Mapping):
-                for key, weight in weights.items():
-                    w_val = _optional_float(weight)
-                    if w_val is not None and abs(w_val) > policy.max_single_name_weight:
-                        raise CapitalGuardError(
-                            f"Risk policy rejected: target_weight {key}={w_val} exceeds max_single_name_weight {policy.max_single_name_weight}"
-                        )
+                if result.rejected:
+                    raise CapitalGuardError("Risk policy rejected: " + "; ".join(result.blocking_reasons))
+        except CapitalGuardError:
+            raise
+        except Exception as exc:
+            raise CapitalGuardError(f"Risk policy unavailable: {exc}") from exc
 
     def _require_risk_policy(
         self,
@@ -356,7 +354,6 @@ class CapitalGuard:
         ref = str(getattr(pool, "risk_policy_ref", None) or "").strip()
         try:
             raw_loaded = self._policy_loader(ref)
-            policy = RiskPolicy.from_mapping(raw_loaded)
             binding_map = (
                 dict(binding)
                 if isinstance(binding, Mapping)
@@ -370,20 +367,23 @@ class CapitalGuard:
                 capital_pool_id=str(getattr(pool, "pool_id", "") or ""),
                 pool=pool,
                 binding=binding_map,
-                risk_policy_ref=ref or str(policy.risk_policy_id or "risk-policy-ref"),
+                risk_policy_ref=ref or "risk-policy-ref",
                 risk_policy_loader=lambda _ref: raw_loaded,
                 expected_tenant_id=tenant,
                 expected_stage=None,
                 require_active=True,
                 require_limits=(),
                 approval_decision_id=decision_id,
-                approval_reader=self._approval_reader,
+                approval_reader=self._approval_reader or configured_approval_reader("capital"),
                 raise_on_error=False,
             )
             if not resolution.resolved or resolution.policy is None:
+                if resolution.reason and str(resolution.reason).startswith("Malformed risk policy"):
+                    raise RiskPolicyError(str(resolution.reason))
                 raise CapitalGuardError(
                     f"Risk policy rejected: {resolution.reason} ({resolution.reason_code})"
                 )
+            policy = resolution.policy
             for context in contexts:
                 result = RiskPolicyEvaluator().evaluate(policy, {
                     **context, "target_type": target_type, "target_id": target_id,

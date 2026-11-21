@@ -205,7 +205,7 @@ def _provisioning_read_surface_double():
 @pytest.fixture(autouse=True)
 def mock_external_services(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
-    transport = FakeOwnerTransport()
+    transport = FakeOwnerTransport(seed_pool_policy_approval=True)
     _state.transport = transport
     _state.mutation_port_updates.clear()
     monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())

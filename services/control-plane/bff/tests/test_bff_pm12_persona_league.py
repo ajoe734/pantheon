@@ -154,7 +154,7 @@ HEADERS = {"Authorization": "Bearer op-pm12:operator,reviewer"}
 
 @pytest.fixture(autouse=True)
 def _canonical_persona_owner_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
-    transport = FakeOwnerTransport()
+    transport = FakeOwnerTransport(seed_pool_policy_approval=True)
     monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
     store = MemoryPersonaProvisioningStore()
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)

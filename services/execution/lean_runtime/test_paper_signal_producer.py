@@ -2436,6 +2436,8 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
     }
 
     def _pool(self, *, policy=True, budget=POOL_BUDGET):
+        from services.capital.conftest import _ApprovesWhatIsAsked
+
         pool = {
             "pool_id": "pool-rb-expr",
             "tenant_id": "default",
@@ -2446,7 +2448,12 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             "currency": "TWD",
             "budget": budget,
             "single_runtime_enforced": True,
-            "metadata": {"internal": True, "execution_context": "paper"},
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "profile_mapping_approval_id": "apv-pool-rb-expr",
+                "approval_reader": _ApprovesWhatIsAsked(),
+            },
         }
         if policy is not False:
             pool["metadata"]["risk_policy"] = dict(self.POLICY if policy is True else policy)

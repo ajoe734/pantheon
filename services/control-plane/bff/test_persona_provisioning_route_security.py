@@ -53,7 +53,7 @@ def _patch_tenant_payload(monkeypatch: pytest.MonkeyPatch, fn):
 @pytest.fixture()
 def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
     read_store = _provisioning_read_surface_double()
-    transport = FakeOwnerTransport()
+    transport = FakeOwnerTransport(seed_pool_policy_approval=True)
     store = MemoryPersonaProvisioningStore()
     cmd_store = CommandStore(str(tmp_path / "cmd_store.jsonl"))
 

@@ -403,6 +403,19 @@ class RiskPolicyEvaluator:
                     continue
                 if facts["target_type"] == "capital_pool_activation" and "stage" not in facts and limit in _ALLOCATION_LIMITS:
                     continue
+                if (
+                    facts["target_type"] in {"capital_pool_activation", "capital_binding_activation"}
+                    and facts.get("target_weights") == {}
+                    and facts.get("gross_exposure") == 0.0
+                    and limit in (
+                        "max_single_name_weight",
+                        "allowed_asset_classes",
+                        "forbidden_asset_classes",
+                        "allowed_strategy_families",
+                        "forbidden_strategy_families",
+                    )
+                ):
+                    continue
                 configured = getattr(resolved_policy, limit)
                 if configured not in (None, (), {}) and _is_obs_missing(limit, configured, facts.get(fact)):
                     raise RiskPolicyError(f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable")
@@ -1243,6 +1256,8 @@ def capital_pool_approval_digest(pool: Any) -> str:
     }
     if not payload.get("pool_id") and is_map and pool.get("capital_pool_id"):
         payload["pool_id"] = pool.get("capital_pool_id")
+    if isinstance(payload.get("budget"), (int, float)) and not isinstance(payload.get("budget"), bool):
+        payload["budget"] = float(payload["budget"])
     pool_meta = pool.get("metadata") if is_map else getattr(pool, "metadata", None)
     if isinstance(pool_meta, Mapping) and isinstance(pool_meta.get("risk_policy"), (Mapping, RiskPolicy)):
         try:
@@ -1451,6 +1466,10 @@ def _verify_policy_owner_approval_decision(
             for item in attached_list:
                 _add_ref(item)
 
+    explicit_candidate_ids = frozenset(candidate_ids)
+    if not candidate_ids and resolved_pool_id:
+        _add_ref(f"apv-capital-pool-{resolved_pool_id}")
+
     if not candidate_ids or not effective_tenant_id or not resolved_pool_id:
         return None
 
@@ -1564,6 +1583,18 @@ def _verify_policy_owner_approval_decision(
         if loaded_ev is None:
             continue
 
+        expected_binding: dict[str, Any] = {
+            "tenant_id": effective_tenant_id,
+            "target_type": "capital_pool_activation",
+            "target_id": resolved_pool_id,
+            "subject.pool_id": resolved_pool_id,
+            "subject.risk_direction": "increase",
+            "subject.risk_policy_id": policy_model.risk_policy_id,
+            "subject.risk_policy_version": str(policy_model.version),
+        }
+        if pool_approval_digest:
+            expected_binding["target_version"] = pool_approval_digest
+
         try:
             if isinstance(loaded_ev, ApprovalEvidence):
                 evidence = loaded_ev
@@ -1571,6 +1602,24 @@ def _verify_policy_owner_approval_decision(
                 evidence = ApprovalEvidence.model_validate(dict(loaded_ev))
             elif hasattr(loaded_ev, "model_dump"):
                 evidence = ApprovalEvidence.model_validate(loaded_ev.model_dump())
+            elif cand_id in explicit_candidate_ids and callable(getattr(loaded_ev, "require_valid", None)):
+                res_ev = loaded_ev.require_valid(
+                    expected={
+                        **expected_binding,
+                        "subject.risk_policy_digest": computed_digest,
+                        "subject.requested_risk": clean_profile or "low",
+                    },
+                    now=now_dt,
+                    usage_context=usage_ctx,
+                )
+                if isinstance(res_ev, ApprovalEvidence):
+                    evidence = res_ev
+                elif isinstance(res_ev, Mapping):
+                    evidence = ApprovalEvidence.model_validate(dict(res_ev))
+                elif hasattr(res_ev, "model_dump"):
+                    evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
+                else:
+                    continue
             else:
                 continue
         except Exception:
@@ -1578,17 +1627,6 @@ def _verify_policy_owner_approval_decision(
 
         if evidence.decision_id != cand_id:
             continue
-
-        expected_binding: dict[str, Any] = {
-            "tenant_id": effective_tenant_id,
-            "target_type": "capital_pool_activation",
-            "target_id": resolved_pool_id,
-            "subject.pool_id": resolved_pool_id,
-            "subject.risk_policy_id": policy_model.risk_policy_id,
-            "subject.risk_policy_version": str(policy_model.version),
-        }
-        if pool_approval_digest:
-            expected_binding["target_version"] = pool_approval_digest
 
         try:
             evidence.require_valid(
@@ -2398,59 +2436,6 @@ def resolve_pool_risk_policy_binding(
     )
 
 
-_LEGACY_NON_PERSONA_UNIT_TEST_FIXTURE_POOLS: frozenset[str] = frozenset(
-    {
-        "pool-1",
-        "pool-rb-expr",
-        "pool-paper-env",
-    }
-)
-
-
-def _is_legacy_non_persona_unit_test_fixture_pool(
-    *,
-    pool_id: str,
-    policy_id: str | None,
-    pool_obj: Any,
-    binding: Mapping[str, Any] | None,
-) -> bool:
-    if pool_id not in _LEGACY_NON_PERSONA_UNIT_TEST_FIXTURE_POOLS:
-        return False
-    if policy_id != f"rp-{pool_id}":
-        return False
-    pool_map = pool_obj if isinstance(pool_obj, Mapping) else {}
-    pool_meta = (
-        pool_map.get("metadata")
-        if isinstance(pool_map.get("metadata"), Mapping)
-        else (
-            getattr(pool_obj, "metadata", None)
-            if isinstance(getattr(pool_obj, "metadata", None), Mapping)
-            else {}
-        )
-    )
-    b_map = binding if isinstance(binding, Mapping) else {}
-    b_meta = b_map.get("metadata") if isinstance(b_map.get("metadata"), Mapping) else {}
-    persona_or_mapping_keys = (
-        "persona_id",
-        "provisioning_request_hash",
-        "requested_risk_profile",
-        "risk_profile",
-        "requested_risk",
-        "risk",
-        "require_approved_profile_mapping",
-        "profile_mapping_approval_id",
-        "approval_decision_id",
-        "decision_id",
-        "profile_mapping_approval",
-        "approval_decision",
-        "approval_decisions",
-    )
-    for container in (pool_map, pool_meta, b_map, b_meta):
-        if isinstance(container, Mapping) and any(container.get(k) not in (None, "", False) for k in persona_or_mapping_keys):
-            return False
-    return True
-
-
 def resolve_bound_pool_risk_policy(
     *,
     capital_pool_id: str | None = None,
@@ -2509,22 +2494,6 @@ def resolve_bound_pool_risk_policy(
         raise_on_error=False,
     )
     if resolution.resolved:
-        return resolution.policy
-    if (
-        require_approved_profile_mapping is None
-        and resolution.status == "unresolved_profile_mapping"
-        and resolution.policy is not None
-        and requested_profile is None
-        and approval_decision_id is None
-        and approval_decision is None
-        and not approval_decisions
-        and _is_legacy_non_persona_unit_test_fixture_pool(
-            pool_id=resolution.capital_pool_id,
-            policy_id=resolution.risk_policy_id,
-            pool_obj=resolved_pool_obj,
-            binding=binding,
-        )
-    ):
         return resolution.policy
     if resolution.status == "missing" and resolution.source == "unresolved":
         return None
