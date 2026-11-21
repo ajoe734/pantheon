@@ -1,0 +1,130 @@
+{
+  "buy_cash_required": 99813.031175,
+  "gross_weight_before_fee": 0.99671,
+  "input": {
+    "book_before": {
+      "gross_notional": 0.0,
+      "positions": []
+    },
+    "budget": {
+      "available_cash": 100000.0,
+      "equity": 100000.0,
+      "gross_limit": 200000.0,
+      "gross_used": 0.0,
+      "margin_reserved": 0.0,
+      "max_leverage": 2.0
+    },
+    "candidates": [
+      {
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+        "expiry": null,
+        "fee_per_unit_per_side": 0.0,
+        "initial_margin_per_unit": 221.0,
+        "instrument_id": "eq:2317",
+        "kind": "cash_share",
+        "last_trading_day": null,
+        "liquidity": null,
+        "maintenance_margin_per_unit": 0,
+        "max_units_by_risk": 452,
+        "multiplier": 1,
+        "price": 221.0,
+        "price_basis": "stock_close_prev_session",
+        "price_date": "2026-11-18",
+        "side_capability": [
+          "long"
+        ],
+        "source_refs": [],
+        "tax_rate_per_side": 0.0,
+        "underlying": "2317",
+        "unit": 1
+      },
+      {
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+        "expiry": "2026-12-16",
+        "fee_per_unit_per_side": 5.0,
+        "initial_margin_per_unit": 59400.0,
+        "instrument_id": "ssf:DHF:202612",
+        "kind": "stock_future",
+        "last_trading_day": "2026-12-16",
+        "liquidity": {
+          "open_interest": 19399,
+          "volume": 6967
+        },
+        "maintenance_margin_per_unit": 45540.0,
+        "max_units_by_risk": 0,
+        "multiplier": 2000,
+        "price": 220.0,
+        "price_basis": "futures_daily_settlement_prev_session",
+        "price_date": "2026-11-17",
+        "side_capability": [
+          "long",
+          "short"
+        ],
+        "source_refs": [
+          {
+            "contract": "DHF",
+            "contract_month": "202612",
+            "dataset": "taifex_ssf_contracts",
+            "margin_date": "2026-11-17",
+            "partition": "normalized/taifex_ssf_contracts/date=2026-11-17",
+            "price_date": "2026-11-17"
+          }
+        ],
+        "tax_rate_per_side": 2e-05,
+        "underlying": "2317",
+        "unit": 2000
+      }
+    ],
+    "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "parameters": {
+      "allow_pyramiding": false,
+      "close_before_reverse": true,
+      "lever_min_strength": 0.5,
+      "notional_fraction_at_full_strength": 1.0
+    },
+    "view": {
+      "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+      "direction": "LONG",
+      "strength": 0.91324200913242,
+      "underlying": "2317"
+    }
+  },
+  "is_new_trade": false,
+  "notional": 99671,
+  "recorded_decision": {
+    "candidates_considered": [
+      "eq:2317",
+      "ssf:DHF:202612"
+    ],
+    "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "instrument_id": "eq:2317",
+    "policy_parameters_digest": "21506025fd1f63344919806d",
+    "policy_version": "1.0",
+    "reason_code": "long_cash",
+    "reason_text": "long view strength=0.91324200913242 target_notional=182648.40 lowest score 82756.40 -> eq:2317 x452",
+    "side": "buy",
+    "strength": 0.91324200913242,
+    "target_notional": 182648.401826484,
+    "units": 452
+  },
+  "remaining_cash": 186.96882500000356,
+  "replay_entrypoint": "expression_policy.decide (historical event contains view/candidates/book/budget/parameters; not a new target-position input)",
+  "replayed_decision": {
+    "candidates_considered": [
+      "eq:2317",
+      "ssf:DHF:202612"
+    ],
+    "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "instrument_id": "eq:2317",
+    "policy_parameters_digest": "21506025fd1f63344919806d",
+    "policy_version": "1.0",
+    "reason_code": "long_cash",
+    "reason_text": "long view strength=0.91324200913242 target_notional=182648.40 lowest score 82977.40 -> eq:2317 x451",
+    "side": "buy",
+    "strength": 0.91324200913242,
+    "target_notional": 182648.401826484,
+    "units": 451
+  },
+  "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+  "source_hash": "87df9eaeca3eec81ae77bba975b76a4f2965fc0566c41a03dbcff5b58665bd6d"
+}

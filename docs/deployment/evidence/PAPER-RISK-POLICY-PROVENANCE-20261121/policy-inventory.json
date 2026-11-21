@@ -1,0 +1,191 @@
+{
+  "policy_mapping_candidates": [],
+  "policy_roots": [
+    {
+      "exists": false,
+      "files": [],
+      "path": "/workspace/config/risk_policies"
+    },
+    {
+      "exists": false,
+      "files": [],
+      "path": "/workspace/services/capital/risk_policies"
+    }
+  ],
+  "source_hashes": {
+    "services/capital/capital_guard.py": "553bd35d54e598a18b6ba860fd8fc25b34ac9aea292e55c1228bd8e0db41bb01",
+    "services/capital/risk_policy.py": "0f38cbebf00ea5ca1a7fafc8ec291d1a2df0af28ba2c97e52c228e7a07948959",
+    "services/control-plane/bff/persona_provisioning_coordinator.py": "c4f62bd31190dc923583365b8c5771a8e8b26b2d9ef4ebb12bd7678068b923ef",
+    "services/control-plane/bff/personas/service.py": "f2040650b906373d955eac845b27dd817bc54773bb13195cf51c6b916cb2bb4e"
+  },
+  "target_types": {
+    "capital_binding_activation": 1,
+    "capital_pool_activation": 1,
+    "evolution_execute": 2,
+    "evolution_proposal": 1,
+    "persona_lifecycle_transition": 8,
+    "registry_entry": 683,
+    "strategy_workshop": 1
+  },
+  "total": 697,
+  "trading_approvals": [
+    {
+      "actor_id": "pantheon-dev-paper-provisioner",
+      "actor_role": "automated_gate",
+      "allowedActions": {
+        "canApprove": false,
+        "canReject": false,
+        "canRequestRevision": false
+      },
+      "authority_status": "authoritative",
+      "authorization_scope": {
+        "allowed_target_stages": [
+          "paper"
+        ],
+        "environment": "dev",
+        "max_capital_scale_pct": 0
+      },
+      "candidate_digest": "sha256:a08767cb603bf475f36e098850ad0eeb4eae7a9a5bf55dc84854612c6a59308a",
+      "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "conditions": [],
+      "controller_record_ref": "governance-controller://approval-apv-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "created_at": "2026-11-18T04:38:58Z",
+      "decided_at": "2026-11-18T06:59:51Z",
+      "decision": "approved",
+      "decision_context": {
+        "evidence_refs": [
+          {
+            "ref_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+            "ref_type": "registry_entry"
+          }
+        ],
+        "governance_chain": {
+          "target_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+          "target_type": "registry_entry",
+          "target_version": "1.2.0"
+        },
+        "risk_summary": "Low-risk internal paper pool envelope"
+      },
+      "decision_id": "apv-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "decision_state": "decided",
+      "decision_type": "registry_entry",
+      "event_id": "cc5f8c82-bbb3-40c2-95dd-fb9c073b4138",
+      "evidence_refs": [
+        {
+          "display_label": null,
+          "kind": null,
+          "reason": "unresolved_evidence_kind",
+          "redacted": true,
+          "redacted_count": null,
+          "ref_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+          "required_capability": "unknown"
+        }
+      ],
+      "expires_at": "2026-11-19T04:38:58Z",
+      "id": "apv-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "metadata": null,
+      "outcome": "approved",
+      "owner_user_id": "pantheon-dev-paper-provisioner",
+      "persona_id": "persona-6507750312870d03a241",
+      "proof_digest": null,
+      "proposal_content_digest": "sha256:f5bab19ae8733bb98bd41dcd9f342d66611f1a172c889bc72799ef7de10f727a",
+      "proposal_id": "persona-pool-publish-pool-039ad01f8bcd2b4aa466-v2",
+      "proposal_revision": 1,
+      "rationale": "Low-risk internal paper pool envelope",
+      "recorded_at": "2026-11-18T06:59:51Z",
+      "revoked_at": null,
+      "risk_level": "low",
+      "session_id": null,
+      "state": "decided",
+      "status": "decided",
+      "submitted_at": "2026-11-18T04:38:58Z",
+      "submitted_by": "pantheon-dev-paper-provisioner",
+      "superseded_by": null,
+      "target_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+      "target_type": "registry_entry",
+      "target_version": "1.2.0",
+      "tenant_id": "tenant-dev",
+      "validation_result_digest": "96b8b023993a192d07e143abe95f5734b1b1eb852d8ab70be4b532e6105c5dc0",
+      "version": 3
+    },
+    {
+      "actor_id": "pantheon-dev-paper-provisioner",
+      "actor_role": "automated_gate",
+      "allowedActions": {
+        "canApprove": false,
+        "canReject": false,
+        "canRequestRevision": false
+      },
+      "authority_status": "authoritative",
+      "authorization_scope": {
+        "allowed_target_stages": [
+          "paper"
+        ],
+        "environment": "dev",
+        "max_capital_scale_pct": 0
+      },
+      "candidate_digest": "sha256:f2fd6496cf5b695c86ddcca66f932d25e941065c056d1a223eb81b37fe303f68",
+      "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "conditions": [],
+      "controller_record_ref": "governance-controller://approval-apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
+      "created_at": "2026-11-08T18:11:00Z",
+      "decided_at": "2026-11-08T18:11:01Z",
+      "decision": "approved",
+      "decision_context": {
+        "evidence_refs": [
+          {
+            "ref_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+            "ref_type": "registry_entry"
+          }
+        ],
+        "governance_chain": {
+          "target_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+          "target_type": "registry_entry",
+          "target_version": "1.0.0"
+        },
+        "risk_summary": "Low-risk internal paper Persona admission"
+      },
+      "decision_id": "apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
+      "decision_state": "decided",
+      "decision_type": "registry_entry",
+      "event_id": "f0788761-e659-4767-964f-7d447b565f32",
+      "evidence_refs": [
+        {
+          "display_label": null,
+          "kind": null,
+          "reason": "unresolved_evidence_kind",
+          "redacted": true,
+          "redacted_count": null,
+          "ref_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+          "required_capability": "unknown"
+        }
+      ],
+      "expires_at": "2026-11-09T18:10:59Z",
+      "id": "apv-persona-paper-artifact-039ad01f8bcd2b4aa466",
+      "metadata": null,
+      "outcome": "approved",
+      "owner_user_id": "pantheon-dev-paper-provisioner",
+      "persona_id": "persona-6507750312870d03a241",
+      "proof_digest": null,
+      "proposal_content_digest": "a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd",
+      "proposal_id": "persona-provisioning-forward-artifact-039ad01f8bcd2b4aa466",
+      "proposal_revision": 1,
+      "rationale": "Low-risk internal paper Persona admission",
+      "recorded_at": "2026-11-08T18:11:01Z",
+      "revoked_at": null,
+      "risk_level": "low",
+      "session_id": null,
+      "state": "decided",
+      "status": "decided",
+      "submitted_at": "2026-11-08T18:11:00Z",
+      "submitted_by": "pantheon-dev-paper-provisioner",
+      "superseded_by": null,
+      "target_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+      "target_type": "registry_entry",
+      "target_version": "1.0.0",
+      "tenant_id": "tenant-dev",
+      "validation_result_digest": "53c19e2765618e51cb2530af88e196fec4f65d815342da9786ae4c490f319101",
+      "version": 3
+    }
+  ]
+}

@@ -1,0 +1,266 @@
+{
+  "observed_at": "2026-11-21T13:08:08.754683+00:00",
+  "personas": {
+    "persona-2448c7053e33ea48da47": {
+      "capitalMode": "paper",
+      "current_pool_members": [
+        {"artifact_ref":"artifact-persona-paper-06d4775a9b6a8f63b311","baseline_ref":"apv-persona-paper-artifact-06d4775a9b6a8f63b311","checksum":"sha256:d200b793c694b9c12bb59b744b531a5a643d3d6ccb31e92a0dc552db05a710b6","demand_ref":null,"joined_at":"2026-11-08T12:19:51Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
+      ],
+      "id": "persona-2448c7053e33ea48da47",
+      "legacyPaperCapitalPoolId": "pool-persona-paper-06d4775a9b6a8f63b311",
+      "name": "青禾｜2330 台股 Paper 學習 R3",
+      "ownerLifecycleState": "paper_owner",
+      "risk": "low",
+      "runtimeBindingId": "rb-3823397e125e4579ba5f4174067087ed",
+      "runtimeId": "rt-ad81501b",
+      "tenantId": "tenant-dev"
+    },
+    "persona-6507750312870d03a241": {
+      "capitalMode": "paper",
+      "current_pool_members": [
+        {"artifact_ref":"artifact-persona-paper-039ad01f8bcd2b4aa466","baseline_ref":"apv-persona-paper-artifact-039ad01f8bcd2b4aa466","checksum":"sha256:f2fd6496cf5b695c86ddcca66f932d25e941065c056d1a223eb81b37fe303f68","demand_ref":null,"joined_at":"2026-11-08T18:11:01Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
+      ],
+      "id": "persona-6507750312870d03a241",
+      "legacyPaperCapitalPoolId": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "name": "澄川｜2317 台股 Paper 學習 R2",
+      "ownerLifecycleState": "paper_owner",
+      "risk": "low",
+      "runtimeBindingId": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+      "runtimeId": "rt-3252fa75",
+      "tenantId": "tenant-dev"
+    },
+    "persona-ee7112a829d38b9135ac": {
+      "capitalMode": "paper",
+      "current_pool_members": [
+        {"artifact_ref":"artifact-persona-paper-a81b4fd15944698341aa","baseline_ref":"apv-persona-paper-artifact-a81b4fd15944698341aa","checksum":"sha256:ac953240e1e4350c97be1ca712b350c4cb1a307efb857c2dbe75e347ced9e7f1","demand_ref":null,"joined_at":"2026-11-08T18:10:02Z","parent_ref":null,"removal_reason":null,"removed_at":null,"risk_weight":1.0,"stage":"active"}
+      ],
+      "id": "persona-ee7112a829d38b9135ac",
+      "legacyPaperCapitalPoolId": "pool-persona-paper-a81b4fd15944698341aa",
+      "name": "衡岳｜0050 台股 Paper 學習 R2",
+      "ownerLifecycleState": "paper_owner",
+      "risk": "low",
+      "runtimeBindingId": "rb-3516fc86e6f84649a499fc89f3c562b3",
+      "runtimeId": "rt-3b65a843",
+      "tenantId": "tenant-dev"
+    }
+  },
+  "provisioning": [
+    {
+      "capital_pool_receipt": {
+        "approval_digest": "5c5b0e44daf895112d993cd83bb9283ccaf9ef469848f0686a69d866cd0eb2ec",
+        "budget": 100000.0,
+        "created_at": "2026-11-08T12:19:41Z",
+        "currency": "TWD",
+        "description": null,
+        "idempotent_replay": false,
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-2448c7053e33ea48da47","provisioning_request_hash":"91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-06d4775a9b6a8f63b311","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
+        "name": "青禾｜2330 台股 Paper 學習 R3 paper pool",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "risk_policy_ref": null,
+        "single_runtime_enforced": true,
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": null
+      },
+      "created_at": "2026-11-08 12:19:41.761558+00:00",
+      "persona_capital_binding_receipt": {
+        "allowed_deployment_scope": "paper",
+        "approval_decision_id": null,
+        "approval_digest": "0a56e55dc167d03ee5e4a7e094064dce684842ad0e13f49d6734452c263fbe91",
+        "binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+        "budget": 100000.0,
+        "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "capital_sleeve_id": null,
+        "created_at": "2026-11-08T12:19:51Z",
+        "created_by": "control-plane-bff",
+        "effective_from": null,
+        "effective_to": null,
+        "idempotent_replay": false,
+        "mandate": "台股 Paper 操盤學習 Persona。以 2330 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；不得把名稱或對話視為策略換版。",
+        "metadata": {"market":"TW","provisioning_request_hash":"91e443f0a947d9b0fa8fd214e717ffb2c8d6f31baea2903398b647fbd45e84f8","registry_id":"artifact-persona-paper-06d4775a9b6a8f63b311","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-06d4775a9b6a8f63b311","tenant_id":"tenant-dev"},
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "role": "paper_owner",
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": "2026-11-08T12:19:51Z"
+      },
+      "persona_id": "persona-2448c7053e33ea48da47",
+      "reference_ids": {
+        "runtime_binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "runtime_id": "rt-ad81501b"
+      },
+      "request_payload": {
+        "archetype": "momentum",
+        "bar_frequency": "1d",
+        "budget": 100000,
+        "currency": "TWD",
+        "data_source": "source-ingest:tw_price_daily",
+        "mandate": "台股 Paper 操盤學習 Persona。以 2330 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；不得把名稱或對話視為策略換版。",
+        "market": "TW",
+        "name": "青禾｜2330 台股 Paper 學習 R3",
+        "requested_by": "pantheon-dev-admin-test",
+        "risk": "low",
+        "risk_policy_ref": null,
+        "strategy_family": "daily_learning_paper_momentum",
+        "symbols": ["2330.TWSE"],
+        "tenant_id": "tenant-dev",
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["2330.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
+      },
+      "state": "succeeded",
+      "strategy_artifact_receipt": {
+        "approval_decision_id": null,
+        "artifact_state": null,
+        "checksum": null,
+        "registry_id": null,
+        "version": null
+      }
+    },
+    {
+      "capital_pool_receipt": {
+        "approval_digest": "2cf74b86334cef173017c2bd109e0c0eba27251d9f8877c824e64f0552e1b196",
+        "budget": 100000.0,
+        "created_at": "2026-11-08T18:10:44Z",
+        "currency": "TWD",
+        "description": null,
+        "idempotent_replay": false,
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-6507750312870d03a241","provisioning_request_hash":"a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-039ad01f8bcd2b4aa466","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
+        "name": "澄川｜2317 台股 Paper 學習 R2 paper pool",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "risk_policy_ref": null,
+        "single_runtime_enforced": true,
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": null
+      },
+      "created_at": "2026-11-08 18:10:44.485779+00:00",
+      "persona_capital_binding_receipt": {
+        "allowed_deployment_scope": "paper",
+        "approval_decision_id": null,
+        "approval_digest": "a73f43d91b42601a03e9515ec2e61debbbb0df48700f24dc19d18b2d0a0d4bce",
+        "binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+        "budget": 100000.0,
+        "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "capital_sleeve_id": null,
+        "created_at": "2026-11-08T18:11:02Z",
+        "created_by": "control-plane-bff",
+        "effective_from": null,
+        "effective_to": null,
+        "idempotent_replay": false,
+        "mandate": "台股 Paper 操盤學習 Persona。以 2317 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；強調資料與執行差異的可追溯說明。",
+        "metadata": {"market":"TW","provisioning_request_hash":"a281d7f54511a9416993d33faff7cbdf4b3a717380e131f001c84c7d040ccacd","registry_id":"artifact-persona-paper-039ad01f8bcd2b4aa466","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-039ad01f8bcd2b4aa466","tenant_id":"tenant-dev"},
+        "persona_id": "persona-6507750312870d03a241",
+        "role": "paper_owner",
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": "2026-11-08T18:11:02Z"
+      },
+      "persona_id": "persona-6507750312870d03a241",
+      "reference_ids": {
+        "runtime_binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "runtime_id": "rt-3252fa75"
+      },
+      "request_payload": {
+        "archetype": "momentum",
+        "bar_frequency": "1d",
+        "budget": 100000,
+        "currency": "TWD",
+        "data_source": "source-ingest:tw_price_daily",
+        "mandate": "台股 Paper 操盤學習 Persona。以 2317 日線為觀察標的，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思。建立時使用共同基礎動能策略；商品（現股或股票期貨）由表達政策逐筆決定；強調資料與執行差異的可追溯說明。",
+        "market": "TW",
+        "name": "澄川｜2317 台股 Paper 學習 R2",
+        "requested_by": "pantheon-dev-admin-test",
+        "risk": "low",
+        "risk_policy_ref": null,
+        "strategy_family": "daily_learning_paper_momentum",
+        "symbols": ["2317.TWSE"],
+        "tenant_id": "tenant-dev",
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["2317.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
+      },
+      "state": "succeeded",
+      "strategy_artifact_receipt": {
+        "approval_decision_id": null,
+        "artifact_state": null,
+        "checksum": null,
+        "registry_id": null,
+        "version": null
+      }
+    },
+    {
+      "capital_pool_receipt": {
+        "approval_digest": "6e353f2ad4a81df8531d464c1f33726e9f7f583d45d4d99fe6863e698c212d4d",
+        "budget": 100000.0,
+        "created_at": "2026-11-08T18:09:41Z",
+        "currency": "TWD",
+        "description": null,
+        "idempotent_replay": false,
+        "metadata": {"execution_context":"paper","internal":true,"persona_id":"persona-ee7112a829d38b9135ac","provisioning_request_hash":"bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f","requested_by":"pantheon-dev-admin-test","risk_policy":{"allowed_asset_classes":["equity","future"],"allowed_stages":["paper"],"gross_limit":2.0,"max_leverage":2.0,"net_limit":2.0,"risk_policy_id":"rp-pool-persona-paper-a81b4fd15944698341aa","status":"active","version":"1.0"},"tenant_id":"tenant-dev"},
+        "name": "衡岳｜0050 台股 Paper 學習 R2 paper pool",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "risk_policy_ref": null,
+        "single_runtime_enforced": true,
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": null
+      },
+      "created_at": "2026-11-08 18:09:41.077514+00:00",
+      "persona_capital_binding_receipt": {
+        "allowed_deployment_scope": "paper",
+        "approval_decision_id": null,
+        "approval_digest": "1ea854d3964e7fe6e94d3de7dab8c59a0e87cf507ff5b2eef87e1a2330826940",
+        "binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+        "budget": 100000.0,
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "capital_sleeve_id": null,
+        "created_at": "2026-11-08T18:10:03Z",
+        "created_by": "control-plane-bff",
+        "effective_from": null,
+        "effective_to": null,
+        "idempotent_replay": false,
+        "mandate": "台股 Paper 操盤學習 Persona。以 0050 日線觀察大盤，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思，並與 2330、2317 的 Persona 做跨標的比較與風險解釋。建立時使用共同基礎動能策略；商品（現股或 ETF 期貨）由表達政策逐筆決定。",
+        "metadata": {"market":"TW","provisioning_request_hash":"bfe278d3e9be00721365075dd06f4b3621926056a8a318d4f1dcb7f225b7927f","registry_id":"artifact-persona-paper-a81b4fd15944698341aa","requested_by":"pantheon-dev-admin-test","strategy_spec_registry_id":"reg-strategy-spec-persona-a81b4fd15944698341aa","tenant_id":"tenant-dev"},
+        "persona_id": "persona-ee7112a829d38b9135ac",
+        "role": "paper_owner",
+        "status": "active",
+        "tenant_id": "tenant-dev",
+        "updated_at": "2026-11-08T18:10:03Z"
+      },
+      "persona_id": "persona-ee7112a829d38b9135ac",
+      "reference_ids": {
+        "runtime_binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "runtime_id": "rt-3b65a843"
+      },
+      "request_payload": {
+        "archetype": "momentum",
+        "bar_frequency": "1d",
+        "budget": 100000,
+        "currency": "TWD",
+        "data_source": "source-ingest:tw_price_daily",
+        "mandate": "台股 Paper 操盤學習 Persona。以 0050 日線觀察大盤，日常研究、依核准策略模擬操盤、追蹤成交持倉績效、參與會診與反思，並與 2330、2317 的 Persona 做跨標的比較與風險解釋。建立時使用共同基礎動能策略；商品（現股或 ETF 期貨）由表達政策逐筆決定。",
+        "market": "TW",
+        "name": "衡岳｜0050 台股 Paper 學習 R2",
+        "requested_by": "pantheon-dev-admin-test",
+        "risk": "low",
+        "risk_policy_ref": null,
+        "strategy_family": "daily_learning_paper_momentum",
+        "symbols": ["0050.TWSE"],
+        "tenant_id": "tenant-dev",
+        "traits": {"decision_style":"evidence-based; explain assumptions and unknowns","hard_rules":["paper_only","no_live_capital","no_fabricated_evidence","consultation_is_advisory"],"instruments":["0050.TWSE"],"persona_voice":"繁體中文；清楚區分事實、假設、建議與已執行結果","time_horizon":"daily"}
+      },
+      "state": "succeeded",
+      "strategy_artifact_receipt": {
+        "approval_decision_id": null,
+        "artifact_state": null,
+        "checksum": null,
+        "registry_id": null,
+        "version": null
+      }
+    }
+  ],
+  "source": "read-only transaction on bff.persona_provisioning; tenant_id=tenant-dev AND persona_id=ANY(the three expected IDs); statement_timeout=15s"
+}
