@@ -290,11 +290,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-writer historical row/byte retention (append-only JSONL journal tracked under RC3 WP3.1); incremental meeting operator review audit event (MEETING-REVIEW-DISPOSITION-20261121, RC2, action=meeting_review_recorded) is bounded to at most 1 ConsultAuditEvent row (~400-600 bytes) per closed REVIEW meeting (persisted operator_review is immutable via _validate_meeting_operator_review_write and idempotent retries check list_audit_for_request before append_audit)",
+   "cleanup": "none in this task: existing append-only audit lines are not deleted or compacted (whole-writer age/size retention remains open under RC3 WP3.1); duplicate/idempotent operator_review retries are suppressed before append_audit",
+   "growth_driver": "append-only consultation lifecycle and operator review audit events (at most 1 meeting_review_recorded event per closed REVIEW meeting; MEETING-REVIEW-DISPOSITION-20261121)",
+   "growth_per_day": "whole-writer total unmeasured on hosted (RC3 WP3.3); incremental meeting_review_recorded audit growth at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day): at most 1 audit row (~400-600 B) per closed REVIEW meeting (< 1 KB/day even if 100% of meetings require operator review)",
    "kind": "jsonl",
    "name": "consult_audit.jsonl",
    "owner": "consultation",
@@ -305,11 +309,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-writer historical row/byte retention (append-only JSONL journal of full record snapshots tracked under RC3 WP3.1); incremental operator_review field on persona_meeting (MEETING-REVIEW-DISPOSITION-20261121, RC2) is bounded per record (note <= 2000 Unicode chars via MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000, operator_review object <= 16384 UTF-8 bytes via MEETING_OPERATOR_REVIEW_MAX_BYTES = 16384 in _validate_meeting_operator_review_write), immutable once status=reviewed, and bounded to at most 1 full-snapshot persona_meeting upsert per closed REVIEW meeting",
+   "cleanup": "none in this task: startup replay into in-memory map and duplicate suppression do not delete or compact historical JSONL lines (whole-writer compaction/retention remains open under RC3 WP3.1); unchanged put_meeting calls and idempotent operator_review retries write 0 new lifecycle events",
+   "growth_driver": "append-only consultation lifecycle full-record upserts (persona_meeting convene, rounds, close, plus at most 1 full-snapshot upsert when operator_review is recorded on a closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "whole-writer total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting upsert writes a full meeting snapshot (~15-40 KB base snapshot, up to ~45-56 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~4-6 full-snapshot upserts/meeting (~90-320 KB/day) and incremental operator_review disposition adds at most 1 full-snapshot upsert per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "jsonl",
    "name": "consult_lifecycle_events.jsonl",
    "owner": "consultation",
@@ -335,11 +343,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-writer historical row/byte retention (append-only JSONL outbox journal tracked under RC3 WP3.1); incremental operator_review disposition (MEETING-REVIEW-DISPOSITION-20261121, RC2) emits at most 1 outbox record per closed REVIEW meeting (1-to-1 with the persona_meeting lifecycle upsert, deduplicated by idempotency_key consult-lifecycle:<event_id>; note <= 2000 Unicode chars, operator_review <= 16384 UTF-8 bytes)",
+   "cleanup": "none in this task: append-only JSONL outbox lines are not truncated or deleted in code (whole-writer retention remains open under RC3 WP3.1); unchanged put_meeting writes and idempotent operator_review retries check _has_outbox_for_lifecycle_event and emit 0 duplicate outbox records",
+   "growth_driver": "append-only consultation lifecycle outbox envelopes wrapping full-record lifecycle events emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "whole-writer total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting outbox record wraps the full meeting snapshot lifecycle event (~16-42 KB base, up to ~46-58 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~95-330 KB/day and incremental operator_review disposition adds at most 1 full-snapshot outbox record per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "jsonl",
    "name": "consult_outbox.jsonl",
    "owner": "consultation",
@@ -3647,11 +3659,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres audit table tracked under RC3 WP3.1); incremental meeting operator review audit event (MEETING-REVIEW-DISPOSITION-20261121, RC2, action=meeting_review_recorded) is bounded to at most 1 ConsultAuditEvent row (~400-600 bytes) per closed REVIEW meeting (persisted operator_review is immutable via _validate_meeting_operator_review_write and idempotent retries check list_audit_for_request before append_audit)",
+   "cleanup": "none in this task: existing append-only audit rows are not deleted or compacted (whole-table age/size retention remains open under RC3 WP3.1); duplicate/idempotent operator_review retries are suppressed before append_audit",
+   "growth_driver": "append-only consultation lifecycle and operator review audit rows (at most 1 meeting_review_recorded event per closed REVIEW meeting; MEETING-REVIEW-DISPOSITION-20261121)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental meeting_review_recorded audit growth at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day): at most 1 audit row (~400-600 B) per closed REVIEW meeting (< 1 KB/day even if 100% of meetings require operator review)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.audit_table}",
    "owner": "consultation",
@@ -3662,11 +3678,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres lifecycle table of full record snapshots tracked under RC3 WP3.1); incremental operator_review field on persona_meeting (MEETING-REVIEW-DISPOSITION-20261121, RC2) is bounded per record (note <= 2000 Unicode chars via MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000, operator_review object <= 16384 UTF-8 bytes via MEETING_OPERATOR_REVIEW_MAX_BYTES = 16384 in _validate_meeting_operator_review_write), immutable once status=reviewed, and bounded to at most 1 full-snapshot persona_meeting row per closed REVIEW meeting",
+   "cleanup": "none in this task: startup/reload replay into in-memory map and duplicate suppression do not delete or compact historical SQL rows (whole-table compaction/retention remains open under RC3 WP3.1); unchanged put_meeting calls and idempotent operator_review retries insert 0 new lifecycle rows",
+   "growth_driver": "append-only consultation lifecycle full-record upserts (persona_meeting convene, rounds, close, plus at most 1 full-snapshot row when operator_review is recorded on a closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting row stores a full meeting snapshot (~15-40 KB base snapshot, up to ~45-56 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~4-6 full-snapshot rows/meeting (~90-320 KB/day) and incremental operator_review disposition adds at most 1 full-snapshot row per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.lifecycle_table}",
    "owner": "consultation",
@@ -3692,11 +3712,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres outbox table tracked under RC3 WP3.1); incremental operator_review disposition (MEETING-REVIEW-DISPOSITION-20261121, RC2) emits at most 1 outbox row per closed REVIEW meeting (1-to-1 with the persona_meeting lifecycle row, deduplicated by idempotency_key consult-lifecycle:<event_id>; note <= 2000 Unicode chars, operator_review <= 16384 UTF-8 bytes)",
+   "cleanup": "none in this task: append-only SQL outbox rows are not deleted or compacted in code (whole-table retention remains open under RC3 WP3.1); unchanged put_meeting writes and idempotent operator_review retries check _has_outbox_for_lifecycle_event and insert 0 duplicate outbox rows",
+   "growth_driver": "append-only consultation lifecycle outbox envelopes wrapping full-record lifecycle events emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting outbox row wraps the full meeting snapshot lifecycle event (~16-42 KB base, up to ~46-58 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~95-330 KB/day and incremental operator_review disposition adds at most 1 full-snapshot outbox row per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "table",
    "name": "services/consultation/store.py::{self.outbox_table}",
    "owner": "consultation",
@@ -4778,11 +4802,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres audit table tracked under RC3 WP3.1); incremental meeting operator review audit event (MEETING-REVIEW-DISPOSITION-20261121, RC2, action=meeting_review_recorded) is bounded to at most 1 ConsultAuditEvent row (~400-600 bytes) per closed REVIEW meeting (persisted operator_review is immutable via _validate_meeting_operator_review_write and idempotent retries check list_audit_for_request before append_audit)",
+   "cleanup": "none in this task: existing append-only audit rows are not deleted or compacted (whole-table age/size retention remains open under RC3 WP3.1); duplicate/idempotent operator_review retries are suppressed before append_audit",
+   "growth_driver": "append-only consultation lifecycle and operator review audit rows (at most 1 meeting_review_recorded event per closed REVIEW meeting; MEETING-REVIEW-DISPOSITION-20261121)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental meeting_review_recorded audit growth at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day): at most 1 audit row (~400-600 B) per closed REVIEW meeting (< 1 KB/day even if 100% of meetings require operator review)",
    "kind": "schema_table",
    "name": "consult_svc.audit_events",
    "owner": "schema:consult_svc",
@@ -4793,11 +4821,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres lifecycle table of full record snapshots tracked under RC3 WP3.1); incremental operator_review field on persona_meeting (MEETING-REVIEW-DISPOSITION-20261121, RC2) is bounded per record (note <= 2000 Unicode chars via MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000, operator_review object <= 16384 UTF-8 bytes via MEETING_OPERATOR_REVIEW_MAX_BYTES = 16384 in _validate_meeting_operator_review_write), immutable once status=reviewed, and bounded to at most 1 full-snapshot persona_meeting row per closed REVIEW meeting",
+   "cleanup": "none in this task: startup/reload replay into in-memory map and duplicate suppression do not delete or compact historical SQL rows (whole-table compaction/retention remains open under RC3 WP3.1); unchanged put_meeting calls and idempotent operator_review retries insert 0 new lifecycle rows",
+   "growth_driver": "append-only consultation lifecycle full-record upserts (persona_meeting convene, rounds, close, plus at most 1 full-snapshot row when operator_review is recorded on a closed REVIEW meeting; no recurring background emitter)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting row stores a full meeting snapshot (~15-40 KB base snapshot, up to ~45-56 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~4-6 full-snapshot rows/meeting (~90-320 KB/day) and incremental operator_review disposition adds at most 1 full-snapshot row per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "schema_table",
    "name": "consult_svc.lifecycle_events",
    "owner": "schema:consult_svc",
@@ -4823,11 +4855,15 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS = 2000",
+    "file": "services/consultation/store.py"
+   },
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for whole-table historical row/byte retention (append-only Postgres outbox table tracked under RC3 WP3.1); incremental operator_review disposition (MEETING-REVIEW-DISPOSITION-20261121, RC2) emits at most 1 outbox row per closed REVIEW meeting (1-to-1 with the persona_meeting lifecycle row, deduplicated by idempotency_key consult-lifecycle:<event_id>; note <= 2000 Unicode chars, operator_review <= 16384 UTF-8 bytes)",
+   "cleanup": "none in this task: append-only SQL outbox rows are not deleted or compacted in code (whole-table retention remains open under RC3 WP3.1); unchanged put_meeting writes and idempotent operator_review retries check _has_outbox_for_lifecycle_event and insert 0 duplicate outbox rows",
+   "growth_driver": "append-only consultation lifecycle outbox envelopes wrapping full-record lifecycle events emitted by _append_lifecycle_event (no recurring background emitter)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); at hosted scale (3 enrolled trading personas, <= 9 meetings/week, ~1.3 meetings/day), each persona_meeting outbox row wraps the full meeting snapshot lifecycle event (~16-42 KB base, up to ~46-58 KB with a max 2000-char Unicode operator_review <= 16 KB): base meeting lifecycle is ~95-330 KB/day and incremental operator_review disposition adds at most 1 full-snapshot outbox row per closed REVIEW meeting (~20-75 KB/day worst case)",
    "kind": "schema_table",
    "name": "consult_svc.outbox_records",
    "owner": "schema:consult_svc",

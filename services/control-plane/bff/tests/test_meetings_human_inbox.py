@@ -271,3 +271,84 @@ def test_human_inbox_200_meetings_within_budget(inbox_meetings_stack):
     assert resp.status_code == 200, resp.text
     assert elapsed < budget, f"Human inbox with 200 meetings took {elapsed:.3f}s >= budget {budget:.3f}s"
     assert resp.json()["data"]["summary"]["meeting_count"] == 12
+
+
+def test_human_inbox_review_meeting_exposes_cause_and_evidence_and_leaves_pending_when_reviewed(
+    inbox_meetings_stack,
+):
+    client, _service, state = inbox_meetings_stack
+    state["meetings"] = [
+        {
+            "meeting_id": "mtg-2c016da5651a0dc4",
+            "meeting_type": "MT-1",
+            "status": "closed",
+            "outcome": "REVIEW",
+            "chair_persona_id": "persona-2448c7053e33ea48da47",
+            "participants": [{"persona_id": "persona-2448c7053e33ea48da47", "role": "chair", "origin": "institutional"}],
+            "case_file_items": [
+                {"item_id": "facts:pool:persona-2448c7053e33ea48da47:v1"},
+                {"item_id": "secret-private-inbox-item", "scope": "private"},
+            ],
+            "rounds": [
+                {
+                    "round": 1,
+                    "positions": [
+                        {
+                            "persona_id": "persona-2448c7053e33ea48da47",
+                            "is_private": True,
+                            "citations": ["secret-private-inbox-pos-ref"],
+                        }
+                    ],
+                }
+            ],
+            "synthesis": {
+                "proposals": [],
+                "outcome": "REVIEW",
+                "unreadable_reason": None,
+                "summary": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+            },
+            "operator_review": None,
+            "round": 2,
+            "created_at": "2026-11-20T17:38:10Z",
+            "closed_at": "2026-11-20T17:40:52Z",
+        },
+        {
+            "meeting_id": "mtg-review-specific-02",
+            "meeting_type": "MT-2",
+            "status": "closed",
+            "outcome": "REVIEW",
+            "synthesis_unreadable_reason": "model_output_missing",
+            "chair_persona_id": "persona-alpha",
+            "participants": [{"persona_id": "persona-alpha", "role": "chair", "origin": "institutional"}],
+            "evidence_refs": ["facts:lessons:alpha:1"],
+            "operator_review": None,
+            "round": 2,
+            "created_at": "2026-11-21T08:00:00Z",
+            "closed_at": "2026-11-21T08:05:00Z",
+        },
+    ]
+
+    # Before operator review: both REVIEW meetings are pending in Human Inbox with cause & evidence_refs
+    before = client.get("/bff/management/human-inbox?source_type=meeting_review", headers=_auth_headers())
+    assert before.status_code == 200, before.text
+    items_before = {i["meeting_id"]: i for i in before.json()["data"]["items"]}
+    assert set(items_before) == {"mtg-2c016da5651a0dc4", "mtg-review-specific-02"}
+    assert items_before["mtg-2c016da5651a0dc4"]["unreadable_reason"] == "unknown"
+    assert items_before["mtg-2c016da5651a0dc4"]["evidence_refs"] == ["facts:pool:persona-2448c7053e33ea48da47:v1"]
+    assert items_before["mtg-review-specific-02"]["unreadable_reason"] == "model_output_missing"
+    assert items_before["mtg-review-specific-02"]["evidence_refs"] == ["facts:lessons:alpha:1"]
+
+    # After operator reviews mtg-review-specific-02: it leaves the pending Human Inbox while original REVIEW outcome stays
+    state["meetings"][1]["operator_review"] = {
+        "status": "reviewed",
+        "disposition": "closed_no_proposal",
+        "note": "Participants requested more research; closed review without proposal.",
+        "reviewed_by": "op-inbox",
+        "reviewed_at": "2026-11-21T12:10:00Z",
+        "cause": "model_output_missing",
+    }
+
+    after = client.get("/bff/management/human-inbox?source_type=meeting_review", headers=_auth_headers())
+    assert after.status_code == 200, after.text
+    items_after = after.json()["data"]["items"]
+    assert [i["meeting_id"] for i in items_after] == ["mtg-2c016da5651a0dc4"]

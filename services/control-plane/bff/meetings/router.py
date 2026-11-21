@@ -14,6 +14,7 @@ from services.control_plane.bff.models import ErrorCode, utc_now as default_utc_
 from services.control_plane.bff.core.display_names import DisplayNameResolver, current_resolver
 
 from .client import (
+    MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS,
     MeetingsOwnerClient,
     MeetingsOwnerNotFoundError,
     MeetingsOwnerUnavailableError,
@@ -44,6 +45,12 @@ class OperatorConveneMeetingRequest(BaseModel):
     participants: Optional[List[str]] = None
     evidence_refs: Optional[List[Any]] = None
     attribution_record_id: Optional[str] = Field(default=None, min_length=1)
+
+
+class OperatorReviewMeetingRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    note: Optional[str] = None
+    rationale: Optional[str] = None
 
 
 def _default_bff_error(
@@ -394,6 +401,102 @@ def create_meetings_router(
             },
         }
 
+    def _handle_review_meeting(
+        meeting_id: str,
+        body: OperatorReviewMeetingRequest,
+        request: Request,
+        idempotency_key: Optional[str],
+    ) -> Dict[str, Any]:
+        identity, tenant_id, is_operator, caller_user_id = _caller_context(
+            request,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=err_fn,
+            utc_now=now_fn,
+            write=True,
+        )
+        raw_note = body.note if body.note is not None else (body.rationale or "")
+        clean_note = str(raw_note).strip()
+        if not clean_note:
+            raise err_fn(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "A non-empty operator review note is required",
+                "review_note_required",
+            )
+        if len(clean_note) > MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS:
+            raise err_fn(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"Operator review note exceeds {MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS} characters",
+                "review_note_too_long",
+            )
+        operator_id = str(getattr(identity, "operator_id", None) or caller_user_id or "").strip()
+        if not operator_id:
+            raise err_fn(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Authenticated operator identity is required to review a meeting",
+                "operator_required",
+            )
+        clean_idem = str(idempotency_key or "").strip() or None
+        snap = now_fn()
+        try:
+            reviewed_raw = make_client(tenant_id, operator_id).review_meeting(
+                meeting_id=meeting_id,
+                note=clean_note,
+                reviewed_by=operator_id,
+                idempotency_key=clean_idem,
+            )
+        except MeetingsOwnerNotFoundError as exc:
+            raise err_fn(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"Meeting {meeting_id!r} was not found",
+                exc.reason,
+            ) from exc
+        except MeetingsOwnerValidationError as exc:
+            err_code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else (
+                    ErrorCode.RESOURCE_CONFLICT
+                    if exc.status_code == 409
+                    else ErrorCode.VALIDATION_FAILED
+                )
+            )
+            raise err_fn(
+                exc.status_code,
+                err_code,
+                f"Consultation owner rejected review request: {exc.reason}",
+                exc.reason,
+            ) from exc
+        except MeetingsOwnerUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=unavailable_meetings_envelope("meeting_detail", exc.reason, snapshot_at=snap),
+            ) from exc
+
+        envelope = _annotate_meeting_envelope(
+            shape_meeting_detail(
+                reviewed_raw,
+                is_operator=is_operator,
+                caller_user_id=caller_user_id,
+                snapshot_at=snap,
+            )
+        )
+        replayed = bool(reviewed_raw.get("replayed"))
+        envelope["replayed"] = replayed
+        if isinstance(envelope.get("data"), dict):
+            envelope["data"]["replayed"] = replayed
+        if isinstance(envelope.get("meta"), dict):
+            envelope["meta"]["capability"] = "management.meetings.review.v1"
+            envelope["meta"]["replayed"] = replayed
+            if clean_idem:
+                envelope["meta"]["idempotency_key"] = clean_idem
+        return envelope
+
     # --- Static routes registered BEFORE parameterized /{meeting_id} routes ---
 
     @router.get("/bff/management/meetings/proposals", operation_id="bff_management_list_meeting_proposals")
@@ -542,5 +645,31 @@ def create_meetings_router(
     @router.get("/bff/meetings/{meeting_id}", operation_id="bff_get_meeting_detail")
     def bff_get_meeting_detail(meeting_id: str, request: Request) -> Dict[str, Any]:
         return _handle_get_meeting_detail(meeting_id, request)
+
+    @router.post(
+        "/bff/management/meetings/{meeting_id}/review",
+        status_code=200,
+        operation_id="bff_management_review_meeting",
+    )
+    def bff_management_review_meeting(
+        meeting_id: str,
+        body: OperatorReviewMeetingRequest,
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        return _handle_review_meeting(meeting_id, body, request, idempotency_key)
+
+    @router.post(
+        "/bff/meetings/{meeting_id}/review",
+        status_code=200,
+        operation_id="bff_review_meeting",
+    )
+    def bff_review_meeting(
+        meeting_id: str,
+        body: OperatorReviewMeetingRequest,
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        return _handle_review_meeting(meeting_id, body, request, idempotency_key)
 
     return router
