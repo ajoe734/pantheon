@@ -2188,7 +2188,11 @@ def _paper_lifecycle_identity(
         return None, "lifecycle_runtime_mismatch"
     if str(identity.get("event_id")) != str(envelope.get("event_id")):
         return None, "lifecycle_event_envelope_mismatch"
-    if str(identity.get("tenant_id")) != str(envelope.get("tenant_id")):
+    summary_tenant = str(summary.get("tenant_id") or "").strip()
+    if (
+        str(identity.get("tenant_id")) != str(envelope.get("tenant_id"))
+        or (summary_tenant and str(identity.get("tenant_id")) != summary_tenant)
+    ):
         return None, "lifecycle_tenant_mismatch"
     if str(identity.get("trace_id")) != str(envelope.get("trace_id")):
         return None, "lifecycle_trace_mismatch"
@@ -2574,6 +2578,218 @@ def _journey_booking_decision(
     return "completed", None, detail
 
 
+_EXPRESSION_CHOICE_REASON_CODES = frozenset(
+    {"long_cash", "long_lever", "short_via_future", "close_leg"}
+)
+_PREBROKER_FORBIDDEN_EVIDENCE_KEYS = (
+    "broker_order_id",
+    "fill_id",
+    "source_fill_event_id",
+    "broker_trade_id",
+    "shioaji_trade_id",
+    "ledger_entry_id",
+    "position_id",
+    "reconciliation_id",
+    "reconciliation_evaluation_id",
+    "trade_episode_id",
+    "position_quantity_before",
+    "position_quantity_after",
+    "cash_before",
+    "cash_after",
+    "fill_price",
+)
+_NON_PREBROKER_REJECTION_REASONS = frozenset(
+    {
+        "reason_not_recorded",
+        "unknown",
+        "uncertain",
+        "uncertain_broker_outcome",
+        "uncertain_broker_outcome_pending_reconciliation",
+        "taiwan_broker_error",
+        "tw_broker_error",
+        "broker_error",
+        "broker_rejected",
+        "transport_failed",
+        "submitted",
+        "accepted",
+        "filled",
+        "partially_filled",
+        "partial_fill",
+        "partial",
+        "pending",
+        "in_flight",
+    }
+)
+
+
+def _is_terminal_prebroker_paper_rejection(
+    event: Mapping[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """True for an authoritative terminal pre-broker paper ``order_rejection``.
+
+    Requires explicit ``submitted_to_broker=False`` and zero/absent fill
+    quantities across event, metadata, and metrics, consistent pre-broker risk
+    rejection status and a single concrete non-expression rejection reason, and
+    no broker/fill/ledger/reconciliation identifiers or uncertain/in-flight
+    submission evidence.
+    """
+    if not isinstance(event, Mapping) or event.get("event_type") != "order_rejection":
+        return False
+    if metadata is None:
+        raw_meta = event.get("metadata")
+        metadata = raw_meta if isinstance(raw_meta, Mapping) else {}
+    elif not isinstance(metadata, Mapping):
+        return False
+    raw_metrics = event.get("metrics")
+    metrics: Mapping[str, Any] = raw_metrics if isinstance(raw_metrics, Mapping) else {}
+
+    present_submission_flags = [
+        container["submitted_to_broker"]
+        for container in (event, metadata, metrics)
+        if "submitted_to_broker" in container
+    ]
+    if not present_submission_flags or any(
+        flag is not False for flag in present_submission_flags
+    ):
+        return False
+
+    for field in _PREBROKER_FORBIDDEN_EVIDENCE_KEYS:
+        for container in (event, metadata, metrics):
+            if container.get(field) not in (None, "", [], {}):
+                return False
+
+    for flag_field in (
+        "sim_fill_flag",
+        "ledger_committed",
+        "is_real_capital",
+        "is_real_order",
+        "reconciliation_required",
+    ):
+        for container in (event, metadata, metrics):
+            if flag_field in container and container[flag_field] is not None:
+                if container[flag_field] is not False:
+                    return False
+
+    for qty_field in ("fill_quantity", "filled_quantity", "quantity", "ledger_fill_count"):
+        for container in (metrics, event, metadata):
+            if qty_field not in container:
+                continue
+            raw_qty = container.get(qty_field)
+            if raw_qty is None:
+                continue
+            if isinstance(raw_qty, bool):
+                return False
+            try:
+                parsed_qty = float(raw_qty)
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(parsed_qty) or parsed_qty != 0.0:
+                return False
+
+    for scope_field in ("tenant_id", "binding_id", "runtime_id"):
+        top_val = str(event.get(scope_field) or "").strip()
+        meta_val = metadata.get(scope_field)
+        if meta_val not in (None, "") and (
+            not isinstance(meta_val, str) or meta_val.strip() != top_val
+        ):
+            return False
+    for mode_field in ("environment", "execution_mode", "deployment_stage"):
+        meta_mode = metadata.get(mode_field)
+        if meta_mode not in (None, "") and (
+            not isinstance(meta_mode, str) or meta_mode.strip().lower() != "paper"
+        ):
+            return False
+    authority_refs = event.get("authority_refs")
+    if isinstance(authority_refs, Mapping):
+        runtime_mode = authority_refs.get("runtime_mode")
+        if runtime_mode not in (None, "") and (
+            not isinstance(runtime_mode, str) or runtime_mode.strip().lower() != "paper"
+        ):
+            return False
+
+    for container in (event, metadata, metrics):
+        if "broker_outcome" in container and container["broker_outcome"] is not None:
+            raw_outcome = container["broker_outcome"]
+            if not isinstance(raw_outcome, str) or raw_outcome.strip().lower() not in {
+                "not_submitted",
+                "pre_broker_rejected",
+                "rejected",
+            }:
+                return False
+
+    def _normalized_str_values(key: str) -> list[str] | None:
+        values: list[str] = []
+        for container in (event, metadata, metrics):
+            if key not in container or container[key] is None:
+                continue
+            raw_val = container[key]
+            if not isinstance(raw_val, str) or not raw_val.strip():
+                return None
+            values.append(raw_val.strip().lower())
+        return values
+
+    order_statuses = _normalized_str_values("order_status")
+    if order_statuses is None or any(
+        s not in {"rejected", "not_submitted"} for s in order_statuses
+    ):
+        return False
+
+    rejection_statuses = _normalized_str_values("rejection_status")
+    if rejection_statuses is None or any(s != "rejected" for s in rejection_statuses):
+        return False
+
+    risk_statuses = _normalized_str_values("risk_status")
+    if risk_statuses is None or any(s != "rejected" for s in risk_statuses):
+        return False
+
+    risk_gate_flags = [
+        container["risk_gate_evaluated"]
+        for container in (event, metadata, metrics)
+        if "risk_gate_evaluated" in container
+    ]
+    if any(flag is not True for flag in risk_gate_flags):
+        return False
+    if not risk_statuses and not risk_gate_flags:
+        return False
+
+    concrete_reasons: set[str] = set()
+    for reason_key in ("reject_reason", "risk_reason", "reason"):
+        vals = _normalized_str_values(reason_key)
+        if vals is None:
+            return False
+        for val in vals:
+            if (
+                val in _EXPRESSION_CHOICE_REASON_CODES
+                or val in _NON_PREBROKER_REJECTION_REASONS
+            ):
+                return False
+            concrete_reasons.add(val)
+
+    reason_codes = _normalized_str_values("reason_code")
+    if reason_codes is None:
+        return False
+    for val in reason_codes:
+        if val in _NON_PREBROKER_REJECTION_REASONS:
+            return False
+        if val not in _EXPRESSION_CHOICE_REASON_CODES:
+            concrete_reasons.add(val)
+
+    submission_statuses = _normalized_str_values("broker_submission_status")
+    if submission_statuses is None:
+        return False
+    for val in submission_statuses:
+        if (
+            val in _NON_PREBROKER_REJECTION_REASONS
+            or val in _EXPRESSION_CHOICE_REASON_CODES
+        ):
+            return False
+        if val not in {"not_submitted", "rejected"}:
+            concrete_reasons.add(val)
+
+    return len(concrete_reasons) == 1
+
+
 def _scheduled_lifecycle_event(
     *,
     summary: Dict[str, Any],
@@ -2594,7 +2810,11 @@ def _scheduled_lifecycle_event(
         "reconciliation_failed",
     }:
         return None, "lifecycle_already_reconciled"
-    if is_noop_order(identity, identity.get("metadata") or {}):
+    if is_noop_order(
+        identity, identity.get("metadata") or {}
+    ) or _is_terminal_prebroker_paper_rejection(
+        identity, identity.get("metadata") or {}
+    ):
         return None, "lifecycle_noop_order_closed"
     if identity["event_type"] != "position_snapshot":
         return None, "lifecycle_in_flight"
