@@ -1038,21 +1038,67 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         has_ks_injected = bool(getattr(self._ks, "_strategy_specs", None))
         return not (has_registry_url or has_ks_injected)
 
-    def list_strategy_specs_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def list_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
         if self._read_surface_uses_custom_unpaged_strategy_list():
             return None
         if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_specs_page"):
-            return self._read_surface.list_strategy_specs_page(**kwargs)
+            return self._read_surface.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
         if self._ks is not None and hasattr(self._ks, "list_strategy_specs_page"):
-            return self._ks.list_strategy_specs_page(**kwargs)
+            return self._ks.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
         return None
 
-    def list_strategy_summaries_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def list_strategy_summaries_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
         if self._read_surface_uses_custom_unpaged_strategy_list():
             return None
         if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_summaries_page"):
-            return self._read_surface.list_strategy_summaries_page(**kwargs)
-        return self.list_strategy_specs_page(**kwargs)
+            return self._read_surface.list_strategy_summaries_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        return self.list_strategy_specs_page(
+            state=state,
+            exclude_state=exclude_state,
+            persona_id=persona_id,
+            query=query,
+            page_token=page_token,
+            page_size=page_size,
+        )
 
     def list_personas(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_personas"):

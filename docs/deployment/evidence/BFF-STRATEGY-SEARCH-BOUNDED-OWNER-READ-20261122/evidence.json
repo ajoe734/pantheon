@@ -60,7 +60,7 @@
     "root_cause": "ResearchRouterService.search_knowledge (backing GET /bff/search) called port.list_strategies() without a bounded owner view or query parameter, and ResearchPortWiring did not forward list_strategy_summaries_page/list_strategy_specs_page. ReadSurfacePorts.list_strategies() therefore called DefaultResearchKnowledgeSourcePort.list_strategy_specs() -> GET /api/registry/strategy-specs (the unpaged full-entry route), forcing Registry to load and decode all 5,031+ full JSONB strategy entries (~24.35 MB) and construct full RegistryEntryView objects inside its 256 MiB container limit.",
     "fix": [
       "Extended Registry owner view GET /api/registry/strategy-specs?view=strategy_summary_page (service.py, split_api.py, storage.py, pg_store.py) to accept query/q. When query is non-empty, Phase 1 candidate-index extraction includes only the 4 compact scalar title/name leaves (metadata.title, metadata.name, metadata.strategy_spec.title, metadata.strategy_spec.name) and filters current winning non-retired strategy versions case-insensitively by strategy_id or title/name before sorting and page slicing; Phase 2 full summary leaf extraction still executes only for the <= page_size returned matching rows.",
-      "Extended ResearchKnowledgeSourcePort.list_strategy_specs_page, DefaultResearchKnowledgeSourcePort.list_strategy_specs_page, _fetch_canonical_strategy_specs_page, _fetch_canonical_strategy_specs_page_uncached, ReadSurfacePorts.list_strategy_specs_page, and ResearchPortWiring to forward query, page_token, and page_size to the bounded Registry owner view while preserving local overlay/custom test double fallback.",
+      "Extended ResearchKnowledgeSourcePort.list_strategy_specs_page, DefaultResearchKnowledgeSourcePort.list_strategy_specs_page, _fetch_canonical_strategy_specs_page, _fetch_canonical_strategy_specs_page_uncached, ReadSurfacePorts.list_strategy_specs_page, and ResearchPortWiring (with explicit concrete domain keyword signature matching ResearchKnowledgeSourcePort.list_strategy_specs_page) to forward query, page_token, and page_size to the bounded Registry owner view while preserving local overlay/custom test double fallback.",
       "Updated ResearchRouterService.search_knowledge to query port.list_strategy_summaries_page(query=query, page_token=owner_page_token, page_size=effective_page_size) when strategies are in scope, validate the owner page payload fail-closed (503 DEPENDENCY_UNAVAILABLE on malformed payloads or owner errors), combine bounded strategy page items with persona and capital_pool matches with exact total and cross-source offset pagination, and skip strategy reads entirely when types excludes strategy (e.g. types=persona or types=capital_pool)."
     ]
   },
@@ -132,6 +132,12 @@
     "adds_service": false
   },
   "verification_suites": {
+    "bff_test_architecture_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "passed": 39,
+      "failed": 0,
+      "exit_code": 0
+    },
     "bff_strategy_persona_search_contract": {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -k \"search or strategies or types\" -v",
       "passed": 11,
