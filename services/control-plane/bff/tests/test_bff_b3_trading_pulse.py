@@ -826,7 +826,8 @@ def test_strategy_enrichment_uses_only_admitted_ids_and_bounded_owner_contract(s
                 data = service.get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
             else:
                 data = service.get_management_cockpit(snapshot_at=SNAP)["data"]["trading_pulse"]
-            assert data["summary"]["runtime_count"] == 3
+            assert data["summary"]["runtime_count"] is None
+            assert data["summary"]["operator_scope"]["verified_runtime_count"] == 3
             if surface != "rankings":
                 row = next(r for r in data["runtime_rows"] if r["runtime_id"] == "r-p1")
                 assert row["strategy_name"] == ("合格策略" if response == "ok" else None)
@@ -1070,6 +1071,8 @@ def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding(outcom
     store = _OperatorStore()
     for binding in store.bindings:
         binding["deployment_stage"] = stage
+    for record in store.records:
+        record["deployment_stage"] = stage
     store.reader = Reader()
     row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
     outcome = row["latest_outcome"]

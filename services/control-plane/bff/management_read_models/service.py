@@ -4069,7 +4069,7 @@ class ManagementService:
                 monitoring_session_record=session, prefetched=True,
             )
             person = personas[str(binding["persona_id"])]
-            strategy = strategies.get(binding.get("strategy_id"), {})
+            strategy = strategies.get(str(binding.get("strategy_id") or ""), {})
             symbols = (strategy.get("market_scope") or {}).get("symbols") or (strategy.get("parameters") or {}).get("symbols") or []
             symbol = symbols[0] if isinstance(symbols, list) and len(symbols) == 1 else None
             row.update(tenant_id=binding.get("tenant_id"), persona_name=_persona_label(person) or None,
