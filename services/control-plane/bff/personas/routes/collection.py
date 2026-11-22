@@ -390,7 +390,25 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
             ooda_packet=ooda_packet,
         )
         if active.state in {"failed", "compensated"}:
-            failed_step = str((active.error or {}).get("failed_step") or "provisioning")
+            err_info = active.error if isinstance(active.error, dict) else {}
+            failed_step = str(err_info.get("failed_step") or "provisioning")
+            owner_decision_req = err_info.get("owner_decision_request") or active.references.get(
+                "risk_policy_owner_decision_request"
+            )
+            details_extra: Dict[str, Any] = {
+                "personaId": active.persona_id,
+                "provisioningState": active.state,
+                "provisioningStep": active.current_step,
+                "compensation": active.compensation,
+            }
+            if err_info.get("reason_code"):
+                details_extra["reasonCode"] = err_info["reason_code"]
+            if err_info.get("absence_source"):
+                details_extra["absenceSource"] = err_info["absence_source"]
+            if err_info.get("resolution_status"):
+                details_extra["resolutionStatus"] = err_info["resolution_status"]
+            if isinstance(owner_decision_req, dict):
+                details_extra["riskPolicyOwnerDecisionRequest"] = owner_decision_req
             raise _bff_error(
                 502,
                 ErrorCode.UPSTREAM_ERROR,
@@ -398,12 +416,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Downstream owner rejected persona provisioning step",
                 precondition_failed=failed_step,
                 suggestion="Inspect the persisted Persona provisioning receipt before a governed retry",
-                details_extra={
-                    "personaId": active.persona_id,
-                    "provisioningState": active.state,
-                    "provisioningStep": active.current_step,
-                    "compensation": active.compensation,
-                },
+                details_extra=details_extra,
             )
         return response
 
