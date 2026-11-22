@@ -281,3 +281,75 @@ def test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token(m
     monkeypatch.setattr(probe.urllib.request, "urlopen", request)
     assert probe.main() == 0
     assert "capital-token" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("kind", ["capital", "telemetry", "approvals"])
+def test_dev_owner_transport_sends_only_scoped_ids_and_uses_bounded_existing_helper(monkeypatch, kind):
+    import json
+    import subprocess
+    monkeypatch.setenv("ACCEPTANCE_BFF_URL", "https://api.dev.mvl-cap.tw")
+    calls = []
+    def invoke(argv, **kwargs):
+        calls.append((argv, kwargs))
+        assert argv[0].endswith("/scripts/dev_vm_ssh.sh") and argv[1] == "exec"
+        assert argv[2].startswith("timeout 15s docker exec -i pantheon-")
+        assert json.loads(kwargs["input"]) == {"kind": kind, "identity": "fixture-id", "tenant": "fixture-tenant"}
+        assert kwargs["timeout"] == 3 and kwargs["capture_output"] is True
+        return subprocess.CompletedProcess(argv, 0, '{"fixture":true}', '')
+    monkeypatch.setattr(probe.subprocess, "run", invoke)
+    assert probe.dev_owner_read(kind, "fixture-id", "fixture-tenant", timeout=3) == {"fixture": True}
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["timeout", "exit", "oversize", "invalid", "wrong_origin"])
+def test_dev_owner_transport_fails_closed_without_echoing_remote_secrets(monkeypatch, failure):
+    import subprocess
+    monkeypatch.setenv("ACCEPTANCE_BFF_URL", "https://fixture.invalid" if failure == "wrong_origin"
+                       else "https://api.dev.mvl-cap.tw")
+    def invoke(argv, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, 1, output="fixture-secret")
+        return subprocess.CompletedProcess(argv, 1 if failure == "exit" else 0,
+            "x" * (probe.MAX_BYTES + 1) if failure == "oversize" else "fixture-secret", "fixture-secret")
+    monkeypatch.setattr(probe.subprocess, "run", invoke)
+    with pytest.raises(RuntimeError) as error:
+        probe.dev_owner_read("telemetry", "fixture-id", "fixture-tenant", timeout=1)
+    assert "fixture-secret" not in str(error.value)
+
+
+def test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads(monkeypatch, capsys):
+    import io
+    import json
+    from urllib.parse import urlsplit
+    payload = evidence()
+    pool = payload["/bff/capital-pools/fixture-pool"]["data"]
+    pool["risk_policy_ref"] = "fixture-policy"
+    for key, value in {"ACCEPTANCE_BFF_URL": "https://api.dev.mvl-cap.tw", "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+            "ACCEPTANCE_VIEWER_CLIENT_SECRET": "viewer-secret", "ACCEPTANCE_EXPECTED_PERSONA_IDS": "fixture-persona",
+            "DEV_DEPLOY_SSH_HOST": "fixture", "DEV_DEPLOY_SSH_KEY_FILE": "/fixture/key"}.items():
+        monkeypatch.setenv(key, value)
+    for key in ("ACCEPTANCE_POLICY_READER_CLIENT_ID", "ACCEPTANCE_POLICY_READER_CLIENT_SECRET",
+                "ACCEPTANCE_CAPITAL_OWNER_URL", "ACCEPTANCE_CAPITAL_OWNER_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    calls = []
+    def remote(kind, identity, tenant, *, timeout):
+        calls.append((kind, identity, tenant))
+        assert 0 < timeout <= probe.MAX_SECONDS
+        if kind == "approvals":
+            return payload["/api/v1/approval-decisions"]
+        assert kind == "capital" and identity == "fixture-pool" and tenant == "fixture-tenant"
+        return {"capital_pool_id": identity, "tenant_id": tenant, "stage": "paper",
+                "resolved": True, "policy": pool["metadata"]["risk_policy"]}
+    def request(req, timeout):
+        parsed = urlsplit(req.full_url)
+        if req.get_method() == "POST":
+            body = {"access_token": "viewer-token"}
+        else:
+            assert parsed.path != "/api/v1/approval-decisions"
+            body = payload[parsed.path + ("?" + parsed.query if parsed.query else "")]
+        return io.BytesIO(json.dumps(body).encode())
+    monkeypatch.setattr(probe, "dev_owner_read", remote)
+    monkeypatch.setattr(probe.urllib.request, "urlopen", request)
+    assert probe.main() == 0
+    assert [call[0] for call in calls] == ["approvals", "capital"]
+    assert "viewer-secret" not in capsys.readouterr().out

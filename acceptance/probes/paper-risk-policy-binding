@@ -13,6 +13,8 @@ import hashlib
 import json
 import math
 import os
+import shlex
+import subprocess
 import sys
 import time
 import urllib.error
@@ -38,6 +40,80 @@ MAX_BYTES = 8 * 1024 * 1024
 MAX_ROWS = 2000
 MAX_REQUESTS = 24
 MAX_SECONDS = 180
+
+# Existing dev acceptance jobs already carry pinned SSH transport. Service
+# credentials stay in the running containers; only scoped GET bodies return.
+DEV_OWNER_READ = r'''
+import json, os, sys, urllib.parse, urllib.request
+from services.service_token_file import configured_service_token
+try:
+    args = json.load(sys.stdin)
+    kind, identity, tenant = args['kind'], args['identity'], args['tenant']
+    def request(url, token=None, body=None):
+        headers = {'Content-Type': 'application/json', 'X-Tenant-Id': tenant}
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        req = urllib.request.Request(url, headers=headers,
+            data=json.dumps(body).encode() if body else None, method='POST' if body else 'GET')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            raw = response.read(8388609)
+        if len(raw) > 8388608:
+            raise ValueError('response_size_exceeded')
+        return json.loads(raw)
+    if kind == 'approvals':
+        origin = 'http://127.0.0.1:8001'
+        token = request(origin + '/bff/auth/dev-login', body={
+            'grant_type': 'client_credentials',
+            'client_id': os.environ['PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID'],
+            'client_secret': os.environ['PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET'],
+        })['access_token']
+        result = request(origin + '/api/v1/approval-decisions', token)
+    elif kind in ('capital', 'telemetry'):
+        if kind == 'capital':
+            origin = os.environ['PANTHEON_CAPITAL_API_URL'].rstrip('/')
+            token = (configured_service_token('RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN')
+                     or configured_service_token('DEPLOYMENT_CAPITAL_SERVICE_TOKEN'))
+            path = '/api/capital-pools/' + urllib.parse.quote(identity, safe='') + '/risk-policy?stage=paper'
+        else:
+            origin = os.environ['PANTHEON_TELEMETRY_API_URL'].rstrip('/')
+            token = configured_service_token('PANTHEON_TELEMETRY_SERVICE_TOKEN')
+            path = '/api/telemetry/events/' + urllib.parse.quote(identity, safe='')
+        if not token:
+            raise ValueError('owner_credential_unavailable')
+        result = request(origin + path, token)
+    else:
+        raise ValueError('unsupported_owner_read')
+    print(json.dumps(result, ensure_ascii=False))
+except Exception:
+    # Never print credential-bearing exception text or remote environment.
+    print(json.dumps({'owner_read_failed': True}))
+    sys.exit(1)
+'''
+
+
+def dev_transport_configured():
+    return bool(os.environ.get("DEV_DEPLOY_SSH_HOST") and os.environ.get("DEV_DEPLOY_SSH_KEY_FILE"))
+
+
+def dev_owner_read(kind, identity, tenant, *, timeout):
+    if (kind not in {"capital", "telemetry", "approvals"} or not tenant
+            or os.environ.get("ACCEPTANCE_BFF_URL", "").rstrip("/") != "https://api.dev.mvl-cap.tw"):
+        raise RuntimeError("dev_owner_read_scope_invalid")
+    container = "pantheon-operator-bff-1" if kind == "approvals" else "pantheon-paper-signal-producer-1"
+    command = "timeout 15s docker exec -i " + container + " python3 -c " + shlex.quote(DEV_OWNER_READ)
+    transport = Path(__file__).resolve().parents[2] / "scripts/dev_vm_ssh.sh"
+    try:
+        result = subprocess.run([str(transport), "exec", command],
+            input=json.dumps({"kind": kind, "identity": identity, "tenant": tenant}),
+            text=True, capture_output=True, timeout=min(15, timeout))
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("dev_owner_transport_failed") from None
+    if result.returncode or len(result.stdout.encode()) > MAX_BYTES:
+        raise RuntimeError("dev_owner_read_failed")
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError("dev_owner_response_invalid") from None
 
 
 def data(body):
@@ -267,27 +343,27 @@ def main(report_runner=None):
         except Exception as exc:
             raise RuntimeError("request_failed:" + type(exc).__name__) from None
 
-    def owner_read(pool):
+    def owner_read(kind, identity, tenant):
         nonlocal requests
-        base_owner = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_URL", "").rstrip("/")
-        owner_token = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_TOKEN", "")
+        if kind == "capital":
+            base_owner = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_URL", "").rstrip("/")
+            owner_token = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_TOKEN", "")
+            path = "/api/capital-pools/" + urllib.parse.quote(identity, safe="") + "/risk-policy?stage=paper"
+        else:
+            base_owner = os.environ.get("ACCEPTANCE_TELEMETRY_URL", "").rstrip("/")
+            owner_token = os.environ.get("ACCEPTANCE_TELEMETRY_TOKEN", "")
+            path = "/api/telemetry/events/" + urllib.parse.quote(identity, safe="")
+        if kind != "approvals" and base_owner and owner_token:
+            return request(path, origin=base_owner, token=owner_token, tenant=tenant)
+        if dev_transport_configured():
+            requests += 2 if kind == "approvals" else 1
+            remaining = deadline - time.monotonic()
+            if requests > MAX_REQUESTS or remaining <= 0:
+                raise RuntimeError("probe_budget_exceeded")
+            return dev_owner_read(kind, identity, tenant, timeout=remaining)
         if not base_owner or not owner_token:
-            raise RuntimeError("referenced_policy_owner_readback_unavailable")
-        requests += 1
-        remaining = deadline - time.monotonic()
-        if requests > MAX_REQUESTS or remaining <= 0:
-            raise RuntimeError("probe_budget_exceeded")
-        req = urllib.request.Request(base_owner + "/api/capital-pools/"
-            + urllib.parse.quote(pool["pool_id"], safe="") + "/risk-policy?stage=paper",
-            headers={"Authorization": "Bearer " + owner_token, "X-Tenant-Id": pool["tenant_id"]})
-        try:
-            with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
-                payload = response.read(MAX_BYTES + 1)
-            if len(payload) > MAX_BYTES:
-                raise RuntimeError("response_size_exceeded")
-            return json.loads(payload)
-        except Exception as exc:
-            raise RuntimeError("policy_owner_read_failed:" + type(exc).__name__) from None
+            raise RuntimeError("referenced_policy_owner_readback_unavailable" if kind == "capital"
+                               else "immutable_telemetry_owner_readback_unavailable")
 
     try:
         token = request("/bff/auth/dev-login", {
@@ -309,11 +385,16 @@ def main(report_runner=None):
                 raise RuntimeError("policy_reader_access_token_missing")
         configured = os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS")
         expected = DEFAULT_PERSONAS if configured is None else tuple(x.strip() for x in configured.split(",") if x.strip())
-        fetch = lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token)
-        pool_reader = lambda pool: owner_read(pool) if pool.get("risk_policy_ref") else None
+        def fetch(path):
+            if path == "/api/v1/approval-decisions":
+                if not policy_id and dev_transport_configured():
+                    return owner_read("approvals", "", "tenant-dev")
+                return request(path, token=policy_token)
+            return request(path, token=token)
+        pool_reader = lambda pool: owner_read("capital", pool["pool_id"], pool["tenant_id"]) if pool.get("risk_policy_ref") else None
         if report_runner:
             report = report_runner(fetch, expected, pool_reader,
-                lambda: request("/deployment.json", origin=os.environ["ACCEPTANCE_FE_URL"].rstrip("/")), request)
+                lambda: request("/deployment.json", origin=os.environ["ACCEPTANCE_FE_URL"].rstrip("/")), owner_read)
         else:
             report = run(fetch, expected, pool_policy_reader=pool_reader)
     except (RuntimeError, ValueError) as exc:

@@ -64,6 +64,25 @@ broker/position/cash differences and missing evidence. These tests do not prove
 a new hosted fill or risk-reducing exit occurred. Exact commands and terminal
 results are in `evidence.json`.
 
+Source correction on PR #7752: the probe now consumes the real detail DTO's
+`identifiers.binding_id[]` and root `stage_events`, with an active-binding
+check on every stage and on its immutable source. `dto-regression.json` repeats
+the original reproduction against reviewed head `581cb757d`: its invented
+positive shape passes, the same events in the recorded hosted shape fail five
+checks; the corrected probe passes that same hosted-shape synthetic control.
+The tests also send a positive fixture through the actual BFF `_detail`
+composer and retain negative source identity, freshness and booking controls.
+These are source regressions, not new natural hosted events.
+
+`hosted-probe-repaired.json` records a new bounded execution of the current
+executable probe on the worker using the already configured pinned dev SSH
+transport. It still returns exit 1: the same three unresolved mappings and
+zero eligible fresh decisions, rejections or reconciled fills, on the same
+da78/bf4e pair. `owner-transport-readback.json` separately proves successful
+tenant-scoped raw telemetry, Capital resolution and approval reads using
+installed service identities. The historical raw event is never a fresh sample.
+No additional owner URL, token, policy approval or write was required.
+
 Residual findings for the coordinator (existing classes, no replacement task):
 
 - RC2 paper-risk owner: genuine policy-owner disposition remains with
@@ -76,10 +95,10 @@ Residual findings for the coordinator (existing classes, no replacement task):
 - RC2/RC6 acceptance owner (this task): rerun the probe after deployment and
   normal daily processing; record fresh IDs, sizing, pre-broker reason/amounts,
   and passing broker/position/cash comparisons. Zero samples cannot pass.
-- RC2 acceptance runner: internal Capital/telemetry owner read configuration is
-  required when fresh reference-backed samples exist. The current release
-  viewer alone cannot supply those source bodies. Missing configuration fails;
-  this task does not introduce a new credential, endpoint or blocking gate.
+- RC2 acceptance runner: resolved source configuration defect. The probe now
+  uses the runner's existing pinned SSH transport and installed owner read
+  credentials; the three actual owner reads passed. Missing authorized reads
+  still fail. No new credential, endpoint or blocking gate was introduced.
 
 Runtime budget: one bounded probe invocation per release, 72 requests / 240 s,
 8 MiB response cap, three persona pages of at most 50 rows and four details

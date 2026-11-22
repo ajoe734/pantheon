@@ -83,6 +83,23 @@ def test_positive_is_explicitly_synthetic_and_requires_source_and_all_checks():
     assert len(report["fresh_reconciled_fills"][0]["booking_checks"]) == 6
 
 
+def test_positive_through_actual_bff_detail_composer():
+    from services.control_plane.bff.trade_journeys import _detail
+    from services.trade_journey.materializer import JourneyProjection
+    state = fixture()
+    for jid, row in state[4].items():
+        timeline = [{**event, "stage": stage} for stage, event in row["stage_events"].items()]
+        snapshot = {"journey_id": jid, "tenant_id": "fixture-tenant", "environment": "paper",
+            "status": "completed", "created_at": row["created_at"], "updated_at": row["created_at"],
+            "identifiers": {"binding_id": ["active-binding"], "persona_id": ["fixture-persona"]},
+            "stages": {event["stage"]: {"status": "succeeded"} for event in timeline}}
+        projection = JourneyProjection(jid, "fixture-tenant", "paper", timeline, snapshot, [], [])
+        state[4][jid] = _detail(projection, now=NOW)
+        assert "binding_id" not in state[4][jid] and "snapshot" not in state[4][jid]
+    report = run(state)
+    assert report["passed"], report["failed"]
+
+
 @pytest.mark.parametrize("mutation", ["no_rows", "stale", "replay", "fixture", "foreign", "policy",
                                      "missing_cash", "variance", "no_amounts", "pair", "missing_mapping"])
 def test_missing_freshness_provenance_policy_or_booking_proof_cannot_pass(mutation):

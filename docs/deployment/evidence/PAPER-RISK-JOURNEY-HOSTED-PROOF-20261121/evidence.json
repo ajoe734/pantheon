@@ -8,14 +8,14 @@
     "RC6"
   ],
   "source_review": {
-    "requested_scope": "bounded GET-only probe, catalog-policy audit, negative controls and truthful hosted evidence",
+    "requested_scope": "Actual BFF detail DTO compatibility, stage and raw-owner identity controls, installed pinned dev owner transport, bounded GET-only probe and truthful outstanding hosted proof",
     "decision": "pending independent review",
     "hosted_acceptance_required": true
   },
   "hosted_acceptance": {
     "passed": false,
     "probe_exit_code": 1,
-    "observed_at": "2026-11-22T17:10:00.283556+00:00",
+    "observed_at": "2026-11-22T17:19:05.779546+00:00",
     "deployment_cutoff": "2026-11-22T15:14:29+00:00",
     "backend_sha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
     "frontend_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
@@ -33,7 +33,8 @@
       "no_fresh_governed_decision:persona-ee7112a829d38b9135ac",
       "no_fresh_pre_broker_rejection_with_amounts",
       "no_fresh_broker_position_cash_reconciled_fill"
-    ]
+    ],
+    "latest_probe_evidence": "hosted-probe-repaired.json"
   },
   "chain_delivery_states": {
     "policy_binding": "deployed",
@@ -109,6 +110,29 @@
       "command": "timeout 55s python3 /tmp/collect-paper-risk-stack.py",
       "exit_code": 0,
       "result": "read-only Docker container/image inspection; inventory is not a full expected-service acceptance"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q acceptance/test_paper_risk_journey.py acceptance/test_paper_risk_policy_binding.py acceptance/test_trade_journey_readable_probe.py",
+      "exit_code": 0,
+      "result": "82 passed in 2.96s; includes actual BFF detail composer, DTO and immutable source negative controls, dev transport scope/failure controls"
+    },
+    {
+      "command": "PYTHONPATH=acceptance /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -",
+      "exit_code": 0,
+      "result": "prior positive passed, prior actual shape failed five checks, repaired actual shape passed; dto-regression.json",
+      "stdin_summary": "Load prior 581cb757d probe using git show; run the same synthetic fixture in invented and hosted DTO shapes, then run current probe against the hosted shape and assert all three outcomes."
+    },
+    {
+      "command": "timeout 265s python3 /tmp/run-paper-risk-hosted-repaired.py",
+      "collector_exit_code": 0,
+      "probe_exit_code": 1,
+      "result": "current executable probe on worker with existing pinned SSH transport; same unresolved mappings and zero fresh samples; hosted-probe-repaired.json"
+    },
+    {
+      "command": "DEV_DEPLOY_SSH_HOST=35.194.154.62 DEV_DEPLOY_SSH_USER=chloe_ong_dev_cctech_support_com DEV_DEPLOY_SSH_KEY_FILE=/home/chloe_ong_dev_cctech_support_com/.ssh/google_compute_engine DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE=/home/chloe_ong_dev_cctech_support_com/.ssh/known_hosts ACCEPTANCE_BFF_URL=https://api.dev.mvl-cap.tw timeout 55s python3 -",
+      "exit_code": 0,
+      "result": "all three owner reads succeeded with existing installed credentials; unresolved policy remains a real owner result; owner-transport-readback.json",
+      "stdin_summary": "Import current policy probe; dev_owner_read telemetry historical event, Capital pool resolution and approvals; assert exact event, pool and tenant identity and record sanitized receipt."
     }
   ],
   "runtime_budget": {
@@ -122,7 +146,9 @@
     "trading_persona_count": 3,
     "persistent_product_writes": 0,
     "growth_per_day_bytes": 0,
-    "cap_and_cleanup": "stdout only; existing runner caps/replaces verdict; fixed task evidence snapshot in git"
+    "cap_and_cleanup": "stdout only; existing runner caps/replaces verdict; fixed task evidence snapshot in git",
+    "remote_owner_call_seconds": 15,
+    "remote_request_accounting": "Each owner GET counts once; approvals GET plus token exchange counts twice, all within existing total budget."
   },
   "residual_findings": [
     {
@@ -144,24 +170,36 @@
     },
     {
       "register_class": "RC2 acceptance probe runner",
-      "finding": "Complete fresh source proof requires existing tenant-scoped immutable telemetry and referenced Capital owner read configuration. The public DTO drops sizing metadata.",
-      "disposition": "Existing chain must supply authorized owner reads; absence fails closed. No endpoint, credential, gate or runtime feature added."
+      "finding": "Prior acceptance source required additional owner URLs/tokens despite an installed dev read transport.",
+      "disposition": "Resolved in this source change: runner existing pinned SSH now reads Capital, telemetry and approvals. Actual scoped owner reads succeeded; no new grants. Genuine mapping/deployment/fresh-evidence waits remain in preceding residuals.",
+      "evidence": "owner-transport-readback.json"
     }
   ],
   "fixture_and_replay_boundary": "Fresh positive controls are synthetic tests only. Historical DTO fixture is prior-task recorded shape. Hosted read/browser data is natural readback; no trades, repair, replay, policy activation or deployment performed.",
   "source_sha256": {
-    "acceptance/probes/paper-risk-journey": "b7b6dd1f94ccb37973d444e8b4f0a92d40fdbf08527572b75c6587eb42a935e0",
-    "acceptance/probes/paper-risk-policy-binding": "494f8707d1805886f3779dc421bc3e39aab2d22f0a8f2d6f98e0a1eac273c000",
-    "acceptance/test_paper_risk_journey.py": "089a08234417e4ae481c48e5dcb46a0d60642a68f1e92e2105a796e07c7a5be6",
-    "acceptance/test_paper_risk_policy_binding.py": "cdfc9d1e9a0fdcbbd9e72f2d946cef619037a8d7bc2dcb22f9aa0037ea55b7ab"
+    "acceptance/probes/paper-risk-journey": "df5790e567ccfa60afa1183b868fd6a2001289b7d30f561793d3898fc944e849",
+    "acceptance/probes/paper-risk-policy-binding": "de5ad7ac441772cffbafbb155428f03ec52121afbb527d9f95a253862e7c46fd",
+    "acceptance/test_paper_risk_journey.py": "1402c1fce8e9934c851e060710ffe9033865a0bb75bd63ecbbe2ea0890893402",
+    "acceptance/test_paper_risk_policy_binding.py": "451fbd9217d5228a9ed8a9cd186ab27e6a5f3b8e7b73610dd4a3a7a141507879"
   },
   "artifact_sha256": {
     "hosted-probe-execution.json": "47542cc02f46c232fc6e43c0d262f0264a0806f0cda52782d1f2c194a451a7b2",
     "hosted-runtime-owner.json": "284478ba6aed17aa1c3cfb08c53380e016c48267d175d3ddcc21fbf97de1ebb9",
     "hosted-manifest.json": "4143fa7f332d646c7e497152fa939992c30fd9b94b29a01cfacdd39dfbf4f61f",
-    "README.md": "183bc2fb7ef6a9f569c500b6a60b45b301753f2eb02fdbd2ca9d8e13e979476e",
+    "README.md": "55a81d67b62f8d6347a2882d13c9a82163be614f798cf2ace7e9aab7eafb9190",
     "hosted-stack.json": "90976d4d61699c21625247b99a7f7b7772b8a8e38e29d42ba3d3b0b14477acde",
     "hosted-browser.json": "0b6bc027869d5f2244f0fb8065e926079fde7a6b1c30ecb02fbd944a2bfd9c37",
-    "hosted-bff-version.json": "479d091951a325c5a252a5b7562bfd292b672595e13091a95a2f417bc74f1a0d"
+    "hosted-bff-version.json": "479d091951a325c5a252a5b7562bfd292b672595e13091a95a2f417bc74f1a0d",
+    "dto-regression.json": "09d04156d372609961cb305d76ae4e8760bbae93f7f660aa99d9b4f510277be5",
+    "owner-transport-readback.json": "76a7fd584d3166b5d803bef84bdf65b01758cdfe85b846472dc7bef4d860af3c",
+    "hosted-probe-repaired.json": "4966b0522af11ca769ba5df1376953e786952c7e55508834641c8a0796cb64ca"
+  },
+  "source_correction": {
+    "prior_head": "581cb757da05ae5f4a45b6a4210895ecd10717ab",
+    "dto_regression": "dto-regression.json",
+    "actual_bff_composer_test": "test_positive_through_actual_bff_detail_composer",
+    "owner_read_transport": "existing scripts/dev_vm_ssh.sh; installed service credentials remain inside running containers",
+    "owner_read_evidence": "owner-transport-readback.json",
+    "new_credentials_or_grants": false
   }
 }

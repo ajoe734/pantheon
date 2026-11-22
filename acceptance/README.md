@@ -131,18 +131,31 @@ personas, active tenant bindings and pool policies, and requires current owner
 approval of the requested profile. Both pool activation and catalog policy
 targets are recognized; tenant, policy identity, version, content digest, target,
 expiry, role authority and paper authorization scope must agree. A catalog
-reference never falls back to nearby inline policy data.
+reference never falls back to nearby inline policy data. Journey details use
+the served BFF contract: `identifiers.binding_id[]` and root `stage_events`.
+Every inspected stage must also name the active binding before an immutable
+owner event can qualify.
 
 The journey probe requires the standard `ACCEPTANCE_BFF_URL`,
 `ACCEPTANCE_FE_URL`, `ACCEPTANCE_BACKEND_SHA`, `ACCEPTANCE_FRONTEND_SHA` and
 viewer credentials. Optional `ACCEPTANCE_POLICY_READER_CLIENT_ID/SECRET` are
-used only for the governance approval GET. Reference-backed pools additionally
-require `ACCEPTANCE_CAPITAL_OWNER_URL` and `ACCEPTANCE_CAPITAL_OWNER_TOKEN` for
-the existing tenant-scoped `/api/capital-pools/{id}/risk-policy?stage=paper` GET.
-Fresh journey source events require `ACCEPTANCE_TELEMETRY_URL` and
-`ACCEPTANCE_TELEMETRY_TOKEN` for `/api/telemetry/events/{id}`. These are existing
-owner read identities; the probe creates no grants or policies. Credentials stay
-in memory. A public journey DTO alone does not expose complete sizing evidence.
+used only for the governance approval GET. On the existing dev release runner,
+the configured `DEV_DEPLOY_SSH_HOST`, `DEV_DEPLOY_SSH_USER`,
+`DEV_DEPLOY_SSH_KEY_FILE` and `DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE` enable
+`scripts/dev_vm_ssh.sh` owner reads. No additional owner URLs or tokens are
+needed: the fixed read commands use installed paper-signal-producer service
+credentials for tenant-scoped Capital policy and immutable telemetry GETs.
+When no separate policy reader is configured, the existing dev risk-owner
+identity is exchanged inside the BFF container solely for the approvals GET.
+The transport is limited to the current dev BFF origin. Credentials stay in
+the containers; returned errors omit remote exception text.
+
+Alternatively, reference-backed pools accept `ACCEPTANCE_CAPITAL_OWNER_URL`
+and `ACCEPTANCE_CAPITAL_OWNER_TOKEN` for the existing tenant-scoped
+`/api/capital-pools/{id}/risk-policy?stage=paper` GET; fresh source reads accept
+`ACCEPTANCE_TELEMETRY_URL` and `ACCEPTANCE_TELEMETRY_TOKEN` for
+`/api/telemetry/events/{id}`. Missing authorized reads fail closed. The probe
+creates no grants or policies. A public DTO alone lacks complete sizing metadata.
 
 The exact FE/BFF pair is read before and after. `deployment.json.deployedAt`
 sets the cutoff: only natural live source events strictly after it, belonging to
@@ -163,7 +176,8 @@ All product reads use GET; only existing dev-login token exchanges use POST.
 No trades, policy activation, repair or replay are performed. Dev probes remain
 post-switch and do not introduce a deploy gate.
 
-Budget: at most 72 requests, 240 seconds, 15 seconds per request, 8 MiB per
+Budget: at most 72 requests (including remote GETs and token exchanges), 240
+seconds, 15 seconds per request or SSH call, 8 MiB per
 response, 50 list rows and four detailed journeys per persona (three by default;
 maximum ten configured personas). Budget exhaustion fails. This is a bounded
 sample, not a global absence claim. The release runner owns cadence (one per
