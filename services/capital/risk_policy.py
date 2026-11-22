@@ -119,6 +119,8 @@ class RiskPolicy:
     allowed_stages: tuple[str, ...] = ()
     max_canary_capital_scale_pct: float | None = None
     max_canary_gross_scale_pct: float | None = None
+    min_cash_reserve_pct: float | None = None
+    min_cash_reserve: float | None = None
     kill_switch_triggers: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -183,6 +185,8 @@ class RiskPolicy:
             allowed_stages=_policy_limit(payload.get("allowed_stages"), "list"),
             max_canary_capital_scale_pct=_policy_limit(payload.get("max_canary_capital_scale_pct")),
             max_canary_gross_scale_pct=_policy_limit(payload.get("max_canary_gross_scale_pct")),
+            min_cash_reserve_pct=_policy_alias(payload, "min_cash_reserve_pct", "cash_reserve_pct"),
+            min_cash_reserve=_policy_alias(payload, "min_cash_reserve", "cash_reserve"),
             kill_switch_triggers=_policy_limit(payload.get("kill_switch_triggers"), "list"),
             metadata=metadata,
         )
@@ -219,6 +223,8 @@ class RiskPolicyEvaluationContext:
     drawdown_pct: float | None = None
     capital_scale_pct: float | None = None
     gross_scale_pct: float | None = None
+    cash_reserve_pct: float | None = None
+    cash_reserve: float | None = None
     runtime_action: str | None = None
     kill_switch_trigger: str | None = None
     decision_id: str | None = None
@@ -286,6 +292,12 @@ class RiskPolicyEvaluationContext:
             drawdown_pct=_optional_float(payload.get("drawdown_pct")),
             capital_scale_pct=_optional_float(payload.get("capital_scale_pct")),
             gross_scale_pct=_optional_float(payload.get("gross_scale_pct")),
+            cash_reserve_pct=_optional_float(
+                payload.get("cash_reserve_pct", metadata.get("cash_reserve_pct"))
+            ),
+            cash_reserve=_optional_float(
+                payload.get("cash_reserve", metadata.get("cash_reserve"))
+            ),
             runtime_action=_first_text_or_none(payload, "runtime_action"),
             kill_switch_trigger=_first_text_or_none(payload, "kill_switch_trigger"),
             decision_id=_optional_text(payload.get("decision_id") or metadata.get("decision_id")),
@@ -464,6 +476,7 @@ class RiskPolicyEvaluator:
         self._check_liquidity(resolved_policy, resolved_context, checks)
         self._check_order_controls(resolved_policy, resolved_context, checks)
         self._check_canary_scale(resolved_policy, resolved_context, checks)
+        self._check_cash_reserve(resolved_policy, resolved_context, checks)
         self._check_drawdown(resolved_policy, resolved_context, checks)
         self._check_kill_switch(resolved_policy, resolved_context, checks)
 
@@ -792,6 +805,53 @@ class RiskPolicyEvaluator:
             context.gross_scale_pct,
             checks,
         )
+
+    def _check_cash_reserve(
+        self,
+        policy: RiskPolicy,
+        context: RiskPolicyEvaluationContext,
+        checks: list[RiskPolicyCheck],
+    ) -> None:
+        if policy.min_cash_reserve_pct is not None and context.cash_reserve_pct is not None:
+            if context.cash_reserve_pct + 1e-12 >= policy.min_cash_reserve_pct:
+                checks.append(
+                    _passed(
+                        "min_cash_reserve_pct",
+                        "cash_reserve_pct meets RiskPolicy minimum",
+                        context.cash_reserve_pct,
+                        limit=policy.min_cash_reserve_pct,
+                    )
+                )
+            else:
+                checks.append(
+                    _failed(
+                        "min_cash_reserve_pct",
+                        "cash_reserve_breach",
+                        f"cash_reserve_pct {context.cash_reserve_pct:.6g} is below RiskPolicy min_cash_reserve_pct {policy.min_cash_reserve_pct:.6g}",
+                        limit=policy.min_cash_reserve_pct,
+                        observed=context.cash_reserve_pct,
+                    )
+                )
+        if policy.min_cash_reserve is not None and context.cash_reserve is not None:
+            if context.cash_reserve + 1e-9 >= policy.min_cash_reserve:
+                checks.append(
+                    _passed(
+                        "min_cash_reserve",
+                        "cash_reserve meets RiskPolicy minimum",
+                        context.cash_reserve,
+                        limit=policy.min_cash_reserve,
+                    )
+                )
+            else:
+                checks.append(
+                    _failed(
+                        "min_cash_reserve",
+                        "cash_reserve_breach",
+                        f"cash_reserve {context.cash_reserve:.6g} is below RiskPolicy min_cash_reserve {policy.min_cash_reserve:.6g}",
+                        limit=policy.min_cash_reserve,
+                        observed=context.cash_reserve,
+                    )
+                )
 
     def _check_drawdown(
         self,
@@ -1155,6 +1215,8 @@ POLICY_DIGEST_FIELDS: tuple[str, ...] = (
     "liquidation_rules",
     "max_canary_capital_scale_pct",
     "max_canary_gross_scale_pct",
+    "min_cash_reserve_pct",
+    "min_cash_reserve",
     "kill_switch_triggers",
 )
 
@@ -1175,6 +1237,10 @@ _RECOGNIZED_POLICY_LIMIT_KEYS: frozenset[str] = frozenset(
         *_FACT_OF_LIMIT.keys(),
         "max_single_weight",
         "max_pairwise_correlation",
+        "min_cash_reserve_pct",
+        "cash_reserve_pct",
+        "min_cash_reserve",
+        "cash_reserve",
         "exposure_limits",
         "allowed_order_types",
         "allowed_time_in_force",
@@ -1210,6 +1276,8 @@ _NON_NEGATIVE_SCALAR_LIMIT_FIELDS: tuple[str, ...] = (
     "max_signal_correlation",
     "max_canary_capital_scale_pct",
     "max_canary_gross_scale_pct",
+    "min_cash_reserve_pct",
+    "min_cash_reserve",
 )
 
 _FLEX_EXPOSURE_LIMIT_FIELDS: tuple[str, ...] = (
@@ -1331,6 +1399,8 @@ def _policy_effective_limits(policy: RiskPolicy) -> dict[str, Any]:
         "liquidation_rules",
         "max_canary_capital_scale_pct",
         "max_canary_gross_scale_pct",
+        "min_cash_reserve_pct",
+        "min_cash_reserve",
         "kill_switch_triggers",
     ):
         value = raw.get(key)
@@ -2026,6 +2096,8 @@ def _policy_eligible_for_governed_risk_reduction(
             return False
         if field_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
             return False
+        if field_name == "min_cash_reserve_pct" and float(val) >= 1.0:
+            return False
         if float(val) < 0.0:
             return False
 
@@ -2620,6 +2692,14 @@ def resolve_pool_risk_policy_binding(
                 "invalid",
                 "risk_policy_invalid_limit",
                 f"Risk policy {policy_model.risk_policy_id!r} limit {field_name}={val!r} must be > 0",
+                policy_obj=policy_model,
+                policy_tenant=policy_tenant_id,
+            )
+        if field_name == "min_cash_reserve_pct" and float(val) >= 1.0:
+            return _fail(
+                "invalid",
+                "risk_policy_invalid_limit",
+                f"Risk policy {policy_model.risk_policy_id!r} limit min_cash_reserve_pct={val!r} must be < 1.0",
                 policy_obj=policy_model,
                 policy_tenant=policy_tenant_id,
             )
