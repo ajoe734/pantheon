@@ -259,6 +259,65 @@ def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[st
     return [r for r in records if str(r.get("status") or "").lower() in requested]
 
 
+def _is_approval_forbidden_error(exc: BaseException) -> bool:
+    for attr in ("code", "status_code", "status", "downstream_status"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int) and not isinstance(val, bool) and val == 403:
+            return True
+    return False
+
+
+class _JournalApprovalIsolatedReadStore:
+    """Journal-scoped read_surface proxy that isolates optional Governance approval owner 403s."""
+
+    def __init__(self, read_store: Any) -> None:
+        self._read_store = read_store
+        self.approval_forbidden = False
+
+    def _read_approval(self, method_name: str, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not decision_id or not str(decision_id).strip() or self.approval_forbidden:
+            return None
+        getter = getattr(self._read_store, method_name, None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(decision_id)
+        except Exception as exc:
+            if _is_approval_forbidden_error(exc):
+                self.approval_forbidden = True
+                return None
+            raise
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_approval("get_approval_decision", decision_id)
+
+    def get_approval_decision_by_id(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._read_approval("get_approval_decision_by_id", decision_id)
+
+    def dataset_source(self, dataset: str) -> str:
+        if (
+            dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}
+            and self.approval_forbidden
+        ):
+            return "missing"
+        ds_fn = getattr(self._read_store, "dataset_source", None)
+        if not callable(ds_fn):
+            return "missing"
+        try:
+            return ds_fn(dataset)
+        except Exception as exc:
+            if (
+                dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}
+                and _is_approval_forbidden_error(exc)
+            ):
+                self.approval_forbidden = True
+                return "missing"
+            raise
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._read_store, name)
+
+
 def _register_evolution_programs_routes(
     router: APIRouter,
     *,
@@ -1113,9 +1172,22 @@ def create_evolution_router(
         )
         freeze_orders = list(getattr(read_store, "list_freeze_orders", lambda: [])() or [])
         rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
+        journal_read_store = _JournalApprovalIsolatedReadStore(read_store)
+
+        def _journal_surface_status_fn(dataset: str, *, snapshot_at: str, **kwargs: Any) -> Dict[str, Any]:
+            if dataset == "approval_decisions" and journal_read_store.approval_forbidden:
+                return _surface_status_fn(dataset, snapshot_at=snapshot_at, source="missing", **kwargs)
+            try:
+                return _surface_status_fn(dataset, snapshot_at=snapshot_at, **kwargs)
+            except Exception as exc:
+                if dataset == "approval_decisions" and _is_approval_forbidden_error(exc):
+                    journal_read_store.approval_forbidden = True
+                    return _surface_status_fn(dataset, snapshot_at=snapshot_at, source="missing", **kwargs)
+                raise
+
         surfaces = evolution_journal_surfaces(
             snapshot_at=snapshot_at,
-            dataset_surface_status_fn=_surface_status_fn,
+            dataset_surface_status_fn=_journal_surface_status_fn,
         )
 
         items: List[Dict[str, Any]] = []
@@ -1448,10 +1520,14 @@ def create_evolution_router(
                 full_proj = None
                 if mutation_review_projection is not None:
                     full_proj = mutation_review_projection(
-                        dec_id, identity=identity, snapshot_at=snapshot_at, decision=raw_dec or None
+                        dec_id,
+                        identity=identity,
+                        snapshot_at=snapshot_at,
+                        decision=raw_dec or None,
+                        read_surface=journal_read_store,
                     )
                 if full_proj is None:
-                    app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(raw_dec.get("approval_decision_id"))
+                    app_dec = journal_read_store.get_approval_decision_by_id(raw_dec.get("approval_decision_id"))
                     full_proj = dict(it.get("mutation_review") or {})
                     full_proj["approval_decision"] = app_dec
                 for field in ("metadata", "provenance", "origin"):
@@ -1461,6 +1537,12 @@ def create_evolution_router(
                 # The decision row keeps its own record/status/summary/target;
                 # only the nested mutation_review is hydrated.
                 it["mutation_review"] = full_proj
+
+        if journal_read_store.approval_forbidden and surfaces.get("approval_decisions", {}).get("status") != "unavailable":
+            surfaces = evolution_journal_surfaces(
+                snapshot_at=snapshot_at,
+                dataset_surface_status_fn=_journal_surface_status_fn,
+            )
 
         meta = _snap_meta(snapshot_at)
         meta["surfaces"] = surfaces

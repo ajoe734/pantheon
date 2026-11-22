@@ -163,6 +163,16 @@ def _store_and_record(
             "requested_by": "operator-human-cp1",
             "mandate": "Paper-only owner contract verification",
             "budget": 25000,
+            "risk_policy": {
+                "risk_policy_id": "rp-cp1-paper-contract-v1",
+                "version": "1.0",
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "allowed_asset_classes": ["equity", "future"],
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+            },
         },
     )
     assert created

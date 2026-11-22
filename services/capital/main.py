@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -75,6 +76,7 @@ try:
     )
     from .write_authority import is_authorized, matrix_as_list
     from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
+    from .risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest
     from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
         CapitalInboundAuthority,
@@ -123,6 +125,7 @@ except ImportError:
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
     from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
+    from risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
     import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthority,
@@ -139,7 +142,19 @@ log = logging.getLogger(__name__)
 
 
 def pool_digest(pool: Any) -> str:
-    return stable_payload_hash({f: getattr(pool, f, None) for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")})
+    payload: Dict[str, Any] = {
+        f: getattr(pool, f, None)
+        for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")
+    }
+    pool_meta = getattr(pool, "metadata", None)
+    if isinstance(pool_meta, dict) and isinstance(pool_meta.get("risk_policy"), dict):
+        try:
+            digest = risk_policy_digest(pool_meta["risk_policy"])
+            if digest:
+                payload["risk_policy_digest"] = digest
+        except Exception:
+            pass
+    return stable_payload_hash(payload)
 def binding_digest(binding: Any) -> str:
     return stable_payload_hash({f: getattr(binding, f, None) for f in ("binding_id", "persona_id", "capital_pool_id", "capital_sleeve_id", "role", "allowed_deployment_scope", "budget", "effective_from", "effective_to")})
 def plan_digest(proposal: Dict[str, Any]) -> str:
@@ -336,18 +351,154 @@ class CapitalBoundaryService:
         self.get_pool(pool_id)
         with self._CAPITAL_STATE_APPLY_LOCK:
             pool = self.get_pool(pool_id)
-            if body.status == "active" and pool.status != "active":
-                self._authorize_pool_activation(pool, body.approval_decision_id)
-            updated = self.pool_store.update_status(pool_id, body.status)
+            has_policy_patch = body.risk_policy_ref is not None or body.metadata is not None
+            merged_meta = dict(pool.metadata or {})
+            if isinstance(body.metadata, dict):
+                merged_meta.update(body.metadata)
+            pool_tenant = _tenant_of(pool)
+            if pool_tenant:
+                merged_meta["tenant_id"] = pool_tenant
+            next_ref = (
+                (str(body.risk_policy_ref).strip() or None)
+                if body.risk_policy_ref is not None
+                else pool.risk_policy_ref
+            )
+            candidate_pool = replace(
+                pool,
+                status=body.status,
+                risk_policy_ref=next_ref,
+                metadata=merged_meta,
+            )
+            if pool_tenant:
+                object.__setattr__(candidate_pool, "tenant_id", pool_tenant)
+            if body.status == "active" and (pool.status != "active" or has_policy_patch):
+                self._authorize_pool_activation(candidate_pool, body.approval_decision_id)
+            if has_policy_patch:
+                patch_fields: Dict[str, Any] = {
+                    "status": body.status,
+                    "risk_policy_ref": next_ref,
+                    "metadata": merged_meta,
+                }
+                if hasattr(self.pool_store, "patch"):
+                    updated = self.pool_store.patch(pool_id, patch=patch_fields, updated_at=self._utc_now())
+                else:
+                    updated = self.pool_store.update_status(pool_id, body.status)
+            else:
+                updated = self.pool_store.update_status(pool_id, body.status)
+        detail: Dict[str, Any] = {"status": updated.status}
+        if has_policy_patch:
+            detail["risk_policy_ref"] = updated.risk_policy_ref
+            if isinstance(updated.metadata, dict) and isinstance(updated.metadata.get("risk_policy"), dict):
+                detail["risk_policy_id"] = updated.metadata["risk_policy"].get("risk_policy_id")
+                detail["risk_policy_version"] = updated.metadata["risk_policy"].get("version")
         self._emit(
             event_type="capital_pool_status_updated",
             resource_type="CapitalPool",
             resource_id=updated.pool_id,
             actor_id=body.actor_id,
             actor_role=body.actor_role,
-            detail={"status": updated.status},
+            detail=detail,
         )
         return updated
+
+    def resolve_pool_risk_policy(self, pool_id: str, *, stage: Optional[str] = None) -> Dict[str, Any]:
+        pool = self.get_pool(pool_id)
+        pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+        expected_stage = str(
+            stage
+            or pool_meta.get("execution_context")
+            or pool_meta.get("target_stage")
+            or "paper"
+        ).strip()
+        resolution = resolve_pool_risk_policy_binding(
+            capital_pool_id=pool.pool_id,
+            pool=pool,
+            risk_policy_loader=self.guard._policy_loader,
+            expected_tenant_id=_tenant_of(pool),
+            expected_stage=expected_stage or "paper",
+            approval_reader=self.guard._effective_approval_reader(),
+            require_active=True,
+            require_limits=("gross_limit",),
+            raise_on_error=False,
+        )
+        return resolution.to_dict()
+
+    def get_pool_approval_evidence(
+        self,
+        decision_id: str,
+        *,
+        pool_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from services.governance.approval_authority import ApprovalEvidence
+
+        clean_decision_id = str(decision_id or "").strip()
+        if not clean_decision_id:
+            raise CapitalPoolError("Approval decision not found")
+        tenant = _current_tenant()
+        pool: Optional[CapitalPool] = None
+        if pool_id is not None:
+            pool = self.get_pool(pool_id)
+        reader = self.guard._effective_approval_reader()
+        if reader is None:
+            raise CapitalServiceError("Governance approval reader is not configured")
+        try:
+            loaded = reader.get(clean_decision_id)
+        except Exception as exc:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}") from exc
+        if loaded is None:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        evidence: Optional[ApprovalEvidence] = None
+        if isinstance(loaded, ApprovalEvidence):
+            evidence = loaded
+        elif isinstance(loaded, dict):
+            evidence = ApprovalEvidence.model_validate(dict(loaded))
+        elif hasattr(loaded, "model_dump"):
+            evidence = ApprovalEvidence.model_validate(loaded.model_dump())
+        elif pool is not None and callable(getattr(loaded, "require_valid", None)):
+            pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+            raw_policy = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+            req_risk = (
+                str(
+                    pool_meta.get("requested_risk_profile")
+                    or pool_meta.get("risk_profile")
+                    or "low"
+                ).strip()
+                or "low"
+            )
+            expected_binding: Dict[str, Any] = {
+                "tenant_id": _tenant_of(pool) or tenant or "default",
+                "target_type": "capital_pool_activation",
+                "target_id": pool.pool_id,
+                "target_version": pool_digest(pool),
+                "subject.pool_id": pool.pool_id,
+                "subject.risk_direction": "increase",
+                "subject.risk_policy_id": str(
+                    raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
+                ),
+                "subject.risk_policy_version": str(raw_policy.get("version") or "1.0"),
+                "subject.risk_policy_digest": risk_policy_digest(raw_policy) if raw_policy else "",
+                "subject.requested_risk": req_risk,
+            }
+            res_ev = loaded.require_valid(expected=expected_binding)
+            if isinstance(res_ev, ApprovalEvidence):
+                evidence = res_ev
+            elif isinstance(res_ev, dict):
+                evidence = ApprovalEvidence.model_validate(dict(res_ev))
+            elif hasattr(res_ev, "model_dump"):
+                evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
+        if evidence is None or evidence.decision_id != clean_decision_id:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if tenant and evidence.tenant_id != tenant:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if evidence.target_type != "capital_pool_activation":
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is not None and evidence.target_id != pool.pool_id:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is None:
+            target_pool = self.get_pool(evidence.target_id)
+            if target_pool.pool_id != evidence.target_id:
+                raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        return evidence.model_dump(mode="json")
 
     def create_binding(
         self,
@@ -1275,6 +1426,41 @@ def update_capital_pool_status(
     try:
         body = bind_capital_mutation(body)
         return _pool_body(service.update_pool_status(pool_id, body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/risk-policy")
+def get_capital_pool_risk_policy(
+    pool_id: str,
+    stage: Optional[str] = None,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/approvals/{decision_id}")
+def get_capital_pool_approval_evidence(
+    pool_id: str,
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id, pool_id=pool_id)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital/approvals/{decision_id}")
+def get_capital_approval_evidence(
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

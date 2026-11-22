@@ -28,6 +28,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional
 
+try:
+    from services.governance.approval_authority import configured_approval_reader
+except Exception:  # pragma: no cover
+    configured_approval_reader = None  # type: ignore[assignment]
+
+_DEFAULT_CONFIGURED_APPROVAL_READER = configured_approval_reader
+
 # ---------------------------------------------------------------------------
 # Fleet scope constants
 # ---------------------------------------------------------------------------
@@ -255,6 +262,8 @@ def _extract_allowed_scope(binding_dict: Dict[str, Any]) -> Optional[str]:
 
 def _execution_projection_exclusion_reason(
     binding_dict: Dict[str, Any],
+    *,
+    approval_reader: Optional[Any] = None,
 ) -> Optional[str]:
     """Return why an active managed binding cannot start product execution.
 
@@ -321,10 +330,99 @@ def _execution_projection_exclusion_reason(
     if not isinstance(market_data_policy, Mapping):
         return "non_executable_missing_market_data_policy"
 
+    has_explicit_risk_policy = (
+        "risk_policy" in binding_dict
+        or "risk_policy" in metadata
+        or "risk_policy_ref" in binding_dict
+        or "risk_policy_ref" in metadata
+        or metadata.get("risk_policy_required") is True
+        or metadata.get("require_approved_profile_mapping") is True
+        or bool(str(metadata.get("requested_risk_profile") or "").strip())
+    )
+    if has_explicit_risk_policy:
+        from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+        inline_policy = (
+            binding_dict.get("risk_policy")
+            if "risk_policy" in binding_dict
+            else metadata.get("risk_policy")
+        )
+        policy_ref = (
+            str(
+                binding_dict.get("risk_policy_ref")
+                or metadata.get("risk_policy_ref")
+                or ""
+            ).strip()
+            or None
+        )
+        if inline_policy is None and not policy_ref:
+            if (
+                metadata.get("require_approved_profile_mapping") is True
+                or bool(str(metadata.get("requested_risk_profile") or "").strip())
+            ):
+                return "non_executable_risk_policy_profile_mapping_unapproved"
+            return "non_executable_risk_policy_missing"
+
+        pool_meta_for_resolution: Dict[str, Any] = dict(metadata)
+        if inline_policy is not None or "risk_policy" in binding_dict:
+            pool_meta_for_resolution["risk_policy"] = inline_policy
+        pool_for_resolution: Dict[str, Any] = {
+            "pool_id": str(binding_dict.get("capital_pool_id") or ""),
+            "tenant_id": metadata.get("tenant_id") or binding_dict.get("tenant_id"),
+            "metadata": pool_meta_for_resolution,
+        }
+        if policy_ref is not None:
+            pool_for_resolution["risk_policy_ref"] = policy_ref
+        pool_approval_digest = (
+            binding_dict.get("approval_digest")
+            or binding_dict.get("pool_approval_digest")
+            or metadata.get("approval_digest")
+            or metadata.get("pool_approval_digest")
+        )
+        if pool_approval_digest:
+            pool_for_resolution["approval_digest"] = pool_approval_digest
+        for top_approval_key in (
+            "profile_mapping_approval_id",
+            "approval_decision_id",
+            "decision_id",
+        ):
+            if binding_dict.get(top_approval_key) and top_approval_key not in pool_meta_for_resolution:
+                pool_meta_for_resolution[top_approval_key] = binding_dict.get(top_approval_key)
+                pool_for_resolution[top_approval_key] = binding_dict.get(top_approval_key)
+
+        effective_approval_reader = approval_reader
+        if (
+            effective_approval_reader is None
+            and callable(configured_approval_reader)
+            and configured_approval_reader is not _DEFAULT_CONFIGURED_APPROVAL_READER
+        ):
+            try:
+                effective_approval_reader = configured_approval_reader("runtime_manager")
+            except Exception:
+                effective_approval_reader = None
+
+        res = resolve_pool_risk_policy_binding(
+            capital_pool_id=str(binding_dict.get("capital_pool_id") or ""),
+            pool=pool_for_resolution,
+            binding=binding_dict,
+            expected_tenant_id=str(metadata.get("tenant_id") or binding_dict.get("tenant_id") or "").strip() or None,
+            expected_stage=str(binding_dict.get("deployment_mode") or "paper").strip() or "paper",
+            approval_reader=effective_approval_reader,
+            require_active=True,
+            require_limits=("gross_limit",),
+            raise_on_error=False,
+        )
+        if not res.resolved:
+            return f"non_executable_{res.reason_code or 'risk_policy_invalid'}"
+
     return None
 
 
-def _policy_envelope_for(binding_dict: Dict[str, Any]) -> PolicyEnvelope:
+def _policy_envelope_for(
+    binding_dict: Dict[str, Any],
+    *,
+    approval_reader: Optional[Any] = None,
+) -> PolicyEnvelope:
     """Build a PolicyEnvelope for a RuntimeBinding dict."""
     stage = str(binding_dict.get("deployment_mode") or "")
     status = str(binding_dict.get("status") or "")
@@ -347,7 +445,10 @@ def _policy_envelope_for(binding_dict: Dict[str, Any]) -> PolicyEnvelope:
             exclusion_reason=reason,
         )
 
-    execution_reason = _execution_projection_exclusion_reason(binding_dict)
+    execution_reason = _execution_projection_exclusion_reason(
+        binding_dict,
+        approval_reader=approval_reader,
+    )
     if execution_reason is not None:
         return PolicyEnvelope(
             stage=stage,
@@ -373,6 +474,7 @@ def build_fleet_desired_state(
     *,
     stage_filter: Optional[str] = None,
     safe_mode_resolver: Optional[Callable[[str], str]] = None,
+    approval_reader: Optional[Any] = None,
 ) -> FleetDesiredState:
     """Build the fleet desired state from a list of RuntimeBinding dicts.
 
@@ -419,7 +521,7 @@ def build_fleet_desired_state(
         if stage_filter is not None and stage != stage_filter:
             continue
 
-        envelope = _policy_envelope_for(b)
+        envelope = _policy_envelope_for(b, approval_reader=approval_reader)
 
         if envelope.fleet_eligible:
             desired.append(
