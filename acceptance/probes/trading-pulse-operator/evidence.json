@@ -2,10 +2,10 @@
   "task_id": "BFF-TRADING-PULSE-OPERATOR-FACTS-20261122",
   "owner": "Codex2",
   "reviewer": "Antigravity2",
-  "recorded_at": "2026-11-22T13:18:05.967923+00:00",
+  "recorded_at": "2026-11-22T13:29:59.319669+00:00",
   "review_status": "ready_for_independent_review",
   "root_cause": "RC6 WP6.1/WP6.2/WP6.3 operator readability and scoped business facts",
-  "validated_source_commit": "30f6d4051",
+  "validated_source_commit": "dd55cf43fe773c33644d421d9589cd39e22700c0",
   "owned_layer": "Trading-pulse shared read aggregation, additive operator contract, independent read-only API probe and compatibility tests",
   "not_changing": [
     "order execution",
@@ -23,7 +23,7 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_trading_pulse_operator.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py --disable-warnings --maxfail=2",
       "exit_code": 0,
-      "result": "188 passed, 143 warnings in 72.11s"
+      "result": "208 passed, 143 warnings in 74.88s"
     },
     {
       "command": ".venv-pantheon/bin/python3 acceptance/probes/trading-pulse-operator",
@@ -38,6 +38,11 @@
       "command": "git diff --check",
       "exit_code": 0,
       "result": "passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_trading_pulse_operator.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "75 passed, 3 warnings in 6.15s"
     }
   ],
   "acceptance_evidence": [
@@ -46,7 +51,8 @@
     "Matching zero ledger fills stays 0; unknown PnL stays null with no_fills; 0/452 is 0 and 0/0 is unknown; zero slippage/PnL/drawdown and Sharpe source reasons retained.",
     "Only equal stage/currency/definition/exact period PnL can be summed; rankings require observations and comparable periods and rank within comparison scope.",
     "Refusal comes from existing indexed journey projection with tenant/environment/runtime/binding/persona and snapshot checks; source event, amounts, quantity, submitted flag and links are tested.",
-    "Independent API probe reads roster, bindings, raw telemetry and journeys; corruption tests reject probe rows, wrong denominators, zero/null substitution, altered quantities/units, missing refusal evidence and ranked identities."
+    "Independent API probe reads roster, bindings, raw telemetry and journeys; corruption tests reject probe rows, wrong denominators, zero/null substitution, altered quantities/units, missing refusal evidence and ranked identities.",
+    "Actual RuntimePort metadata-only tenant/deployment_mode and legacy top-level/both shapes preserve scoped joins, zero fills and ranking scope; independent four-row viewer sample counts three operators. Tenant conflicts are partial/unverifiable and retired/failed bindings are excluded."
   ],
   "contract_and_probe_runbook": "acceptance/probes/trading-pulse-operator/README.md",
   "runtime_budget": {
@@ -63,5 +69,29 @@
     "owner_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
     "claim": "No hosted deployment or acceptance claimed by this source task."
   },
-  "residual_findings": []
+  "residual_findings": [],
+  "composition_base": "3595613c6",
+  "viewer_witness_validation": {
+    "source": "owner-witness-20261122.json supplied by coordinator, captured under independent viewer roles",
+    "captured_at": "2026-11-22T13:15:36.892690+00:00",
+    "sha256": "8eccfe73f04e04c049797ce7151a222e495443b3e65cef167bb01b89884369f8",
+    "active_bindings": 4,
+    "bindings_with_top_level_tenant": 0,
+    "operator_persona_count": 3,
+    "operator_runtime_count": 3,
+    "result": "Sample projected through actual RuntimePort and shared admission: verified 3 operators; original owner records unchanged. Same four-row wire roster independently exercised by test_viewer_witness_wire_roster_has_three_operators_not_zero.",
+    "scope": "Offline validation of coordinator viewer evidence; not a hosted acceptance claim.",
+    "fixes": [
+      "Admit metadata.tenant_id or top-level tenant_id only when all supplied claims agree with the verified persona tenant.",
+      "Normalize copies for telemetry, journey and baseline joins without mutating owner records.",
+      "Support existing Runtime owner deployment_mode stage alias.",
+      "Exclude retired, retired_at and failed bindings; preserve paused bindings and existing alert helper behavior."
+    ],
+    "negative_cases": [
+      "Conflicting tenant fields in both directions or missing provenance: model partial, probe unverifiable.",
+      "Metadata-scoped foreign bindings and test personas excluded.",
+      "Empty aggregate cannot pass when the independent wire roster has three operators."
+    ],
+    "regression_before_fix": "Actual RuntimePort metadata-only tenant plus deployment_mode produced verified runtime_count=0; regression failed with expected 2. After fix focused suite passed 75 tests."
+  }
 }
