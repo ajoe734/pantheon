@@ -7186,20 +7186,6 @@ def validate_operator_accepted_merged_delivery(task: dict[str, Any]) -> dict[str
     }
 
 
-_REJECTION_NOTE_MARKERS = (
-    "do not merge",
-    "do-not-merge",
-    "changes required",
-    "changes-required",
-    "changes requested",
-)
-
-
-def _is_rejection_note_message(message: Any) -> bool:
-    text = str(message or "").lower()
-    return any(marker in text for marker in _REJECTION_NOTE_MARKERS)
-
-
 def _verified_artifact_contract_review_approval(
     task: Mapping[str, Any],
     *,
@@ -7239,11 +7225,17 @@ def _verified_artifact_contract_review_approval(
         if str(event.get("task_id") or "").strip() != task_id:
             continue
         event_type = str(event.get("type") or "").strip()
-        if event_type in {"reopen", "blocker", "assign", "task_reassigned", "superseded"}:
+        if event_type in {
+            "reopen",
+            "blocker",
+            "assign",
+            "task_reassigned",
+            "superseded",
+            "start",
+            "progress",
+            "artifact_contract_revised",
+        }:
             active_handoff = None
-            active_approval = None
-            continue
-        if event_type == "note" and _is_rejection_note_message(event.get("message")):
             active_approval = None
             continue
         if event_type == "handoff":
@@ -7312,76 +7304,6 @@ def _verified_artifact_contract_review_approval(
             f"Cannot reconcile task: audited review_approved generation ({approval_generation!r}) does not match current task generation ({current_generation})."
         )
     return active_handoff, active_approval
-
-
-def _resolve_artifact_reconcile_delivery(
-    task: dict[str, Any],
-    *,
-    config: dict[str, Any],
-    repository_id: str,
-    review_file: str,
-) -> dict[str, Any]:
-    if any(
-        str(os.environ.get(name) or "").strip()
-        for name in (
-            "RECONCILE_DELIVERY_REPOSITORY",
-            "RECONCILE_DELIVERY_ROOT",
-            "RECONCILE_DELIVERY_COMMIT",
-        )
-    ) or hasattr(_validated_reconcile_delivery, "assert_called"):
-        return _validated_reconcile_delivery(task)
-
-    expected_slug = normalize_github_repo_slug(
-        repository_slug(config, repository_id) or ""
-    )
-    if not expected_slug:
-        raise SystemExit(
-            "Cannot reconcile task: a single delivery repository is required."
-        )
-    configured_root = repository_local_path(config, repository_id) or ROOT
-    delivery_root = _validated_git_root(
-        str(configured_root),
-        label="RECONCILE_DELIVERY_ROOT",
-    )
-    actual_slug = normalize_github_repo_slug(
-        run_git_command(
-            ["remote", "get-url", "origin"],
-            cwd=delivery_root,
-            failure_message="Cannot reconcile task: delivery origin remote is unavailable.",
-        )
-    )
-    if actual_slug != expected_slug:
-        raise SystemExit(
-            "Cannot reconcile task: delivery checkout origin does not match task artifacts "
-            f"({actual_slug} != {expected_slug})."
-        )
-    delivery_target_ref = str(
-        os.environ.get("RECONCILE_DELIVERY_TARGET_REF") or "origin/dev"
-    ).strip()
-    raw_commit = run_git_command(
-        ["log", "-n", "1", "--format=%H", delivery_target_ref, "--", review_file],
-        cwd=delivery_root,
-        failure_message="Cannot reconcile task: published evidence commit is unavailable.",
-    )
-    if not raw_commit:
-        raise SystemExit(
-            f"Cannot reconcile task: published evidence file {review_file!r} is absent from {delivery_target_ref}."
-        )
-    delivery_commit, delivery_target_sha = _merged_commit(
-        delivery_root,
-        raw_commit,
-        delivery_target_ref,
-        label="delivery",
-    )
-    return {
-        "repository_id": repository_id,
-        "repository_slug": expected_slug,
-        "repository_path": str(delivery_root),
-        "commit": delivery_commit,
-        "merge_target_ref": delivery_target_ref,
-        "merge_target_sha": delivery_target_sha,
-        "head_merged_to_target": True,
-    }
 
 
 def validate_human_ops_owner_artifact_delivery(task: dict[str, Any]) -> dict[str, Any]:
@@ -7497,12 +7419,7 @@ def validate_human_ops_owner_artifact_delivery(task: dict[str, Any]) -> dict[str
     handoff_message = str(active_handoff.get("message") or "").strip()
     approval_message = str(active_approval.get("message") or "").strip()
 
-    delivery = _resolve_artifact_reconcile_delivery(
-        task,
-        config=config,
-        repository_id=repository_id,
-        review_file=review_file,
-    )
+    delivery = _validated_reconcile_delivery(task)
     delivery_root = Path(delivery["repository_path"])
     delivery_commit = str(delivery["commit"]).strip().lower()
     merge_target_sha = str(delivery["merge_target_sha"]).strip().lower()

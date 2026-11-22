@@ -8764,6 +8764,64 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
             )
 
+    def test_artifact_contract_review_approval_preserved_across_ordinary_note(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-note-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            note_event = ai_status._activity_event(
+                {
+                    "ts": "2026-11-22T01:00:00Z",
+                    "agent": "Codex2",
+                    "type": "note",
+                    "task_id": task["id"],
+                    "message": (
+                        "No changes requested on the already approved evidence; "
+                        "ready for Human/Ops closeout."
+                    ),
+                }
+            )
+            with self._test_log_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(note_event) + "\n")
+
+            active_handoff, active_approval = (
+                ai_status._verified_artifact_contract_review_approval(
+                    task,
+                    delivery_binding=task[ai_status.DELIVERY_BINDING_KEY],
+                )
+            )
+            self.assertEqual(active_handoff["agent"], "Human/Ops")
+            self.assertEqual(active_approval["agent"], "Codex2")
+
+            env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                _command_reconcile_merged_done(
+                    self.state,
+                    [
+                        task["id"],
+                        "Human/Ops closed peer-approved hosted artifact acceptance after note.",
+                    ],
+                )
+                self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+
+            self.assertIsNone(ai_status.get_task(self.state, task["id"]))
+            self.assertEqual(
+                self.state[ai_status.TERMINAL_FACTS_KEY][task["id"]]["status"],
+                "done",
+            )
+            self.assertIn(task["id"], self.state[ai_status.ARCHIVE_RECEIPTS_KEY])
+
     def test_reconcile_merged_done_human_ops_artifact_closeout_preserves_rejections(
         self,
     ) -> None:
@@ -8814,17 +8872,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                         "type": "reopen",
                         "task_id": base_task["id"],
                         "message": "Reopened after approval.",
-                    }
-                )
-
-            def mutate_rejection_note(_t: dict[str, Any]) -> None:
-                append_audit_event(
-                    {
-                        "ts": "2026-11-22T01:00:00Z",
-                        "agent": "Codex2",
-                        "type": "note",
-                        "task_id": base_task["id"],
-                        "message": "Changes required before closeout.",
                     }
                 )
 
@@ -8915,12 +8962,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     mutate_reopen,
                     {},
                     "no unrevoked audited",
-                ),
-                (
-                    "superseded_by_rejection_note",
-                    mutate_rejection_note,
-                    {},
-                    "no unrevoked audited review_approved event",
                 ),
                 (
                     "wrong_review_actor",

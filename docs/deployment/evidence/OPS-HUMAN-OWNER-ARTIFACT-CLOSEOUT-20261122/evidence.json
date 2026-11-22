@@ -44,7 +44,7 @@
     "prior_gap": "validate_human_ops_owner_merged_delivery (#6709) called require_current_pr_delivery_binding unconditionally, rejecting a Human/Ops-owned read-only hosted acceptance task whose handoff-frozen delivery_binding.kind is artifact_contract while local done excludes Human/Ops."
   },
   "repair_summary": {
-    "mechanism": "Extended validate_human_ops_owner_merged_delivery and command_reconcile_merged_done to admit a Human/Ops-owned review_approved task with a current artifact_contract delivery_binding when: (1) all declared task artifacts are task-scoped evidence under docs/deployment/evidence/<TASK-ID>/, with no PR delivery markers or protected product closeout requirement; (2) completion_tracks.hosted is done and cites docs/deployment/evidence/<TASK-ID>/evidence.json, the exact published evidence SHA-256, the publication commit, and the accepted release identity; (3) the activity audit contains an unrevoked handoff matching the current delivery_binding and an unrevoked current-generation review_approved by the assigned independent reviewer citing the exact evidence SHA-256, publication commit, and accepted release identity, plus a pending finalize handoff from reviewer to Human/Ops; and (4) the evidence file on origin/dev is immutable, matches task_id, and was published by a separate completed publication task whose archived PR delivery/review bindings and commit trailers match the publication commit.",
+    "mechanism": "Extended validate_human_ops_owner_merged_delivery and command_reconcile_merged_done to admit a Human/Ops-owned review_approved task with a current artifact_contract delivery_binding when: (1) all declared task artifacts are task-scoped evidence under docs/deployment/evidence/<TASK-ID>/, with no PR delivery markers or protected product closeout requirement; (2) completion_tracks.hosted is done and cites docs/deployment/evidence/<TASK-ID>/evidence.json, the exact published evidence SHA-256, the publication commit, and the accepted release identity; (3) the activity audit contains an unrevoked handoff matching the current delivery_binding and an unrevoked current-generation review_approved by the assigned independent reviewer citing the exact evidence SHA-256, publication commit, and accepted release identity (relying on canonical lifecycle and explicit invalidation events without generic note-text revocation), plus a pending finalize handoff from reviewer to Human/Ops; and (4) the delivery resolved via native _validated_reconcile_delivery(task) proves the evidence file on origin/dev is immutable, matches task_id, and was published by a separate completed publication task whose archived PR delivery/review bindings and commit trailers match the publication commit.",
     "guardrails_preserved": {
       "local_human_ops_done_whitelist_unchanged": true,
       "no_borrowed_publication_pr_binding_on_acceptance_task": true,
@@ -66,8 +66,8 @@
       "python3 scripts/check_storage_manifest.py"
     ],
     "results": {
-      "review_approved_workflow_tests": "Ran 173 tests in 2.666s - OK",
-      "full_test_ai_status_suite": "Ran 535 tests in 40.741s - OK",
+      "review_approved_workflow_tests": "Ran 174 tests in 2.752s - OK",
+      "full_test_ai_status_suite": "Ran 536 tests across 4 foreground batches - OK",
       "storage_manifest_check": "passed: true (372 entries, 0 failures)",
       "read_only_live_snapshot_dry_run": "validate_human_ops_owner_merged_delivery and isolated temp-dir reconcile_merged_done + recover_status_archive_outbox succeeded on a read-only copy of REGIME-DATA-HOSTED-ACCEPTANCE-20261114 with terminal_fact and archive_receipt emitted"
     }
