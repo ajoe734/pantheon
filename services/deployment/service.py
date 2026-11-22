@@ -536,6 +536,62 @@ class DeploymentPlannerService:
         if request.plan_id and self.plan_store.get(request.plan_id) is not None:
             raise DeploymentPlanError(f"DeploymentPlan '{request.plan_id}' already exists")
 
+        has_inline_meta_policy = "risk_policy" in metadata
+        has_meta_policy_ref = "risk_policy_ref" in metadata
+        meta_policy_ref = str(metadata.get("risk_policy_ref") or "").strip() or None
+        if request.risk_policy is not None or has_inline_meta_policy or has_meta_policy_ref:
+            from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+            candidate_policy = (
+                request.risk_policy if request.risk_policy is not None else metadata.get("risk_policy")
+            )
+            if candidate_policy is None and not meta_policy_ref:
+                raise DeploymentPlanError(
+                    "RiskPolicy rejected: metadata.risk_policy is null or missing (risk_policy_missing)"
+                )
+            pool_for_res: Dict[str, Any] = {
+                "pool_id": capital_pool_id,
+                "tenant_id": tenant_id,
+                "metadata": {
+                    **metadata,
+                    **(
+                        {"risk_policy": candidate_policy}
+                        if (request.risk_policy is not None or has_inline_meta_policy)
+                        else {}
+                    ),
+                },
+                **(
+                    {"risk_policy_ref": meta_policy_ref}
+                    if meta_policy_ref is not None
+                    else {}
+                ),
+                **(
+                    {"approval_digest": metadata.get("approval_digest") or metadata.get("pool_approval_digest")}
+                    if (metadata.get("approval_digest") or metadata.get("pool_approval_digest"))
+                    else {}
+                ),
+            }
+            policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=capital_pool_id,
+                pool=pool_for_res,
+                expected_tenant_id=tenant_id,
+                expected_stage=request.target_stage.value,
+                approval_reader=self.approval_reader,
+                require_active=True,
+                require_limits=(
+                    ("gross_limit",)
+                    if request.target_stage.value == "paper"
+                    and (has_inline_meta_policy or has_meta_policy_ref)
+                    and request.risk_policy is None
+                    else ()
+                ),
+                raise_on_error=False,
+            )
+            if not policy_res.resolved:
+                raise DeploymentPlanError(
+                    f"RiskPolicy rejected: {policy_res.reason} ({policy_res.reason_code})"
+                )
+
         schedule_window = (
             ScheduleWindow(**request.schedule_window.model_dump())
             if request.schedule_window is not None

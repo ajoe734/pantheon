@@ -9,6 +9,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from services.capital.risk_policy import (
+    POLICY_DIGEST_FIELDS,
+    POLICY_PROVENANCE_DIGEST_KEYS,
+    BoundPoolRiskPolicyResolution,
+    CapitalOwnerApprovalReader,
     RiskPolicy,
     RiskPolicyCheck,
     RiskPolicyCheckStatus,
@@ -17,11 +21,25 @@ from services.capital.risk_policy import (
     RiskPolicyEvaluation,
     RiskPolicyEvaluationContext,
     RiskPolicyEvaluator,
+    RiskPolicyLoadError,
     RiskPolicyTargetType,
+    capital_pool_approval_digest,
+    configured_capital_owner_approval_reader,
+    load_risk_policy,
+    load_risk_policy_model,
+    normalize_risk_policy,
+    read_capital_pool_record,
+    resolve_bound_pool_risk_policy,
+    resolve_pool_risk_policy_binding,
+    risk_policy_digest,
     risk_policy_rejection_message,
 )
 
 __all__ = [
+    "POLICY_DIGEST_FIELDS",
+    "POLICY_PROVENANCE_DIGEST_KEYS",
+    "BoundPoolRiskPolicyResolution",
+    "CapitalOwnerApprovalReader",
     "RiskPolicy",
     "RiskPolicyCheck",
     "RiskPolicyCheckStatus",
@@ -30,6 +48,16 @@ __all__ = [
     "RiskPolicyEvaluation",
     "RiskPolicyEvaluationContext",
     "RiskPolicyEvaluator",
+    "RiskPolicyLoadError",
     "RiskPolicyTargetType",
+    "capital_pool_approval_digest",
+    "configured_capital_owner_approval_reader",
+    "load_risk_policy",
+    "load_risk_policy_model",
+    "normalize_risk_policy",
+    "read_capital_pool_record",
+    "resolve_bound_pool_risk_policy",
+    "resolve_pool_risk_policy_binding",
+    "risk_policy_digest",
     "risk_policy_rejection_message",
 ]
