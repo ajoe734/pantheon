@@ -689,6 +689,17 @@ class PaperExecutionAlgorithm:
         if pool_id:
             self._capital_pool_id = pool_id
 
+    def _find_order_reservation_key(self, identifier: str | None) -> str | None:
+        clean_id = str(identifier or "").strip()
+        if not clean_id:
+            return None
+        if clean_id in self._order_reservations:
+            return clean_id
+        for key, item in self._order_reservations.items():
+            if item.get("signal_id") == clean_id or item.get("reservation_id") == clean_id:
+                return key
+        return None
+
     def reserve_order(
         self,
         reservation_id: str,
@@ -719,8 +730,9 @@ class PaperExecutionAlgorithm:
                 "duplicate_retry": True,
                 "reserved": False,
             }
-        if clean_id in self._order_reservations:
-            existing = dict(self._order_reservations[clean_id])
+        existing_key = self._find_order_reservation_key(clean_id) or self._find_order_reservation_key(clean_sig)
+        if existing_key is not None:
+            existing = dict(self._order_reservations[existing_key])
             existing["duplicate_retry"] = True
             existing["idempotent_reservation"] = True
             existing["reserved"] = True
@@ -827,32 +839,71 @@ class PaperExecutionAlgorithm:
         if popped is not None:
             return popped
         for key, item in list(self._order_reservations.items()):
-            if item.get("signal_id") == clean_id or item.get("decision_id") == clean_id:
+            if item.get("signal_id") == clean_id or item.get("reservation_id") == clean_id:
+                return self._order_reservations.pop(key, None)
+        for key, item in list(self._order_reservations.items()):
+            if item.get("decision_id") == clean_id:
                 return self._order_reservations.pop(key, None)
         return None
 
     def _release_current_signal_reservation(self, signal_id: str | None = None) -> dict[str, Any] | None:
-        """Release any active reservation bound to ``signal_id`` or current signal/reservation context."""
-        released = self.release_order_reservation(signal_id)
-        for ctx_key in ("reservation_id", "signal_id", "decision_id"):
-            ctx_val = str(self._current_signal_metadata.get(ctx_key) or "").strip()
-            if ctx_val and ctx_val != str(signal_id or "").strip():
-                extra = self.release_order_reservation(ctx_val)
-                if released is None:
-                    released = extra
+        """Release any active reservation bound to ``signal_id`` or matching signal/reservation context."""
+        clean_sig = str(signal_id or "").strip()
+        released = self.release_order_reservation(clean_sig) if clean_sig else None
+        ctx_sig = str(self._current_signal_metadata.get("signal_id") or "").strip()
+        ctx_res = str(self._current_signal_metadata.get("reservation_id") or "").strip()
+        if not clean_sig:
+            for candidate in (ctx_res, ctx_sig):
+                if candidate:
+                    extra = self.release_order_reservation(candidate)
+                    if released is None:
+                        released = extra
+        elif not ctx_sig or ctx_sig == clean_sig or ctx_res == clean_sig:
+            for candidate in (ctx_res, ctx_sig):
+                if candidate and candidate != clean_sig:
+                    extra = self.release_order_reservation(candidate)
+                    if released is None:
+                        released = extra
         return released
+
+    def _resolve_reservation_exclude_ids(
+        self,
+        exclude_id: str | None = None,
+        *,
+        include_context_fallback: bool = False,
+    ) -> set[str]:
+        clean_excl = str(exclude_id or "").strip()
+        excl_ids: set[str] = {clean_excl} if clean_excl else set()
+        ctx_sig = str(self._current_signal_metadata.get("signal_id") or "").strip()
+        ctx_res = str(self._current_signal_metadata.get("reservation_id") or "").strip()
+        if clean_excl:
+            if not ctx_sig or ctx_sig == clean_excl or ctx_res == clean_excl:
+                if ctx_sig:
+                    excl_ids.add(ctx_sig)
+                if ctx_res:
+                    excl_ids.add(ctx_res)
+        elif include_context_fallback:
+            if ctx_sig:
+                excl_ids.add(ctx_sig)
+            if ctx_res:
+                excl_ids.add(ctx_res)
+        if excl_ids:
+            for rec in self._order_reservations.values():
+                r_id = str(rec.get("reservation_id") or "").strip()
+                s_id = str(rec.get("signal_id") or "").strip()
+                if (r_id and r_id in excl_ids) or (s_id and s_id in excl_ids):
+                    if r_id:
+                        excl_ids.add(r_id)
+                    if s_id:
+                        excl_ids.add(s_id)
+        return excl_ids
 
     def active_order_reservations(self, *, exclude_id: str | None = None) -> list[dict[str, Any]]:
         """Return active competing order reservations excluding ``exclude_id``."""
-        excl_ids = {
-            str(x).strip()
-            for x in (
-                exclude_id,
-                self._current_signal_metadata.get("signal_id"),
-                self._current_signal_metadata.get("reservation_id"),
-            )
-            if x is not None and str(x).strip()
-        }
+        excl_ids = self._resolve_reservation_exclude_ids(
+            exclude_id,
+            include_context_fallback=False,
+        )
         result: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
 
@@ -864,7 +915,12 @@ class PaperExecutionAlgorithm:
                 or ""
             ).strip()
             sig_id = str(item.get("signal_id") or "").strip()
-            if (res_id and res_id in excl_ids) or (sig_id and sig_id in excl_ids):
+            cli_id = str(item.get("client_order_id") or "").strip()
+            if (
+                (res_id and res_id in excl_ids)
+                or (sig_id and sig_id in excl_ids)
+                or (cli_id and cli_id in excl_ids)
+            ):
                 return
             if res_id and res_id in seen_ids:
                 return
@@ -947,8 +1003,17 @@ class PaperExecutionAlgorithm:
     ) -> float:
         """Sum competing risk-reducing reservation quantities for the same instrument/side."""
         clean_side = str(side or "").strip().lower()
+        resolved_exclude = (
+            str(
+                exclude_id
+                or self._current_signal_metadata.get("signal_id")
+                or self._current_signal_metadata.get("reservation_id")
+                or ""
+            ).strip()
+            or None
+        )
         total = 0.0
-        for item in self.active_order_reservations(exclude_id=exclude_id):
+        for item in self.active_order_reservations(exclude_id=resolved_exclude):
             if not item.get("is_risk_reducing"):
                 continue
             if str(item.get("side") or "").strip().lower() != clean_side:
@@ -959,12 +1024,23 @@ class PaperExecutionAlgorithm:
                 total += max(0.0, float(item.get("holding_quantity_reserved") or item.get("quantity") or 0.0))
         return total
 
-    def _record_completed_submission(self, signal_id: str, outcome: Mapping[str, Any]) -> dict[str, Any]:
+    def _record_completed_submission(
+        self,
+        signal_id: str,
+        outcome: Mapping[str, Any],
+        *,
+        extra_ids: tuple[str | None, ...] = (),
+    ) -> dict[str, Any]:
         clean_sig = str(signal_id or "").strip()
         stored = dict(outcome)
         self._last_submission_outcome = stored
-        if clean_sig:
-            self._completed_signal_submissions[clean_sig] = stored
+        keys: list[str] = [clean_sig] if clean_sig else []
+        for candidate in extra_ids:
+            c_id = str(candidate or "").strip()
+            if c_id and c_id not in keys:
+                keys.append(c_id)
+        for k in keys:
+            self._completed_signal_submissions[k] = stored
             if len(self._completed_signal_submissions) > 2048:
                 oldest_key = next(iter(self._completed_signal_submissions))
                 self._completed_signal_submissions.pop(oldest_key, None)
@@ -1496,6 +1572,7 @@ class PaperExecutionAlgorithm:
         price_as_of: str | None = None,
         persona_binding_id: str | None = None,
         signal_id: str | None = None,
+        reservation_id: str | None = None,
     ) -> dict[str, Any]:
         """Evaluate the pre-trade order-level risk gate without mutating the ledger."""
         binding_id = self._resolve_persona_binding_id(persona_binding_id)
@@ -1713,7 +1790,14 @@ class PaperExecutionAlgorithm:
 
         ref_price = float(price or 0.0)
         current_sig_id = (
-            str(signal_id or self._current_signal_metadata.get("signal_id") or "").strip() or None
+            str(
+                signal_id
+                or reservation_id
+                or self._current_signal_metadata.get("signal_id")
+                or self._current_signal_metadata.get("reservation_id")
+                or ""
+            ).strip()
+            or None
         )
         active_res = self.active_order_reservations(exclude_id=current_sig_id)
         reserved_cash = sum(float(r.get("cash_reserved") or 0.0) for r in active_res if not r.get("is_risk_reducing"))
@@ -2693,7 +2777,8 @@ class PaperExecutionAlgorithm:
     ) -> dict[str, Any]:
         ref_px = float(market_price if market_price is not None else (limit_price or 0.0))
         if clean_sig_id:
-            if clean_sig_id not in self._order_reservations:
+            res_key = self._find_order_reservation_key(clean_sig_id)
+            if res_key is None:
                 self.reserve_order(
                     clean_sig_id,
                     symbol=symbol,
@@ -2708,10 +2793,11 @@ class PaperExecutionAlgorithm:
                     is_risk_reducing=is_close_leg,
                     metadata=self._current_signal_metadata,
                 )
-            if clean_sig_id in self._order_reservations:
-                self._order_reservations[clean_sig_id]["status"] = "uncertain_broker_outcome"
-                self._order_reservations[clean_sig_id]["reconciliation_required"] = True
-                self._order_reservations[clean_sig_id]["uncertain_reason"] = reason
+                res_key = self._find_order_reservation_key(clean_sig_id)
+            if res_key is not None and res_key in self._order_reservations:
+                self._order_reservations[res_key]["status"] = "uncertain_broker_outcome"
+                self._order_reservations[res_key]["reconciliation_required"] = True
+                self._order_reservations[res_key]["uncertain_reason"] = reason
             self._uncertain_broker_submissions[clean_sig_id] = {
                 "signal_id": clean_sig_id,
                 "symbol": str(symbol),
@@ -2907,7 +2993,7 @@ class PaperExecutionAlgorithm:
         if compact_fill_ev is not None:
             fill_metadata["submission_sizing_evidence"] = compact_fill_ev
         self._uncertain_broker_submissions.pop(clean_sig, None)
-        self._release_current_signal_reservation(clean_sig)
+        released_res = self._release_current_signal_reservation(clean_sig)
         completed = self._record_completed_submission(
             clean_sig,
             {
@@ -2928,6 +3014,7 @@ class PaperExecutionAlgorithm:
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
             },
+            extra_ids=((released_res or {}).get("reservation_id"), (released_res or {}).get("signal_id")),
         )
         self._publish(
             "paper_fill_simulated",
@@ -3049,7 +3136,12 @@ class PaperExecutionAlgorithm:
             if resolved_month:
                 base_metadata["contract_month"] = resolved_month
 
-        clean_sig_id = str(signal_id or "").strip()
+        clean_sig_id = str(
+            signal_id
+            or self._current_signal_metadata.get("signal_id")
+            or self._current_signal_metadata.get("reservation_id")
+            or ""
+        ).strip()
         if clean_sig_id and clean_sig_id in self._completed_signal_submissions:
             prev_outcome = dict(self._completed_signal_submissions[clean_sig_id])
             self._release_current_signal_reservation(clean_sig_id)
@@ -3287,7 +3379,7 @@ class PaperExecutionAlgorithm:
         if resolved_kind == "cash_share" and side == "sell":
             effective_holding_quantity = float(holding_quantity) - reserved_close_qty
             if effective_holding_quantity <= 0:
-                self._release_current_signal_reservation(clean_sig_id)
+                released_res = self._release_current_signal_reservation(clean_sig_id)
                 if is_close_leg:
                     noop_meta = {
                         **base_metadata,
@@ -3312,6 +3404,7 @@ class PaperExecutionAlgorithm:
                             "submitted_to_broker": False,
                             "reservation_released": True,
                         },
+                        extra_ids=((released_res or {}).get("reservation_id"), (released_res or {}).get("signal_id")),
                     )
                     self._publish(
                         "paper_order_simulated",
@@ -3377,7 +3470,7 @@ class PaperExecutionAlgorithm:
                 else 0.0
             )
             if removable_fut <= 0:
-                self._release_current_signal_reservation(clean_sig_id)
+                released_res = self._release_current_signal_reservation(clean_sig_id)
                 noop_meta = {
                     **base_metadata,
                     "no_trade_at_submission": True,
@@ -3401,6 +3494,7 @@ class PaperExecutionAlgorithm:
                         "submitted_to_broker": False,
                         "reservation_released": True,
                     },
+                    extra_ids=((released_res or {}).get("reservation_id"), (released_res or {}).get("signal_id")),
                 )
                 self._publish(
                     "paper_order_simulated",
@@ -3435,12 +3529,18 @@ class PaperExecutionAlgorithm:
         )
         sizing_ev = gate_result.get("sizing_evidence") if isinstance(gate_result.get("sizing_evidence"), Mapping) else {}
         permitted_units = sizing_ev.get("permitted_units")
-        recheck_enabled = bool(
-            self._current_signal_metadata.get("recheck_sizing_at_submission")
-            or self._current_signal_metadata.get("resize_at_submission")
-            or "pre_trade_sizing" in self._current_signal_metadata
-            or "expression_decision" in self._current_signal_metadata
-            or is_close_leg
+        recheck_flag = self._current_signal_metadata.get("recheck_sizing_at_submission")
+        recheck_enabled = (
+            False
+            if recheck_flag is False
+            else bool(
+                recheck_flag
+                or self._current_signal_metadata.get("resize_at_submission")
+                or "pre_trade_sizing" in self._current_signal_metadata
+                or "expression_decision" in self._current_signal_metadata
+                or is_close_leg
+                or (clean_sig_id and self._find_order_reservation_key(clean_sig_id) is not None)
+            )
         )
         hard_non_sizing_reasons = {
             "starting_cash_unavailable",
@@ -3458,6 +3558,7 @@ class PaperExecutionAlgorithm:
             and int(permitted_units) < int(round(qty))
         ):
             if int(permitted_units) > 0:
+                first_req_fee_cash = sizing_ev.get("requested_fee_inclusive_cash")
                 qty = float(int(permitted_units))
                 partial_clamped = True
                 resized_at_submission = True
@@ -3479,6 +3580,7 @@ class PaperExecutionAlgorithm:
                     price_basis=resolved_price_basis,
                     price_source=market_price_source,
                     price_as_of=market_price_as_of,
+                    signal_id=clean_sig_id,
                 )
                 if isinstance(gate_result.get("sizing_evidence"), Mapping):
                     sizing_ev = {
@@ -3487,13 +3589,17 @@ class PaperExecutionAlgorithm:
                         "permitted_units": int(permitted_units),
                         "binding_limit": resize_reason,
                     }
+                    if first_req_fee_cash is not None:
+                        sizing_ev["requested_fee_inclusive_cash"] = first_req_fee_cash
                     gate_result["sizing_evidence"] = sizing_ev
+                    gate_result["permitted_units"] = int(permitted_units)
+                    gate_result["binding_limit"] = resize_reason
             elif (
                 sizing_ev.get("binding_limit")
                 in {"already_at_target", "position_already_closed", "target_notional", "existing_holdings_target_notional"}
                 or self._current_signal_metadata.get("no_trade_on_zero_permitted") is True
             ):
-                self._release_current_signal_reservation(clean_sig_id)
+                released_res = self._release_current_signal_reservation(clean_sig_id)
                 nt_reason = str(sizing_ev.get("binding_limit") or gate_result.get("reason") or "no_feasible_instrument")
                 compact_noop_ev = self._compact_submission_sizing_evidence(sizing_ev)
                 noop_meta = {
@@ -3522,6 +3628,7 @@ class PaperExecutionAlgorithm:
                         "submitted_to_broker": False,
                         "reservation_released": True,
                     },
+                    extra_ids=((released_res or {}).get("reservation_id"), (released_res or {}).get("signal_id")),
                 )
                 self._publish(
                     "paper_order_simulated",
@@ -3868,7 +3975,7 @@ class PaperExecutionAlgorithm:
         compact_fill_ev = self._compact_submission_sizing_evidence(gate_result.get("sizing_evidence"))
         if compact_fill_ev is not None:
             fill_metadata["submission_sizing_evidence"] = compact_fill_ev
-        self._release_current_signal_reservation(clean_sig_id)
+        released_res = self._release_current_signal_reservation(clean_sig_id)
         self._record_completed_submission(
             clean_sig_id,
             {
@@ -3887,6 +3994,7 @@ class PaperExecutionAlgorithm:
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
             },
+            extra_ids=((released_res or {}).get("reservation_id"), (released_res or {}).get("signal_id")),
         )
         self._publish(
             "paper_fill_simulated", str(symbol), signed_fill_qty, action,

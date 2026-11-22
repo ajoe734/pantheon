@@ -7853,5 +7853,179 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
                     self.assertFalse(events[-1].metadata["reservation_released"])
                     self.assertEqual(len(algo.active_order_reservations()), 1)
 
+    def test_own_reservation_excluded_across_every_submission_resize_recheck_without_context_signal_id(self):
+        # 1. Exact Codex2 review reproduction: own reservation for 451 shares @ 221.0 (99813.031175 cash),
+        # then SubmitTaiwanBrokerOrder at changed price 225.0 with signal_id="self-resize" and NO signal_id
+        # duplicated in _current_signal_metadata. Both the initial and post-resize EvaluateOrderRiskGate calls
+        # must exclude "self-resize", fill 443 shares once, release the reservation, and deduplicate retries.
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=225.0)
+        self.assertNotIn("signal_id", algo._current_signal_metadata)
+
+        own_res = algo.reserve_order(
+            "self-resize",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(own_res["reserved"])
+        self.assertAlmostEqual(own_res["cash_reserved"], 99813.031175, places=5)
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        self.assertEqual(algo.active_order_reservations(exclude_id="self-resize"), [])
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-resize",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["original_quantity"], 451.0)
+        self.assertEqual(events[-1].metadata["fill_quantity"], 443.0)
+        self.assertEqual(events[-1].metadata["binding_limit"], "available_cash_after_fees")
+        self.assertEqual(
+            events[-1].metadata["submission_sizing_evidence"]["permitted_units"],
+            443,
+        )
+        self.assertEqual(
+            events[-1].metadata["submission_sizing_evidence"]["binding_limit"],
+            "available_cash_after_fees",
+        )
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 443.0)
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Retry deduplication for both reserve_order and SubmitTaiwanBrokerOrder on "self-resize"
+        retry_res = algo.reserve_order(
+            "self-resize",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(retry_res["duplicate_retry"])
+        self.assertFalse(retry_res["reserved"])
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-resize",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[-1].event_type, "paper_order_simulated")
+        self.assertEqual(events[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 443.0)
+
+        # 2. Own reservation + changed policy at submission (tightened to v1.1 max_single_name_weight=0.25 -> 113 shares)
+        # with distinct reservation_id and signal_id, without signal_id or reservation_id in _current_signal_metadata.
+        events_pol = []
+        algo_pol, pool_pol = self._make_2317_algo(events_pol)
+        own_pol_res = algo_pol.reserve_order(
+            "res-self-policy",
+            signal_id="sig-self-policy",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(own_pol_res["reserved"])
+        self.assertAlmostEqual(own_pol_res["cash_reserved"], 99813.031175, places=5)
+        pool_pol["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
+            version="1.1",
+            max_single_name_weight=0.25,
+        )
+        self._set_2317_signal_context(algo_pol, price=221.0)
+        self.assertNotIn("signal_id", algo_pol._current_signal_metadata)
+        algo_pol.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-self-policy",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_pol[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_pol[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_pol[-1].metadata["fill_quantity"], 113.0)
+        self.assertEqual(events_pol[-1].metadata["binding_limit"], "max_single_name_weight")
+        self.assertEqual(algo_pol.active_order_reservations(), [])
+        # Retrying under either reservation_id or signal_id is deduplicated
+        self.assertTrue(
+            algo_pol.reserve_order(
+                "res-self-policy",
+                symbol="2317.TW",
+                side="buy",
+                quantity=451,
+                price=221.0,
+            )["duplicate_retry"]
+        )
+        algo_pol.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="res-self-policy",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_pol[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertEqual(algo_pol.performance_ledger()["fill_count"], 1)
+
+        # 3. Own reservation + independent competing reservation + changed price (225.0) without signal_id in context:
+        # own reservation (99813.031175) is excluded in both risk gate calls while the competing 2330 reservation
+        # (40 shares @ 1000 = 40057.0 cash) is retained across both rechecks and stays active after fill.
+        events_both = []
+        algo_both, _ = self._make_2317_algo(events_both)
+        comp_res = algo_both.reserve_order(
+            "competing-2330",
+            symbol="2330.TW",
+            side="buy",
+            quantity=40,
+            price=1000.0,
+        )
+        self_res = algo_both.reserve_order(
+            "self-with-competing",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertAlmostEqual(comp_res["cash_reserved"], 40057.0, places=5)
+        self.assertAlmostEqual(self_res["cash_reserved"], 99813.031175, places=5)
+        self.assertEqual(len(algo_both.active_order_reservations()), 2)
+
+        self._set_2317_signal_context(algo_both, price=225.0)
+        self.assertNotIn("signal_id", algo_both._current_signal_metadata)
+        algo_both.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-with-competing",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_both[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_both[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_both[-1].metadata["fill_quantity"], 266.0)
+        self.assertEqual(events_both[-1].metadata["binding_limit"], "competing_reservation")
+        self.assertEqual(
+            events_both[-1].metadata["submission_sizing_evidence"]["reservations_applied"],
+            1,
+        )
+        remaining_res = algo_both.active_order_reservations()
+        self.assertEqual(len(remaining_res), 1)
+        self.assertEqual(remaining_res[0]["reservation_id"], "competing-2330")
+        self.assertAlmostEqual(remaining_res[0]["cash_reserved"], 40057.0, places=5)
+
+
 
 

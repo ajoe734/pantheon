@@ -214,6 +214,47 @@
       "submitted_to_broker": true
     },
     {
+      "scenario": "own_reservation_excluded_across_every_resize_recheck_without_context_signal_id_while_retaining_competing_reservation",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "own_reservation": {
+        "signal_id": "self-resize",
+        "pretrade_price": 221.0,
+        "reserved_units": 451,
+        "cash_reserved": 99813.031175
+      },
+      "changed_price_case": {
+        "price_at_submission": 225.0,
+        "context_duplicates_signal_id": false,
+        "requested_units": 451,
+        "permitted_units": 443,
+        "outcome": "resized_and_filled_once_then_retry_deduplicated",
+        "binding_limit": "available_cash_after_fees",
+        "own_reservation_released": true
+      },
+      "changed_policy_case": {
+        "price_at_submission": 221.0,
+        "risk_policy_version": "1.1",
+        "max_single_name_weight": 0.25,
+        "context_duplicates_signal_id": false,
+        "requested_units": 451,
+        "permitted_units": 113,
+        "outcome": "resized_and_filled_once_then_retry_deduplicated_across_reservation_and_signal_aliases",
+        "binding_limit": "max_single_name_weight",
+        "own_reservation_released": true
+      },
+      "own_plus_competing_reservation_case": {
+        "competing_reservation_id": "competing-2330",
+        "competing_cash_reserved": 40057.0,
+        "price_at_submission": 225.0,
+        "context_duplicates_signal_id": false,
+        "requested_units": 451,
+        "permitted_units": 266,
+        "reservations_applied": 1,
+        "outcome": "resized_and_filled_once_own_released_competing_retained",
+        "binding_limit": "competing_reservation"
+      }
+    },
+    {
       "scenario": "changed_holdings_already_at_target",
       "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
