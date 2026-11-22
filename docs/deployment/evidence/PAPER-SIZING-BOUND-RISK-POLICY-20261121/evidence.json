@@ -293,6 +293,33 @@
         "transport_stream_read_failure_held_and_retry_blocked",
         "transport_missing_order_key_held_and_retry_blocked"
       ]
+    },
+    {
+      "scenario": "daily_next_open_settlement_two_case_target_notional_guard_and_positive_capacity_fill",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "symbol": "2330.TW",
+      "target_notional": 40000.0,
+      "session_1_official_open": 104.0,
+      "session_1_filled_units": 363.0,
+      "session_2_cases": {
+        "111.5": {
+          "existing_holdings_notional_at_open": 40474.5,
+          "permitted_units": 0,
+          "outcome": "no_trade_at_submission",
+          "binding_limit": "already_at_target",
+          "positions": {"2330.TW": 363.0},
+          "fill_prices": [104.0]
+        },
+        "105.0": {
+          "existing_holdings_notional_at_open": 38115.0,
+          "remaining_target_notional": 1885.0,
+          "permitted_units": 17,
+          "outcome": "resized_and_filled",
+          "binding_limit": "existing_holdings_target_notional",
+          "positions": {"2330.TW": 380.0},
+          "fill_prices": [104.0, 105.0]
+        }
+      }
     }
   ],
   "runtime_budget": {

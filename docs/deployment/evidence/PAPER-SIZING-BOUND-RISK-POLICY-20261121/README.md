@@ -46,6 +46,7 @@
   - **Changed holdings at submission**: when holdings already satisfy target notional, submission records `no_trade_at_submission = true` (`reason_code = "already_at_target"`, `submitted_to_broker = false`).
   - **Retry deduplication**: retrying `SubmitTaiwanBrokerOrder` with an already-completed `signal_id` records `duplicate_signal_retry` with `submitted_to_broker = false` and never creates a duplicate reservation or fill.
   - **Risk-reducing exits preserved**: `close_leg` orders clamp down to remaining unreserved held quantity when holdings shrink and record `position_already_closed` (`submitted_to_broker = false`) when already flat.
+  - **Daily next-open settlement (`test_daily_settlement_integration.py`)**: Session 1 (`2026-11-16` official open `104.0`) fills `363` shares against `40,000.0` target notional; Session 2 (`2026-11-17`) preserves the `already_at_target` guard at official open `111.5` (`363 * 111.5 = 40,474.5 > 40,000.0` -> `0` additional shares, `fill_prices = [104.0]`) and fills `17` resized shares (`binding_limit = "existing_holdings_target_notional"`, `positions = {"2330.TW": 380.0}`, `fill_prices = [104.0, 105.0]`) at official open `105.0` (`363 * 105.0 = 38,115.0 < 40,000.0`).
 
 ## Runtime Budget & Affected Existing Writers (`docs/operations/storage-manifest.json`)
 - **`telemetry_events` & `public.telemetry_events`**:
