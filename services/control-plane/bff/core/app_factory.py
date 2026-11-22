@@ -1604,9 +1604,15 @@ def mount_bff_routers(
 
     # 37: Agora. Select once at composition; never silently build a different
     # local writer if the configured authority is absent or unreachable.
-    from ..agora.router import create_agora_router
+    from ..agora.router import _UNSET_DECISION_LOCK_OWNER, create_agora_router
     from ..models import ErrorCode
     journal_owner = app_deps.decision_journal_write_owner
+    if "decision_lock_owner" in dependencies:
+        _agora_owner_dep = dependencies["decision_lock_owner"]
+    elif "agora_owner" in dependencies:
+        _agora_owner_dep = dependencies["agora_owner"]
+    else:
+        _agora_owner_dep = _UNSET_DECISION_LOCK_OWNER
 
     def get_journal_write_owner() -> Any:
         if journal_owner is None or not journal_owner.is_storage_healthy:
@@ -1633,6 +1639,7 @@ def mount_bff_routers(
         get_trade_journey_store=app_deps.read_surface.trade_journey_projection_reader,
         sync_servant_agent=lambda p: _dep("_ensure_agora_servant_openclaw_agent", lambda: lambda p_: {})(dict(p)),
         canonical_context_ref_resolver=_dep("_resolve_agora_interaction_context_ref"),
+        decision_lock_owner=_agora_owner_dep,
         idempotency_store=_dep("_AGORA_CORE_BFF_IDEMPOTENCY"),
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
@@ -1674,10 +1681,12 @@ def mount_bff_routers(
 
     # 39: Attribution (outliers, records, shadow comparisons; forward-only)
     from ..attribution.router import create_attribution_router
-    _agora_owner_dep = dependencies.get("agora_owner")
+
+    def _resolve_agora_decision_lock_owner() -> Any:
+        return getattr(agora_router, "decision_lock_owner", None)
 
     def _read_agora_lock(decision_id, tenant_id, user_id, roles):
-        owner = _agora_owner_dep() if callable(_agora_owner_dep) else _agora_owner_dep
+        owner = _resolve_agora_decision_lock_owner()
         if owner is None or not hasattr(owner, "get_decision_lock_for_event"):
             raise RuntimeError("agora_owner_unconfigured")
         return owner.get_decision_lock_for_event(
@@ -1703,6 +1712,8 @@ def mount_bff_routers(
     app.state.interaction_lifecycle = agora_router.interaction_lifecycle
     app.state.workshop_store = agora_router.workshop_store
     app.state.proposal_store = agora_router.proposal_store
+    app.state.trading_room_store = getattr(agora_router, "trading_room_store", None)
+    app.state.decision_lock_owner = getattr(agora_router, "decision_lock_owner", None)
     app.state.research_store = getattr(agora_router, "research_store", None)
     app.state.dataset_store = getattr(agora_router, "dataset_store", None)
     from ..agora.evidence.router import create_human_evidence_router
@@ -1717,7 +1728,7 @@ def mount_bff_routers(
     install_evidence_worker(app, app.state.dataset_store)
     from ..agora.platform_source_router import create_platform_source_router
     platform_source_router = create_platform_source_router(
-        agora_owner=dependencies.get("agora_owner"),
+        agora_owner=_resolve_agora_decision_lock_owner,
         dataset_store=app.state.dataset_store,
         journal_write_owner=journal_owner,
         extract_identity=_dep("_extract_identity"),

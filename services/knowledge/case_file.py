@@ -128,7 +128,7 @@ class OwnerUnavailable(Exception):
 
 def http_json(endpoint: Optional[OwnerEndpoint], path: str, *, tenant_id: str,
               method: str = "GET", body: Optional[dict] = None,
-              params: Optional[Sequence[tuple]] = None, timeout: float = 10.0) -> Any:
+              params: Optional[Sequence[tuple]] = None, timeout: float = 15.0) -> Any:
     """One fixed-owner JSON call.  URLs are never caller- or model-selected."""
     if endpoint is None or not endpoint.base_url:
         raise OwnerUnavailable("owner_unconfigured")

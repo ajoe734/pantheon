@@ -128,13 +128,13 @@ VERIFIED_METADATA_CACHE_ENTRIES = 16
 # whole-market-day bound must be cacheable, otherwise every continuation tick re-reads the day.
 # Measured resident cost of a parsed day is about 2.6x its file bytes.
 VERIFIED_METADATA_CACHE_BYTES = MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES
-_METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = OrderedDict()
 _METADATA_CACHE_LOCK = RLock()
 # In-memory only (nothing persisted, nothing survives a restart): bounded by count.
-# Trade date proven for one exact (run, bundle_sha256): lets the priority path skip re-verifying
-# a run fetched on a later date that carries an earlier session.
+# Trade date and verified item hashes proven for one exact index entry: lets the priority path
+# skip re-verifying earlier sessions and equivalent/already-delivered candidates even when the
+# full parsed workset exceeds VERIFIED_METADATA_CACHE_BYTES.
 PRIORITY_TRADE_DATE_MEMO_ENTRIES = 512
-_PRIORITY_TRADE_DATE_MEMO: OrderedDict[tuple, str] = OrderedDict()
+_PRIORITY_TRADE_DATE_MEMO: OrderedDict[tuple, Any] = OrderedDict()
 # Per connector scope: the latest session was fully delivered for exactly this candidate index
 # fingerprint and persisted state; an identical index lets the next pull skip every verification.
 PRIORITY_DELIVERED_MEMO_ENTRIES = 64
@@ -142,6 +142,17 @@ PRIORITY_DELIVERED_MEMO_ENTRIES = 64
 # path's superseded-session eviction must not drop it. One entry per scope, bounded by scopes.
 _HISTORY_READING: dict[tuple, set[tuple[str, str]]] = {}
 _PRIORITY_DELIVERED_MEMO: OrderedDict[tuple, tuple[str, str, str, tuple[str, ...], str]] = OrderedDict()
+
+
+class _MetadataCacheDict(OrderedDict):
+    def clear(self) -> None:
+        super().clear()
+        _PRIORITY_TRADE_DATE_MEMO.clear()
+        _PRIORITY_DELIVERED_MEMO.clear()
+        _HISTORY_READING.clear()
+
+
+_METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = _MetadataCacheDict()
 
 
 class _DeadlineBody:
@@ -966,14 +977,14 @@ class CollectorBundleAdapter:
         remaining = total_cap - len(records)
         op_deadline = _OP_DEADLINE.get()
         base = None
-        if done and remaining > 0 and not (op_deadline is not None and time.monotonic() >= op_deadline):
+        if done and remaining > 0 and not (records and op_deadline is not None and time.monotonic() >= op_deadline):
             try:
                 base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining,
                                           priority_state={"trade_date": trade_date, "key": key, "items": delivered_items})
             except TimeoutError:
                 # The shared deadline cut the ordered sweep before any of its rows verified:
                 # keep the already verified priority prefix; ordered work stays pending.
-                if op_deadline is None or time.monotonic() < op_deadline:
+                if not records or op_deadline is None or time.monotonic() < op_deadline:
                     raise
         if base is None:
             base = CollectorPullResult(
@@ -1077,7 +1088,17 @@ class CollectorBundleAdapter:
                 _METADATA_CACHE[key] = (transport, bundle, size)
                 while (len(_METADATA_CACHE) > VERIFIED_METADATA_CACHE_ENTRIES
                        or sum(value[2] for value in _METADATA_CACHE.values()) > VERIFIED_METADATA_CACHE_BYTES):
-                    _METADATA_CACHE.popitem(last=False)
+                    victim = next(
+                        (
+                            k for k, (_, cached, _) in _METADATA_CACHE.items()
+                            if k != key and (cached.date, cached.run_id) not in _HISTORY_READING.get(k[:3], set())
+                        ),
+                        None,
+                    )
+                    if victim is not None:
+                        del _METADATA_CACHE[victim]
+                    else:
+                        _METADATA_CACHE.popitem(last=False)
         return bundle
 
     def _verify_ordered_bundle(self, transport: BundleTransport, *, expected_source_id: str,
@@ -1110,6 +1131,98 @@ class CollectorBundleAdapter:
             return {}
         return doc if isinstance(doc, dict) and doc.get("source_id") == self.source_id else {}
 
+    def _validate_priority_bundle_rows(self, bundle: VerifiedBundle) -> None:
+        if self.attribution_required and not str(bundle.manifest.get("attribution") or "").strip():
+            raise SourceEvidenceError(
+                f"collector source {self.source_id} requires attribution text in the manifest"
+            )
+        for row in bundle.items:
+            item_id = str(row["id"]).strip()
+            manifest_item = bundle.manifest_items[item_id]
+            if not str(row.get("url") or manifest_item.get("url") or "").strip():
+                raise SourceEvidenceError(f"collector item {item_id} has no url")
+            fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
+            published_raw = row.get("published_at")
+            published_at = (
+                _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True)
+                if published_raw
+                else fetched_at
+            )
+            if row.get("trade_date"):
+                self._market_event_time(item_id, row, published_raw, published_at, fetched_at)
+
+    def _verified_manifest_matching_trusted(
+        self,
+        transport: BundleTransport,
+        entry: Mapping[str, Any],
+        *,
+        trusted_trade_date: str,
+        trusted_items: Mapping[str, str],
+    ) -> bool:
+        source_id = str(entry.get("source_id") or "").strip()
+        date = str(entry.get("date") or "").strip()
+        run_id = str(entry.get("run_id") or "").strip()
+        if not (source_id and date and run_id) or any("/" in x or ".." in x for x in (source_id, date, run_id)):
+            raise SourceEvidenceError(f"collector bundle index entry is malformed: {dict(entry)!r}")
+        if "trade_date" in entry and str(entry.get("trade_date") or "").strip() != trusted_trade_date:
+            return False
+        base = f"bundles/{source_id}/{date}/{run_id}"
+        manifest_bytes = _read_whole_file(transport, f"{base}/manifest.json", max_bytes=MAX_MANIFEST_BYTES)
+        manifest = _loads(manifest_bytes, "manifest.json")
+        if not isinstance(manifest, dict):
+            raise SourceEvidenceError("collector bundle manifest must be an object")
+        if str(manifest.get("source_id") or "") != self.source_id or source_id != self.source_id:
+            raise SourceEvidenceError(
+                f"collector bundle source_id mismatch: manifest={manifest.get('source_id')!r} "
+                f"index={source_id!r} expected={self.source_id!r}"
+            )
+        if str(manifest.get("run_id") or "") != run_id:
+            raise SourceEvidenceError("collector bundle run_id does not match its index entry")
+        if str(manifest.get("schema_version") or "") not in SUPPORTED_BUNDLE_SCHEMA_VERSIONS:
+            raise SourceEvidenceError(
+                f"collector bundle schema_version is not supported: {manifest.get('schema_version')!r}"
+            )
+        status = str(manifest.get("status") or "")
+        if status not in BUNDLE_STATUSES:
+            raise SourceEvidenceError(f"collector bundle status must be one of {sorted(BUNDLE_STATUSES)}: {status!r}")
+        if "status" in entry and entry["status"] != status:
+            raise SourceEvidenceError("collector bundle status does not match its index entry")
+        finished_at = _utc(manifest.get("finished_at"), "finished_at")
+        if finished_at != _utc(entry.get("finished_at"), "index finished_at"):
+            raise SourceEvidenceError("collector bundle finished_at does not match its index entry")
+        _utc(manifest.get("started_at"), "started_at")
+        for required in ("terms_ref", "robots_decision", "collector_version", "fetch_policy_hash"):
+            if not str(manifest.get(required) or "").strip():
+                raise SourceEvidenceError(f"collector bundle manifest.{required} is required")
+        if status != "complete":
+            return False
+        if "trade_date" in manifest and str(manifest.get("trade_date") or "").strip() != trusted_trade_date:
+            return False
+        if self.attribution_required and not str(manifest.get("attribution") or "").strip():
+            raise SourceEvidenceError(
+                f"collector source {self.source_id} requires attribution text in the manifest"
+            )
+        manifest_items_raw = manifest.get("items")
+        if not isinstance(manifest_items_raw, list):
+            raise SourceEvidenceError("collector bundle manifest.items must be a list")
+        item_hashes: dict[str, str] = {}
+        for item in manifest_items_raw:
+            item_id = str(item.get("item_id") or "").strip() if isinstance(item, dict) else ""
+            if not item_id or item_id in item_hashes:
+                raise SourceEvidenceError("collector bundle manifest.items need unique item_id values")
+            _safe_raw_path(str(item.get("raw_path") or ""))
+            if not str(item.get("url") or "").strip():
+                return False
+            sha = str(item.get("content_sha256") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", sha):
+                raise SourceEvidenceError(f"collector item {item_id} has invalid content_sha256")
+            item_hashes[item_id] = sha
+        if compute_bundle_sha256(item_hashes.values()) != str(manifest.get("bundle_sha256") or "").lower():
+            raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+        if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
+            raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+        return bool(item_hashes) and item_hashes == trusted_items
+
     def _pull_priority_latest(
         self, cursor: str | None, *, trace_id: str, total_cap: int, held: tuple[str, ...] = ()
     ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool, tuple[str, ...], str, Mapping[str, str]] | None:
@@ -1139,9 +1252,28 @@ class CollectorBundleAdapter:
             return str(e.get("trade_date") or (match.group(1) if match else e.get("date")) or "")
 
         state = self._priority_document()
-        state_key, delivered, _, state_held = self._load_priority_state()
+        state_key, delivered, state_done, state_held = self._load_priority_state()
         scope = self._metadata_scope(transport)
+        state_trade_date = str(state.get("trade_date") or "")
+        state_items_raw = state.get("items") if isinstance(state.get("items"), Mapping) else {}
+        state_items = {str(k): str(v).lower() for k, v in state_items_raw.items() if str(k).strip() and str(v).strip()}
         state_hash = _sha256(json.dumps(state.get("items") or {}, sort_keys=True).encode())
+        base_cursor, _ = _split_cursor(cursor)
+        if base_cursor and _PARTIAL_CURSOR_MARK in str(cursor):
+            resumed = next(
+                (
+                    (str(e.get("date") or ""), str(e.get("run_id") or ""))
+                    for e in mine
+                    if _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or ""))
+                    == base_cursor
+                ),
+                None,
+            )
+            if resumed is not None:
+                with _METADATA_CACHE_LOCK:
+                    reading_set = _HISTORY_READING.setdefault(scope, set())
+                    if len(reading_set) < VERIFIED_METADATA_CACHE_ENTRIES:
+                        reading_set.add(resumed)
 
         def fingerprint(trade_day: str) -> str | None:
             # Every index entry that could still hold this session (upper bound not below it).
@@ -1162,41 +1294,113 @@ class CollectorBundleAdapter:
             # Same candidate index, same persisted state, session fully delivered: the full
             # verification below would find nothing pending and return None.
             return None
-        best: tuple[str, str, VerifiedBundle] | None = None
-        candidates: list[tuple[str, str, VerifiedBundle]] = []
+        trusted_by_digest: dict[str, tuple[str, Mapping[str, str]]] = {}
+        receipt_digest = (
+            compute_bundle_sha256(tuple(state_items.values()))
+            if state_done and state_key and state_trade_date and state_items
+            else ""
+        )
+        if receipt_digest:
+            state_entry = next(
+                (
+                    e for e in mine
+                    if _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or ""))
+                    == state_key
+                ),
+                None,
+            )
+            if state_entry is None or str(state_entry.get("bundle_sha256") or "").lower() == receipt_digest:
+                trusted_by_digest[receipt_digest] = (state_trade_date, state_items)
+        best: tuple[str, str] | None = None
+        candidates: list[tuple[str, str, Mapping[str, Any], Mapping[str, str], VerifiedBundle | None]] = []
         for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
             if best and upper_bound(entry) < best[0]:
                 continue
             key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
             digest = str(entry.get("bundle_sha256") or "")
-            memo_key = (*scope, str(entry.get("run_id") or ""), digest.lower())
-            if best and re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+            digest_lower = digest.lower()
+            valid_digest = bool(re.fullmatch(r"[0-9a-f]{64}", digest_lower))
+            entry_sig = json.dumps(dict(entry), sort_keys=True, separators=(",", ":"))
+            memo_key = (*scope, str(entry.get("run_id") or ""), digest_lower)
+            known_day: str | None = None
+            known_items: Mapping[str, str] | None = None
+            if valid_digest:
                 with _METADATA_CACHE_LOCK:
-                    known_day = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
-                if known_day is not None and known_day < best[0]:
-                    continue  # proven earlier session for this exact bundle; not a candidate
+                    memo_val = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                    if memo_val is not None:
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                if isinstance(memo_val, str):
+                    known_day = memo_val
+                elif isinstance(memo_val, tuple) and len(memo_val) >= 3:
+                    known_day = str(memo_val[0])
+                    if memo_val[1] == entry_sig and isinstance(memo_val[2], Mapping):
+                        known_items = memo_val[2]
+                        trusted_by_digest.setdefault(digest_lower, (known_day, known_items))
+            if best and known_day is not None and known_day < best[0]:
+                continue  # proven earlier session for this exact bundle; not a candidate
+            if known_day is not None and known_items is not None:
+                candidates.append((known_day, key, entry, known_items, None))
+                if best is None or (known_day, key) > best:
+                    best = (known_day, key)
+                continue
+            cache_key = (*scope, entry_sig)
+            with _METADATA_CACHE_LOCK:
+                in_metadata_cache = cache_key in _METADATA_CACHE
+            if not in_metadata_cache and valid_digest and digest_lower in trusted_by_digest:
+                ref_day, ref_items = trusted_by_digest[digest_lower]
+                if self._verified_manifest_matching_trusted(
+                    transport, entry, trusted_trade_date=ref_day, trusted_items=ref_items
+                ):
+                    with _METADATA_CACHE_LOCK:
+                        _PRIORITY_TRADE_DATE_MEMO[memo_key] = (ref_day, entry_sig, ref_items)
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                        while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                            _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
+                    if best and ref_day < best[0]:
+                        continue
+                    candidates.append((ref_day, key, entry, ref_items, None))
+                    if best is None or (ref_day, key) > best:
+                        best = (ref_day, key)
+                    continue
             bundle = self._verified_metadata(transport, entry)
             if bundle.status != "complete" or not bundle.items:
                 continue
             trade_date = _bundle_trade_date(entry, bundle.items)
             if "trade_date" in bundle.manifest:
                 _bundle_trade_date(bundle.manifest, bundle.items)
-            if digest:
-                if digest.lower() != str(bundle.manifest["bundle_sha256"]).lower():
-                    raise SourceEvidenceError("collector index bundle_sha256 mismatch")
-                if re.fullmatch(r"[0-9a-f]{64}", digest.lower()):
+            if digest and digest_lower != str(bundle.manifest["bundle_sha256"]).lower():
+                raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+            if best is None or trade_date >= best[0]:
+                try:
+                    self._validate_priority_bundle_rows(bundle)
+                except Exception:
                     with _METADATA_CACHE_LOCK:
-                        _PRIORITY_TRADE_DATE_MEMO[memo_key] = trade_date
-                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
-                        while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
-                            _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
-            candidates.append((trade_date, key, bundle))
-            if best is None or (trade_date, key) > best[:2]:
-                best = (trade_date, key, bundle)
+                        _METADATA_CACHE.pop(cache_key, None)
+                    raise
+            item_hashes: Mapping[str, str] = {
+                str(r["id"]): str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                for r in bundle.items
+            }
+            if state_items and item_hashes == state_items:
+                item_hashes = state_items
+            else:
+                for _, _, _, existing_hashes, _ in candidates:
+                    if existing_hashes == item_hashes:
+                        item_hashes = existing_hashes
+                        break
+            if valid_digest:
+                trusted_by_digest.setdefault(digest_lower, (trade_date, item_hashes))
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_TRADE_DATE_MEMO[memo_key] = (trade_date, entry_sig, item_hashes)
+                    _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                    while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                        _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
+            candidates.append((trade_date, key, entry, item_hashes, bundle))
+            if best is None or (trade_date, key) > best:
+                best = (trade_date, key)
         if best is None:
             return None
-        trade_date, key, bundle = best
-        base_cursor, _ = _split_cursor(cursor)
+        trade_date, key = best
         if base_cursor is not None and (key < base_cursor or (key == base_cursor and _PARTIAL_CURSOR_MARK not in str(cursor))):
             return None
         if state.get("trade_date") and trade_date < state["trade_date"]:
@@ -1217,15 +1421,15 @@ class CollectorBundleAdapter:
         # A later complete run can omit an instrument. Keep the union of this
         # session's items, choosing the latest revision of each native identity.
         # Its pending tail must survive both a new run and a worker restart.
-        session_items: dict[str, tuple[VerifiedBundle, Mapping[str, Any]]] = {}
-        for day, _, candidate in sorted(candidates, key=lambda c: c[1], reverse=True):
+        session_item_owners: dict[str, tuple[str, Mapping[str, Any], str, VerifiedBundle | None]] = {}
+        for day, cand_key, cand_entry, cand_hashes, cand_bundle in sorted(candidates, key=lambda c: c[1], reverse=True):
             if day == trade_date:
-                for row in candidate.items:
-                    session_items.setdefault(str(row["id"]), (candidate, row))
+                for item_id, sha in cand_hashes.items():
+                    session_item_owners.setdefault(item_id, (cand_key, cand_entry, sha, cand_bundle))
         # Release cached earlier-session metadata, except the history bundle the ordered
         # sweep is currently reading (it is not a candidate and must survive across pulls).
         # Earlier-session candidates this pull verified are kept so they are not re-read next pull.
-        kept = {(c.date, c.run_id) for day, _, c in candidates if day < trade_date}
+        kept = {(str(e.get("date") or ""), str(e.get("run_id") or "")) for day, _, e, _, _ in candidates if day < trade_date}
         with _METADATA_CACHE_LOCK:
             reading = _HISTORY_READING.get(scope, set())
             for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
@@ -1237,22 +1441,36 @@ class CollectorBundleAdapter:
                         not in _PRIORITY_TRADE_DATE_MEMO):
                     del _METADATA_CACHE[cache_key]
             _PRIORITY_DELIVERED_MEMO.pop(scope, None)
-        pending = [(candidate, row) for item_id, (candidate, row) in session_items.items()
-                   if delivered_items.get(item_id) != str(candidate.manifest_items[item_id]["content_sha256"]).lower()]
-        pending.sort(key=lambda pair: not (
-            str(pair[1].get("symbol") or "").upper() in held
-            or str(pair[1]["id"]).rsplit("-", 1)[-1].upper() in held))
-        if not pending:
-            if state_key != key or not state.get("trade_date") or state_held != held:
-                return [], key, (), len(session_items), True, held, trade_date, delivered_items
+        pending_ids = {
+            item_id
+            for item_id, (_, _, sha, _) in session_item_owners.items()
+            if delivered_items.get(item_id) != sha
+        }
+        if not pending_ids:
             fp = fingerprint(trade_date)
-            if fp is not None and state.get("trade_date") == trade_date:
+            delivered_hash = _sha256(json.dumps(delivered_items, sort_keys=True).encode())
+            if fp is not None:
                 with _METADATA_CACHE_LOCK:
-                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, state_hash)
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, delivered_hash)
                     _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
                     while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
                         _PRIORITY_DELIVERED_MEMO.popitem(last=False)
+            if state_key != key or not state.get("trade_date") or state_held != held:
+                return [], key, (), len(session_item_owners), True, held, trade_date, delivered_items
             return None
+        session_items: dict[str, tuple[VerifiedBundle, Mapping[str, Any]]] = {}
+        needed_keys = {session_item_owners[item_id][0] for item_id in pending_ids}
+        for day, cand_key, cand_entry, _, cand_bundle in sorted(candidates, key=lambda c: c[1], reverse=True):
+            if day == trade_date and cand_key in needed_keys:
+                resolved_bundle = cand_bundle or self._verified_metadata(transport, cand_entry)
+                for row in resolved_bundle.items:
+                    item_id = str(row["id"])
+                    if item_id in pending_ids and session_item_owners.get(item_id, ("",))[0] == cand_key:
+                        session_items.setdefault(item_id, (resolved_bundle, row))
+        pending = list(session_items.values())
+        pending.sort(key=lambda pair: not (
+            str(pair[1].get("symbol") or "").upper() in held
+            or str(pair[1]["id"]).rsplit("-", 1)[-1].upper() in held))
         if _DEFER_ACK.get():
             total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)
         rows = []
@@ -1278,9 +1496,19 @@ class CollectorBundleAdapter:
             offset += len(window)
             if len(window) < len(items):
                 break
-        count = sum(delivered_items.get(item_id) == str(candidate.manifest_items[item_id]["content_sha256"]).lower()
-                    for item_id, (candidate, _) in session_items.items())
-        return rows, key, (), count, count == len(session_items), held, trade_date, delivered_items
+        count = sum(delivered_items.get(item_id) == sha
+                    for item_id, (_, _, sha, _) in session_item_owners.items())
+        done = count == len(session_item_owners)
+        if done:
+            fp = fingerprint(trade_date)
+            delivered_hash = _sha256(json.dumps(delivered_items, sort_keys=True).encode())
+            if fp is not None:
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, delivered_hash)
+                    _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
+                    while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
+                        _PRIORITY_DELIVERED_MEMO.popitem(last=False)
+        return rows, key, (), count, done, held, trade_date, delivered_items
 
     def _pull_ordered(
         self,
@@ -1339,6 +1567,48 @@ class CollectorBundleAdapter:
                 break
             skip = partial_skip if key == base_cursor else 0
             try:
+                if self._priority_latest_enabled() and priority_state.get("items") and key < str(priority_state.get("key") or ""):
+                    scope = self._metadata_scope(transport)
+                    entry_sig = json.dumps(dict(entry), sort_keys=True, separators=(",", ":"))
+                    cache_key = (*scope, entry_sig)
+                    digest_lower = str(entry.get("bundle_sha256") or "").lower()
+                    memo_key = (*scope, str(entry.get("run_id") or ""), digest_lower)
+                    with _METADATA_CACHE_LOCK:
+                        in_cache = cache_key in _METADATA_CACHE
+                        memo_val = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                    if (
+                        not in_cache
+                        and isinstance(memo_val, tuple)
+                        and len(memo_val) >= 3
+                        and memo_val[1] == entry_sig
+                        and isinstance(memo_val[2], Mapping)
+                        and memo_val[2]
+                        and str(memo_val[0]) == str(priority_state.get("trade_date") or "")
+                        and all(str(item_id) in priority_state["items"] for item_id in memo_val[2])
+                    ):
+                        finished_dt = _utc(entry.get("finished_at"), "index finished_at")
+                        verified.append(
+                            VerifiedBundle(
+                                source_id=self.source_id,
+                                date=str(entry.get("date") or ""),
+                                run_id=str(entry.get("run_id") or ""),
+                                finished_at=finished_dt,
+                                manifest={
+                                    "source_id": self.source_id,
+                                    "run_id": str(entry.get("run_id") or ""),
+                                    "status": "complete",
+                                    "finished_at": _iso(finished_dt),
+                                    "bundle_sha256": str(entry.get("bundle_sha256") or ""),
+                                },
+                                manifest_items={},
+                                items=(),
+                                raw_bytes={},
+                                cursor=key,
+                            )
+                        )
+                        acknowledged_only_keys.add(key)
+                        window_stops[key] = 0
+                        continue
                 metadata_bundle = None
                 if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
                     metadata_bundle = self._verified_metadata(transport, entry)
