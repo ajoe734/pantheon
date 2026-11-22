@@ -153,6 +153,11 @@ unchanged. `ingress-owner-validation.log` and `ingress-pg.log` supersede the
 previous-head regression runs; the typed missing/conflict/invalid guard remains
 in force. Focused tests cover default provenance, old-hash replay, owner identity,
 aliases, missing old sources, conflicting sources and no-approved-policy holds.
+The final source run passed 620 owner/provisioning/Capital tests with no skips,
+107 original caller tests, and the independently connected PostgreSQL row-update
+test. The unchanged six-case reviewer control also passed. Disposable PostgreSQL
+was removed at the end of the successful bounded batch. All four restored caller
+files were compared directly with `origin/dev` and have no diff.
 
 After review/merge, `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121` owns deployment
 and normal repair of the three accounts, then read-only collection of original
