@@ -1,6 +1,6 @@
 # Governed paper journey proof — hosted evidence outstanding
 
-Task: `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`; owner Codex; reviewer Claude.
+Task: `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`; owner Codex2; reviewer Antigravity.
 Register owners: RC2 WP2.1 paper persona/risk chain, RC6 journey causes/history.
 
 The hosted probe **failed**, exit 1. This task is not accepted. Source tests and
@@ -106,3 +106,13 @@ Runtime budget: one bounded probe invocation per release, 72 requests / 240 s,
 each. No persistent product writer, additional emitted event or daily storage
 growth. Task evidence is a fixed git snapshot. The existing acceptance runner
 owns its capped verdict and cleanup. See `acceptance/README.md` for execution.
+
+Source continuation after the shard-11 CI failure: the existing post-switch
+stage inventory now includes `paper-risk-journey` in discovery order and checks
+that both risk probes skip with exit 77 without viewer credentials. The focused
+stage suite reproduced 1 failure / 15 passes before this correction. After the
+correction, the 16 stage tests and existing 82 risk/journey tests all passed
+(98 total). This changes the inventory regression test only; the deployment
+runner and its post-switch behavior are unchanged. The earlier source review
+on `ab1b549a9` does not approve this new head; Antigravity must review it.
+Hosted observations above retain their original timestamps and external wait.

@@ -1,14 +1,14 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
-  "owner": "Codex",
-  "reviewer": "Claude",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
   "register_classes": [
     "RC2 WP2.1",
     "RC6"
   ],
   "source_review": {
-    "requested_scope": "Actual BFF detail DTO compatibility, stage and raw-owner identity controls, installed pinned dev owner transport, bounded GET-only probe and truthful outstanding hosted proof",
+    "requested_scope": "Actual BFF detail DTO compatibility, stage and raw-owner identity controls, installed pinned dev owner transport, bounded GET-only probe and truthful outstanding hosted proof; same-PR shard-11 release-probe inventory regression correction",
     "decision": "pending independent review",
     "hosted_acceptance_required": true
   },
@@ -133,6 +133,17 @@
       "exit_code": 0,
       "result": "all three owner reads succeeded with existing installed credentials; unresolved policy remains a real owner result; owner-transport-readback.json",
       "stdin_summary": "Import current policy probe; dev_owner_read telemetry historical event, Capital pool resolution and approvals; assert exact event, pool and tenant identity and record sanitized receipt."
+    },
+    {
+      "command": "timeout 60s /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+      "source_head": "ab1b549a98ed5875ab25842e05a0d737b05bc2ec",
+      "exit_code": 1,
+      "result": "1 failed, 15 passed in 1.14s; existing explicit probe list omitted paper-risk-journey"
+    },
+    {
+      "command": "timeout 90s /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_journey.py acceptance/test_paper_risk_policy_binding.py acceptance/test_trade_journey_readable_probe.py",
+      "exit_code": 0,
+      "result": "98 passed in 4.21s; 16 stage tests plus existing 82 risk/journey tests"
     }
   ],
   "runtime_budget": {
@@ -180,13 +191,14 @@
     "acceptance/probes/paper-risk-journey": "df5790e567ccfa60afa1183b868fd6a2001289b7d30f561793d3898fc944e849",
     "acceptance/probes/paper-risk-policy-binding": "de5ad7ac441772cffbafbb155428f03ec52121afbb527d9f95a253862e7c46fd",
     "acceptance/test_paper_risk_journey.py": "1402c1fce8e9934c851e060710ffe9033865a0bb75bd63ecbbe2ea0890893402",
-    "acceptance/test_paper_risk_policy_binding.py": "451fbd9217d5228a9ed8a9cd186ab27e6a5f3b8e7b73610dd4a3a7a141507879"
+    "acceptance/test_paper_risk_policy_binding.py": "451fbd9217d5228a9ed8a9cd186ab27e6a5f3b8e7b73610dd4a3a7a141507879",
+    "scripts/test_dev_acceptance_stage.py": "9c0400f18f53166b8e2b1d43ad08c544d8044a956aa5bc4b2dc8ef86b2dca5ca"
   },
   "artifact_sha256": {
     "hosted-probe-execution.json": "47542cc02f46c232fc6e43c0d262f0264a0806f0cda52782d1f2c194a451a7b2",
     "hosted-runtime-owner.json": "284478ba6aed17aa1c3cfb08c53380e016c48267d175d3ddcc21fbf97de1ebb9",
     "hosted-manifest.json": "4143fa7f332d646c7e497152fa939992c30fd9b94b29a01cfacdd39dfbf4f61f",
-    "README.md": "087ae87769180dff03fff54a2bf95fb55333cdc4ce5042618f5894ee1d5243ad",
+    "README.md": "8300cb542a41fdb2dd2d44ba5db648f9f0b0e2339760b889c372fb23df998438",
     "hosted-stack.json": "b8ce1a72f5409b1d501ee2420528e8d5c71a7c109c56cd632ac068659b6fa381",
     "hosted-browser.json": "0b6bc027869d5f2244f0fb8065e926079fde7a6b1c30ecb02fbd944a2bfd9c37",
     "hosted-bff-version.json": "479d091951a325c5a252a5b7562bfd292b672595e13091a95a2f417bc74f1a0d",
@@ -207,5 +219,14 @@
     "run": 45049110353,
     "reason": "Original hosted-stack inventory added 676 evidence lines above cap 400.",
     "change": "Commit targeted service observations and aggregate inventory counts; preserve immutable original commit/blob/SHA256 in hosted-stack.json. No product or acceptance logic changes."
+  },
+  "ci_stage_inventory_remediation": {
+    "failed_check": "Test sweep (shard 11)",
+    "run": 45049351184,
+    "job": 137290956561,
+    "prior_head": "ab1b549a98ed5875ab25842e05a0d737b05bc2ec",
+    "change": "Include paper-risk-journey in explicit release probe inventory and verify both risk probes skip with exit 77 without viewer credentials.",
+    "runtime_changes": false,
+    "hosted_status": "external_wait; original observations retained without claiming a new hosted run"
   }
 }
