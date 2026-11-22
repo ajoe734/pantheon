@@ -16,7 +16,6 @@ import fcntl
 import hashlib
 import json
 import os
-import re
 import tempfile
 import threading
 import time
@@ -27,6 +26,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
+
+import jsonschema
 
 from services.consultation.sponsor_decision_bridge import (
     ApprovalDecisionProposal,
@@ -655,51 +656,11 @@ def _check_sponsor_eligibility(
     return validated
 
 
-_EPISODE_ITEM_KINDS: frozenset[str] = frozenset(
-    {
-        "trade_episode",
-        "trade_episodes",
-        "episode",
-        "trade_journal_episode",
-    }
+_TRADE_EPISODE_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "telemetry" / "trade_episode_projection.schema.json"
 )
-_EPISODE_REF_PREFIXES: tuple[str, ...] = (
-    "facts:trade_episode:",
-    "facts:trade-episode:",
-    "facts:trade_episodes:",
-    "facts:trade-episodes:",
-    "facts:episode:",
-    "telemetry:trade_episode:",
-    "telemetry:trade-episode:",
-    "telemetry:trade_episodes:",
-    "telemetry:trade-episodes:",
-    "telemetry:episode:",
-    "trade_episode:",
-    "trade-episode:",
-    "trade_episodes:",
-    "trade-episodes:",
-    "episode:",
-)
-_NON_EPISODE_REF_PREFIXES: tuple[str, ...] = (
-    "facts:",
-    "lessons:",
-    "similar_history:",
-    "evidence:",
-    "preread:",
-    "casefile-",
-    "memo-",
-    "pool-",
-    "journal-",
-    "reg-",
-    "strat-",
-    "artifact-",
-    "apv-",
-    "attr-",
-    "pmem-",
-)
-_EPISODE_TOKEN_RE = re.compile(
-    r"^(?:ep(?:isode)?[-_][A-Za-z0-9][A-Za-z0-9._-]*|ep[0-9][A-Za-z0-9._-]*)$",
-    re.IGNORECASE,
+_TRADE_EPISODE_VALIDATOR = jsonschema.Draft7Validator(
+    json.loads(_TRADE_EPISODE_SCHEMA_PATH.read_text(encoding="utf-8"))
 )
 
 
@@ -713,79 +674,104 @@ def _as_uuid_str(value: Any, namespace_tag: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f"pantheon:{namespace_tag}:default"))
 
 
-def _extract_direct_episode_id(raw: Any, *, allow_bare_uuid: bool = True) -> str | None:
-    if not isinstance(raw, str):
-        return None
-    text = raw.strip()
-    if not text:
-        return None
-    lowered = text.lower()
-    for prefix in _EPISODE_REF_PREFIXES:
-        if lowered.startswith(prefix):
-            tail = text[len(prefix):].strip()
-            if not tail:
-                return None
-            return _extract_direct_episode_id(tail, allow_bare_uuid=True) or (
-                tail if ":" not in tail and not tail.lower().startswith(_NON_EPISODE_REF_PREFIXES) else None
-            )
-    if lowered.startswith(_NON_EPISODE_REF_PREFIXES):
-        return None
-    if allow_bare_uuid:
-        try:
-            return str(uuid.UUID(text))
-        except ValueError:
-            pass
-    if _EPISODE_TOKEN_RE.fullmatch(text):
-        return text
-    return None
+def _telemetry_base_url() -> str:
+    return (
+        os.getenv("PANTHEON_TELEMETRY_API_URL")
+        or os.getenv("PANTHEON_TELEMETRY_SERVICE_URL")
+        or os.getenv("TELEMETRY_URL")
+        or "http://127.0.0.1:8083"
+    ).rstrip("/")
 
 
-def _index_verified_meeting_evidence(
+def _telemetry_auth_headers(
+    *,
+    tenant_id: str,
+    sponsor_persona_id: str | None,
+) -> dict[str, str]:
+    headers: dict[str, str] = {"X-Tenant-Id": tenant_id}
+    if sponsor_persona_id:
+        headers["X-Sponsor-Persona-Id"] = sponsor_persona_id
+        headers["X-Actor-Id"] = sponsor_persona_id
+    static_token = _resolve_configured_token(
+        "CONSULTATION_TELEMETRY_READ_TOKEN",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+    )
+    if static_token:
+        headers["Authorization"] = f"Bearer {static_token}"
+        return headers
+    secret = (
+        os.getenv("PANTHEON_TELEMETRY_JWT_SECRET")
+        or os.getenv("PANTHEON_DEV_BFF_JWT_SECRET")
+        or os.getenv("PERSONA_JWT_SECRET")
+        or os.getenv("PANTHEON_BFF_JWT_SECRET")
+        or os.getenv("PANTHEON_RUNTIME_JWT_SECRET")
+        or "pantheon-meeting-outputs-local-secret"
+    ).strip()
+    issuer = (
+        os.getenv("PANTHEON_TELEMETRY_JWT_ISSUER")
+        or os.getenv("PANTHEON_DEV_BFF_JWT_ISSUER")
+        or os.getenv("PERSONA_JWT_ISSUER")
+        or os.getenv("PANTHEON_BFF_JWT_ISSUER")
+        or None
+    )
+    audience = (
+        os.getenv("PANTHEON_TELEMETRY_JWT_AUDIENCE")
+        or os.getenv("PANTHEON_DEV_BFF_JWT_AUDIENCE")
+        or os.getenv("PERSONA_JWT_AUDIENCE")
+        or os.getenv("PANTHEON_BFF_JWT_AUDIENCE")
+        or None
+    )
+    token = _mint_jwt(
+        subject="pantheon-dev-consultation-telemetry-reader",
+        tenant_id=tenant_id,
+        roles=["viewer", "service"],
+        secret=secret,
+        issuer=issuer,
+        audience=audience,
+    )
+    headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _is_verified_trade_episode(
+    record: Any,
+    *,
+    tenant_id: str,
+    sponsor_persona_id: str | None,
+    expected_episode_id: str | None = None,
+) -> bool:
+    if not isinstance(record, Mapping) or not sponsor_persona_id:
+        return False
+    episode_id = str(record.get("trade_episode_id") or "").strip()
+    if not episode_id:
+        return False
+    if expected_episode_id is not None and episode_id != expected_episode_id:
+        return False
+    if str(record.get("tenant_id") or "").strip() != tenant_id:
+        return False
+    if str(record.get("persona_id") or "").strip() != sponsor_persona_id:
+        return False
+    return _TRADE_EPISODE_VALIDATOR.is_valid(dict(record))
+
+
+def _index_verified_meeting_episodes(
     meeting: Mapping[str, Any] | None,
     *,
     sponsor_persona_id: str | None,
     tenant_id: str,
-) -> dict[str, list[Mapping[str, Any]]]:
-    by_key: dict[str, list[Mapping[str, Any]]] = {}
+) -> dict[str, Mapping[str, Any]]:
+    by_id: dict[str, Mapping[str, Any]] = {}
     if not isinstance(meeting, Mapping):
-        return by_key
-
-    allowed_preread_personas = {
-        str(p).strip()
-        for p in (sponsor_persona_id, meeting.get("chair_persona_id"))
-        if p and str(p).strip()
-    }
+        return by_id
 
     def _register(item: Any) -> None:
-        if not isinstance(item, Mapping):
-            return
-        if (
-            item.get("relevance_scope") == "persona_private"
-            or item.get("memory_layer") == "persona_private"
+        if _is_verified_trade_episode(
+            item,
+            tenant_id=tenant_id,
+            sponsor_persona_id=sponsor_persona_id,
         ):
-            return
-        item_tenant = str(item.get("tenant_id") or "").strip()
-        if item_tenant and item_tenant != tenant_id:
-            return
-        item_persona = str(item.get("persona_id") or "").strip()
-        if item_persona and sponsor_persona_id and item_persona != sponsor_persona_id:
-            return
-        for key_field in (
-            "item_id",
-            "entry_id",
-            "memory_id",
-            "source_id",
-            "ref_id",
-            "ref",
-            "id",
-            "trade_episode_id",
-            "episode_id",
-        ):
-            val = item.get(key_field)
-            if isinstance(val, str) and val.strip():
-                bucket = by_key.setdefault(val.strip(), [])
-                if all(existing is not item for existing in bucket):
-                    bucket.append(item)
+            ep_id = str(item["trade_episode_id"]).strip()
+            by_id.setdefault(ep_id, item)
 
     case_file = meeting.get("case_file")
     if isinstance(case_file, Mapping):
@@ -793,239 +779,101 @@ def _index_verified_meeting_evidence(
         if isinstance(groups, Mapping):
             for grp in groups.values():
                 if isinstance(grp, Mapping):
-                    for it in grp.get("items") or []:
+                    for it in grp.get("items") or ():
                         _register(it)
-        for it in case_file.get("items") or []:
+        for it in case_file.get("items") or ():
             _register(it)
 
-    for it in meeting.get("case_file_items") or []:
-        _register(it)
+    for key in ("case_file_items", "evidence_refs", "trade_episodes"):
+        raw_items = meeting.get(key)
+        if isinstance(raw_items, (list, tuple)):
+            for it in raw_items:
+                _register(it)
 
-    pre_read = meeting.get("pre_read")
-    if isinstance(pre_read, list):
-        for entry in pre_read:
-            if not isinstance(entry, Mapping):
-                continue
-            nested_entries = entry.get("entries")
-            if isinstance(nested_entries, list):
-                owner_pid = str(entry.get("persona_id") or "").strip()
-                if owner_pid and allowed_preread_personas and owner_pid not in allowed_preread_personas:
-                    continue
-                for sub in nested_entries:
-                    _register(sub)
-            else:
-                _register(entry)
-    elif isinstance(pre_read, Mapping):
-        for owner_pid, nested_entries in pre_read.items():
-            if (
-                str(owner_pid).strip()
-                and allowed_preread_personas
-                and str(owner_pid).strip() not in allowed_preread_personas
-            ):
-                continue
-            if isinstance(nested_entries, list):
-                for sub in nested_entries:
-                    _register(sub)
-
-    for it in meeting.get("evidence_refs") or []:
-        _register(it)
-
-    return by_key
-
-
-def _extract_episode_ids_from_item(
-    item: Any,
-    *,
-    sponsor_persona_id: str | None,
-    tenant_id: str,
-    verified_index: Mapping[str, list[Mapping[str, Any]]],
-    visited: set[int],
-) -> list[str]:
-    collected: list[str] = []
-
-    def _add(ep_id: str | None) -> None:
-        if ep_id and ep_id not in collected:
-            collected.append(ep_id)
-
-    if isinstance(item, str):
-        key = item.strip()
-        if not key:
-            return collected
-        if key in verified_index:
-            for verified_item in verified_index[key]:
-                for ep_id in _extract_episode_ids_from_item(
-                    verified_item,
-                    sponsor_persona_id=sponsor_persona_id,
-                    tenant_id=tenant_id,
-                    verified_index=verified_index,
-                    visited=visited,
-                ):
-                    _add(ep_id)
-            return collected
-        _add(_extract_direct_episode_id(key, allow_bare_uuid=True))
-        return collected
-
-    if not isinstance(item, Mapping) or id(item) in visited:
-        return collected
-    visited.add(id(item))
-
-    if (
-        item.get("relevance_scope") == "persona_private"
-        or item.get("memory_layer") == "persona_private"
-    ):
-        return collected
-    item_tenant = str(item.get("tenant_id") or "").strip()
-    if item_tenant and item_tenant != tenant_id:
-        return collected
-    item_persona = str(item.get("persona_id") or "").strip()
-    if item_persona and sponsor_persona_id and item_persona != sponsor_persona_id:
-        return collected
-
-    for single_key in ("trade_episode_id", "episode_id"):
-        if item.get(single_key) is not None:
-            _add(_extract_direct_episode_id(str(item.get(single_key)), allow_bare_uuid=True))
-
-    for list_key in (
-        "trade_episode_ids",
-        "supporting_episode_ids",
-        "covered_episode_ids",
-        "episode_ids",
-        "episodes",
-    ):
-        raw_list = item.get(list_key)
-        if isinstance(raw_list, (list, tuple)):
-            for elem in raw_list:
-                for ep_id in _extract_episode_ids_from_item(
-                    elem,
-                    sponsor_persona_id=sponsor_persona_id,
-                    tenant_id=tenant_id,
-                    verified_index=verified_index,
-                    visited=visited,
-                ):
-                    _add(ep_id)
-
-    item_kind = str(
-        item.get("kind")
-        or item.get("ref_type")
-        or item.get("type")
-        or item.get("evidence_type")
-        or ""
-    ).strip().lower()
-    if item_kind in _EPISODE_ITEM_KINDS:
-        for id_key in ("trade_episode_id", "episode_id", "source_id", "ref_id", "ref", "id", "item_id"):
-            raw_id = item.get(id_key)
-            if isinstance(raw_id, str) and raw_id.strip():
-                ep_id = _extract_direct_episode_id(raw_id, allow_bare_uuid=True) or (
-                    raw_id.strip()
-                    if ":" not in raw_id.strip()
-                    and not raw_id.strip().lower().startswith(_NON_EPISODE_REF_PREFIXES)
-                    else None
-                )
-                if ep_id:
-                    _add(ep_id)
-                    break
-
-    raw_item_id = item.get("item_id")
-    if isinstance(raw_item_id, str) and raw_item_id.strip().lower().startswith(_EPISODE_REF_PREFIXES):
-        _add(_extract_direct_episode_id(raw_item_id, allow_bare_uuid=True))
-
-    for nested_key in ("subject_fields", "structured_payload", "payload", "metadata", "content", "entry"):
-        nested = item.get(nested_key)
-        if isinstance(nested, Mapping):
-            for ep_id in _extract_episode_ids_from_item(
-                nested,
-                sponsor_persona_id=sponsor_persona_id,
-                tenant_id=tenant_id,
-                verified_index=verified_index,
-                visited=visited,
-            ):
-                _add(ep_id)
-
-    raw_excerpt = item.get("excerpt")
-    if isinstance(raw_excerpt, str):
-        stripped_excerpt = raw_excerpt.strip()
-        if stripped_excerpt.startswith("{") and stripped_excerpt.endswith("}"):
-            try:
-                parsed_excerpt = json.loads(stripped_excerpt)
-            except Exception:
-                parsed_excerpt = None
-            if isinstance(parsed_excerpt, Mapping):
-                for ep_id in _extract_episode_ids_from_item(
-                    parsed_excerpt,
-                    sponsor_persona_id=sponsor_persona_id,
-                    tenant_id=tenant_id,
-                    verified_index=verified_index,
-                    visited=visited,
-                ):
-                    _add(ep_id)
-
-    if not collected:
-        for ref_key in ("ref_id", "ref", "id", "item_id", "source_id"):
-            ref_val = item.get(ref_key)
-            if not isinstance(ref_val, str) or not ref_val.strip():
-                continue
-            clean_ref = ref_val.strip()
-            if clean_ref in verified_index:
-                for verified_item in verified_index[clean_ref]:
-                    for ep_id in _extract_episode_ids_from_item(
-                        verified_item,
-                        sponsor_persona_id=sponsor_persona_id,
-                        tenant_id=tenant_id,
-                        verified_index=verified_index,
-                        visited=visited,
-                    ):
-                        _add(ep_id)
-            elif not item_kind or item_kind in _EPISODE_ITEM_KINDS:
-                _add(_extract_direct_episode_id(clean_ref, allow_bare_uuid=(item_kind in _EPISODE_ITEM_KINDS)))
-
-    return collected
+    return by_id
 
 
 def _resolve_lesson_candidate_episode_ids(
     *,
-    proposal: Mapping[str, Any] | None,
     payload: Mapping[str, Any],
     citations: Sequence[Any],
     meeting: Mapping[str, Any] | None,
     sponsor_persona_id: str | None,
     tenant_id: str,
+    send: HttpTransport | None = None,
 ) -> list[str]:
-    """Deterministically extract distinct, real trade_episode_ids from input or verified evidence."""
-    verified_index = _index_verified_meeting_evidence(
+    """Resolve distinct trade_episode_ids verified for tenant_id and sponsor_persona_id."""
+    verified_by_id = _index_verified_meeting_episodes(
         meeting,
         sponsor_persona_id=sponsor_persona_id,
         tenant_id=tenant_id,
     )
+    rejected_ids: set[str] = set()
     episode_ids: list[str] = []
+    active_send = _active_transport(send)
+    telemetry_base: str | None = None
+    telemetry_headers: dict[str, str] | None = None
 
-    def _collect_from_sequence(seq: Iterable[Any]) -> None:
-        for raw_entry in seq:
-            for ep_id in _extract_episode_ids_from_item(
-                raw_entry,
-                sponsor_persona_id=sponsor_persona_id,
+    def _verify_episode_id(raw_id: str) -> str | None:
+        ep_id = raw_id.strip()
+        if not ep_id:
+            return None
+        if ep_id in verified_by_id:
+            return ep_id
+        if ep_id in rejected_ids:
+            return None
+        nonlocal telemetry_base, telemetry_headers
+        if telemetry_base is None:
+            telemetry_base = _telemetry_base_url()
+        if telemetry_headers is None:
+            telemetry_headers = _telemetry_auth_headers(
                 tenant_id=tenant_id,
-                verified_index=verified_index,
-                visited=set(),
-            ):
-                if ep_id not in episode_ids:
-                    episode_ids.append(ep_id)
-
-    for container in (payload, proposal if isinstance(proposal, Mapping) else {}):
-        for field_name in (
-            "trade_episode_ids",
-            "supporting_episode_ids",
-            "covered_episode_ids",
-            "episode_ids",
+                sponsor_persona_id=sponsor_persona_id,
+            )
+        encoded_id = urllib.parse.quote(ep_id, safe="")
+        try:
+            status_code, body = active_send(
+                "GET",
+                f"{telemetry_base}/api/telemetry/trade-episodes/{encoded_id}",
+                telemetry_headers,
+                None,
+            )
+        except Exception:
+            rejected_ids.add(ep_id)
+            return None
+        if status_code == 200 and _is_verified_trade_episode(
+            body,
+            tenant_id=tenant_id,
+            sponsor_persona_id=sponsor_persona_id,
+            expected_episode_id=ep_id,
         ):
-            raw_field = container.get(field_name)
-            if isinstance(raw_field, (list, tuple)):
-                _collect_from_sequence(raw_field)
+            verified_by_id[ep_id] = body
+            return ep_id
+        rejected_ids.add(ep_id)
+        return None
 
-    _collect_from_sequence(citations or ())
-    raw_evidence_refs = payload.get("evidence_refs")
-    if isinstance(raw_evidence_refs, (list, tuple)):
-        _collect_from_sequence(raw_evidence_refs)
+    def _collect(seq: Iterable[Any]) -> None:
+        for entry in seq:
+            if isinstance(entry, Mapping):
+                if _is_verified_trade_episode(
+                    entry,
+                    tenant_id=tenant_id,
+                    sponsor_persona_id=sponsor_persona_id,
+                ):
+                    ep_id = str(entry["trade_episode_id"]).strip()
+                    verified_by_id.setdefault(ep_id, entry)
+                    if ep_id not in episode_ids:
+                        episode_ids.append(ep_id)
+                continue
+            if isinstance(entry, str):
+                verified_id = _verify_episode_id(entry)
+                if verified_id and verified_id not in episode_ids:
+                    episode_ids.append(verified_id)
 
+    raw_payload_episodes = payload.get("trade_episode_ids")
+    if isinstance(raw_payload_episodes, (list, tuple)):
+        _collect(raw_payload_episodes)
+    _collect(citations or ())
     return episode_ids
 
 
@@ -1041,6 +889,7 @@ def _build_outbound_request(
     now: datetime,
     meeting: Mapping[str, Any] | None = None,
     proposal: Mapping[str, Any] | None = None,
+    send: HttpTransport | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Return (path, request_json, request_meta) for the given proposal kind."""
     now_iso = _iso(now)
@@ -1158,12 +1007,12 @@ def _build_outbound_request(
         lc_id = _as_uuid_str(payload.get("lesson_candidate_id") or proposal_id, "lesson_candidate")
         ref_id = _as_uuid_str(payload.get("reflection_id") or f"{meeting_id}:{proposal_id}", "reflection")
         episode_ids = _resolve_lesson_candidate_episode_ids(
-            proposal=proposal,
             payload=payload,
             citations=citations,
             meeting=meeting,
             sponsor_persona_id=sponsor_persona_id,
             tenant_id=tenant_id,
+            send=send,
         )
         if len(episode_ids) < 3:
             raise MeetingOutputRoutingError(
@@ -1572,6 +1421,15 @@ def dispatch_proposals(
                 payload=payload,
                 meeting=meeting,
             )
+            headers = _auth_headers(
+                kind=kind,
+                tenant_id=tenant_id,
+                sponsor_persona_id=sponsor_persona_id,
+                idempotency_key=idempotency_key,
+                owner_user_id=str(payload.get("owner_user_id") or "user-a")
+                if kind == "agora_candidate_decision"
+                else None,
+            )
             target_path, request_body, request_meta = _build_outbound_request(
                 kind=kind,
                 proposal_id=proposal_id,
@@ -1583,6 +1441,7 @@ def dispatch_proposals(
                 now=current_dt,
                 meeting=meeting,
                 proposal=proposal,
+                send=send,
             )
         except Exception as exc:
             target_path = _target_path(
@@ -1635,13 +1494,6 @@ def dispatch_proposals(
         full_url = f"{base_url}{target_path}"
 
         try:
-            headers = _auth_headers(
-                kind=kind,
-                tenant_id=tenant_id,
-                sponsor_persona_id=sponsor_persona_id,
-                idempotency_key=idempotency_key,
-                owner_user_id=request_meta.get("owner_user_id"),
-            )
             status_code, resp_body = send("POST", full_url, headers, request_body)
             # Handle idempotent replay when an earlier attempt succeeded on the server before response loss
             if status_code == 409 and kind == "evolution_proposal":

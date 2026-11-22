@@ -72,6 +72,9 @@ from services.persona.write_owner import (  # noqa: E402
 from services.research.tests.test_research_orchestrator_http_service import (  # noqa: E402
     _load_service_module as load_research_module,
 )
+from services.runtime_auth_inbound import AuthError, validate_request_auth  # noqa: E402
+from services.telemetry.auth import _telemetry_auth_env  # noqa: E402
+from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore  # noqa: E402
 
 from services.evolution import main as evolution_main  # noqa: E402
 sys.modules.pop("models", None)
@@ -316,11 +319,80 @@ def _seed_agora_interaction(interactions: InteractionLifecycleStore) -> None:
     }
 
 
+def _seed_telemetry_episode(
+    store: TradeEpisodeProjectionStore,
+    episode_id: str,
+    *,
+    tenant_id: str = TENANT,
+    persona_id: str = SPONSOR,
+    regime: str = "bull",
+    realized_pnl: float = 125.0,
+) -> dict[str, Any]:
+    store.project_event(
+        {
+            "event_id": f"ev-open-{episode_id}",
+            "event_type": "trade_episode.opened",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "persona_id": persona_id,
+            "strategy_id": "strat-member-1",
+            "artifact_id": "strat-member-1",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-paper-1",
+            "instrument_id": "2330.TW",
+            "occurred_at": "2026-11-10T01:00:00Z",
+            "sequence_number": 1,
+            "payload": {
+                "side": "long",
+                "status": "open",
+                "opened_at": "2026-11-10T01:00:00Z",
+                "entry_actor": "persona",
+                "requested_quantity": 100.0,
+                "filled_quantity": 100.0,
+                "remaining_quantity": 0.0,
+                "vwap": 580.0,
+                "fees": 12.5,
+                "confidence": 0.84,
+                "thesis": f"Paper momentum trade in {regime} regime",
+            },
+        }
+    )
+    projected = store.project_event(
+        {
+            "event_id": f"ev-close-{episode_id}",
+            "event_type": "trade_episode.closed",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "persona_id": persona_id,
+            "occurred_at": "2026-11-11T05:30:00Z",
+            "sequence_number": 2,
+            "payload": {
+                "status": "closed",
+                "closed_at": "2026-11-11T05:30:00Z",
+                "exit_actor": "persona",
+                "exit_reason": "target_reached",
+                "realized_pnl": realized_pnl,
+            },
+        }
+    )
+    assert projected is not None
+    return projected
+
+
 @pytest.fixture
 def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Mount all 6 owner services (covering all 8 proposal kinds) in-process via TestClient."""
+    """Mount all 7 owner services (covering all 8 proposal kinds + Telemetry episodes) in-process via TestClient."""
     # Common auth configuration
-    for prefix in ("PANTHEON_RESEARCH_", "PANTHEON_MEMORY_", "PANTHEON_GOVERNANCE_", "PERSONA_", "PANTHEON_BFF_"):
+    for prefix in (
+        "PANTHEON_RESEARCH_",
+        "PANTHEON_MEMORY_",
+        "PANTHEON_TELEMETRY_",
+        "PANTHEON_GOVERNANCE_",
+        "PERSONA_",
+        "PANTHEON_BFF_",
+    ):
         monkeypatch.setenv(prefix + "AUTH_MODE", "strict")
         monkeypatch.setenv(prefix + "JWT_SECRET", SECRET)
         monkeypatch.setenv(prefix + "JWT_ISSUER", ISSUER)
@@ -553,6 +625,61 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     agora_client = TestClient(agora_app)
 
+    # 7. Telemetry trade-episode owner app
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
+    telemetry_store = TradeEpisodeProjectionStore(
+        projections_path=telemetry_dir / "trade_episode_projections.json",
+        events_path=telemetry_dir / "trade_episode_events.jsonl",
+    )
+    for ep_id, reg in zip(seed_lesson["trade_episode_ids"], ("bull", "bear", "bull")):
+        _seed_telemetry_episode(telemetry_store, ep_id, regime=reg)
+    for ep_id, reg in (
+        ("ep-101", "bull"),
+        ("ep-102", "bear"),
+        ("ep-103", "bull"),
+        ("ep-201", "bull"),
+        ("ep-202", "bear"),
+        ("ep-203", "bull"),
+        ("ep-301", "bull"),
+        ("ep-302", "bear"),
+        ("ep-303", "bull"),
+    ):
+        _seed_telemetry_episode(telemetry_store, ep_id, regime=reg)
+
+    telemetry_app = FastAPI()
+
+    @telemetry_app.get("/api/telemetry/trade-episodes/{episode_id}")
+    def get_trade_episode(
+        episode_id: str,
+        tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        try:
+            ctx = validate_request_auth(
+                authorization=authorization or "",
+                mfa_header="",
+                required_roles=("viewer", "service", "operator", "reviewer", "admin"),
+                env=_telemetry_auth_env(),
+            )
+        except AuthError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+        req_tenant = (tenant_id or "").strip()
+        allowed_tenants = list(ctx.claims.get("allowed_tenants") or [])
+        if ctx.claims.get("tenant_id"):
+            allowed_tenants.append(str(ctx.claims["tenant_id"]))
+        if not req_tenant or req_tenant not in allowed_tenants:
+            raise HTTPException(status_code=403, detail="tenant forbidden")
+        rec = telemetry_store.get(episode_id, tenant_id=req_tenant)
+        if not rec:
+            raise HTTPException(status_code=404, detail="trade episode not found")
+        return rec
+
+    telemetry_client = TestClient(telemetry_app)
+
     call_log: list[dict[str, Any]] = []
 
     def in_process_transport(
@@ -579,6 +706,8 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             client = persona_client
         elif parsed.path.startswith("/api/memory/"):
             client = memory_client
+        elif parsed.path.startswith("/api/telemetry/"):
+            client = telemetry_client
         elif parsed.path.startswith("/api/governance/"):
             client = governance_client
         elif parsed.path.startswith("/bff/agora/"):
@@ -610,6 +739,8 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "governance_client": governance_client,
             "memory_main": memory_main,
             "memory_client": memory_client,
+            "telemetry_store": telemetry_store,
+            "telemetry_client": telemetry_client,
             "lesson_gov_service": lesson_gov_service,
             "endorsed_lesson_id": endorsed_lesson_id,
             "persona_client": persona_client,
@@ -1157,6 +1288,15 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
         audience=AUDIENCE,
         extra_claims={"marker": "from-consultation-memory-read-token-file"},
     )
+    telemetry_read_jwt = _mint_jwt(
+        subject="pantheon-dev-consultation-telemetry-reader",
+        tenant_id=TENANT,
+        roles=["viewer"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "from-consultation-telemetry-read-token-file"},
+    )
 
     write_file = tmp_path / "CONSULTATION_MEMORY_WRITE_TOKEN"
     write_file.write_text(memory_write_jwt, encoding="utf-8")
@@ -1164,14 +1304,36 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
     read_file = tmp_path / "CONSULTATION_MEMORY_READ_TOKEN"
     read_file.write_text(memory_read_jwt, encoding="utf-8")
     os.chmod(read_file, 0o600)
+    telemetry_read_file = tmp_path / "CONSULTATION_TELEMETRY_READ_TOKEN"
+    telemetry_read_file.write_text(telemetry_read_jwt, encoding="utf-8")
+    os.chmod(telemetry_read_file, 0o600)
 
     monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", research_jwt)
     monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(write_file))
     monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
+    monkeypatch.setenv("CONSULTATION_TELEMETRY_READ_TOKEN_FILE", str(telemetry_read_file))
 
     ep_uuid_1 = str(uuid.uuid4())
     ep_uuid_2 = str(uuid.uuid4())
     ep_uuid_3 = str(uuid.uuid4())
+    telemetry_store: TradeEpisodeProjectionStore = owner_harness["telemetry_store"]
+    verified_ep_1 = _seed_telemetry_episode(telemetry_store, ep_uuid_1, regime="bull")
+    verified_ep_2 = _seed_telemetry_episode(telemetry_store, ep_uuid_2, regime="bear")
+    verified_ep_3 = _seed_telemetry_episode(telemetry_store, ep_uuid_3, regime="bull")
+    foreign_persona_ep = _seed_telemetry_episode(
+        telemetry_store,
+        "ep-foreign-persona",
+        tenant_id=TENANT,
+        persona_id="persona-other",
+        regime="bull",
+    )
+    _seed_telemetry_episode(
+        telemetry_store,
+        "ep-foreign-tenant",
+        tenant_id="tenant-other",
+        persona_id=SPONSOR,
+        regime="bear",
+    )
 
     meeting = {
         "meeting_id": "mtg-hosted-tokens-001",
@@ -1186,18 +1348,10 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
                 "excerpt": '{"pool_version":1,"members":[{"artifact_ref":"strat-member-1","stage":"active"}]}',
                 "subject_fields": {"pool_version": 1},
             },
-            {
-                "item_id": "facts:trade_reflection:refl-pattern-1",
-                "group": "facts",
-                "kind": "trade_reflection",
-                "source_owner": "persona",
-                "source_id": "refl-pattern-1",
-                "persona_id": SPONSOR,
-                "tenant_id": TENANT,
-                "subject_fields": {
-                    "trade_episode_ids": [ep_uuid_1, ep_uuid_2, ep_uuid_3, ep_uuid_1],
-                },
-            },
+            verified_ep_1,
+            verified_ep_2,
+            verified_ep_3,
+            foreign_persona_ep,
         ],
         "proposals": [
             {
@@ -1221,16 +1375,16 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
                 "sponsor_persona_id": SPONSOR,
                 "payload": {
                     "scope": "strategy",
-                    "proposed_change": "Lesson candidate citing three real episode references",
+                    "proposed_change": "Lesson candidate citing three real episode references verified via Telemetry",
                     "confidence": 0.84,
                 },
-                # Payload omits trade_episode_ids; citations carry 3 distinct real episode refs (plus a duplicate and non-episode ref)
+                # Payload omits trade_episode_ids; citations carry 3 distinct real episode IDs in Telemetry (plus a duplicate and non-episode ref)
                 "citations": [
                     "facts:strategy_pool:persona-alpha@1",
-                    "facts:trade_episode:ep-301",
+                    "ep-301",
                     "ep-302",
-                    "facts:trade_episode:ep-301",
-                    "trade_episode:ep-303",
+                    "ep-301",
+                    "ep-303",
                 ],
             },
             {
@@ -1240,10 +1394,10 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
                 "sponsor_persona_id": SPONSOR,
                 "payload": {
                     "scope": "strategy",
-                    "proposed_change": "Lesson candidate citing verified reflection evidence with 3 real episodes",
+                    "proposed_change": "Lesson candidate preferring already-verified exact TradeEpisodeProjection entries",
                     "confidence": 0.86,
                 },
-                "citations": ["facts:trade_reflection:refl-pattern-1"],
+                "citations": [ep_uuid_1, ep_uuid_2, ep_uuid_3, ep_uuid_1, "ep-foreign-persona"],
             },
             {
                 "proposal_id": "prop-hosted-lc-non-episode-citation",
@@ -1281,6 +1435,25 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
                 },
                 "citations": ["ep-301", "ep-302", "ep-301", "facts:strategy_pool:persona-alpha@1"],
             },
+            {
+                "proposal_id": "prop-hosted-lc-missing-and-foreign-episodes",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Missing, foreign-persona, and foreign-tenant episodes must be rejected before Memory submission",
+                    "confidence": 0.83,
+                    "trade_episode_ids": [
+                        "ep-301",
+                        "ep-302",
+                        "ep-missing-404",
+                        "ep-foreign-persona",
+                        "ep-foreign-tenant",
+                    ],
+                },
+                "citations": ["ep-missing-404", "ep-foreign-persona", "ep-foreign-tenant"],
+            },
         ],
     }
 
@@ -1297,11 +1470,12 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
     assert by_id["prop-hosted-lc-valid-verified-evidence"]["error"] is None
     assert by_id["prop-hosted-lc-valid-verified-evidence"]["status"] == "proposed"
 
-    # 2. Non-episode citation, no-evidence, and <3 distinct real episodes fail closed without placeholder generation
+    # 2. Non-episode citation, no-evidence, <3 distinct episodes, and missing/foreign episodes fail closed before Memory submission
     for failed_pid, expected_count in (
         ("prop-hosted-lc-non-episode-citation", 0),
         ("prop-hosted-lc-no-evidence", 0),
         ("prop-hosted-lc-insufficient-episodes", 2),
+        ("prop-hosted-lc-missing-and-foreign-episodes", 2),
     ):
         assert by_id[failed_pid]["status"] == "failed"
         assert by_id[failed_pid]["downstream_id"] is None
@@ -1317,6 +1491,16 @@ def test_configured_service_tokens_and_real_episode_reference_requirement_for_le
     assert len(lc_calls) == 2
     for lc_call in lc_calls:
         assert lc_call["headers"]["Authorization"] == f"Bearer {memory_write_jwt}"
+
+    telemetry_calls = [c for c in owner_harness["call_log"] if c["path"].startswith("/api/telemetry/trade-episodes/") and c["method"] == "GET"]
+    assert telemetry_calls
+    for tel_call in telemetry_calls:
+        assert tel_call["headers"]["Authorization"] == f"Bearer {telemetry_read_jwt}"
+    # Already-verified exact TradeEpisodeProjection entries on the meeting required zero Telemetry GET requests
+    fetched_paths = {c["path"] for c in telemetry_calls}
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_1}" not in fetched_paths
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_2}" not in fetched_paths
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_3}" not in fetched_paths
 
     # Only the two valid candidates were persisted in Memory, with their exact real episode IDs
     assert len(owner_harness["lesson_gov_service"].store.list()) == candidates_before + 2
@@ -1470,7 +1654,4 @@ def test_configured_token_file_failures_fail_closed_without_alias_or_jwt_fallbac
     with pytest.raises(MeetingOutputRoutingError, match="Configured service credential unavailable"):
         read_downstream_status(f"prop-fc-lc-{failure_mode}")
     assert owner_harness["call_log"] == []
-
-
-
 
