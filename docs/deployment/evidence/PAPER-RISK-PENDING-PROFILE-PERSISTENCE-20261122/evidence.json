@@ -90,6 +90,14 @@
       "exit_code": 0,
       "result": "passed; zero failures",
       "log": "ingress-storage-check.json"
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<disposable PostgreSQL 16 gov_approval_test> timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+      "exit_code": 1,
+      "result": "1 failed, 3 warnings in 7.13s; direct reservation bypasses effective create input normalization; requested_profile_source_missing at capital_pool; disposable container removed",
+      "log": "fresh-owner-before.log",
+      "acceptance_evidence": false,
+      "scope": "Reproduced remaining fresh-simulator fixture before authorized artifact-contract expansion; no product authorization guard changed"
     }
   ],
   "runtime_budget": {
@@ -164,5 +172,11 @@
     "typed_capital_missing_profile_guard": "Preserved and rerun with the original independent six-case control and typed/PG suite",
     "hosted_mutations": 0,
     "new_persistent_writers": 0
+  },
+  "continuation_hold": {
+    "required_artifact": "services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+    "reason": "Current canonical artifacts omit the directly reserved fresh-simulator fixture. Task brief authorizes normalizing the same wire input but requires an owner blocker before coordination can add the path and resume.",
+    "planned_change": "Use the genuine _persona_create_effective_profile_payload helper on the unchanged synthetic fresh request before reserve; preserve truly source-less negative controls.",
+    "source_delivery": "PR #7755 remains open; no merge, hosted deployment or acceptance claimed"
   }
 }

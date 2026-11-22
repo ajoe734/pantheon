@@ -195,3 +195,23 @@ test runs the same probe against low/medium/high and rejects a null readback.
   three hosted budgets). This task preserves existing approval hashes and
   tests that actual service shape; legacy integer-record compatibility needs
   assessment by the existing RC2 capital/risk chain before changing hashes.
+
+## Fresh simulator continuation hold (2026-11-22)
+
+The bounded PostgreSQL rerun of
+`services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py`
+failed: 1 failed in 7.13s, exit 1 (`fresh-owner-before.log`). Its fresh
+synthetic request calls `store.reserve` directly, bypassing the actual BFF
+`_persona_create_effective_profile_payload` normalization. It therefore has
+no requested-profile source and correctly stops at `capital_pool` with
+`requested_profile_source_missing`, before exercising its intended real
+Governance/Registry approval and reload contract. PostgreSQL was disposable
+and removed after the terminal result; no hosted services were touched.
+
+The task-scoped continuation authorizes using the same production normalization
+helper on this unchanged fresh wire input. The exact test path is absent from
+the current canonical artifacts. Per that continuation, the owner must block
+for coordination to add this path and immediately resume before editing it.
+Truly source-less negative controls must stay source-less; no coordinator or
+Capital authorization fallback is justified by this fixture. PR #7755 is still
+open and is not ready for review handoff until this contract passes.
