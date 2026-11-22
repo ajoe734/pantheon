@@ -511,22 +511,32 @@ def _default_committee_memory_fetcher(
     ).strip()
     if not memory_url:
         return None
+    adapter_identity = _uses_adapter_memory_identity()
+    actor_prefix = "PANTHEON_OPENCLAW_MEMORY" if adapter_identity else "PANTHEON_MEMORY"
     return fetch_canonical_memory(
         memory_url,
         persona_id=persona_id,
-        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "consultation-provider"),
+        actor_id=os.getenv(f"{actor_prefix}_ACTOR_ID", "").strip()
+        or ("openclaw-persona-sync" if adapter_identity else "consultation-provider"),
         actor_roles=[
             part.strip()
-            for part in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",")
+            for part in os.getenv(f"{actor_prefix}_ACTOR_ROLES", "").split(",")
             if part.strip()
         ]
-        or ["operator"],
+        or (["persona_memory_reader"] if adapter_identity else ["operator"]),
         session_id=session_id,
         scope="both",
         query=decision_query,
         limit=COMMITTEE_MEMORY_LIMIT,
         auth_token=_memory_auth_token(),
+        timeout_seconds=15.0,
     )
+
+
+def _uses_adapter_memory_identity() -> bool:
+    return not any(os.getenv(key, "").strip() for key in (
+        "PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE"
+    ))
 
 
 def _memory_auth_token() -> str | None:
@@ -534,7 +544,9 @@ def _memory_auth_token() -> str | None:
 
     token = resolve_runtime_manager_auth(
         token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
-        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+        token_file_env_key=("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"
+                            if _uses_adapter_memory_identity()
+                            else "PANTHEON_MEMORY_AUTH_TOKEN_FILE"),
         default_token="",
     ).token
     return token or None
@@ -1383,7 +1395,12 @@ def create_app(
                         interpretation = run_panel_interpretation_turn(
                             provider, get_broker(), payload=payload, persona_id=persona_id,
                             query=query, session_id=session_id, operator_id=expected_actor)
-                    if interpretation is not None and interpretation["mode"] == INTERPRETATION_MODE:
+                    if is_meeting and isinstance(meeting_turn.get("own_pre_read"), Mapping):
+                        # Consultation already fetched and validated this turn's
+                        # pre-read (including an empty/refused read). The meeting
+                        # prompt includes it directly; do not issue another read.
+                        retrieval = {"hits": []}
+                    elif interpretation is not None and interpretation["mode"] == INTERPRETATION_MODE:
                         retrieval = {"hits": []}  # the interpretation replaces the memory block
                     else:
                         retrieval = memory_fetcher(
