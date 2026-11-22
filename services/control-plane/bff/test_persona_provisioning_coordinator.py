@@ -5233,6 +5233,7 @@ def test_profile_missing_conflict_and_identity_fail_without_mutation(pending_pro
         coord.repair_paper_pool_risk_policy(**kwargs, requested_profile="low")
     stored = store._backend.records[(record.tenant_id, record.idempotency_key)]
     stored.request_payload.pop("risk")
+    stored.request_payload.pop("traits")  # Remove the original supplied legacy risk source too.
     with pytest.raises(PersonaProvisioningCoordinationError, match="requested_profile_source_missing"):
         coord.repair_paper_pool_risk_policy(**kwargs)
     stored.request_payload.update(risk="medium", metadata={"requested_risk_profile": "high"})
@@ -5386,7 +5387,8 @@ def test_name_only_create_without_approved_policy_holds_and_reuses_case(profile_
     assert retried.error["owner_decision_request"]["deterministic_proposal_id"] == request["deterministic_proposal_id"]
 
 
-def test_original_name_only_reservation_replays_from_verified_owner_without_rehash(profile_ingress):
+@pytest.mark.parametrize("profile", ["low", "medium", "high"])
+def test_original_name_only_reservation_replays_from_verified_owner_without_rehash(profile_ingress, profile):
     h = profile_ingress
     assert h.client.post("/bff/personas", headers=h.headers, json={"name": "Seed Tenant"}).status_code == 201
     tenant_id = h.store.list_all()[0].tenant_id
@@ -5401,15 +5403,18 @@ def test_original_name_only_reservation_replays_from_verified_owner_without_reha
         request_payload=original)
     h.owner.create_persona({"persona_id": record.persona_id, "tenant_id": tenant_id,
                             "name": name, "lifecycle_state": "research_only",
-                            "metadata": {"risk_level": "low", "tenant_id": tenant_id,
+                            "metadata": {"risk_level": profile, "tenant_id": tenant_id,
                                          "provisioning_request_hash": request_hash,
                                          "internal_paper_capital_pool_id": deterministic_provisioning_ids(record).capital_pool_id}})
     response = h.client.post("/bff/personas", headers={**h.headers, "Idempotency-Key": "legacy-key"}, json={"name": name})
-    assert response.status_code == 201, response.text
+    assert response.status_code == (201 if profile == "low" else 502), response.text
     saved = h.store.get(tenant_id, "legacy-key")
     assert saved.request_hash == request_hash
     assert saved.request_payload == original
     assert saved.references["requested_risk_profile_provenance"]["source"] == "verified_persona_owner"
+    assert h.owner.get_persona(record.persona_id)["metadata"]["risk_level"] == profile
+    if profile != "low":
+        assert saved.error["reason_code"] == "risk_policy_profile_mapping_unapproved"
 
 
 def test_conflicting_create_profile_is_traceable_and_writes_nothing(profile_ingress):

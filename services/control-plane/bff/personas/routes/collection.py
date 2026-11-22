@@ -10,7 +10,6 @@ from fastapi import APIRouter, Body, Header, Query
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 from ..service import (
-    PersonaProvisioningCoordinator,
     PersonaProvisioningCoordinationError,
     ProvisioningConflict,
     ProvisioningRecord,
@@ -288,9 +287,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         if _request_dry_run_requested():
             ids = deterministic_provisioning_ids(record)
             archetype = str(canonical_payload.get("archetype") or "generalist")
-            risk = _normalize_risk_level(
-                PersonaProvisioningCoordinator._extract_request_risk_profile_context(canonical_payload)[0] or "low"
-            )
+            risk = _normalize_risk_level(canonical_payload.get("risk") or "low")
             mandate = str(canonical_payload.get("mandate") or "").strip() or None
             strategy_family = str(
                 canonical_payload.get("strategy_family")

@@ -81,12 +81,33 @@ was rerun against disposable PostgreSQL 16.16 (593 passed, no skips), and the
 independent-connection row-update test passed again separately. The container
 was removed after the bounded batch.
 
-The previous-head CI additionally found four lifecycle/enrollment fixture
-files that omitted the actual risk request and depended on inferred low.
-Those tests now explicitly request low, preserving their lifecycle assertions;
-the 107 affected tests pass. No lifecycle production code changed. These are
-narrow validation fixtures for the same provenance guard, including tests
-outside the brief's suggested coordinator test file.
+The operator reopened `a54100a3f`: the original normal name-only request passed
+on f78 but failed with `requested_profile_source_missing` on that head.
+Adding explicit low to four unrelated caller suites concealed a supported
+ingress regression. All four suites are restored byte-for-byte to their
+original inputs; the old `lifecycle-fixtures.log` only describes the rejected
+fixture modification, not acceptance of the original contract.
+
+At `POST /bff/personas`, the original canonical input is hashed unchanged before
+the existing new-Persona default is recorded as `risk=low` with
+`metadata.requested_risk_profile_provenance=persona_create_default`. The existing
+reservation writer stores it. Same-key retries still compare the original hash;
+an explicit-low request differs from an omitted-risk request as before. Explicit
+policies keep their separate contract. Actual financial-profile aliases remain
+validated for conflicts. A historical request with only `traits.risk_appetite`
+uses that supplied value when no financial profile or policy is explicit; it
+cannot override an explicit financial profile. These are actual request values,
+not a catalog policy default.
+
+An older reservation's payload and hash remain unchanged. When its profile is
+absent, the coordinator may recover a profile from the real Persona write owner,
+checking Persona/tenant IDs, declared pool IDs and the request hash when present.
+The owner value must actually exist and agree across its fields. The checkpoint
+labels this source `verified_persona_owner`. Missing owners/profiles still hold;
+a bare older pool never receives low merely because it lacks provenance. Owner
+readback also feeds policy repair and publication. A recovered medium/high value
+survives Persona materialization instead of being overwritten by a display default.
+No policy or approval is inferred by any of these paths.
 
 ## Runtime budget and cleanup
 
@@ -101,6 +122,15 @@ concurrent same-data submissions and dry_run add zero. Existing identical
 Governance cases are reused. Pre-admission provisioning retains its existing
 single suspension write, now carrying the profile as a narrow metadata merge.
 
+Create ingress adds <=96 bytes to an existing provisioning request for the
+default and label. Verified legacy Persona recovery adds <=512 bytes per
+existing provisioning row at current hosted identity lengths (<=1536 bytes
+once for the three accounts). Both are bounded replacing fields. Daily growth
+is <=96*N + 512*M bytes for N new omitted-profile requests and M newly recovered
+records; steady-state growth is zero. No additional rows, recurring writes or
+cleanup process are introduced; the existing provisioning row retention applies.
+This increment is registered on the provisioning writer in the storage manifest.
+
 Provenance is retained with the existing pool row and its archival policy;
 there is no new cleanup process. Whole-pool and audit-history retention remain
 under RC3 WP3.1. These increments are registered on the existing JSON, Postgres
@@ -114,8 +144,11 @@ fixtures, low/medium/high, real Capital dataclass/store/mapper, HTTP `/risk-poli
 dry_run, response loss, no-op retries, concurrent status/metadata preservation,
 Postgres independent connections updating exactly one row, mismatched
 pending/rejected proposals, and existing explicit policy/version/revocation/exit
-regressions. Test fixtures now explicitly supply risk instead of relying on a
-production fallback.
+regressions. `original-lifecycle-contracts.log` verifies the 107 original callers
+unchanged. `ingress-owner-validation.log` and `ingress-pg.log` supersede the
+previous-head regression runs; the typed missing/conflict/invalid guard remains
+in force. Focused tests cover default provenance, old-hash replay, owner identity,
+aliases, missing old sources, conflicting sources and no-approved-policy holds.
 
 After review/merge, `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121` owns deployment
 and normal repair of the three accounts, then read-only collection of original

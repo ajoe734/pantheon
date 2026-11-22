@@ -6337,11 +6337,15 @@ def _persona_create_effective_profile_payload(payload: Mapping[str, Any]) -> Dic
     This is create ingress normalization, never a fallback for an older pool.
     Explicit policies retain their existing independent contract.
     """
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
     effective = deepcopy(dict(payload))
-    profile, required, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(effective)
+    profile, required, _ = ProfileProvenance._extract_request_risk_profile_context(effective)
+    if profile is not None:
+        effective["risk"] = profile
     if profile is None and required:
         effective["risk"] = "low"
-        metadata = dict(effective.get("metadata") or {})
+        metadata = dict(effective["metadata"]) if isinstance(effective.get("metadata"), Mapping) else {}
         metadata["requested_risk_profile_provenance"] = "persona_create_default"
         effective["metadata"] = metadata
     return effective
@@ -6407,16 +6411,18 @@ def _persona_record_for_provisioning(
     mutate_store: bool = False,
     existing: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
-    requested_profile, _, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(payload)
+    requested_profile, _, _ = ProfileProvenance._extract_request_risk_profile_context(payload)
     recovered = record.references.get("requested_risk_profile_provenance")
     if (requested_profile is None and isinstance(recovered, Mapping)
             and recovered.get("source") == "verified_persona_owner"
             and recovered.get("persona_id") == record.persona_id
             and recovered.get("tenant_id") == record.tenant_id):
-        requested_profile = PersonaProvisioningCoordinator._verified_requested_profile(
+        requested_profile = ProfileProvenance._verified_requested_profile(
             ("verified_persona_owner", recovered.get("requested_profile")))
     risk = _normalize_risk_level(requested_profile or "low")
     mandate = str(payload.get("mandate") or "").strip() or None
@@ -6759,7 +6765,7 @@ def _coordinate_persona_create(
         active = latest
     persona, metadata = _persona_record_for_provisioning(
         active,
-        payload=payload,
+        payload=active.request_payload,
         owner=owner,
         mutate_store=True,
     )
