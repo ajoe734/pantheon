@@ -64,12 +64,15 @@ valuation definition. Groups expose value, as-of, interval, covered/eligible
 persona counts and covered/eligible runtime counts. Missing comparability stays
 on the individual row. Legacy `total_pnl` is null across incompatible groups.
 `metric_coverage` exposes each metric's available, missing and eligible counts.
+The existing reconciliation adapter also preserves its source tenant ID so
+baseline comparisons can prove tenant identity without changing their values.
 `average_fill_rate` is named `arithmetic_mean_of_observed_runtime_rates` through
 `fill_rate_aggregation`; raw per-runtime algorithms remain available.
 Ranking items include `ranking_unit`, `comparison_scope` and ranks within that
 scope. `ranking_basis=within_comparison_scope` prevents interpreting a USD/live
-rank as competition with TWD/paper. Unknown PnL intervals and stale sources do
-not enter the PnL ranking. Missing observations remain in block diagnostics.
+rank as competition with TWD/paper. Unknown metric intervals and stale sources do
+not enter the corresponding ranking. Legacy scalar fill rates require a dated
+source window; quantity rates retain their own explicit source window. Missing observations remain in block diagnostics.
 
 ## Budget and cleanup
 

@@ -226,7 +226,7 @@ def _fresh_client(
     }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
     for record in telemetry_summaries.values():
-        record.update(tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
+        record.update(drawdown_at="2026-05-23T08:00:00Z", sharpe_ratio_at="2026-05-23T08:00:00Z", fill_rate_at="2026-05-23T08:00:00Z", tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
     for runtime_id, record in drift_reports.items():
         record.update(tenant_id="tenant-test", binding_id="binding-" + runtime_id.removeprefix("runtime-"))
     for record in monitoring_sessions.values():
@@ -742,6 +742,7 @@ class _OperatorStore:
             "pnl": -168.085 if b["persona_id"] == "p1" else None,
             "pnl_currency": "TWD", "pnl_period_start_at": "2026-11-01T00:00:00Z", "pnl_at": SNAP,
             "pnl_definition": "net_ledger_pnl", "ledger_fill_count": 1 if b["persona_id"] == "p1" else 0,
+            "drawdown_at": SNAP, "sharpe_ratio_at": SNAP, "window": "1h",
             "avg_slippage_bps": 0, "avg_slippage": 99, "sharpe_ratio_reason": "insufficient_samples",
             "fill_rate_details": {"status": "known", "numerator": 0, "denominator": 452, "unit": "shares",
                                   "basis": "filled_quantity_over_submitted_quantity", "window": {"start_at": "2026-11-01T00:00:00Z", "end_exclusive_at": SNAP}}}
@@ -961,3 +962,28 @@ def test_known_quarter_equity_provenance_can_name_pnl_definition():
     data = _operator_pulse(store)["data"]
     assert not any(g["value"] is not None for g in data["summary"]["pnl_groups"])
     assert not next(r for r in data["rankings"] if r["persona_id"] == "p1")["ranking_eligible"]
+
+
+def test_observed_metric_with_unknown_period_is_not_comparable():
+    store = _OperatorStore()
+    store.records[0].pop("drawdown_at")
+    store.records[0].update(drawdown=0.02)
+    data = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
+    block = next(b for b in data["items"] if b["metric"] == "drawdown")
+    assert block["items"] == []
+    assert block["metric_reasons"]["r-p1"] == "comparison_scope_unverified"
+
+
+def test_reconciliation_mapping_preserves_tenant_for_scoped_baselines():
+    from services.control_plane.bff.ports.reconciliation_drift_reads import map_reconciliation_record_to_drift_report
+    source = {"tenant_id": "other", "runtime_id": "r-p1", "binding_id": "b-p1", "deployment_stage": "live", "generated_at": SNAP,
+              "delta_summary": {"baseline_metrics": {"pnl": 1}, "observed_metrics": {"pnl": 2}}}
+    mapped = map_reconciliation_record_to_drift_report(source)
+    assert mapped["tenant_id"] == "other"
+    store = _OperatorStore()
+    store.bindings[0]["deployment_stage"] = "live"
+    store.records[0]["deployment_stage"] = "live"
+    store.list_paper_live_drift_reports = lambda: [mapped]
+    body = _operator_pulse(store)
+    assert body["data"]["summary"]["baseline_comparison_count"] == 0
+    assert body["data"]["summary"]["missing_baseline_runtime_ids"] == ["r-p1"]

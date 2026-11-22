@@ -2163,14 +2163,36 @@ def _trading_pulse_sort_operator_rows(rows: List[Dict[str, Any]]) -> List[Dict[s
     return sorted(rows, key=_trading_pulse_operator_row_sort_key)
 
 
+def _pulse_comparison_scope(item: Dict[str, Any], metric: str) -> Optional[Dict[str, Any]]:
+    ctx = item.get("performance_context") or {}
+    if ctx.get("source_status") in {"stale", "unavailable"}:
+        return None
+    period = (ctx.get("metric_periods") or {}).get(metric) or {}
+    scope = {"stage": item.get("deployment_stage"), "period": period,
+             "unit": (ctx.get("metric_units") or {}).get(metric)}
+    if metric == "pnl":
+        if not all(ctx.get(key) for key in ("pnl_currency", "pnl_period_start_at", "pnl_at", "pnl_definition")):
+            return None
+        scope["definition"] = ctx["pnl_definition"]
+    elif metric == "fill_rate":
+        details = ctx.get("fill_rate_details") or {}
+        window = details.get("window") or {}
+        if window.get("start_at") and window.get("end_exclusive_at"):
+            scope["period"] = window
+        elif not period.get("as_of") or not period.get("window"):
+            return None
+        scope["basis"] = ctx.get("fill_rate_basis")
+        scope["quantity_unit"] = details.get("unit")
+    elif not period.get("as_of") or not (period.get("start_at") or period.get("window")):
+        return None
+    return scope
+
+
 def _trading_pulse_metric_value(
     item: Dict[str, Any],
     metric: str,
 ) -> Optional[float]:
-    ctx = item.get("performance_context") or {}
-    if ctx.get("source_status") in {"stale", "unavailable"}:
-        return None
-    if metric == "pnl" and not all(ctx.get(k) for k in ("pnl_currency", "pnl_period_start_at", "pnl_at", "pnl_definition")):
+    if _pulse_comparison_scope(item, metric) is None:
         return None
     for field in _TRADING_PULSE_RANKING_METRIC_FIELDS.get(metric, (metric,)):
         value = _pulse_number(item.get(field))
@@ -2204,14 +2226,7 @@ def _trading_pulse_ranked_items(
     ranks_by_scope: Dict[str, int] = {}
     for index, item in enumerate(ordered_present[:limit], start=1):
         projected = dict(item)
-        ctx = item.get("performance_context") or {}
-        scope = {"stage": item.get("deployment_stage"), "period": (ctx.get("metric_periods") or {}).get(metric),
-                 "unit": (ctx.get("metric_units") or {}).get(metric)}
-        if metric == "pnl":
-            scope["definition"] = ctx.get("pnl_definition")
-        if metric == "fill_rate":
-            scope["basis"] = ctx.get("fill_rate_basis")
-            scope["period"] = (ctx.get("fill_rate_details") or {}).get("window") or scope["period"]
+        scope = _pulse_comparison_scope(item, metric)
         scope_key = json.dumps(scope, sort_keys=True)
         ranks_by_scope[scope_key] = ranks_by_scope.get(scope_key, 0) + 1
         projected["rank"] = ranks_by_scope[scope_key]
@@ -3993,7 +4008,7 @@ class ManagementService:
                 prior = telemetry_by_binding.get(key)
                 if prior is None or str(record.get("collected_at") or "") > str(prior.get("collected_at") or ""):
                     telemetry_by_binding[key] = record
-        monitoring_by_runtime_id, monitoring_by_binding_id = _trading_pulse_monitoring_indexes([r for r in monitoring_sessions if r.get("tenant_id") == operator_scope.get("tenant_id")])
+        _, monitoring_by_binding_id = _trading_pulse_monitoring_indexes([r for r in monitoring_sessions if r.get("tenant_id") == operator_scope.get("tenant_id")])
         strategies = {}
         try:
             for strategy in store.list_strategies() or []:
@@ -4024,7 +4039,7 @@ class ManagementService:
             if session and not _pulse_matching_record(session, binding, snap):
                 session = None
             row = _project_operator_runtime_state_row(
-                None, binding, telemetry_summary_record=raw,
+                store, binding, telemetry_summary_record=raw,
                 monitoring_session_record=session, prefetched=True,
             )
             person = personas[str(binding["persona_id"])]

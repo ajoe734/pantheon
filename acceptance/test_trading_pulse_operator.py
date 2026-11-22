@@ -26,7 +26,7 @@ def fixture():
                  "tenant_id": p["tenant_id"], "deployment_stage": "paper", "status": "active"} for p in people]
     raw = {"r-p1": {"runtime_id": "r-p1", "binding_id": "b-p1", "tenant_id": "tenant-a", "last_event_at": AT,
                       "pnl_at": AT, "pnl": -168.085, "pnl_currency": "TWD", "pnl_period_start_at": START,
-                      "pnl_definition": "net_ledger_pnl", "drawdown": 0, "sharpe_ratio": None, "avg_slippage_bps": 0, "ledger_fill_count": 1},
+                      "pnl_definition": "net_ledger_pnl", "drawdown_at": AT, "window": "1h", "drawdown": 0, "sharpe_ratio": None, "avg_slippage_bps": 0, "ledger_fill_count": 1},
            "r-p2": {"runtime_id": "r-p2", "binding_id": "b-p2", "tenant_id": "tenant-a", "last_event_at": AT,
                       "pnl_at": None, "pnl": None, "drawdown": None, "sharpe_ratio": None,
                       "avg_slippage_bps": 0, "ledger_fill_count": 0,

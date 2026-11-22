@@ -268,7 +268,17 @@ def test_reconciliation_record_mapping_missing_values_stay_missing() -> None:
     assert report["drift_groups"] is None
 
 
-def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
+@pytest.fixture
+def _operator_default_tenant():
+    from services.control_plane.bff.core.owner_reads import selected_tenant, authorization
+    token = selected_tenant.set("default")
+    auth_token = authorization.set("Bearer op:operator:default")
+    yield
+    authorization.reset(auth_token)
+    selected_tenant.reset(token)
+
+
+def test_reconciliation_drift_contract_composition_and_trading_pulse(_operator_default_tenant) -> None:
     # AC6: Recorded owner responses in real shape from reconciliation-drift main.py
     # live/paper records through native BFF composition and existing DTO builder
     from fastapi import FastAPI
@@ -394,7 +404,10 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
             "plan_id": "plan-paper-01",
         },
     ]
-    store.persona_capital_runtime.runtime.list_runtime_bindings = lambda: list(bindings)
+    for binding in bindings:
+        binding.update(tenant_id="default", persona_id="p-" + binding["runtime_id"])
+    store.list_runtime_bindings = lambda: list(bindings)
+    store.list_personas = lambda: [{"id": b["persona_id"], "tenant_id": "default", "name": b["persona_id"]} for b in bindings]
     store.get_runtime_binding_by_runtime_id = lambda rid: next(
         (b for b in bindings if b["runtime_id"] == rid), None
     )
@@ -427,7 +440,7 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
     # 1. Operator endpoint for recorded live record:
     live_resp = client.get(
         "/api/v1/operator/paper-live-drift/runtime-live-01",
-        headers={"Authorization": "Bearer op:operator"},
+        headers={"Authorization": "Bearer op:operator:default"},
     )
     assert live_resp.status_code == 200
     live_dto = live_resp.json()
@@ -442,7 +455,7 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
     # 2. Operator endpoint for recorded paper-only record:
     paper_resp = client.get(
         "/api/v1/operator/paper-live-drift/runtime-paper-01",
-        headers={"Authorization": "Bearer op:operator"},
+        headers={"Authorization": "Bearer op:operator:default"},
     )
     assert paper_resp.status_code == 200
     paper_dto = paper_resp.json()
@@ -457,7 +470,7 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
     # 3. Management trading pulse endpoint:
     pulse_resp = client.get(
         "/bff/management/trading-pulse",
-        headers={"Authorization": "Bearer op:operator"},
+        headers={"Authorization": "Bearer op:operator:default"},
     )
     assert pulse_resp.status_code == 200
     pulse_dto = pulse_resp.json()
@@ -475,7 +488,7 @@ def test_reconciliation_drift_contract_composition_and_trading_pulse() -> None:
     assert live_comp["paper_live_drift"]["status"] == "breached"
 
 
-def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
+def test_paper_only_bindings_trading_pulse_healthy_empty(_operator_default_tenant) -> None:
     # AC5: With only paper bindings the management trading pulse returns no comparison
     # with a healthy empty status rather than fabricated or zero values
     from fastapi import FastAPI
@@ -538,7 +551,10 @@ def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
             "plan_id": "plan-paper-02",
         }
     ]
-    store.persona_capital_runtime.runtime.list_runtime_bindings = lambda: list(paper_bindings)
+    for binding in paper_bindings:
+        binding.update(tenant_id="default", persona_id="p-" + binding["runtime_id"])
+    store.list_runtime_bindings = lambda: list(paper_bindings)
+    store.list_personas = lambda: [{"id": b["persona_id"], "tenant_id": "default", "name": b["persona_id"]} for b in paper_bindings]
     store.get_runtime_binding_by_runtime_id = lambda rid: next(
         (b for b in paper_bindings if b["runtime_id"] == rid), None
     )
@@ -555,7 +571,7 @@ def test_paper_only_bindings_trading_pulse_healthy_empty() -> None:
 
     pulse_resp = client.get(
         "/bff/management/trading-pulse",
-        headers={"Authorization": "Bearer op:operator"},
+        headers={"Authorization": "Bearer op:operator:default"},
     )
     assert pulse_resp.status_code == 200
     pulse_dto = pulse_resp.json()

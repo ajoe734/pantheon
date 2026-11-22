@@ -215,7 +215,10 @@ def check(fetch, tenant):
             value = ((by_key.get(key, {}).get("telemetry_summary") or {}).get("metrics") or {}).get(metric)
             stale = raw.get("staleness") or {}
             stale_source = raw.get("_valuation_failure") or stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))
-            comparable = metric != "pnl" or all((raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw)))
+            comparable = all((raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))) if metric == "pnl" else bool(raw.get(metric + "_at") and (raw.get("window") or raw.get(metric + "_period_start_at") or (raw.get("pnl_period_start_at") if metric == "drawdown" else None)))
+            if metric == "fill_rate":
+                window = (raw.get("fill_rate_details") or {}).get("window") or {}
+                comparable = comparable or bool(window.get("start_at") and window.get("end_exclusive_at"))
             if number(value) is not None and comparable and not stale_source:
                 eligible_keys.add(key)
         # Source availability can further restrict eligibility (for example a

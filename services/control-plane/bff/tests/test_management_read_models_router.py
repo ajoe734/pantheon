@@ -1181,7 +1181,7 @@ def _fresh_trading_pulse_router_client(*, include_gap: bool = False) -> TestClie
     }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
     for record in telemetry_summaries.values():
-        record.update(tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
+        record.update(drawdown_at="2026-05-23T08:00:00Z", sharpe_ratio_at="2026-05-23T08:00:00Z", fill_rate_at="2026-05-23T08:00:00Z", tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
     for runtime_id, record in drift_reports.items():
         record.update(tenant_id="tenant-test", binding_id="binding-" + runtime_id.removeprefix("runtime-"))
     for record in monitoring_sessions.values():
