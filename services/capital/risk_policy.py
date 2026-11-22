@@ -2538,7 +2538,7 @@ def discover_approved_profile_risk_policy(
     resolved_pool_id: str,
     effective_tenant_id: str | None,
     clean_stage: str | None = "paper",
-    clean_profile: str = "low",
+    clean_profile: str | None = None,
     expected_version: str | None = None,
     base_pool: Mapping[str, Any] | None = None,
     currency: str | None = None,
@@ -2557,7 +2557,15 @@ def discover_approved_profile_risk_policy(
 ) -> ProfilePolicyAutoResolution:
     """Bounded discovery of an applicable approved RiskPolicy for (tenant_id, requested_profile, stage)."""
     effective_now = now_dt or _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
-    eff_profile = _optional_text(clean_profile) or "low"
+    eff_profile = _optional_text(clean_profile)
+    if eff_profile is None or not isinstance(clean_profile, str):
+        return ProfilePolicyAutoResolution(
+            resolved=False,
+            status="unresolved_profile_mapping",
+            reason_code="risk_policy_profile_mapping_unapproved",
+            reason="Requested profile provenance must be established before policy discovery",
+            absence_source="requested_profile_missing" if eff_profile is None else "requested_profile_invalid",
+        )
     eff_stage = _optional_text(clean_stage) or "paper"
     req_version = _optional_text(expected_version)
 
@@ -3404,21 +3412,37 @@ def resolve_pool_risk_policy_binding(
     )
     effective_tenant_id = clean_expected_tenant or pool_tenant_id or binding_tenant
     clean_stage = _optional_text(expected_stage)
-    clean_profile = (
-        _optional_text(requested_profile)
-        or (
-            _first_text_or_none(pool_obj, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
-            if isinstance(pool_obj, Mapping)
-            else None
-        )
-        or _first_text_or_none(pool_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
-        or _first_text_or_none(b_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+    # Request provenance belongs to the caller/pool/binding, never the candidate
+    # policy. Check every alias so precedence cannot hide a contradictory source.
+    profile_keys = ("requested_risk_profile", "risk_profile", "requested_risk", "risk")
+    profile_sources = {"requested_profile": requested_profile}
+    for label, container in (
+        ("pool", pool_obj), ("pool.metadata", pool_meta),
+        ("binding", b_map), ("binding.metadata", b_meta),
+        ("binding.capital_pool", pool_sub),
+        ("binding.capital_pool.metadata", pool_sub.get("metadata")),
+    ):
+        for key in profile_keys:
+            value = container.get(key) if isinstance(container, Mapping) else getattr(container, key, None)
+            if value is not None:
+                profile_sources[f"{label}.{key}"] = value
+    present_profiles = {key: value for key, value in profile_sources.items() if value is not None and value != ""}
+    invalid_profile = any(not isinstance(value, str) or not value.strip() for value in present_profiles.values())
+    distinct_profiles = {value.strip() for value in present_profiles.values() if isinstance(value, str) and value.strip()}
+    profile_absence = (
+        "requested_profile_invalid" if invalid_profile else
+        "requested_profile_conflict" if len(distinct_profiles) > 1 else
+        "requested_profile_missing" if not distinct_profiles else None
     )
+    clean_profile = next(iter(distinct_profiles)) if profile_absence is None else None
     needs_approved_mapping = bool(
         require_approved_profile_mapping is True
         or pool_meta.get("require_approved_profile_mapping") is True
         or b_meta.get("require_approved_profile_mapping") is True
-        or (require_approved_profile_mapping is not False and clean_profile is not None)
+        or getattr(pool_obj, "require_approved_profile_mapping", False) is True
+        or pool_sub.get("require_approved_profile_mapping") is True
+        or _mapping(pool_sub.get("metadata")).get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and bool(present_profiles))
     )
 
     def _fail(
@@ -3456,6 +3480,26 @@ def resolve_pool_risk_policy_binding(
             owner_decision_request=owner_decision,
         )
 
+    def _profile_provenance_failure(
+        policy_obj: RiskPolicy | None = None, policy_tenant: str | None = None,
+    ) -> BoundPoolRiskPolicyResolution:
+        return _fail(
+            "unresolved_profile_mapping", "risk_policy_profile_mapping_unapproved",
+            f"Requested profile provenance rejected: {profile_absence}; repair the original request before policy mapping",
+            policy_obj=policy_obj, policy_tenant=policy_tenant,
+            profile_status="unresolved_owner_decision_required",
+            owner_decision={
+                "policy_owner": "services/capital/risk_policy.py",
+                "accountable_domain": "capital_risk_policy_owner",
+                "absence_source": profile_absence,
+                "requested_profile": None,
+                "profile_sources": present_profiles,
+                "capital_pool_id": resolved_pool_id,
+                "tenant_id": effective_tenant_id,
+                "stage": clean_stage,
+            },
+        )
+
     if clean_expected_tenant and pool_tenant_id and clean_expected_tenant != pool_tenant_id:
         return _fail(
             "wrong_tenant",
@@ -3465,7 +3509,9 @@ def resolve_pool_risk_policy_binding(
         )
 
     if needs_approved_mapping and not resolved_ref and not explicit_inline_key:
-        effective_req_profile = clean_profile or "low"
+        if profile_absence is not None:
+            return _profile_provenance_failure()
+        effective_req_profile = clean_profile
         auto_now = _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
         auto_res = discover_approved_profile_risk_policy(
             resolved_pool_id=resolved_pool_id,
@@ -3961,8 +4007,7 @@ def resolve_pool_risk_policy_binding(
                 policy_tenant=policy_tenant_id,
             )
 
-    if not clean_profile:
-        clean_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
+    policy_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
     is_default_inline_id = (
         str(policy_model.risk_policy_id).startswith("rp-pool-")
         or (bool(resolved_pool_id) and str(policy_model.risk_policy_id) == f"rp-{resolved_pool_id}")
@@ -3972,8 +4017,11 @@ def resolve_pool_risk_policy_binding(
     needs_approved_mapping = bool(
         needs_approved_mapping
         or policy_meta.get("require_approved_profile_mapping") is True
-        or (require_approved_profile_mapping is not False and (clean_profile is not None or is_default_inline_id))
+        or (require_approved_profile_mapping is not False and (policy_profile is not None or is_default_inline_id))
     )
+    if needs_approved_mapping and profile_absence is not None:
+        # Retain the validated bound policy for governed reductions and exits.
+        return _profile_provenance_failure(policy_model, policy_tenant_id)
     verified_decision_id, all_verified_decision_ids, verification_diag = _verify_policy_owner_approval_decisions(
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
@@ -3999,7 +4047,7 @@ def resolve_pool_risk_policy_binding(
         len(all_verified_decision_ids) > 1
         or verification_diag == "policy_candidates_ambiguous"
     ):
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         ambig_req = {
             "policy_owner": "services/capital/risk_policy.py",
             "governance_surface": "services/control-plane/governance/risk_policy.py",
@@ -4138,7 +4186,7 @@ def resolve_pool_risk_policy_binding(
         verification_diag = _higher_priority_absence_source(verification_diag, policy_veto_diag)
 
     if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         if is_default_inline_id and not resolved_ref and policy_veto_diag is None:
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=resolved_pool_id,
@@ -4198,7 +4246,7 @@ def resolve_pool_risk_policy_binding(
                     computed_digest = risk_policy_digest(policy_model)
 
     if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         cand_pool_digest = (
             (
                 _first_text_or_none(pool_obj, "approval_digest", "pool_approval_digest")
