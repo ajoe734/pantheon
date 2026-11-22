@@ -3,9 +3,12 @@
   "work_package": "RC6 WP6.4 / FE-RISK-STRATEGY-RESEARCH-UI-20261120",
   "continuation": "FE-RESEARCH-OPERATOR-READABILITY-20261122",
   "verification": {
-    "command": "python -m pytest -q services/control-plane/bff/tests/test_research_tasks_read.py services/research/tests/test_query_plan.py",
-    "result": "22 passed",
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_tasks_read.py services/research/tests/test_query_plan.py",
+    "result": "22 passed, 33 deprecation warnings; exit 0",
     "scope": "Default all-view compatibility, category filtering before pagination, tenant isolation, structured source and dataset references, and legacy runner states"
   },
+  "composition": "Prepared PR #7747 head 66346b8e9053a6e51e87d4b7ae7ffe9cf82a0c5e preserved and composed with dev 667067aab0d2c6e924f345f3583fc6fe18cc0000.",
+  "diff_check": "git diff --check origin/dev...HEAD; exit 0",
+  "residual_findings": [],
   "hosted_acceptance": "Pending exact FE/BFF deploy and authenticated research readback under EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104."
 }
