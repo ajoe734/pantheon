@@ -108,10 +108,18 @@ stdout, retain one summary per exact FE/BFF pair under its existing 5 MiB packag
 cap and delete superseded temporary captures. No new storage-manifest writer is
 needed.
 
-## Review coordination
+## Review and hosted handoff
 
-The proposed relocated manifest is `docs/deployment/evidence/
-BFF-TRADING-PULSE-OPERATOR-FACTS-20261122/evidence.json` (one continuous path).
-Human/Ops must confirm/admit this directory and the one-line discovery test
-update in `scripts/test_dev_acceptance_stage.py` before the new handoff.
-The old approval for head `57c0c5f3d` does not approve the follow-up commits.
+Human/Ops admitted the relocated manifest, this README and the discovery test
+in `scripts/test_dev_acceptance_stage.py` on 2026-11-22. PR #7742 returns to
+Antigravity2 for independent review of the new exact head. The old approval
+for head `57c0c5f3d` does not approve the follow-up commits.
+
+The coordinator independently invoked the regular executable with the real
+dev viewer against the pre-fix public API. Authentication and active/allowed
+tenant verification succeeded; the verdict was `aggregate_scope_unverified`
+(exit 77). This is a coordinator-reported negative baseline, not a positive
+hosted result or a worker rerun. No exact served FE/BFF pair was supplied with
+that diagnostic. Task E must verify the repaired exact pair and obtain exit 0
+from this same executable, alongside its browser acceptance. Exit 77 remains
+unverifiable and cannot satisfy hosted acceptance.

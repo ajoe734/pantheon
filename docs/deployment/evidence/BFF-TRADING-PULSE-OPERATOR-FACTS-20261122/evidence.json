@@ -2,10 +2,10 @@
   "task_id": "BFF-TRADING-PULSE-OPERATOR-FACTS-20261122",
   "owner": "Codex2",
   "reviewer": "Antigravity2",
-  "recorded_at": "2026-11-22T14:31:34.939496+00:00",
-  "review_status": "awaiting_human_ops_artifact_coordination_then_independent_review",
+  "recorded_at": "2026-11-22T14:37:03.708653+00:00",
+  "review_status": "awaiting_independent_exact_head_review",
   "root_cause": "RC6 WP6.1/WP6.2/WP6.3 operator readability and scoped business facts",
-  "validated_source_commit": "93bc9db4b56b111f9f88f6fe5863dc131454975a",
+  "validated_source_commit": "3d58888aaae969609e5ca51043f409a3b8af2fb1",
   "owned_layer": "Trading-pulse shared read aggregation, additive operator contract, independent read-only API probe and compatibility tests",
   "not_changing": [
     "order execution",
@@ -23,12 +23,12 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_trading_pulse_operator.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py scripts/test_dev_acceptance_stage.py --disable-warnings --maxfail=2",
       "exit_code": 0,
-      "result": "102 passed, 3 warnings in 8.87s"
+      "result": "102 passed, 3 warnings in 10.34s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py --disable-warnings --maxfail=2",
       "exit_code": 0,
-      "result": "133 passed, 143 warnings in 67.62s"
+      "result": "133 passed, 143 warnings in 74.05s (0:01:14)"
     },
     {
       "command": "git diff --check",
@@ -59,7 +59,8 @@
   "hosted_acceptance": {
     "status": "pending",
     "owner_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
-    "claim": "No hosted deployment or acceptance claimed by this source task."
+    "claim": "No hosted deployment or acceptance claimed by this source task.",
+    "required_result": "Task E must run this same executable with the real dev viewer against the repaired, verified exact FE/BFF pair and obtain exit 0; exit 77 is unverifiable, never acceptance."
   },
   "residual_findings": [],
   "composition_base": "3595613c6",
@@ -120,8 +121,26 @@
     "The fixed expected-probe list in the existing stage regression includes the new discoverable probe. Stage runtime is unchanged."
   ],
   "coordination_hold": {
+    "status": "resolved",
     "actor": "Human/Ops",
-    "reason": "Canonical artifact contract currently names the former probe directory; its executable replacement cannot contain evidence.json. Confirm/admit this evidence directory and scripts/test_dev_acceptance_stage.py before exact-head review handoff.",
+    "artifact_contract_updated_at": "2026-11-22T14:34:16Z",
+    "resume_instruction_at": "2026-11-22T14:34:22Z",
+    "reason": "Canonical artifact contract admits relocated evidence.json, README.md and scripts/test_dev_acceptance_stage.py; resume PR #7742 and hand off to Antigravity2.",
     "manifest": "docs/deployment/evidence/BFF-TRADING-PULSE-OPERATOR-FACTS-20261122/evidence.json"
+  },
+  "hosted_negative_baseline": {
+    "source": "Coordinator report in canonical task next, 2026-11-22T14:34:22Z",
+    "invocation": "./acceptance/probes/trading-pulse-operator",
+    "environment": "Pre-fix public dev API with real read-only dev viewer; no tenant override",
+    "authentication": "succeeded",
+    "active_and_allowed_tenant_verification": "succeeded",
+    "exit_code": 77,
+    "result": {
+      "passed": false,
+      "unverifiable": "aggregate_scope_unverified"
+    },
+    "exact_served_pair": null,
+    "scope": "Coordinator-reported negative baseline only; not rerun by this worker. No exact served pair accompanied this diagnostic; it does not prove repaired hosted behavior.",
+    "disposition": "Existing RC6 WP6.1/WP6.2/WP6.3 source repair in PR #7742; positive exact-pair hosted proof remains with TRADING-PULSE-HOSTED-ACCEPTANCE-20261122."
   }
 }
