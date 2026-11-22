@@ -213,3 +213,16 @@ The isolated rerun passed (1 passed, 3 warnings in 14.16s, exit 0;
 Bare typed/legacy negative controls retain their original source-less inputs;
 no product provenance or authorization guard changed for this fixture repair.
 Hosted deployment/three-account repair remains with the existing proof task.
+
+The final continuation rerun on source `6255a80ae` passed 620 full
+owner/provisioning/Capital contracts (82.40s, no skips), 108 lifecycle contracts
+including the original four caller suites and real Governance/Registry reload
+(58.64s), the six-connection PostgreSQL one-row update (1.11s), the original six
+reviewer controls with explicit result assertions, and the storage manifest check.
+The first combined harness used `gov_approval_test` for Capital and failed the
+existing migration test that names `pantheon` (619 passed, 1 failed); that failed
+receipt is retained as non-acceptance evidence in `continuation-owner-validation.log`.
+The corrected full rerun uses the expected `pantheon` database and passed;
+`continuation-owner-retry.log` is the acceptance receipt. Both disposable
+containers were removed after collecting terminal results. Subsequent delivery
+commits only add these evidence records; source remains the tested version.
