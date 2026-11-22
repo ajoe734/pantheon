@@ -10,7 +10,7 @@
 
 | 可核對的來源 | 識別資訊 |
 |---|---|
-| 觀察版本 | Dev Root 44977484046，BFF `d585efa53fc6242c31972ad69b2f627473a33f3d`，FE `bf4e79d774bb387a51e9030e5821b4f61bbbb806` |
+| 觀察版本 | BFF `d585efa53fc6242c31972ad69b2f627473a33f3d`，FE `bf4e79d774bb387a51e9030e5821b4f61bbbb806`。[Dev Root 44975037755](https://github.com/ajoe734/pantheon/actions/runs/44975037755) · [同版前端整合驗證 44977484046](https://github.com/ajoe734/execute-plans/actions/runs/44977484046) |
 | 澄川目前綁定（觀察當時） | `rt-3252fa75`、`rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4` |
 | 拒單事件與交易旅程 | `91d55953-b575-4fe8-8d39-6e0cade58d59`、`tj_79726064-4cc2-5510-8e11-7f5e59ff89bd` |
 | 驗證用 Persona | `rt-49c1c3d1`、`persona-d64835a203ce276b8fbb`，既有 hosted fixture 中 `persona_is_probe` 為真 |
