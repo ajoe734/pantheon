@@ -2250,6 +2250,10 @@ class PersonaProvisioningCoordinator:
     ) -> tuple[str | None, bool, str | None]:
         req_meta = req.get("metadata") if isinstance(req.get("metadata"), Mapping) else {}
         has_explicit_policy = "risk_policy" in req or "risk_policy" in req_meta
+        raw_ref = req.get("risk_policy_ref")
+        if raw_ref is None or not str(raw_ref).strip():
+            raw_ref = req.get("riskPolicyRef") or req_meta.get("risk_policy_ref")
+        has_explicit_ref = bool(raw_ref is not None and str(raw_ref).strip())
 
         risk_profile_map = req.get("risk_profile") if isinstance(req.get("risk_profile"), Mapping) else {}
         requested_profile = str(
@@ -2273,7 +2277,7 @@ class PersonaProvisioningCoordinator:
         else:
             require_approved_mapping = bool(
                 requested_profile is not None
-                or not has_explicit_policy
+                or (not has_explicit_policy and not has_explicit_ref)
                 or explicit_require_flag is True
             )
         candidate_approval_id = (
@@ -2523,6 +2527,20 @@ class PersonaProvisioningCoordinator:
                     auto_res=auto_res,
                 )
             else:
+                base_existing_meta = (
+                    dict(base_pool.get("metadata"))
+                    if isinstance(base_pool, Mapping) and isinstance(base_pool.get("metadata"), Mapping)
+                    else {}
+                )
+                persisted_unmapped_approval_id = (
+                    candidate_approval_id
+                    or str(
+                        base_existing_meta.get("profile_mapping_approval_id")
+                        or base_existing_meta.get("approval_decision_id")
+                        or ""
+                    ).strip()
+                    or None
+                )
                 candidate_fallback = (
                     auto_res.candidate_policy.to_dict()
                     if auto_res.candidate_policy is not None
@@ -2545,8 +2563,8 @@ class PersonaProvisioningCoordinator:
                         "profile_auto_resolved": True,
                         "risk_policy": candidate_fallback,
                         **(
-                            {"profile_mapping_approval_id": candidate_approval_id}
-                            if candidate_approval_id
+                            {"profile_mapping_approval_id": persisted_unmapped_approval_id}
+                            if persisted_unmapped_approval_id
                             else {}
                         ),
                     },
@@ -5497,19 +5515,36 @@ class PersonaProvisioningCoordinator:
                 f"{before_resolution.reason}"
             )
 
+        is_explicit_caller_replacement = bool(
+            (risk_policy is not None or caller_clean_ref is not None)
+            and auto_discovered_policy is None
+            and caller_approval_id is None
+        )
+        stripped_replacement_keys = {
+            "risk_policy_stale",
+            "risk_policy_superseded_by",
+            "risk_policy_expires_at",
+            "risk_policy_effective_from",
+            "expected_risk_policy_digest",
+            *(
+                {
+                    "require_approved_profile_mapping",
+                    "profile_mapping_approval_id",
+                    "approval_decision_id",
+                    "decision_id",
+                    "profile_mapping_approval",
+                    "profile_auto_resolved",
+                }
+                if is_explicit_caller_replacement
+                else set()
+            ),
+        }
         validation_meta = (
             {
                 **{
                     k: v
                     for k, v in pool_meta.items()
-                    if k
-                    not in {
-                        "risk_policy_stale",
-                        "risk_policy_superseded_by",
-                        "risk_policy_expires_at",
-                        "risk_policy_effective_from",
-                        "expected_risk_policy_digest",
-                    }
+                    if k not in stripped_replacement_keys
                 },
                 "risk_policy": target_policy,
             }
@@ -5519,7 +5554,7 @@ class PersonaProvisioningCoordinator:
                 "risk_policy": target_policy,
             }
         )
-        if effective_approval_id is not None:
+        if effective_approval_id is not None and not is_explicit_caller_replacement:
             validation_meta["profile_mapping_approval_id"] = effective_approval_id
         if has_authoritative_replacement and risk_policy_version is not None and str(risk_policy_version).strip():
             validation_meta["expected_risk_policy_version"] = str(risk_policy_version).strip()
@@ -5540,7 +5575,7 @@ class PersonaProvisioningCoordinator:
             expected_stage="paper",
             requested_profile=effective_profile,
             require_approved_profile_mapping=require_approved_profile_mapping,
-            approval_decision_id=effective_approval_id,
+            approval_decision_id=None if is_explicit_caller_replacement else effective_approval_id,
             approval_reader=approval_reader,
             require_active=True,
             require_limits=("gross_limit",),
@@ -5551,6 +5586,13 @@ class PersonaProvisioningCoordinator:
                 f"CapitalPool risk policy repair rejected: {target_validation.reason} ({target_validation.reason_code})"
             )
 
+        persist_require_mapping = bool(
+            require_approved_profile_mapping
+            and (
+                target_validation.profile_mapping_approval_id is not None
+                or target_validation.profile_mapping_status != "explicit_policy"
+            )
+        )
         already_converged = (
             before_resolution.resolved
             and before_resolution.risk_policy_id == target_validation.risk_policy_id
@@ -5558,7 +5600,7 @@ class PersonaProvisioningCoordinator:
             and before_resolution.risk_policy_digest == target_validation.risk_policy_digest
             and (clean_ref is None or pool.get("risk_policy_ref") == clean_ref)
             and pool_meta.get("requested_risk_profile") == effective_profile
-            and bool(pool_meta.get("require_approved_profile_mapping")) == bool(require_approved_profile_mapping)
+            and bool(pool_meta.get("require_approved_profile_mapping")) == persist_require_mapping
             and (
                 target_validation.profile_mapping_approval_id is None
                 or pool_meta.get("profile_mapping_approval_id") == target_validation.profile_mapping_approval_id
@@ -5567,13 +5609,29 @@ class PersonaProvisioningCoordinator:
         repaired = False
         updated_pool = pool_with_current_digest
         if not already_converged and not dry_run:
+            cleaned_base_meta = (
+                {
+                    k: v
+                    for k, v in pool_meta.items()
+                    if k
+                    not in {
+                        "profile_mapping_approval_id",
+                        "approval_decision_id",
+                        "decision_id",
+                        "profile_mapping_approval",
+                        "profile_auto_resolved",
+                    }
+                }
+                if target_validation.profile_mapping_approval_id is None
+                else dict(pool_meta)
+            )
             updated_meta = {
-                **pool_meta,
+                **cleaned_base_meta,
                 "tenant_id": tenant_id,
                 "persona_id": persona_id,
                 "execution_context": "paper",
                 "requested_risk_profile": effective_profile,
-                "require_approved_profile_mapping": bool(require_approved_profile_mapping),
+                "require_approved_profile_mapping": persist_require_mapping,
                 "risk_policy": deepcopy(target_policy),
                 "risk_policy_repaired_by": self.actor_id,
                 "risk_policy_requested_by": requested_by,

@@ -3023,6 +3023,7 @@ def discover_approved_profile_risk_policy(
             continue
         ref_options: list[str | None] = [pref_ref, None] if pref_ref is not None else [None]
         matched_for_this_policy = False
+        policy_ver_diag: str | None = None
         for ref_opt in ref_options:
             cand_pool = _build_candidate_pool(ref_opt, cand_pol)
             ver_id, all_ver_ids, ver_diag = _verify_policy_owner_approval_decisions(
@@ -3045,6 +3046,7 @@ def discover_approved_profile_risk_policy(
                 capital_pool_reader=capital_pool_reader,
                 now_dt=effective_now,
             )
+            policy_ver_diag = _higher_priority_absence_source(policy_ver_diag, ver_diag)
             diagnostic_source = _higher_priority_absence_source(diagnostic_source, ver_diag)
             if ver_diag == "policy_candidates_ambiguous":
                 target_approval_lookup_overflow = True
@@ -3062,7 +3064,7 @@ def discover_approved_profile_risk_policy(
                     verified_matches.append((ref_opt, cand_pol, raw_d, ver_id))
                 matched_for_this_policy = True
                 break
-        if not matched_for_this_policy and is_catalog:
+        if not matched_for_this_policy and is_catalog and policy_ver_diag is None:
             diagnostic_source = _higher_priority_absence_source(
                 diagnostic_source,
                 "policy_approval_missing",
@@ -4059,20 +4061,68 @@ def resolve_pool_risk_policy_binding(
             owner_meta = dict(owner_ref_policy.metadata) if isinstance(owner_ref_policy.metadata, Mapping) else {}
             owner_tenant = _first_text_or_none(owner_meta, "tenant_id")
             owner_profile = _first_text_or_none(owner_meta, "requested_profile", "risk_profile", "requested_risk")
+            policy_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
             owner_veto = _policy_approval_veto_source(owner_ref_policy, loaded_owner_raw, owner_meta)
             if owner_veto is not None:
                 policy_veto_diag = _higher_priority_absence_source(policy_veto_diag, owner_veto)
+            has_bound_approval_provenance = bool(
+                _optional_text(approval_decision_id)
+                or approval_decision is not None
+                or bool(approval_decisions)
+                or (
+                    pool_obj is not None
+                    and not isinstance(pool_obj, (Mapping, RiskPolicy, str))
+                    and (
+                        _optional_text(getattr(pool_obj, "profile_mapping_approval_id", None)) is not None
+                        or _optional_text(getattr(pool_obj, "approval_decision_id", None)) is not None
+                    )
+                )
+                or any(
+                    isinstance(container, Mapping)
+                    and (
+                        _first_text_or_none(
+                            container,
+                            "profile_mapping_approval_id",
+                            "approval_decision_id",
+                            "decision_id",
+                        )
+                        is not None
+                        or container.get("profile_mapping_approval") is not None
+                        or container.get("approval_decision") is not None
+                        or bool(container.get("approval_decisions"))
+                        or container.get("profile_auto_resolved") is True
+                    )
+                    for container in (
+                        pool_obj if isinstance(pool_obj, Mapping) else None,
+                        pool_meta,
+                        b_map,
+                        b_meta,
+                        pool_sub,
+                        dict(pool_sub.get("metadata")) if isinstance(pool_sub.get("metadata"), Mapping) else None,
+                        raw_policy_mapping,
+                        policy_meta,
+                        loaded_owner_raw,
+                        owner_meta,
+                    )
+                )
+            )
             explicitly_unapproved = (
                 policy_veto_diag is not None
+                or verification_diag is not None
+                or has_bound_approval_provenance
+                or owner_profile is not None
+                or policy_profile is not None
                 or owner_meta.get("require_approved_profile_mapping") is True
                 or policy_meta.get("require_approved_profile_mapping") is True
+                or pool_meta.get("require_approved_profile_mapping") is True
+                or b_meta.get("require_approved_profile_mapping") is True
                 or pool_meta.get("profile_auto_resolved") is True
             )
             if explicitly_unapproved:
-                verification_diag = _higher_priority_absence_source(
-                    verification_diag,
-                    policy_veto_diag or "policy_approval_missing",
-                )
+                if policy_veto_diag is not None:
+                    verification_diag = _higher_priority_absence_source(verification_diag, policy_veto_diag)
+                elif verification_diag is None:
+                    verification_diag = "policy_approval_missing"
             elif (
                 owner_ref_policy.risk_policy_id == policy_model.risk_policy_id
                 and str(owner_ref_policy.version) == str(policy_model.version)

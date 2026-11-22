@@ -1992,6 +1992,150 @@ def test_profile_policy_autoresolve_arbitrary_decision_id_catalog_ambiguity_and_
         assert rev_bind_persisted.allow_new_or_increased_risk is False
         assert rev_bind_persisted.owner_decision_request["absence_source"] == "policy_approval_revoked"
 
+    # (f) Persisted auto-resolved catalog policy with normal coordinator metadata
+    # (require_approved_profile_mapping=True, profile_mapping_approval_id set, no profile_auto_resolved)
+    # must fail closed across resolve_pool_risk_policy_binding and resolve_bound_pool_risk_policy
+    # when the owner ApprovalDecision is subsequently revoked, expired, rejected, cross-tenant, or removed.
+    import copy
+    import pytest
+    from services.capital.risk_policy import RiskPolicyError
+
+    owner_low_pol = {
+        "risk_policy_id": "rp-owner-low",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.8,
+        "net_limit": 0.6,
+        "max_leverage": 1.0,
+        "metadata": {"tenant_id": "tenant-dev", "requested_profile": "low"},
+    }
+    (policy_dir / "rp-owner-low.json").write_text(json.dumps(owner_low_pol), encoding="utf-8")
+    (policy_dir / "rp-dedicated-low.json").unlink()
+
+    persisted_review_pool = {
+        "pool_id": "pool-review",
+        "tenant_id": "tenant-dev",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "currency": "USD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "status": "active",
+        "metadata": {"tenant_id": "tenant-dev", "execution_context": "paper"},
+    }
+    arbitrary_low_dec = approval_snapshot(
+        decision_id="arbitrary-approved-low",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id=owner_low_pol["risk_policy_id"],
+        target_version=risk_policy_digest(owner_low_pol),
+        owner_user_id="proposer",
+        risk_level="medium",
+        metadata={
+            "subject": {
+                "pool_id": owner_low_pol["risk_policy_id"],
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": owner_low_pol["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(owner_low_pol),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "risk_owner"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    auto_owner_low = discover_approved_profile_risk_policy(
+        resolved_pool_id=persisted_review_pool["pool_id"],
+        effective_tenant_id="tenant-dev",
+        clean_profile="low",
+        base_pool=persisted_review_pool,
+        approval_reader=SnapshotApprovalReader([arbitrary_low_dec]),
+    )
+    assert auto_owner_low.resolved is True
+    assert auto_owner_low.risk_policy_ref == "rp-owner-low"
+    assert auto_owner_low.approval_decision_id == "arbitrary-approved-low"
+
+    persisted_review_pool["risk_policy_ref"] = auto_owner_low.risk_policy_ref
+    persisted_review_pool["metadata"].update(
+        risk_policy=auto_owner_low.policy.to_dict(),
+        requested_risk_profile="low",
+        require_approved_profile_mapping=True,
+        profile_mapping_approval_id=auto_owner_low.approval_decision_id,
+    )
+    assert "profile_auto_resolved" not in persisted_review_pool["metadata"]
+
+    valid_persisted_reader = SnapshotApprovalReader([copy.deepcopy(arbitrary_low_dec)])
+    valid_persisted_res = resolve_pool_risk_policy_binding(
+        pool=persisted_review_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        approval_reader=valid_persisted_reader,
+    )
+    assert valid_persisted_res.resolved is True
+    assert valid_persisted_res.status == "valid"
+    assert valid_persisted_res.profile_mapping_status == "approved_profile_mapping"
+    assert valid_persisted_res.profile_mapping_approval_id == "arbitrary-approved-low"
+    assert valid_persisted_res.allow_new_or_increased_risk is True
+    valid_bound_pol = resolve_bound_pool_risk_policy(
+        pool=persisted_review_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        approval_reader=valid_persisted_reader,
+    )
+    assert valid_bound_pol is not None
+    assert valid_bound_pol.risk_policy_id == "rp-owner-low"
+    assert valid_bound_pol.gross_limit == 0.8
+
+    for case_name, dec_mutation, expected_absence in [
+        ("revoked", {"revoked_at": "2026-11-22T00:00:00Z"}, "policy_approval_revoked"),
+        ("expired", {"expires_at": "2000-01-01T00:00:00Z"}, "policy_approval_expired"),
+        ("rejected", {"decision": "rejected"}, "policy_approval_rejected"),
+        ("cross_tenant", {"tenant_id": "tenant-other"}, "cross_tenant_policy_or_approval_rejected"),
+    ]:
+        mutated_reader = SnapshotApprovalReader([{**copy.deepcopy(arbitrary_low_dec), **dec_mutation}])
+        mutated_res = resolve_pool_risk_policy_binding(
+            pool=persisted_review_pool,
+            expected_tenant_id="tenant-dev",
+            expected_stage="paper",
+            approval_reader=mutated_reader,
+        )
+        assert mutated_res.resolved is False, case_name
+        assert mutated_res.status == "unresolved_profile_mapping", case_name
+        assert mutated_res.profile_mapping_status == "unresolved_owner_decision_required", case_name
+        assert mutated_res.profile_mapping_approval_id is None, case_name
+        assert mutated_res.allow_new_or_increased_risk is False, case_name
+        assert mutated_res.owner_decision_request["absence_source"] == expected_absence, case_name
+        with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+            resolve_bound_pool_risk_policy(
+                pool=persisted_review_pool,
+                expected_tenant_id="tenant-dev",
+                expected_stage="paper",
+                approval_reader=mutated_reader,
+            )
+
+    missing_res = resolve_pool_risk_policy_binding(
+        pool=persisted_review_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        approval_reader=SnapshotApprovalReader([]),
+    )
+    assert missing_res.resolved is False
+    assert missing_res.status == "unresolved_profile_mapping"
+    assert missing_res.profile_mapping_status == "unresolved_owner_decision_required"
+    assert missing_res.profile_mapping_approval_id is None
+    assert missing_res.allow_new_or_increased_risk is False
+    assert missing_res.owner_decision_request["absence_source"] == "policy_approval_missing"
+    with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+        resolve_bound_pool_risk_policy(
+            pool=persisted_review_pool,
+            expected_tenant_id="tenant-dev",
+            expected_stage="paper",
+            approval_reader=SnapshotApprovalReader([]),
+        )
+
 
 
 def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unresolved_and_expired_owner_mapping(

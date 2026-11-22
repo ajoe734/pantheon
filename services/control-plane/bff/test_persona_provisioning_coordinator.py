@@ -4178,6 +4178,104 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert created_cat_pool["metadata"]["risk_policy"]["gross_limit"] == 0.85
     assert created_cat_pool["metadata"]["risk_policy"]["max_single_name_weight"] == 0.2
     assert created_cat_pool["metadata"]["profile_mapping_approval_id"] == "apv-catalog-low-881"
+
+    # 2b. Authority loss on the owner ApprovalDecision after normal coordinator persistence
+    # (revoked, expired, rejected, cross-tenant, or removed) must fail closed on bound runtime,
+    # direct coordinator readback resolution, repair_paper_pool_risk_policy, and resumed coordinate().
+    from services.capital.risk_policy import (
+        RiskPolicyError,
+        resolve_bound_pool_risk_policy,
+        resolve_pool_risk_policy_binding,
+    )
+
+    ids_cat = deterministic_provisioning_ids(record_cat)
+    cat_pool_path = f"/api/capital-pools/{ids_cat.capital_pool_id}"
+    persisted_cat_pool_snapshot = deepcopy(tx_cat.get("capital", cat_pool_path))
+    assert persisted_cat_pool_snapshot is not None
+    assert "profile_auto_resolved" not in persisted_cat_pool_snapshot["metadata"]
+    valid_cat_dec_snapshot = deepcopy(
+        tx_cat.objects[("governance", "/api/governance/approvals/apv-catalog-low-881")]
+    )
+    coord_cat_check = PersonaProvisioningCoordinator(
+        store=store_cat,
+        transport=tx_cat,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="test-worker",
+        actor_id="pantheon-persona-provisioner",
+        governance_proposer=tx_cat,
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+    tx_cat.governance_subject = "pantheon-dev-persona-enrollment-proposer"
+    tx_cat.governance_roles = {"approval_proposer"}
+
+    initial_tx_objects = deepcopy(tx_cat.objects)
+
+    for loss_case, dec_override, expected_absence in [
+        ("revoked", {"revoked_at": "2026-11-22T00:00:00Z"}, "policy_approval_revoked"),
+        ("expired", {"expires_at": "2000-01-01T00:00:00Z"}, "policy_approval_expired"),
+        ("rejected", {"decision": "rejected"}, "policy_approval_rejected"),
+        ("cross_tenant", {"tenant_id": "tenant-other"}, "cross_tenant_policy_or_approval_rejected"),
+        ("missing", None, "policy_approval_missing"),
+    ]:
+        tx_cat.objects = deepcopy(initial_tx_objects)
+        tx_cat.objects[("capital", cat_pool_path)] = deepcopy(persisted_cat_pool_snapshot)
+        if dec_override is None:
+            tx_cat.objects.pop(("governance", "/api/governance/approvals/apv-catalog-low-881"), None)
+        else:
+            tx_cat.objects[("governance", "/api/governance/approvals/apv-catalog-low-881")] = {
+                **deepcopy(valid_cat_dec_snapshot),
+                **dec_override,
+            }
+        tx_reader = coord_cat_check._governance_approval_reader()
+        readback_pool = tx_cat.get("capital", cat_pool_path)
+        bind_res = resolve_pool_risk_policy_binding(
+            pool=readback_pool,
+            expected_tenant_id="tenant-a",
+            expected_stage="paper",
+            approval_reader=tx_reader,
+        )
+        assert bind_res.resolved is False, loss_case
+        assert bind_res.status == "unresolved_profile_mapping", loss_case
+        assert bind_res.profile_mapping_status == "unresolved_owner_decision_required", loss_case
+        assert bind_res.profile_mapping_approval_id is None, loss_case
+        assert bind_res.allow_new_or_increased_risk is False, loss_case
+        assert bind_res.owner_decision_request["absence_source"] == expected_absence, loss_case
+        with pytest.raises(RiskPolicyError, match="risk_policy_profile_mapping_unapproved"):
+            resolve_bound_pool_risk_policy(
+                pool=readback_pool,
+                expected_tenant_id="tenant-a",
+                expected_stage="paper",
+                approval_reader=tx_reader,
+            )
+
+        rep_loss = coord_cat_check.repair_paper_pool_risk_policy(
+            tenant_id=record_cat.tenant_id,
+            persona_id=record_cat.persona_id,
+            dry_run=True,
+        )
+        assert rep_loss["repaired"] is False, loss_case
+        assert rep_loss["after_resolution"]["resolved"] is False, loss_case
+        assert rep_loss["after_resolution"]["allow_new_or_increased_risk"] is False, loss_case
+        assert rep_loss["owner_decision_request"]["absence_source"] == expected_absence, loss_case
+
+        store_resume, resume_record = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+        coord_resume = PersonaProvisioningCoordinator(
+            store=store_resume,
+            transport=tx_cat,
+            schedule_registrar=_schedule_receipt,
+            lease_owner="test-worker",
+            actor_id="pantheon-persona-provisioner",
+            governance_proposer=tx_cat,
+            governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+        )
+        resume_res = coord_resume.coordinate(resume_record)
+        assert resume_res.state in {"failed", "compensated"}, loss_case
+        assert resume_res.error["failed_step"] == "capital_pool", loss_case
+        assert resume_res.error["reason_code"] == "risk_policy_profile_mapping_unapproved", loss_case
+        assert resume_res.error["absence_source"] == expected_absence, loss_case
+        assert tx_cat.get("capital", cat_pool_path)["status"] == "suspended", loss_case
+        assert tx_cat.get("capital", cat_pool_path)["metadata"]["provisional_unresolved_risk_policy"] is True, loss_case
+
     (policy_dir / "rp-tenant-a-paper-low-v1.json").unlink()
 
     # 3. Provisional active-looking unresolved pool record is suspended on unresolved coordinate(),
