@@ -215,11 +215,11 @@ class ExecutorConfig:
     database_url: str = ""
     memory_url: str = ""
     evolution_url: str = ""
-    lease_seconds: int = 60
+    lease_seconds: int = 120
     retry_after_seconds: int = 15
     max_blocked_attempts: int = 3
     batch_size: int = 10
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 180.0
 
     @classmethod
     def from_env(cls) -> "ExecutorConfig":
@@ -271,7 +271,7 @@ class ExecutorConfig:
                 or ""
             ).rstrip("/"),
             lease_seconds=_env_int(
-                "CONSULTATION_WORKFLOW_LEASE_SECONDS", 60, minimum=1
+                "CONSULTATION_WORKFLOW_LEASE_SECONDS", 120, minimum=1
             ),
             retry_after_seconds=_env_int(
                 "CONSULTATION_WORKFLOW_RETRY_SECONDS", 15, minimum=0
@@ -283,7 +283,7 @@ class ExecutorConfig:
                 "CONSULTATION_WORKFLOW_BATCH_SIZE", 10, minimum=1
             ),
             timeout_seconds=float(
-                os.getenv("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "30")
+                os.getenv("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "180")
             ),
         )
 
@@ -1738,6 +1738,27 @@ def _execute_meeting_claim(
         nonlocal nonlocal_claim
         nonlocal_claim = _renew(state, nonlocal_claim, config)
 
+    def _provider_call(call: Callable[..., Any], **kwargs: Any) -> Any:
+        # Keep the fenced claim alive while OpenClaw is working. Always join
+        # the bounded provider call, including on a renewal failure; no work
+        # may keep running after this claim has returned to the executor.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(call, **kwargs)
+            while True:
+                try:
+                    return future.result(timeout=max(0.05, config.lease_seconds / 3))
+                except FutureTimeout:
+                    if future.done():
+                        return future.result()
+                    _renew_cb()
+
+    class LeaseRenewingProvider:
+        def ensure_agents(self, **kwargs: Any) -> Any:
+            return _provider_call(provider.ensure_agents, **kwargs)
+
+        def obtain(self, **kwargs: Any) -> Any:
+            return _provider_call(provider.obtain, **kwargs)
+
     trace_id = str(
         request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
     )
@@ -1747,7 +1768,7 @@ def _execute_meeting_claim(
             store=proxy_store,
             meeting_id=claim.request_id,
             tenant_id=config.tenant_id,
-            provider=provider,
+            provider=LeaseRenewingProvider(),
             memory_url=config.memory_url,
             renew_lease=_renew_cb,
         )

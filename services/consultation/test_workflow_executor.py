@@ -1020,3 +1020,132 @@ def test_hosted_writeback_dead_letters_are_redriven_once_probe_passes(tmp_path, 
     while (claim := state.claim_next(tenant_id=TENANT, lease_owner="w", lease_seconds=30)):
         state.complete(claim, memo_id="m", handoff_id="h")
     assert state.counts(tenant_id=TENANT)["dead_letter"] == 0
+
+
+# ---- MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122 -------------------------
+def test_meeting_executor_defaults_and_overrides(monkeypatch):
+    for key in ("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "CONSULTATION_WORKFLOW_LEASE_SECONDS"):
+        monkeypatch.delenv(key, raising=False)
+    config = ExecutorConfig.from_env()
+    assert (config.timeout_seconds, config.lease_seconds) == (180.0, 120)
+    assert ExecutorConfig.__dataclass_fields__["timeout_seconds"].default == 180.0
+    assert ExecutorConfig.__dataclass_fields__["lease_seconds"].default == 120
+    monkeypatch.setenv("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "240")
+    monkeypatch.setenv("CONSULTATION_WORKFLOW_LEASE_SECONDS", "90")
+    config = ExecutorConfig.from_env()
+    assert (config.timeout_seconds, config.lease_seconds) == (240.0, 90)
+
+
+def _meeting_claim_setup(tmp_path, monkeypatch, *, lease_seconds=3):
+    from services.consultation import meetings
+
+    config = replace(_wb_config(tmp_path), lease_seconds=lease_seconds)
+    state = WorkflowStateStore(config.state_path)
+    state.ensure_request(tenant_id=TENANT, request_id="mtg-slow")
+    claim = state.claim_next(tenant_id=TENANT, lease_owner="owner", lease_seconds=lease_seconds)
+    posts = []
+    monkeypatch.setattr(wf, "_api_post", lambda _c, path, body: posts.append((path, body)) or {})
+    return meetings, config, state, claim, posts
+
+
+def test_meeting_35_second_turn_and_slow_ensure_keep_durable_lease(tmp_path, monkeypatch):
+    """Real elapsed time + SQLite fencing: another worker cannot steal either call."""
+    meetings, config, state, claim, posts = _meeting_claim_setup(tmp_path, monkeypatch)
+    phase = {"name": ""}
+    renewals = []
+    durations = {}
+    renew = state.renew
+
+    def observe_renew(claim, *, lease_seconds):
+        renewed = renew(claim, lease_seconds=lease_seconds)
+        renewals.append((phase["name"], renewed.lease_epoch, renewed.lease_expires_at))
+        return renewed
+
+    monkeypatch.setattr(state, "renew", observe_renew)
+
+    class SlowProvider:
+        def wait(self, name, seconds):
+            phase["name"] = name
+            start = time.monotonic()
+            while time.monotonic() - start < seconds:
+                assert state.claim_next(tenant_id=TENANT, lease_owner="rival", lease_seconds=3) is None
+                time.sleep(0.05)
+            durations[name] = time.monotonic() - start
+            return {"phase": name}
+
+        def ensure_agents(self, **kwargs):
+            assert kwargs == {"tenant_id": TENANT, "persona_ids": ["persona-a"]}
+            return self.wait("ensure", 3.2)
+
+        def obtain(self, **kwargs):
+            assert kwargs == {"tenant_id": TENANT, "request": {"request_id": claim.request_id}}
+            return self.wait("obtain", 35.0)
+
+    def execute(**kwargs):
+        kwargs["renew_lease"]()
+        kwargs["provider"].ensure_agents(tenant_id=TENANT, persona_ids=["persona-a"])
+        kwargs["renew_lease"]()
+        assert kwargs["provider"].obtain(tenant_id=TENANT, request={"request_id": claim.request_id}) == {"phase": "obtain"}
+        return {"status": "closed", "outcome": "proposals_issued", "minutes": {"memo_id": "mem-slow"}}
+
+    monkeypatch.setattr(meetings, "execute_persona_meeting", execute)
+    out = wf._execute_meeting_claim(config=config, state=state, provider=SlowProvider(),
+                                   claim=claim, request={}, phase_hook=None)
+    assert out["outcome"] == "completed"
+    assert durations["obtain"] >= 35.0
+    assert len([r for r in renewals if r[0] == "ensure"]) >= 3
+    assert len([r for r in renewals if r[0] == "obtain"]) >= 34
+    assert all(epoch == claim.lease_epoch for _, epoch, _ in renewals)
+    row = state.get(tenant_id=TENANT, request_id=claim.request_id)
+    assert row["status"] == "completed" and row["memo_id"] == "mem-slow"
+    assert len(posts) == 1 and posts[0][1]["request_status"] == "published"
+
+
+@pytest.mark.parametrize("method", ["ensure_agents", "obtain"])
+def test_meeting_provider_timeout_propagates_without_publication(tmp_path, monkeypatch, method):
+    from types import SimpleNamespace
+
+    meetings, config, state, claim, posts = _meeting_claim_setup(tmp_path, monkeypatch)
+    error = TimeoutError("provider transport timed out")
+
+    def fail(**kwargs):
+        raise error
+
+    def execute(**kwargs):
+        return getattr(kwargs["provider"], method)(tenant_id=TENANT)
+
+    monkeypatch.setattr(meetings, "execute_persona_meeting", execute)
+    with pytest.raises(TimeoutError) as caught:
+        wf._execute_meeting_claim(config=config, state=state,
+                                  provider=SimpleNamespace(**{method: fail}), claim=claim,
+                                  request={}, phase_hook=None)
+    assert caught.value is error
+    assert not posts
+    assert state.get(tenant_id=TENANT, request_id=claim.request_id)["status"] == "leased"
+
+
+def test_meeting_lost_lease_joins_provider_and_prevents_publication(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from services.consultation.workflow_state import StaleWorkflowClaim
+
+    meetings, config, state, claim, posts = _meeting_claim_setup(tmp_path, monkeypatch, lease_seconds=1)
+    joined = threading.Event()
+    renewal_failed = threading.Event()
+
+    def renew(*args):
+        renewal_failed.set()
+        raise StaleWorkflowClaim("claim fenced")
+
+    def obtain(**kwargs):
+        assert renewal_failed.wait(timeout=5)
+        joined.set()
+        return {}
+
+    monkeypatch.setattr(wf, "_renew", renew)
+    monkeypatch.setattr(meetings, "execute_persona_meeting",
+                        lambda **kw: kw["provider"].obtain(tenant_id=TENANT))
+    with pytest.raises(StaleWorkflowClaim, match="claim fenced"):
+        wf._execute_meeting_claim(config=config, state=state,
+                                  provider=SimpleNamespace(obtain=obtain), claim=claim,
+                                  request={}, phase_hook=None)
+    assert joined.is_set() and not posts

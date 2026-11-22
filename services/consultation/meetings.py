@@ -1389,6 +1389,7 @@ def build_participant_pre_read(
                     query=topic,
                     limit=12,
                     auth_token=token or None,
+                    timeout_seconds=float(os.getenv("CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS", "15.0")),
                 )
                 if isinstance(retrieval, Mapping):
                     hits, _ = normalize_retrieval_hits(retrieval, persona_id=pid)
