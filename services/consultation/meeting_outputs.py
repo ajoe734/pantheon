@@ -25,7 +25,9 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
+
+import jsonschema
 
 from services.consultation.sponsor_decision_bridge import (
     ApprovalDecisionProposal,
@@ -36,6 +38,7 @@ from services.consultation.sponsor_decision_bridge import (
     validate_sponsor_persona,
 )
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.service_token_file import configured_service_token
 
 SUPPORTED_PROPOSAL_KINDS: frozenset[str] = frozenset(
     {
@@ -343,6 +346,14 @@ def _mint_jwt(
     return encode_jwt_hs256(claims, secret=secret)
 
 
+def _resolve_configured_token(*variables: str) -> str:
+    for variable in variables:
+        token = configured_service_token(variable)
+        if token:
+            return token
+    return ""
+
+
 def _auth_headers(
     *,
     kind: str,
@@ -350,6 +361,7 @@ def _auth_headers(
     sponsor_persona_id: str | None,
     idempotency_key: str | None = None,
     owner_user_id: str | None = None,
+    read_only: bool = False,
 ) -> dict[str, str]:
     headers: dict[str, str] = {"X-Tenant-Id": tenant_id}
     if idempotency_key:
@@ -359,7 +371,10 @@ def _auth_headers(
         headers["X-Actor-Id"] = sponsor_persona_id
 
     if kind == "research_demand":
-        static_token = os.getenv("PERSONA_RESEARCH_SERVICE_TOKEN", "").strip()
+        static_token = _resolve_configured_token(
+            "PERSONA_RESEARCH_SERVICE_TOKEN",
+            "PANTHEON_RESEARCH_SERVICE_TOKEN",
+        )
         if static_token:
             headers["Authorization"] = f"Bearer {static_token}"
             return headers
@@ -455,6 +470,21 @@ def _auth_headers(
         return headers
 
     if kind == "lesson_candidate":
+        static_token = (
+            _resolve_configured_token(
+                "CONSULTATION_MEMORY_READ_TOKEN",
+                "CONSULTATION_MEMORY_WRITE_TOKEN",
+                "PANTHEON_MEMORY_AUTH_TOKEN",
+            )
+            if read_only
+            else _resolve_configured_token(
+                "CONSULTATION_MEMORY_WRITE_TOKEN",
+                "PANTHEON_MEMORY_AUTH_TOKEN",
+            )
+        )
+        if static_token:
+            headers["Authorization"] = f"Bearer {static_token}"
+            return headers
         secret = (
             os.getenv("PANTHEON_MEMORY_JWT_SECRET")
             or os.getenv("PERSONA_JWT_SECRET")
@@ -626,6 +656,14 @@ def _check_sponsor_eligibility(
     return validated
 
 
+_TRADE_EPISODE_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "telemetry" / "trade_episode_projection.schema.json"
+)
+_TRADE_EPISODE_VALIDATOR = jsonschema.Draft7Validator(
+    json.loads(_TRADE_EPISODE_SCHEMA_PATH.read_text(encoding="utf-8"))
+)
+
+
 def _as_uuid_str(value: Any, namespace_tag: str) -> str:
     text = str(value or "").strip()
     if text:
@@ -634,6 +672,143 @@ def _as_uuid_str(value: Any, namespace_tag: str) -> str:
         except ValueError:
             return str(uuid.uuid5(uuid.NAMESPACE_OID, f"pantheon:{namespace_tag}:{text}"))
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f"pantheon:{namespace_tag}:default"))
+
+
+def _telemetry_base_url() -> str:
+    return (
+        os.getenv("PANTHEON_TELEMETRY_API_URL")
+        or os.getenv("PANTHEON_TELEMETRY_SERVICE_URL")
+        or os.getenv("TELEMETRY_URL")
+        or "http://127.0.0.1:8083"
+    ).rstrip("/")
+
+
+def _telemetry_auth_headers(
+    *,
+    tenant_id: str,
+    sponsor_persona_id: str | None,
+) -> dict[str, str] | None:
+    static_token = _resolve_configured_token(
+        "CONSULTATION_TELEMETRY_READ_TOKEN",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+    )
+    if not static_token:
+        return None
+    headers: dict[str, str] = {
+        "X-Tenant-Id": tenant_id,
+        "Authorization": f"Bearer {static_token}",
+    }
+    if sponsor_persona_id:
+        headers["X-Sponsor-Persona-Id"] = sponsor_persona_id
+        headers["X-Actor-Id"] = sponsor_persona_id
+    return headers
+
+
+def _is_verified_trade_episode(
+    record: Any,
+    *,
+    tenant_id: str,
+    sponsor_persona_id: str | None,
+    expected_episode_id: str | None = None,
+) -> bool:
+    if not isinstance(record, Mapping) or not sponsor_persona_id:
+        return False
+    episode_id = str(record.get("trade_episode_id") or "").strip()
+    if not episode_id:
+        return False
+    if expected_episode_id is not None and episode_id != expected_episode_id:
+        return False
+    if str(record.get("tenant_id") or "").strip() != tenant_id:
+        return False
+    if str(record.get("persona_id") or "").strip() != sponsor_persona_id:
+        return False
+    return _TRADE_EPISODE_VALIDATOR.is_valid(dict(record))
+
+
+def _resolve_lesson_candidate_episode_ids(
+    *,
+    payload: Mapping[str, Any],
+    citations: Sequence[Any],
+    meeting: Mapping[str, Any] | None,
+    sponsor_persona_id: str | None,
+    tenant_id: str,
+    send: HttpTransport | None = None,
+) -> list[str]:
+    """Resolve distinct trade_episode_ids verified via Telemetry owner GET for tenant_id and sponsor_persona_id."""
+    del meeting
+    verified_by_id: dict[str, Mapping[str, Any]] = {}
+    rejected_ids: set[str] = set()
+    episode_ids: list[str] = []
+    active_send = _active_transport(send)
+    telemetry_base: str | None = None
+    telemetry_headers: dict[str, str] | None = None
+    telemetry_headers_resolved = False
+
+    def _verify_episode_id(raw_id: str) -> str | None:
+        ep_id = raw_id.strip()
+        if not ep_id:
+            return None
+        if ep_id in verified_by_id:
+            return ep_id
+        if ep_id in rejected_ids:
+            return None
+        nonlocal telemetry_base, telemetry_headers, telemetry_headers_resolved
+        if not telemetry_headers_resolved:
+            telemetry_headers = _telemetry_auth_headers(
+                tenant_id=tenant_id,
+                sponsor_persona_id=sponsor_persona_id,
+            )
+            telemetry_headers_resolved = True
+        if telemetry_headers is None:
+            rejected_ids.add(ep_id)
+            return None
+        if telemetry_base is None:
+            telemetry_base = _telemetry_base_url()
+        encoded_id = urllib.parse.quote(ep_id, safe="")
+        try:
+            status_code, body = active_send(
+                "GET",
+                f"{telemetry_base}/api/telemetry/trade-episodes/{encoded_id}",
+                telemetry_headers,
+                None,
+            )
+        except Exception:
+            rejected_ids.add(ep_id)
+            return None
+        if status_code == 200 and _is_verified_trade_episode(
+            body,
+            tenant_id=tenant_id,
+            sponsor_persona_id=sponsor_persona_id,
+            expected_episode_id=ep_id,
+        ):
+            verified_by_id[ep_id] = body
+            return ep_id
+        rejected_ids.add(ep_id)
+        return None
+
+    def _collect(seq: Iterable[Any]) -> None:
+        for entry in seq:
+            if isinstance(entry, Mapping):
+                if not _is_verified_trade_episode(
+                    entry,
+                    tenant_id=tenant_id,
+                    sponsor_persona_id=sponsor_persona_id,
+                ):
+                    continue
+                verified_id = _verify_episode_id(str(entry["trade_episode_id"]))
+                if verified_id and verified_id not in episode_ids:
+                    episode_ids.append(verified_id)
+                continue
+            if isinstance(entry, str):
+                verified_id = _verify_episode_id(entry)
+                if verified_id and verified_id not in episode_ids:
+                    episode_ids.append(verified_id)
+
+    raw_payload_episodes = payload.get("trade_episode_ids")
+    if isinstance(raw_payload_episodes, (list, tuple)):
+        _collect(raw_payload_episodes)
+    _collect(citations or ())
+    return episode_ids
 
 
 def _build_outbound_request(
@@ -646,6 +821,9 @@ def _build_outbound_request(
     payload: Mapping[str, Any],
     citations: list[Any],
     now: datetime,
+    meeting: Mapping[str, Any] | None = None,
+    proposal: Mapping[str, Any] | None = None,
+    send: HttpTransport | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Return (path, request_json, request_meta) for the given proposal kind."""
     now_iso = _iso(now)
@@ -762,8 +940,20 @@ def _build_outbound_request(
         assert sponsor_persona_id is not None
         lc_id = _as_uuid_str(payload.get("lesson_candidate_id") or proposal_id, "lesson_candidate")
         ref_id = _as_uuid_str(payload.get("reflection_id") or f"{meeting_id}:{proposal_id}", "reflection")
-        raw_episodes = list(payload.get("trade_episode_ids") or citations or [f"ep-{proposal_id}-1", f"ep-{proposal_id}-2", f"ep-{proposal_id}-3"])
-        episode_ids = [_as_uuid_str(ep.get("id") if isinstance(ep, Mapping) else ep, "episode") for ep in raw_episodes]
+        episode_ids = _resolve_lesson_candidate_episode_ids(
+            payload=payload,
+            citations=citations,
+            meeting=meeting,
+            sponsor_persona_id=sponsor_persona_id,
+            tenant_id=tenant_id,
+            send=send,
+        )
+        if len(episode_ids) < 3:
+            raise MeetingOutputRoutingError(
+                "lesson_candidate requires at least 3 distinct supporting trade_episode_ids "
+                f"from input or verified evidence (got {len(episode_ids)})",
+                status_code=422,
+            )
         expiry = str(payload.get("expiry") or _iso(now + timedelta(days=30)))
         created_at = str(payload.get("created_at") or now_iso)
         lesson_body = {
@@ -1165,6 +1355,15 @@ def dispatch_proposals(
                 payload=payload,
                 meeting=meeting,
             )
+            headers = _auth_headers(
+                kind=kind,
+                tenant_id=tenant_id,
+                sponsor_persona_id=sponsor_persona_id,
+                idempotency_key=idempotency_key,
+                owner_user_id=str(payload.get("owner_user_id") or "user-a")
+                if kind == "agora_candidate_decision"
+                else None,
+            )
             target_path, request_body, request_meta = _build_outbound_request(
                 kind=kind,
                 proposal_id=proposal_id,
@@ -1174,6 +1373,9 @@ def dispatch_proposals(
                 payload=payload,
                 citations=citations,
                 now=current_dt,
+                meeting=meeting,
+                proposal=proposal,
+                send=send,
             )
         except Exception as exc:
             target_path = _target_path(
@@ -1224,13 +1426,6 @@ def dispatch_proposals(
 
         base_url = _service_base_url(kind)
         full_url = f"{base_url}{target_path}"
-        headers = _auth_headers(
-            kind=kind,
-            tenant_id=tenant_id,
-            sponsor_persona_id=sponsor_persona_id,
-            idempotency_key=idempotency_key,
-            owner_user_id=request_meta.get("owner_user_id"),
-        )
 
         try:
             status_code, resp_body = send("POST", full_url, headers, request_body)
@@ -1243,7 +1438,14 @@ def dispatch_proposals(
                 status_code, resp_body = send("GET", f"{base_url}/api/governance/approvals/{dec_id}", headers, None)
             elif status_code == 422 and kind == "lesson_candidate" and "already exists" in json.dumps(resp_body):
                 lc_id = urllib.parse.quote(str(request_meta["lesson_candidate_id"]), safe="")
-                status_code, resp_body = send("GET", f"{base_url}/api/memory/trade-lessons/{lc_id}", headers, None)
+                read_headers = _auth_headers(
+                    kind=kind,
+                    tenant_id=tenant_id,
+                    sponsor_persona_id=sponsor_persona_id,
+                    owner_user_id=request_meta.get("owner_user_id"),
+                    read_only=True,
+                )
+                status_code, resp_body = send("GET", f"{base_url}/api/memory/trade-lessons/{lc_id}", read_headers, None)
 
             if status_code >= 400:
                 raise MeetingOutputRoutingError(
@@ -1386,12 +1588,16 @@ def read_downstream_status(
     request_meta = dict(entry.get("request_meta") or {})
     base_url = _service_base_url(kind)
     send = _active_transport(transport)
-    headers = _auth_headers(
-        kind=kind,
-        tenant_id=tenant_id,
-        sponsor_persona_id=sponsor_persona_id,
-        owner_user_id=request_meta.get("owner_user_id"),
-    )
+    try:
+        headers = _auth_headers(
+            kind=kind,
+            tenant_id=tenant_id,
+            sponsor_persona_id=sponsor_persona_id,
+            owner_user_id=request_meta.get("owner_user_id"),
+            read_only=True,
+        )
+    except RuntimeError as exc:
+        raise MeetingOutputRoutingError(str(exc), status_code=503) from exc
     now_iso = _iso(_utc_now(now))
 
     if kind == "research_demand":

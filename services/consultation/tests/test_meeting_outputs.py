@@ -72,6 +72,9 @@ from services.persona.write_owner import (  # noqa: E402
 from services.research.tests.test_research_orchestrator_http_service import (  # noqa: E402
     _load_service_module as load_research_module,
 )
+from services.runtime_auth_inbound import AuthError, validate_request_auth  # noqa: E402
+from services.telemetry import main as telemetry_main  # noqa: E402
+from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore  # noqa: E402
 
 from services.evolution import main as evolution_main  # noqa: E402
 sys.modules.pop("models", None)
@@ -316,11 +319,80 @@ def _seed_agora_interaction(interactions: InteractionLifecycleStore) -> None:
     }
 
 
+def _seed_telemetry_episode(
+    store: TradeEpisodeProjectionStore,
+    episode_id: str,
+    *,
+    tenant_id: str = TENANT,
+    persona_id: str = SPONSOR,
+    regime: str = "bull",
+    realized_pnl: float = 125.0,
+) -> dict[str, Any]:
+    store.project_event(
+        {
+            "event_id": f"ev-open-{episode_id}",
+            "event_type": "trade_episode.opened",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "persona_id": persona_id,
+            "strategy_id": "strat-member-1",
+            "artifact_id": "strat-member-1",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-paper-1",
+            "instrument_id": "2330.TW",
+            "occurred_at": "2026-11-10T01:00:00Z",
+            "sequence_number": 1,
+            "payload": {
+                "side": "long",
+                "status": "open",
+                "opened_at": "2026-11-10T01:00:00Z",
+                "entry_actor": "persona",
+                "requested_quantity": 100.0,
+                "filled_quantity": 100.0,
+                "remaining_quantity": 0.0,
+                "vwap": 580.0,
+                "fees": 12.5,
+                "confidence": 0.84,
+                "thesis": f"Paper momentum trade in {regime} regime",
+            },
+        }
+    )
+    projected = store.project_event(
+        {
+            "event_id": f"ev-close-{episode_id}",
+            "event_type": "trade_episode.closed",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "environment": "paper",
+            "persona_id": persona_id,
+            "occurred_at": "2026-11-11T05:30:00Z",
+            "sequence_number": 2,
+            "payload": {
+                "status": "closed",
+                "closed_at": "2026-11-11T05:30:00Z",
+                "exit_actor": "persona",
+                "exit_reason": "target_reached",
+                "realized_pnl": realized_pnl,
+            },
+        }
+    )
+    assert projected is not None
+    return projected
+
+
 @pytest.fixture
 def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Mount all 6 owner services (covering all 8 proposal kinds) in-process via TestClient."""
+    """Mount all 7 owner services (covering all 8 proposal kinds + Telemetry episodes) in-process via TestClient."""
     # Common auth configuration
-    for prefix in ("PANTHEON_RESEARCH_", "PANTHEON_MEMORY_", "PANTHEON_GOVERNANCE_", "PERSONA_", "PANTHEON_BFF_"):
+    for prefix in (
+        "PANTHEON_RESEARCH_",
+        "PANTHEON_MEMORY_",
+        "PANTHEON_TELEMETRY_",
+        "PANTHEON_GOVERNANCE_",
+        "PERSONA_",
+        "PANTHEON_BFF_",
+    ):
         monkeypatch.setenv(prefix + "AUTH_MODE", "strict")
         monkeypatch.setenv(prefix + "JWT_SECRET", SECRET)
         monkeypatch.setenv(prefix + "JWT_ISSUER", ISSUER)
@@ -553,6 +625,66 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     agora_client = TestClient(agora_app)
 
+    # 7. Real Telemetry Flask owner app (services.telemetry.main.app)
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
+    telemetry_store = TradeEpisodeProjectionStore(
+        projections_path=telemetry_dir / "trade_episode_projections.json",
+        events_path=telemetry_dir / "trade_episode_events.jsonl",
+    )
+    for ep_id, reg in zip(seed_lesson["trade_episode_ids"], ("bull", "bear", "bull")):
+        _seed_telemetry_episode(telemetry_store, ep_id, regime=reg)
+    for ep_id, reg in (
+        ("ep-101", "bull"),
+        ("ep-102", "bear"),
+        ("ep-103", "bull"),
+        ("ep-201", "bull"),
+        ("ep-202", "bear"),
+        ("ep-203", "bull"),
+        ("ep-301", "bull"),
+        ("ep-302", "bear"),
+        ("ep-303", "bull"),
+    ):
+        _seed_telemetry_episode(telemetry_store, ep_id, regime=reg)
+
+    class _TelemetryServiceStub:
+        def get_trade_episode_projection(
+            self,
+            trade_episode_id: str,
+            *,
+            as_of: str | None = None,
+            as_of_sequence: int | None = None,
+            tenant_id: str | None = None,
+        ) -> dict[str, Any] | None:
+            return telemetry_store.get(
+                trade_episode_id,
+                as_of=as_of,
+                as_of_sequence=as_of_sequence,
+                tenant_id=tenant_id,
+            )
+
+        def list_runtime_summaries(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(telemetry_main, "_get_service", lambda: _TelemetryServiceStub())
+    telemetry_client = telemetry_main.app.test_client()
+
+    from services.consultation.meeting_outputs import _mint_jwt
+
+    default_telemetry_token = _mint_jwt(
+        subject="pantheon-dev-consultation-telemetry-reader",
+        tenant_id=TENANT,
+        roles=["viewer", "reviewer"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"allowed_tenants": [TENANT]},
+    )
+    default_telemetry_token_file = tmp_path / "default_consultation_telemetry_read_token"
+    default_telemetry_token_file.write_text(default_telemetry_token, encoding="utf-8")
+    os.chmod(default_telemetry_token_file, 0o600)
+    monkeypatch.setenv("CONSULTATION_TELEMETRY_READ_TOKEN_FILE", str(default_telemetry_token_file))
+
     call_log: list[dict[str, Any]] = []
 
     def in_process_transport(
@@ -571,6 +703,18 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 "body": copy.deepcopy(body),
             }
         )
+        if parsed.path.startswith("/api/telemetry/"):
+            flask_resp = telemetry_client.open(
+                path_and_query,
+                method=method.upper(),
+                headers=dict(headers),
+                json=body if method.upper() == "POST" else None,
+            )
+            data = flask_resp.get_json(silent=True)
+            if not isinstance(data, dict):
+                data = {"detail": flask_resp.get_data(as_text=True)}
+            return flask_resp.status_code, data
+
         if parsed.path.startswith("/api/research/"):
             client = research_client
         elif parsed.path.startswith("/api/evolution/"):
@@ -610,6 +754,8 @@ def owner_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "governance_client": governance_client,
             "memory_main": memory_main,
             "memory_client": memory_client,
+            "telemetry_store": telemetry_store,
+            "telemetry_client": telemetry_client,
             "lesson_gov_service": lesson_gov_service,
             "endorsed_lesson_id": endorsed_lesson_id,
             "persona_client": persona_client,
@@ -1121,3 +1267,463 @@ def test_downstream_gates_unchanged_even_when_payload_requests_approved_or_appli
     assert str(getattr(gov_record.decision_state, "value", gov_record.decision_state)) == "proposed"
     assert gov_record.decision is None
 
+
+def test_configured_service_tokens_and_real_episode_reference_requirement_for_lesson_candidates(
+    owner_harness: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.issue_dev_paper_principals import issue_environment
+
+    dev_tenant = "tenant-dev"
+    issued = issue_environment(
+        {
+            "PANTHEON_ENV": "dev",
+            "PANTHEON_DEV_BFF_TENANT_ID": dev_tenant,
+            "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+            "PANTHEON_DEV_BFF_JWT_SECRET": SECRET,
+            "PANTHEON_DEV_BFF_JWT_ISSUER": ISSUER,
+            "PANTHEON_DEV_BFF_JWT_AUDIENCE": AUDIENCE,
+        }
+    )
+    research_jwt = issued["PERSONA_RESEARCH_SERVICE_TOKEN"]
+    memory_write_jwt = issued["CONSULTATION_MEMORY_WRITE_TOKEN"]
+    memory_read_jwt = issued["CONSULTATION_MEMORY_READ_TOKEN"]
+    telemetry_read_jwt = issued["CONSULTATION_TELEMETRY_READ_TOKEN"]
+
+    write_file = tmp_path / "CONSULTATION_MEMORY_WRITE_TOKEN"
+    write_file.write_text(memory_write_jwt, encoding="utf-8")
+    os.chmod(write_file, 0o600)
+    read_file = tmp_path / "CONSULTATION_MEMORY_READ_TOKEN"
+    read_file.write_text(memory_read_jwt, encoding="utf-8")
+    os.chmod(read_file, 0o600)
+    telemetry_read_file = tmp_path / "CONSULTATION_TELEMETRY_READ_TOKEN"
+    telemetry_read_file.write_text(telemetry_read_jwt, encoding="utf-8")
+    os.chmod(telemetry_read_file, 0o600)
+
+    monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", research_jwt)
+    monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(write_file))
+    monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
+    monkeypatch.setenv("CONSULTATION_TELEMETRY_READ_TOKEN_FILE", str(telemetry_read_file))
+
+    ep_uuid_1 = str(uuid.uuid4())
+    ep_uuid_2 = str(uuid.uuid4())
+    ep_uuid_3 = str(uuid.uuid4())
+    unverified_full_shape_id = str(uuid.uuid4())
+    telemetry_store: TradeEpisodeProjectionStore = owner_harness["telemetry_store"]
+    for ep_id, reg in (("ep-dev-301", "bull"), ("ep-dev-302", "bear"), ("ep-dev-303", "bull")):
+        _seed_telemetry_episode(telemetry_store, ep_id, tenant_id=dev_tenant, persona_id=SPONSOR, regime=reg)
+    verified_ep_1 = _seed_telemetry_episode(telemetry_store, ep_uuid_1, tenant_id=dev_tenant, persona_id=SPONSOR, regime="bull")
+    verified_ep_2 = _seed_telemetry_episode(telemetry_store, ep_uuid_2, tenant_id=dev_tenant, persona_id=SPONSOR, regime="bear")
+    verified_ep_3 = _seed_telemetry_episode(telemetry_store, ep_uuid_3, tenant_id=dev_tenant, persona_id=SPONSOR, regime="bull")
+    foreign_persona_ep = _seed_telemetry_episode(
+        telemetry_store,
+        "ep-foreign-persona",
+        tenant_id=dev_tenant,
+        persona_id="persona-other",
+        regime="bull",
+    )
+    _seed_telemetry_episode(
+        telemetry_store,
+        "ep-foreign-tenant",
+        tenant_id="tenant-other",
+        persona_id=SPONSOR,
+        regime="bear",
+    )
+    # Full-shape candidate matching TradeEpisodeProjection schema, tenant, and sponsor persona,
+    # but NOT present in the authoritative Telemetry store.
+    unverified_full_shape_ep = {
+        **copy.deepcopy(verified_ep_1),
+        "trade_episode_id": unverified_full_shape_id,
+    }
+
+    meeting = {
+        "meeting_id": "mtg-hosted-tokens-001",
+        "tenant_id": dev_tenant,
+        "case_file_items": [
+            {
+                "item_id": "facts:strategy_pool:persona-alpha@1",
+                "group": "facts",
+                "kind": "strategy_pool",
+                "source_owner": "persona",
+                "source_id": "persona-alpha@1",
+                "excerpt": '{"pool_version":1,"members":[{"artifact_ref":"strat-member-1","stage":"active"}]}',
+                "subject_fields": {"pool_version": 1},
+            },
+            verified_ep_1,
+            verified_ep_2,
+            verified_ep_3,
+            unverified_full_shape_ep,
+            foreign_persona_ep,
+        ],
+        "proposals": [
+            {
+                "proposal_id": "prop-hosted-rd-1",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "research_demand",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "mandate": "momentum",
+                    "missing_datasets": [],
+                    "tried_families": ["momentum"],
+                    "short_measure": "effective_bets",
+                    "pool_version": 1,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-valid-citations",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Lesson candidate citing three real episode references verified via Telemetry",
+                    "confidence": 0.84,
+                },
+                "citations": [
+                    "facts:strategy_pool:persona-alpha@1",
+                    "ep-dev-301",
+                    "ep-dev-302",
+                    "ep-dev-301",
+                    "ep-dev-303",
+                ],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-valid-verified-evidence",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Lesson candidate passing full-shape TradeEpisodeProjection candidates verified via Telemetry GET",
+                    "confidence": 0.86,
+                    "trade_episode_ids": [verified_ep_1, verified_ep_2, verified_ep_3],
+                },
+                "citations": [ep_uuid_1, ep_uuid_2, ep_uuid_3, ep_uuid_1, "ep-foreign-persona"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-unverified-full-shape",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Full-shape candidate absent from Telemetry must fail before Memory POST",
+                    "confidence": 0.85,
+                    "trade_episode_ids": [verified_ep_1, verified_ep_2, unverified_full_shape_ep],
+                },
+                "citations": [unverified_full_shape_ep],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-non-episode-citation",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Non-episode strategy-pool citation must not be converted into episode UUIDs",
+                    "confidence": 0.84,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-no-evidence",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "No-evidence lesson candidate must fail closed without placeholder padding",
+                    "confidence": 0.81,
+                },
+                "citations": [],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-insufficient-episodes",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Two distinct episodes with duplicates must not be padded to three",
+                    "confidence": 0.80,
+                },
+                "citations": ["ep-dev-301", "ep-dev-302", "ep-dev-301", "facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-missing-and-foreign-episodes",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Missing, foreign-persona, and foreign-tenant episodes must be rejected before Memory submission",
+                    "confidence": 0.83,
+                    "trade_episode_ids": [
+                        "ep-dev-301",
+                        "ep-dev-302",
+                        "ep-missing-404",
+                        "ep-foreign-persona",
+                        "ep-foreign-tenant",
+                    ],
+                },
+                "citations": ["ep-missing-404", "ep-foreign-persona", "ep-foreign-tenant"],
+            },
+        ],
+    }
+
+    candidates_before = len(owner_harness["lesson_gov_service"].store.list())
+    owner_harness["call_log"].clear()
+    results = dispatch_proposals(meeting)
+    by_id = {r["proposal_id"]: r for r in results}
+
+    # 1. Research demand and the two valid lesson_candidate proposals succeed
+    assert by_id["prop-hosted-rd-1"]["error"] is None
+    assert by_id["prop-hosted-rd-1"]["status"] == "open"
+    assert by_id["prop-hosted-lc-valid-citations"]["error"] is None
+    assert by_id["prop-hosted-lc-valid-citations"]["status"] == "proposed"
+    assert by_id["prop-hosted-lc-valid-verified-evidence"]["error"] is None
+    assert by_id["prop-hosted-lc-valid-verified-evidence"]["status"] == "proposed"
+
+    # 2. Unverified full-shape candidate, non-episode citation, no-evidence, <3 distinct episodes, and missing/foreign episodes fail closed before Memory submission
+    for failed_pid, expected_count in (
+        ("prop-hosted-lc-unverified-full-shape", 2),
+        ("prop-hosted-lc-non-episode-citation", 0),
+        ("prop-hosted-lc-no-evidence", 0),
+        ("prop-hosted-lc-insufficient-episodes", 2),
+        ("prop-hosted-lc-missing-and-foreign-episodes", 2),
+    ):
+        assert by_id[failed_pid]["status"] == "failed"
+        assert by_id[failed_pid]["downstream_id"] is None
+        assert (
+            by_id[failed_pid]["error"]
+            == "lesson_candidate requires at least 3 distinct supporting trade_episode_ids "
+            f"from input or verified evidence (got {expected_count})"
+        )
+
+    rd_call = next(c for c in owner_harness["call_log"] if c["path"] == "/api/research/persona-demands" and c["method"] == "POST")
+    assert rd_call["headers"]["Authorization"] == f"Bearer {research_jwt}"
+    lc_calls = [c for c in owner_harness["call_log"] if c["path"] == "/api/memory/trade-lessons" and c["method"] == "POST"]
+    assert len(lc_calls) == 2
+    for lc_call in lc_calls:
+        assert lc_call["headers"]["Authorization"] == f"Bearer {memory_write_jwt}"
+
+    telemetry_calls = [c for c in owner_harness["call_log"] if c["path"].startswith("/api/telemetry/trade-episodes/") and c["method"] == "GET"]
+    assert telemetry_calls
+    for tel_call in telemetry_calls:
+        assert tel_call["headers"]["Authorization"] == f"Bearer {telemetry_read_jwt}"
+    # Every selected candidate ID (including full-shape candidates) was verified via Telemetry owner GET
+    fetched_paths = {c["path"] for c in telemetry_calls}
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_1}" in fetched_paths
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_2}" in fetched_paths
+    assert f"/api/telemetry/trade-episodes/{ep_uuid_3}" in fetched_paths
+    assert f"/api/telemetry/trade-episodes/{unverified_full_shape_id}" in fetched_paths
+
+    # Only the two valid candidates were persisted in Memory, with their exact real episode IDs
+    assert len(owner_harness["lesson_gov_service"].store.list()) == candidates_before + 2
+    lc_id_1 = by_id["prop-hosted-lc-valid-citations"]["downstream_id"]
+    lc_record_1 = owner_harness["lesson_gov_service"].store.get(lc_id_1)
+    assert lc_record_1 is not None
+    assert lc_record_1["trade_episode_ids"] == ["ep-dev-301", "ep-dev-302", "ep-dev-303"]
+
+    lc_id_2 = by_id["prop-hosted-lc-valid-verified-evidence"]["downstream_id"]
+    lc_record_2 = owner_harness["lesson_gov_service"].store.get(lc_id_2)
+    assert lc_record_2 is not None
+    assert lc_record_2["trade_episode_ids"] == [ep_uuid_1, ep_uuid_2, ep_uuid_3]
+
+    # Live readback succeeds using CONSULTATION_MEMORY_READ_TOKEN_FILE
+    live_lc = read_downstream_status("prop-hosted-lc-valid-citations")
+    assert live_lc["status"] == "proposed"
+    assert live_lc["downstream_id"] == lc_id_1
+    lc_get_call = next(c for c in owner_harness["call_log"] if c["path"].startswith("/api/memory/trade-lessons/") and c["method"] == "GET")
+    assert lc_get_call["headers"]["Authorization"] == f"Bearer {memory_read_jwt}"
+
+    # 3. Issued CONSULTATION_TELEMETRY_READ_TOKEN is denied on all real Telemetry write routes
+    telemetry_client = owner_harness["telemetry_client"]
+    tel_headers = {"Authorization": f"Bearer {telemetry_read_jwt}", "X-Tenant-Id": dev_tenant}
+    for write_path in (
+        "/api/telemetry/ingest",
+        "/api/telemetry/ingest/batch",
+        "/api/v1/telemetry/infrastructure-health",
+        "/api/v1/telemetry/heartbeats",
+        "/api/telemetry/replay",
+    ):
+        write_resp = telemetry_client.post(write_path, json={}, headers=tel_headers)
+        assert write_resp.status_code == 403
+        assert write_resp.get_json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+    # 4. When consultation telemetry read credentials are unconfigured, no fallback JWT is minted
+    # and missing configuration reports unavailable evidence before any Memory POST.
+    for env_key in (
+        "CONSULTATION_TELEMETRY_READ_TOKEN",
+        "CONSULTATION_TELEMETRY_READ_TOKEN_FILE",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE",
+    ):
+        monkeypatch.delenv(env_key, raising=False)
+
+    unconfigured_meeting = {
+        "meeting_id": "mtg-unconfigured-telemetry-001",
+        "tenant_id": dev_tenant,
+        "proposals": [
+            {
+                "proposal_id": "prop-lc-unconfigured-telemetry",
+                "meeting_id": "mtg-unconfigured-telemetry-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Unconfigured telemetry credential must not mint fallback JWT",
+                    "confidence": 0.85,
+                    "trade_episode_ids": [verified_ep_1, verified_ep_2, verified_ep_3],
+                },
+                "citations": ["ep-dev-301", "ep-dev-302", "ep-dev-303"],
+            }
+        ],
+    }
+    owner_harness["call_log"].clear()
+    unconf_results = dispatch_proposals(unconfigured_meeting)
+    assert len(unconf_results) == 1
+    assert unconf_results[0]["status"] == "failed"
+    assert unconf_results[0]["downstream_id"] is None
+    assert (
+        unconf_results[0]["error"]
+        == "lesson_candidate requires at least 3 distinct supporting trade_episode_ids "
+        "from input or verified evidence (got 0)"
+    )
+    assert owner_harness["call_log"] == []
+
+
+@pytest.mark.parametrize("failure_mode", ["missing", "unsafe_mode", "revoked_empty"])
+def test_configured_token_file_failures_fail_closed_without_alias_or_jwt_fallback(
+    owner_harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_mode: str,
+) -> None:
+    """A configured missing, unsafe, or revoked *_FILE credential must fail closed.
+
+    Even when lower-priority alias tokens and JWT signing secrets are present in
+    the environment, dispatch_proposals must record a dispatch failure and send
+    zero outbound HTTP requests rather than falling back to an alias or minting
+    a synthetic JWT.
+    """
+    from services.consultation.meeting_outputs import MeetingOutputRoutingError, _mint_jwt
+
+    alias_memory_jwt = _mint_jwt(
+        subject="pantheon-dev-consultation-memory-writer",
+        tenant_id=TENANT,
+        roles=["consultation-svc"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "alias-memory-token-must-not-be-used"},
+    )
+    alias_research_jwt = _mint_jwt(
+        subject="persona-pool-cycle",
+        tenant_id=TENANT,
+        roles=["viewer"],
+        secret=SECRET,
+        issuer=ISSUER,
+        audience=AUDIENCE,
+        extra_claims={"marker": "alias-research-token-must-not-be-used"},
+    )
+
+    bad_mem_file = tmp_path / f"CONSULTATION_MEMORY_WRITE_TOKEN_{failure_mode}"
+    bad_res_file = tmp_path / f"PERSONA_RESEARCH_SERVICE_TOKEN_{failure_mode}"
+    if failure_mode == "unsafe_mode":
+        bad_mem_file.write_text(alias_memory_jwt, encoding="utf-8")
+        os.chmod(bad_mem_file, 0o644)
+        bad_res_file.write_text(alias_research_jwt, encoding="utf-8")
+        os.chmod(bad_res_file, 0o644)
+    elif failure_mode == "revoked_empty":
+        bad_mem_file.write_text("   \n", encoding="utf-8")
+        os.chmod(bad_mem_file, 0o600)
+        bad_res_file.write_text("", encoding="utf-8")
+        os.chmod(bad_res_file, 0o600)
+
+    # Configure higher-priority *_FILE paths to the broken files while also
+    # populating fallback aliases and JWT secrets to prove no fallback occurs.
+    monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(bad_mem_file))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", alias_memory_jwt)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", SECRET)
+
+    monkeypatch.setenv("PERSONA_RESEARCH_SERVICE_TOKEN_FILE", str(bad_res_file))
+    monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", alias_research_jwt)
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", SECRET)
+
+    meeting = {
+        "meeting_id": f"mtg-fail-closed-{failure_mode}",
+        "tenant_id": TENANT,
+        "proposals": [
+            {
+                "proposal_id": f"prop-fc-rd-{failure_mode}",
+                "meeting_id": f"mtg-fail-closed-{failure_mode}",
+                "kind": "research_demand",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "mandate": "momentum",
+                    "missing_datasets": [],
+                    "tried_families": ["momentum"],
+                    "short_measure": "effective_bets",
+                    "pool_version": 1,
+                },
+                "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": f"prop-fc-lc-{failure_mode}",
+                "meeting_id": f"mtg-fail-closed-{failure_mode}",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Must not mint fallback JWT when token file fails",
+                    "confidence": 0.85,
+                },
+                "citations": ["ep-301", "ep-302", "ep-303"],
+            },
+        ],
+    }
+
+    owner_harness["call_log"].clear()
+    results = dispatch_proposals(meeting)
+    by_id = {r["proposal_id"]: r for r in results}
+
+    for pid in (f"prop-fc-rd-{failure_mode}", f"prop-fc-lc-{failure_mode}"):
+        assert by_id[pid]["status"] == "failed"
+        assert by_id[pid]["downstream_id"] is None
+        assert by_id[pid]["error"] == "Configured service credential unavailable"
+
+    # Zero HTTP requests were sent to any owner (no alias token, no minted JWT).
+    assert owner_harness["call_log"] == []
+
+    # After repairing the configured files in place with valid mode-0600 tokens,
+    # retrying dispatch_proposals succeeds and uses the file tokens.
+    bad_mem_file.write_text(alias_memory_jwt, encoding="utf-8")
+    os.chmod(bad_mem_file, 0o600)
+    bad_res_file.write_text(alias_research_jwt, encoding="utf-8")
+    os.chmod(bad_res_file, 0o600)
+
+    retry_results = dispatch_proposals(meeting)
+    retry_by_id = {r["proposal_id"]: r for r in retry_results}
+    assert retry_by_id[f"prop-fc-rd-{failure_mode}"]["status"] == "open"
+    assert retry_by_id[f"prop-fc-rd-{failure_mode}"]["error"] is None
+    assert retry_by_id[f"prop-fc-lc-{failure_mode}"]["status"] == "proposed"
+    assert retry_by_id[f"prop-fc-lc-{failure_mode}"]["error"] is None
+
+    # Configuring a broken CONSULTATION_MEMORY_READ_TOKEN_FILE also fails closed
+    # on read_downstream_status even when CONSULTATION_MEMORY_WRITE_TOKEN_FILE is valid.
+    bad_read_file = tmp_path / f"CONSULTATION_MEMORY_READ_TOKEN_{failure_mode}"
+    if failure_mode == "unsafe_mode":
+        bad_read_file.write_text(alias_memory_jwt, encoding="utf-8")
+        os.chmod(bad_read_file, 0o644)
+    elif failure_mode == "revoked_empty":
+        bad_read_file.write_text("", encoding="utf-8")
+        os.chmod(bad_read_file, 0o600)
+    monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(bad_read_file))
+
+    owner_harness["call_log"].clear()
+    with pytest.raises(MeetingOutputRoutingError, match="Configured service credential unavailable"):
+        read_downstream_status(f"prop-fc-lc-{failure_mode}")
+    assert owner_harness["call_log"] == []
