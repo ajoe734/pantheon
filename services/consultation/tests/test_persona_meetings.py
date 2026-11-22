@@ -2644,3 +2644,27 @@ def test_meeting_memory_writeback_honors_consultation_memory_write_token_file(
     )
     assert len(writebacks) == 2
     assert inst_id
+
+
+@pytest.mark.parametrize("configured, expected", [(None, 15.0), ("22.5", 22.5)])
+def test_preread_memory_timeout_default_and_override(monkeypatch, configured, expected):
+    import integrations.openclaw.persona_memory_bridge as bridge
+    from services.consultation.meetings import build_participant_pre_read
+
+    if configured is None:
+        monkeypatch.delenv("CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS", configured)
+    calls = []
+
+    def fetch(url, **kw):
+        calls.append(kw)
+        return {"hits": []}
+
+    monkeypatch.setattr(bridge, "fetch_canonical_memory", fetch)
+    build_participant_pre_read(
+        meeting_id="mtg-budget", tenant_id=TENANT, topic="memory latency",
+        memory_url="http://memory.invalid", participants=[{
+            "persona_id": "persona-a", "role": "chair", "style": "momentum", "origin": "institutional"}])
+    assert len(calls) == 1 and calls[0]["timeout_seconds"] == expected
+    assert calls[0]["scope"] == "both" and calls[0]["limit"] == 12

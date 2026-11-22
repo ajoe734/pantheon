@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 _ADAPTER_DIR = Path(__file__).resolve().parents[1]
@@ -525,3 +526,81 @@ def test_round_1_round_2_and_chair_synthesis_prompt_schemas_validate_meeting_fie
     synth_contrib["event_content"] = dict(synth_contrib["event_content"])
     synth_contrib["event_content"].pop("committee_memory_status", None)
     jsonschema.validate(synth_contrib, synth_schema)
+
+
+@pytest.mark.parametrize("round_value", [1, 2, "synthesis"])
+@pytest.mark.parametrize("entries", [[], [{"item_id": "pmem-1", "summary": "SUPPLIED-PRE-READ-SENTINEL"}]])
+def test_supplied_preread_skips_memory_fetch_even_when_empty(tmp_path, round_value, entries):
+    double = _ProviderDouble()
+    calls = []
+
+    def fetch(*args):
+        calls.append(args)
+        raise AssertionError("pre-read must be used without another memory read")
+
+    response = _post_turn(double, tmp_path, memory_fetcher=fetch, meeting={
+        "meeting_id": "mtg-1", "meeting_type": "MT-1", "round": round_value,
+        "own_pre_read": {"persona_id": "persona-alpha", "entries": entries},
+        **({"prior_round_positions": []} if round_value == 2 else {}),
+    })
+    assert response.status_code == 200, response.text
+    assert not calls and len(double.prompts) == 1
+    if entries:
+        assert "SUPPLIED-PRE-READ-SENTINEL" in double.prompts[0]
+
+
+def test_absent_preread_still_fetches_memory(tmp_path):
+    calls = []
+    response = _post_turn(_ProviderDouble(), tmp_path, memory_fetcher=lambda *a: calls.append(a) or {"hits": []},
+                          meeting={"meeting_id": "mtg-1", "meeting_type": "MT-1", "round": 1})
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1 and calls[0][0:2] == (TENANT, "persona-alpha")
+
+
+@pytest.mark.parametrize("shared_source", [None, "env", "file"])
+def test_memory_token_fallback_keeps_actor_and_roles_aligned(tmp_path, monkeypatch, shared_source):
+    import consultation_provider as cp
+
+    for name in ("PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+                 "PANTHEON_MEMORY_ACTOR_ID", "PANTHEON_MEMORY_ACTOR_ROLES"):
+        monkeypatch.setenv(name, "")
+    adapter_file = tmp_path / "adapter-token"
+    adapter_file.write_text("synthetic-adapter-token\n")
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ID", "adapter-reader")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES", "persona_memory_reader, researcher")
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.invalid")
+    if shared_source:
+        monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "shared-reader")
+        monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "consultation_session")
+        if shared_source == "env":
+            monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "synthetic-shared-token")
+        else:
+            shared_file = tmp_path / "shared-token"
+            shared_file.write_text("synthetic-shared-token\n")
+            monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", str(shared_file))
+    calls = []
+    monkeypatch.setattr(cp, "fetch_canonical_memory", lambda url, **kw: calls.append((url, kw)) or {"hits": []})
+    assert cp._default_committee_memory_fetcher(TENANT, "persona-alpha", "s1", "decision") == {"hits": []}
+    url, params = calls[0]
+    assert url == "http://memory.invalid"
+    assert params["auth_token"] == ("synthetic-shared-token" if shared_source else "synthetic-adapter-token")
+    assert params["actor_id"] == ("shared-reader" if shared_source else "adapter-reader")
+    assert params["actor_roles"] == (["consultation_session"] if shared_source else ["persona_memory_reader", "researcher"])
+    assert params["timeout_seconds"] == 15.0
+    assert params["scope"] == "both" and params["persona_id"] == "persona-alpha"
+    if not shared_source:
+        adapter_file.write_text("synthetic-rotated-token\n")
+        assert cp._memory_auth_token() == "synthetic-rotated-token"
+
+
+def test_configured_missing_shared_token_file_does_not_downgrade_to_adapter(tmp_path, monkeypatch):
+    import consultation_provider as cp
+
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", str(tmp_path / "missing-shared"))
+    adapter_file = tmp_path / "adapter-token"
+    adapter_file.write_text("synthetic-adapter-token")
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
+    with pytest.raises(FileNotFoundError):
+        cp._memory_auth_token()

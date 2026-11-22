@@ -534,9 +534,11 @@ def _default_committee_memory_fetcher(
 
 
 def _uses_adapter_memory_identity() -> bool:
-    return not any(os.getenv(key, "").strip() for key in (
-        "PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE"
-    ))
+    shared_configured = any(
+        os.getenv(key, "").strip()
+        for key in ("PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE")
+    )
+    return bool(os.getenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", "").strip()) and not shared_configured
 
 
 def _memory_auth_token() -> str | None:

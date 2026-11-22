@@ -1749,7 +1749,7 @@ def _execute_meeting_claim(
                     return future.result(timeout=max(0.05, config.lease_seconds / 3))
                 except FutureTimeout:
                     if future.done():
-                        raise
+                        return future.result()
                     _renew_cb()
 
     class LeaseRenewingProvider:
