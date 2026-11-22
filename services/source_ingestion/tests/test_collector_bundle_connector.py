@@ -2035,3 +2035,552 @@ def test_instrument_authority_lists_symbols_through_the_reader_not_the_store(tmp
     monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "daily_bars")
     monkeypatch.setattr(dbs.DailyBarsStore, "symbol_stats", lambda *a, **k: (_ for _ in ()).throw(AssertionError("store listing used")))
     assert "2330" in stored_instrument_authority(*roots)
+
+
+# --- COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122: RC2 republish workset > cache cap & verification boundaries ---
+def _rc2_tpex_bundle(
+    run_id: str,
+    entry_date: str,
+    finished_at: str,
+    trade_date: str,
+    *,
+    n_rows: int = 16,
+    tag: str = "nov20-close",
+    manifest_target_bytes: int = 0,
+    items_target_bytes: int = 0,
+) -> tuple[dict[str, bytes], dict[str, str], dict[str, str]]:
+    source_id = "collector-tw-tpex-price-history"
+    manifest_items = []
+    rows = []
+    raw_files: dict[str, bytes] = {}
+    item_hashes: dict[str, str] = {}
+    codes = ("2330", "2317", "2454")
+    for idx in range(n_rows):
+        code = codes[idx] if idx < len(codes) else f"{5000 + idx}"
+        item_id = f"tpex-price-history-{trade_date}-{code}"
+        raw_doc = {
+            "dataset": "tw_price_daily",
+            "exchange": "TPEX",
+            "record": {
+                "close": 100.0 + idx,
+                "high": 101.0 + idx,
+                "low": 99.0 + idx,
+                "open": 100.0 + idx,
+                "symbol": code,
+                "tag": tag,
+                "trade_date": trade_date,
+                "volume": 1000 + idx,
+            },
+        }
+        raw_bytes = json.dumps(raw_doc, sort_keys=True).encode("utf-8")
+        sha = hashlib.sha256(raw_bytes).hexdigest()
+        raw_path = f"raw/{sha}.json"
+        manifest_items.append(
+            {
+                "item_id": item_id,
+                "url": f"https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date={trade_date}&code={code}",
+                "http_status": 200,
+                "content_sha256": sha,
+                "raw_path": raw_path,
+                "bytes": len(raw_bytes),
+            }
+        )
+        rows.append(
+            {
+                "id": item_id,
+                "url": f"https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date={trade_date}&code={code}",
+                "fetched_at": finished_at,
+                "dataset": "tw_price_daily",
+                "exchange": "TPEX",
+                "symbol": code,
+                "trade_date": trade_date,
+                "open": 100.0 + idx,
+                "high": 101.0 + idx,
+                "low": 99.0 + idx,
+                "close": 100.0 + idx,
+                "volume": 1000 + idx,
+                "turnover": 100000.0 + idx,
+                "transactions": 50 + idx,
+                "change": 0.5,
+            }
+        )
+        raw_files[raw_path] = raw_bytes
+        item_hashes[item_id] = sha
+    bundle_sha = compute_bundle_sha256(item_hashes.values())
+    manifest = {
+        "schema_version": "collector_bundle.v1",
+        "source_id": source_id,
+        "run_id": run_id,
+        "collector_version": "1.0.0",
+        "started_at": finished_at,
+        "finished_at": finished_at,
+        "fetch_policy_hash": "rc2-tpex-policy-hash",
+        "robots_decision": "allowed",
+        "terms_ref": "https://www.tpex.org.tw/terms",
+        "attribution": "證券櫃買中心 (TPEx)",
+        "items": manifest_items,
+        "status": "complete",
+        "bundle_sha256": bundle_sha,
+    }
+    base = f"bundles/{source_id}/{entry_date}/{run_id}"
+    manifest_bytes = json.dumps(manifest).encode("utf-8")
+    if manifest_target_bytes > len(manifest_bytes):
+        manifest_bytes += b" " * (manifest_target_bytes - len(manifest_bytes))
+    items_bytes = "\n".join(json.dumps(r) for r in rows).encode("utf-8")
+    if items_target_bytes > len(items_bytes):
+        items_bytes += b" " * (items_target_bytes - len(items_bytes))
+    files = {
+        f"{base}/manifest.json": manifest_bytes,
+        f"{base}/items.jsonl": items_bytes,
+    }
+    for rel_raw, raw_body in raw_files.items():
+        files[f"{base}/{rel_raw}"] = raw_body
+    entry = {
+        "source_id": source_id,
+        "date": entry_date,
+        "run_id": run_id,
+        "finished_at": finished_at,
+        "status": "complete",
+        "bundle_sha256": bundle_sha,
+    }
+    return files, entry, item_hashes
+
+
+def test_rc2_retained_receipt_and_republished_sessions_advance_historical_offset_within_budget(
+    tmp_path, monkeypatch
+):
+    """Acceptance 1: reproduce the RC2 retained priority receipt (2026-11-21T18:16:40Z#run-20261121T181640Z),
+    12 eligible upper-bound candidates with digest groups [9, 2, 1], 4 measured runs totaling 87,025,300 bytes
+    (> 71,680,000-byte _METADATA_CACHE cap), and historical partial cursor
+    2026-11-11T12:35:01Z#backfill-2026-10-28|items=804 (8,993,131 metadata bytes) under the 15s budget."""
+    import threading
+    import types
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    assert cb.COLLECTOR_REQUEST_READ_BUDGET_SECONDS == 15.0
+    assert cb.VERIFIED_METADATA_CACHE_BYTES == 71_680_000
+    assert cb.VERIFIED_METADATA_CACHE_ENTRIES == 16
+    assert cb.PRIORITY_TRADE_DATE_MEMO_ENTRIES == 512
+    assert cb.PRIORITY_DELIVERED_MEMO_ENTRIES == 64
+
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+
+    source_id = "collector-tw-tpex-price-history"
+    files: dict[str, bytes] = {}
+    entries: list[dict[str, str]] = []
+
+    # Historical bundle at partial offset 2026-11-11T12:35:01Z#backfill-2026-10-28|items=804 (8,993,131 metadata bytes).
+    hist_files, hist_entry, _ = _rc2_tpex_bundle(
+        "backfill-2026-10-28",
+        "2026-11-11",
+        "2026-11-11T12:35:01Z",
+        "2026-10-28",
+        n_rows=868,
+        tag="oct28-backfill",
+        manifest_target_bytes=2_345_000,
+        items_target_bytes=8_993_131 - 2_345_000,
+    )
+    files.update(hist_files)
+    entries.append(hist_entry)
+
+    # 3 earlier-session runs fetched on 2026-11-20 carrying trade_date 2026-11-19 (digest groups 2 and 1).
+    for run_id, finished_at, tag in (
+        ("run-20261120T001802Z", "2026-11-20T00:18:02Z", "nov19-early"),
+        ("close-2026-11-20-0511", "2026-11-20T05:11:13Z", "nov19-close"),
+        ("run-20261120T061626Z", "2026-11-20T06:16:26Z", "nov19-close"),
+    ):
+        c_files, c_entry, _ = _rc2_tpex_bundle(
+            run_id, "2026-11-20", finished_at, "2026-11-19", n_rows=16, tag=tag
+        )
+        files.update(c_files)
+        entries.append(c_entry)
+
+    # 9 equivalent republished runs carrying trade_date 2026-11-20; the 4 measured runs match RC2 byte sizes
+    # (5,674,342 + 16,081,983 = 21,756,325 bytes each; 4 * 21,756,325 = 87,025,300 bytes > 71,680,000 cap).
+    measured_four = {
+        "run-20261121T181640Z",
+        "run-20261122T001805Z",
+        "run-20261122T061626Z",
+        "run-20261122T121941Z",
+    }
+    nov20_runs = (
+        ("run-20261120T122009Z", "2026-11-20", "2026-11-20T12:20:09Z"),
+        ("run-20261120T181629Z", "2026-11-20", "2026-11-20T18:16:29Z"),
+        ("run-20261121T001805Z", "2026-11-21", "2026-11-21T00:18:05Z"),
+        ("run-20261121T061617Z", "2026-11-21", "2026-11-21T06:16:17Z"),
+        ("run-20261121T121953Z", "2026-11-21", "2026-11-21T12:19:53Z"),
+        ("run-20261121T181640Z", "2026-11-21", "2026-11-21T18:16:40Z"),
+        ("run-20261122T001805Z", "2026-11-22", "2026-11-22T00:18:05Z"),
+        ("run-20261122T061626Z", "2026-11-22", "2026-11-22T06:16:26Z"),
+        ("run-20261122T121941Z", "2026-11-22", "2026-11-22T12:19:41Z"),
+    )
+    nov20_hashes: dict[str, str] = {}
+    measured_bytes_sum = 0
+    for run_id, entry_date, finished_at in nov20_runs:
+        is_measured = run_id in measured_four
+        m_target = 5_674_342 if is_measured else 0
+        i_target = 16_081_983 if is_measured else 0
+        c_files, c_entry, item_hashes = _rc2_tpex_bundle(
+            run_id,
+            entry_date,
+            finished_at,
+            "2026-11-20",
+            n_rows=16,
+            tag="nov20-close",
+            manifest_target_bytes=m_target,
+            items_target_bytes=i_target,
+        )
+        if is_measured:
+            base = f"bundles/{source_id}/{entry_date}/{run_id}"
+            measured_bytes_sum += len(c_files[f"{base}/manifest.json"]) + len(c_files[f"{base}/items.jsonl"])
+        files.update(c_files)
+        entries.append(c_entry)
+        nov20_hashes = item_hashes
+
+    assert measured_bytes_sum == 87_025_300
+    assert measured_bytes_sum > cb.VERIFIED_METADATA_CACHE_BYTES
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    files["status.json"] = json.dumps(
+        {
+            "sources": {
+                source_id: {
+                    "status": "ok",
+                    "last_run_at": "2026-11-22T12:19:41Z",
+                    "cadence_seconds": 21600,
+                }
+            }
+        }
+    ).encode("utf-8")
+
+    clock = [0.0]
+    lock = threading.Lock()
+    reads: list[str] = []
+
+    class ModeledRC2Transport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            data = super().read(relative_path, max_bytes=max_bytes)
+            with lock:
+                reads.append(relative_path)
+                if relative_path.endswith(("manifest.json", "items.jsonl")):
+                    # Proportional to RC2 measured 1977.4 ms for 21,756,325 metadata bytes.
+                    clock[0] += len(data) * (1.9774 / 21_756_325)
+                elif "/raw/" in relative_path:
+                    clock[0] += 0.015
+            return data
+
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    transport = ModeledRC2Transport(files)
+
+    def make_adapter():
+        return CollectorBundleAdapter(
+            connector_id=source_id,
+            source_id=source_id,
+            source_type="market",
+            dataset="tw_price_daily",
+            cadence_seconds=1800,
+            max_records=32,
+            attribution_required=True,
+            raw_root=str(tmp_path / "store"),
+            transport=transport,
+            host=HOST,
+        )
+
+    adapter = make_adapter()
+    # Write the retained existing priority receipt at 2026-11-21T18:16:40Z#run-20261121T181640Z
+    # and the partial historical cursor at 2026-11-11T12:35:01Z#backfill-2026-10-28|items=804.
+    priority_path = adapter._priority_key_path()
+    priority_path.parent.mkdir(parents=True, exist_ok=True)
+    priority_path.write_text(
+        json.dumps(
+            {
+                "source_id": source_id,
+                "key": "2026-11-21T18:16:40Z#run-20261121T181640Z",
+                "trade_date": "2026-11-20",
+                "delivered": len(nov20_hashes),
+                "done": True,
+                "held": ["2317", "2330", "2454"],
+                "items": nov20_hashes,
+            }
+        ),
+        encoding="utf-8",
+    )
+    cursor_0 = "2026-11-11T12:35:01Z#backfill-2026-10-28|items=804"
+    cursor_path = adapter._resume_cursor_path()
+    cursor_path.parent.mkdir(parents=True, exist_ok=True)
+    cursor_path.write_text(
+        json.dumps({"source_id": source_id, "cursor": cursor_0}),
+        encoding="utf-8",
+    )
+
+    # Pull 1 (from cold caches): verifies equivalent republished candidates without downloading their 16.08 MB
+    # items.jsonl files, updates priority key to run-20261122T121941Z, and advances backfill-2026-10-28|items=804.
+    t0 = clock[0]
+    pull_1 = adapter.pull(cursor=adapter.load_resume_cursor(), priority_symbols=("2330.TWO", "2317.TWSE", "2454.TWSE"))
+    elapsed_1 = clock[0] - t0
+    adapter.save_resume_cursor(pull_1)
+
+    assert elapsed_1 < cb.COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    assert pull_1.priority_key == "2026-11-22T12:19:41Z#run-20261122T121941Z"
+    assert pull_1.priority_done is True
+    assert len(pull_1.records) == 32
+    assert {r.metadata["trade_date"] for r in pull_1.records} == {"2026-10-28"}
+    assert pull_1.next_cursor == "2026-11-11T12:35:01Z#backfill-2026-10-28|items=836"
+    assert pull_1.observed["continuation_pending"] is True
+    assert pull_1.observed["newest_session_pending"] is False
+    assert "collector_complete_boundary_unverified" not in pull_1.observed.get("reasons", ())
+    assert json.loads(priority_path.read_text())["key"] == "2026-11-22T12:19:41Z#run-20261122T121941Z"
+    # None of the 9 equivalent 2026-11-20 runs read items.jsonl, and the 2nd 2026-11-19 close run also skipped items.jsonl.
+    for run_id, _, _ in nov20_runs:
+        assert sum(1 for r in reads if f"/{run_id}/manifest.json" in r) == 1
+        assert sum(1 for r in reads if f"/{run_id}/items.jsonl" in r) == 0
+    assert sum(1 for r in reads if "/close-2026-11-20-0511/items.jsonl" in r) == 0
+
+    # Force-load all 4 measured 21.75 MB runs (87,025,300 bytes > 71,680,000-byte _METADATA_CACHE cap)
+    # to confirm _HISTORY_READING protects backfill-2026-10-28 in _METADATA_CACHE while priority runs evict.
+    for entry in entries:
+        if entry["run_id"] in measured_four:
+            adapter._verified_metadata(transport, entry)
+    with cb._METADATA_CACHE_LOCK:
+        cached_bytes = sum(size for _, _, size in cb._METADATA_CACHE.values())
+        cached_runs = {b.run_id for _, b, _ in cb._METADATA_CACHE.values()}
+    assert cached_bytes <= cb.VERIFIED_METADATA_CACHE_BYTES
+    assert "backfill-2026-10-28" in cached_runs
+
+    # Now publish a new 6-hourly equivalent run (run-20261122T181640Z); previously verified runs evicted from
+    # _METADATA_CACHE by the 71.68 MB cap must not be re-read, and backfill-2026-10-28 completes to the next boundary.
+    new_files, new_entry, _ = _rc2_tpex_bundle(
+        "run-20261122T181640Z",
+        "2026-11-22",
+        "2026-11-22T18:16:40Z",
+        "2026-11-20",
+        n_rows=16,
+        tag="nov20-close",
+        manifest_target_bytes=5_674_342,
+        items_target_bytes=16_081_983,
+    )
+    files.update(new_files)
+    entries.append(new_entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    reads.clear()
+    t1 = clock[0]
+    pull_2 = make_adapter().pull(
+        cursor=adapter.load_resume_cursor(), priority_symbols=("2330.TWO", "2317.TWSE", "2454.TWSE")
+    )
+    elapsed_2 = clock[0] - t1
+    adapter.save_resume_cursor(pull_2)
+
+    assert elapsed_2 < cb.COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    assert pull_2.priority_key == "2026-11-22T18:16:40Z#run-20261122T181640Z"
+    assert len(pull_2.records) == 32
+    assert pull_2.next_cursor == "2026-11-11T12:35:01Z#backfill-2026-10-28"
+    # Zero metadata re-reads for all 12 prior candidates and zero metadata re-reads for backfill-2026-10-28!
+    assert [r for r in reads if r.endswith(("manifest.json", "items.jsonl"))] == [
+        f"bundles/{source_id}/2026-11-22/run-20261122T181640Z/manifest.json"
+    ]
+
+
+def test_priority_republish_preserves_row_identity_and_handles_revisions_changed_manifests_and_cold_restart(
+    tmp_path, monkeypatch
+):
+    """Acceptance 1 & 3: positive complete pending input with held-symbol priority, equivalent republish,
+    swapped item_id row identity with identical bundle_sha256, tampered manifest, revised data correction,
+    resume after cold restart, and unverified empty input failing closed."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+
+    source_id = "collector-tw-tpex-price-history"
+    hist_files, hist_entry, _ = _rc2_tpex_bundle(
+        "backfill-2026-10-28", "2026-11-11", "2026-11-11T12:35:01Z", "2026-10-28", n_rows=6, tag="oct28"
+    )
+    nov20_files, nov20_entry, nov20_hashes = _rc2_tpex_bundle(
+        "run-20261121T181640Z", "2026-11-21", "2026-11-21T18:16:40Z", "2026-11-20", n_rows=4, tag="nov20"
+    )
+    files = {**hist_files, **nov20_files}
+    entries = [hist_entry, nov20_entry]
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    files["status.json"] = json.dumps(
+        {"sources": {source_id: {"status": "ok", "last_run_at": "2026-11-21T18:16:40Z", "cadence_seconds": 21600}}}
+    ).encode("utf-8")
+    transport = _CountingTransport(files)
+
+    def make_adapter(max_records=6):
+        return CollectorBundleAdapter(
+            connector_id=source_id,
+            source_id=source_id,
+            source_type="market",
+            dataset="tw_price_daily",
+            cadence_seconds=1800,
+            max_records=max_records,
+            attribution_required=True,
+            raw_root=str(tmp_path / "store"),
+            transport=transport,
+            host=HOST,
+        )
+
+    # 1. Positive complete pending input: held symbol 2454 comes first, followed by remaining newest-session rows
+    # and the first 2 historical rows (partial cursor |items=2).
+    a = make_adapter(max_records=6)
+    first = a.pull(cursor=None, priority_symbols=("2454.TWO",))
+    a.save_resume_cursor(first)
+    assert first.priority_done is True
+    assert [r.metadata["symbol"] for r in first.records[:4]] == ["2454", "2330", "2317", "5003"]
+    assert [r.metadata["trade_date"] for r in first.records] == [
+        "2026-11-20",
+        "2026-11-20",
+        "2026-11-20",
+        "2026-11-20",
+        "2026-10-28",
+        "2026-10-28",
+    ]
+    assert first.next_cursor == "2026-11-11T12:35:01Z#backfill-2026-10-28|items=2"
+    for rec in first.records:
+        assert rec.metadata["content_hash"].startswith("sha256:")
+        assert rec.metadata["event_time"] <= rec.metadata["available_time"]
+
+    # 2. Changed manifest with swapped item_id -> content_sha256 mapping but IDENTICAL sorted bundle_sha256:
+    # must not be skipped as equivalent because verified row identity changed.
+    swapped_files, swapped_entry, _ = _rc2_tpex_bundle(
+        "run-20261122T001805Z", "2026-11-22", "2026-11-22T00:18:05Z", "2026-11-20", n_rows=4, tag="nov20"
+    )
+    swapped_base = f"bundles/{source_id}/2026-11-22/run-20261122T001805Z"
+    swapped_manifest = json.loads(swapped_files[f"{swapped_base}/manifest.json"])
+    swapped_manifest["items"][0]["item_id"], swapped_manifest["items"][1]["item_id"] = (
+        swapped_manifest["items"][1]["item_id"],
+        swapped_manifest["items"][0]["item_id"],
+    )
+    assert compute_bundle_sha256([m["content_sha256"] for m in swapped_manifest["items"]]) == nov20_entry["bundle_sha256"]
+    swapped_files[f"{swapped_base}/manifest.json"] = json.dumps(swapped_manifest).encode("utf-8")
+    files.update(swapped_files)
+    files["bundles/index.json"] = json.dumps({"bundles": [*entries, swapped_entry]}).encode("utf-8")
+    transport.reads.clear()
+    swapped_pull = make_adapter(max_records=6).pull(
+        cursor=a.load_resume_cursor(), priority_symbols=("2454.TWO",)
+    )
+    # Row identity mismatch forced items.jsonl verification and re-delivery of the 2 swapped item_ids.
+    assert any(r.endswith("/run-20261122T001805Z/items.jsonl") for r in transport.reads)
+    assert len([r for r in swapped_pull.records if r.metadata["trade_date"] == "2026-11-20"]) == 2
+
+    # 3. Tampered manifest claiming the trusted bundle_sha256 in index.json fails closed.
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+    bad_manifest = dict(swapped_manifest)
+    bad_manifest["attribution"] = ""
+    files[f"{swapped_base}/manifest.json"] = json.dumps(bad_manifest).encode("utf-8")
+    with pytest.raises(SourceEvidenceError, match="requires attribution"):
+        make_adapter(max_records=6).pull(cursor=a.load_resume_cursor(), priority_symbols=("2454.TWO",))
+
+    # Restore valid equivalent republish run-20261122T001805Z and simulate cold restart.
+    equiv_files, equiv_entry, _ = _rc2_tpex_bundle(
+        "run-20261122T001805Z", "2026-11-22", "2026-11-22T00:18:05Z", "2026-11-20", n_rows=4, tag="nov20"
+    )
+    files.update(equiv_files)
+    entries.append(equiv_entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+    assert not cb._PRIORITY_TRADE_DATE_MEMO and not cb._PRIORITY_DELIVERED_MEMO
+
+    # 4. Resume after cold restart: priority receipt skips items.jsonl for equivalent republish, updates key,
+    # and resumes historical backfill from |items=2 to |items=4.
+    transport.reads.clear()
+    resumed = make_adapter(max_records=2).pull(cursor=a.load_resume_cursor(), priority_symbols=("2454.TWO",))
+    a.save_resume_cursor(resumed)
+    assert resumed.priority_key == "2026-11-22T00:18:05Z#run-20261122T001805Z"
+    assert not any(r.endswith("/run-20261122T001805Z/items.jsonl") for r in transport.reads)
+    assert [r.metadata["trade_date"] for r in resumed.records] == ["2026-10-28", "2026-10-28"]
+    assert resumed.next_cursor == "2026-11-11T12:35:01Z#backfill-2026-10-28|items=4"
+
+    # 5. Revised data (correction to 2330 close price in run-20261122T061626Z): verifies items.jsonl and raw file,
+    # delivers only the corrected 2330 record for 2026-11-20 plus the final 2 historical rows of 2026-10-28.
+    rev_files, rev_entry, _ = _rc2_tpex_bundle(
+        "run-20261122T061626Z", "2026-11-22", "2026-11-22T06:16:26Z", "2026-11-20", n_rows=4, tag="nov20"
+    )
+    rev_base = f"bundles/{source_id}/2026-11-22/run-20261122T061626Z"
+    rev_manifest = json.loads(rev_files[f"{rev_base}/manifest.json"])
+    rev_rows = [json.loads(line) for line in rev_files[f"{rev_base}/items.jsonl"].decode("utf-8").splitlines()]
+    old_raw_path = rev_manifest["items"][0]["raw_path"]
+    raw_doc = json.loads(rev_files.pop(f"{rev_base}/{old_raw_path}").decode("utf-8"))
+    raw_doc["record"]["close"] = 999.0
+    new_raw_bytes = json.dumps(raw_doc, sort_keys=True).encode("utf-8")
+    new_sha = hashlib.sha256(new_raw_bytes).hexdigest()
+    rev_manifest["items"][0]["content_sha256"] = new_sha
+    rev_manifest["items"][0]["raw_path"] = f"raw/{new_sha}.json"
+    rev_manifest["items"][0]["bytes"] = len(new_raw_bytes)
+    rev_manifest["bundle_sha256"] = compute_bundle_sha256([m["content_sha256"] for m in rev_manifest["items"]])
+    rev_entry["bundle_sha256"] = rev_manifest["bundle_sha256"]
+    rev_rows[0]["close"] = 999.0
+    rev_files[f"{rev_base}/raw/{new_sha}.json"] = new_raw_bytes
+    rev_files[f"{rev_base}/manifest.json"] = json.dumps(rev_manifest).encode("utf-8")
+    rev_files[f"{rev_base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rev_rows).encode("utf-8")
+    files.update(rev_files)
+    entries.append(rev_entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+
+    corrected = make_adapter(max_records=4).pull(cursor=a.load_resume_cursor(), priority_symbols=("2454.TWO",))
+    a.save_resume_cursor(corrected)
+    assert corrected.priority_key == "2026-11-22T06:16:26Z#run-20261122T061626Z"
+    nov20_corrected = [r for r in corrected.records if r.metadata["trade_date"] == "2026-11-20"]
+    assert len(nov20_corrected) == 1
+    assert nov20_corrected[0].metadata["symbol"] == "2330"
+    assert nov20_corrected[0].metadata["normalized_row"]["close"] == 999.0
+    assert corrected.complete is True
+    assert corrected.next_cursor == "2026-11-22T06:16:26Z#run-20261122T061626Z"
+
+    # 6. Unverified empty input fails closed through execute_provider_owned_adapter and never advances cursor/state.
+    unverified_dir = tmp_path / "unverified_store"
+    partial_files, partial_entry, _ = _rc2_tpex_bundle(
+        "run-partial", "2026-11-22", "2026-11-22T12:00:00Z", "2026-11-20", n_rows=0, tag="partial"
+    )
+    p_base = f"bundles/{source_id}/2026-11-22/run-partial"
+    p_manifest = json.loads(partial_files[f"{p_base}/manifest.json"])
+    p_manifest["status"] = "partial"
+    partial_entry["status"] = "partial"
+    partial_files[f"{p_base}/manifest.json"] = json.dumps(p_manifest).encode("utf-8")
+    partial_files["bundles/index.json"] = json.dumps({"bundles": [partial_entry]}).encode("utf-8")
+    partial_files["status.json"] = json.dumps(
+        {"sources": {source_id: {"status": "complete", "last_run_at": "2026-11-22T12:00:00Z", "cadence_seconds": 21600}}}
+    ).encode("utf-8")
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: FakeTransport(partial_files))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(unverified_dir))
+    unverified_adapter = CollectorBundleAdapter(
+        connector_id=source_id,
+        source_id=source_id,
+        source_type="market",
+        dataset="tw_price_daily",
+        cadence_seconds=1800,
+        max_records=10,
+        attribution_required=True,
+        raw_root=str(unverified_dir),
+        host=HOST,
+    )
+    with cb.deferred_collector_acknowledgement():
+        unverified_result = execute_provider_owned_adapter(
+            connector=unverified_adapter.connector(),
+            fetch={
+                "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+                "adapter_config": {
+                    "source_id": source_id,
+                    "source_type": "market",
+                    "dataset": "tw_price_daily",
+                    "cadence_seconds": 1800,
+                    "attribution_required": True,
+                    "raw_root": str(unverified_dir),
+                    "host": HOST,
+                },
+                "request": {},
+                "max_records": 10,
+            },
+            trace_id="rc2-unverified-empty",
+            preserve_collector_outcome=True,
+        )
+    assert unverified_result.records == ()
+    assert unverified_result.complete is False
+    assert unverified_result.no_new_data is False
+    assert "collector_complete_boundary_unverified" in unverified_result.observed["reasons"]
+    assert not unverified_adapter._resume_cursor_path().exists()
+    assert not unverified_adapter._priority_key_path().exists()
+

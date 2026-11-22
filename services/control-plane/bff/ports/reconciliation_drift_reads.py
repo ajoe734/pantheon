@@ -88,6 +88,7 @@ def map_reconciliation_record_to_drift_report(
             }
 
     report: Dict[str, Any] = {
+        "tenant_id": record.get("tenant_id"),
         "runtime_id": record.get("runtime_id"),
         "binding_id": record.get("binding_id") or record.get("runtime_binding_id") or record.get("scope_ref"),
         "deployment_stage": record.get("deployment_stage"),

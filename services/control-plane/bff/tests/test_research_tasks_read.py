@@ -699,6 +699,32 @@ def test_collector_query_plan_task_exposes_exact_diff_and_other_tasks_do_not(
     assert by_id[plan_task["task_id"]]["query_plan"] == plan_task["query_plan"]
     assert "query_plan" not in by_id[plain["task_id"]]
 
+    for view, expected in (("research", plain), ("collector_checks", plan_task)):
+        response = client.get(
+            "/bff/research-tasks",
+            params={"view": view, "include_non_real": "true", "page_size": 1},
+            headers=_auth_headers("tenant-dev"),
+        )
+        assert response.status_code == 200
+        page = response.json()
+        assert [item["task_id"] for item in page["items"]] == [expected["task_id"]]
+        assert page["page_info"] == {"page_size": 1, "next_page_token": None, "total": 1}
+
+
+def test_display_summary_reads_structured_dataset_and_subject_references(monkeypatch: pytest.MonkeyPatch) -> None:
+    task = deepcopy(HOSTED_TASK_CONSTRAINTS_TENANT)
+    task["source_refs"] = [{"type": "strategy_spec", "id": "strategy-reference"}]
+    run = deepcopy(HOSTED_RUNS[0])
+    run["task_id"] = task["task_id"]
+    run["input_refs"] = [{"type": "stage", "id": "stage-reference"}, {"type": "dataset", "dataset_id": "dataset-reference"}]
+    _install_owner_urllib_stub(monkeypatch, tasks=[task], runs=[run])
+    response = _build_client().get(
+        "/bff/research-tasks", params={"view": "research", "include_non_real": "true"}, headers=_auth_headers("tenant-dev"),
+    )
+    summary = response.json()["items"][0]["display_summary"]
+    assert summary["subject_ref"] == "strategy-reference"
+    assert summary["dataset_ref"] == "dataset-reference"
+
 
 # --- RC6 WP6.2/WP6.4: non-real hidden by default, display summary (hosted shapes) ---
 

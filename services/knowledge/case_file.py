@@ -17,6 +17,7 @@ with a reason; nothing is invented or silently skipped.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -127,7 +128,7 @@ class OwnerUnavailable(Exception):
 
 def http_json(endpoint: Optional[OwnerEndpoint], path: str, *, tenant_id: str,
               method: str = "GET", body: Optional[dict] = None,
-              params: Optional[Sequence[tuple]] = None, timeout: float = 10.0) -> Any:
+              params: Optional[Sequence[tuple]] = None, timeout: float = 15.0) -> Any:
     """One fixed-owner JSON call.  URLs are never caller- or model-selected."""
     if endpoint is None or not endpoint.base_url:
         raise OwnerUnavailable("owner_unconfigured")
@@ -605,6 +606,7 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
                 score=None, mode="owner_read", budgets=budgets))
         except OwnerUnavailable as exc:
             g.missing(f"research:{run}", exc.reason)
+    pool: Any = None
     try:
         pool = http_json(owners.pool, f"/api/personas/{q(subject.persona_id, safe='')}/strategy-pool", tenant_id=tenant)
         pool_excerpt, pool_subj = _summarize_strategy_pool(pool, budgets)
@@ -614,6 +616,32 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
                              subject_fields=pool_subj))
     except OwnerUnavailable as exc:
         g.missing("persona_pool", exc.reason)
+    if subject.decision_type == "consult" and not all_member_refs and isinstance(pool, Mapping):
+        pool_refs: list[str] = []
+        for m in pool.get("members") or []:
+            if not isinstance(m, Mapping):
+                continue
+            if str(m.get("stage") or "active").strip().lower() == "removed":
+                continue
+            ref = str(m.get("artifact_ref") or m.get("member_id") or m.get("artifact_id") or "").strip()
+            if ref and ref not in pool_refs:
+                pool_refs.append(ref)
+        if pool_refs:
+            all_member_refs = tuple(pool_refs)
+            if len(all_member_refs) > budgets.max_items_per_group:
+                g.truncated = True
+            member_refs = all_member_refs[: budgets.max_items_per_group]
+            subject = replace(subject, member_artifact_refs=member_refs)
+            for ref in member_refs:
+                try:
+                    raw = http_json(owners.registry, f"/api/registry/entries/{q(ref, safe='')}", tenant_id=tenant)
+                    excerpt, subj_fields, e = _summarize_registry_entry(raw, budgets)
+                    resolved_entries.append(e)
+                    g.items.append(_item("facts", "registry_entry", "registry", ref, excerpt,
+                        score=None, mode="owner_read", budgets=budgets,
+                        subject_fields=subj_fields))
+                except OwnerUnavailable as exc:
+                    g.missing(f"registry:{ref}", exc.reason)
     binding_id = subject.persona_capital_binding_id
     if not binding_id and resolved_entries:
         bindings = {
@@ -626,6 +654,11 @@ def _facts(subject: Subject, owners: Owners, budgets: Budgets, g: _Group) -> Sub
         }
         if len(bindings) == 1:
             binding_id = next(iter(bindings))
+            subject = replace(subject, persona_capital_binding_id=binding_id)
+    if not binding_id and isinstance(pool, Mapping):
+        pool_binding = str(pool.get("persona_capital_binding_id") or "").strip()
+        if pool_binding:
+            binding_id = pool_binding
             subject = replace(subject, persona_capital_binding_id=binding_id)
     if resolved_entries and subject.decision_type == "consult" and subject.strategy_family in _PLACEHOLDER_FAMILIES:
         families = []
@@ -834,10 +867,38 @@ def _history(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets,
 
 # ---- evidence ----------------------------------------------------------------
 
+def _search_caller_identity(endpoint: Optional[OwnerEndpoint], caller: Caller) -> tuple[str, list[str]]:
+    token = str(getattr(endpoint, "token", "") or "").strip()
+    if token.startswith(("Bearer ", "bearer ")):
+        token = token.split(None, 1)[1].strip()
+    parts = token.split(".")
+    if len(parts) == 3 and all(parts):
+        try:
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+            if isinstance(claims, Mapping):
+                actor = str(claims.get("actor_id") or claims.get("sub") or claims.get("service") or "").strip()
+                raw_roles = claims.get("roles") if claims.get("roles") is not None else claims.get("role")
+                if isinstance(raw_roles, str):
+                    roles = [r.strip() for r in raw_roles.split(",") if r.strip()]
+                elif isinstance(raw_roles, (list, tuple, set)):
+                    roles = [str(r).strip() for r in raw_roles if str(r).strip()]
+                else:
+                    roles = []
+                if actor and roles:
+                    return actor, roles
+                if actor:
+                    return actor, list(caller.actor_roles)
+        except Exception:
+            pass
+    return caller.actor_id, list(caller.actor_roles)
+
+
 def _evidence(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets, g: _Group) -> None:
     query, _tags = lesson_query(subject)
-    body = {"query": query, "retrieval_mode": "hybrid", "actor_ref": caller.actor_id,
-            "role_refs": list(caller.actor_roles), "purpose": "decision_case_file",
+    actor_ref, role_refs = _search_caller_identity(owners.search, caller)
+    body = {"query": query, "retrieval_mode": "hybrid", "actor_ref": actor_ref,
+            "role_refs": role_refs, "purpose": "decision_case_file",
             "persona_id": subject.persona_id, "workspace_id": subject.tenant_id,
             "request_id": f"case-file-{caller.session_id}", "trace_id": f"case-file-{caller.session_id}",
             "top_k": budgets.max_items_per_group, "require_citations": True,

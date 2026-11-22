@@ -248,6 +248,9 @@ services:
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS:-180}
+      CONSULTATION_WORKFLOW_LEASE_SECONDS: ${CONSULTATION_WORKFLOW_LEASE_SECONDS:-120}
+      CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS: ${CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS:-15.0}
       # Consult-policy persona panels: outcome memory writeback (memory) and
       # the harness-patch decision owner (evolution). Governance is the
       # handoff sink above. A panel blocks, never silently skips, if absent.
@@ -271,6 +274,9 @@ services:
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
+      # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
+      CONSULTATION_TELEMETRY_READ_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
       # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this

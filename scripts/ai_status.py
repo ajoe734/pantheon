@@ -133,6 +133,7 @@ from rewrite.task_contract import (
     resolve_handoff_delivery_binding,
     resolve_operator_accept_delivery_binding,
     review_gate_delivery_kind,
+    task_normalized_artifact_patterns,
     validate_delivery_binding_for_approval,
     validate_handoff_pr_delivery_binding,
     validate_reassignment_against_acceptance,
@@ -207,6 +208,7 @@ from common import (
     read_activity_log_tail_bytes,
     read_regular_file_bytes,
     recent_activity_event_digests_unlocked,
+    recent_logical_activity,
     strict_activity_json_loads,
     utc_now as iso_now,
     canonical_task_state_identity_from_environment,
@@ -7184,6 +7186,488 @@ def validate_operator_accepted_merged_delivery(task: dict[str, Any]) -> dict[str
     }
 
 
+def _verified_artifact_contract_review_approval(
+    task: Mapping[str, Any],
+    *,
+    delivery_binding: Mapping[str, Any],
+    not_before: float | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the unrevoked handoff and approval audit events for an artifact contract."""
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    current_generation = task_assignment_generation(task)
+    try:
+        if not_before is not None:
+            events = [
+                entry
+                for entry, _source_path, _line_number in recent_logical_activity(
+                    LOG_FILE,
+                    not_before=not_before,
+                )
+            ]
+        else:
+            events = list(
+                _activity_events_across_sources(
+                    LOG_FILE,
+                    source="canonical artifact review approval evidence",
+                )
+            )
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise SystemExit(
+            f"Cannot reconcile task: activity audit is unavailable for {task_id}."
+        ) from exc
+
+    active_handoff: dict[str, Any] | None = None
+    active_approval: dict[str, Any] | None = None
+    for event in events:
+        if str(event.get("task_id") or "").strip() != task_id:
+            continue
+        event_type = str(event.get("type") or "").strip()
+        if event_type in {
+            "reopen",
+            "blocker",
+            "assign",
+            "task_reassigned",
+            "superseded",
+            "start",
+            "progress",
+            "artifact_contract_revised",
+        }:
+            active_handoff = None
+            active_approval = None
+            continue
+        if event_type == "handoff":
+            active_approval = None
+            if (
+                _self_consistent_event_id_matches(event)
+                and canonical_agent_name(event.get("agent")) == owner
+                and event.get(DELIVERY_BINDING_KEY) == dict(delivery_binding)
+            ):
+                active_handoff = dict(event)
+            else:
+                active_handoff = None
+            continue
+        if event_type == "review_approved":
+            if active_handoff is None or not _self_consistent_event_id_matches(event):
+                active_approval = None
+                continue
+            if event.get(APPROVAL_BINDING_KEY) not in (None, {}):
+                raise SystemExit(
+                    f"Cannot reconcile task: {task_id} artifact-contract approval event unexpectedly carries a PR review_binding."
+                )
+            active_approval = dict(event)
+
+    if active_handoff is None:
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} has no unrevoked audited artifact-contract handoff event matching the current delivery binding."
+        )
+    if active_approval is None:
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} has no unrevoked audited review_approved event for the current handoff epoch."
+        )
+    approved_by = canonical_agent_name(active_approval.get("agent"))
+    if approved_by != reviewer:
+        raise SystemExit(
+            f"Cannot reconcile task: audited review_approved actor ({approved_by or 'missing'}) does not match the current assigned reviewer ({reviewer})."
+        )
+    status_cmd = active_approval.get("status_command")
+    worker_lease = (
+        status_cmd.get("worker_lease")
+        if isinstance(status_cmd, Mapping)
+        else None
+    )
+    approval_generation = None
+    if isinstance(worker_lease, Mapping):
+        lease_task_id = str(worker_lease.get("task_id") or "").strip()
+        if lease_task_id != task_id:
+            raise SystemExit(
+                f"Cannot reconcile task: audited review_approved worker lease task ({lease_task_id or 'missing'}) does not match {task_id}."
+            )
+        lease_actor = canonical_agent_name(worker_lease.get("actor"))
+        if lease_actor != reviewer:
+            raise SystemExit(
+                f"Cannot reconcile task: audited review_approved worker lease actor ({lease_actor or 'missing'}) does not match assigned reviewer ({reviewer})."
+            )
+        approval_generation = worker_lease.get("task_generation")
+    if approval_generation is None:
+        approval_generation = active_approval.get(
+            "task_generation", active_approval.get("generation")
+        )
+    if (
+        isinstance(approval_generation, bool)
+        or not isinstance(approval_generation, int)
+        or approval_generation != current_generation
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: audited review_approved generation ({approval_generation!r}) does not match current task generation ({current_generation})."
+        )
+    return active_handoff, active_approval
+
+
+def validate_human_ops_owner_artifact_delivery(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate canonical review_approved closeout for a Human/Ops-owned hosted artifact acceptance task."""
+
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import loop_done_guardrail
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if loop_done_guardrail.requires_protected_closeout_verdict(task):
+        raise SystemExit(
+            f"Cannot reconcile task: protected product closeout task {task_id} requires exact-head PR delivery and protected verdict verification."
+        )
+    raw_delivery_binding = task.get(DELIVERY_BINDING_KEY)
+    if (
+        not isinstance(raw_delivery_binding, Mapping)
+        or str(raw_delivery_binding.get("kind") or "").strip() != "artifact_contract"
+        or not task_machine.delivery_binding_is_current(task)
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} artifact delivery contract is missing or stale; reopen and re-handoff the current artifact contract first."
+        )
+    if (
+        requires_pr_delivery_binding(task)
+        or pull_request_delivery_reason(task)
+        or task.get("integration_receipt") is not None
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} carries pull-request delivery identity or requires a PR delivery binding and cannot close as an artifact-only contract."
+        )
+    config = load_config()
+    delivery_kind, delivery_reason = review_gate_delivery_kind(task, config)
+    if delivery_kind != "artifact_contract":
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} resolved to delivery kind {delivery_kind!r} ({delivery_reason}) and cannot close as an artifact-only contract."
+        )
+    try:
+        repository_id = validate_task_repository_scope(config, task)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"Cannot reconcile task: {exc}") from exc
+
+    allowed_patterns = task_normalized_artifact_patterns(
+        task, config, repository_id=repository_id
+    )
+    evidence_prefix = f"docs/deployment/evidence/{task_id}"
+    if not allowed_patterns or any(
+        pat.rstrip("/") != evidence_prefix
+        and not pat.startswith(evidence_prefix + "/")
+        for pat in allowed_patterns
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: artifact-contract owner closeout is restricted to task-scoped evidence artifacts under {evidence_prefix}/."
+        )
+    expected_review_file = _default_evidence_manifest_artifact(task_id)
+    task_review_file = str(task.get("review_file") or "").strip()
+    env_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if task_review_file and task_review_file != expected_review_file:
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} review_file {task_review_file!r} does not match expected task evidence path {expected_review_file!r}."
+        )
+    if env_review_file and env_review_file != expected_review_file:
+        raise SystemExit(
+            f"Cannot reconcile task: REVIEW_FILE={env_review_file!r} does not match expected task evidence path {expected_review_file!r}."
+        )
+    review_file = validate_review_manifest_contract_path(
+        task,
+        config,
+        repository_id=repository_id,
+        review_file=expected_review_file,
+    )
+
+    tracks = task.get("completion_tracks")
+    hosted = tracks.get("hosted") if isinstance(tracks, Mapping) else None
+    if not isinstance(hosted, Mapping):
+        raise SystemExit(
+            f"Task {task_id} cannot finalize: declared hosted completion must be done with evidence."
+        )
+    validate_hosted_completion(task)
+    hosted_evidence = [
+        str(item).strip()
+        for item in (hosted.get("evidence") or [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if review_file not in hosted_evidence:
+        raise SystemExit(
+            f"Cannot reconcile task: {task_id} completion_tracks.hosted.evidence must cite the task evidence artifact {review_file!r}."
+        )
+    hosted_message = str(hosted.get("message") or "").strip()
+    hosted_text = " ".join([hosted_message, *hosted_evidence])
+    not_before_timestamps = [
+        ts.timestamp()
+        for ts in (
+            _parse_utc_timestamp(hosted.get("updated_at")),
+            _parse_utc_timestamp(task.get("last_update")),
+        )
+        if ts is not None
+    ]
+    not_before = (
+        min(not_before_timestamps) - OUTBOX_ARCHIVE_MTIME_SLACK_SECONDS
+        if not_before_timestamps
+        else None
+    )
+
+    active_handoff, active_approval = _verified_artifact_contract_review_approval(
+        task,
+        delivery_binding=raw_delivery_binding,
+        not_before=not_before,
+    )
+    handoff_message = str(active_handoff.get("message") or "").strip()
+    approval_message = str(active_approval.get("message") or "").strip()
+
+    delivery = _validated_reconcile_delivery(task)
+    delivery_root = Path(delivery["repository_path"])
+    delivery_commit = str(delivery["commit"]).strip().lower()
+    merge_target_sha = str(delivery["merge_target_sha"]).strip().lower()
+
+    evidence_disk_path = delivery_root / review_file
+    symlink_component = first_symlink_component(evidence_disk_path)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Cannot reconcile task: evidence path cannot include a symlink component: {symlink_component}"
+        )
+    blob_at_commit = run_git_command(
+        ["rev-parse", "--verify", f"{delivery_commit}:{review_file}"],
+        cwd=delivery_root,
+        failure_message=(
+            f"Cannot reconcile task: published evidence file {review_file!r} is absent at commit {delivery_commit}."
+        ),
+    ).lower()
+    blob_at_target = run_git_command(
+        ["rev-parse", "--verify", f"{merge_target_sha}:{review_file}"],
+        cwd=delivery_root,
+        failure_message=(
+            f"Cannot reconcile task: published evidence file {review_file!r} is absent at {delivery['merge_target_ref']}."
+        ),
+    ).lower()
+    if blob_at_commit != blob_at_target:
+        raise SystemExit(
+            "Cannot reconcile task: published evidence file differs between the publication commit and the merge target ref."
+        )
+    commit_for_file = run_git_command(
+        ["log", "-n", "1", "--format=%H", delivery_commit, "--", review_file],
+        cwd=delivery_root,
+        failure_message="Cannot reconcile task: unable to resolve publication commit for evidence file.",
+    ).lower()
+    target_commit_for_file = run_git_command(
+        ["log", "-n", "1", "--format=%H", merge_target_sha, "--", review_file],
+        cwd=delivery_root,
+        failure_message="Cannot reconcile task: unable to resolve target commit for evidence file.",
+    ).lower()
+    if (
+        not APPROVAL_HEAD_SHA_RE.fullmatch(commit_for_file)
+        or commit_for_file != target_commit_for_file
+    ):
+        raise SystemExit(
+            "Cannot reconcile task: published evidence file history is not immutable on the merge target ref."
+        )
+    blob_proc = subprocess.run(
+        ["git", "cat-file", "blob", blob_at_commit],
+        cwd=delivery_root,
+        capture_output=True,
+        check=False,
+    )
+    if blob_proc.returncode != 0 or not blob_proc.stdout:
+        raise SystemExit(
+            "Cannot reconcile task: unable to read immutable published evidence blob."
+        )
+    committed_bytes = blob_proc.stdout
+    if evidence_disk_path.exists():
+        if not evidence_disk_path.is_file():
+            raise SystemExit(
+                f"Cannot reconcile task: evidence path is not a regular file: {evidence_disk_path}"
+            )
+        if git_command_succeeds(
+            ["merge-base", "--is-ancestor", commit_for_file, "HEAD"],
+            cwd=delivery_root,
+        ) and evidence_disk_path.read_bytes() != committed_bytes:
+            raise SystemExit(
+                "Cannot reconcile task: working evidence file differs from the published immutable commit."
+            )
+    evidence_sha256 = hashlib.sha256(committed_bytes).hexdigest()
+    try:
+        evidence_payload = json.loads(committed_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            "Cannot reconcile task: published evidence file is not valid UTF-8 JSON."
+        ) from exc
+    if not isinstance(evidence_payload, Mapping):
+        raise SystemExit(
+            "Cannot reconcile task: published evidence file root must be a JSON object."
+        )
+    payload_task_id = str(evidence_payload.get("task_id") or "").strip()
+    if payload_task_id != task_id:
+        raise SystemExit(
+            f"Cannot reconcile task: published evidence file task_id ({payload_task_id or 'missing'!r}) does not match {task_id!r}."
+        )
+
+    pub_commit_body = run_git_command(
+        ["show", "-s", "--format=%b", commit_for_file],
+        cwd=delivery_root,
+        failure_message="Cannot reconcile task: publication commit message is unavailable.",
+    )
+    pub_trailers = _commit_trailer_checker().parse_trailers(pub_commit_body)
+    pub_task_id = str(pub_trailers.get("Task-ID") or "").strip()
+    if not pub_task_id or pub_task_id == task_id:
+        raise SystemExit(
+            "Cannot reconcile task: published evidence commit must bind a separate completed publication task."
+        )
+    raw_pub_snapshot = load_archived_snapshot(pub_task_id)
+    if raw_pub_snapshot is None:
+        raise SystemExit(
+            f"Cannot reconcile task: separate publication task {pub_task_id} is not archived as completed."
+        )
+    try:
+        pub_snapshot = _validate_status_archive_snapshot(deepcopy(dict(raw_pub_snapshot)))
+    except RuntimeError as exc:
+        raise SystemExit(
+            f"Cannot reconcile task: publication task {pub_task_id} archive snapshot is invalid."
+        ) from exc
+    if (
+        pub_snapshot.get("terminal_status") != "done"
+        or pub_snapshot.get("terminal_outcome") != "completed"
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: separate publication task {pub_task_id} is not completed."
+        )
+    pub_task = pub_snapshot["task"]
+    pub_owner = canonical_agent_name(pub_task.get("owner"))
+    pub_reviewer = canonical_agent_name(pub_task.get("reviewer"))
+    if (
+        pub_owner not in KNOWN_AGENTS
+        or pub_reviewer not in KNOWN_AGENTS
+        or pub_owner == pub_reviewer
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: publication task {pub_task_id} lacks independent owner/reviewer metadata."
+        )
+    if (
+        canonical_agent_name(pub_trailers.get("LLM-Agent")) != pub_owner
+        or canonical_agent_name(pub_trailers.get("Reviewer")) != pub_reviewer
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: publication commit trailers do not match publication task {pub_task_id} owner/reviewer."
+        )
+    pub_allowed_patterns = task_normalized_artifact_patterns(
+        pub_task, config, repository_id=repository_id
+    )
+    if review_file not in pub_allowed_patterns:
+        raise SystemExit(
+            f"Cannot reconcile task: publication task {pub_task_id} does not declare the acceptance evidence artifact {review_file!r}."
+        )
+    pub_delivery_binding = pub_task.get(DELIVERY_BINDING_KEY)
+    pub_review_binding = pub_task.get(APPROVAL_BINDING_KEY)
+    if (
+        not isinstance(pub_delivery_binding, Mapping)
+        or str(pub_delivery_binding.get("kind") or "").strip() != "pull_request"
+        or not isinstance(pub_review_binding, Mapping)
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: publication task {pub_task_id} lacks exact-head PR delivery and review bindings."
+        )
+    validated_pub_delivery = _validated_pr_binding(pub_delivery_binding, pub_task_id)
+    validated_pub_review = _validated_pr_binding(pub_review_binding, pub_task_id)
+    if validated_pub_delivery != validated_pub_review:
+        raise SystemExit(
+            f"Cannot reconcile task: publication task {pub_task_id} delivery and review bindings do not match."
+        )
+    pub_head_sha = validated_pub_delivery["head_sha"]
+    pub_pr = validated_pub_delivery["pr"]
+    if pub_head_sha != commit_for_file:
+        raise SystemExit(
+            f"Cannot reconcile task: publication commit {commit_for_file} does not match publication task {pub_task_id} reviewed head {pub_head_sha}."
+        )
+    pub_merge_sha = str(
+        (pub_task.get("integration_receipt") or {}).get("merge_commit_sha")
+        or (pub_task.get("delivery") or {}).get("merge_target_sha")
+        or (pub_task.get("delivery") or {}).get("workspace_head")
+        or ""
+    ).strip().lower()
+    allowed_publication_commits = {
+        sha
+        for sha in (pub_head_sha, pub_merge_sha)
+        if APPROVAL_HEAD_SHA_RE.fullmatch(sha)
+    }
+    if delivery_commit not in allowed_publication_commits:
+        raise SystemExit(
+            f"Cannot reconcile task: supplied delivery commit {delivery_commit} does not match the completed publication task {pub_task_id}."
+        )
+
+    if evidence_sha256 not in approval_message.lower():
+        raise SystemExit(
+            "Cannot reconcile task: audited review_approved message does not bind the exact published evidence SHA-256."
+        )
+    if evidence_sha256 not in hosted_text.lower() or evidence_sha256 not in handoff_message.lower():
+        raise SystemExit(
+            "Cannot reconcile task: hosted completion milestone and handoff must bind the exact published evidence SHA-256."
+        )
+    if not any(sha in approval_message.lower() for sha in allowed_publication_commits):
+        raise SystemExit(
+            "Cannot reconcile task: audited review_approved message does not cite the verified publication commit."
+        )
+    if not any(sha in hosted_text.lower() for sha in allowed_publication_commits):
+        raise SystemExit(
+            "Cannot reconcile task: completion_tracks.hosted does not cite the verified publication commit."
+        )
+    accepted_release = evidence_payload.get("accepted_release")
+    if isinstance(accepted_release, Mapping):
+        root_workflow = str(accepted_release.get("root_workflow") or "").strip()
+        if root_workflow and (
+            root_workflow not in approval_message
+            or root_workflow not in hosted_text
+        ):
+            raise SystemExit(
+                "Cannot reconcile task: approval and hosted milestone must cite the accepted release root_workflow recorded in the evidence file."
+            )
+        for release_key in ("bff", "frontend"):
+            release_sha = str(accepted_release.get(release_key) or "").strip().lower()
+            if release_sha and (
+                release_sha not in approval_message.lower()
+                or release_sha not in hosted_text.lower()
+            ):
+                raise SystemExit(
+                    f"Cannot reconcile task: approval and hosted milestone must cite the accepted release {release_key} commit recorded in the evidence file."
+                )
+
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_human_ops_owner_review_approved": True,
+        "reconciled_from_human_ops_owner_artifact_review_approved": True,
+        "delivery_kind": "artifact_contract",
+        "owner": owner,
+        "reviewer": reviewer,
+        "review_file": review_file,
+        "evidence_manifest": {
+            "path": review_file,
+            "blob_sha": blob_at_commit,
+            "sha256": evidence_sha256,
+        },
+        "artifact_review_evidence": {
+            "handoff_event_id": str(active_handoff.get("event_id") or ""),
+            "handoff_at": str(active_handoff.get("ts") or ""),
+            "contract_sha256": str(raw_delivery_binding.get("contract_sha256") or ""),
+            "approval_event_id": str(active_approval.get("event_id") or ""),
+            "approved_at": str(active_approval.get("ts") or ""),
+            "reviewer": reviewer,
+            "task_generation": task_assignment_generation(task),
+            "evidence_sha256": evidence_sha256,
+        },
+        "publication_task": {
+            "task_id": pub_task_id,
+            "owner": pub_owner,
+            "reviewer": pub_reviewer,
+            "pr": pub_pr,
+            "head_sha": pub_head_sha,
+            **({"merge_commit_sha": pub_merge_sha} if pub_merge_sha else {}),
+        },
+        **delivery,
+    }
+
+
 def validate_human_ops_owner_merged_delivery(task: dict[str, Any]) -> dict[str, Any]:
     """Validate canonical review_approved closeout for a Human/Ops-owned task."""
 
@@ -7198,10 +7682,16 @@ def validate_human_ops_owner_merged_delivery(task: dict[str, Any]) -> dict[str, 
             "Cannot reconcile task: canonical Human/Ops owner closeout requires status=review_approved."
         )
     reviewer = canonical_agent_name(task.get("reviewer"))
-    if not reviewer or reviewer == owner:
+    if not reviewer or reviewer == owner or reviewer not in KNOWN_AGENTS:
         raise SystemExit(
             "Cannot reconcile task: canonical Human/Ops owner closeout requires an assigned independent peer reviewer."
         )
+    raw_delivery_binding = task.get(DELIVERY_BINDING_KEY)
+    if (
+        isinstance(raw_delivery_binding, Mapping)
+        and str(raw_delivery_binding.get("kind") or "").strip() == "artifact_contract"
+    ):
+        return validate_human_ops_owner_artifact_delivery(task)
     delivery_binding = require_current_pr_delivery_binding(task, action="reconcile")
     frozen_manifest = dict(delivery_binding["evidence_manifest"])
     frozen_review_file = str(frozen_manifest.get("path") or "").strip()
@@ -7707,6 +8197,44 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         "reconcile_merged_done", task
     )
     delivery = deepcopy(preflight["delivery"])
+    if delivery.get("reconciled_from_human_ops_owner_artifact_review_approved"):
+        pub_task_id = str(
+            (delivery.get("publication_task") or {}).get("task_id") or ""
+        ).strip()
+        if pub_task_id and get_task(state, pub_task_id) is not None:
+            raise SystemExit(
+                f"Cannot reconcile task: separate publication task {pub_task_id} is still active and not archived."
+            )
+        raw_terminal_facts = state.get(TERMINAL_FACTS_KEY)
+        if isinstance(raw_terminal_facts, Mapping) and raw_terminal_facts:
+            pub_fact = raw_terminal_facts.get(pub_task_id)
+            if (
+                not isinstance(pub_fact, Mapping)
+                or pub_fact.get("status") != "done"
+                or pub_fact.get("terminal_outcome") != "completed"
+            ):
+                raise SystemExit(
+                    f"Cannot reconcile task: separate publication task {pub_task_id} has no completed terminal fact in canonical state."
+                )
+        task_handoffs = [
+            handoff
+            for handoff in (state.get("handoffs") or [])
+            if isinstance(handoff, Mapping)
+            and str(handoff.get("task_id") or "").strip() == task_id
+        ]
+        if task_handoffs and not any(
+            handoff.get("status") != "done"
+            and canonical_agent_name(handoff.get("from")) == current_reviewer
+            and canonical_agent_name(handoff.get("to")) == "Human/Ops"
+            for handoff in task_handoffs
+        ):
+            raise SystemExit(
+                f"Cannot reconcile task: {task_id} has no pending finalize handoff from reviewer {current_reviewer} to Human/Ops."
+            )
+        if not str(task.get("review_file") or "").strip() and str(
+            delivery.get("review_file") or ""
+        ).strip():
+            task["review_file"] = str(delivery["review_file"]).strip()
     recovered_archive = deepcopy(preflight.get("recovered_immutable_archive"))
     if recovered_archive is not None:
         current_archive = load_archived_snapshot(task_id)

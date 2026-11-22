@@ -87,6 +87,7 @@ def fetch_canonical_memory(
     timeout_seconds: float = 5.0,
     auth_token: Optional[str] = None,
     tags: Iterable[str] = (),
+    session_persona_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call the canonical Memory Plane retrieval facade."""
     base = memory_api_url.rstrip("/")
@@ -99,6 +100,16 @@ def fetch_canonical_memory(
         "query": query,
         "limit": int(limit),
     }
+    clean_persona_id = str(persona_id or "").strip()
+    eff_session_persona_id = str(
+        session_persona_id if session_persona_id is not None else clean_persona_id
+    ).strip()
+    if (
+        str(scope or "").strip().lower() in {"persona", "both"}
+        and clean_persona_id
+        and eff_session_persona_id
+    ):
+        params["session_persona_id"] = eff_session_persona_id
     tag_list = [str(t) for t in tags if str(t).strip()]
     if tag_list:
         params["tags"] = tag_list

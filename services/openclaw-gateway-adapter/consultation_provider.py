@@ -511,22 +511,34 @@ def _default_committee_memory_fetcher(
     ).strip()
     if not memory_url:
         return None
+    adapter_identity = _uses_adapter_memory_identity()
+    actor_prefix = "PANTHEON_OPENCLAW_MEMORY" if adapter_identity else "PANTHEON_MEMORY"
     return fetch_canonical_memory(
         memory_url,
         persona_id=persona_id,
-        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "consultation-provider"),
+        actor_id=os.getenv(f"{actor_prefix}_ACTOR_ID", "").strip()
+        or ("openclaw-persona-sync" if adapter_identity else "consultation-provider"),
         actor_roles=[
             part.strip()
-            for part in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator").split(",")
+            for part in os.getenv(f"{actor_prefix}_ACTOR_ROLES", "").split(",")
             if part.strip()
         ]
-        or ["operator"],
+        or (["persona_memory_reader"] if adapter_identity else ["operator"]),
         session_id=session_id,
         scope="both",
         query=decision_query,
         limit=COMMITTEE_MEMORY_LIMIT,
         auth_token=_memory_auth_token(),
+        timeout_seconds=15.0,
     )
+
+
+def _uses_adapter_memory_identity() -> bool:
+    shared_configured = any(
+        os.getenv(key, "").strip()
+        for key in ("PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE")
+    )
+    return bool(os.getenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", "").strip()) and not shared_configured
 
 
 def _memory_auth_token() -> str | None:
@@ -534,7 +546,9 @@ def _memory_auth_token() -> str | None:
 
     token = resolve_runtime_manager_auth(
         token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
-        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+        token_file_env_key=("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE"
+                            if _uses_adapter_memory_identity()
+                            else "PANTHEON_MEMORY_AUTH_TOKEN_FILE"),
         default_token="",
     ).token
     return token or None
@@ -669,6 +683,181 @@ def _validate_meeting_turn(
     return dict(meeting)
 
 
+_PANEL_CLAIMS_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "required": ["claim", "evidence_refs"],
+        "properties": {
+            "claim": {"type": "string", "minLength": 1},
+            "evidence_refs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+            },
+            "subject_fields": {"type": "object"},
+        },
+        "additionalProperties": False,
+    },
+}
+
+_PANEL_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["claims", "summary_evidence_refs"],
+    "properties": {
+        "claims": _PANEL_CLAIMS_SCHEMA,
+        "summary_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"},
+        },
+    },
+    "additionalProperties": False,
+}
+
+_MEETING_PROPOSAL_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["kind", "sponsor_persona_id", "citations", "payload"],
+    "properties": {
+        "proposal_id": {"type": "string", "minLength": 1},
+        "kind": {
+            "type": "string",
+            "enum": [
+                "research_demand",
+                "evolution_proposal",
+                "harness_patch",
+                "lesson_candidate",
+                "lesson_rule",
+                "pool_decision",
+                "governance_approval",
+                "agora_candidate_decision",
+            ],
+        },
+        "sponsor_persona_id": {"type": ["string", "null"]},
+        "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "payload": {"type": "object"},
+        "summary": {"type": "string"},
+        "rationale": {"type": "string"},
+        "target_id": {"type": "string"},
+        "component": {"type": "string"},
+        "test": {"type": "string"},
+        "hypothesis": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
+
+MEETING_ROUND_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["stance", "citations", "claims", "summary_evidence_refs"],
+    "properties": {
+        "stance": {"type": "string", "minLength": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "claims": _PANEL_CLAIMS_SCHEMA,
+        "summary_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "proposals": {
+            "type": "array",
+            "items": _MEETING_PROPOSAL_ITEM_SCHEMA,
+        },
+        "accepted": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "disputed": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "changed": {"type": "boolean"},
+        "label": {"type": "string"},
+        "assigned_case": {"type": ["string", "null"]},
+    },
+    "additionalProperties": False,
+}
+
+MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["claims", "summary_evidence_refs", "synthesis"],
+    "properties": {
+        "claims": _PANEL_CLAIMS_SCHEMA,
+        "summary_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+        },
+        "citations": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+        },
+        "synthesis": {
+            "type": "object",
+            "required": ["summary", "outcome", "proposals"],
+            "properties": {
+                "summary": {"type": "string", "minLength": 1},
+                "outcome": {
+                    "type": "string",
+                    "enum": [
+                        "proposals_issued",
+                        "completed_no_proposal",
+                        "no_testable_hypothesis",
+                    ],
+                },
+                "proposals": {
+                    "type": "array",
+                    "items": _MEETING_PROPOSAL_ITEM_SCHEMA,
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    "additionalProperties": False,
+}
+
+_OUTER_CODE_FENCE_RE = re.compile(
+    r"^\s*```(?:[A-Za-z0-9_-]+)?(?:\s*\r?\n|\s+)(.*?)\s*```\s*$",
+    re.DOTALL,
+)
+
+
+def _strip_markdown_code_fence(text: str) -> str:
+    raw = str(text or "").strip()
+    if raw.startswith("```") and raw.endswith("```"):
+        match = _OUTER_CODE_FENCE_RE.match(raw)
+        if match:
+            return match.group(1).strip()
+    return raw
+
+
+def _meeting_event_content_schema(meeting: Mapping[str, Any]) -> dict[str, Any]:
+    round_val = meeting.get("round", 1)
+    if round_val == "synthesis" or meeting.get("phase") == "synthesis":
+        return json.loads(json.dumps(MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA))
+    schema = json.loads(json.dumps(MEETING_ROUND_EVENT_CONTENT_SCHEMA))
+    if round_val in (2, 3):
+        schema["required"] = [
+            "stance",
+            "citations",
+            "claims",
+            "summary_evidence_refs",
+            "accepted",
+            "disputed",
+            "changed",
+        ]
+    return schema
+
+
 def _meeting_persona_prompt(
     payload: ConsultationContributionRequest,
     persona_id: str,
@@ -693,9 +882,11 @@ def _meeting_persona_prompt(
         )
     if round_val == "synthesis" or meeting.get("phase") == "synthesis":
         round_instruction = (
-            f"Chair synthesis turn for {meeting_type} (no vote). Summarize proposals with "
-            "one trading-persona sponsor and citations, non-binding confidence tally, and "
-            "dissent. For MT-4, accept ONLY testable causal hypotheses naming the component "
+            f"Chair synthesis turn for {meeting_type} (no vote). Populate event_content.synthesis "
+            "with summary, outcome (proposals_issued, completed_no_proposal, or no_testable_hypothesis), "
+            "and proposals (each with kind, one trading-persona sponsor_persona_id, citations from the "
+            "shared case file or chair pre-read, and payload). Include non-binding confidence tally and "
+            "dissent in summary. For MT-4, accept ONLY testable causal hypotheses naming the component "
             "and empirical test; otherwise record outcome=no_testable_hypothesis."
         )
     elif round_val in (2, 3):
@@ -714,7 +905,12 @@ def _meeting_persona_prompt(
             + role_instruction
         )
     return (
-        _persona_prompt(payload, persona_id, committee_memory)
+        _persona_prompt(
+            payload,
+            persona_id,
+            committee_memory,
+            event_content_schema=_meeting_event_content_schema(meeting),
+        )
         + "\nDeliberative meeting instruction: "
         + round_instruction
     )
@@ -837,6 +1033,8 @@ def _persona_prompt(
     persona_id: str,
     committee_memory: list[dict[str, Any]] | None = None,
     interpretation: Mapping[str, Any] | None = None,
+    *,
+    event_content_schema: Mapping[str, Any] | None = None,
 ) -> str:
     """Prompt for a participant's consultation-only agent.
 
@@ -849,19 +1047,16 @@ def _persona_prompt(
         committee_memory or [], sort_keys=True, separators=(",", ":")
     )
     # Keep the generic structured-extraction contract unchanged. Persona panels
-    # have a stricter per-claim citation contract in their own prompt schema.
+    # have a stricter per-claim citation contract in their own prompt schema,
+    # while deliberative persona_meeting turns pass their round or synthesis schema.
     schema = json.loads(json.dumps(QUALIFIED_CONTRIBUTION_SCHEMA))
-    schema["properties"]["event_content"] = {
-        "type": "object", "required": ["claims", "summary_evidence_refs"],
-        "properties": {
-            "claims": {"type": "array", "minItems": 1, "items": {
-                "type": "object", "required": ["claim", "evidence_refs"],
-                "properties": {"claim": {"type": "string", "minLength": 1},
-                               "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-                               "subject_fields": {"type": "object"}},
-                "additionalProperties": False}},
-            "summary_evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}}},
-        "additionalProperties": False}
+    schema["properties"]["event_content"] = json.loads(
+        json.dumps(
+            event_content_schema
+            if event_content_schema is not None
+            else _PANEL_EVENT_CONTENT_SCHEMA
+        )
+    )
     return (
         f"You are persona {persona_id}, answering a Pantheon Consultation "
         "independently as yourself. Use your own persona judgement and only the "
@@ -913,7 +1108,7 @@ def _persona_response(
         raise ContributionProviderError(
             "persona consultation must not emit tool calls"
         )
-    text = AssistantOpenClawProvider._result_text(result)
+    text = _strip_markdown_code_fence(AssistantOpenClawProvider._result_text(result))
     try:
         structured = json.loads(text)
     except ValueError as exc:
@@ -1202,7 +1397,12 @@ def create_app(
                         interpretation = run_panel_interpretation_turn(
                             provider, get_broker(), payload=payload, persona_id=persona_id,
                             query=query, session_id=session_id, operator_id=expected_actor)
-                    if interpretation is not None and interpretation["mode"] == INTERPRETATION_MODE:
+                    if is_meeting and isinstance(meeting_turn.get("own_pre_read"), Mapping):
+                        # Consultation already fetched and validated this turn's
+                        # pre-read (including an empty/refused read). The meeting
+                        # prompt includes it directly; do not issue another read.
+                        retrieval = {"hits": []}
+                    elif interpretation is not None and interpretation["mode"] == INTERPRETATION_MODE:
                         retrieval = {"hits": []}  # the interpretation replaces the memory block
                     else:
                         retrieval = memory_fetcher(

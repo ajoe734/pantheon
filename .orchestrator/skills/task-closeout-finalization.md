@@ -273,6 +273,19 @@ RECONCILE_DELIVERY_TARGET_REF=origin/dev \
   "$TASK" "<checkpoint message>"
 ```
 
+The same `scripts/human-ops-status.sh reconcile_merged_done` closeout also
+applies when a `Human/Ops`-owned read-only hosted acceptance task has reached
+canonical `review_approved` under a current `artifact_contract`
+`delivery_binding` (restricted to task-scoped evidence under
+`docs/deployment/evidence/<TASK-ID>/`), with `completion_tracks.hosted` marked
+`done` citing `docs/deployment/evidence/<TASK-ID>/evidence.json`, an unrevoked
+audited `handoff` and current-generation `review_approved` from the assigned
+independent `reviewer` binding the exact published evidence SHA-256 and
+accepted release identity, and a separate completed publication task whose
+merged PR published those exact unchanged immutable bytes on `origin/dev`
+(without borrowing the publication PR as a PR/review binding on the acceptance
+task).
+
 Lost-review-state recovery for tasks that lost their `review_approved`
 transition continues to require `RECONCILE_EVIDENCE_FILE` and
 `RECONCILE_EVIDENCE_COMMIT`.

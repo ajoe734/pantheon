@@ -3842,3 +3842,272 @@ def test_steady_dlq_gate_still_rejects_contradictory_scoped_counts() -> None:
     actual["dlq_status_counts_by_connector"][CONNECTOR_ID]["pending"] = 3
     with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
         _validate_dlq_delta(actual, {CONNECTOR_ID: 14})
+
+
+# --- COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122: failing TPEx history yields to due holidays/suspension ---
+
+
+def _rc2_collector_item(
+    connector_id: str,
+    *,
+    is_due: bool = True,
+    last_success_at: str | None = None,
+    last_failure_at: str | None = None,
+    last_error: str | None = None,
+    consecutive_failures: int = 0,
+    run_status: str = "completed",
+    continuation_pending: bool = False,
+    newest_session_pending: bool | None = None,
+) -> dict[str, Any]:
+    actual = _collector_actual(connector_id=connector_id, definition_id=connector_id, is_due=is_due)
+    item = deepcopy(actual["connectors"][0])
+    item["freshness"].update(
+        {
+            "is_due": is_due,
+            "last_success_at": last_success_at,
+            "last_failure_at": last_failure_at,
+            "status": "stale" if last_error else "fresh",
+            "latest_run": {"ingest_run_id": f"run-{connector_id}", "status": run_status},
+            "latest_receipt": {"ingest_run_id": f"run-{connector_id}", "status": run_status},
+        }
+    )
+    item["source_health"].update(
+        {
+            "status": "degraded" if last_error else "ok",
+            "consecutive_failures": consecutive_failures,
+            "last_error": last_error,
+            "last_success_at": last_success_at,
+        }
+    )
+    item["fetch_state"] = {
+        "last_error": last_error,
+        "collector_outcome": {
+            "complete": False,
+            "no_new_data": False,
+            "observed": {
+                "continuation_pending": continuation_pending,
+                "newest_session_pending": newest_session_pending,
+                "health_state": "degraded" if last_error else "healthy",
+            },
+        },
+    }
+    return item
+
+
+def test_rc2_failing_tpex_history_yields_to_due_holidays_and_suspension_and_retries_via_last_attempt() -> None:
+    """Acceptance 2: reproduce the RC2 selector state from survivorship-due-and-scheduled-priority-20261122T1226Z.json."""
+    tpex_id = "collector-tw-tpex-price-history"
+    holidays_id = "collector-tw-trading-holidays"
+    suspension_id = "collector-tw-trading-suspension"
+
+    tpex_failing = _rc2_collector_item(
+        tpex_id,
+        is_due=True,
+        last_success_at="2026-11-22T00:17:45Z",
+        last_failure_at="2026-11-22T12:25:18Z",
+        last_error=(
+            "scheduled connector fetch failed for collector-tw-tpex-price-history: "
+            "collector pull for collector-tw-tpex-price-history is degraded: "
+            "collector_complete_boundary_unverified, cursor_lag_over_7_days"
+        ),
+        consecutive_failures=1,
+        run_status="failed",
+        continuation_pending=True,
+        newest_session_pending=None,
+    )
+    holidays_due = _rc2_collector_item(
+        holidays_id,
+        is_due=True,
+        last_success_at="2026-11-21T12:21:21Z",
+        last_failure_at="2026-11-22T00:03:54Z",
+    )
+    suspension_due = _rc2_collector_item(
+        suspension_id,
+        is_due=True,
+        last_success_at="2026-11-21T12:21:36Z",
+        last_failure_at="2026-11-21T07:53:46Z",
+    )
+
+    actual = _collector_actual(connector_id=tpex_id, definition_id=tpex_id)
+    actual["connectors"] = [tpex_failing, holidays_due, suspension_due]
+    reconcile = _collector_reconcile(tpex_id, holidays_id, suspension_id)
+
+    selected = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected == [tpex_id, holidays_id, suspension_id]
+
+    # Slot 1: failing TPEx history yields to suspension (oldest last_attempt = 2026-11-21T12:21:36Z).
+    batch_1 = controller_worker.limit_collector_pull_batch(
+        actual, selected, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_1 == [suspension_id]
+
+    # Slot 2: after suspension succeeds at 12:26:30Z, failing TPEx history yields to holidays (last_attempt = 00:03:54Z).
+    suspension_done = _rc2_collector_item(
+        suspension_id, is_due=False, last_success_at="2026-11-22T12:26:30Z", last_failure_at="2026-11-21T07:53:46Z"
+    )
+    actual["connectors"] = [tpex_failing, holidays_due, suspension_done]
+    selected_2 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected_2 == [tpex_id, holidays_id]
+    batch_2 = controller_worker.limit_collector_pull_batch(
+        actual, selected_2, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_2 == [holidays_id]
+
+    # Slot 3: after holidays succeeds at 12:27:30Z (or even if both stay due with newer attempts), TPEx history retries.
+    holidays_done = _rc2_collector_item(
+        holidays_id, is_due=False, last_success_at="2026-11-22T12:27:30Z", last_failure_at="2026-11-22T00:03:54Z"
+    )
+    actual["connectors"] = [tpex_failing, holidays_done, suspension_done]
+    selected_3 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected_3 == [tpex_id]
+    batch_3 = controller_worker.limit_collector_pull_batch(
+        actual, selected_3, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_3 == [tpex_id]
+
+    # When TPEx has a genuinely pending fresh market session (not failing), it keeps priority ahead of due backlog.
+    tpex_fresh_pending = _rc2_collector_item(
+        tpex_id,
+        is_due=True,
+        last_success_at="2026-11-22T12:00:00Z",
+        last_failure_at=None,
+        continuation_pending=True,
+        newest_session_pending=True,
+    )
+    actual["connectors"] = [tpex_fresh_pending, holidays_due, suspension_due]
+    selected_4 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert (
+        controller_worker.limit_collector_pull_batch(
+            actual, selected_4, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+        )
+        == [tpex_id]
+    )
+
+
+def test_steady_controller_ticks_yield_from_failing_tpex_to_holidays_and_suspension_then_retry_and_preserve_held_symbol_priority(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Acceptance 2 end-to-end regression: real steady controller ticks (1 pull slot per steady tick),
+    real scheduler and CollectorBundleAdapter with independently pending holiday and suspension connectors
+    and a repeatedly failing TPEx history connector."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_collector_newest_session_progress import recorded_run
+    from services.source_ingestion.tests.test_scheduled_connector import admission_stack as make_admission_stack
+
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+
+    http, module, _reads, wanted, files, _transport, tick = make_admission_stack.__wrapped__(
+        client, monkeypatch, tmp_path
+    ) if hasattr(make_admission_stack, "__wrapped__") else make_admission_stack(client, monkeypatch, tmp_path)
+
+    tpex_id = "collector-tw-tpex-price-history"
+    holidays_id = "collector-tw-trading-holidays"
+    suspension_id = "collector-tw-trading-suspension"
+    enabled = {tpex_id, holidays_id, suspension_id}
+
+    # Build a TPEx session with 4 items including held symbol 10003 at the end, plus an older backfill bundle.
+    entries = [e for e in json.loads(files["bundles/index.json"])["bundles"] if e["source_id"] != tpex_id]
+    latest_files, latest_entry = recorded_run(tpex_id, count=4, fetched="2026-11-21T18:16:40Z", day="2026-11-20")
+    backfill_files, backfill_entry = recorded_run(
+        tpex_id, count=3, fetched="2026-11-11T12:35:01Z", day="2026-10-28"
+    )
+    files.update(latest_files)
+    files.update(backfill_files)
+    entries.extend([backfill_entry, latest_entry])
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    all_sources = set(wanted) | {e["source_id"] for e in entries}
+    files["status.json"] = json.dumps(
+        {
+            "sources": {
+                s: {
+                    "status": "ok",
+                    "offered": s in enabled,
+                    "last_run_at": now_iso,
+                    "cadence_seconds": 21600,
+                }
+                for s in all_sources
+            }
+        }
+    ).encode("utf-8")
+
+    # Reconcile desired state and verify all three connectors are configured and scheduled.
+    tick(controller_worker.RECONCILE_ONLY_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "10003.TPEX")
+
+    # 1. Genuinely pending fresh market session takes priority ahead of due holidays & suspension,
+    # delivers held symbol 10003.TPEX into the latest market snapshot store, and writes a completed receipt.
+    res_fresh = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+    assert res_fresh["status"] == "ok"
+    assert res_fresh["schedule_summary"]["exclusive_connector_count"] == controller_worker.STEADY_PULLS_PER_REQUEST == 1
+    snap_1 = module.runtime.store.read_freshness_snapshot()
+    receipt_1 = snap_1["receipts"][-1]
+    assert receipt_1.connector_id == tpex_id
+    assert receipt_1.status == "completed"
+    assert receipt_1.normalized_count == 7
+    module.runtime.latest_market_snapshot_store.reload()
+    snap_held = module.runtime.latest_market_snapshot_store.get("10003.TPEX")
+    assert snap_held is not None
+    assert snap_held.points[-1].event_time[:10] == "2026-11-20"
+
+    # 2. Now make TPEx history due again alongside still-due holidays and suspension, and inject a repeated
+    # failure in TPEx history (corrupt manifest on a newly added TPEx entry).
+    bad_files, bad_entry = recorded_run(
+        tpex_id, count=2, fetched="2026-11-22T06:16:26Z", day="2026-11-20", correction=True
+    )
+    bad_base = f"bundles/{tpex_id}/{bad_entry['date']}/{bad_entry['run_id']}"
+    bad_files[f"{bad_base}/manifest.json"] = b"{corrupt-json"
+    files.update(bad_files)
+    entries.append(bad_entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    sched = module.runtime.schedule_config_store.get_schedule(tpex_id)
+    assert sched is not None
+    # Force TPEx to be due so all three (TPEx, holidays, suspension) are due at the same time.
+    module.runtime.FRONTIER_BACKOFF_SECONDS = 0
+    orig_freshness = module.runtime._connector_freshness_summary_from_snapshot
+
+    def due_freshness(cid: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        summary = dict(orig_freshness(cid, *args, **kwargs))
+        if cid == tpex_id:
+            summary["is_due"] = True
+        return summary
+
+    monkeypatch.setattr(module.runtime, "_connector_freshness_summary_from_snapshot", due_freshness)
+
+    # First attempt on due TPEx fails with ControllerTickError (1 pull slot claimed).
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+
+    # Subsequent steady ticks yield the single pull slot to due holidays and suspension even though TPEx remains due!
+    ran_connectors: list[str] = []
+    for _ in range(2):
+        res_other = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+        assert res_other["status"] == "ok"
+        assert res_other["schedule_summary"]["exclusive_connector_count"] == 1
+        latest_receipt = module.runtime.store.read_freshness_snapshot()["receipts"][-1]
+        assert latest_receipt.status == "completed"
+        assert latest_receipt.normalized_count > 0
+        ran_connectors.append(latest_receipt.connector_id)
+    assert set(ran_connectors) == {holidays_id, suspension_id}
+
+    # Even if TPEx is still failing when retried next (while holidays & suspension are now fresh/not due),
+    # the scheduler retries TPEx on the next steady tick.
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+
+    # Once the TPEx bundle is repaired, the next steady tick retries TPEx and completes with a valid receipt.
+    repaired_files, repaired_entry = recorded_run(
+        tpex_id, count=2, fetched="2026-11-22T06:16:26Z", day="2026-11-20", correction=True
+    )
+    files.update(repaired_files)
+    entries[-1] = repaired_entry
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    res_retry = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+    assert res_retry["status"] == "ok"
+    assert res_retry["schedule_summary"]["exclusive_connector_count"] == 1
+    retry_receipt = module.runtime.store.read_freshness_snapshot()["receipts"][-1]
+    assert retry_receipt.connector_id == tpex_id
+    assert retry_receipt.status == "completed"
+    assert retry_receipt.normalized_count == 1
+

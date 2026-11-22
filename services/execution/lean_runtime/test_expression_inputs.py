@@ -615,6 +615,68 @@ class ProducerComposeEnvironmentTest(unittest.TestCase):
                     self.assertEqual(caught.exception.missing, "risk_policy")
                     self.assertIn("risk_policy_profile_mapping_unapproved", caught.exception.detail)
 
+    def test_build_expression_inputs_surfaces_policy_identity_net_single_name_reserve_and_reservations(self) -> None:
+        policy = RiskPolicy.from_mapping(
+            {
+                **POLICY,
+                "version": "1.2",
+                "gross_limit": 1.8,
+                "net_limit": 1.2,
+                "max_leverage": 1.5,
+                "max_single_name_weight": 0.30,
+                "min_cash_reserve_pct": 0.10,
+            }
+        )
+        summary = _summary(
+            ledger_fill_count=1,
+            executed_trade_count=1,
+            ledger_cash=80000.0,
+            positions=[
+                {
+                    "symbol": "2317.TWSE",
+                    "quantity": 100.0,
+                    "average_price": 200.0,
+                    "mark_price": 200.0,
+                    "market_value": 20000.0,
+                    "currency": "TWD",
+                }
+            ],
+            order_reservations=[
+                {
+                    "reservation_id": "res-competing-1",
+                    "symbol": "2330.TW",
+                    "side": "buy",
+                    "kind": "cash_share",
+                    "quantity": 10,
+                    "price": 1000.0,
+                    "notional": 10000.0,
+                    "cash_reserved": 10014.25,
+                }
+            ],
+        )
+        inputs = build_expression_inputs(pool=_pool(budget=100000.0), policy=policy, summary=summary)
+        budget = inputs["risk_budget"]
+        self.assertEqual(budget["risk_policy_id"], "rp-pool-1")
+        self.assertEqual(budget["risk_policy_version"], "1.2")
+        self.assertEqual(budget["risk_policy_digest"], risk_policy_digest(policy))
+        self.assertEqual(budget["equity"], 100000.0)
+        self.assertEqual(budget["raw_cash"], 80000.0)
+        self.assertEqual(budget["cash_reserved"], 10014.25)
+        self.assertEqual(budget["cash_reserve_required"], 10000.0)
+        self.assertEqual(budget["available_cash"], 59985.75)
+        self.assertEqual(budget["available_buying_power"], 59985.75)
+        self.assertEqual(budget["gross_limit"], 180000.0)
+        self.assertEqual(budget["gross_used"], 30000.0)
+        self.assertEqual(budget["net_limit"], 120000.0)
+        self.assertEqual(budget["net_used"], 30000.0)
+        self.assertEqual(budget["signed_net_used"], 30000.0)
+        self.assertEqual(budget["max_leverage"], 1.5)
+        self.assertEqual(budget["max_single_name_weight"], 0.30)
+        self.assertEqual(budget["max_single_name_notional"], 30000.0)
+        self.assertEqual(budget["underlying_exposures"], {"2317": 20000.0, "2330": 10000.0})
+        self.assertEqual(len(budget["order_reservations"]), 1)
+        self.assertEqual(set(inputs["persona_book"].keys()), {"positions", "gross_notional"})
+
 
 if __name__ == "__main__":
     unittest.main()

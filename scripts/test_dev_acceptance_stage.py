@@ -156,6 +156,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:paper-risk-policy-binding",
         "probe:persona-pool-member-rules",
         "probe:trade-journey-readable",
+        "probe:trading-pulse-operator",
     ]
     risk_probe = next(r for r in results if r["id"] == "probe:paper-risk-policy-binding")
     assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77

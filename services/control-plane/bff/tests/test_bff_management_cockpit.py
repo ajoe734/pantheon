@@ -17,7 +17,15 @@ from services.control_plane.bff.management_read_models.service import Management
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
-OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator,reviewer"}
+@pytest.fixture(autouse=True)
+def _operator_tenant_scope():
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    token = selected_tenant.set("tenant-test")
+    yield
+    selected_tenant.reset(token)
+
+
+OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator,reviewer:tenant-test"}
 
 _COCKPIT_FUNCS = None
 
@@ -176,6 +184,7 @@ def _seeded_client(td: str, service_cls: type = ManagementService, **router_kwar
     }
     store.list_runtime_bindings = lambda **kwargs: [
         {
+            "tenant_id": "tenant-test",
             "binding_id": "binding-b3-001",
             "runtime_id": "runtime-b3-001",
             "persona_id": "persona-b3-001",
@@ -188,8 +197,12 @@ def _seeded_client(td: str, service_cls: type = ManagementService, **router_kwar
             "created_at": "2026-05-23T08:00:00Z",
         }
     ]
+    store.list_personas = lambda **kwargs: [{"persona_id": "persona-b3-001", "name": "Trader", "tenant_id": "tenant-test"}]
     store.get_telemetry_summary = lambda runtime_id: {
         "runtime_id": runtime_id,
+        "binding_id": "binding-b3-001", "tenant_id": "tenant-test",
+        "pnl_currency": "TWD", "pnl_definition": "net_ledger_pnl",
+        "pnl_period_start_at": "2026-05-23T00:00:00Z", "pnl_at": "2026-05-23T08:05:00Z",
         "window": "24h",
         "collected_at": "2026-05-23T08:05:00Z",
         "pnl": 0.42,
@@ -224,6 +237,7 @@ def _seeded_client(td: str, service_cls: type = ManagementService, **router_kwar
     ]
     store.get_paper_live_drift_report = lambda **kwargs: {
         "report_id": "drift-b3-001",
+        "binding_id": "binding-b3-001", "tenant_id": "tenant-test",
         "runtime_id": "runtime-b3-001",
         "status": "watch",
         "drift_detected": True,
@@ -698,7 +712,7 @@ def _build_reload_owner_store(monkeypatch, per_owner_delay: float, call_counts: 
 
     def _fake_read_records(_url_builder, path: str, _key: Any = None):
         payloads = {
-            "/api/runtime-bindings": [{"binding_id": "rb-1", "runtime_id": "rt-1", "persona_id": "p-1", "status": "active", "stage": "paper"}],
+            "/api/runtime-bindings": [{"binding_id": "rb-1", "runtime_id": "rt-1", "persona_id": "p-1", "tenant_id": "tenant-test", "status": "active", "stage": "paper", "deployment_stage": "paper"}],
             "/api/capital-pools": [{"pool_id": "pool-1", "id": "pool-1", "status": "active"}],
             "/api/bindings": [{"binding_id": "cb-1", "id": "cb-1", "persona_id": "p-1", "pool_id": "pool-1", "status": "active"}],
             "/api/deployment/plans": [{"plan_id": "dp-1", "id": "dp-1", "persona_id": "p-1", "status": "pending", "stage": "paper"}],
@@ -733,7 +747,7 @@ def _build_reload_owner_store(monkeypatch, per_owner_delay: float, call_counts: 
         def list_personas(self):
             return _record_call(
                 "/api/personas",
-                [{"persona_id": "p-1", "id": "p-1", "name": "Alpha", "lifecycle_state": "active", "status": "active"}],
+                [{"persona_id": "p-1", "id": "p-1", "name": "Alpha", "tenant_id": "tenant-test", "lifecycle_state": "active", "status": "active"}],
             )
 
     pcr = create_owner_domain_ports(persona_store=_PersonaOwnerStore())
