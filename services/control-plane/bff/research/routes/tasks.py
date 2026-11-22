@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, Query
@@ -114,18 +114,22 @@ def _resolve_task_name(task: Dict[str, Any], task_id: str) -> str:
 
 _NON_REAL_RUN_MODES = {"stub": "stub_run", "manual": "manual_record"}
 _NON_REAL_DATA_SCOPES = {"test", "acceptance", "synthetic"}
+_COLLECTOR_QUERY_PLAN = "collector_query_plan"
 
 
 def _is_blank_name(task: Dict[str, Any]) -> bool:
     return not any(str(task.get(k) or "").strip() for k in ("title", "objective"))
 
 
-def _first_text(values: Any) -> Optional[str]:
+def _first_reference(values: Any, *, dataset_only: bool = False) -> Optional[str]:
     if isinstance(values, (list, tuple)):
-        for v in values:
-            text = str(v or "").strip()
-            if text:
-                return text
+        for value in values:
+            if isinstance(value, dict):
+                if dataset_only and value.get("type") not in ("dataset", "dataset_ref", "dataset_version", "dataset_version_id"):
+                    continue
+                value = value.get("id") or value.get("dataset_id") or value.get("ref") or value.get("uri")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return None
 
 
@@ -167,12 +171,12 @@ def _build_display_summary(
     )
     symbol = params.get("symbol") or constraints.get("symbol")
     dataset_ref = (
-        _first_text(latest_run.get("input_refs") if isinstance(latest_run, dict) else None)
+        _first_reference(latest_run.get("input_refs") if isinstance(latest_run, dict) else None, dataset_only=True)
         or (str(constraints.get("dataset_ref")).strip() if constraints.get("dataset_ref") else None)
     )
     return {
         "task_kind": task.get("task_type") or None,
-        "subject_ref": _first_text(task.get("source_refs")),
+        "subject_ref": _first_reference(task.get("source_refs")),
         "symbol": str(symbol).strip() if symbol else None,
         "dataset_ref": dataset_ref,
     }
@@ -237,7 +241,7 @@ def _project_task_item(
         "source_refs": list(task.get("source_refs") or []),
         "run_count": len(ordered_runs),
         "latest_run": latest_run,
-        **({"query_plan": task["query_plan"]} if task.get("task_type") == "collector_query_plan" else {}),
+        **({"query_plan": task["query_plan"]} if task.get("task_type") == _COLLECTOR_QUERY_PLAN else {}),
     }
 
 
@@ -322,6 +326,7 @@ def create_research_tasks_router(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=20, ge=1, le=200),
         include_non_real: bool = Query(default=False),
+        view: Literal["all", "research", "collector_checks"] = Query(default="all"),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
@@ -426,6 +431,9 @@ def create_research_tasks_router(
                     excluded_unscoped_count += 1
                     continue
                 if task_tenant != caller_tenant:
+                    continue
+                is_collector_check = raw_task.get("task_type") == _COLLECTOR_QUERY_PLAN
+                if view != "all" and is_collector_check != (view == "collector_checks"):
                     continue
                 if allowed_statuses is not None and str(raw_task.get("status") or "") not in allowed_statuses:
                     continue
