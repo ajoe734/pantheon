@@ -768,6 +768,30 @@ def _operator_pulse(store):
     return ManagementService(read_store=store).get_trading_pulse(snapshot_at=SNAP)
 
 
+@pytest.mark.parametrize("surface", ["rankings", "cockpit"])
+def test_operator_summaries_do_not_open_or_hydrate_journeys(surface, monkeypatch):
+    store = _OperatorStore()
+    reads = []
+    def reader():
+        reads.append("opened")
+        raise AssertionError("summary must not load journey counts or stages")
+    store.trade_journey_projection_reader = reader
+    service = ManagementService(read_store=store)
+    if surface == "rankings":
+        data = service.get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
+        assert data["summary"]["operator_scope"]["runtime_count"] == 2
+        assert any(block["items"] for block in data["items"])
+    else:
+        # Isolate unrelated cockpit contributors; exercise its real pulse path.
+        for method in ("get_operator_health_status", "get_operator_home", "get_human_inbox",
+                       "get_operator_alerts", "get_management_anomalies"):
+            monkeypatch.setattr(service, method, lambda **kwargs: {"data": {}, "meta": {"surfaces": {}}})
+        data = service.get_management_cockpit(snapshot_at=SNAP)["data"]["trading_pulse"]
+        assert data["summary"]["operator_scope"]["runtime_count"] == 2
+        assert all(row["latest_outcome"]["status"] == "not_requested" for row in data["runtime_rows"])
+    assert reads == []
+
+
 def test_operator_scope_filters_every_output_and_counts_distinct_people():
     store = _OperatorStore()
     store.bindings.append({**store.bindings[0], "id": "b-extra", "binding_id": "b-extra", "runtime_id": "r-extra"})

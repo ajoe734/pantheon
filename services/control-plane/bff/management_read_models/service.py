@@ -3971,7 +3971,7 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 4. Trading Pulse & Rankings
     # -----------------------------------------------------------------------
-    def get_trading_pulse(self, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_trading_pulse(self, snapshot_at: Optional[str] = None, *, include_outcomes: bool = True) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         store = self._resolve_store()
 
@@ -4028,10 +4028,14 @@ class ManagementService:
                     strategies[str(strategy.get("strategy_id") or strategy.get("id"))] = strategy
         except Exception:
             pass
-        try:
-            journey_reader = store.trade_journey_projection_reader()
-        except Exception:
-            journey_reader = None
+        # Rankings and cockpit summaries need metrics, not per-binding journey
+        # pages (each page also counts matches and hydrates stage evidence).
+        journey_reader = None
+        if include_outcomes:
+            try:
+                journey_reader = store.trade_journey_projection_reader()
+            except Exception:
+                pass
 
         runtime_rows = []
         for binding in runtime_bindings:
@@ -4063,6 +4067,8 @@ class ManagementService:
                        underlying_symbol=binding.get("underlying_symbol") or strategy.get("underlying_symbol") or (person.get("metadata") or {}).get("underlying_symbol") or symbol or (raw or {}).get("last_fill", {}).get("symbol"))
             _pulse_performance(row, raw, snap)
             row["latest_outcome"] = _pulse_latest_outcome(journey_reader, binding, snap)
+            if not include_outcomes:
+                row["latest_outcome"]["status"] = "not_requested"
             row["links"] = {"persona": f"/management/personas/{binding['persona_id']}"}
             if binding.get("strategy_id"):
                 row["links"]["strategy"] = f"/management/strategies/{binding['strategy_id']}"
@@ -4441,7 +4447,7 @@ class ManagementService:
 
     def get_trading_pulse_rankings(self, limit: int = 20, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        trading_pulse = self.get_trading_pulse(snapshot_at=snap)
+        trading_pulse = self.get_trading_pulse(snapshot_at=snap, include_outcomes=False)
         trading_pulse_payload = trading_pulse.get("data") or {}
         blocks = _build_management_trading_pulse_ranking_blocks(
             list(trading_pulse_payload.get("rankings") or []),
@@ -5323,7 +5329,7 @@ class ManagementService:
                     lambda: self.get_operator_home(snapshot_at=snap, health_payload=runtime_health)
                     if "groups" in runtime_health else self.get_operator_home(snapshot_at=snap),
                 )
-                trading_pulse = _section("trading_pulse", "management_trading_pulse", lambda: self.get_trading_pulse(snapshot_at=snap))
+                trading_pulse = _section("trading_pulse", "management_trading_pulse", lambda: self.get_trading_pulse(snapshot_at=snap, include_outcomes=False))
                 if human_inbox is None:
                     human_inbox = _section("human_inbox", "human_inbox", self.get_human_inbox)
                 else:

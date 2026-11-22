@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # acceptance-owner: BFF-TRADING-PULSE-OPERATOR-FACTS-20261122
-"""Read-only, on-demand operator facts probe. See README.md for evidence budget."""
+"""Read-only stage probe; login then GET only, 0 passed / 1 failed / 77 unverifiable.
+
+Uses the stage's BFF URL and viewer client ID/secret, verifies its tenant via
+/bff/me. No files written; at most 200 runtimes, 5 MiB/response, 30s/request.
+Daily storage growth zero; the stage owns its existing bounded stdout verdict.
+"""
 from __future__ import annotations
 
 import json
@@ -9,9 +14,11 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import urlencode, quote
 
 # Allow standalone execution from an installed checkout, without PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
 
 
@@ -244,7 +251,11 @@ def check(fetch, tenant):
             value = ((row.get("telemetry_summary") or {}).get("metrics") or {}).get(metric)
             if number(value) is None or not same(item.get("ranking_metric_value"), value):
                 failures.append("ranked_metric_mismatch")
-            if item.get("persona_name") != row.get("persona_name") or item.get("links") != row.get("links"):
+            # Rankings deliberately avoid journey hydration; stable Persona
+            # and strategy navigation still identifies the same operator.
+            if item.get("persona_name") != row.get("persona_name") or any(
+                    (item.get("links") or {}).get(k) != (row.get("links") or {}).get(k)
+                    for k in ("persona", "strategy")):
                 failures.append("ranked_identity_or_navigation_mismatch")
     if source(fetch, "/api/v1/personas") != people or source(fetch, "/api/v1/runtime-bindings") != bindings:
         raise Unverifiable("roster_changed_during_read")
@@ -252,13 +263,13 @@ def check(fetch, tenant):
 
 
 def main():
-    required = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET", "ACCEPTANCE_TENANT_ID")
+    required = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
     if any(not os.getenv(k) for k in required):
         print(json.dumps({"passed": False, "unverifiable": "missing_environment"}))
         return 77
     base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
     def request(path, payload=None, token=None):
-        headers = {"Content-Type": "application/json", "X-Tenant-Id": os.environ["ACCEPTANCE_TENANT_ID"]}
+        headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
         req = urllib.request.Request(base + path, data=json.dumps(payload).encode() if payload is not None else None, headers=headers, method="POST" if payload is not None else "GET")
@@ -276,7 +287,11 @@ def main():
         token = login.get("access_token")
         if not token:
             raise Unverifiable("login_token_missing")
-        report = check(lambda path: request(path, token=token), os.environ["ACCEPTANCE_TENANT_ID"])
+        me = request("/bff/me", token=token).get("data") or {}
+        tenant = me.get("tenant_id")
+        if not tenant or tenant not in (me.get("allowed_tenants") or []):
+            raise Unverifiable("viewer_tenant_unverified")
+        report = check(lambda path: request(path, token=token), tenant)
     except (Unverifiable, OSError, ValueError, KeyError) as exc:
         print(json.dumps({"passed": False, "unverifiable": str(exc) if isinstance(exc, Unverifiable) else type(exc).__name__}))
         return 77

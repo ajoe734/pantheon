@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+from importlib.machinery import SourceFileLoader
+import io
+import json
+import os
+import subprocess
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-PATH = Path(__file__).parent / "probes/trading-pulse-operator/__main__.py"
-SPEC = importlib.util.spec_from_file_location("trading_pulse_probe", PATH)
+PATH = Path(__file__).parent / "probes/trading-pulse-operator"
+SPEC = importlib.util.spec_from_loader("trading_pulse_probe", SourceFileLoader("trading_pulse_probe", str(PATH)))
 probe = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(probe)
 
@@ -203,3 +208,56 @@ def test_missing_environment_is_skip_not_pass(monkeypatch):
     for key in ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET", "ACCEPTANCE_TENANT_ID"):
         monkeypatch.delenv(key, raising=False)
     assert probe.main() == 77
+
+
+def test_stage_discovers_and_executes_probe_without_pythonpath_or_tenant(tmp_path):
+    from scripts.dev_acceptance_stage import discover_probes
+    found = next(p for p in discover_probes(PATH.parent) if p["id"] == "probe:trading-pulse-operator")
+    assert found["owner"] == "BFF-TRADING-PULSE-OPERATOR-FACTS-20261122"
+    assert found["executable"]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_") and k != "PYTHONPATH"}
+    done = subprocess.run([str(PATH.resolve())], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 77, done.stderr
+    assert json.loads(done.stdout)["unverifiable"] == "missing_environment"
+
+
+@pytest.mark.parametrize("tenant_state", ["verified", "missing", "not_allowed"])
+def test_stage_viewer_contract_verifies_tenant_without_extra_environment(monkeypatch, tenant_state, capsys):
+    world = fixture()
+    requests = []
+    for k in ("ACCEPTANCE_TENANT_ID", "PYTHONPATH"):
+        monkeypatch.delenv(k, raising=False)
+    for k, v in {"ACCEPTANCE_BFF_URL": "https://bff.example", "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+                 "ACCEPTANCE_VIEWER_CLIENT_SECRET": "private-client-secret"}.items():
+        monkeypatch.setenv(k, v)
+    def urlopen(req, timeout):
+        assert timeout == 30
+        requests.append(req)
+        path = req.full_url.removeprefix("https://bff.example")
+        if path == "/bff/auth/dev-login":
+            assert req.method == "POST"
+            body = {"access_token": "private-access-token"}
+        else:
+            assert req.method == "GET" and req.get_header("Authorization") == "Bearer private-access-token"
+            assert req.get_header("X-tenant-id") is None
+            if path == "/bff/me":
+                body = {"data": {"tenant_id": None if tenant_state == "missing" else "tenant-a",
+                                 "allowed_tenants": [] if tenant_state == "not_allowed" else ["tenant-a"]}}
+            else:
+                body = fetcher(world)(path)
+        return io.BytesIO(json.dumps(body).encode())
+    monkeypatch.setattr(probe.urllib.request, "urlopen", urlopen)
+    assert probe.main() == (0 if tenant_state == "verified" else 77)
+    output = capsys.readouterr().out
+    assert "private-client-secret" not in output and "private-access-token" not in output
+    if tenant_state != "verified":
+        assert len(requests) == 2
+        assert json.loads(output)["unverifiable"] == "viewer_tenant_unverified"
+
+
+def test_rankings_keep_navigation_without_loading_journey_evidence():
+    world = fixture()
+    for block in world["rankings"]["items"]:
+        for item in block["items"]:
+            item["links"] = {k: v for k, v in item["links"].items() if k != "journey"}
+    assert probe.check(fetcher(world), "tenant-a")["passed"]
