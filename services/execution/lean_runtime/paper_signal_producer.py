@@ -349,6 +349,19 @@ def apply_expression_record(
             candidates_list = [dict(c) for c in raw_cands if isinstance(c, Mapping)]
         if isinstance(replay_input.get("book_before"), Mapping):
             book_before = replay_input["book_before"]
+    pre_trade_sizing = stored.get("pre_trade_sizing")
+    if isinstance(pre_trade_sizing, Mapping):
+        from services.execution.lean_runtime.expression_policy import compact_pre_trade_sizing
+
+        metadata["pre_trade_sizing"] = compact_pre_trade_sizing(pre_trade_sizing)
+        for pol_key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest"):
+            if pre_trade_sizing.get(pol_key) is not None:
+                metadata.setdefault(pol_key, pre_trade_sizing.get(pol_key))
+    if isinstance(replay_input, Mapping) and isinstance(replay_input.get("budget"), Mapping):
+        replay_budget = replay_input["budget"]
+        for pol_key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest"):
+            if replay_budget.get(pol_key) is not None:
+                metadata.setdefault(pol_key, replay_budget.get(pol_key))
     metadata["reason_code"] = record.get("reason_code")
     attach_futures_session_inputs(
         decision,
@@ -580,6 +593,22 @@ class CurrentArtifactStrategy:
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
             {},
         )
+        pre_trade_sizing = None
+        if unavailable is None:
+            try:
+                pre_trade_sizing = expression_policy.compact_pre_trade_sizing(
+                    expression_policy.evaluate_pre_trade_sizing(
+                        decision_view,
+                        candidates,
+                        book,
+                        budget,
+                        params,
+                        policy_kind=policy_kind,
+                        decision=record,
+                    )
+                )
+            except Exception:
+                pre_trade_sizing = None
         return {
             "view": {
                 **decision_view,
@@ -588,6 +617,7 @@ class CurrentArtifactStrategy:
                 "multiplier": chosen_candidate.get("multiplier"),
             },
             "decision": record,
+            "pre_trade_sizing": pre_trade_sizing,
             # Exactly what the policy was given, so expression_replay input can
             # be rebuilt from recorded events (dev plan section 6).
             "replay_input": {
@@ -2687,6 +2717,11 @@ class PaperSignalProducer:
                             "kind": expression_view.get("kind"),
                             "multiplier": expression_view.get("multiplier"),
                             "replay_input": evaluated.get("replay_input"),
+                            **(
+                                {"pre_trade_sizing": evaluated["pre_trade_sizing"]}
+                                if isinstance(evaluated.get("pre_trade_sizing"), Mapping)
+                                else {}
+                            ),
                         },
                     )
                 apply_expression_record(out, expression_view, stored)
