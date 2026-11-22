@@ -1,0 +1,67 @@
+{
+  "task_id": "BFF-TRADING-PULSE-OPERATOR-FACTS-20261122",
+  "owner": "Codex2",
+  "reviewer": "Antigravity2",
+  "recorded_at": "2026-11-22T13:18:05.967923+00:00",
+  "review_status": "ready_for_independent_review",
+  "root_cause": "RC6 WP6.1/WP6.2/WP6.3 operator readability and scoped business facts",
+  "validated_source_commit": "30f6d4051",
+  "owned_layer": "Trading-pulse shared read aggregation, additive operator contract, independent read-only API probe and compatibility tests",
+  "not_changing": [
+    "order execution",
+    "risk policy",
+    "ledger writers",
+    "reconciliation behavior",
+    "frontend",
+    "deployment gates"
+  ],
+  "supporting_changes": [
+    "Preserve source tenant_id in the existing reconciliation-to-drift adapter so a scoped baseline remains verifiable.",
+    "Add tenant/persona/binding/metric-period provenance to cockpit, router and owner-wiring test fixtures; keep their functional assertions."
+  ],
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_trading_pulse_operator.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/tests/test_owner_read_wiring.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "188 passed, 143 warnings in 72.11s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 acceptance/probes/trading-pulse-operator",
+      "exit_code": 77,
+      "result": {
+        "passed": false,
+        "unverifiable": "missing_environment"
+      },
+      "interpretation": "Standalone invocation exercised; skipped, not hosted acceptance."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "acceptance_evidence": [
+    "Both endpoints derive all rows, denominators, diagnostics and baselines from one tenant-verified directory and current binding roster; probe/test personas excluded with shared classifier.",
+    "Distinct persona/runtime counts, verified empty scope, partial directory, failed owners, same persona with multiple bindings, cross-tenant and old-binding evidence tested.",
+    "Matching zero ledger fills stays 0; unknown PnL stays null with no_fills; 0/452 is 0 and 0/0 is unknown; zero slippage/PnL/drawdown and Sharpe source reasons retained.",
+    "Only equal stage/currency/definition/exact period PnL can be summed; rankings require observations and comparable periods and rank within comparison scope.",
+    "Refusal comes from existing indexed journey projection with tenant/environment/runtime/binding/persona and snapshot checks; source event, amounts, quantity, submitted flag and links are tested.",
+    "Independent API probe reads roster, bindings, raw telemetry and journeys; corruption tests reject probe rows, wrong denominators, zero/null substitution, altered quantities/units, missing refusal evidence and ranked identities."
+  ],
+  "contract_and_probe_runbook": "acceptance/probes/trading-pulse-operator/README.md",
+  "runtime_budget": {
+    "cadence": "manual per release; no recurring job",
+    "hosted_scale": "a few admitted runtimes; probe capped at 200",
+    "source_response_cap_bytes": 5242880,
+    "summary_cap_bytes": 8192,
+    "growth_per_day_bytes": 0,
+    "persistent_writers_added": 0,
+    "cleanup": "No raw sources, credentials or temporary files persisted. Task E retains one redacted stdout summary per exact FE/BFF pair in its existing <=5 MiB package and removes superseded captures."
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "owner_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+    "claim": "No hosted deployment or acceptance claimed by this source task."
+  },
+  "residual_findings": []
+}
