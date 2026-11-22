@@ -1122,7 +1122,7 @@ def test_downstream_gates_unchanged_even_when_payload_requests_approved_or_appli
     assert gov_record.decision is None
 
 
-def test_configured_service_tokens_and_single_citation_lesson_candidate_padding(
+def test_configured_service_tokens_and_real_episode_reference_requirement_for_lesson_candidates(
     owner_harness: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1169,9 +1169,36 @@ def test_configured_service_tokens_and_single_citation_lesson_candidate_padding(
     monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(write_file))
     monkeypatch.setenv("CONSULTATION_MEMORY_READ_TOKEN_FILE", str(read_file))
 
+    ep_uuid_1 = str(uuid.uuid4())
+    ep_uuid_2 = str(uuid.uuid4())
+    ep_uuid_3 = str(uuid.uuid4())
+
     meeting = {
         "meeting_id": "mtg-hosted-tokens-001",
         "tenant_id": TENANT,
+        "case_file_items": [
+            {
+                "item_id": "facts:strategy_pool:persona-alpha@1",
+                "group": "facts",
+                "kind": "strategy_pool",
+                "source_owner": "persona",
+                "source_id": "persona-alpha@1",
+                "excerpt": '{"pool_version":1,"members":[{"artifact_ref":"strat-member-1","stage":"active"}]}',
+                "subject_fields": {"pool_version": 1},
+            },
+            {
+                "item_id": "facts:trade_reflection:refl-pattern-1",
+                "group": "facts",
+                "kind": "trade_reflection",
+                "source_owner": "persona",
+                "source_id": "refl-pattern-1",
+                "persona_id": SPONSOR,
+                "tenant_id": TENANT,
+                "subject_fields": {
+                    "trade_episode_ids": [ep_uuid_1, ep_uuid_2, ep_uuid_3, ep_uuid_1],
+                },
+            },
+        ],
         "proposals": [
             {
                 "proposal_id": "prop-hosted-rd-1",
@@ -1188,44 +1215,125 @@ def test_configured_service_tokens_and_single_citation_lesson_candidate_padding(
                 "citations": ["facts:strategy_pool:persona-alpha@1"],
             },
             {
-                "proposal_id": "prop-hosted-lc-1",
+                "proposal_id": "prop-hosted-lc-valid-citations",
                 "meeting_id": "mtg-hosted-tokens-001",
                 "kind": "lesson_candidate",
                 "sponsor_persona_id": SPONSOR,
                 "payload": {
                     "scope": "strategy",
-                    "proposed_change": "Single-citation meeting synthesis lesson candidate",
+                    "proposed_change": "Lesson candidate citing three real episode references",
                     "confidence": 0.84,
                 },
-                # Single case-file citation and no trade_episode_ids in payload
+                # Payload omits trade_episode_ids; citations carry 3 distinct real episode refs (plus a duplicate and non-episode ref)
+                "citations": [
+                    "facts:strategy_pool:persona-alpha@1",
+                    "facts:trade_episode:ep-301",
+                    "ep-302",
+                    "facts:trade_episode:ep-301",
+                    "trade_episode:ep-303",
+                ],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-valid-verified-evidence",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Lesson candidate citing verified reflection evidence with 3 real episodes",
+                    "confidence": 0.86,
+                },
+                "citations": ["facts:trade_reflection:refl-pattern-1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-non-episode-citation",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Non-episode strategy-pool citation must not be converted into episode UUIDs",
+                    "confidence": 0.84,
+                },
                 "citations": ["facts:strategy_pool:persona-alpha@1"],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-no-evidence",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "No-evidence lesson candidate must fail closed without placeholder padding",
+                    "confidence": 0.81,
+                },
+                "citations": [],
+            },
+            {
+                "proposal_id": "prop-hosted-lc-insufficient-episodes",
+                "meeting_id": "mtg-hosted-tokens-001",
+                "kind": "lesson_candidate",
+                "sponsor_persona_id": SPONSOR,
+                "payload": {
+                    "scope": "strategy",
+                    "proposed_change": "Two distinct episodes with duplicates must not be padded to three",
+                    "confidence": 0.80,
+                },
+                "citations": ["ep-301", "ep-302", "ep-301", "facts:strategy_pool:persona-alpha@1"],
             },
         ],
     }
 
+    candidates_before = len(owner_harness["lesson_gov_service"].store.list())
     owner_harness["call_log"].clear()
     results = dispatch_proposals(meeting)
     by_id = {r["proposal_id"]: r for r in results}
+
+    # 1. Research demand and the two valid lesson_candidate proposals succeed
     assert by_id["prop-hosted-rd-1"]["error"] is None
     assert by_id["prop-hosted-rd-1"]["status"] == "open"
-    assert by_id["prop-hosted-lc-1"]["error"] is None
-    assert by_id["prop-hosted-lc-1"]["status"] == "proposed"
+    assert by_id["prop-hosted-lc-valid-citations"]["error"] is None
+    assert by_id["prop-hosted-lc-valid-citations"]["status"] == "proposed"
+    assert by_id["prop-hosted-lc-valid-verified-evidence"]["error"] is None
+    assert by_id["prop-hosted-lc-valid-verified-evidence"]["status"] == "proposed"
+
+    # 2. Non-episode citation, no-evidence, and <3 distinct real episodes fail closed without placeholder generation
+    for failed_pid, expected_count in (
+        ("prop-hosted-lc-non-episode-citation", 0),
+        ("prop-hosted-lc-no-evidence", 0),
+        ("prop-hosted-lc-insufficient-episodes", 2),
+    ):
+        assert by_id[failed_pid]["status"] == "failed"
+        assert by_id[failed_pid]["downstream_id"] is None
+        assert (
+            by_id[failed_pid]["error"]
+            == "lesson_candidate requires at least 3 distinct supporting trade_episode_ids "
+            f"from input or verified evidence (got {expected_count})"
+        )
 
     rd_call = next(c for c in owner_harness["call_log"] if c["path"] == "/api/research/persona-demands" and c["method"] == "POST")
     assert rd_call["headers"]["Authorization"] == f"Bearer {research_jwt}"
-    lc_call = next(c for c in owner_harness["call_log"] if c["path"] == "/api/memory/trade-lessons" and c["method"] == "POST")
-    assert lc_call["headers"]["Authorization"] == f"Bearer {memory_write_jwt}"
+    lc_calls = [c for c in owner_harness["call_log"] if c["path"] == "/api/memory/trade-lessons" and c["method"] == "POST"]
+    assert len(lc_calls) == 2
+    for lc_call in lc_calls:
+        assert lc_call["headers"]["Authorization"] == f"Bearer {memory_write_jwt}"
 
-    lc_id = by_id["prop-hosted-lc-1"]["downstream_id"]
-    lc_record = owner_harness["lesson_gov_service"].store.get(lc_id)
-    assert lc_record is not None
-    assert len(lc_record["trade_episode_ids"]) == 3
-    assert len(set(lc_record["trade_episode_ids"])) == 3
+    # Only the two valid candidates were persisted in Memory, with their exact real episode IDs
+    assert len(owner_harness["lesson_gov_service"].store.list()) == candidates_before + 2
+    lc_id_1 = by_id["prop-hosted-lc-valid-citations"]["downstream_id"]
+    lc_record_1 = owner_harness["lesson_gov_service"].store.get(lc_id_1)
+    assert lc_record_1 is not None
+    assert lc_record_1["trade_episode_ids"] == ["ep-301", "ep-302", "ep-303"]
+
+    lc_id_2 = by_id["prop-hosted-lc-valid-verified-evidence"]["downstream_id"]
+    lc_record_2 = owner_harness["lesson_gov_service"].store.get(lc_id_2)
+    assert lc_record_2 is not None
+    assert lc_record_2["trade_episode_ids"] == [ep_uuid_1, ep_uuid_2, ep_uuid_3]
 
     # Live readback succeeds using CONSULTATION_MEMORY_READ_TOKEN_FILE
-    live_lc = read_downstream_status("prop-hosted-lc-1")
+    live_lc = read_downstream_status("prop-hosted-lc-valid-citations")
     assert live_lc["status"] == "proposed"
-    assert live_lc["downstream_id"] == lc_id
+    assert live_lc["downstream_id"] == lc_id_1
     lc_get_call = next(c for c in owner_harness["call_log"] if c["path"].startswith("/api/memory/trade-lessons/") and c["method"] == "GET")
     assert lc_get_call["headers"]["Authorization"] == f"Bearer {memory_read_jwt}"
 
@@ -1316,7 +1424,7 @@ def test_configured_token_file_failures_fail_closed_without_alias_or_jwt_fallbac
                     "proposed_change": "Must not mint fallback JWT when token file fails",
                     "confidence": 0.85,
                 },
-                "citations": ["facts:strategy_pool:persona-alpha@1"],
+                "citations": ["ep-301", "ep-302", "ep-303"],
             },
         ],
     }
@@ -1362,6 +1470,7 @@ def test_configured_token_file_failures_fail_closed_without_alias_or_jwt_fallbac
     with pytest.raises(MeetingOutputRoutingError, match="Configured service credential unavailable"):
         read_downstream_status(f"prop-fc-lc-{failure_mode}")
     assert owner_harness["call_log"] == []
+
 
 
 

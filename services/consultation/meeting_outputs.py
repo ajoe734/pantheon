@@ -16,6 +16,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -25,7 +26,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 from services.consultation.sponsor_decision_bridge import (
     ApprovalDecisionProposal,
@@ -654,6 +655,54 @@ def _check_sponsor_eligibility(
     return validated
 
 
+_EPISODE_ITEM_KINDS: frozenset[str] = frozenset(
+    {
+        "trade_episode",
+        "trade_episodes",
+        "episode",
+        "trade_journal_episode",
+    }
+)
+_EPISODE_REF_PREFIXES: tuple[str, ...] = (
+    "facts:trade_episode:",
+    "facts:trade-episode:",
+    "facts:trade_episodes:",
+    "facts:trade-episodes:",
+    "facts:episode:",
+    "telemetry:trade_episode:",
+    "telemetry:trade-episode:",
+    "telemetry:trade_episodes:",
+    "telemetry:trade-episodes:",
+    "telemetry:episode:",
+    "trade_episode:",
+    "trade-episode:",
+    "trade_episodes:",
+    "trade-episodes:",
+    "episode:",
+)
+_NON_EPISODE_REF_PREFIXES: tuple[str, ...] = (
+    "facts:",
+    "lessons:",
+    "similar_history:",
+    "evidence:",
+    "preread:",
+    "casefile-",
+    "memo-",
+    "pool-",
+    "journal-",
+    "reg-",
+    "strat-",
+    "artifact-",
+    "apv-",
+    "attr-",
+    "pmem-",
+)
+_EPISODE_TOKEN_RE = re.compile(
+    r"^(?:ep(?:isode)?[-_][A-Za-z0-9][A-Za-z0-9._-]*|ep[0-9][A-Za-z0-9._-]*)$",
+    re.IGNORECASE,
+)
+
+
 def _as_uuid_str(value: Any, namespace_tag: str) -> str:
     text = str(value or "").strip()
     if text:
@@ -662,6 +711,322 @@ def _as_uuid_str(value: Any, namespace_tag: str) -> str:
         except ValueError:
             return str(uuid.uuid5(uuid.NAMESPACE_OID, f"pantheon:{namespace_tag}:{text}"))
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f"pantheon:{namespace_tag}:default"))
+
+
+def _extract_direct_episode_id(raw: Any, *, allow_bare_uuid: bool = True) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    for prefix in _EPISODE_REF_PREFIXES:
+        if lowered.startswith(prefix):
+            tail = text[len(prefix):].strip()
+            if not tail:
+                return None
+            return _extract_direct_episode_id(tail, allow_bare_uuid=True) or (
+                tail if ":" not in tail and not tail.lower().startswith(_NON_EPISODE_REF_PREFIXES) else None
+            )
+    if lowered.startswith(_NON_EPISODE_REF_PREFIXES):
+        return None
+    if allow_bare_uuid:
+        try:
+            return str(uuid.UUID(text))
+        except ValueError:
+            pass
+    if _EPISODE_TOKEN_RE.fullmatch(text):
+        return text
+    return None
+
+
+def _index_verified_meeting_evidence(
+    meeting: Mapping[str, Any] | None,
+    *,
+    sponsor_persona_id: str | None,
+    tenant_id: str,
+) -> dict[str, list[Mapping[str, Any]]]:
+    by_key: dict[str, list[Mapping[str, Any]]] = {}
+    if not isinstance(meeting, Mapping):
+        return by_key
+
+    allowed_preread_personas = {
+        str(p).strip()
+        for p in (sponsor_persona_id, meeting.get("chair_persona_id"))
+        if p and str(p).strip()
+    }
+
+    def _register(item: Any) -> None:
+        if not isinstance(item, Mapping):
+            return
+        if (
+            item.get("relevance_scope") == "persona_private"
+            or item.get("memory_layer") == "persona_private"
+        ):
+            return
+        item_tenant = str(item.get("tenant_id") or "").strip()
+        if item_tenant and item_tenant != tenant_id:
+            return
+        item_persona = str(item.get("persona_id") or "").strip()
+        if item_persona and sponsor_persona_id and item_persona != sponsor_persona_id:
+            return
+        for key_field in (
+            "item_id",
+            "entry_id",
+            "memory_id",
+            "source_id",
+            "ref_id",
+            "ref",
+            "id",
+            "trade_episode_id",
+            "episode_id",
+        ):
+            val = item.get(key_field)
+            if isinstance(val, str) and val.strip():
+                bucket = by_key.setdefault(val.strip(), [])
+                if all(existing is not item for existing in bucket):
+                    bucket.append(item)
+
+    case_file = meeting.get("case_file")
+    if isinstance(case_file, Mapping):
+        groups = case_file.get("groups")
+        if isinstance(groups, Mapping):
+            for grp in groups.values():
+                if isinstance(grp, Mapping):
+                    for it in grp.get("items") or []:
+                        _register(it)
+        for it in case_file.get("items") or []:
+            _register(it)
+
+    for it in meeting.get("case_file_items") or []:
+        _register(it)
+
+    pre_read = meeting.get("pre_read")
+    if isinstance(pre_read, list):
+        for entry in pre_read:
+            if not isinstance(entry, Mapping):
+                continue
+            nested_entries = entry.get("entries")
+            if isinstance(nested_entries, list):
+                owner_pid = str(entry.get("persona_id") or "").strip()
+                if owner_pid and allowed_preread_personas and owner_pid not in allowed_preread_personas:
+                    continue
+                for sub in nested_entries:
+                    _register(sub)
+            else:
+                _register(entry)
+    elif isinstance(pre_read, Mapping):
+        for owner_pid, nested_entries in pre_read.items():
+            if (
+                str(owner_pid).strip()
+                and allowed_preread_personas
+                and str(owner_pid).strip() not in allowed_preread_personas
+            ):
+                continue
+            if isinstance(nested_entries, list):
+                for sub in nested_entries:
+                    _register(sub)
+
+    for it in meeting.get("evidence_refs") or []:
+        _register(it)
+
+    return by_key
+
+
+def _extract_episode_ids_from_item(
+    item: Any,
+    *,
+    sponsor_persona_id: str | None,
+    tenant_id: str,
+    verified_index: Mapping[str, list[Mapping[str, Any]]],
+    visited: set[int],
+) -> list[str]:
+    collected: list[str] = []
+
+    def _add(ep_id: str | None) -> None:
+        if ep_id and ep_id not in collected:
+            collected.append(ep_id)
+
+    if isinstance(item, str):
+        key = item.strip()
+        if not key:
+            return collected
+        if key in verified_index:
+            for verified_item in verified_index[key]:
+                for ep_id in _extract_episode_ids_from_item(
+                    verified_item,
+                    sponsor_persona_id=sponsor_persona_id,
+                    tenant_id=tenant_id,
+                    verified_index=verified_index,
+                    visited=visited,
+                ):
+                    _add(ep_id)
+            return collected
+        _add(_extract_direct_episode_id(key, allow_bare_uuid=True))
+        return collected
+
+    if not isinstance(item, Mapping) or id(item) in visited:
+        return collected
+    visited.add(id(item))
+
+    if (
+        item.get("relevance_scope") == "persona_private"
+        or item.get("memory_layer") == "persona_private"
+    ):
+        return collected
+    item_tenant = str(item.get("tenant_id") or "").strip()
+    if item_tenant and item_tenant != tenant_id:
+        return collected
+    item_persona = str(item.get("persona_id") or "").strip()
+    if item_persona and sponsor_persona_id and item_persona != sponsor_persona_id:
+        return collected
+
+    for single_key in ("trade_episode_id", "episode_id"):
+        if item.get(single_key) is not None:
+            _add(_extract_direct_episode_id(str(item.get(single_key)), allow_bare_uuid=True))
+
+    for list_key in (
+        "trade_episode_ids",
+        "supporting_episode_ids",
+        "covered_episode_ids",
+        "episode_ids",
+        "episodes",
+    ):
+        raw_list = item.get(list_key)
+        if isinstance(raw_list, (list, tuple)):
+            for elem in raw_list:
+                for ep_id in _extract_episode_ids_from_item(
+                    elem,
+                    sponsor_persona_id=sponsor_persona_id,
+                    tenant_id=tenant_id,
+                    verified_index=verified_index,
+                    visited=visited,
+                ):
+                    _add(ep_id)
+
+    item_kind = str(
+        item.get("kind")
+        or item.get("ref_type")
+        or item.get("type")
+        or item.get("evidence_type")
+        or ""
+    ).strip().lower()
+    if item_kind in _EPISODE_ITEM_KINDS:
+        for id_key in ("trade_episode_id", "episode_id", "source_id", "ref_id", "ref", "id", "item_id"):
+            raw_id = item.get(id_key)
+            if isinstance(raw_id, str) and raw_id.strip():
+                ep_id = _extract_direct_episode_id(raw_id, allow_bare_uuid=True) or (
+                    raw_id.strip()
+                    if ":" not in raw_id.strip()
+                    and not raw_id.strip().lower().startswith(_NON_EPISODE_REF_PREFIXES)
+                    else None
+                )
+                if ep_id:
+                    _add(ep_id)
+                    break
+
+    raw_item_id = item.get("item_id")
+    if isinstance(raw_item_id, str) and raw_item_id.strip().lower().startswith(_EPISODE_REF_PREFIXES):
+        _add(_extract_direct_episode_id(raw_item_id, allow_bare_uuid=True))
+
+    for nested_key in ("subject_fields", "structured_payload", "payload", "metadata", "content", "entry"):
+        nested = item.get(nested_key)
+        if isinstance(nested, Mapping):
+            for ep_id in _extract_episode_ids_from_item(
+                nested,
+                sponsor_persona_id=sponsor_persona_id,
+                tenant_id=tenant_id,
+                verified_index=verified_index,
+                visited=visited,
+            ):
+                _add(ep_id)
+
+    raw_excerpt = item.get("excerpt")
+    if isinstance(raw_excerpt, str):
+        stripped_excerpt = raw_excerpt.strip()
+        if stripped_excerpt.startswith("{") and stripped_excerpt.endswith("}"):
+            try:
+                parsed_excerpt = json.loads(stripped_excerpt)
+            except Exception:
+                parsed_excerpt = None
+            if isinstance(parsed_excerpt, Mapping):
+                for ep_id in _extract_episode_ids_from_item(
+                    parsed_excerpt,
+                    sponsor_persona_id=sponsor_persona_id,
+                    tenant_id=tenant_id,
+                    verified_index=verified_index,
+                    visited=visited,
+                ):
+                    _add(ep_id)
+
+    if not collected:
+        for ref_key in ("ref_id", "ref", "id", "item_id", "source_id"):
+            ref_val = item.get(ref_key)
+            if not isinstance(ref_val, str) or not ref_val.strip():
+                continue
+            clean_ref = ref_val.strip()
+            if clean_ref in verified_index:
+                for verified_item in verified_index[clean_ref]:
+                    for ep_id in _extract_episode_ids_from_item(
+                        verified_item,
+                        sponsor_persona_id=sponsor_persona_id,
+                        tenant_id=tenant_id,
+                        verified_index=verified_index,
+                        visited=visited,
+                    ):
+                        _add(ep_id)
+            elif not item_kind or item_kind in _EPISODE_ITEM_KINDS:
+                _add(_extract_direct_episode_id(clean_ref, allow_bare_uuid=(item_kind in _EPISODE_ITEM_KINDS)))
+
+    return collected
+
+
+def _resolve_lesson_candidate_episode_ids(
+    *,
+    proposal: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+    citations: Sequence[Any],
+    meeting: Mapping[str, Any] | None,
+    sponsor_persona_id: str | None,
+    tenant_id: str,
+) -> list[str]:
+    """Deterministically extract distinct, real trade_episode_ids from input or verified evidence."""
+    verified_index = _index_verified_meeting_evidence(
+        meeting,
+        sponsor_persona_id=sponsor_persona_id,
+        tenant_id=tenant_id,
+    )
+    episode_ids: list[str] = []
+
+    def _collect_from_sequence(seq: Iterable[Any]) -> None:
+        for raw_entry in seq:
+            for ep_id in _extract_episode_ids_from_item(
+                raw_entry,
+                sponsor_persona_id=sponsor_persona_id,
+                tenant_id=tenant_id,
+                verified_index=verified_index,
+                visited=set(),
+            ):
+                if ep_id not in episode_ids:
+                    episode_ids.append(ep_id)
+
+    for container in (payload, proposal if isinstance(proposal, Mapping) else {}):
+        for field_name in (
+            "trade_episode_ids",
+            "supporting_episode_ids",
+            "covered_episode_ids",
+            "episode_ids",
+        ):
+            raw_field = container.get(field_name)
+            if isinstance(raw_field, (list, tuple)):
+                _collect_from_sequence(raw_field)
+
+    _collect_from_sequence(citations or ())
+    raw_evidence_refs = payload.get("evidence_refs")
+    if isinstance(raw_evidence_refs, (list, tuple)):
+        _collect_from_sequence(raw_evidence_refs)
+
+    return episode_ids
 
 
 def _build_outbound_request(
@@ -674,6 +1039,8 @@ def _build_outbound_request(
     payload: Mapping[str, Any],
     citations: list[Any],
     now: datetime,
+    meeting: Mapping[str, Any] | None = None,
+    proposal: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Return (path, request_json, request_meta) for the given proposal kind."""
     now_iso = _iso(now)
@@ -790,21 +1157,20 @@ def _build_outbound_request(
         assert sponsor_persona_id is not None
         lc_id = _as_uuid_str(payload.get("lesson_candidate_id") or proposal_id, "lesson_candidate")
         ref_id = _as_uuid_str(payload.get("reflection_id") or f"{meeting_id}:{proposal_id}", "reflection")
-        supplied_episodes = payload.get("trade_episode_ids")
-        has_supplied_episodes = isinstance(supplied_episodes, list) and len(supplied_episodes) > 0
-        raw_episodes = list(supplied_episodes) if has_supplied_episodes else list(citations or [])
-        episode_ids: list[str] = []
-        for ep in raw_episodes:
-            uid = _as_uuid_str(ep.get("id") if isinstance(ep, Mapping) else ep, "episode")
-            if uid not in episode_ids:
-                episode_ids.append(uid)
-        if not has_supplied_episodes:
-            pad_idx = 1
-            while len(episode_ids) < 3:
-                uid = _as_uuid_str(f"ep-{meeting_id}-{proposal_id}-{pad_idx}", "episode")
-                if uid not in episode_ids:
-                    episode_ids.append(uid)
-                pad_idx += 1
+        episode_ids = _resolve_lesson_candidate_episode_ids(
+            proposal=proposal,
+            payload=payload,
+            citations=citations,
+            meeting=meeting,
+            sponsor_persona_id=sponsor_persona_id,
+            tenant_id=tenant_id,
+        )
+        if len(episode_ids) < 3:
+            raise MeetingOutputRoutingError(
+                "lesson_candidate requires at least 3 distinct supporting trade_episode_ids "
+                f"from input or verified evidence (got {len(episode_ids)})",
+                status_code=422,
+            )
         expiry = str(payload.get("expiry") or _iso(now + timedelta(days=30)))
         created_at = str(payload.get("created_at") or now_iso)
         lesson_body = {
@@ -1215,6 +1581,8 @@ def dispatch_proposals(
                 payload=payload,
                 citations=citations,
                 now=current_dt,
+                meeting=meeting,
+                proposal=proposal,
             )
         except Exception as exc:
             target_path = _target_path(
