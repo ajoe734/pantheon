@@ -401,8 +401,6 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "provisioningStep": active.current_step,
                 "compensation": active.compensation,
             }
-            if err_info.get("terminal_reason"):
-                details_extra["terminalReason"] = err_info["terminal_reason"]
             if err_info.get("reason_code"):
                 details_extra["reasonCode"] = err_info["reason_code"]
             if err_info.get("absence_source"):
