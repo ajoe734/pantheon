@@ -1727,9 +1727,9 @@ def _trading_pulse_monitoring_indexes(
     return by_runtime, by_binding
 
 
-def _trading_pulse_binding_is_retired(binding: Dict[str, Any]) -> bool:
+def _trading_pulse_binding_is_inactive(binding: Dict[str, Any]) -> bool:
     status = str(binding.get("status") or "").strip().lower()
-    return status == "retired" or binding.get("retired_at") not in (None, "")
+    return status in {"retired", "failed"} or binding.get("retired_at") not in (None, "")
 
 
 def _pulse_number(value: Any) -> Optional[float]:
@@ -1775,17 +1775,27 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[L
             personas[str(pid)] = person
     admitted, unresolved = [], 0
     for binding in bindings:
-        if not isinstance(binding, dict) or _trading_pulse_binding_is_retired(binding):
-            continue
-        if tenant and binding.get("tenant_id") != tenant:
+        if not isinstance(binding, dict) or _trading_pulse_binding_is_inactive(binding):
             continue
         if _trading_pulse_stage(binding) not in {"paper", "canary", "live", "broker_sandbox"}:
+            continue
+        # Runtime owner wire rows carry tenant provenance in metadata. Admit
+        # either supported location only when all supplied claims agree; a
+        # persona match must never override a foreign or conflicting binding.
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        claims = {value for value in (binding.get("tenant_id"), metadata.get("tenant_id")) if value not in (None, "")}
+        if claims and tenant not in claims:
+            continue
+        if claims != {tenant}:
+            unresolved += 1
             continue
         person = personas.get(str(binding.get("persona_id") or ""))
         if person is None:
             unresolved += 1
         elif not is_probe_or_test_persona(person):
-            admitted.append(binding)
+            # Normalize a copy for telemetry/journey/baseline joins downstream;
+            # do not modify the owner's record or its provenance metadata.
+            admitted.append({**binding, "tenant_id": tenant})
     stages = {}
     for binding in admitted:
         stage = _trading_pulse_stage(binding)

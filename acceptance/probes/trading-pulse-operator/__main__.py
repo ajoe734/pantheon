@@ -57,11 +57,17 @@ def check(fetch, tenant):
     directory = {str(p.get("persona_id") or p.get("id")): p for p in people if p.get("tenant_id") == tenant}
     expected = {}
     for b in bindings:
-        if b.get("tenant_id") != tenant or b.get("status") == "retired" or b.get("retired_at"):
+        if str(b.get("status") or "").strip().lower() in {"retired", "failed"} or b.get("retired_at"):
             continue
         stage = b.get("deployment_stage") or b.get("deployment_mode")
         if stage not in {"paper", "canary", "live", "broker_sandbox"}:
             continue
+        metadata = b.get("metadata") if isinstance(b.get("metadata"), dict) else {}
+        claims = {value for value in (b.get("tenant_id"), metadata.get("tenant_id")) if value not in (None, "")}
+        if claims and tenant not in claims:
+            continue
+        if claims != {tenant}:
+            raise Unverifiable("independent_binding_tenant_unverified")
         pid = str(b.get("persona_id") or "")
         if pid not in directory:
             raise Unverifiable("independent_identity_missing")

@@ -23,7 +23,7 @@ def fixture():
               {"id": "p-probe", "name": "fixture", "tenant_id": "tenant-a", "metadata": {"is_probe": True}},
               {"id": "foreign", "name": "other", "tenant_id": "tenant-b"}]
     bindings = [{"runtime_id": "r-" + p["id"], "binding_id": "b-" + p["id"], "persona_id": p["id"],
-                 "tenant_id": p["tenant_id"], "deployment_stage": "paper", "status": "active"} for p in people]
+                 "metadata": {"tenant_id": p["tenant_id"]}, "deployment_stage": "paper", "status": "active"} for p in people]
     raw = {"r-p1": {"runtime_id": "r-p1", "binding_id": "b-p1", "tenant_id": "tenant-a", "last_event_at": AT,
                       "pnl_at": AT, "pnl": -168.085, "pnl_currency": "TWD", "pnl_period_start_at": START,
                       "pnl_definition": "net_ledger_pnl", "drawdown_at": AT, "window": "1h", "drawdown": 0, "sharpe_ratio": None, "avg_slippage_bps": 0, "ledger_fill_count": 1},
@@ -87,6 +87,68 @@ def fetcher(world):
 
 def test_probe_passes_independent_sources_with_zero_and_unknown():
     assert probe.check(fetcher(fixture()), "tenant-a")["passed"]
+
+
+@pytest.mark.parametrize("location", ["metadata", "top_level", "both"])
+def test_probe_binding_tenant_wire_locations(location):
+    # Viewer witness 2026-11-22T13:15Z: all four active owner bindings
+    # omit top-level tenant_id and carry metadata.tenant_id instead.
+    world = fixture()
+    for binding in world["bindings"]:
+        if location in {"top_level", "both"}:
+            binding["tenant_id"] = binding["metadata"]["tenant_id"]
+        if location == "top_level":
+            binding.pop("metadata")
+    assert probe.check(fetcher(world), "tenant-a") == {
+        "passed": True, "failed": [], "runtime_count": 2, "persona_count": 2}
+
+
+@pytest.mark.parametrize("binding_tenant,metadata_tenant", [
+    ("tenant-a", "tenant-b"), ("tenant-b", "tenant-a"), (None, None),
+])
+def test_probe_cannot_verify_missing_or_conflicting_binding_tenant(binding_tenant, metadata_tenant):
+    world = fixture()
+    world["bindings"][0].update(tenant_id=binding_tenant, metadata={"tenant_id": metadata_tenant})
+    with pytest.raises(probe.Unverifiable, match="independent_binding_tenant_unverified"):
+        probe.check(fetcher(world), "tenant-a")
+
+
+@pytest.mark.parametrize("inactive", [{"status": "retired"}, {"status": "FAILED"}, {"retired_at": AT}])
+def test_probe_excludes_old_and_failed_bindings(inactive):
+    world = fixture()
+    old = {**world["bindings"][0], "runtime_id": "r-old", "binding_id": "b-old", **inactive}
+    world["bindings"].append(old)
+    assert probe.check(fetcher(world), "tenant-a")["passed"]
+
+
+def test_probe_rejects_empty_aggregate_when_metadata_scoped_bindings_exist():
+    world = fixture()
+    world["pulse"]["runtime_rows"] = []
+    report = probe.check(fetcher(world), "tenant-a")
+    assert not report["passed"]
+    assert "operator_roster_mismatch" in report["failed"]
+    assert report["runtime_count"] == 2
+
+
+def test_viewer_witness_wire_roster_has_three_operators_not_zero():
+    # Minimal wire projection of the independent viewer sample captured at
+    # 2026-11-22T13:15:36Z (owner-witness-20261122.json). Four active
+    # metadata-scoped bindings; the release persona is marked data_scope=test.
+    sample = [
+        ("persona-d64835a203ce276b8fbb", "rt-49c1c3d1", "rb-23c9d71a91c5420dae77ca14eea9f988", "test"),
+        ("persona-6507750312870d03a241", "rt-3252fa75", "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4", None),
+        ("persona-2448c7053e33ea48da47", "rt-ad81501b", "rb-eb74118dd3ca4b169496b1c239087512", None),
+        ("persona-ee7112a829d38b9135ac", "rt-3b65a843", "rb-2b0df30559154a93902c209b0318d95c", None),
+    ]
+    world = fixture()
+    world["people"] = [{"id": pid, "tenant_id": "tenant-dev", "data_scope": scope} for pid, _, _, scope in sample]
+    world["bindings"] = [{"persona_id": pid, "runtime_id": rid, "binding_id": bid,
+        "metadata": {"tenant_id": "tenant-dev"}, "deployment_stage": "paper", "status": "active"}
+        for pid, rid, bid, _ in sample]
+    world["pulse"]["runtime_rows"] = []
+    report = probe.check(fetcher(world), "tenant-dev")
+    assert report["runtime_count"] == report["persona_count"] == 3
+    assert not report["passed"] and "operator_roster_mismatch" in report["failed"]
 
 
 @pytest.mark.parametrize("mutation", ["probe_row", "denominator", "zero_to_null", "unknown_to_zero", "remove_refusal", "wrong_amount", "wrong_unit", "wrong_name", "wrong_pnl_group", "ranking_probe"])

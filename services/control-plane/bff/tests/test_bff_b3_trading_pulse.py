@@ -571,18 +571,18 @@ def _hosted_shaped_store(sessions_order="ended_first"):
     return _FleetStore(bindings, sessions, telemetry=[_telemetry(i) for i in range(4)])
 
 
-def test_trading_pulse_excludes_retired_and_counts_them() -> None:
+def test_trading_pulse_excludes_retired_and_failed_from_operator_counts() -> None:
     store = _hosted_shaped_store()
     data = ManagementService(read_store=store).get_trading_pulse()["data"]
     summary = data["summary"]
-    assert summary["runtime_count"] == 13
+    assert summary["runtime_count"] == 10
     assert summary["retired_runtime_count"] == 0
-    assert len(data["runtime_rows"]) == 13
-    assert len(data["rankings"]) == 13
-    assert data["cards"][0]["value"] == 13
-    assert summary["by_status"] == {"active": 4, "paused": 6, "failed": 3}
+    assert len(data["runtime_rows"]) == 10
+    assert len(data["rankings"]) == 10
+    assert data["cards"][0]["value"] == 10
+    assert summary["by_status"] == {"active": 4, "paused": 6}
     ids = {r["runtime_id"] for r in data["runtime_rows"]}
-    assert not any(i in ids for i in ("r-100", "r-300"))
+    assert not any(i in ids for i in ("r-20", "r-21", "r-22", "r-100", "r-300"))
 
 
 def test_trading_pulse_prefers_non_ended_monitoring_session_in_either_order() -> None:
@@ -799,6 +799,53 @@ def test_operator_zero_fill_ledger_and_unknown_pnl_are_distinct():
     assert ctx["last_fill_at"] is None and ctx["latest_report_at"] == SNAP
     assert data["summary"]["pnl_groups"][0]["covered_persona_count"] == 1
     assert data["summary"]["pnl_groups"][0]["eligible_persona_count"] == 2
+
+
+@pytest.mark.parametrize("location", ["metadata", "top_level", "both"])
+def test_operator_binding_tenant_wire_locations_preserve_scoped_joins(location):
+    import copy
+    store = _OperatorStore()
+    for binding in store.bindings:
+        if location in {"metadata", "both"}:
+            binding["metadata"] = {"tenant_id": binding["tenant_id"]}
+        if location == "metadata":
+            binding.pop("tenant_id")
+    original = copy.deepcopy(store.bindings)
+    data = _operator_pulse(store)["data"]
+    scope = data["summary"]["operator_scope"]
+    assert scope["status"] == "verified"
+    assert scope["runtime_count"] == scope["persona_count"] == 2
+    assert {r["persona_id"] for r in data["runtime_rows"]} == {"p1", "p2"}
+    assert {r["tenant_id"] for r in data["runtime_rows"]} == {"tenant-test"}
+    rows = {r["persona_id"]: r for r in data["runtime_rows"]}
+    assert rows["p1"]["telemetry_summary"]["metrics"]["pnl"] == -168.085
+    assert rows["p2"]["telemetry_summary"]["metrics"]["total_trades"] == 0
+    assert rows["p2"]["telemetry_summary"]["metrics"]["fill_rate"] == 0
+    ranked = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
+    assert ranked["summary"]["operator_scope"] == scope
+    assert "foreign" not in str(ranked) and "probe" not in str(ranked)
+    assert store.bindings == original
+
+
+@pytest.mark.parametrize("top,metadata", [("tenant-test", "other"), ("other", "tenant-test"), (None, None)])
+def test_operator_binding_tenant_conflicts_never_fall_back_to_persona(top, metadata):
+    store = _OperatorStore()
+    store.bindings[0].update(tenant_id=top, metadata={"tenant_id": metadata})
+    data = _operator_pulse(store)["data"]
+    assert data["summary"]["operator_scope"]["status"] == "partial"
+    assert data["summary"]["operator_scope"]["runtime_count"] is None
+    assert {r["persona_id"] for r in data["runtime_rows"]} == {"p2"}
+    assert "r-p1" not in str(data)
+
+
+@pytest.mark.parametrize("inactive", [{"status": "retired"}, {"status": "FAILED"}, {"retired_at": SNAP}])
+def test_operator_excludes_old_and_failed_bindings(inactive):
+    store = _OperatorStore()
+    store.bindings.append({**store.bindings[0], "id": "old", "binding_id": "old", "runtime_id": "r-old", **inactive})
+    data = _operator_pulse(store)["data"]
+    assert data["summary"]["operator_scope"]["status"] == "verified"
+    assert data["summary"]["runtime_count"] == 2
+    assert "r-old" not in str(data)
 
 
 def test_no_intents_is_not_zero_percent_and_real_zero_pnl_is_preserved():
