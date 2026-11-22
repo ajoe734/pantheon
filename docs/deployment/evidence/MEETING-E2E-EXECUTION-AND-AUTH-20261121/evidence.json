@@ -1,0 +1,33 @@
+{
+  "task_id": "MEETING-E2E-EXECUTION-AND-AUTH-20261121",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "source_verified": true,
+  "hosted_verified": false,
+  "hosted_pending": "Next hosted dev deployment and deliberative persona meeting execution (pre-read, rounds 1..2, chair synthesis with sponsored proposals, C2 downstream dispatch, and learn-feedback memory writeback).",
+  "root_cause_fixes": {
+    "1_meeting_prompt_schemas_and_fenced_json": "services/openclaw-gateway-adapter/consultation_provider.py _meeting_persona_prompt now injects explicit event_content JSON schemas for rounds 1..3 (allowing stance, citations, proposals, accepted, disputed, changed alongside claims and summary_evidence_refs) and chair synthesis (requiring synthesis={summary, outcome in [proposals_issued, completed_no_proposal, no_testable_hypothesis], proposals}), and _persona_response strips optional outer markdown code fences before json.loads.",
+    "2_preread_session_persona_id": "integrations/openclaw/persona_memory_bridge.py fetch_canonical_memory sends session_persona_id=persona_id (or explicit session_persona_id) when scope in {persona, both} and persona_id is non-empty so consultation_session and persona_memory_reader principals pass governance authz without 403 missing_session_persona_id.",
+    "3_search_evidence_jwt_identity": "services/knowledge/case_file.py _evidence binds search query actor_ref and role_refs to owners.search JWT claims when owners.search carries a JWT bearer token so search-svc strict auth does not reject memory-reader caller identity with 403.",
+    "4_consult_pool_members_and_telemetry_principal": "services/knowledge/case_file.py _facts resolves active strategy-pool member artifact_refs from Registry and derives persona_capital_binding_id on decision_type=consult even when member_artifact_refs starts empty; scripts/issue_dev_paper_principals.py issues read-only viewer+reviewer token CONSULTATION_TELEMETRY_READ_TOKEN for consultation-svc (accepted by Telemetry GET /api/telemetry/runtime-summaries and GET /api/telemetry/trade-episodes/{episode_id} while denied on all Telemetry write routes) and docker-compose.yml wires PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE to it.",
+    "5_meeting_output_tokens_and_real_episode_refs": "services/consultation/meeting_outputs.py resolves configured_service_token for PERSONA_RESEARCH_SERVICE_TOKEN / PANTHEON_RESEARCH_SERVICE_TOKEN on research_demand and CONSULTATION_MEMORY_WRITE_TOKEN / PANTHEON_MEMORY_AUTH_TOKEN on lesson_candidate (plus CONSULTATION_MEMORY_READ_TOKEN on GET readback and CONSULTATION_TELEMETRY_READ_TOKEN / PANTHEON_TELEMETRY_SERVICE_TOKEN on Telemetry trade-episode verification, with no unconfigured local-default JWT fallback on Telemetry reads) with fail-closed file semantics (propagating configured missing/unsafe/revoked *_FILE failures into a recorded dispatch failure without falling back to lower-priority aliases or minting a JWT), and verifies every selected trade_episode_id across at least 3 distinct supporting episodes for the same tenant and sponsor through the scoped Telemetry owner read GET /api/telemetry/trade-episodes/{episode_id} against the typed TradeEpisodeProjection contract (services/telemetry/trade_episode_projection.schema.json), failing closed with the insufficient-evidence error before Memory submission when records are missing, foreign, unverified, or unavailable."
+  },
+  "runtime_budget": {
+    "manifest_entry": "docs/operations/storage-manifest.json runtime_budgets entry CONSULTATION_TELEMETRY_READ_TOKEN (dev-paper-consultation-tokens:/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN)",
+    "writer": "CONSULTATION_TELEMETRY_READ_TOKEN file in existing dev-paper-consultation-tokens volume (scripts/issue_dev_paper_principals.py refresh_files)",
+    "cadence": "refreshed hourly (REFRESH_SECONDS = 3600) in place by dev-paper-principal-issuer via _atomic_private",
+    "size_and_count": "1 rotating principal file under 1 KB (~500 bytes HS256 JWT; 5 total files in consultation-svc consumer directory)",
+    "growth_per_day": "0 bytes/day (atomic in-place replacement via os.replace)",
+    "cap_and_cleanup": "single fixed filename (< 1 KB, enforced <= 16384 bytes by configured_service_token); temp file unlinked in finally block and principal file unlinked on revoke_files"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py integrations/openclaw/test_persona_memory_bridge.py services/knowledge/test_case_file.py scripts/test_issue_dev_paper_principals.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/consultation/tests/test_meeting_outputs.py services/consultation/tests/test_persona_meetings.py",
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest",
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-meeting-e2e.json"
+    ],
+    "results": "164 passed across all 6 focused pytest suites (including real services.telemetry.main.app Flask GET /api/telemetry/trade-episodes/{episode_id} owner verification with actual issue_environment CONSULTATION_TELEMETRY_READ_TOKEN, rejection of unverified full-shape candidates, missing/foreign/non-episode citations, and unconfigured telemetry credentials before Memory submission, denial of all Telemetry write routes for CONSULTATION_TELEMETRY_READ_TOKEN, and missing/unsafe/revoked configured token file fail-closed regression coverage); test_check_storage_manifest 10 passed and check_storage_manifest.py passed=true, failures=[]"
+  },
+  "tokens_in_evidence": false
+}

@@ -2562,3 +2562,85 @@ def test_evidence_refs_withholds_all_private_and_unauthorized_trader_refs_across
     assert bob_shaped["evidence_refs"] == ["cf-shared-public", "memo-dissent-mixed"]
     assert "cf-trader-alice-only" not in bob_shaped["rounds"][0]["positions"][0]["citations"]
     assert "cf-private-hidden" not in bob_shaped["rounds"][0]["positions"][0]["citations"]
+
+
+def test_meeting_memory_writeback_honors_consultation_memory_write_token_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+    from scripts.issue_dev_paper_principals import issue_environment
+    from scripts.test_issue_dev_paper_principals import KEY, configured
+    from services.memory import main as memory_main
+
+    values = issue_environment(configured())
+    token_file = tmp_path / "CONSULTATION_MEMORY_WRITE_TOKEN"
+    token_file.write_text(values["CONSULTATION_MEMORY_WRITE_TOKEN"], encoding="utf-8")
+    token_file.chmod(0o600)
+
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("CONSULTATION_MEMORY_WRITE_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst.json"))
+    monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "pers.json"))
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_MEMORY_JWT_AUDIENCE", "isolated-audience")
+    memory_main._STORE = None
+    memory_main._PERSONA_STORE = None
+
+    client = TestClient(memory_main.app)
+
+    class _Resp:
+        def __init__(self, raw: bytes) -> None:
+            self._raw = raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self) -> bytes:
+            return self._raw
+
+    def fake_urlopen(req, timeout=15.0):
+        resp = client.post(
+            "/api/memory/writebacks/learn-feedback",
+            content=req.data,
+            headers=dict(req.header_items()),
+        )
+        assert resp.status_code in (200, 201), resp.text
+        return _Resp(resp.content)
+
+    monkeypatch.setattr(meetings_mod.urllib.request, "urlopen", fake_urlopen)
+    meeting = {
+        "meeting_id": "mtg-wb-file-1",
+        "meeting_type": "MT-1",
+        "topic": "Weekly review",
+        "chair_persona_id": "persona-alpha",
+        "participants": [
+            {"persona_id": "persona-alpha", "role": "chair"},
+            {"persona_id": "persona-beta", "role": "trading_peer"},
+        ],
+        "case_file_items": [{"item_id": "facts:item:1"}],
+        "rounds": [
+            {
+                "round": 2,
+                "positions": [
+                    {"persona_id": "persona-alpha", "stance": "approve", "changed": False},
+                    {"persona_id": "persona-beta", "stance": "approve_with_conditions", "changed": True},
+                ],
+            }
+        ],
+        "synthesis": {"outcome": "proposals_issued", "proposals": [{"proposal_id": "prop-1", "sponsor_persona_id": "persona-alpha"}]},
+    }
+    writebacks, inst_id = meetings_mod._write_meeting_memory(
+        tenant_id="tenant-dev",
+        meeting=meeting,
+        summary_memo_id="mem-summary-mtg-wb-file-1",
+        memory_url="http://memory",
+    )
+    assert len(writebacks) == 2
+    assert inst_id

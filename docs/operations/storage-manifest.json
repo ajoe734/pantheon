@@ -5865,6 +5865,30 @@
    "size_per_day": "measured 5,779 B on the generated run (calendar evidence only); limit 400,000 B, alarm 600,000 B",
    "task": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
    "writer": "services/source_ingestion/daily_bars_store.py (calendar evidence and run refs with source id and upstream endpoint)"
+  },
+  {
+   "bound_proof": {
+    "contains": "\"CONSULTATION_TELEMETRY_READ_TOKEN\": (\"pantheon-dev-consultation-telemetry-reader\", \"viewer\")",
+    "file": "scripts/issue_dev_paper_principals.py"
+   },
+   "cadence": "refreshed once per hour (REFRESH_SECONDS = 3600) in place via _atomic_private (tempfile.mkstemp + os.replace) in scripts/issue_dev_paper_principals.py refresh_files",
+   "cap": "1 file per consumer directory (/issued/consultation-svc/CONSULTATION_TELEMETRY_READ_TOKEN mounted read-only at /run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN in volume dev-paper-consultation-tokens), < 1 KB (~500 bytes HS256 JWT; enforced <= 16384 bytes by services/service_token_file.py configured_service_token)",
+   "cleanup": "atomic in-place replacement via os.replace on every hourly refresh (try/finally unlinks temporary .rotating-* file on failure) and explicit unlink on --revoke in revoke_files; zero historical file accumulation",
+   "count_at_hosted_scale": "1 rotating credential file in consultation-svc consumer directory (5 total files in dev-paper-consultation-tokens volume)",
+   "growth": "0 bytes/day net growth (in-place atomic replacement)",
+   "growth_per_day": "0 bytes/day net growth (in-place atomic replacement)",
+   "name": "CONSULTATION_TELEMETRY_READ_TOKEN (dev-paper-consultation-tokens:/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN)",
+   "owner": "consultation-svc (issued by dev-paper-principal-issuer via scripts/issue_dev_paper_principals.py)",
+   "readers": [
+    "services/knowledge/case_file.py",
+    "services/service_token_file.py"
+   ],
+   "register_class": "RC2",
+   "size": "~500 bytes (< 1 KB) single HS256 JWT token file",
+   "size_per_day": "0 bytes net growth (~500 bytes static file size replaced hourly in place)",
+   "task": "MEETING-E2E-EXECUTION-AND-AUTH-20261121",
+   "volume": "dev-paper-consultation-tokens (/issued/consultation-svc -> /run/pantheon-principals:ro)",
+   "writer": "scripts/issue_dev_paper_principals.py refresh_files (_atomic_private writes /issued/consultation-svc/CONSULTATION_TELEMETRY_READ_TOKEN; not discovered by check_storage_manifest.py static inventory because token files under /run/pantheon-principals have no .json/.jsonl/.sqlite/.db suffix)"
   }
  ]
 }
