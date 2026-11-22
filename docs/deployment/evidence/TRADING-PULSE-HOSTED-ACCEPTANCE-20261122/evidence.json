@@ -1,0 +1,266 @@
+{
+  "schema_version": "pantheon.task-review-evidence.v1",
+  "task_id": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-22T16:59:49.313644+00:00",
+  "problem_register": {
+    "root_cause_class": "RC6",
+    "work_package": "WP6.5",
+    "path": "docs/operations/problem-register.md"
+  },
+  "related_acceptance": [
+    "MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114",
+    "RC6 WP6.1-WP6.5"
+  ],
+  "source_chain_state": "merged",
+  "source_changes": [
+    {
+      "repository": "ajoe734/pantheon",
+      "pr": "https://github.com/ajoe734/pantheon/pull/7742",
+      "merge_commit": "0a0833e68dc5b14f5121fae8615632d3ca0a0420",
+      "merged_at": "2026-11-22T15:50:24Z",
+      "delivery_state": "merged"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pr": "https://github.com/ajoe734/execute-plans/pull/1062",
+      "merge_commit": "8ccf254f4bb9ed34748a7532055f0fafba154504",
+      "merged_at": "2026-11-22T15:31:25Z",
+      "delivery_state": "merged"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pr": "https://github.com/ajoe734/execute-plans/pull/1066",
+      "merge_commit": "42813d3eeac17f211926e42d89cb7abf5d183a6f",
+      "merged_at": "2026-11-22T16:25:22Z",
+      "delivery_state": "merged"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pr": "https://github.com/ajoe734/execute-plans/pull/1063",
+      "merge_commit": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
+      "merged_at": "2026-11-22T16:50:34Z",
+      "delivery_state": "merged"
+    }
+  ],
+  "hosted_accepted": false,
+  "verdict": "pending_exact_repaired_pair_deployment",
+  "candidate": {
+    "bff": "eedf523a5d23e90742e427d2e055e70884664805",
+    "fe": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/45046460903",
+    "run_status": "completed",
+    "run_conclusion": "failure",
+    "failure_at": "2026-11-22T16:56:19.1624177Z",
+    "failure_step": "Resolve and validate dev payload",
+    "failure": "Dev release payload eedf523a5d23e90742e427d2e055e70884664805 has no successful dev push Branch CI run (latest=completed:cancelled)",
+    "switch_executed": false,
+    "acceptance_stage": "skipped",
+    "steady_service_version_validation": "not_run_for_candidate"
+  },
+  "served_pair": {
+    "fe": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "bff_manifest": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "bff_actual": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "manifest_url": "https://app.dev.mvl-cap.tw/deployment.json",
+    "version_url": "https://api.dev.mvl-cap.tw/bff/version",
+    "manifest_sha256": "a95e41bf59beca4b1b7da3cfdd72412d069b823262b2024730476b6dc168eb1c",
+    "manifest_sha256_encoding": "UTF-8 json.dumps(sort_keys=True), no newline",
+    "previous_release_run": "45029250554",
+    "previous_release_manifest_state": "accepted",
+    "profile": "operator-live",
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "true",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    },
+    "scope": "Previously served release; excludes Trading Pulse repairs. Its accepted manifest is not task E acceptance."
+  },
+  "ci_observation": [
+    {
+      "repository": "ajoe734/pantheon",
+      "conclusion": "",
+      "databaseId": 45043298963,
+      "headSha": "d6f9592222341889b63cb9e775791cdafe88587c",
+      "status": "in_progress",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/45043298963"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "conclusion": "cancelled",
+      "databaseId": 45046047577,
+      "headSha": "eedf523a5d23e90742e427d2e055e70884664805",
+      "status": "completed",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/45046047577"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "conclusion": "",
+      "databaseId": 45046505584,
+      "headSha": "f78d53689e2443338353f14a9cb40d595bbe8535",
+      "status": "pending",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/45046505584"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "conclusion": "",
+      "databaseId": 45046071831,
+      "headSha": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
+      "status": "in_progress",
+      "url": "https://github.com/ajoe734/execute-plans/actions/runs/45046071831"
+    }
+  ],
+  "read_only_rehearsal": {
+    "captured_at": "2026-11-22T16:57:52.372043+00:00",
+    "pair": {
+      "fe": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+      "bff": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec"
+    },
+    "viewer_roles": [
+      "viewer"
+    ],
+    "tenant_verified": true,
+    "independent_sources": [
+      {
+        "source": "/api/v1/personas",
+        "sha256": "8f54c6ee14a26175e82dab8a6841b8968fc69ebc7da46f370a7d884a63c87ff3"
+      },
+      {
+        "source": "/api/v1/runtime-bindings",
+        "sha256": "d6791fca278c8b8d32777b7ac10f8f031a4f73ea72e0a0aec93cc268442b8f7d"
+      },
+      {
+        "source": "/api/v1/telemetry/rt-3252fa75/summary",
+        "sha256": "adf551fffe707dafb6848603d2ee5d5f96928b11587cf0c56dd40e007769d7e1"
+      },
+      {
+        "source": "/api/v1/telemetry/rt-ad81501b/summary",
+        "sha256": "085f52a95ed06d95043059f6ae2519601fff1a8e2e6481246b9a10698084f5fb"
+      },
+      {
+        "source": "/api/v1/telemetry/rt-3b65a843/summary",
+        "sha256": "58f4e5176cd14ae1fcf0fa309fd6bcbb454fcdfe0e24f0208433ed158923375a"
+      }
+    ],
+    "business_persona_count": 3,
+    "excluded_probe_persona_count": 1,
+    "deidentified_current_rows": [
+      {
+        "stage": "paper",
+        "ledger_fill_count": 0,
+        "pnl": null,
+        "pnl_currency": null,
+        "pnl_period": null,
+        "filled_quantity": 0.0,
+        "requested_quantity": 452.0
+      },
+      {
+        "stage": "paper",
+        "ledger_fill_count": 1,
+        "pnl": -168.0851249999978,
+        "pnl_currency": null,
+        "pnl_period": "2026-11-18T07:00:04Z",
+        "filled_quantity": 1.0,
+        "requested_quantity": 1.0
+      },
+      {
+        "stage": "paper",
+        "ledger_fill_count": 1,
+        "pnl": -9.73402125001303,
+        "pnl_currency": null,
+        "pnl_period": "2026-11-18T07:00:26Z",
+        "filled_quantity": 1.0,
+        "requested_quantity": 1.0
+      }
+    ],
+    "comparable_pnl_groups": [],
+    "comparability_reason": "Source PnL currency is unknown; non-null valuation periods also differ. No cross-row sum is accepted.",
+    "history": {
+      "environment": "paper",
+      "symbol": "2317",
+      "reason_code": "insufficient_cash",
+      "reason_text": {
+        "zh-TW": "資金不足",
+        "en-US": "Insufficient cash"
+      },
+      "required": 100034.3461,
+      "available": 100000.0,
+      "requested_quantity": 452.0,
+      "submitted_to_broker": false,
+      "occurred_at": "2026-11-19T23:46:17Z"
+    },
+    "historical_source": "docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/historical-events.json",
+    "historical_case": "2317 pre-broker refusal at 2026-11-19T23:46:17Z; source event SHA256 99383a35c664c529324a0bcf26bf65912a3609d4da69118f343ed632f789832a",
+    "scope": "Preparation on old served pair only; no repaired-pair API or browser acceptance inferred."
+  },
+  "probes": {
+    "api": {
+      "path": "acceptance/probes/trading-pulse-operator",
+      "repaired_pair_exit_code": null,
+      "status": "not_run_until_candidate_served"
+    },
+    "browser": {
+      "repository": "ajoe734/execute-plans",
+      "source_commit": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
+      "command": "node scripts/accept-persona-strategy-hosted-readonly.mjs --mode trading-pulse --out-dir <private-dir> < <RAM-only viewer input>",
+      "runner_sha256": "e043a00554e1f9e39322982a4d4d5b1f9fe4a2029304ca18b9472f8826ba2fd8",
+      "helper_sha256": "d4ddc514c5c32d9e0226fa9285e7601e237dd251c315b6985ba61a4e17110195",
+      "c_evidence": "execute-plans:docs/deployment/evidence/FE-TRADING-PULSE-BROWSER-PROBE-20261122/evidence.json",
+      "repaired_pair_exit_code": null,
+      "status": "not_run_until_candidate_served",
+      "required_contexts": [
+        "zh-TW 1440px",
+        "zh-TW 390px",
+        "en-US 1440px"
+      ],
+      "required_roundtrips": [
+        "keyboard Persona detail and visible return",
+        "historical rejection scoped detail, matching event/time/cause, and visible return"
+      ]
+    }
+  },
+  "residual_findings": [
+    {
+      "class": "RC1 WP1.4",
+      "owning_work_package": "DEV-GREEN-COMMIT-DEPLOY-TRIGGER-20261117 / Release and hosted operations",
+      "finding": "Root 45046460903 selected a candidate whose exact dev push Branch CI was cancelled; validation rejected it before switch. Pending descendant CI or older in-progress protected ancestry may produce the next eligible normal release.",
+      "disposition": "External deployment prerequisite; preserve existing owner and normal reconciliation. No new fix task or pipeline edit."
+    }
+  ],
+  "resume": {
+    "authorization": "Existing ordinary dev release and read-only acceptance authorization remains valid; no new operator grant required.",
+    "steps": [
+      "Observe normal reconciliation after a successful dev-push CI for an ancestry containing BFF #7742 and FE #1062/#1066/#1063; do not duplicate an active release.",
+      "Record the selected exact pair and terminal Dev Root result; verify manifest, actual frontend asset and BFF version, then every expected steady service and release-built image revision.",
+      "Refresh independent same-tenant viewer roster, bindings and telemetry within 15 minutes; supply symbol from authoritative strategy source and keep immutable rejection witness separate.",
+      "Run A API and C normal browser mode, collect terminal exits plus zh/en desktop/narrow and actual roundtrips; functional failure means deployed, not accepted.",
+      "Replace this pending summary with the same-pair redacted facts and at most two screenshots, record bytes, then admit exact-head evidence to Claude2."
+    ]
+  },
+  "runtime_budget": {
+    "cadence": "On demand per release only",
+    "routine_daily_growth_bytes": 0,
+    "summary_count": 1,
+    "screenshot_count": 0,
+    "max_screenshots_per_pair": 2,
+    "max_bundle_bytes": 5242880,
+    "cleanup": "No raw API bodies, credentials, tokens, cookie state, traces or browser profiles committed. Temporary rehearsal witness is removed after deidentification. Replace duplicate summaries/images per SHA pair.",
+    "measured_bundle_bytes": 14575
+  },
+  "validation": {
+    "git_diff_check": "passed",
+    "json_parse": "passed",
+    "source_merge_identity_and_probe_hash_checks": "passed",
+    "candidate_hosted_stack": "not_run",
+    "api_acceptance": "not_run",
+    "browser_acceptance": "not_run",
+    "unfinished_local_command_handles": 0
+  },
+  "independent_review": {
+    "status": "not_requested_pending_hosted_acceptance",
+    "assigned_reviewer": "Claude2"
+  }
+}
