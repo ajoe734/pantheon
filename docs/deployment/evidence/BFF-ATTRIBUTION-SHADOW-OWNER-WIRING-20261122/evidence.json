@@ -1,0 +1,98 @@
+{
+  "task_id": "BFF-ATTRIBUTION-SHADOW-OWNER-WIRING-20261122",
+  "title": "Bind Management Shadow to the existing Agora decision-lock owner",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "branch": "task/BFF-ATTRIBUTION-SHADOW-OWNER-WIRING-20261122",
+  "review_status": "pending_independent_review",
+  "scoped_artifacts": [
+    "services/control-plane/bff/core/app_factory.py",
+    "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/tests/test_attribution_views.py",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/BFF-ATTRIBUTION-SHADOW-OWNER-WIRING-20261122/evidence.json"
+  ],
+  "hosted_incident_evidence": {
+    "acceptance_root_run": "45018810312",
+    "frontend_switch_workflow": "45024889851",
+    "candidate_gate_run": "45022061438",
+    "candidate_gate_artifact": "14755705606",
+    "backend_sha": "bac80d756dec67b19c9af5183eae7a9869835015",
+    "fe_manifest_frontend_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "fe_manifest_backend_sha": "d585efa53fc6242c31972ad69b2f627473a33f3d",
+    "decision_key_digest": "c4839160905730d657ad6e1e21348c0f1981bf327a4485a95af593d5c2adff47",
+    "measurement_sha256": "0651b23f0142919f0f0e00ebbbe82725d8225043486531b6dca74b44b0e31895",
+    "route_differential": {
+      "native_decision_lock": {
+        "route": "GET /bff/agora/trading-room/decision-events/{id}/decision-lock",
+        "http": 404,
+        "codes": [
+          "RESOURCE_NOT_FOUND",
+          "decision_lock_not_found"
+        ]
+      },
+      "management_shadow": {
+        "route": "GET /bff/management/attribution/shadow/{id}",
+        "http": 200,
+        "codes": [
+          "agora_owner_unavailable",
+          "shadow_not_settled_or_unknown"
+        ]
+      }
+    },
+    "root_cause": "In default BFF composition (compose_bff_app -> mount_bff_routers), create_agora_router initialized the authoritative AgoraWriteService decision-lock owner via _default_decision_lock_owner() only for create_trading_room_router, whereas mount_bff_routers bound create_attribution_router's lock_reader exclusively to dependencies.get('agora_owner') (which is None in normal BFF startup). As a result, Management Shadow treated the configured Agora decision-lock owner as unconfigured/unavailable (HTTP 200 degraded agora_owner_unavailable) for the same decision key where Trading Room returned HTTP 404 decision_lock_not_found."
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/agora/router.py",
+      "summary": "Resolved decision_lock_owner once in create_agora_router (using _UNSET_DECISION_LOCK_OWNER so an explicit None is never replaced by a default substitute), passed the single resolved owner to create_trading_room_router, and exposed router.decision_lock_owner on the returned Agora router."
+    },
+    {
+      "path": "services/control-plane/bff/core/app_factory.py",
+      "summary": "Forwarded any explicit decision_lock_owner/agora_owner dependency into create_agora_router (which resolves a callable factory once at composition) and bound Management Attribution's _read_agora_lock and platform_source_router to reuse getattr(agora_router, 'decision_lock_owner', None) without re-invoking a callable dependency on each read, so native Trading Room and Management Shadow share the exact same resolved Agora decision-lock owner instance without duplicate writable owners or default substitutes."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_attribution_views.py",
+      "summary": "Added test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow exercising compose_bff_app() to prove a single AgoraWriteService owner instance serves both native Trading Room and Management Shadow (under default DSN composition as well as callable factory injection through both decision_lock_owner and agora_owner dependency names), explicit None injection through either dependency name never falls back to a default substitute even when AGORA_STORE_DSN is set, unknown locks with no attribution return 404 on both routes, real store refusal/unconfigured owner stays distinguishable as degraded agora_owner_unavailable, and same-tenant trader/operator and cross-tenant negative visibility rules hold on both routes."
+    },
+    {
+      "path": "docs/operations/problem-register.md",
+      "summary": "Recorded the BFF bac80d756dec67b19c9af5183eae7a9869835015 hosted read differential under RC6 WP6.3 and RC2 linked to BFF-ATTRIBUTION-SHADOW-OWNER-WIRING-20261122 while retaining hosted lock, settlement, linked MT-4, attribution and Management crawl acceptance with AGORA-SHADOW-ATTRIBUTION-HOSTED-ACCEPTANCE-20261116 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "ac1_shared_owner_instance_and_404_vs_unavailable": "Verified through compose_bff_app() in test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow: build_agora_write_service (or an injected callable factory via either decision_lock_owner or agora_owner) is called once at composition, get_active_trading_room_service().decision_lock_owner is app.state.agora_router.decision_lock_owner, a permitted known lock is readable on both /bff/agora/trading-room/decision-events/{id}/decision-lock and /bff/management/attribution/shadow/{id} from the same owner instance (owners_read == [1, 1]), an unknown decision with no attribution resolves to HTTP 404 on both routes, store refusal degrades with agora_owner_unavailable while keeping settlement data, and explicit None or unconfigured DSN leaves decision_lock_owner as None without a default substitute.",
+    "ac2_tenant_and_actor_visibility_preserved": "Verified in test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow and existing test_attribution_views.py / test_agora_shadow_mode.py tests: same-tenant trader reads only their own lock (without operator-only trader_identity block on shadow), same-tenant operator reads full lock and trader_identity/account_id + four arms with independent attribution/agora source statuses, and same-tenant other trader plus cross-tenant trader/operator receive HTTP 404 on both routes.",
+    "ac3_validation_and_register_record": "Ran BFF composition, Trading Room, shadow mode, and attribution test suites; recorded the exact hosted read differential in docs/operations/problem-register.md while keeping genuine hosted lock, settlement, and Management browser acceptance in AGORA-SHADOW-ATTRIBUTION-HOSTED-ACCEPTANCE-20261116 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
+  },
+  "runtime_budget": {
+    "persistent_runtime_writers_added": 0,
+    "recurring_jobs_added": 0,
+    "daily_runtime_storage_growth_bytes": 0,
+    "note": "Reuses the existing AgoraWriteService decision-lock owner instance already created by create_agora_router; adds no new writer, table, route, or credential."
+  },
+  "residual_findings": [],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py -k test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow",
+      "exit_code": 0,
+      "result": "1 passed, 11 deselected, 3 warnings in 38.73s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py services/control-plane/bff/tests/test_agora_shadow_mode.py -k \"not test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow\"",
+      "exit_code": 0,
+      "result": "21 passed, 1 deselected, 3 warnings in 9.38s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_router.py",
+      "exit_code": 0,
+      "result": "106 passed, 3 warnings in 47.78s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "exit_code": 0,
+      "result": "22 passed, 100 warnings in 24.47s"
+    }
+  ],
+  "credentials_present": false
+}
