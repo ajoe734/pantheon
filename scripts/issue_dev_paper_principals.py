@@ -97,9 +97,14 @@ READERS = {
     # Meeting roster resolution -> persona owner directory (GET /api/personas) ONLY. viewer is the existing
     # read-only persona role (no write/admin/decide role); a file, never an env value.
     "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN": ("pantheon-dev-consultation-persona-directory-reader", "viewer"),
-    # Consultation executor case-file composition -> telemetry owner runtime-summaries GET ONLY (viewer role).
-    # File-delivered only so PANTHEON_TELEMETRY_SERVICE_TOKEN is never exported into the shared deploy env.
-    "CONSULTATION_TELEMETRY_READ_TOKEN": ("pantheon-dev-consultation-telemetry-reader", "viewer"),
+    # Consultation executor case-file composition & meeting lesson-candidate episode verification ->
+    # telemetry owner read-only GET routes (runtime-summaries and trade-episodes; viewer + reviewer roles,
+    # no service/operator/admin write authority). File-delivered only so PANTHEON_TELEMETRY_SERVICE_TOKEN
+    # is never exported into the shared deploy env.
+    "CONSULTATION_TELEMETRY_READ_TOKEN": (
+        "pantheon-dev-consultation-telemetry-reader",
+        ("viewer", "reviewer"),
+    ),
     # Consultation executor -> memory learn-feedback writeback ONLY as write_authority consultation-svc.
     # Role consultation-svc is in the memory write set and satisfies the authority check; no
     # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.

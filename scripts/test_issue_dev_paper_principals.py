@@ -887,19 +887,24 @@ def test_consultation_memory_read_principal_is_read_only_and_distinct_from_write
     assert env.get("PANTHEON_MEMORY_ACTOR_ID", "x") and env.get("PANTHEON_MEMORY_ACTOR_ROLES", "x")
 
 
-def test_consultation_telemetry_read_principal_is_viewer_only_file_delivered_and_mounted():
+def test_consultation_telemetry_read_principal_is_viewer_only_file_delivered_and_mounted(tmp_path, monkeypatch):
+    import time
+    import types
     import yaml
+    from services.telemetry import main as telemetry_main
+    from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
 
     root = Path(__file__).resolve().parents[1]
     variable = "CONSULTATION_TELEMETRY_READ_TOKEN"
     assert variable in CONSUMER_FILES["consultation-svc"]
     assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
-    values = issue_environment(configured(), now=NOW)
-    claims = verify(values[variable])
+    now = int(time.time())
+    values = issue_environment(configured(), now=now)
+    claims = verify(values[variable], now=now + 1)
     assert claims["sub"] == "pantheon-dev-consultation-telemetry-reader"
-    assert claims["roles"] == ["viewer"] and claims["scope"] == "pantheon:dev-owner-read"
+    assert claims["roles"] == ["viewer", "reviewer"] and claims["scope"] == "pantheon:dev-owner-read"
     assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
-    assert not {"service", "operator", "admin", "reviewer"} & set(claims["roles"])
+    assert not {"service", "operator", "admin", "automated_gate", "approval_decider", "registry-writer"} & set(claims["roles"])
     assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
     assert "PANTHEON_TELEMETRY_SERVICE_TOKEN" not in values
     revoked = issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
@@ -907,3 +912,64 @@ def test_consultation_telemetry_read_principal_is_viewer_only_file_delivered_and
     env = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
     assert env[variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
     assert env["PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+
+    # Exercise real services/telemetry/main.py routes in strict mode with the issued principal.
+    monkeypatch.setenv("PANTHEON_TELEMETRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_JWT_SECRET", KEY)
+    monkeypatch.setenv("PANTHEON_TELEMETRY_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_JWT_AUDIENCE", "isolated-audience")
+    ep_store = TradeEpisodeProjectionStore(
+        projections_path=tmp_path / "projections.json",
+        events_path=tmp_path / "events.jsonl",
+    )
+    ep_store.project_event({
+        "event_id": "ev-open-ep-dev-1",
+        "event_type": "trade_episode.opened",
+        "trade_episode_id": "ep-dev-1",
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+        "persona_id": "persona-a",
+        "occurred_at": "2026-11-11T01:00:00Z",
+        "sequence_number": 1,
+        "payload": {
+            "strategy_id": "strat-1",
+            "instrument_id": "2330.TW",
+            "side": "buy",
+            "status": "open",
+            "opened_at": "2026-11-11T01:00:00Z",
+            "entry_actor": "persona",
+            "requested_quantity": 100.0,
+            "filled_quantity": 100.0,
+            "remaining_quantity": 0.0,
+            "vwap": 580.0,
+            "fees": 12.5,
+        },
+    })
+    fake_svc = types.SimpleNamespace(
+        list_runtime_summaries=lambda **kwargs: [],
+        get_trade_episode_projection=lambda ep_id, as_of=None, as_of_sequence=None, tenant_id=None: ep_store.get(
+            ep_id, as_of=as_of, as_of_sequence=as_of_sequence, tenant_id=tenant_id
+        ),
+    )
+    monkeypatch.setattr(telemetry_main, "_get_service", lambda: fake_svc)
+    client = telemetry_main.app.test_client()
+    headers = {"Authorization": "Bearer " + values[variable], "X-Tenant-Id": "tenant-dev"}
+
+    assert client.get("/api/telemetry/runtime-summaries", headers=headers).status_code == 200
+    ep_resp = client.get("/api/telemetry/trade-episodes/ep-dev-1", headers=headers)
+    assert ep_resp.status_code == 200 and ep_resp.get_json()["trade_episode_id"] == "ep-dev-1"
+    assert client.get("/api/telemetry/trade-episodes/ep-missing", headers=headers).status_code == 404
+    assert client.get(
+        "/api/telemetry/trade-episodes/ep-dev-1",
+        headers={"Authorization": "Bearer " + values[variable], "X-Tenant-Id": "tenant-other"},
+    ).status_code == 403
+
+    for write_path in (
+        "/api/telemetry/ingest",
+        "/api/telemetry/ingest/batch",
+        "/api/v1/telemetry/infrastructure-health",
+        "/api/v1/telemetry/heartbeats",
+        "/api/telemetry/replay",
+    ):
+        denied = client.post(write_path, json={}, headers=headers)
+        assert denied.status_code == 403 and denied.get_json()["error"]["code"] == "AUTH_FORBIDDEN"

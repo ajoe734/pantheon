@@ -687,49 +687,20 @@ def _telemetry_auth_headers(
     *,
     tenant_id: str,
     sponsor_persona_id: str | None,
-) -> dict[str, str]:
-    headers: dict[str, str] = {"X-Tenant-Id": tenant_id}
-    if sponsor_persona_id:
-        headers["X-Sponsor-Persona-Id"] = sponsor_persona_id
-        headers["X-Actor-Id"] = sponsor_persona_id
+) -> dict[str, str] | None:
     static_token = _resolve_configured_token(
         "CONSULTATION_TELEMETRY_READ_TOKEN",
         "PANTHEON_TELEMETRY_SERVICE_TOKEN",
     )
-    if static_token:
-        headers["Authorization"] = f"Bearer {static_token}"
-        return headers
-    secret = (
-        os.getenv("PANTHEON_TELEMETRY_JWT_SECRET")
-        or os.getenv("PANTHEON_DEV_BFF_JWT_SECRET")
-        or os.getenv("PERSONA_JWT_SECRET")
-        or os.getenv("PANTHEON_BFF_JWT_SECRET")
-        or os.getenv("PANTHEON_RUNTIME_JWT_SECRET")
-        or "pantheon-meeting-outputs-local-secret"
-    ).strip()
-    issuer = (
-        os.getenv("PANTHEON_TELEMETRY_JWT_ISSUER")
-        or os.getenv("PANTHEON_DEV_BFF_JWT_ISSUER")
-        or os.getenv("PERSONA_JWT_ISSUER")
-        or os.getenv("PANTHEON_BFF_JWT_ISSUER")
-        or None
-    )
-    audience = (
-        os.getenv("PANTHEON_TELEMETRY_JWT_AUDIENCE")
-        or os.getenv("PANTHEON_DEV_BFF_JWT_AUDIENCE")
-        or os.getenv("PERSONA_JWT_AUDIENCE")
-        or os.getenv("PANTHEON_BFF_JWT_AUDIENCE")
-        or None
-    )
-    token = _mint_jwt(
-        subject="pantheon-dev-consultation-telemetry-reader",
-        tenant_id=tenant_id,
-        roles=["viewer", "service"],
-        secret=secret,
-        issuer=issuer,
-        audience=audience,
-    )
-    headers["Authorization"] = f"Bearer {token}"
+    if not static_token:
+        return None
+    headers: dict[str, str] = {
+        "X-Tenant-Id": tenant_id,
+        "Authorization": f"Bearer {static_token}",
+    }
+    if sponsor_persona_id:
+        headers["X-Sponsor-Persona-Id"] = sponsor_persona_id
+        headers["X-Actor-Id"] = sponsor_persona_id
     return headers
 
 
@@ -754,45 +725,6 @@ def _is_verified_trade_episode(
     return _TRADE_EPISODE_VALIDATOR.is_valid(dict(record))
 
 
-def _index_verified_meeting_episodes(
-    meeting: Mapping[str, Any] | None,
-    *,
-    sponsor_persona_id: str | None,
-    tenant_id: str,
-) -> dict[str, Mapping[str, Any]]:
-    by_id: dict[str, Mapping[str, Any]] = {}
-    if not isinstance(meeting, Mapping):
-        return by_id
-
-    def _register(item: Any) -> None:
-        if _is_verified_trade_episode(
-            item,
-            tenant_id=tenant_id,
-            sponsor_persona_id=sponsor_persona_id,
-        ):
-            ep_id = str(item["trade_episode_id"]).strip()
-            by_id.setdefault(ep_id, item)
-
-    case_file = meeting.get("case_file")
-    if isinstance(case_file, Mapping):
-        groups = case_file.get("groups")
-        if isinstance(groups, Mapping):
-            for grp in groups.values():
-                if isinstance(grp, Mapping):
-                    for it in grp.get("items") or ():
-                        _register(it)
-        for it in case_file.get("items") or ():
-            _register(it)
-
-    for key in ("case_file_items", "evidence_refs", "trade_episodes"):
-        raw_items = meeting.get(key)
-        if isinstance(raw_items, (list, tuple)):
-            for it in raw_items:
-                _register(it)
-
-    return by_id
-
-
 def _resolve_lesson_candidate_episode_ids(
     *,
     payload: Mapping[str, Any],
@@ -802,17 +734,15 @@ def _resolve_lesson_candidate_episode_ids(
     tenant_id: str,
     send: HttpTransport | None = None,
 ) -> list[str]:
-    """Resolve distinct trade_episode_ids verified for tenant_id and sponsor_persona_id."""
-    verified_by_id = _index_verified_meeting_episodes(
-        meeting,
-        sponsor_persona_id=sponsor_persona_id,
-        tenant_id=tenant_id,
-    )
+    """Resolve distinct trade_episode_ids verified via Telemetry owner GET for tenant_id and sponsor_persona_id."""
+    del meeting
+    verified_by_id: dict[str, Mapping[str, Any]] = {}
     rejected_ids: set[str] = set()
     episode_ids: list[str] = []
     active_send = _active_transport(send)
     telemetry_base: str | None = None
     telemetry_headers: dict[str, str] | None = None
+    telemetry_headers_resolved = False
 
     def _verify_episode_id(raw_id: str) -> str | None:
         ep_id = raw_id.strip()
@@ -822,14 +752,18 @@ def _resolve_lesson_candidate_episode_ids(
             return ep_id
         if ep_id in rejected_ids:
             return None
-        nonlocal telemetry_base, telemetry_headers
-        if telemetry_base is None:
-            telemetry_base = _telemetry_base_url()
-        if telemetry_headers is None:
+        nonlocal telemetry_base, telemetry_headers, telemetry_headers_resolved
+        if not telemetry_headers_resolved:
             telemetry_headers = _telemetry_auth_headers(
                 tenant_id=tenant_id,
                 sponsor_persona_id=sponsor_persona_id,
             )
+            telemetry_headers_resolved = True
+        if telemetry_headers is None:
+            rejected_ids.add(ep_id)
+            return None
+        if telemetry_base is None:
+            telemetry_base = _telemetry_base_url()
         encoded_id = urllib.parse.quote(ep_id, safe="")
         try:
             status_code, body = active_send(
@@ -855,15 +789,15 @@ def _resolve_lesson_candidate_episode_ids(
     def _collect(seq: Iterable[Any]) -> None:
         for entry in seq:
             if isinstance(entry, Mapping):
-                if _is_verified_trade_episode(
+                if not _is_verified_trade_episode(
                     entry,
                     tenant_id=tenant_id,
                     sponsor_persona_id=sponsor_persona_id,
                 ):
-                    ep_id = str(entry["trade_episode_id"]).strip()
-                    verified_by_id.setdefault(ep_id, entry)
-                    if ep_id not in episode_ids:
-                        episode_ids.append(ep_id)
+                    continue
+                verified_id = _verify_episode_id(str(entry["trade_episode_id"]))
+                if verified_id and verified_id not in episode_ids:
+                    episode_ids.append(verified_id)
                 continue
             if isinstance(entry, str):
                 verified_id = _verify_episode_id(entry)
