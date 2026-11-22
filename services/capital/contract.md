@@ -218,3 +218,10 @@ an authoritative pool body. This does not approve a policy or activate capital.
 An identical replay writes no pool state or audit event. PostgreSQL serializes
 this operation with a row lock and updates only that pool's row; `/risk-policy`
 then exposes `requested_profile` even while the mapping remains unresolved.
+
+A legacy inline policy without an explicit requested-profile mapping requirement
+may retain a verified approval for that exact pool and policy version/digest.
+That compatibility path checks the computed pool digest and approval validity,
+disables target discovery, and leaves an unknown requested profile unset.
+Catalog approvals cannot supply a missing request; explicit required mappings,
+conflicting/invalid request sources and unverifiable approvals still stop increases.

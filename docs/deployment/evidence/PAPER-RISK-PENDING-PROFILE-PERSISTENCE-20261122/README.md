@@ -248,3 +248,12 @@ Twenty-four typed/wire controls cover a valid exact-pool approval and required
 request, conflict, tenant/pool/digest/version mismatch, pending/rejected,
 revoked and expired approvals. All 80 focused Capital/Bootstrap/futures tests
 passed with 10 subtests (8.03s; `existing-pool-approval-controls.log`).
+
+The final source `61e490e5a` passed the complete 644-test owner/Capital batch
+(no skips, 85.18s), 843 execution tests and 93 subtests (14 existing skips,
+88.53s), all 108 caller/real-owner reload contracts (56.57s), the independent
+PostgreSQL row-update control (1.24s), the original six reviewer controls and
+the storage manifest check. These terminal `bound-*` receipts supersede prior
+source-head results. The four original BFF caller files and both execution
+fixtures have no diff against `origin/dev`. All disposable containers were
+removed. Only documentation and evidence change after that tested source.

@@ -147,6 +147,42 @@
       "exit_code": 0,
       "result": "80 passed, 1 warning, 10 subtests passed in 8.03s",
       "log": "existing-pool-approval-controls.log"
+    },
+    {
+      "command": "CAPITAL_TEST_DSN=<disposable PostgreSQL 16 pantheon> timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/capital acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "644 passed, 3 warnings in 85.18s; no skips; disposable container removed",
+      "log": "bound-owner-validation.log"
+    },
+    {
+      "command": "CAPITAL_TEST_DSN=<disposable PostgreSQL 16 pantheon> timeout 30 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q -rs services/capital/test_service.py::test_pg_requested_profile_updates_one_row_and_concurrent_retries_noop",
+      "exit_code": 0,
+      "result": "1 passed, 1 warning in 1.24s; six independent connections; one actual row update; disposable container removed",
+      "log": "bound-pg.log"
+    },
+    {
+      "command": "timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/execution",
+      "exit_code": 0,
+      "result": "843 passed, 14 existing skips, 45 warnings, 93 subtests passed in 88.53s; original execution inputs unchanged",
+      "log": "bound-execution-validation.log"
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<disposable PostgreSQL 16 gov_approval_test> timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+      "exit_code": 0,
+      "result": "108 passed, 6 warnings in 56.57s; real Governance/Registry process reload; original four callers unchanged; disposable container removed",
+      "log": "bound-lifecycle-validation.log"
+    },
+    {
+      "command": "PYTHONPATH=. timeout 30 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/typed-risk-profile-negative-control.py; assert six original cases and expected resolution/profile results",
+      "exit_code": 0,
+      "result": "Six original controls passed after exact-pool compatibility repair; approved catalog low does not authorize unknown or high requests",
+      "log": "bound-typed-control.jsonl"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output /tmp/pending-profile-bound-storage.json",
+      "exit_code": 0,
+      "result": "passed; zero failures; no additional writer/cadence introduced by approval compatibility correction",
+      "log": "bound-storage-check.json"
     }
   ],
   "runtime_budget": {
@@ -230,7 +266,7 @@
     "product_guard_changes": 0,
     "hosted_mutations": 0
   },
-  "validated_source_commit": "6255a80ae",
+  "validated_source_commit": "61e490e5a",
   "existing_pool_approval_regression": {
     "ci_run": 45069768318,
     "rejected_head": "4bdead7f4235cb663c406be7aed7b8f7f6ed4b7f",
