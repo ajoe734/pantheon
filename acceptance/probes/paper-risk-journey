@@ -108,7 +108,8 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
         items = binding.data(page).get("items")
         if not isinstance(items, list) or len(items) > 50:
             raise ValueError("journey_page_invalid")
-        samples = report["personas"][pid] = {"rows_read": len(items), "fresh_decisions": [], "inspected": 0}
+        samples = report["personas"][pid] = {"rows_read": len(items), "fresh_decisions": [],
+                                            "decision_evidence": [], "inspected": 0}
         # Inspect at most four recent journeys/persona. Exhaustion fails, never implies absence globally.
         for item in items:
             if item.get("persona_id") != pid or item.get("persona_is_probe") is not False:
@@ -152,6 +153,10 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
             governed_decision = decision.get("event_type") == "trade_decision" and sized(decision, policy, "pre_trade_sizing")
             if governed_decision:
                 samples["fresh_decisions"].append(decision["event_id"])
+                samples["decision_evidence"].append({"event_id": decision["event_id"],
+                    "journey_id": row["journey_id"], "created_at": decision["created_at"],
+                    "risk_policy_id": policy["risk_policy_id"], "risk_policy_version": policy["version"],
+                    "pre_trade_sizing": decision["metadata"]["pre_trade_sizing"]})
             rejection = originals.get("order_submission") or {}
             meta = rejection.get("metadata") or {}
             detail = meta.get("reason_detail") or meta
@@ -159,6 +164,7 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
                     and meta.get("reject_reason") not in {None, "", "long_cash", "long_lever", "close_leg"}
                     and all(number(detail.get(k)) for k in ("required", "available", "limit"))):
                 report["fresh_rejections"].append({"event_id": rejection["event_id"], "reason": meta["reject_reason"],
+                    "journey_id": row["journey_id"], "persona_id": pid,
                     "amounts": {k: detail[k] for k in ("required", "available", "limit")}})
             fill = originals.get("fill_management") or {}
             recon = originals.get("reconciliation") or {}
@@ -166,7 +172,11 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
                     and recon.get("event_type") == "reconciliation_completed" and reconciliation_ok(recon)
                     and (recon.get("metadata") or {}).get("broker_order_id") == (fill.get("metadata") or {}).get("broker_order_id")
                     and (fill.get("metadata") or {}).get("broker_order_id")):
-                report["fresh_reconciled_fills"].append({"fill_event_id": fill["event_id"], "reconciliation_event_id": recon["event_id"]})
+                report["fresh_reconciled_fills"].append({"fill_event_id": fill["event_id"],
+                    "reconciliation_event_id": recon["event_id"], "journey_id": row["journey_id"], "persona_id": pid,
+                    "broker_order_id": fill["metadata"]["broker_order_id"],
+                    "submission_sizing_evidence": fill["metadata"]["submission_sizing_evidence"],
+                    "booking_checks": recon.get("reason_detail") or recon["metadata"]["reason_detail"]})
         if not samples["fresh_decisions"]:
             failed.append("no_fresh_governed_decision:" + pid)
     if not report["fresh_rejections"]:

@@ -77,6 +77,8 @@ def test_positive_is_explicitly_synthetic_and_requires_source_and_all_checks():
     assert report["passed"], report["failed"]
     assert len(report["fresh_rejections"]) == len(report["fresh_reconciled_fills"]) == 1
     assert len(report["personas"]["fixture-persona"]["fresh_decisions"]) == 2
+    assert report["personas"]["fixture-persona"]["decision_evidence"][0]["pre_trade_sizing"]["permitted_units"] == 2
+    assert len(report["fresh_reconciled_fills"][0]["booking_checks"]) == 6
 
 
 @pytest.mark.parametrize("mutation", ["no_rows", "stale", "replay", "fixture", "foreign", "policy",

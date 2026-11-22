@@ -15,7 +15,7 @@
   "hosted_acceptance": {
     "passed": false,
     "probe_exit_code": 1,
-    "observed_at": "2026-11-22T17:07:19.197721+00:00",
+    "observed_at": "2026-11-22T17:10:00.283556+00:00",
     "deployment_cutoff": "2026-11-22T15:14:29+00:00",
     "backend_sha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
     "frontend_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
@@ -150,13 +150,13 @@
   ],
   "fixture_and_replay_boundary": "Fresh positive controls are synthetic tests only. Historical DTO fixture is prior-task recorded shape. Hosted read/browser data is natural readback; no trades, repair, replay, policy activation or deployment performed.",
   "source_sha256": {
-    "acceptance/probes/paper-risk-journey": "3e71b598631ac1b6b47bcbbd8daa504df5d1e2282cbb2130f2236a3969163de5",
+    "acceptance/probes/paper-risk-journey": "b7b6dd1f94ccb37973d444e8b4f0a92d40fdbf08527572b75c6587eb42a935e0",
     "acceptance/probes/paper-risk-policy-binding": "494f8707d1805886f3779dc421bc3e39aab2d22f0a8f2d6f98e0a1eac273c000",
-    "acceptance/test_paper_risk_journey.py": "ce9b7d14850f0282bf9181fe06fe833498db40def28a81cd01035b26fcdaa555",
+    "acceptance/test_paper_risk_journey.py": "089a08234417e4ae481c48e5dcb46a0d60642a68f1e92e2105a796e07c7a5be6",
     "acceptance/test_paper_risk_policy_binding.py": "cdfc9d1e9a0fdcbbd9e72f2d946cef619037a8d7bc2dcb22f9aa0037ea55b7ab"
   },
   "artifact_sha256": {
-    "hosted-probe-execution.json": "a0048c2c2bf9af9163cef43c7b577dfe4f836f639bc50848c1723c5c1bf75409",
+    "hosted-probe-execution.json": "47542cc02f46c232fc6e43c0d262f0264a0806f0cda52782d1f2c194a451a7b2",
     "hosted-runtime-owner.json": "284478ba6aed17aa1c3cfb08c53380e016c48267d175d3ddcc21fbf97de1ebb9",
     "hosted-manifest.json": "4143fa7f332d646c7e497152fa939992c30fd9b94b29a01cfacdd39dfbf4f61f",
     "README.md": "183bc2fb7ef6a9f569c500b6a60b45b301753f2eb02fdbd2ca9d8e13e979476e",
