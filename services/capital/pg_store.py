@@ -19,6 +19,7 @@ from capital_pool import (  # type: ignore
     CapitalPoolStore,
     _validate_status_transition,
     validate_pool,
+    utc_now,
 )
 from persona_capital_binding import (  # type: ignore
     PersonaCapitalBinding,
@@ -40,6 +41,29 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
     """Capital-owned store with an atomic canonical pool patch operation."""
 
     _PATCH_FIELDS = frozenset({"name", "status", "risk_policy_ref", "metadata"})
+
+    @staticmethod
+    def _requested_profile_update(pool: CapitalPool, persona_id: str, profile: str) -> dict[str, Any]:
+        meta = dict(pool.metadata or {})
+        if (
+            profile not in {"low", "medium", "high"}
+            or not persona_id
+            or meta.get("persona_id") != persona_id
+            or meta.get("execution_context") != "paper"
+            or pool.single_runtime_enforced is not True
+        ):
+            raise CapitalPoolError("requested_profile_identity_invalid")
+        if meta.get("requested_risk_profile") not in (None, "", profile):
+            raise CapitalPoolError("requested_profile_source_conflict")
+        return {**meta, "requested_risk_profile": profile, "require_approved_profile_mapping": True}
+
+    def record_requested_profile(self, pool_id: str, *, persona_id: str, profile: str) -> tuple[CapitalPool, bool]:
+        with self._lock:
+            pool = self.require(pool_id)
+            meta = self._requested_profile_update(pool, persona_id, profile)
+            if meta == pool.metadata:
+                return pool, False
+            return self.patch(pool_id, patch={"metadata": meta}, updated_at=utc_now()), True
 
     def patch(
         self,
@@ -137,6 +161,29 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
         with self._lock:
             self._refresh_from_postgres()
             return super().create(pool)
+
+    def record_requested_profile(self, pool_id: str, *, persona_id: str, profile: str) -> tuple[CapitalPool, bool]:
+        # Serialize with other Postgres writers and update just this row; _save
+        # writes full snapshots of all pools and is unsuitable for provenance.
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Unknown pool: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            meta = self._requested_profile_update(pool, persona_id, profile)
+            if meta == pool.metadata:
+                return pool, False
+            payload = {**pool.to_dict(), "metadata": meta, "updated_at": utc_now()}
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            updated = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            self._pools[pool_id] = updated
+            return updated, True
 
     def get(self, pool_id: str) -> Optional[CapitalPool]:
         with self._lock:
