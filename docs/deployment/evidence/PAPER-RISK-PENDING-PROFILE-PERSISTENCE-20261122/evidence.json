@@ -1,0 +1,73 @@
+{
+  "task_id": "PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122",
+  "owner": "Codex",
+  "assigned_independent_reviewer": "Antigravity",
+  "problem_register_class": "RC2 WP2.1",
+  "evidence_kind": "local_validation_not_hosted_acceptance",
+  "source_review": "pending_independent_review",
+  "hosted_proof_task": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+  "reproduction": {
+    "prior_hosted_build": "f78d53689e2443338353f14a9cb40d595bbe8535",
+    "artifact_directory": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG",
+    "receipts": [
+      "f78-profile-provenance-records.jsonl",
+      "f78-capital-guard-after-proposals.jsonl",
+      "f78-risk-owner-pending-queue.json"
+    ],
+    "observed": "3 original low requests; absent pool provenance; Capital requested_profile null while owner cases pending"
+  },
+  "validation": [
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/capital acceptance/test_paper_risk_policy_binding.py",
+      "exit_code": 0,
+      "result": "559 passed, 3 warnings in 76.70s",
+      "log": "validation.log"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/capital/test_service.py",
+      "exit_code": 0,
+      "result": "181 passed, 3 warnings in 30.69s; final source including contradictory proposal alias and malformed metadata guards",
+      "log": "final-focused.log"
+    },
+    {
+      "command": "timeout 45 python3 scripts/check_storage_manifest.py --output /tmp/pending-profile-storage.json",
+      "exit_code": 0,
+      "result": "passed; 0 failures",
+      "log": "storage-check.json"
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "event driven on existing repair/provisioning call",
+    "hosted_accounts": 3,
+    "pool_increment_bytes_per_account_max": 96,
+    "pool_mutations_per_missing_account_max": 1,
+    "audit_events_per_actual_mutation_max": 1,
+    "audit_bytes_per_current_hosted_event_max": 512,
+    "steady_growth_per_day_bytes": 0,
+    "growth_per_newly_repaired_account_per_day_bytes_max": 608,
+    "retry_and_dry_run_writes": 0,
+    "cleanup": "inherits existing pool archival and audit retention; broader retention RC3 WP3.1"
+  },
+  "acceptance_probe": {
+    "path": "check_readback.py",
+    "read_only": true,
+    "expected_account_count": 3,
+    "input_contract": "README.md"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2",
+      "owner_chain": "existing capital/risk chain + policy owner disposition",
+      "finding": "Policy mappings remain unapproved; existing hosted proof must rerun after merge."
+    },
+    {
+      "class": "RC3 WP3.1",
+      "finding": "Legacy general Postgres _save snapshots all pools; this dedicated provenance operation bypasses it. Whole-writer retention remains unbounded."
+    },
+    {
+      "class": "RC2",
+      "owner_chain": "existing capital/risk chain",
+      "finding": "Legacy integer budget dataclasses hash differently between main.pool_digest and capital_pool_approval_digest; normal wire models and the three hosted budgets use floats; approval hashes were preserved."
+    }
+  ]
+}

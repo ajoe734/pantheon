@@ -46,7 +46,8 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
     def _requested_profile_update(pool: CapitalPool, persona_id: str, profile: str) -> dict[str, Any]:
         meta = dict(pool.metadata or {})
         if (
-            profile not in {"low", "medium", "high"}
+            not isinstance(profile, str)
+            or profile not in {"low", "medium", "high"}
             or not persona_id
             or meta.get("persona_id") != persona_id
             or meta.get("execution_context") != "paper"

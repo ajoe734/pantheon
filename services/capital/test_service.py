@@ -2299,6 +2299,7 @@ def test_requested_profile_provenance_patch_http_is_bounded_and_idempotent(clien
         {**patch, "metadata": {**patch["metadata"], "risk_policy": {"gross_limit": 3.0}}},
         {**patch, "metadata": {**patch["metadata"], "require_approved_profile_mapping": False}},
         {**patch, "risk_policy_ref": "unauthorized"},
+        {**patch, "metadata": {**patch["metadata"], "requested_risk_profile": []}},
     ]:
         assert api.patch(f"{path}/status", json=invalid).status_code == 400
     assert (data_dir / "capital_audit.jsonl").read_bytes() == audit_before

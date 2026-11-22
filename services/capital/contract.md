@@ -205,3 +205,16 @@ from mutations:
 
 - `approval_digest` (pool, binding) and `plan_digest` (rebalance) are owner-computed and must be the approval's `target_version`; rebalance also sets `subject.plan_digest` to it. `request_hash` is idempotency only.
 - Risk policy files are read from `CAPITAL_RISK_POLICY_DIR` (default `services/capital/risk_policies/<risk_policy_ref>.json`); a missing policy, or a configured limit the owner cannot observe, rejects the increase.
+
+### Requested-profile provenance on the existing status PATCH
+
+`PATCH /api/capital-pools/{pool_id}/status` may omit `status` only when
+`metadata` contains exactly `requested_risk_profile` (`low`, `medium`, `high`)
+and `require_approved_profile_mapping: true`, with `expected_persona_id`.
+The existing Capital update authority and tenant checks still apply. The owner
+verifies the same single-runtime paper pool/persona, rejects contradictory
+stored provenance, preserves current status and all other fields, and returns
+an authoritative pool body. This does not approve a policy or activate capital.
+An identical replay writes no pool state or audit event. PostgreSQL serializes
+this operation with a row lock and updates only that pool's row; `/risk-policy`
+then exposes `requested_profile` even while the mapping remains unresolved.

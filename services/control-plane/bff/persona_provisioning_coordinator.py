@@ -2113,6 +2113,8 @@ class PersonaProvisioningCoordinator:
         def matches_request(item: Mapping[str, Any]) -> bool:
             meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
             subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+            profiles = [subj.get(key) for key in ("requested_risk", "requested_profile", "risk_profile")
+                        if subj.get(key) not in (None, "")]
             return bool(
                 item.get("tenant_id") == tenant_id
                 and item.get("target_type") == "capital_pool_activation"
@@ -2120,7 +2122,7 @@ class PersonaProvisioningCoordinator:
                 and item.get("target_version") == cand_pool_digest
                 and subj.get("pool_id") == pool_id
                 and subj.get("risk_direction") == "increase"
-                and (subj.get("requested_risk") or subj.get("requested_profile") or subj.get("risk_profile")) == requested_profile
+                and profiles and all(value == requested_profile for value in profiles)
                 and subj.get("risk_policy_id") == cand_pol_id
                 and subj.get("risk_policy_version") == cand_pol_ver
                 and subj.get("risk_policy_digest") == cand_pol_digest
@@ -2301,10 +2303,14 @@ class PersonaProvisioningCoordinator:
             # readback can recover it; a missing write still fails closed.
             pass
         readback = self._owner_get("capital", path)
-        read_meta = readback.get("metadata", {}) if isinstance(readback, Mapping) else {}
+        read_meta = readback.get("metadata") if isinstance(readback, Mapping) else None
+        read_meta = read_meta if isinstance(read_meta, Mapping) else {}
         if (
             not isinstance(readback, Mapping)
+            or readback.get("pool_id") != pool_id
             or not self._formal_tenant_matches(readback, tenant_id)
+            or readback.get("single_runtime_enforced") is not True
+            or read_meta.get("execution_context") != "paper"
             or read_meta.get("persona_id") != persona_id
             or read_meta.get("requested_risk_profile") != profile
             or read_meta.get("require_approved_profile_mapping") is not True

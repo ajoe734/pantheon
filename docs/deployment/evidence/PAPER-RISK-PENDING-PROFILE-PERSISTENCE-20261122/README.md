@@ -71,7 +71,7 @@ and audit writers in `docs/operations/storage-manifest.json`.
 
 ## Validation and hosted handoff
 
-See `evidence.json`, `validation.log` and `storage-check.json` for terminal local
+See `evidence.json`, `validation.log`, `final-focused.log` and `storage-check.json` for terminal local
 results. Tests exercise normal create/resume, the three existing paper pool
 fixtures, low/medium/high, real Capital dataclass/store/mapper, HTTP `/risk-policy`,
 dry_run, response loss, no-op retries, concurrent status/metadata preservation,
@@ -108,3 +108,11 @@ test runs the same probe against low/medium/high and rejects a null readback.
 - RC3 WP3.1: the existing general Postgres pool `_save` still snapshots all pools
   on unrelated create/status/policy mutations. This task's dedicated provenance
   method avoids it; broad writer amplification/retention is not repaired here.
+
+- RC2 residual observed in a local legacy-record fixture: `capital.main.pool_digest`
+  hashes a raw integer budget while `capital_pool_approval_digest` normalizes
+  it to float, producing different digests for an integer-valued dataclass.
+  Normal CreateCapitalPoolRequest wire parsing supplies floats (as do the
+  three hosted budgets). This task preserves existing approval hashes and
+  tests that actual service shape; legacy integer-record compatibility needs
+  assessment by the existing RC2 capital/risk chain before changing hashes.

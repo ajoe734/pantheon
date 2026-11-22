@@ -12,8 +12,8 @@ from pathlib import Path
 
 def check(rows, expected_count=3):
     failures = []
-    identities = set()
-    if not isinstance(rows, list) or len(rows) != expected_count:
+    identities, pools = set(), set()
+    if expected_count < 1 or not isinstance(rows, list) or len(rows) != expected_count:
         return {"passed": False, "failures": ["unexpected_account_count"]}
     for row in rows:
         tenant, persona = row["tenant_id"], row["persona_id"]
@@ -28,9 +28,10 @@ def check(rows, expected_count=3):
         sources += [req_meta.get(k) for k in ("requested_risk_profile", "risk_profile", "requested_risk")]
         values = {v for v in sources if v is not None and v != ""}
         profile = next(iter(values)) if len(values) == 1 else None
-        identity = (tenant, persona, pool["pool_id"])
+        identity = (tenant, persona)
         valid = (
             profile in {"low", "medium", "high"} and identity not in identities
+            and pool["pool_id"] not in pools
             and meta.get("persona_id") == persona and pool.get("tenant_id") == tenant
             and meta.get("execution_context") == "paper" and pool.get("single_runtime_enforced") is True
             and meta.get("requested_risk_profile") == profile
@@ -55,6 +56,7 @@ def check(rows, expected_count=3):
                  or (proposal.get("decision_state") == "decided" and proposal.get("decision") == "rejected"))
         )
         identities.add(identity)
+        pools.add(pool["pool_id"])
         if not valid:
             failures.append(persona)
     return {"passed": not failures, "checked": len(rows), "failures": failures}
@@ -67,7 +69,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         result = check(json.loads(args.receipts.read_text()), args.expected_count)
-    except (KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError):
         result = {"passed": False, "failures": ["malformed_owner_receipts"]}
     print(json.dumps(result))
     raise SystemExit(0 if result["passed"] else 1)

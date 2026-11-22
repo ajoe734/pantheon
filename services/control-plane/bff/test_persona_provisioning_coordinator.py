@@ -4445,6 +4445,11 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
         # Once owner approves the routed proposal (with its deterministic apv-risk-profile-* ID),
         # repair_paper_pool_risk_policy with NO approval_decision_id argument auto-resolves and converges
         routed_prop_id = od_req["deterministic_proposal_id"]
+        assert routed_prop_id == [
+            "apv-risk-profile-550ae83ccfeaafa69ec1",
+            "apv-risk-profile-a1cdc8408fe251534581",
+            "apv-risk-profile-6bf0cafe806a1e89fb34",
+        ][idx]
         tx_3.objects[("governance", f"/api/governance/approvals/{routed_prop_id}")] = approval_snapshot(
             decision_id=routed_prop_id,
             tenant_id="tenant-dev",
@@ -5238,7 +5243,7 @@ def test_profile_missing_conflict_and_identity_fail_without_mutation(pending_pro
 
 
 @pytest.mark.parametrize("state", ["proposed", "rejected"])
-@pytest.mark.parametrize("mismatch", ["tenant", "profile", "policy", "version", "digest", "pool_digest", "target"])
+@pytest.mark.parametrize("mismatch", ["tenant", "profile", "profile_alias", "policy", "version", "digest", "pool_digest", "target"])
 def test_pending_or_rejected_proposal_must_match_entire_request(state, mismatch):
     store, record = _record_and_store({"risk": "medium"}, seed_pool_approval=False)
     tx = FakeOwnerTransport(seed_pool_policy_approval=False,
@@ -5259,6 +5264,8 @@ def test_pending_or_rejected_proposal_must_match_entire_request(state, mismatch)
         proposal["target_version"] = "wrong"
     elif mismatch == "target":
         proposal["target_id"] = "other-pool"
+    elif mismatch == "profile_alias":
+        proposal["metadata"]["subject"]["requested_profile"] = "high"
     else:
         key = {"profile": "requested_risk", "policy": "risk_policy_id",
                "version": "risk_policy_version", "digest": "risk_policy_digest"}[mismatch]
