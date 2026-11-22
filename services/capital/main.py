@@ -533,8 +533,8 @@ class CapitalBoundaryService:
                     items = reader.list_for_target(
                         target_type=t_type,
                         target_id=t_id,
-                        decision_state="decided",
-                        max_items=16,
+                        decision_state=None,
+                        max_items=17,
                     )
                 except Exception:
                     items = []
@@ -551,7 +551,7 @@ class CapitalBoundaryService:
                         continue
                     if tenant and ev.tenant_id != tenant:
                         continue
-                    if ev.decision_id not in found and len(found) < 16:
+                    if ev.decision_id not in found and len(found) < 17:
                         found[ev.decision_id] = ev.model_dump(mode="json")
 
         fallback_ids: list[str] = []
@@ -563,7 +563,7 @@ class CapitalBoundaryService:
         if default_cand not in fallback_ids:
             fallback_ids.append(default_cand)
         for cand_id in fallback_ids:
-            if cand_id in found or len(found) >= 16:
+            if cand_id in found or len(found) >= 17:
                 continue
             try:
                 ev_dict = self.get_pool_approval_evidence(cand_id, pool_id=pool.pool_id)

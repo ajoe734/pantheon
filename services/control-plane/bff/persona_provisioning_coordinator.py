@@ -1996,8 +1996,11 @@ class PersonaProvisioningCoordinator:
                     return []
                 if not isinstance(raw_items, list):
                     return []
+                from services.governance.approval_authority import BoundedApprovalList
+
                 bound = max(1, min(int(max_items or 16), 64))
                 matched: list[dict[str, Any]] = []
+                overflow = False
                 for item in raw_items:
                     if not isinstance(item, Mapping):
                         continue
@@ -2007,10 +2010,11 @@ class PersonaProvisioningCoordinator:
                         continue
                     if decision_state and str(item.get("decision_state") or "") != decision_state:
                         continue
-                    matched.append(deepcopy(dict(item)))
                     if len(matched) >= bound:
+                        overflow = True
                         break
-                return matched
+                    matched.append(deepcopy(dict(item)))
+                return BoundedApprovalList(matched, overflow=overflow)
 
         return _TransportApprovalReader()
 

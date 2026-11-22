@@ -25,6 +25,14 @@ class ApprovalUnavailable(ApprovalInvalid):
     pass
 
 
+class BoundedApprovalList(list):
+    """Bounded list of approval records that preserves ``isinstance(x, list)`` and exposes ``overflow``."""
+
+    def __init__(self, iterable=(), *, overflow: bool = False):
+        super().__init__(iterable)
+        self.overflow = bool(overflow)
+
+
 class ApprovalEvidence(BaseModel):
     model_config = ConfigDict(strict=True, extra='allow', frozen=True)
     decision_id: str = Field(min_length=1)
@@ -213,6 +221,7 @@ class ApprovalReader:
         if not isinstance(raw_items, list):
             raise ApprovalInvalid('Malformed Governance decision list')
         results: list[ApprovalEvidence] = []
+        overflow = bool(body.get('overflow')) if isinstance(body, Mapping) else False
         for item in raw_items:
             if not isinstance(item, Mapping):
                 continue
@@ -224,10 +233,11 @@ class ApprovalReader:
                 continue
             if decision_state and evidence.decision_state != decision_state:
                 continue
-            results.append(evidence)
             if len(results) >= bound:
+                overflow = True
                 break
-        return results
+            results.append(evidence)
+        return BoundedApprovalList(results, overflow=overflow)
 
 
 def configured_approval_reader(domain: str, *, base_url: str | None = None) -> ApprovalReader:

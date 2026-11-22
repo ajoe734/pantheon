@@ -1662,11 +1662,12 @@ class CapitalOwnerApprovalReader:
             ApprovalEvidence,
             ApprovalInvalid,
             ApprovalUnavailable,
+            BoundedApprovalList,
         )
 
         effective_pool_id = _optional_text(pool_id) or self.pool_id or _optional_text(target_id)
         if not effective_pool_id:
-            return []
+            return BoundedApprovalList()
         url = (
             f"{self.base_url}/api/capital-pools/"
             f"{urllib.parse.quote(effective_pool_id, safe='')}/approvals"
@@ -1676,15 +1677,16 @@ class CapitalOwnerApprovalReader:
         try:
             body = fetcher(url, headers, self.timeout_seconds)
         except (ApprovalInvalid, ApprovalUnavailable):
-            return []
+            return BoundedApprovalList()
         except Exception:
-            return []
+            return BoundedApprovalList()
         raw_items = body.get("items") if isinstance(body, Mapping) else body
         if not isinstance(raw_items, list):
-            return []
+            return BoundedApprovalList()
         effective_tenant = _optional_text(tenant_id) or self.tenant_id
         bound = max(1, min(int(max_items or 16), 64))
         results: list[Any] = []
+        overflow = bool(body.get("overflow")) if isinstance(body, Mapping) else False
         for item in raw_items:
             if not isinstance(item, Mapping):
                 continue
@@ -1700,10 +1702,11 @@ class CapitalOwnerApprovalReader:
                 continue
             if decision_state and ev.decision_state != decision_state:
                 continue
-            results.append(ev)
             if len(results) >= bound:
+                overflow = True
                 break
-        return results
+            results.append(ev)
+        return BoundedApprovalList(results, overflow=overflow)
 
     def verify(
         self,
@@ -1838,6 +1841,58 @@ def _higher_priority_absence_source(current: str | None, candidate: str | None) 
     if _ABSENCE_SOURCE_PRIORITY.get(candidate, 0) > _ABSENCE_SOURCE_PRIORITY.get(current, 0):
         return candidate
     return current
+
+
+_VETOED_POLICY_APPROVAL_STATUSES: frozenset[str] = frozenset(
+    {"unapproved", "pending", "proposed", "rejected", "revoked"}
+)
+
+
+def _policy_approval_veto_source(
+    policy_model: RiskPolicy | None,
+    raw_mapping: Mapping[str, Any] | None = None,
+    *extra_containers: Mapping[str, Any] | None,
+) -> str | None:
+    """Return the fail-closed absence_source if a policy carries an explicit revocation or unapproved veto."""
+    containers: list[Mapping[str, Any]] = []
+    if policy_model is not None:
+        raw_status = str(policy_model.status or "").strip().lower()
+        if raw_status == "revoked":
+            return "policy_approval_revoked"
+        if raw_status == "rejected":
+            return "policy_approval_rejected"
+        if raw_status in {"unapproved", "pending", "proposed"}:
+            return "policy_approval_missing"
+        if isinstance(policy_model.metadata, Mapping):
+            containers.append(policy_model.metadata)
+    if isinstance(raw_mapping, Mapping):
+        containers.append(raw_mapping)
+        if isinstance(raw_mapping.get("metadata"), Mapping):
+            containers.append(raw_mapping["metadata"])
+    for extra in extra_containers:
+        if isinstance(extra, Mapping):
+            containers.append(extra)
+
+    has_unapproved_flag = False
+    for c in containers:
+        if c.get("revoked") is True or c.get("risk_policy_revoked") is True:
+            return "policy_approval_revoked"
+        if c.get("revoked_at") not in (None, "") or c.get("risk_policy_revoked_at") not in (None, ""):
+            return "policy_approval_revoked"
+        for status_key in ("approval_status", "risk_policy_approval_status"):
+            st = str(c.get(status_key) or "").strip().lower()
+            if st in _VETOED_POLICY_APPROVAL_STATUSES:
+                if st == "revoked":
+                    return "policy_approval_revoked"
+                if st == "rejected":
+                    return "policy_approval_rejected"
+                has_unapproved_flag = True
+        if c.get("approved") is False or c.get("risk_policy_approved") is False:
+            has_unapproved_flag = True
+
+    if has_unapproved_flag:
+        return "policy_approval_missing"
+    return None
 
 
 def _build_approval_readers(
@@ -2017,6 +2072,16 @@ def _verify_policy_owner_approval_decisions(
 
     if not effective_tenant_id or not resolved_pool_id:
         return None, [], None
+
+    policy_veto_diag = _policy_approval_veto_source(
+        policy_model,
+        raw_policy_mapping,
+        policy_meta,
+        pool_meta,
+        b_meta,
+    )
+    if policy_veto_diag is not None:
+        return None, [], policy_veto_diag
 
     readers = _build_approval_readers(
         approval_reader=approval_reader,
@@ -2199,6 +2264,12 @@ def _verify_policy_owner_approval_decisions(
         d = evidence.model_dump()
         meta = d.get("metadata") if isinstance(d.get("metadata"), Mapping) else {}
         subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+        for emb_cand in (subject.get("risk_policy"), meta.get("risk_policy")):
+            if isinstance(emb_cand, Mapping):
+                emb_veto = _policy_approval_veto_source(None, emb_cand)
+                if emb_veto is not None:
+                    diagnostic_source = _higher_priority_absence_source(diagnostic_source, emb_veto)
+                    return None
         if _optional_text(subject.get("risk_policy_digest")) not in valid_digests:
             return None
         subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
@@ -2252,6 +2323,7 @@ def _verify_policy_owner_approval_decisions(
     # 3. Bounded target discovery in Governance / Capital owner reader.
     discovered_verified: list[str] = []
     checked_ids: set[str] = set(container_candidate_ids)
+    target_lookup_overflow = False
 
     if allow_target_discovery:
         targets: list[tuple[str, str]] = [("capital_pool_activation", resolved_pool_id)]
@@ -2263,7 +2335,7 @@ def _verify_policy_owner_approval_decisions(
                     continue
                 items: list[Any] = []
                 try:
-                    items = list(
+                    raw_res = (
                         reader.list_for_target(
                             target_type=t_type,
                             target_id=t_id,
@@ -2272,19 +2344,27 @@ def _verify_policy_owner_approval_decisions(
                         )
                         or []
                     )
+                    if bool(getattr(raw_res, "overflow", False)):
+                        target_lookup_overflow = True
+                    items = list(raw_res)
                 except TypeError:
                     try:
-                        items = list(
+                        raw_res = (
                             reader.list_for_target(
                                 target_type=t_type,
                                 target_id=t_id,
                             )
                             or []
                         )
+                        if bool(getattr(raw_res, "overflow", False)):
+                            target_lookup_overflow = True
+                        items = list(raw_res)
                     except Exception:
                         items = []
                 except Exception:
                     items = []
+                if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+                    target_lookup_overflow = True
                 for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
                     item_id = _extract_decision_id_reference(item)
                     if item_id:
@@ -2295,15 +2375,15 @@ def _verify_policy_owner_approval_decisions(
 
     # 4. Fallback exact-ID lookup for deterministic default ID if not already checked.
     default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
-    if not discovered_verified and default_apv_id not in checked_ids:
+    if not discovered_verified and not target_lookup_overflow and default_apv_id not in checked_ids:
         matched_default = _validate_loaded_evidence(_fetch_by_id(default_apv_id), default_apv_id)
         if matched_default and matched_default not in discovered_verified:
             discovered_verified.append(matched_default)
 
+    if len(discovered_verified) > 1 or target_lookup_overflow:
+        return None, discovered_verified, "policy_candidates_ambiguous"
     if len(discovered_verified) == 1:
         return discovered_verified[0], discovered_verified, None
-    if len(discovered_verified) > 1:
-        return None, discovered_verified, "policy_candidates_ambiguous"
     return None, [], diagnostic_source
 
 
@@ -2485,14 +2565,22 @@ def discover_approved_profile_risk_policy(
     catalog_candidates: list[tuple[RiskPolicy, dict[str, Any]]] = []
     unapproved_catalog_policies: list[RiskPolicy] = []
     catalog_by_id: dict[str, tuple[RiskPolicy, dict[str, Any]]] = {}
+    rejected_catalog_policy_ids: set[str] = set()
+    vetoed_catalog_by_id: dict[str, str] = {}
+    catalog_overflow = False
 
     # 1. Bounded scan of CAPITAL_RISK_POLICY_DIR for policies explicitly declaring requested_profile.
     catalog_root = _configured_policy_catalog_root(policy_dir)
     if catalog_root is not None and catalog_root.is_dir():
-        for path in sorted(catalog_root.glob("*.json"))[:MAX_POLICY_CATALOG_FILES]:
+        eligible_paths = [
+            p
+            for p in sorted(catalog_root.glob("*.json"))
+            if p.stem.strip() and not p.stem.strip().startswith(".") and not p.stem.strip().startswith("rp-pool-")
+        ]
+        if len(eligible_paths) > MAX_POLICY_CATALOG_FILES:
+            catalog_overflow = True
+        for path in eligible_paths[:MAX_POLICY_CATALOG_FILES]:
             stem = path.stem.strip()
-            if not stem or stem.startswith(".") or stem.startswith("rp-pool-"):
-                continue
             try:
                 raw_loaded = (
                     risk_policy_loader(stem)
@@ -2516,6 +2604,7 @@ def discover_approved_profile_risk_policy(
 
             cand_tenant = _first_text_or_none(cand_meta, "tenant_id")
             if not effective_tenant_id or cand_tenant != effective_tenant_id:
+                rejected_catalog_policy_ids.add(cand_policy.risk_policy_id)
                 diagnostic_source = _higher_priority_absence_source(
                     diagnostic_source,
                     "cross_tenant_policy_or_approval_rejected",
@@ -2523,6 +2612,7 @@ def discover_approved_profile_risk_policy(
                 continue
 
             if req_version and str(cand_policy.version) != req_version:
+                rejected_catalog_policy_ids.add(cand_policy.risk_policy_id)
                 diagnostic_source = _higher_priority_absence_source(
                     diagnostic_source,
                     "policy_version_mismatch",
@@ -2537,23 +2627,18 @@ def discover_approved_profile_risk_policy(
                 now_dt=effective_now,
             )
             if not window_ok:
+                rejected_catalog_policy_ids.add(cand_policy.risk_policy_id)
                 diagnostic_source = _higher_priority_absence_source(diagnostic_source, window_diag)
                 continue
 
-            approval_status_str = str(cand_meta.get("approval_status") or "").strip().lower()
-            if cand_meta.get("approved") is False or approval_status_str in {
-                "unapproved",
-                "pending",
-                "proposed",
-                "rejected",
-                "revoked",
-            }:
+            veto_diag = _policy_approval_veto_source(cand_policy, raw_dict, cand_meta)
+            if veto_diag is not None:
                 unapproved_catalog_policies.append(cand_policy)
+                rejected_catalog_policy_ids.add(cand_policy.risk_policy_id)
+                vetoed_catalog_by_id[cand_policy.risk_policy_id] = veto_diag
                 diagnostic_source = _higher_priority_absence_source(
                     diagnostic_source,
-                    "policy_approval_revoked"
-                    if approval_status_str == "revoked"
-                    else ("policy_approval_rejected" if approval_status_str == "rejected" else "policy_approval_missing"),
+                    veto_diag,
                 )
                 continue
 
@@ -2637,6 +2722,7 @@ def discover_approved_profile_risk_policy(
         diagnostic_source = _higher_priority_absence_source(diagnostic_source, diag)
         pool_decisions.append(d)
 
+    pool_decision_lookup_overflow = False
     if approval_decision_id:
         for reader in readers:
             try:
@@ -2659,7 +2745,7 @@ def discover_approved_profile_risk_policy(
                 continue
             items: list[Any] = []
             try:
-                items = list(
+                raw_res = (
                     reader.list_for_target(
                         target_type="capital_pool_activation",
                         target_id=resolved_pool_id,
@@ -2668,23 +2754,31 @@ def discover_approved_profile_risk_policy(
                     )
                     or []
                 )
+                if bool(getattr(raw_res, "overflow", False)):
+                    pool_decision_lookup_overflow = True
+                items = list(raw_res)
             except TypeError:
                 try:
-                    items = list(
+                    raw_res = (
                         reader.list_for_target(
                             target_type="capital_pool_activation",
                             target_id=resolved_pool_id,
                         )
                         or []
                     )
+                    if bool(getattr(raw_res, "overflow", False)):
+                        pool_decision_lookup_overflow = True
+                    items = list(raw_res)
                 except Exception:
                     items = []
             except Exception:
                 items = []
+            if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+                pool_decision_lookup_overflow = True
             for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
                 _collect_decision_obj(item)
         default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
-        if not pool_decisions and default_apv_id not in seen_dec_ids:
+        if not pool_decisions and not pool_decision_lookup_overflow and default_apv_id not in seen_dec_ids:
             for reader in readers:
                 try:
                     if hasattr(reader, "get"):
@@ -2717,6 +2811,13 @@ def discover_approved_profile_risk_policy(
             continue
         if subj_pol_id in catalog_by_id:
             continue
+        if subj_pol_id in rejected_catalog_policy_ids:
+            if subj_pol_id in vetoed_catalog_by_id:
+                diagnostic_source = _higher_priority_absence_source(
+                    diagnostic_source,
+                    vetoed_catalog_by_id[subj_pol_id],
+                )
+            continue
         # Try loading from policy catalog by exact ID if it is not a default pool inline ID.
         is_def_id = subj_pol_id.startswith("rp-pool-") or subj_pol_id == f"rp-{resolved_pool_id}"
         if (
@@ -2728,6 +2829,7 @@ def discover_approved_profile_risk_policy(
         ):
             continue
         if not is_def_id:
+            loaded_authoritative = False
             try:
                 loaded_raw = (
                     risk_policy_loader(subj_pol_id)
@@ -2735,29 +2837,49 @@ def discover_approved_profile_risk_policy(
                     else load_risk_policy(subj_pol_id, policy_dir=catalog_root)
                 )
                 if isinstance(loaded_raw, Mapping):
+                    loaded_authoritative = True
                     raw_d = dict(loaded_raw)
                     loaded_pol = normalize_risk_policy(raw_d, default_id=subj_pol_id)
                     l_meta = dict(loaded_pol.metadata) if isinstance(loaded_pol.metadata, Mapping) else {}
                     l_tenant = _first_text_or_none(l_meta, "tenant_id")
                     if effective_tenant_id and l_tenant and l_tenant != effective_tenant_id:
+                        rejected_catalog_policy_ids.add(subj_pol_id)
                         diagnostic_source = _higher_priority_absence_source(
                             diagnostic_source,
                             "cross_tenant_policy_or_approval_rejected",
                         )
-                    else:
-                        w_ok, w_diag = _is_policy_Candidate_valid_for_profile_window(
-                            loaded_pol,
-                            raw_d,
-                            clean_stage=eff_stage,
-                            require_limits=require_limits,
-                            now_dt=effective_now,
+                        continue
+                    if req_version and str(loaded_pol.version) != req_version:
+                        rejected_catalog_policy_ids.add(subj_pol_id)
+                        diagnostic_source = _higher_priority_absence_source(
+                            diagnostic_source,
+                            "policy_version_mismatch",
                         )
-                        if w_ok:
-                            decision_policy_candidates.append((loaded_pol.risk_policy_id, loaded_pol, raw_d))
-                            continue
+                        continue
+                    w_ok, w_diag = _is_policy_Candidate_valid_for_profile_window(
+                        loaded_pol,
+                        raw_d,
+                        clean_stage=eff_stage,
+                        require_limits=require_limits,
+                        now_dt=effective_now,
+                    )
+                    if not w_ok:
+                        rejected_catalog_policy_ids.add(subj_pol_id)
                         diagnostic_source = _higher_priority_absence_source(diagnostic_source, w_diag)
+                        continue
+                    veto_diag = _policy_approval_veto_source(loaded_pol, raw_d, l_meta)
+                    if veto_diag is not None:
+                        unapproved_catalog_policies.append(loaded_pol)
+                        rejected_catalog_policy_ids.add(subj_pol_id)
+                        vetoed_catalog_by_id[subj_pol_id] = veto_diag
+                        diagnostic_source = _higher_priority_absence_source(diagnostic_source, veto_diag)
+                        continue
+                    decision_policy_candidates.append((loaded_pol.risk_policy_id, loaded_pol, raw_d))
+                    continue
             except Exception:
-                pass
+                if loaded_authoritative:
+                    rejected_catalog_policy_ids.add(subj_pol_id)
+                    continue
 
         # Check if an inline policy object is embedded in the decision metadata/subject or base_pool.
         embedded_pol = subject.get("risk_policy") if isinstance(subject.get("risk_policy"), Mapping) else (
@@ -2767,7 +2889,19 @@ def discover_approved_profile_risk_policy(
             try:
                 raw_d = dict(embedded_pol)
                 norm_p = normalize_risk_policy(raw_d, default_id=subj_pol_id)
-                w_ok, _ = _is_policy_Candidate_valid_for_profile_window(
+                e_meta = dict(norm_p.metadata) if isinstance(norm_p.metadata, Mapping) else {}
+                e_tenant = _first_text_or_none(e_meta, "tenant_id")
+                if effective_tenant_id and e_tenant and e_tenant != effective_tenant_id:
+                    diagnostic_source = _higher_priority_absence_source(
+                        diagnostic_source,
+                        "cross_tenant_policy_or_approval_rejected",
+                    )
+                    continue
+                veto_diag = _policy_approval_veto_source(norm_p, raw_d, e_meta)
+                if veto_diag is not None:
+                    diagnostic_source = _higher_priority_absence_source(diagnostic_source, veto_diag)
+                    continue
+                w_ok, w_diag = _is_policy_Candidate_valid_for_profile_window(
                     norm_p,
                     raw_d,
                     clean_stage=eff_stage,
@@ -2777,6 +2911,8 @@ def discover_approved_profile_risk_policy(
                 if w_ok:
                     decision_policy_candidates.append((None, norm_p, raw_d))
                     continue
+                diagnostic_source = _higher_priority_absence_source(diagnostic_source, w_diag)
+                continue
             except Exception:
                 pass
 
@@ -2787,7 +2923,19 @@ def discover_approved_profile_risk_policy(
                     base_pol_dict["version"] = subj_pol_ver
                 try:
                     norm_p = normalize_risk_policy(base_pol_dict, default_id=subj_pol_id)
-                    w_ok, _ = _is_policy_Candidate_valid_for_profile_window(
+                    b_pol_meta = dict(norm_p.metadata) if isinstance(norm_p.metadata, Mapping) else {}
+                    b_pol_tenant = _first_text_or_none(b_pol_meta, "tenant_id")
+                    if effective_tenant_id and b_pol_tenant and b_pol_tenant != effective_tenant_id:
+                        diagnostic_source = _higher_priority_absence_source(
+                            diagnostic_source,
+                            "cross_tenant_policy_or_approval_rejected",
+                        )
+                        continue
+                    veto_diag = _policy_approval_veto_source(norm_p, base_pol_dict, b_pol_meta, base_meta)
+                    if veto_diag is not None:
+                        diagnostic_source = _higher_priority_absence_source(diagnostic_source, veto_diag)
+                        continue
+                    w_ok, w_diag = _is_policy_Candidate_valid_for_profile_window(
                         norm_p,
                         base_pol_dict,
                         clean_stage=eff_stage,
@@ -2797,6 +2945,8 @@ def discover_approved_profile_risk_policy(
                     if w_ok:
                         decision_policy_candidates.append((None, norm_p, base_pol_dict))
                         continue
+                    diagnostic_source = _higher_priority_absence_source(diagnostic_source, w_diag)
+                    continue
                 except Exception:
                     pass
 
@@ -2814,15 +2964,27 @@ def discover_approved_profile_risk_policy(
             norm_p = normalize_risk_policy(default_raw, default_id=subj_pol_id)
             decision_policy_candidates.append((None, norm_p, default_raw))
 
-    #Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
+    # Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
     # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.
     fallback_inline_raw: dict[str, Any]
+    fallback_is_vetoed = False
     if isinstance(base_meta.get("risk_policy"), Mapping) and _is_policy_content_mapping(base_meta["risk_policy"]):
         fallback_inline_raw = dict(base_meta["risk_policy"])
         if req_version and str(fallback_inline_raw.get("risk_policy_id") or "").startswith(
             ("rp-pool-", "paper-inline-policy:")
         ):
             fallback_inline_raw["version"] = req_version
+        fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
+        fb_id = fallback_inline_policy.risk_policy_id
+        if fb_id in rejected_catalog_policy_ids:
+            fallback_is_vetoed = True
+            if fb_id in vetoed_catalog_by_id:
+                diagnostic_source = _higher_priority_absence_source(diagnostic_source, vetoed_catalog_by_id[fb_id])
+        else:
+            fb_veto = _policy_approval_veto_source(fallback_inline_policy, fallback_inline_raw, base_meta)
+            if fb_veto is not None:
+                fallback_is_vetoed = True
+                diagnostic_source = _higher_priority_absence_source(diagnostic_source, fb_veto)
     else:
         fallback_inline_raw = {
             "risk_policy_id": f"rp-{resolved_pool_id}",
@@ -2834,13 +2996,15 @@ def discover_approved_profile_risk_policy(
             "max_leverage": 2.0,
             "allowed_asset_classes": ["equity", "future"],
         }
-    fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
-    decision_policy_candidates.append((None, fallback_inline_policy, fallback_inline_raw))
+        fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
+    if not fallback_is_vetoed:
+        decision_policy_candidates.append((None, fallback_inline_policy, fallback_inline_raw))
 
     # 3. Verify each candidate policy against Governance approvals.
     verified_matches: list[tuple[str | None, RiskPolicy, dict[str, Any], str]] = []
     seen_match_keys: set[tuple[str, str, str, str]] = set()
     ambiguous_decision_ids: list[str] = []
+    target_approval_lookup_overflow = False
 
     all_candidates_to_check: list[tuple[str | None, RiskPolicy, dict[str, Any], bool]] = [
         (cand_pol.risk_policy_id, cand_pol, raw_d, True)
@@ -2853,6 +3017,10 @@ def discover_approved_profile_risk_policy(
     for pref_ref, cand_pol, raw_d, is_catalog in all_candidates_to_check:
         cand_digest = risk_policy_digest(cand_pol)
         cand_meta = dict(cand_pol.metadata) if isinstance(cand_pol.metadata, Mapping) else {}
+        cand_veto = _policy_approval_veto_source(cand_pol, raw_d, cand_meta)
+        if cand_veto is not None:
+            diagnostic_source = _higher_priority_absence_source(diagnostic_source, cand_veto)
+            continue
         ref_options: list[str | None] = [pref_ref, None] if pref_ref is not None else [None]
         matched_for_this_policy = False
         for ref_opt in ref_options:
@@ -2878,6 +3046,11 @@ def discover_approved_profile_risk_policy(
                 now_dt=effective_now,
             )
             diagnostic_source = _higher_priority_absence_source(diagnostic_source, ver_diag)
+            if ver_diag == "policy_candidates_ambiguous":
+                target_approval_lookup_overflow = True
+                for aid in all_ver_ids:
+                    if aid not in ambiguous_decision_ids:
+                        ambiguous_decision_ids.append(aid)
             if len(all_ver_ids) > 1:
                 for aid in all_ver_ids:
                     if aid not in ambiguous_decision_ids:
@@ -2895,7 +3068,13 @@ def discover_approved_profile_risk_policy(
                 "policy_approval_missing",
             )
 
-    if len(verified_matches) > 1 or ambiguous_decision_ids:
+    if (
+        len(verified_matches) > 1
+        or ambiguous_decision_ids
+        or catalog_overflow
+        or pool_decision_lookup_overflow
+        or target_approval_lookup_overflow
+    ):
         pol_ids = tuple(dict.fromkeys(m[1].risk_policy_id for m in verified_matches)) or tuple(
             dict.fromkeys(c[0].risk_policy_id for c in catalog_candidates)
         )
@@ -3814,7 +3993,10 @@ def resolve_pool_risk_policy_binding(
         now_dt=now_dt,
     )
 
-    if needs_approved_mapping and len(all_verified_decision_ids) > 1:
+    if needs_approved_mapping and (
+        len(all_verified_decision_ids) > 1
+        or verification_diag == "policy_candidates_ambiguous"
+    ):
         effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
         ambig_req = {
             "policy_owner": "services/capital/risk_policy.py",
@@ -3848,38 +4030,49 @@ def resolve_pool_risk_policy_binding(
             owner_decision=ambig_req,
         )
 
+    policy_veto_diag = _policy_approval_veto_source(
+        policy_model,
+        raw_policy_mapping,
+        policy_meta,
+        pool_meta,
+        b_meta,
+    )
     owner_verified_explicit_contract = False
     if not is_default_inline_id:
         owner_ref_policy = authoritative_ref_policy
-        if owner_ref_policy is None and needs_approved_mapping:
+        loaded_owner_raw: Mapping[str, Any] | None = (
+            raw_policy_mapping if authoritative_ref_policy is not None else None
+        )
+        if owner_ref_policy is None:
             try:
-                loaded_owner_raw = (
+                raw_owner_candidate = (
                     risk_policy_loader(policy_model.risk_policy_id)
                     if risk_policy_loader is not None
                     else load_risk_policy(policy_model.risk_policy_id)
                 )
-                owner_ref_policy = normalize_risk_policy(loaded_owner_raw, default_id=policy_model.risk_policy_id)
+                if isinstance(raw_owner_candidate, Mapping):
+                    loaded_owner_raw = dict(raw_owner_candidate)
+                owner_ref_policy = normalize_risk_policy(raw_owner_candidate, default_id=policy_model.risk_policy_id)
             except Exception:
                 owner_ref_policy = None
         if owner_ref_policy is not None:
             owner_meta = dict(owner_ref_policy.metadata) if isinstance(owner_ref_policy.metadata, Mapping) else {}
             owner_tenant = _first_text_or_none(owner_meta, "tenant_id")
             owner_profile = _first_text_or_none(owner_meta, "requested_profile", "risk_profile", "requested_risk")
-            owner_approval_status = str(owner_meta.get("approval_status") or "").strip().lower()
+            owner_veto = _policy_approval_veto_source(owner_ref_policy, loaded_owner_raw, owner_meta)
+            if owner_veto is not None:
+                policy_veto_diag = _higher_priority_absence_source(policy_veto_diag, owner_veto)
             explicitly_unapproved = (
-                owner_meta.get("approved") is False
-                or owner_approval_status in {"unapproved", "pending", "proposed", "rejected", "revoked"}
+                policy_veto_diag is not None
                 or owner_meta.get("require_approved_profile_mapping") is True
                 or policy_meta.get("require_approved_profile_mapping") is True
                 or pool_meta.get("profile_auto_resolved") is True
             )
             if explicitly_unapproved:
-                if owner_approval_status == "revoked":
-                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_revoked")
-                elif owner_approval_status == "rejected":
-                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_rejected")
-                else:
-                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_missing")
+                verification_diag = _higher_priority_absence_source(
+                    verification_diag,
+                    policy_veto_diag or "policy_approval_missing",
+                )
             elif (
                 owner_ref_policy.risk_policy_id == policy_model.risk_policy_id
                 and str(owner_ref_policy.version) == str(policy_model.version)
@@ -3889,9 +4082,14 @@ def resolve_pool_risk_policy_binding(
             ):
                 owner_verified_explicit_contract = True
 
-    if needs_approved_mapping and verified_decision_id is None and not owner_verified_explicit_contract:
+    if policy_veto_diag is not None:
+        verified_decision_id = None
+        owner_verified_explicit_contract = False
+        verification_diag = _higher_priority_absence_source(verification_diag, policy_veto_diag)
+
+    if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
         effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
-        if is_default_inline_id and not resolved_ref:
+        if is_default_inline_id and not resolved_ref and policy_veto_diag is None:
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=resolved_pool_id,
                 effective_tenant_id=effective_tenant_id,
@@ -3949,7 +4147,7 @@ def resolve_pool_risk_policy_binding(
                     policy_model = auto_res.candidate_policy
                     computed_digest = risk_policy_digest(policy_model)
 
-    if needs_approved_mapping and verified_decision_id is None and not owner_verified_explicit_contract:
+    if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
         effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
         cand_pool_digest = (
             (

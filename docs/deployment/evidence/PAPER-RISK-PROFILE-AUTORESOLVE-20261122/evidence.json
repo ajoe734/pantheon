@@ -309,7 +309,9 @@
       "Full-path credentials-scoped HTTP route tests on mounted FastAPI router: POST /bff/personas (502 unresolved -> 502 ambiguous -> 201 resolved), POST /bff/personas/{id}/provisioning/paper-capital/risk-policy (ambiguous repaired=False -> single approved repaired=True), and GET /bff/personas/{id} readback",
       "Existing three dev paper pools (06d4775a9b6a8f63b311, 039ad01f8bcd2b4aa466, a81b4fd15944698341aa): absence classification, idempotent proposal routing, explicit non-approval, and auto-resolved repair",
       "Policy version upgrade (1.0 -> 2.0) auto-resolving v2 approval without caller supplying approval_decision_id",
-      "No label inference (name='Low Risk Generic') and no generic 2x baseline inference without explicit profile metadata and valid Governance approval"
+      "No label inference (name='Low Risk Generic') and no generic 2x baseline inference without explicit profile metadata and valid Governance approval",
+      "Bounded catalog scan (MAX_POLICY_CATALOG_FILES=64) and bounded target approval lookup (MAX_BOUNDED_APPROVAL_CANDIDATES=16) fail closed with ambiguous_profile_mapping and allow_new_or_increased_risk=False on overflow (65 catalog files or 17 same-target decisions) across ApprovalReader, CapitalOwnerApprovalReader, _TransportApprovalReader, and SnapshotApprovalReader",
+      "Policy revocation and unapproved vetoes (metadata.approval_status='revoked'/'rejected'/'unapproved'/'pending'/'proposed', metadata.approved=False, status='revoked') enforced consistently across discovered, exact-ID, embedded, explicit, and persisted paths even when a pre-revocation ApprovalDecision shares the same risk_policy_digest"
     ]
   }
 }

@@ -4935,7 +4935,65 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert get_ok_data["riskPolicyResolution"]["risk_policy_id"] == "rp-route-low-1"
     assert get_ok_data["riskPolicyResolution"]["profile_mapping_approval_id"] == "apv-route-low-1"
     assert get_ok_data.get("riskPolicyOwnerDecisionRequest") is None
+
+    # 8d. Pre-existing approval then policy revocation on catalog policy fails closed on coordinator repair
+    revoked_route_pol = {
+        "risk_policy_id": "rp-route-low-1",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.4,
+        "net_limit": 0.6,
+        "max_leverage": 1.0,
+        "metadata": {
+            "tenant_id": route_tenant_id,
+            "requested_profile": "low",
+            "approval_status": "revoked",
+        },
+    }
+    (policy_dir / "rp-route-low-1.json").write_text(json.dumps(revoked_route_pol), encoding="utf-8")
+    resp_repair_revoked = route_client.post(
+        f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
+        headers=AUTH_HEADERS,
+        json={},
+    )
+    assert resp_repair_revoked.status_code == 200, resp_repair_revoked.text
+    repair_revoked_data = resp_repair_revoked.json()["data"]
+    assert repair_revoked_data["repaired"] is False
+    assert repair_revoked_data["after_resolution"]["resolved"] is False
+    assert repair_revoked_data["after_resolution"]["allow_new_or_increased_risk"] is False
+    assert repair_revoked_data["owner_decision_request"]["absence_source"] == "policy_approval_revoked"
     (policy_dir / "rp-route-low-1.json").unlink()
+
+    # 8e. Transport approval reader signals overflow when > 16 target decisions exist and repair fails closed
+    for idx in range(17):
+        over_dec = approval_snapshot(
+            decision_id=f"apv-route-over-{idx:02d}",
+            tenant_id=route_tenant_id,
+            target_type="capital_pool_activation",
+            target_id=created_pool_id,
+            target_version="1.0",
+            decision="rejected",
+            owner_user_id="proposer",
+            risk_level="medium",
+        )
+        route_tx.objects[("governance", f"/api/governance/approvals/{over_dec['decision_id']}")] = over_dec
+    tx_list = route_coord._governance_approval_reader().list_for_target(
+        target_type="capital_pool_activation",
+        target_id=created_pool_id,
+        decision_state=None,
+        max_items=16,
+    )
+    assert len(tx_list) == 16
+    assert getattr(tx_list, "overflow", False) is True
+    resp_repair_over = route_client.post(
+        f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
+        headers=AUTH_HEADERS,
+        json={},
+    )
+    assert resp_repair_over.status_code == 200, resp_repair_over.text
+    assert resp_repair_over.json()["data"]["after_resolution"]["status"] == "ambiguous_profile_mapping"
+
 
 
 
