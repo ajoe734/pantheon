@@ -248,7 +248,8 @@
     "max_screenshots_per_pair": 2,
     "max_bundle_bytes": 5242880,
     "cleanup": "No raw API bodies, credentials, tokens, cookie state, traces or browser profiles committed. Temporary rehearsal witness is removed after deidentification. Replace duplicate summaries/images per SHA pair.",
-    "measured_bundle_bytes": 14575
+    "measured_bundle_bytes": 15222,
+    "cleanup_completed": "Task-generated private rehearsal witness removed after this deidentified record; no browser started and no credential file created."
   },
   "validation": {
     "git_diff_check": "passed",
@@ -262,5 +263,18 @@
   "independent_review": {
     "status": "not_requested_pending_hosted_acceptance",
     "assigned_reviewer": "Claude2"
-  }
+  },
+  "additional_release_attempts": [
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/45046752287",
+      "bff": "f78d53689e2443338353f14a9cb40d595bbe8535",
+      "fe": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
+      "status": "completed",
+      "conclusion": "failure",
+      "failure_at": "2026-11-22T17:00:03.7883275Z",
+      "failure": "Exact dev push Branch CI latest=pending:null",
+      "switch_executed": false,
+      "acceptance_stage": "skipped"
+    }
+  ]
 }
