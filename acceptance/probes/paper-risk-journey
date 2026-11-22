@@ -131,29 +131,38 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
                 if event.get("source_mode") != "live" or event.get("accepted_live") is not True:
                     continue
                 eid = event.get("source_event_id") or event.get("canonical_event_id") or event.get("event_id")
-                original = binding.data(source_read(eid, owner["tenant_id"]))
+                try:
+                    original = binding.data(source_read(eid, owner["tenant_id"]))
+                except (RuntimeError, ValueError) as exc:
+                    failed.append("source_read_failed:" + str(eid) + ":" + str(exc))
+                    continue
                 meta = original.get("metadata") or {}
-                if (original.get("event_id") != eid or meta.get("binding_id") != owner["binding_id"]
-                        or meta.get("persona_id") != pid or meta.get("fixture_source")
-                        or timestamp(original.get("timestamp", "")) <= cutoff):
+                if (original.get("event_id") != eid or original.get("binding_id") != owner["binding_id"]
+                        or (original.get("authority_refs") or {}).get("persona_id") != pid or meta.get("fixture_source")
+                        or original.get("source_mode") != "live"
+                        or original.get("tenant_id") != owner["tenant_id"]
+                        or original.get("deployment_stage") != "paper"
+                        or original.get("journey_id") != row["journey_id"]
+                        or timestamp(original.get("created_at", "")) <= cutoff):
                     failed.append("source_identity_or_freshness_invalid:" + str(eid))
                     continue
                 originals[stage] = original
             policy = owner.get("effective_policy") or {}
             decision = originals.get("trade_decision") or {}
-            if sized(decision, policy, "pre_trade_sizing"):
+            governed_decision = decision.get("event_type") == "trade_decision" and sized(decision, policy, "pre_trade_sizing")
+            if governed_decision:
                 samples["fresh_decisions"].append(decision["event_id"])
             rejection = originals.get("order_submission") or {}
             meta = rejection.get("metadata") or {}
             detail = meta.get("reason_detail") or meta
-            if (rejection.get("event_type") == "order_rejection" and meta.get("submitted_to_broker") is False
+            if (governed_decision and rejection.get("event_type") == "order_rejection" and meta.get("submitted_to_broker") is False
                     and meta.get("reject_reason") not in {None, "", "long_cash", "long_lever", "close_leg"}
                     and all(number(detail.get(k)) for k in ("required", "available", "limit"))):
                 report["fresh_rejections"].append({"event_id": rejection["event_id"], "reason": meta["reject_reason"],
                     "amounts": {k: detail[k] for k in ("required", "available", "limit")}})
             fill = originals.get("fill_management") or {}
             recon = originals.get("reconciliation") or {}
-            if (fill.get("event_type") == "paper_fill_simulated" and sized(fill, policy, "submission_sizing_evidence")
+            if (governed_decision and fill.get("event_type") == "paper_fill_simulated" and sized(fill, policy, "submission_sizing_evidence")
                     and recon.get("event_type") == "reconciliation_completed" and reconciliation_ok(recon)
                     and (recon.get("metadata") or {}).get("broker_order_id") == (fill.get("metadata") or {}).get("broker_order_id")
                     and (fill.get("metadata") or {}).get("broker_order_id")):

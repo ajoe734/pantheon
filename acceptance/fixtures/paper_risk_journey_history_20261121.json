@@ -1,0 +1,56 @@
+{
+  "source_kind": "prior task repaired BFF readback proof; recorded shape, not fresh hosted events",
+  "source_path": "docs/deployment/evidence/TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121/evidence.json",
+  "rows": {
+    "tj_57418ba7-ef37-5015-9b5e-b6423872da89": {
+      "filled_quantity": 1.0,
+      "journey_id": "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "outcome": {
+        "accounting_variance": false,
+        "classification": "unverified_evidence",
+        "comparison_completed": false,
+        "discrepancies": [],
+        "kind": "variance",
+        "missing_evidence": [
+          "position_quantity_before",
+          "position_quantity_after",
+          "fee",
+          "tax",
+          "cash_before",
+          "cash_after",
+          "position_change:actual",
+          "committed_snapshot_position:expected",
+          "cash_change:actual",
+          "committed_snapshot_cash:expected"
+        ],
+        "reason_code": "reconciliation_evidence_incomplete",
+        "source_event_id": "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+      },
+      "price": 218.5,
+      "quantity": 1.0,
+      "status": "completed_with_variance"
+    },
+    "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd": {
+      "current_stage": "risk_evaluation",
+      "filled_quantity": null,
+      "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "outcome": {
+        "expression_reason_code": "long_cash",
+        "kind": "rejected",
+        "order_status": "not_submitted",
+        "reason_code": "insufficient_cash",
+        "reason_detail": {
+          "available": 100000.0,
+          "limit": 100000.0,
+          "requested_quantity": 452.0,
+          "required": 100034.3461
+        },
+        "rejected_stage": "risk_evaluation",
+        "source_event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+        "submitted_to_broker": false
+      },
+      "quantity": 452.0,
+      "status": "failed"
+    }
+  }
+}

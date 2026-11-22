@@ -23,6 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.capital.risk_policy import risk_policy_digest
+from services.governance.write_authority import is_authorized_to_decide
+from services.governance.paper_approval_scope import (
+    ApprovalUsageContext, enforce_authorization_scope, require_dedicated_subject_scope,
+)
 
 DEFAULT_PERSONAS = (
     "persona-2448c7053e33ea48da47",
@@ -114,20 +118,27 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or approval.get("authority_status") != "authoritative"
                 or not approval.get("actor_role")
                 or not approval.get("actor_id") or not approval.get("decided_at")
+                or not approval.get("recorded_at") or not approval.get("controller_record_ref")
+                or not is_authorized_to_decide(approval.get("actor_role"), approval.get("risk_level"))
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
-                or subject.get("requested_risk") != persona.get("risk")
+                or (subject.get("requested_risk") or subject.get("requested_profile") or subject.get("risk_profile")) != persona.get("risk")
+                or subject.get("risk_direction") != "increase"
                 or subject.get("risk_policy_id") != policy.get("risk_policy_id")
                 or subject.get("risk_policy_version") != policy.get("version")
                 or subject.get("risk_policy_digest") not in digests):
             continue
-        expiry = approval.get("expires_at")
-        if expiry:
-            try:
-                if datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= now:
-                    continue
-            except (ValueError, TypeError):
+        try:
+            expiry = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
+            decided = datetime.fromisoformat(approval["decided_at"].replace("Z", "+00:00"))
+            if expiry.tzinfo is None or decided.tzinfo is None or expiry <= now or decided > now:
                 continue
+            require_dedicated_subject_scope(actor_id=approval["actor_id"],
+                owner_user_id=approval.get("owner_user_id"), authorization_scope=approval.get("authorization_scope"))
+            enforce_authorization_scope(approval.get("authorization_scope"),
+                ApprovalUsageContext(environment="dev", target_stage="paper", capital_scale_pct=0.0))
+        except (KeyError, AttributeError, ValueError, TypeError):
+            continue
         matches.add(approval["decision_id"])
     return next(iter(matches)) if len(matches) == 1 else None
 
@@ -197,6 +208,15 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
             reader = (lambda ref: owner["policy"]) if owner is not None else referenced_policy_reader
             policy, origin = effective_policy(pool, reader)
             failures.extend(policy_errors(policy))
+            policy_meta = policy.get("metadata") or {}
+            if (policy.get("tenant_id") or policy_meta.get("tenant_id")) not in (None, tenant):
+                failures.append("policy_tenant_mismatch")
+            for container in (policy, policy_meta):
+                if container.get("superseded_by") or container.get("stale") or container.get("revoked_at"):
+                    failures.append("policy_stale_or_revoked")
+                for key in ("expires_at", "effective_to"):
+                    if container.get(key) and datetime.fromisoformat(container[key].replace("Z", "+00:00")) <= now:
+                        failures.append("policy_expired")
             result.update(policy_origin=origin, effective_policy=policy)
             if origin == "reference" and policy.get("risk_policy_id") != pool.get("risk_policy_ref"):
                 failures.append("referenced_policy_identity_mismatch")

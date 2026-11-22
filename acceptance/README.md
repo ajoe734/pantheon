@@ -123,6 +123,57 @@ when either (or `ACCEPTANCE_BFF_URL`) is absent. Reads the first page of `GET /b
 `persona_is_probe` true, or when `attention=recon_mismatch` returns as many rows as the unfiltered page.
 Tests: `acceptance/test_trade_journey_readable_probe.py` with `fixtures/hosted_trade_journeys_20261120.json`.
 
+## Governed paper risk and journey proof
+
+`acceptance/probes/paper-risk-journey` belongs to `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`
+(RC2 WP2.1 / RC6). It uses the existing policy probe to read all three trading
+personas, active tenant bindings and pool policies, and requires current owner
+approval of the requested profile. Both pool activation and catalog policy
+targets are recognized; tenant, policy identity, version, content digest, target,
+expiry, role authority and paper authorization scope must agree. A catalog
+reference never falls back to nearby inline policy data.
+
+The journey probe requires the standard `ACCEPTANCE_BFF_URL`,
+`ACCEPTANCE_FE_URL`, `ACCEPTANCE_BACKEND_SHA`, `ACCEPTANCE_FRONTEND_SHA` and
+viewer credentials. Optional `ACCEPTANCE_POLICY_READER_CLIENT_ID/SECRET` are
+used only for the governance approval GET. Reference-backed pools additionally
+require `ACCEPTANCE_CAPITAL_OWNER_URL` and `ACCEPTANCE_CAPITAL_OWNER_TOKEN` for
+the existing tenant-scoped `/api/capital-pools/{id}/risk-policy?stage=paper` GET.
+Fresh journey source events require `ACCEPTANCE_TELEMETRY_URL` and
+`ACCEPTANCE_TELEMETRY_TOKEN` for `/api/telemetry/events/{id}`. These are existing
+owner read identities; the probe creates no grants or policies. Credentials stay
+in memory. A public journey DTO alone does not expose complete sizing evidence.
+
+The exact FE/BFF pair is read before and after. `deployment.json.deployedAt`
+sets the cutoff: only natural live source events strictly after it, belonging to
+the active binding, persona, tenant and journey, qualify. The probe requires a
+governed sizing decision for every expected persona, a pre-broker rejection
+with its actual reason and required/available/limit amounts, and a fresh fill
+with submission sizing and six passing broker/position/cash reconciliation
+comparisons. Both historical URLs are read separately to verify recovered
+insufficient-cash evidence and unavailable accounting evidence. They never
+supply fresh samples. The companion browser observation and served service
+version inventory remain task evidence; probe success alone does not assert
+that the browser or every service was verified.
+
+Exit 0 means all probe checks passed; 1 means failed, including zero eligible
+samples, unresolved policy or unavailable owner reads; 77 means missing
+initial release/auth configuration. Run `timeout 245s acceptance/probes/paper-risk-journey`.
+All product reads use GET; only existing dev-login token exchanges use POST.
+No trades, policy activation, repair or replay are performed. Dev probes remain
+post-switch and do not introduce a deploy gate.
+
+Budget: at most 72 requests, 240 seconds, 15 seconds per request, 8 MiB per
+response, 50 list rows and four detailed journeys per persona (three by default;
+maximum ten configured personas). Budget exhaustion fails. This is a bounded
+sample, not a global absence claim. The release runner owns cadence (one per
+release) and its existing capped verdict; the probe writes only stdout and
+adds no persistent runtime storage or daily growth. Standalone task evidence is
+a fixed git snapshot, with no recurring writer or temporary product files.
+Tests: `acceptance/test_paper_risk_journey.py` and
+`acceptance/test_paper_risk_policy_binding.py`. Positive fresh events are
+explicit synthetic fixtures, never represented as hosted acceptance.
+
 ## mgmt-strategy-meeting-research-readable probe (`acceptance/probes/mgmt-strategy-meeting-research-readable`)
 
 Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at `/bff/auth/dev-login` with

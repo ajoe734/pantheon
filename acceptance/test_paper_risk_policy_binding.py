@@ -37,8 +37,10 @@ def evidence():
                 "target_id": "fixture-pool", "target_version": "fixture-activation-digest",
                 "tenant_id": "fixture-tenant", "decision_state": "decided", "decision": "approved",
                 "authority_status": "authoritative",
+                "risk_level": "high", "recorded_at": "2026-11-20T00:00:01Z",
+                "controller_record_ref": "fixture-controller-record", "expires_at": "2026-12-01T00:00:00Z",
                 "actor_role": "risk_owner", "actor_id": "fixture-owner", "decided_at": "2026-11-20T00:00:00Z",
-                "metadata": {"subject": {"pool_id": "fixture-pool", "requested_risk": "low",
+                "metadata": {"subject": {"pool_id": "fixture-pool", "requested_risk": "low", "risk_direction": "increase",
                                          "risk_policy_id": "fixture-policy", "risk_policy_version": "fixture-v1",
                                          "risk_policy_digest": probe.policy_digest(policy)}}}
     return {"/bff/personas/fixture-persona": {"data": persona},
@@ -74,7 +76,7 @@ def test_missing_policy_is_distinct_from_valid_inline():
     assert "no_effective_policy" in check(payload)["personas"]["fixture-persona"]["failed"]
 
 
-@pytest.mark.parametrize("mutation", ["tenant", "version", "limits", "expired", "registry", "revoked", "conditions", "no_actor", "unverified_authority"])
+@pytest.mark.parametrize("mutation", ["tenant", "version", "limits", "expired", "registry", "revoked", "conditions", "no_actor", "unverified_authority", "no_expiry", "unrecorded", "unauthorized_role", "wrong_scope"])
 def test_mapping_proof_cannot_be_stale_foreign_or_registry_admission(mutation):
     payload = evidence()
     approval = payload["/api/v1/approval-decisions"]["data"][0]
@@ -94,6 +96,14 @@ def test_mapping_proof_cannot_be_stale_foreign_or_registry_admission(mutation):
         approval["conditions"] = ["fixture unresolved condition"]
     elif mutation == "no_actor":
         approval["actor_id"] = None
+    elif mutation == "no_expiry":
+        approval.pop("expires_at")
+    elif mutation == "unrecorded":
+        approval.pop("controller_record_ref")
+    elif mutation == "unauthorized_role":
+        approval["actor_role"] = "viewer"
+    elif mutation == "wrong_scope":
+        approval["authorization_scope"] = {"environment": "production", "allowed_target_stages": ["live"], "max_capital_scale_pct": 100}
     else:
         approval["authority_status"] = "unknown"
     assert not check(payload)["passed"]
@@ -238,3 +248,36 @@ def test_http_main_uses_policy_reader_only_for_approval_get(monkeypatch, capsys)
     assert '"passed": true' in output
     assert all(secret not in output for secret in ["owner-token", "viewer-token", "viewer-secret", "owner-secret"])
     assert sum(method == "POST" for method, path in calls) == 2
+
+
+def test_cli_reads_reference_from_capital_owner_with_tenant_and_separate_token(monkeypatch, capsys):
+    import io
+    import json
+    from urllib.parse import urlsplit
+    payload = evidence()
+    pool = payload["/bff/capital-pools/fixture-pool"]["data"]
+    pool["risk_policy_ref"] = "fixture-policy"
+    for key, value in {"ACCEPTANCE_BFF_URL": "https://bff.invalid", "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+            "ACCEPTANCE_VIEWER_CLIENT_SECRET": "viewer-secret", "ACCEPTANCE_EXPECTED_PERSONA_IDS": "fixture-persona",
+            "ACCEPTANCE_CAPITAL_OWNER_URL": "http://capital.invalid", "ACCEPTANCE_CAPITAL_OWNER_TOKEN": "capital-token"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("ACCEPTANCE_POLICY_READER_CLIENT_ID", raising=False)
+    monkeypatch.delenv("ACCEPTANCE_POLICY_READER_CLIENT_SECRET", raising=False)
+    def request(req, timeout):
+        parsed = urlsplit(req.full_url)
+        if req.get_method() == "POST":
+            assert parsed.path == "/bff/auth/dev-login"
+            body = {"access_token": "viewer-token"}
+        elif parsed.hostname == "capital.invalid":
+            assert req.get_header("X-tenant-id") == "fixture-tenant"
+            assert req.get_header("Authorization") == "Bearer capital-token"
+            assert parsed.path == "/api/capital-pools/fixture-pool/risk-policy" and parsed.query == "stage=paper"
+            body = {"capital_pool_id": "fixture-pool", "tenant_id": "fixture-tenant", "stage": "paper",
+                    "resolved": True, "policy": pool["metadata"]["risk_policy"]}
+        else:
+            assert req.get_header("Authorization") == "Bearer viewer-token"
+            body = payload[parsed.path + ("?" + parsed.query if parsed.query else "")]
+        return io.BytesIO(json.dumps(body).encode())
+    monkeypatch.setattr(probe.urllib.request, "urlopen", request)
+    assert probe.main() == 0
+    assert "capital-token" not in capsys.readouterr().out

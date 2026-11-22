@@ -1,0 +1,70 @@
+{
+  "startedAt": "2026-11-22T17:02:04.081Z",
+  "release": 45029250554,
+  "frontendGate": 45033823404,
+  "role": "viewer",
+  "tenant": "tenant-dev",
+  "checks": {
+    "normalList": {
+      "path": "/management/trade-journeys",
+      "api": "/bff/management/trade-journeys",
+      "http": 200,
+      "query": "?tenant_id=tenant-dev&environment=paper&page_size=25&sort=updated_at_desc",
+      "finalPath": "/management/trade-journeys",
+      "hasPageHeading": true,
+      "listVisible": true
+    },
+    "buy": {
+      "path": "/management/trade-journeys/tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "api": "/bff/management/trade-journeys/tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "http": 200,
+      "query": "?tenant_id=tenant-dev&environment=paper",
+      "finalPath": "/management/trade-journeys/tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "hasPageHeading": true,
+      "matchesRecord": true,
+      "recordStatus": "failed",
+      "actual": {
+        "kind": "rejected",
+        "reason_code": "insufficient_cash",
+        "order_status": "not_submitted",
+        "submitted_to_broker": false,
+        "required": 100034.3461,
+        "available": 100000
+      },
+      "visibleRecoveredReason": true
+    },
+    "sell": {
+      "path": "/management/trade-journeys/tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "api": "/bff/management/trade-journeys/tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "http": 200,
+      "query": "?tenant_id=tenant-dev&environment=paper",
+      "finalPath": "/management/trade-journeys/tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "hasPageHeading": true,
+      "matchesRecord": true,
+      "recordStatus": "completed_with_variance",
+      "actual": {
+        "kind": "variance",
+        "reason_code": "reconciliation_evidence_incomplete",
+        "classification": "unverified_evidence",
+        "accounting_variance": false,
+        "comparison_completed": false,
+        "fill_quantity": 1
+      },
+      "visibleRecoveredReason": true
+    }
+  },
+  "writeAttempts": [],
+  "pageErrors": [],
+  "before": [
+    "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "45033823404"
+  ],
+  "after": [
+    "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "45033823404"
+  ],
+  "transportErrors": 0,
+  "endedAt": "2026-11-22T17:02:20.069Z"
+}
