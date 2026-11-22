@@ -108,15 +108,404 @@ def _resolved_parameters(parameters: Mapping[str, Any] | None) -> dict[str, Any]
     return merged
 
 
-def remaining_gross_notional(budget: Mapping[str, Any]) -> Decimal:
-    """Gross notional still spendable; a missing limit leaves nothing."""
-    explicit = budget.get("max_gross_notional_remaining")
-    if explicit is not None:
-        return max(_dec(explicit), Decimal(0))
+def _effective_gross_limit(budget: Mapping[str, Any]) -> Decimal:
+    """Effective gross notional cap from ``gross_limit`` and ``max_leverage * equity``."""
     limit = budget.get("gross_limit")
+    equity_raw = budget.get("equity")
+    equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
+    if limit is None and budget.get("gross_limit_multiple") is not None and equity is not None:
+        limit = _dec(budget["gross_limit_multiple"]) * equity
     if limit is None:
         return Decimal(0)
-    return max(_dec(limit) - _dec(budget.get("gross_used") or 0), Decimal(0))
+    limit_dec = _dec(limit)
+    leverage = budget.get("max_leverage")
+    if leverage is not None and equity is not None and _dec(leverage) > 0:
+        limit_dec = min(limit_dec, _dec(leverage) * equity)
+    return max(limit_dec, Decimal(0))
+
+
+def _resolve_sizing_state(
+    underlying: str,
+    direction: str,
+    candidates: Sequence[Mapping[str, Any]],
+    book: Mapping[str, Any] | None,
+    budget: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compute effective account/per-name exposures, reservations and constraint caps."""
+    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+    try:
+        norm_underlying = normalize_underlying_code(underlying) if underlying else ""
+    except Exception:
+        norm_underlying = str(underlying or "").strip()
+
+    by_id = {str(c.get("instrument_id")): c for c in candidates}
+    positions = (book or {}).get("positions")
+    pos_list = positions if isinstance(positions, list) else []
+
+    pos_gross = Decimal(0)
+    pos_signed_net = Decimal(0)
+    underlying_gross_by_code: dict[str, Decimal] = {}
+    underlying_same_dir_notional = Decimal(0)
+
+    for p in pos_list:
+        if not isinstance(p, Mapping):
+            continue
+        units = int(p.get("units") or p.get("quantity") or 0)
+        if units <= 0:
+            continue
+        raw_n = p.get("notional")
+        if raw_n is not None:
+            notional = abs(_dec(raw_n))
+        else:
+            cand = by_id.get(str(p.get("instrument_id") or ""))
+            if cand is not None and _unit_notional(cand) > 0:
+                notional = _unit_notional(cand) * units
+            else:
+                px = _dec(p.get("mark_price") or p.get("price") or 0)
+                mult = _dec(p.get("multiplier") or p.get("unit") or 1)
+                notional = px * mult * units
+        p_dir = str(p.get("direction") or "LONG").strip().upper()
+        signed = -notional if p_dir == "SHORT" else notional
+        pos_gross += notional
+        pos_signed_net += signed
+        raw_u = str(p.get("underlying") or p.get("symbol") or p.get("instrument_id") or "").strip()
+        try:
+            u_code = normalize_underlying_code(raw_u) if raw_u else ""
+        except Exception:
+            u_code = raw_u
+        if u_code:
+            underlying_gross_by_code[u_code] = underlying_gross_by_code.get(u_code, Decimal(0)) + notional
+            if u_code == norm_underlying and p_dir == direction.upper():
+                underlying_same_dir_notional += notional
+
+    raw_res = budget.get("order_reservations")
+    if raw_res is None:
+        raw_res = budget.get("reservations")
+    if raw_res is None and isinstance(book, Mapping):
+        raw_res = book.get("order_reservations") or book.get("reservations")
+    res_items = list(raw_res.values()) if isinstance(raw_res, Mapping) else (raw_res if isinstance(raw_res, list) else [])
+
+    res_gross = Decimal(0)
+    res_signed_net = Decimal(0)
+    res_cash = Decimal(0)
+    res_margin = Decimal(0)
+    res_underlying_gross: dict[str, Decimal] = {}
+    active_res_count = 0
+
+    for item in res_items:
+        if not isinstance(item, Mapping):
+            continue
+        if bool(item.get("is_risk_reducing") or item.get("close_leg") or item.get("reason_code") == "close_leg"):
+            continue
+        active_res_count += 1
+        qty = abs(_dec(item.get("units") if item.get("units") is not None else (item.get("quantity") or 0)))
+        mult = _dec(item.get("multiplier") if item.get("multiplier") is not None else (item.get("unit") or 1))
+        px = _dec(item.get("price") if item.get("price") is not None else (item.get("mark_price") or 0))
+        raw_n = item.get("notional") if item.get("notional") is not None else item.get("gross_notional")
+        notional = abs(_dec(raw_n)) if raw_n is not None else (qty * mult * px)
+        side = str(item.get("side") or item.get("action") or "").strip().lower()
+        r_dir = str(item.get("direction") or ("SHORT" if side == "sell" else "LONG")).strip().upper()
+        signed = -notional if (r_dir == "SHORT" or side == "sell") else notional
+        res_gross += notional
+        res_signed_net += signed
+        raw_c = item.get("cash_reserved") if item.get("cash_reserved") is not None else item.get("cash_required")
+        if raw_c is not None:
+            res_cash += max(Decimal(0), _dec(raw_c))
+        elif str(item.get("kind") or "cash_share") == "cash_share" and r_dir == "LONG" and qty > 0 and px > 0:
+            raw_u_fee = str(item.get("underlying") or item.get("symbol") or "0000")
+            res_cash += _dec(buy_cash_required(raw_u_fee, int(qty), float(px)))
+        raw_m = item.get("margin_reserved") if item.get("margin_reserved") is not None else item.get("margin_required")
+        if raw_m is not None:
+            res_margin += max(Decimal(0), _dec(raw_m))
+        raw_u = str(item.get("underlying") or item.get("symbol") or item.get("instrument_id") or "").strip()
+        try:
+            u_code = normalize_underlying_code(raw_u) if raw_u else ""
+        except Exception:
+            u_code = raw_u
+        if u_code:
+            res_underlying_gross[u_code] = res_underlying_gross.get(u_code, Decimal(0)) + notional
+
+    pos_margin = Decimal(0)
+    for p in pos_list:
+        if isinstance(p, Mapping):
+            raw_pm = p.get("margin_reserved") if p.get("margin_reserved") is not None else p.get("initial_margin_reserved")
+            if raw_pm is not None:
+                pos_margin += max(Decimal(0), _dec(raw_pm))
+
+    scalar_cash_res = _dec(budget.get("cash_reserved") or budget.get("reserved_cash") or 0)
+    cash_reserved = max(scalar_cash_res, res_cash)
+    unfolded_cash_res = max(res_cash - scalar_cash_res, Decimal(0))
+
+    scalar_margin_res = _dec(
+        budget.get("margin_reserved")
+        or budget.get("order_margin_reserved")
+        or budget.get("reserved_margin")
+        or 0
+    )
+    if budget.get("order_margin_reserved") is not None:
+        folded_order_margin = _dec(budget["order_margin_reserved"])
+        inferred_pos_margin = max(scalar_margin_res - folded_order_margin, pos_margin)
+    else:
+        folded_order_margin = scalar_margin_res
+        inferred_pos_margin = pos_margin
+    margin_reserved = max(scalar_margin_res, inferred_pos_margin + res_margin)
+    unfolded_margin_res = max(res_margin - folded_order_margin, Decimal(0))
+
+    if (cash_reserved > 0 or margin_reserved > 0) and active_res_count == 0:
+        active_res_count = 1
+
+    folded_res_u_map = (
+        budget.get("reserved_underlying_notional")
+        if isinstance(budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_dec(v or 0) for v in folded_res_u_map.values())
+    reservations_folded_in_budget = (
+        "reserved_underlying_notional" in budget
+        and folded_res_gross >= sum(res_underlying_gross.values(), Decimal(0))
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _dec(budget.get("gross_used") or 0) >= pos_gross + res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded_in_budget else max(res_gross - folded_res_gross, Decimal(0))
+
+    if "gross_used" in budget and budget.get("gross_used") is not None:
+        base_gross_used = _dec(budget["gross_used"])
+        gross_used = base_gross_used + unfolded_res_gross
+    elif isinstance(book, Mapping) and book.get("gross_notional") is not None:
+        gross_used = _dec(book["gross_notional"]) + res_gross
+    else:
+        gross_used = pos_gross + res_gross
+
+    if budget.get("signed_net_used") is not None:
+        signed_net_used = _dec(budget["signed_net_used"])
+        if not reservations_folded_in_budget and unfolded_res_gross > 0 and res_signed_net != 0:
+            signed_net_used += res_signed_net
+    elif budget.get("net_used") is not None and not pos_list:
+        net_mag = abs(_dec(budget["net_used"]))
+        signed_net_used = (net_mag if direction.upper() == "LONG" else -net_mag) + res_signed_net
+    else:
+        signed_net_used = pos_signed_net + res_signed_net
+
+    budget_u_map = budget.get("underlying_exposures")
+    existing_u_from_budget = Decimal(0)
+    if isinstance(budget_u_map, Mapping) and norm_underlying in budget_u_map and budget_u_map[norm_underlying] is not None:
+        existing_u_from_budget = _dec(budget_u_map[norm_underlying])
+    pos_u = underlying_gross_by_code.get(norm_underlying, Decimal(0))
+    res_u = res_underlying_gross.get(norm_underlying, Decimal(0))
+    folded_u = res_u if reservations_folded_in_budget else min(res_u, _dec(folded_res_u_map.get(norm_underlying) or 0))
+    unfolded_u = max(res_u - folded_u, Decimal(0))
+    existing_underlying_gross = max(existing_u_from_budget + unfolded_u, pos_u + res_u)
+
+    equity_raw = budget.get("equity")
+    equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
+
+    explicit_rem = budget.get("max_gross_notional_remaining")
+    gross_limit_raw = budget.get("gross_limit")
+    if gross_limit_raw is None and budget.get("gross_limit_multiple") is not None and equity is not None:
+        gross_limit_raw = _dec(budget["gross_limit_multiple"]) * equity
+    gross_limit_dec = _dec(gross_limit_raw) if gross_limit_raw is not None else None
+    if explicit_rem is not None:
+        remaining_by_gross_limit = max(_dec(explicit_rem) - unfolded_res_gross, Decimal(0))
+    elif gross_limit_dec is not None:
+        remaining_by_gross_limit = max(gross_limit_dec - gross_used, Decimal(0))
+    else:
+        remaining_by_gross_limit = Decimal(0)
+
+    max_leverage_raw = budget.get("max_leverage")
+    if max_leverage_raw is not None and equity is not None and _dec(max_leverage_raw) > 0:
+        leverage_limit_dec = _dec(max_leverage_raw) * equity
+        remaining_by_leverage: Decimal | None = max(leverage_limit_dec - gross_used, Decimal(0))
+    else:
+        leverage_limit_dec = None
+        remaining_by_leverage = None
+
+    net_limit_raw = budget.get("net_limit")
+    if net_limit_raw is None and budget.get("net_limit_multiple") is not None and equity is not None:
+        net_limit_raw = _dec(budget["net_limit_multiple"]) * equity
+    if net_limit_raw is not None:
+        net_limit_dec = _dec(net_limit_raw)
+        if direction.upper() == "LONG":
+            remaining_by_net: Decimal | None = max(net_limit_dec - signed_net_used, Decimal(0))
+        elif direction.upper() == "SHORT":
+            remaining_by_net = max(net_limit_dec + signed_net_used, Decimal(0))
+        else:
+            remaining_by_net = max(net_limit_dec - abs(signed_net_used), Decimal(0))
+    else:
+        net_limit_dec = None
+        remaining_by_net = None
+
+    single_name_raw = budget.get("max_single_name_notional")
+    max_single_name_weight = (
+        _dec(budget["max_single_name_weight"])
+        if budget.get("max_single_name_weight") is not None
+        else None
+    )
+    if single_name_raw is None and max_single_name_weight is not None and equity is not None:
+        single_name_raw = max_single_name_weight * equity
+    if single_name_raw is not None:
+        single_name_limit_dec = _dec(single_name_raw)
+        if max_single_name_weight is None and equity is not None and equity > 0:
+            max_single_name_weight = single_name_limit_dec / equity
+        remaining_by_single_name: Decimal | None = max(single_name_limit_dec - existing_underlying_gross, Decimal(0))
+    else:
+        single_name_limit_dec = None
+        remaining_by_single_name = None
+
+    has_cash_field = any(k in budget and budget.get(k) is not None for k in ("available_cash", "available_buying_power", "raw_cash"))
+    if has_cash_field:
+        avail_field = budget.get("available_buying_power")
+        if avail_field is None:
+            avail_field = budget.get("available_cash")
+        avail_dec = max(_dec(avail_field if avail_field is not None else budget.get("raw_cash") or 0), Decimal(0))
+        raw_cash_dec = _dec(budget["raw_cash"]) if budget.get("raw_cash") is not None else avail_dec
+
+        reserve_req = Decimal(0)
+        if budget.get("cash_reserve_required") is not None:
+            reserve_req = max(reserve_req, _dec(budget["cash_reserve_required"]))
+        if budget.get("min_cash_reserve") is not None:
+            reserve_req = max(reserve_req, _dec(budget["min_cash_reserve"]))
+        if budget.get("min_cash_reserve_pct") is not None:
+            base_eq = equity if equity is not None else raw_cash_dec
+            reserve_req = max(reserve_req, _dec(budget["min_cash_reserve_pct"]) * base_eq)
+
+        if "raw_cash" in budget:
+            base_margin_eq = equity if (equity is not None and equity > 0) else raw_cash_dec
+            if budget.get("free_margin") is not None:
+                free_margin_dec = min(
+                    _dec(budget["free_margin"]) - unfolded_margin_res,
+                    base_margin_eq - margin_reserved,
+                )
+            else:
+                free_margin_dec = base_margin_eq - margin_reserved
+            unreserved_cash = max(min(raw_cash_dec - cash_reserved, free_margin_dec), Decimal(0))
+            spendable_cash: Decimal | None = max(min(avail_dec, unreserved_cash - reserve_req), Decimal(0))
+        else:
+            if budget.get("free_margin") is not None:
+                free_margin_dec = _dec(budget["free_margin"]) - unfolded_margin_res
+                if equity is not None and equity > 0:
+                    free_margin_dec = min(free_margin_dec, equity - margin_reserved)
+                unreserved_cash = max(min(avail_dec - unfolded_cash_res, free_margin_dec), Decimal(0))
+            elif (cash_reserved > 0 or margin_reserved > 0) and equity is not None and equity > 0:
+                unreserved_cash = max(
+                    min(avail_dec - unfolded_cash_res - unfolded_margin_res, equity - cash_reserved - margin_reserved),
+                    Decimal(0),
+                )
+            else:
+                unreserved_cash = max(avail_dec - cash_reserved - margin_reserved, Decimal(0))
+            spendable_cash = max(unreserved_cash - reserve_req, Decimal(0))
+    else:
+        raw_cash_dec = None
+        unreserved_cash = None
+        reserve_req = Decimal(0)
+        spendable_cash = None
+
+    effective_remaining_notional = remaining_by_gross_limit
+    for opt_rem in (remaining_by_leverage, remaining_by_net, remaining_by_single_name):
+        if opt_rem is not None:
+            effective_remaining_notional = min(effective_remaining_notional, opt_rem)
+
+    gross_mult = (
+        _dec(budget["gross_limit_multiple"])
+        if budget.get("gross_limit_multiple") is not None
+        else ((gross_limit_dec / equity) if (gross_limit_dec is not None and equity is not None and equity > 0) else None)
+    )
+    net_mult = (
+        _dec(budget["net_limit_multiple"])
+        if budget.get("net_limit_multiple") is not None
+        else ((net_limit_dec / equity) if (net_limit_dec is not None and equity is not None and equity > 0) else None)
+    )
+    lev_mult = _dec(max_leverage_raw) if max_leverage_raw is not None else None
+
+    return {
+        "underlying": norm_underlying,
+        "direction": direction.upper(),
+        "equity": equity,
+        "raw_cash": raw_cash_dec,
+        "unreserved_cash": unreserved_cash,
+        "cash_reserved": cash_reserved,
+        "margin_reserved": margin_reserved,
+        "cash_reserve_required": reserve_req,
+        "spendable_cash": spendable_cash,
+        "gross_limit": gross_limit_dec,
+        "gross_limit_multiple": gross_mult,
+        "gross_used": gross_used,
+        "leverage_limit": leverage_limit_dec,
+        "max_leverage": lev_mult,
+        "net_limit": net_limit_dec,
+        "net_limit_multiple": net_mult,
+        "signed_net_used": signed_net_used,
+        "single_name_limit": single_name_limit_dec,
+        "max_single_name_weight": max_single_name_weight,
+        "existing_underlying_gross": existing_underlying_gross,
+        "underlying_same_dir_notional": underlying_same_dir_notional,
+        "remaining_by_gross_limit": remaining_by_gross_limit,
+        "remaining_by_leverage": remaining_by_leverage,
+        "remaining_by_net": remaining_by_net,
+        "remaining_by_single_name": remaining_by_single_name,
+        "effective_remaining_notional": max(effective_remaining_notional, Decimal(0)),
+        "active_reservations_count": active_res_count,
+        "risk_policy_id": budget.get("risk_policy_id"),
+        "risk_policy_version": budget.get("risk_policy_version"),
+        "risk_policy_digest": budget.get("risk_policy_digest"),
+    }
+
+
+def remaining_gross_notional(budget: Mapping[str, Any]) -> Decimal:
+    """Gross notional still spendable; a missing limit leaves nothing."""
+    raw_res = budget.get("order_reservations")
+    if raw_res is None:
+        raw_res = budget.get("reservations")
+    res_items = list(raw_res.values()) if isinstance(raw_res, Mapping) else (raw_res if isinstance(raw_res, list) else [])
+    res_gross = Decimal(0)
+    res_cash = Decimal(0)
+    res_margin = Decimal(0)
+    for item in res_items:
+        if not isinstance(item, Mapping):
+            continue
+        if bool(item.get("is_risk_reducing") or item.get("close_leg") or item.get("reason_code") == "close_leg"):
+            continue
+        qty = abs(_dec(item.get("units") if item.get("units") is not None else (item.get("quantity") or 0)))
+        mult = _dec(item.get("multiplier") if item.get("multiplier") is not None else (item.get("unit") or 1))
+        px = _dec(item.get("price") if item.get("price") is not None else (item.get("mark_price") or 0))
+        raw_n = item.get("notional") if item.get("notional") is not None else item.get("gross_notional")
+        notional = abs(_dec(raw_n)) if raw_n is not None else (qty * mult * px)
+        res_gross += notional
+        raw_c = item.get("cash_reserved") if item.get("cash_reserved") is not None else item.get("cash_required")
+        if raw_c is not None:
+            res_cash += max(Decimal(0), _dec(raw_c))
+        raw_m = item.get("margin_reserved") if item.get("margin_reserved") is not None else item.get("margin_required")
+        if raw_m is not None:
+            res_margin += max(Decimal(0), _dec(raw_m))
+    folded_res_u_map = (
+        budget.get("reserved_underlying_notional")
+        if isinstance(budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_dec(v or 0) for v in folded_res_u_map.values())
+    scalar_cash_res = _dec(budget.get("cash_reserved") or budget.get("reserved_cash") or 0)
+    scalar_margin_res = _dec(
+        budget.get("margin_reserved")
+        or budget.get("order_margin_reserved")
+        or budget.get("reserved_margin")
+        or 0
+    )
+    reservations_folded = (
+        "reserved_underlying_notional" in budget
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _dec(budget.get("gross_used") or 0) >= res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded else max(res_gross - folded_res_gross, Decimal(0))
+
+    explicit = budget.get("max_gross_notional_remaining")
+    if explicit is not None:
+        return max(_dec(explicit) - unfolded_res_gross, Decimal(0))
+    limit = _effective_gross_limit(budget)
+    if limit <= 0:
+        return Decimal(0)
+    return max(limit - (_dec(budget.get("gross_used") or 0) + unfolded_res_gross), Decimal(0))
 
 
 def _unit_notional(candidate: Mapping[str, Any]) -> Decimal:
@@ -154,10 +543,121 @@ def budget_unavailable_no_trade(
     return _no_trade(view, [], "candidates_unavailable", text)
 
 
+def _candidate_risk_unit_caps(
+    candidate: Mapping[str, Any],
+    sizing_state: Mapping[str, Any],
+) -> dict[str, int | None]:
+    """Compute per-constraint unit caps for ``candidate`` under ``sizing_state``."""
+    per_unit = _unit_notional(candidate)
+    if per_unit <= 0:
+        return {
+            "candidate_max_units_by_risk": 0,
+            "gross_limit": 0,
+            "max_leverage": 0,
+            "net_limit": 0,
+            "max_single_name_weight": 0,
+            "available_cash_pre_fee": 0,
+            "initial_margin": 0,
+            "effective_risk_max_units": 0,
+        }
+    u_cand = max(int(candidate.get("max_units_by_risk") or 0), 0)
+    u_gross = max(int(sizing_state["remaining_by_gross_limit"] // per_unit), 0)
+    u_lev = (
+        max(int(sizing_state["remaining_by_leverage"] // per_unit), 0)
+        if sizing_state.get("remaining_by_leverage") is not None
+        else None
+    )
+    u_net = (
+        max(int(sizing_state["remaining_by_net"] // per_unit), 0)
+        if sizing_state.get("remaining_by_net") is not None
+        else None
+    )
+    u_single = (
+        max(int(sizing_state["remaining_by_single_name"] // per_unit), 0)
+        if sizing_state.get("remaining_by_single_name") is not None
+        else None
+    )
+    spendable = sizing_state.get("spendable_cash")
+    is_cash_long = candidate.get("kind") == "cash_share" and sizing_state.get("direction") == "LONG"
+    if is_cash_long and spendable is not None:
+        u_cash_pre_fee: int | None = max(int(spendable // per_unit), 0)
+    else:
+        u_cash_pre_fee = None
+
+    raw_margin = candidate.get("initial_margin_per_unit")
+    if not is_cash_long and raw_margin is not None and _dec(raw_margin) > 0 and spendable is not None:
+        u_margin: int | None = max(int(spendable // _dec(raw_margin)), 0)
+    else:
+        u_margin = None
+
+    active_caps = [
+        u
+        for u in (u_cand, u_gross, u_lev, u_net, u_single, u_cash_pre_fee, u_margin)
+        if u is not None
+    ]
+    eff_max = min(active_caps) if active_caps else 0
+    return {
+        "candidate_max_units_by_risk": u_cand,
+        "gross_limit": u_gross,
+        "max_leverage": u_lev,
+        "net_limit": u_net,
+        "max_single_name_weight": u_single,
+        "available_cash_pre_fee": u_cash_pre_fee,
+        "initial_margin": u_margin,
+        "effective_risk_max_units": eff_max,
+    }
+
+
+def _satisfies_post_fee_equity_limits(
+    candidate: Mapping[str, Any],
+    units: int,
+    sizing_state: Mapping[str, Any],
+) -> bool:
+    """Verify post-fee exposure and single-name weights against ``equity_after = equity - fee``."""
+    if units <= 0:
+        return True
+    equity = sizing_state.get("equity")
+    if equity is None or equity <= 0:
+        return True
+    notional = _unit_notional(candidate) * units
+    if candidate.get("kind") == "cash_share" and sizing_state.get("direction") == "LONG":
+        req_cash = _cash_buy_required(candidate, units)
+        fee = max(req_cash - notional, Decimal(0))
+    else:
+        fee = (
+            _dec(candidate.get("fee_per_unit_per_side") or 0) * units
+            + notional * _dec(candidate.get("tax_rate_per_side") or 0)
+        )
+    equity_after = equity - fee
+    if equity_after <= 0:
+        return False
+    eps = Decimal("1e-9")
+    max_single_w = sizing_state.get("max_single_name_weight")
+    if max_single_w is not None:
+        if (sizing_state["existing_underlying_gross"] + notional) > max_single_w * equity_after + eps:
+            return False
+    gross_mult = sizing_state.get("gross_limit_multiple")
+    if gross_mult is not None:
+        if (sizing_state["gross_used"] + notional) > gross_mult * equity_after + eps:
+            return False
+    lev_mult = sizing_state.get("max_leverage")
+    if lev_mult is not None:
+        if (sizing_state["gross_used"] + notional) > lev_mult * equity_after + eps:
+            return False
+    net_mult = sizing_state.get("net_limit_multiple")
+    if net_mult is not None:
+        signed_delta = notional if sizing_state.get("direction") == "LONG" else -notional
+        if abs(sizing_state["signed_net_used"] + signed_delta) > net_mult * equity_after + eps:
+            return False
+    return True
+
+
 def _binding_constraint(
     direction: str,
     candidates: Sequence[Mapping[str, Any]],
     budget: Mapping[str, Any],
+    book: Mapping[str, Any] | None = None,
+    underlying: str | None = None,
 ) -> str:
     side = direction.lower()
     capable = [c for c in candidates if side in (c.get("side_capability") or [])]
@@ -166,12 +666,60 @@ def _binding_constraint(
     best = min(capable, key=lambda c: (_unit_notional(c), str(c.get("instrument_id"))))
     if best.get("price") is None or _dec(best["price"]) <= 0:
         return "price_unavailable"
-    if _unit_notional(best) > remaining_gross_notional(budget):
+    min_unit = _unit_notional(best)
+    u_code = underlying or str(best.get("underlying") or str(best.get("instrument_id") or "").split(":", 1)[-1])
+    state = _resolve_sizing_state(u_code, direction, candidates, book, budget)
+
+    failing_notional_limits: list[tuple[Decimal, int, str]] = []
+    if state["remaining_by_single_name"] is not None and state["remaining_by_single_name"] < min_unit:
+        failing_notional_limits.append((state["remaining_by_single_name"], 0, "single_name_limit"))
+    if state["remaining_by_gross_limit"] < min_unit:
+        failing_notional_limits.append((state["remaining_by_gross_limit"], 1, "gross_limit"))
+    if (
+        state["remaining_by_leverage"] is not None
+        and state["remaining_by_leverage"] < min_unit
+        and state["remaining_by_leverage"] < state["remaining_by_gross_limit"]
+    ):
+        failing_notional_limits.append((state["remaining_by_leverage"], 2, "leverage_limit"))
+    if state["remaining_by_net"] is not None and state["remaining_by_net"] < min_unit:
+        failing_notional_limits.append((state["remaining_by_net"], 3, "net_limit"))
+    if failing_notional_limits:
+        failing_notional_limits.sort(key=lambda item: (item[0], item[1]))
+        return failing_notional_limits[0][2]
+
+    spendable = state["spendable_cash"]
+    unreserved = state["unreserved_cash"]
+    raw_cash = state["raw_cash"]
+    if best.get("kind") == "cash_share" and direction.upper() == "LONG":
+        one_req = _cash_buy_required(best, 1)
+        if spendable is not None and one_req > spendable:
+            if unreserved is not None and one_req <= unreserved and state["cash_reserve_required"] > 0:
+                return "cash_reserve"
+            if raw_cash is not None and one_req <= raw_cash and (state["cash_reserved"] > 0 or state["margin_reserved"] > 0):
+                return "cash_reserved"
+            if min_unit <= spendable < one_req:
+                return "insufficient_cash_for_commission"
+            return "insufficient_cash"
+    else:
+        margin = best.get("initial_margin_per_unit")
+        if margin is not None:
+            m_dec = _dec(margin)
+            if spendable is None or m_dec > spendable:
+                if unreserved is not None and m_dec <= unreserved and state["cash_reserve_required"] > 0:
+                    return "cash_reserve"
+                if raw_cash is not None and m_dec <= raw_cash and (state["cash_reserved"] > 0 or state["margin_reserved"] > 0):
+                    return "cash_reserved"
+                return "insufficient_initial_margin"
+
+    if not _satisfies_post_fee_equity_limits(best, 1, state):
+        if state["max_single_name_weight"] is not None:
+            return "single_name_limit"
+        if state["net_limit_multiple"] is not None:
+            return "net_limit"
+        if state["max_leverage"] is not None:
+            return "leverage_limit"
         return "gross_limit"
-    margin = best.get("initial_margin_per_unit")
-    available = budget.get("available_cash")
-    if margin is not None and (available is None or _dec(margin) > _dec(available)):
-        return "insufficient_initial_margin"
+
     return "max_units_by_risk"
 
 
@@ -273,25 +821,52 @@ def fit_cash_share_buy(
     budget: Mapping[str, Any],
     *,
     floor_one: bool = False,
+    sizing_state: Mapping[str, Any] | None = None,
 ) -> int:
-    """Shrink a cash-share buy until notional plus commission fits.
+    """Shrink a cash-share buy until notional plus commission and post-fee limits fit.
 
-    The cap is ``min(target, available_cash)`` using ``taiwan_cash_costs`` (the
+    The cap is ``min(target, spendable_cash)`` using ``taiwan_cash_costs`` (the
     same cost the ledger and paper risk gate charge). ``floor_one`` keeps one unit
-    when the target alone is below its cost but cash still affords it. Returns 0
-    when even one unit plus commission exceeds available cash.
+    when the target alone is below its cost but cash and risk limits still afford it.
+    Returns 0 when even one unit plus commission exceeds spendable cash or risk limits.
     """
-    available = budget.get("available_cash")
-    cash_cap = _dec(available) if available is not None else None
+    state = (
+        sizing_state
+        if sizing_state is not None
+        else _resolve_sizing_state(
+            str(candidate.get("underlying") or str(candidate.get("instrument_id") or "").split(":", 1)[-1]),
+            "LONG",
+            [candidate],
+            None,
+            budget,
+        )
+    )
+    cash_cap = state.get("spendable_cash")
     one = _cash_buy_required(candidate, 1)
     if cash_cap is not None and one > cash_cap:
         return 0
-    cap = target if cash_cap is None else min(target, cash_cap)
-    units = int(units)
-    while units > 1 and _cash_buy_required(candidate, units) > cap:
-        units -= 1
-    if units < 1 or (_cash_buy_required(candidate, units) > cap and not floor_one):
+    risk_caps = _candidate_risk_unit_caps(candidate, state)
+    max_by_risk = int(risk_caps["effective_risk_max_units"] or 0)
+    if max_by_risk < 1:
         return 0
+    cap = target if cash_cap is None else min(target, cash_cap)
+    units = min(int(units), max_by_risk)
+    while units > 1 and (
+        _cash_buy_required(candidate, units) > cap
+        or not _satisfies_post_fee_equity_limits(candidate, units, state)
+    ):
+        units -= 1
+    if units < 1:
+        return 0
+    if not _satisfies_post_fee_equity_limits(candidate, units, state):
+        return 0
+    if _cash_buy_required(candidate, units) > cap:
+        if not floor_one:
+            return 0
+        if cash_cap is not None and _cash_buy_required(candidate, units) > cash_cap:
+            return 0
+        if _unit_notional(candidate) * units > state["effective_remaining_notional"]:
+            return 0
     return units
 
 
@@ -344,8 +919,8 @@ def _trim_same_direction(view, candidates, params, budget, book, underlying, dir
     strength = view.get("strength")
     if strength is None:
         return None
-    limit = budget.get("gross_limit")
-    if limit is None:
+    limit = _effective_gross_limit(budget)
+    if limit <= 0:
         explicit = budget.get("max_gross_notional_remaining")
         if explicit is None:
             return None
@@ -365,6 +940,16 @@ def _trim_same_direction(view, candidates, params, budget, book, underlying, dir
         held_total += int(p["units"])
     fraction = _dec(params.get("rebalance_band_fraction", NOTIONAL_REBALANCE_BAND_FRACTION))
     target = _dec(strength) * _dec(params["notional_fraction_at_full_strength"]) * _dec(limit)
+    equity_raw = budget.get("equity")
+    equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
+    if budget.get("max_single_name_notional") is not None:
+        target = min(target, _dec(budget["max_single_name_notional"]))
+    elif budget.get("max_single_name_weight") is not None and equity is not None:
+        target = min(target, _dec(budget["max_single_name_weight"]) * equity)
+    if budget.get("net_limit") is not None:
+        target = min(target, _dec(budget["net_limit"]))
+    elif budget.get("net_limit_multiple") is not None and equity is not None:
+        target = min(target, _dec(budget["net_limit_multiple"]) * equity)
     if not (target.is_finite() and fraction.is_finite()) or target < 0 or not 0 <= fraction <= 1:
         return None
     band = max(band, target * fraction)
@@ -469,6 +1054,7 @@ def decide(
             )
 
     # Step 3: feasible set.
+    state = _resolve_sizing_state(underlying, direction, candidates, book, budget)
     feasible = feasible_candidates(direction, candidates)
     if not feasible:
         unavailable = any(
@@ -487,27 +1073,51 @@ def decide(
             view,
             candidates,
             "no_feasible_instrument",
-            _binding_constraint(direction, candidates, budget),
+            _binding_constraint(direction, candidates, budget, book, underlying),
         )
 
     # Step 4: target notional.
     target = target_notional(direction, strength, feasible, params, budget)
+    desired_delta = (
+        min(target, state["remaining_by_single_name"])
+        if state["remaining_by_single_name"] is not None
+        else target
+    )
 
     # Step 5: size and score every feasible candidate.
     scored: list[tuple[Decimal, Decimal, str, Mapping[str, Any], int]] = []
     for c in feasible:
         per_unit = _unit_notional(c)
-        units = clamped_units(c, target)
+        risk_caps = _candidate_risk_unit_caps(c, state)
+        eff_max_units = int(risk_caps["effective_risk_max_units"] or 0)
+        if eff_max_units < 1:
+            continue
+        units = min(clamped_units(c, desired_delta), eff_max_units)
         if direction == "LONG" and c.get("kind") == "cash_share":
-            units = fit_cash_share_buy(c, units, target, budget, floor_one=True)
+            units = fit_cash_share_buy(
+                c,
+                units,
+                target,
+                budget,
+                floor_one=True,
+                sizing_state=state,
+            )
             if units < 1:
                 continue
-        score = abs(units * per_unit - target) + units * round_trip_cost_per_unit(c)
+        else:
+            while units > 0 and not _satisfies_post_fee_equity_limits(c, units, state):
+                units -= 1
+            if units < 1:
+                continue
+        score = abs(units * per_unit - desired_delta) + units * round_trip_cost_per_unit(c)
         scored.append((score, per_unit, str(c["instrument_id"]), c, units))
     scored.sort(key=lambda item: (item[0], item[1], item[2]))
     if not scored:
+        detail = _binding_constraint(direction, candidates, budget, book, underlying)
+        if detail == "max_units_by_risk":
+            detail = "insufficient_cash_for_commission"
         return _no_trade(
-            view, candidates, "no_feasible_instrument", "insufficient_cash_for_commission"
+            view, candidates, "no_feasible_instrument", detail
         )
     score, _, instrument_id, winner, units = scored[0]
 
@@ -615,15 +1225,35 @@ TARGET_POLICY_KIND = "target_position_v1"
 
 
 def allocate_targets(views, budget, parameters):
-    """Allocate one bar from the absolute gross limit, before any order is sized.
+    """Allocate one bar from the effective gross/leverage/net/per-name limits, before any order is sized.
 
     The snapshot is replay input. Decimal summation in canonical key order makes
     it independent of both market enumeration and the order fills later arrive.
     """
-    limit = _dec(budget.get("gross_limit") or 0)
+    limit = _effective_gross_limit(budget)
     fraction = _dec(parameters.get("notional_fraction_at_full_strength", 1))
     if not limit.is_finite() or limit <= 0 or not fraction.is_finite() or not 0 < fraction <= 1:
         raise ValueError("allocation_budget_unavailable")
+    equity_raw = budget.get("equity")
+    equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
+    per_name_cap = (
+        _dec(budget["max_single_name_notional"])
+        if budget.get("max_single_name_notional") is not None
+        else (
+            _dec(budget["max_single_name_weight"]) * equity
+            if budget.get("max_single_name_weight") is not None and equity is not None
+            else None
+        )
+    )
+    net_cap = (
+        _dec(budget["net_limit"])
+        if budget.get("net_limit") is not None
+        else (
+            _dec(budget["net_limit_multiple"]) * equity
+            if budget.get("net_limit_multiple") is not None and equity is not None
+            else None
+        )
+    )
     raw = {}
     for symbol, view in sorted(views.items()):
         strength = _dec(1 if view.get("strength") is None else view["strength"])
@@ -633,9 +1263,25 @@ def allocate_targets(views, budget, parameters):
                        if view["direction"] in {"LONG", "SHORT"} else Decimal(0))
     total = sum(raw.values(), Decimal(0))
     scale = min(Decimal(1), limit / total) if total else Decimal(1)
+    if net_cap is not None and net_cap > 0 and total > 0:
+        signed_total = abs(
+            sum(
+                (raw[s] if views[s]["direction"] == "LONG" else -raw[s])
+                for s in sorted(raw)
+                if views[s]["direction"] in {"LONG", "SHORT"}
+            )
+        )
+        if signed_total * scale > net_cap:
+            scale = min(scale, net_cap / signed_total)
+    targets = {}
+    for s, n in raw.items():
+        t_val = n * scale
+        if per_name_cap is not None and t_val > per_name_cap:
+            t_val = per_name_cap
+        targets[s] = float(t_val)
     return {"policy_kind": TARGET_POLICY_KIND, "gross_budget": float(limit),
             "raw_targets": {s: float(n) for s, n in raw.items()},
-            "scale": float(scale), "targets": {s: float(n * scale) for s, n in raw.items()},
+            "scale": float(scale), "targets": targets,
             "views": _json_safe(views)}
 
 
@@ -673,6 +1319,13 @@ def decide_target_position(view, candidates, book, budget, parameters):
             return no("candidates_unavailable", "budget_unavailable: " + field)
     if _dec(budget["gross_limit"]) <= 0:
         return no("candidates_unavailable", "budget_unavailable: gross_limit")
+    direction = str(view.get("direction", "FLAT")).upper()
+    state = _resolve_sizing_state(underlying, direction, candidates, book, budget)
+    effective_target = (
+        min(target, state["single_name_limit"])
+        if state["single_name_limit"] is not None
+        else target
+    )
     exposure = Decimal(0)
     for p in positions:
         candidate = by_id.get(str(p["instrument_id"]))
@@ -680,11 +1333,10 @@ def decide_target_position(view, candidates, book, budget, parameters):
             return no("candidates_unavailable", "held_instrument_mark_unavailable")
         exposure += _unit_notional(candidate) * int(p["units"])
         band = max(band, _unit_notional(candidate))
-    band = max(band, target * fraction)
-    direction = str(view.get("direction", "FLAT")).upper()
+    band = max(band, effective_target * fraction)
     opposite = any(p["direction"] != direction for p in positions)
-    liquidate = direction == "FLAT" or target == 0 or opposite
-    if positions and (liquidate or exposure - target > band):
+    liquidate = direction == "FLAT" or effective_target == 0 or opposite
+    if positions and (liquidate or exposure - effective_target > band):
         selector = view.get("reconcile_instrument_id")
         selected = [p for p in positions if not selector or p["instrument_id"] == selector]
         if not selected:
@@ -693,7 +1345,7 @@ def decide_target_position(view, candidates, book, budget, parameters):
         candidate = by_id[str(p["instrument_id"])]
         held = int(p["units"])
         # Floor proportional reductions; never cross zero or close more than held.
-        units = held if liquidate else int(Decimal(held) * (exposure - target) / exposure)
+        units = held if liquidate else int(Decimal(held) * (exposure - effective_target) / exposure)
         if units < 1:
             return no("already_at_target", "reduction below one held unit")
         return finish(_chosen(view, candidates, params,
@@ -702,9 +1354,9 @@ def decide_target_position(view, candidates, book, budget, parameters):
             units=min(held, units), reason_code="close_leg",
             reason_text="target position liquidation" if liquidate else "target position reduction",
             target_notional=target))
-    if direction == "FLAT" or target == 0:
+    if direction == "FLAT" or effective_target == 0:
         return no("flat_view", "zero target with no holdings")
-    delta = target - exposure
+    delta = effective_target - exposure
     if positions and delta <= band:
         return no("already_at_target", "target within rebalance band")
     if delta <= 0:
@@ -713,15 +1365,23 @@ def decide_target_position(view, candidates, book, budget, parameters):
     scored = []
     for c in feasible:
         unit = _unit_notional(c)
-        units = min(clamped_units(c, delta), int(delta / unit))
+        risk_caps = _candidate_risk_unit_caps(c, state)
+        eff_max_units = int(risk_caps["effective_risk_max_units"] or 0)
+        if eff_max_units < 1:
+            continue
+        units = min(clamped_units(c, delta), int(delta / unit), eff_max_units)
         if units >= 1 and direction == "LONG" and c.get("kind") == "cash_share":
-            units = fit_cash_share_buy(c, units, delta, budget)
+            raw_delta_target = max(target - exposure, Decimal(0))
+            units = fit_cash_share_buy(c, units, raw_delta_target, budget, sizing_state=state)
+        elif units >= 1:
+            while units > 0 and not _satisfies_post_fee_equity_limits(c, units, state):
+                units -= 1
         if units < 1:
             continue
         score = abs(units * unit - delta) + units * round_trip_cost_per_unit(c)
         scored.append((score, unit, str(c["instrument_id"]), c, units))
     if not scored:
-        return no("no_feasible_instrument", _binding_constraint(direction, candidates, budget))
+        return no("no_feasible_instrument", _binding_constraint(direction, candidates, budget, book, underlying))
     _, _, instrument_id, winner, units = min(scored, key=lambda row: row[:3])
     reason = "long_cash" if instrument_id.startswith("eq:") else (
         "long_lever" if direction == "LONG" else "short_via_future")
@@ -729,6 +1389,353 @@ def decide_target_position(view, candidates, book, budget, parameters):
         side="buy" if direction == "LONG" else "sell", units=units,
         reason_code=reason, reason_text="add allocated target position delta",
         target_notional=target))
+
+
+def evaluate_pre_trade_sizing(
+    view: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+    book: Mapping[str, Any] | None,
+    budget: Mapping[str, Any],
+    parameters: Mapping[str, Any] | None = None,
+    *,
+    policy_kind: str = POLICY_KIND,
+    decision: Mapping[str, Any] | None = None,
+    decider: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate pre-trade sizing and return complete policy/limit/cash/concentration breakdown.
+
+    When ``decision`` is provided (the normal producer path), derive all sizing evidence
+    from that actual ``Chosen``/``NoTrade`` record without recomputing ``decide_for_policy``.
+    """
+    params = _resolved_parameters(parameters)
+    direction = str(view.get("direction") or "FLAT").upper()
+    underlying = str(view.get("underlying") or "")
+    state = _resolve_sizing_state(underlying, direction, candidates, book, budget)
+    if decision is not None:
+        resolved_decision = dict(decision)
+    else:
+        if policy_kind == TARGET_POLICY_KIND or decider is None:
+            resolved_decision = decide_for_policy(policy_kind, view, candidates, book, budget, parameters)
+        else:
+            resolved_decision = decide_validated(view, candidates, book, budget, params, decider=decider)
+        if view.get("exit_reason") and resolved_decision.get("reason_code") != "close_leg":
+            resolved_decision = budget_unavailable_no_trade(
+                view, "held_position", "candidate pool exit has no validated close leg"
+            )
+    decision = resolved_decision
+
+    by_id = {str(c.get("instrument_id")): c for c in candidates}
+    chosen_id = decision.get("instrument_id") if not is_no_trade(decision) else None
+    winner = by_id.get(str(chosen_id)) if chosen_id else None
+    if winner is None:
+        side_key = direction.lower()
+        capable = [c for c in candidates if side_key in (c.get("side_capability") or [])]
+        if capable:
+            winner = min(capable, key=lambda c: (_unit_notional(c), str(c.get("instrument_id"))))
+        elif candidates:
+            winner = candidates[0]
+
+    feasible = feasible_candidates(direction, candidates)
+    if decision.get("target_notional") is not None:
+        raw_target = _dec(decision["target_notional"])
+    elif view.get("target_notional") is not None:
+        raw_target = _dec(view["target_notional"])
+    elif feasible and direction in ("LONG", "SHORT"):
+        raw_target = target_notional(direction, view.get("strength"), feasible, params, budget)
+    elif direction in ("LONG", "SHORT") and view.get("strength") is not None:
+        raw_target = (
+            _dec(view["strength"])
+            * _dec(params["notional_fraction_at_full_strength"])
+            * remaining_gross_notional(budget)
+        )
+    else:
+        raw_target = Decimal(0)
+
+    effective_target = (
+        min(raw_target, state["single_name_limit"])
+        if state["single_name_limit"] is not None and raw_target > 0
+        else raw_target
+    )
+    has_existing_offset = policy_kind == TARGET_POLICY_KIND or (
+        state["underlying_same_dir_notional"] > 0 and params.get("allow_pyramiding")
+    )
+    if has_existing_offset:
+        raw_desired_delta = max(raw_target - state["underlying_same_dir_notional"], Decimal(0))
+        desired_delta = max(effective_target - state["underlying_same_dir_notional"], Decimal(0))
+    else:
+        raw_desired_delta = raw_target
+        desired_delta = effective_target
+
+    permitted_units = int(decision.get("units") or 0) if not is_no_trade(decision) else 0
+    is_close_leg = decision.get("reason_code") == "close_leg"
+
+    price = float(winner["price"]) if (winner is not None and winner.get("price") is not None) else 0.0
+    per_unit = _unit_notional(winner) if winner is not None else Decimal(0)
+
+    def _post_fee_cap(u_start: int | None, limit_mult: Decimal | None, used_before: Decimal, *, directional_net: bool = False) -> int | None:
+        if u_start is None:
+            return None
+        u = max(int(u_start), 0)
+        eq = state.get("equity")
+        if limit_mult is None or eq is None or eq <= 0 or winner is None or per_unit <= 0:
+            return u
+        eps = Decimal("1e-9")
+        while u > 0:
+            notional_u = per_unit * u
+            if winner.get("kind") == "cash_share" and direction == "LONG":
+                fee_u = max(_cash_buy_required(winner, u) - notional_u, Decimal(0))
+            else:
+                fee_u = (
+                    _dec(winner.get("fee_per_unit_per_side") or 0) * u
+                    + notional_u * _dec(winner.get("tax_rate_per_side") or 0)
+                )
+            eq_after_u = eq - fee_u
+            if eq_after_u <= 0:
+                u -= 1
+                continue
+            if directional_net:
+                s_delta = notional_u if direction == "LONG" else -notional_u
+                after_val = abs(used_before + s_delta)
+            else:
+                after_val = used_before + notional_u
+            if after_val <= limit_mult * eq_after_u + eps:
+                break
+            u -= 1
+        return max(u, 0)
+
+    constraint_unit_caps: dict[str, int | None] = {}
+    u_single_eff: int | None = None
+    u_lev_eff: int | None = None
+    u_net_eff: int | None = None
+    u_gross_eff: int | None = None
+    if winner is not None and per_unit > 0:
+        risk_caps = _candidate_risk_unit_caps(winner, state)
+        u_target = (
+            max(int((raw_desired_delta / per_unit).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 0)
+            if policy_kind == POLICY_KIND
+            else max(int(raw_desired_delta // per_unit), 0)
+        )
+        u_raw_cash = (
+            max(int(state["raw_cash"] // per_unit), 0)
+            if state["raw_cash"] is not None and winner.get("kind") == "cash_share"
+            else None
+        )
+        u_unreserved_cash = (
+            max(int(state["unreserved_cash"] // per_unit), 0)
+            if state["unreserved_cash"] is not None and winner.get("kind") == "cash_share"
+            else None
+        )
+        u_cash_after_fees: int | None = None
+        if winner.get("kind") == "cash_share" and direction == "LONG" and state["spendable_cash"] is not None:
+            start_u = int(state["spendable_cash"] // per_unit)
+            while start_u > 0 and _cash_buy_required(winner, start_u) > state["spendable_cash"]:
+                start_u -= 1
+            u_cash_after_fees = max(start_u, 0)
+        u_single_eff = _post_fee_cap(
+            risk_caps["max_single_name_weight"], state["max_single_name_weight"], state["existing_underlying_gross"]
+        )
+        u_lev_eff = _post_fee_cap(risk_caps["max_leverage"], state["max_leverage"], state["gross_used"])
+        u_net_eff = _post_fee_cap(
+            risk_caps["net_limit"], state["net_limit_multiple"], state["signed_net_used"], directional_net=True
+        )
+        u_gross_eff = _post_fee_cap(risk_caps["gross_limit"], state["gross_limit_multiple"], state["gross_used"])
+        constraint_unit_caps = {
+            "target_notional": u_target,
+            "gross_limit": risk_caps["gross_limit"],
+            "max_leverage": risk_caps["max_leverage"],
+            "net_limit": risk_caps["net_limit"],
+            "max_single_name_weight": risk_caps["max_single_name_weight"],
+            "raw_cash_pre_fee": u_raw_cash,
+            "unreserved_cash_pre_fee": u_unreserved_cash,
+            "spendable_cash_pre_fee": risk_caps["available_cash_pre_fee"],
+            "available_cash_after_fees": u_cash_after_fees,
+            "initial_margin": risk_caps["initial_margin"],
+        }
+
+    # Determine binding limit: only a constraint whose cap actually equals permitted_units can bind
+    if is_close_leg:
+        binding_limit = "existing_holding_close_leg"
+    elif is_no_trade(decision):
+        if decision.get("reason_code") == "already_at_target":
+            binding_limit = "already_at_target"
+        elif decision.get("reason_code") == "flat_view":
+            binding_limit = "flat_view"
+        else:
+            binding_limit = str(decision.get("detail") or decision.get("reason_code") or "no_feasible_instrument")
+    else:
+        binding_limit = "target_notional"
+        if winner is not None and per_unit > 0:
+            u_t = constraint_unit_caps.get("target_notional")
+            u_single = constraint_unit_caps.get("max_single_name_weight")
+            u_net = constraint_unit_caps.get("net_limit")
+            u_lev = constraint_unit_caps.get("max_leverage")
+            u_gross = constraint_unit_caps.get("gross_limit")
+            u_cash_fee = constraint_unit_caps.get("available_cash_after_fees")
+            u_spend_pre = constraint_unit_caps.get("spendable_cash_pre_fee")
+            u_unres_pre = constraint_unit_caps.get("unreserved_cash_pre_fee")
+            u_raw_pre = constraint_unit_caps.get("raw_cash_pre_fee")
+            u_margin = constraint_unit_caps.get("initial_margin")
+
+            candidates_binding: list[tuple[int, int, str]] = []
+            if u_single is not None and permitted_units in (u_single, u_single_eff) and (u_t is None or permitted_units <= u_t):
+                candidates_binding.append((permitted_units, 0, "max_single_name_weight"))
+            if u_cash_fee is not None and permitted_units == u_cash_fee:
+                if state["cash_reserve_required"] > 0 and u_unres_pre is not None and u_spend_pre is not None and u_spend_pre < u_unres_pre:
+                    candidates_binding.append((u_cash_fee, 1, "cash_reserve"))
+                elif (state["cash_reserved"] > 0 or state["margin_reserved"] > 0) and u_raw_pre is not None and u_unres_pre is not None and u_unres_pre < u_raw_pre:
+                    candidates_binding.append((u_cash_fee, 2, "cash_reserved"))
+                else:
+                    candidates_binding.append((u_cash_fee, 3, "available_cash_after_fees"))
+            if u_margin is not None and permitted_units == u_margin:
+                if state["cash_reserve_required"] > 0:
+                    candidates_binding.append((u_margin, 1, "cash_reserve"))
+                elif state["cash_reserved"] > 0 or state["margin_reserved"] > 0:
+                    candidates_binding.append((u_margin, 2, "cash_reserved"))
+                else:
+                    candidates_binding.append((u_margin, 3, "initial_margin"))
+            if u_lev is not None and u_gross is not None and u_lev < u_gross and permitted_units in (u_lev, u_lev_eff):
+                candidates_binding.append((permitted_units, 4, "max_leverage"))
+            if u_net is not None and (u_gross is None or u_net < u_gross) and permitted_units in (u_net, u_net_eff):
+                candidates_binding.append((permitted_units, 5, "net_limit"))
+            if u_gross is not None and permitted_units in (u_gross, u_gross_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 6, "gross_limit"))
+            if u_net is not None and permitted_units in (u_net, u_net_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 7, "net_limit"))
+            if u_lev is not None and permitted_units in (u_lev, u_lev_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 8, "max_leverage"))
+            if u_t is not None and permitted_units == u_t:
+                candidates_binding.append((u_t, 9, "target_notional"))
+            if candidates_binding:
+                candidates_binding.sort(key=lambda item: (item[0], item[1]))
+                binding_limit = candidates_binding[0][2]
+
+    order_notional = per_unit * permitted_units
+    if permitted_units > 0 and winner is not None:
+        if winner.get("kind") == "cash_share" and decision.get("side") == "buy":
+            fee_inclusive_cash = _cash_buy_required(winner, permitted_units)
+            fee_amount = max(fee_inclusive_cash - order_notional, Decimal(0))
+        elif winner.get("kind") == "cash_share" and decision.get("side") == "sell":
+            fee_inclusive_cash = Decimal(0)
+            fee_amount = Decimal(0)
+        else:
+            margin_per = _dec(winner.get("initial_margin_per_unit") or 0)
+            fee_amount = (
+                _dec(winner.get("fee_per_unit_per_side") or 0) * permitted_units
+                + order_notional * _dec(winner.get("tax_rate_per_side") or 0)
+            )
+            fee_inclusive_cash = (margin_per * permitted_units + fee_amount) if not is_close_leg else fee_amount
+    else:
+        fee_inclusive_cash = Decimal(0)
+        fee_amount = Decimal(0)
+
+    raw_cash_before = state["raw_cash"] if state["raw_cash"] is not None else (state["spendable_cash"] or Decimal(0))
+    spendable_before = state["spendable_cash"] if state["spendable_cash"] is not None else raw_cash_before
+    equity_before = (
+        state["equity"]
+        if state["equity"] is not None and state["equity"] > 0
+        else (raw_cash_before if raw_cash_before > 0 else _effective_gross_limit(budget))
+    )
+    unreserved_before = (
+        state["unreserved_cash"]
+        if state["unreserved_cash"] is not None
+        else max(raw_cash_before - state["cash_reserved"], Decimal(0))
+    )
+    remaining_cash = max(unreserved_before - fee_inclusive_cash, Decimal(0))
+    remaining_spendable_cash = max(spendable_before - fee_inclusive_cash, Decimal(0))
+
+    if is_close_leg:
+        after_trade_underlying_notional = max(state["existing_underlying_gross"] - order_notional, Decimal(0))
+        after_trade_gross_notional = max(state["gross_used"] - order_notional, Decimal(0))
+        signed_delta = -order_notional if decision.get("side") == "sell" else order_notional
+    else:
+        after_trade_underlying_notional = state["existing_underlying_gross"] + order_notional
+        after_trade_gross_notional = state["gross_used"] + order_notional
+        signed_delta = order_notional if direction == "LONG" else -order_notional
+    after_trade_signed_net = state["signed_net_used"] + signed_delta
+
+    equity_after = max(equity_before - fee_amount, Decimal("1e-9")) if equity_before > 0 else Decimal(0)
+    after_trade_concentration = (
+        round(float(after_trade_underlying_notional / equity_after), 6)
+        if equity_after > 0
+        else 0.0
+    )
+    after_trade_concentration_of_initial_capital = (
+        round(float(after_trade_underlying_notional / equity_before), 6)
+        if equity_before > 0
+        else 0.0
+    )
+
+    return {
+        "decision_id": str(view.get("decision_id") or ""),
+        "underlying": state["underlying"],
+        "direction": direction,
+        "strength": float(view["strength"]) if view.get("strength") is not None else None,
+        "policy_kind": policy_kind,
+        "risk_policy_id": state["risk_policy_id"],
+        "risk_policy_version": state["risk_policy_version"],
+        "risk_policy_digest": state["risk_policy_digest"],
+        "instrument_id": chosen_id,
+        "dated_price": price,
+        "price_date": winner.get("price_date") if winner is not None else None,
+        "capital": round(float(equity_before), 6),
+        "available_cash_before": round(float(raw_cash_before), 6),
+        "available_buying_power": round(float(spendable_before), 6),
+        "cash_reserve_required": round(float(state["cash_reserve_required"]), 6),
+        "cash_reserved": round(float(state["cash_reserved"]), 6),
+        "target_notional": round(float(raw_target), 6),
+        "effective_target_notional": round(float(effective_target), 6),
+        "desired_delta_notional": round(float(desired_delta), 6),
+        "permitted_units": permitted_units,
+        "binding_limit": binding_limit,
+        "order_notional": round(float(order_notional), 6),
+        "commission_fee": round(float(fee_amount), 6),
+        "fee_inclusive_required_cash": round(float(fee_inclusive_cash), 6),
+        "remaining_cash": round(float(remaining_cash), 6),
+        "remaining_spendable_cash": round(float(remaining_spendable_cash), 6),
+        "existing_underlying_exposure": round(float(state["existing_underlying_gross"]), 6),
+        "after_trade_underlying_notional": round(float(after_trade_underlying_notional), 6),
+        "after_trade_concentration": after_trade_concentration,
+        "after_trade_concentration_of_initial_capital": after_trade_concentration_of_initial_capital,
+        "after_trade_gross_exposure": (
+            round(float(after_trade_gross_notional / equity_after), 6) if equity_after > 0 else 0.0
+        ),
+        "after_trade_net_exposure": (
+            round(float(abs(after_trade_signed_net) / equity_after), 6) if equity_after > 0 else 0.0
+        ),
+        "active_reservations_count": state["active_reservations_count"],
+        "constraint_unit_caps": constraint_unit_caps,
+        "decision": decision,
+    }
+
+
+PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384
+
+
+def compact_pre_trade_sizing(sizing: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bounded compact pre-trade sizing summary without duplicate calculation state."""
+    compact: dict[str, Any] = {
+        "risk_policy_id": sizing.get("risk_policy_id"),
+        "risk_policy_version": sizing.get("risk_policy_version"),
+        "dated_price": sizing.get("dated_price"),
+        "capital": sizing.get("capital"),
+        "target_notional": sizing.get("target_notional"),
+        "permitted_units": int(sizing.get("permitted_units") or 0),
+        "binding_limit": str(sizing.get("binding_limit") or "no_feasible_instrument"),
+        "fee_inclusive_required_cash": sizing.get("fee_inclusive_required_cash"),
+        "remaining_cash": sizing.get("remaining_cash"),
+        "after_trade_concentration": sizing.get("after_trade_concentration"),
+    }
+    existing_u = sizing.get("existing_underlying_exposure")
+    if existing_u:
+        compact["existing_underlying_exposure"] = existing_u
+    if len(compact["binding_limit"]) > 96:
+        compact["binding_limit"] = compact["binding_limit"][:96]
+    encoded = json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES:
+        raise ValueError(
+            f"compact_pre_trade_sizing exceeded {PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES} bytes ({len(encoded)})"
+        )
+    return compact
 
 
 def decide_for_policy(kind, view, candidates, book, budget, parameters):

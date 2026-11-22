@@ -753,25 +753,275 @@ def _floor_units(amount: Decimal, per_unit: Decimal) -> int:
     return int((max(amount, Decimal(0)) / per_unit).to_integral_value(rounding=ROUND_DOWN))
 
 
+def _book_and_reservation_exposures(
+    persona_book: Mapping[str, Any] | None,
+    risk_budget: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compute gross, signed net, per-underlying exposure and reserved cash from book + budget."""
+    book = persona_book or {}
+    positions = book.get("positions") if isinstance(book.get("positions"), list) else []
+    pos_gross = Decimal(0)
+    pos_signed_net = Decimal(0)
+    pos_underlying_gross: dict[str, Decimal] = {}
+    for pos in positions:
+        if not isinstance(pos, Mapping):
+            continue
+        raw_notional = pos.get("notional")
+        if raw_notional is None:
+            units = _decimal(pos.get("units") or pos.get("quantity") or 0)
+            mult = _decimal(pos.get("multiplier") or pos.get("unit") or 1)
+            px = _decimal(pos.get("mark_price") or pos.get("price") or 0)
+            notional = abs(units) * mult * px
+        else:
+            notional = abs(_decimal(raw_notional))
+        direction = str(pos.get("direction") or "LONG").strip().upper()
+        signed = -notional if direction == "SHORT" else notional
+        pos_gross += notional
+        pos_signed_net += signed
+        raw_u = str(pos.get("underlying") or pos.get("symbol") or pos.get("instrument_id") or "").strip()
+        if raw_u:
+            try:
+                u_code = normalize_underlying_code(raw_u)
+            except Exception:
+                u_code = raw_u
+            if u_code:
+                pos_underlying_gross[u_code] = pos_underlying_gross.get(u_code, Decimal(0)) + notional
+
+    raw_res = risk_budget.get("order_reservations")
+    if raw_res is None:
+        raw_res = risk_budget.get("reservations")
+    if raw_res is None:
+        raw_res = book.get("order_reservations") or book.get("reservations")
+    res_items = list(raw_res.values()) if isinstance(raw_res, Mapping) else (raw_res if isinstance(raw_res, list) else [])
+
+    res_gross = Decimal(0)
+    res_signed_net = Decimal(0)
+    res_cash = Decimal(0)
+    res_margin = Decimal(0)
+    res_underlying_gross: dict[str, Decimal] = {}
+    for item in res_items:
+        if not isinstance(item, Mapping):
+            continue
+        if bool(item.get("is_risk_reducing") or item.get("close_leg") or item.get("reason_code") == "close_leg"):
+            continue
+        qty = abs(_decimal(item.get("units") if item.get("units") is not None else (item.get("quantity") or 0)))
+        mult = _decimal(item.get("multiplier") if item.get("multiplier") is not None else (item.get("unit") or 1))
+        px = _decimal(item.get("price") if item.get("price") is not None else (item.get("mark_price") or 0))
+        raw_n = item.get("notional") if item.get("notional") is not None else item.get("gross_notional")
+        notional = abs(_decimal(raw_n)) if raw_n is not None else (qty * mult * px)
+        side = str(item.get("side") or item.get("action") or "").strip().lower()
+        direction = str(item.get("direction") or ("SHORT" if side == "sell" else "LONG")).strip().upper()
+        signed = -notional if (direction == "SHORT" or side == "sell") else notional
+        res_gross += notional
+        res_signed_net += signed
+        raw_c = item.get("cash_reserved") if item.get("cash_reserved") is not None else item.get("cash_required")
+        if raw_c is not None:
+            res_cash += max(Decimal(0), _decimal(raw_c))
+        elif str(item.get("kind") or "cash_share") == "cash_share" and direction == "LONG" and qty > 0 and px > 0:
+            from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+            raw_u_for_fee = str(item.get("underlying") or item.get("symbol") or "0000")
+            res_cash += _decimal(buy_cash_required(raw_u_for_fee, int(qty), float(px)))
+        raw_m = item.get("margin_reserved") if item.get("margin_reserved") is not None else item.get("margin_required")
+        if raw_m is not None:
+            res_margin += max(Decimal(0), _decimal(raw_m))
+        raw_u = str(item.get("underlying") or item.get("symbol") or item.get("instrument_id") or "").strip()
+        if raw_u:
+            try:
+                u_code = normalize_underlying_code(raw_u)
+            except Exception:
+                u_code = raw_u
+            if u_code:
+                res_underlying_gross[u_code] = res_underlying_gross.get(u_code, Decimal(0)) + notional
+
+    pos_margin = Decimal(0)
+    for pos in positions:
+        if isinstance(pos, Mapping):
+            raw_pm = pos.get("margin_reserved") if pos.get("margin_reserved") is not None else pos.get("initial_margin_reserved")
+            if raw_pm is not None:
+                pos_margin += max(Decimal(0), _decimal(raw_pm))
+
+    scalar_cash_res = _decimal(risk_budget.get("cash_reserved") or risk_budget.get("reserved_cash") or 0)
+    cash_reserved = max(scalar_cash_res, res_cash)
+    unfolded_cash_res = max(res_cash - scalar_cash_res, Decimal(0))
+
+    scalar_margin_res = _decimal(
+        risk_budget.get("margin_reserved")
+        or risk_budget.get("order_margin_reserved")
+        or risk_budget.get("reserved_margin")
+        or 0
+    )
+    if risk_budget.get("order_margin_reserved") is not None:
+        folded_order_margin = _decimal(risk_budget["order_margin_reserved"])
+        inferred_pos_margin = max(scalar_margin_res - folded_order_margin, pos_margin)
+    else:
+        folded_order_margin = scalar_margin_res
+        inferred_pos_margin = pos_margin
+    margin_reserved = max(scalar_margin_res, inferred_pos_margin + res_margin)
+    unfolded_margin_res = max(res_margin - folded_order_margin, Decimal(0))
+
+    folded_res_u_map = (
+        risk_budget.get("reserved_underlying_notional")
+        if isinstance(risk_budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_decimal(v or 0) for v in folded_res_u_map.values())
+    reservations_folded_in_budget = (
+        "reserved_underlying_notional" in risk_budget
+        and folded_res_gross >= sum(res_underlying_gross.values(), Decimal(0))
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _decimal(risk_budget.get("gross_used") or 0) >= pos_gross + res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded_in_budget else max(res_gross - folded_res_gross, Decimal(0))
+
+    raw_gross_used = risk_budget.get("gross_used")
+    if raw_gross_used is None:
+        raw_gross_used = book.get("gross_notional", 0)
+        gross_used = max(_decimal(raw_gross_used or 0) + res_gross, pos_gross + res_gross)
+    else:
+        gross_used = max(_decimal(raw_gross_used or 0) + unfolded_res_gross, pos_gross + res_gross)
+
+    if risk_budget.get("signed_net_used") is not None:
+        signed_net_used = _decimal(risk_budget["signed_net_used"])
+        if not reservations_folded_in_budget and unfolded_res_gross > 0 and res_signed_net != 0:
+            signed_net_used += res_signed_net
+    else:
+        signed_net_used = pos_signed_net + res_signed_net
+
+    budget_u_map = risk_budget.get("underlying_exposures")
+    underlying_gross: dict[str, Decimal] = {}
+    if isinstance(budget_u_map, Mapping):
+        for k, v in budget_u_map.items():
+            if v is not None:
+                underlying_gross[str(k)] = _decimal(v)
+    all_u_codes = set(underlying_gross.keys()) | set(pos_underlying_gross.keys()) | set(res_underlying_gross.keys())
+    for u_code in all_u_codes:
+        pos_u = pos_underlying_gross.get(u_code, Decimal(0))
+        res_u = res_underlying_gross.get(u_code, Decimal(0))
+        budget_u = underlying_gross.get(u_code, Decimal(0))
+        folded_u = res_u if reservations_folded_in_budget else min(res_u, _decimal(folded_res_u_map.get(u_code) or 0))
+        unfolded_u = max(res_u - folded_u, Decimal(0))
+        underlying_gross[u_code] = max(budget_u + unfolded_u, pos_u + res_u)
+
+    return {
+        "gross_used": gross_used,
+        "signed_net_used": signed_net_used,
+        "underlying_gross": underlying_gross,
+        "cash_reserved": cash_reserved,
+        "unfolded_cash_reserved": unfolded_cash_res,
+        "margin_reserved": margin_reserved,
+        "unfolded_margin_reserved": unfolded_margin_res,
+        "budget_already_folded": reservations_folded_in_budget,
+    }
+
+
 def _remaining_gross(persona_book: Mapping[str, Any] | None, risk_budget: Mapping[str, Any]) -> Decimal:
     """Fail closed: a missing limit leaves nothing to spend."""
     limit = risk_budget.get("gross_limit")
+    equity = risk_budget.get("equity")
+    if limit is None and risk_budget.get("gross_limit_multiple") is not None and equity is not None:
+        limit = _decimal(risk_budget["gross_limit_multiple"]) * _decimal(equity)
     if limit is None:
         return Decimal(0)
+    limit_dec = _decimal(limit)
     leverage = risk_budget.get("max_leverage")
-    equity = risk_budget.get("equity")
     if leverage is not None and equity is not None:
         # ``max_leverage`` is a multiple of equity; the tighter bound wins.
-        limit = min(_decimal(limit), _decimal(leverage) * _decimal(equity))
-    used = risk_budget.get("gross_used")
-    if used is None:
-        used = (persona_book or {}).get("gross_notional", 0)
-    return max(_decimal(limit) - _decimal(used or 0), Decimal(0))
+        limit_dec = min(limit_dec, _decimal(leverage) * _decimal(equity))
+    exposures = _book_and_reservation_exposures(persona_book, risk_budget)
+    return max(limit_dec - exposures["gross_used"], Decimal(0))
 
 
-def _available_cash(risk_budget: Mapping[str, Any]) -> Decimal:
-    cash = risk_budget.get("available_cash")
-    return Decimal(0) if cash is None else max(_decimal(cash), Decimal(0))
+def _remaining_notional_for_underlying(
+    code: str,
+    persona_book: Mapping[str, Any] | None,
+    risk_budget: Mapping[str, Any],
+    *,
+    long_only: bool,
+) -> Decimal:
+    """Most restrictive remaining notional across gross, leverage, net, single-name and reservations."""
+    remaining = _remaining_gross(persona_book, risk_budget)
+    exposures = _book_and_reservation_exposures(persona_book, risk_budget)
+    equity_raw = risk_budget.get("equity")
+    equity = _decimal(equity_raw) if equity_raw is not None else None
+
+    net_limit_raw = risk_budget.get("net_limit")
+    if net_limit_raw is None and risk_budget.get("net_limit_multiple") is not None and equity is not None:
+        net_limit_raw = _decimal(risk_budget["net_limit_multiple"]) * equity
+    if net_limit_raw is not None:
+        net_limit = _decimal(net_limit_raw)
+        signed_net = exposures["signed_net_used"]
+        rem_long = max(net_limit - signed_net, Decimal(0))
+        rem_short = max(net_limit + signed_net, Decimal(0))
+        rem_net = rem_long if long_only else max(rem_long, rem_short)
+        remaining = min(remaining, rem_net)
+
+    single_name_raw = risk_budget.get("max_single_name_notional")
+    if single_name_raw is None and risk_budget.get("max_single_name_weight") is not None and equity is not None:
+        single_name_raw = _decimal(risk_budget["max_single_name_weight"]) * equity
+    if single_name_raw is not None:
+        single_name_limit = _decimal(single_name_raw)
+        existing_u = exposures["underlying_gross"].get(code, Decimal(0))
+        rem_single = max(single_name_limit - existing_u, Decimal(0))
+        remaining = min(remaining, rem_single)
+
+    return max(remaining, Decimal(0))
+
+
+def _available_cash(
+    risk_budget: Mapping[str, Any],
+    persona_book: Mapping[str, Any] | None = None,
+) -> Decimal:
+    cash_raw = risk_budget.get("available_buying_power")
+    if cash_raw is None:
+        cash_raw = risk_budget.get("available_cash")
+    if cash_raw is None:
+        return Decimal(0)
+    avail = max(_decimal(cash_raw), Decimal(0))
+    equity_raw = risk_budget.get("equity")
+    equity = _decimal(equity_raw) if equity_raw is not None else None
+
+    reserve_req = Decimal(0)
+    if risk_budget.get("cash_reserve_required") is not None:
+        reserve_req = max(reserve_req, _decimal(risk_budget["cash_reserve_required"]))
+    if risk_budget.get("min_cash_reserve") is not None:
+        reserve_req = max(reserve_req, _decimal(risk_budget["min_cash_reserve"]))
+    if risk_budget.get("min_cash_reserve_pct") is not None:
+        base_eq = equity if (equity is not None and equity > 0) else _decimal(risk_budget.get("raw_cash") or avail)
+        reserve_req = max(reserve_req, _decimal(risk_budget["min_cash_reserve_pct"]) * base_eq)
+
+    exposures = _book_and_reservation_exposures(persona_book, risk_budget)
+    cash_reserved = exposures["cash_reserved"]
+    margin_reserved = exposures["margin_reserved"]
+    unfolded_cash_res = exposures["unfolded_cash_reserved"]
+    unfolded_margin_res = exposures["unfolded_margin_reserved"]
+
+    if "raw_cash" in risk_budget:
+        raw_cash = _decimal(risk_budget["raw_cash"])
+        base_margin_eq = equity if (equity is not None and equity > 0) else raw_cash
+        if risk_budget.get("free_margin") is not None:
+            free_margin = min(
+                _decimal(risk_budget["free_margin"]) - unfolded_margin_res,
+                base_margin_eq - margin_reserved,
+            )
+        else:
+            free_margin = base_margin_eq - margin_reserved
+        raw_bp = max(min(raw_cash - cash_reserved, free_margin), Decimal(0))
+        return max(min(avail, raw_bp - reserve_req), Decimal(0))
+
+    if risk_budget.get("free_margin") is not None:
+        free_margin = _decimal(risk_budget["free_margin"]) - unfolded_margin_res
+        if equity is not None and equity > 0:
+            free_margin = min(free_margin, equity - margin_reserved)
+        unreserved = max(min(avail - unfolded_cash_res, free_margin), Decimal(0))
+    elif (cash_reserved > 0 or margin_reserved > 0) and equity is not None and equity > 0:
+        unreserved = max(
+            min(avail - unfolded_cash_res - unfolded_margin_res, equity - cash_reserved - margin_reserved),
+            Decimal(0),
+        )
+    else:
+        unreserved = max(avail - cash_reserved - margin_reserved, Decimal(0))
+    return max(unreserved - reserve_req, Decimal(0))
 
 
 def _cash_candidate(
@@ -788,7 +1038,10 @@ def _cash_candidate(
         source_refs = [*source_refs, {"reason": "cash_price_unavailable"}]
         margin: float | None = None
     else:
-        spend = min(_available_cash(risk_budget), _remaining_gross(persona_book, risk_budget))
+        spend = min(
+            _available_cash(risk_budget, persona_book),
+            _remaining_notional_for_underlying(code, persona_book, risk_budget, long_only=True),
+        )
         max_units = _floor_units(spend, _decimal(price))
         margin = float(price)
     return {
@@ -845,9 +1098,13 @@ def _future_candidate(
     unit = int(row["unit"])
     price = _decimal(row["settlement_price"])
     fee = fee_row_for(str(row.get("underlying_kind") or "stock"), unit)
+    code = normalize_underlying_code(str(row["underlying_code"]))
     max_units = min(
-        _floor_units(_available_cash(risk_budget), initial),
-        _floor_units(_remaining_gross(persona_book, risk_budget), price * unit),
+        _floor_units(_available_cash(risk_budget, persona_book), initial),
+        _floor_units(
+            _remaining_notional_for_underlying(code, persona_book, risk_budget, long_only=False),
+            price * unit,
+        ),
     )
     return {
         "instrument_id": f"ssf:{row['contract']}:{row['contract_month']}",
