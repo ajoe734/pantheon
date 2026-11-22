@@ -389,7 +389,7 @@ def test_reconcile_polling_remains_in_provisioning_without_downstream_owners() -
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Reconcile Polling"},
+            json={"risk": "low", "name": "Trader Reconcile Polling"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-poll-001"},
         )
         assert resp.status_code == 201, resp.text
@@ -446,7 +446,7 @@ def test_reconcile_refuses_to_advance_without_executable_runtime_binding_owner()
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Missing Binding Owner"},
+            json={"risk": "low", "name": "Trader Missing Binding Owner"},
             headers={**HEADERS, "Idempotency-Key": "create-missing-binding-owner"},
         )
         assert resp.status_code == 201, resp.text
@@ -474,7 +474,7 @@ def test_reconcile_refuses_to_advance_without_paper_worker_heartbeat_owner() -> 
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Missing Worker Owner"},
+            json={"risk": "low", "name": "Trader Missing Worker Owner"},
             headers={**HEADERS, "Idempotency-Key": "create-missing-worker-owner"},
         )
         data = resp.json()["data"]
@@ -512,7 +512,7 @@ def test_reconcile_drives_terminal_success_when_all_owners_present() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Terminal Success"},
+            json={"risk": "low", "name": "Trader Terminal Success"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-terminal-success"},
         )
         assert resp.status_code == 201, resp.text
@@ -565,7 +565,7 @@ def test_reconcile_negative_path_timeout() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Negative Timeout"},
+            json={"risk": "low", "name": "Trader Negative Timeout"},
             headers={**HEADERS, "Idempotency-Key": "create-negative-timeout"},
         )
         persona_id = resp.json()["data"]["id"]
@@ -604,7 +604,7 @@ def test_reconcile_negative_path_runtime_binding_failed() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Binding Failed"},
+            json={"risk": "low", "name": "Trader Binding Failed"},
             headers={**HEADERS, "Idempotency-Key": "create-binding-failed"},
         )
         data = resp.json()["data"]
@@ -641,7 +641,7 @@ def test_reconcile_negative_path_deployment_saga_failed() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Saga Failed"},
+            json={"risk": "low", "name": "Trader Saga Failed"},
             headers={**HEADERS, "Idempotency-Key": "create-saga-failed"},
         )
         data = resp.json()["data"]
@@ -679,7 +679,7 @@ def test_reconcile_negative_path_stale_paper_worker_heartbeat() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Stale Worker"},
+            json={"risk": "low", "name": "Trader Stale Worker"},
             headers={**HEADERS, "Idempotency-Key": "create-stale-worker"},
         )
         data = resp.json()["data"]
@@ -826,7 +826,7 @@ def _compose_background_service(monkeypatch: pytest.MonkeyPatch) -> None:
 def _create_persona(client: TestClient, key: str) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
     resp = client.post(
         "/bff/personas",
-        json={"name": key},
+        json={"risk": "low", "name": key},
         headers={**HEADERS, "Idempotency-Key": key},
     )
     assert resp.status_code == 201, resp.text
@@ -1022,7 +1022,7 @@ def test_background_pass_stays_fail_closed(monkeypatch, fault) -> None:
 def _create_persona(client: TestClient, key: str) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
     resp = client.post(
         "/bff/personas",
-        json={"name": f"Trader {key}"},
+        json={"risk": "low", "name": f"Trader {key}"},
         headers={**HEADERS, "Idempotency-Key": key},
     )
     assert resp.status_code == 201, resp.text
@@ -1549,7 +1549,7 @@ def test_reconcile_preserves_provisioned_expression_policy_and_pool_risk_policy(
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"name": "Trader Expression Policy Reconcile"},
+            json={"risk": "low", "name": "Trader Expression Policy Reconcile"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-expression-policy-reconcile"},
         )
         assert resp.status_code == 201, resp.text

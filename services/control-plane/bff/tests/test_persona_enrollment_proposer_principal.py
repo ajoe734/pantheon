@@ -57,7 +57,7 @@ def tenant_dev(monkeypatch):
         record, _ = store.reserve(
             tenant_id=ISSUED_TENANT, idempotency_key="create-persona-a",
             request_hash="sha256:persona-request", normalized_name="trader a", persona_id="persona-a",
-            request_payload={"name": "Trader A", "requested_by": "operator-a",
+            request_payload={"risk": "low", "name": "Trader A", "requested_by": "operator-a",
                              "mandate": "Paper-only momentum research",
                              "traits": {"risk_appetite": "low"}, "budget": 25000},
         )
