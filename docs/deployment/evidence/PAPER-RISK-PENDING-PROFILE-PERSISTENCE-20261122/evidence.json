@@ -34,6 +34,30 @@
       "exit_code": 0,
       "result": "passed; 0 failures",
       "log": "storage-check.json"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/typed-risk-profile-negative-control.py",
+      "exit_code": 0,
+      "result": "Same six-case reviewer fixture: explicit low passes, high and both unknowns hold; unknown reported profile null",
+      "log": "typed-control-after.jsonl"
+    },
+    {
+      "command": "timeout 240 bash /tmp/pending-profile-resolver-validation.sh (disposable postgres:16; timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/capital acceptance/test_paper_risk_policy_binding.py)",
+      "exit_code": 0,
+      "result": "593 passed, 3 warnings in 82.71s; PostgreSQL 16.16, no skips; fixture container removed",
+      "log": "resolver-validation.log"
+    },
+    {
+      "command": "CAPITAL_TEST_DSN=<disposable PostgreSQL> timeout 30 .venv-pantheon/bin/python3 -m pytest -q -rs services/capital/test_service.py::test_pg_requested_profile_updates_one_row_and_concurrent_retries_noop",
+      "exit_code": 0,
+      "result": "1 passed, 1 warning in 1.20s; six independent store connections, one actual UPDATE, retries unchanged",
+      "log": "resolver-pg.log"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py",
+      "exit_code": 0,
+      "result": "107 passed, 6 warnings in 43.68s",
+      "log": "lifecycle-fixtures.log"
     }
   ],
   "runtime_budget": {
@@ -69,5 +93,18 @@
       "owner_chain": "existing capital/risk chain",
       "finding": "Legacy integer budget dataclasses hash differently between main.pool_digest and capital_pool_approval_digest; normal wire models and the three hosted budgets use floats; approval hashes were preserved."
     }
-  ]
+  ],
+  "review_regression": {
+    "rejected_pr": 7755,
+    "rejected_head": "f1959a0aa62652cfdfcbc7bd0997f9279cfe70e1",
+    "reviewer": "Antigravity",
+    "finding": "Required mapping selected approved low without knowing the Persona request, including with legacy generic inline policy.",
+    "before_receipt": "typed-control-before.jsonl",
+    "after_receipt": "typed-control-after.jsonl",
+    "before_receipt_source": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/7755-f1959a0aa-missing-profile-control.jsonl",
+    "resolution": "Discovery requires a nonempty request. Required mapping compares request, typed/wire pool and binding provenance; missing, conflicting or invalid sources hold with a named absence_source. A validated bound policy remains available for governed exits. Explicit policies without a required profile remain compatible.",
+    "new_controls": 32,
+    "hosted_mutations": 0,
+    "new_persistent_writers": 0
+  }
 }

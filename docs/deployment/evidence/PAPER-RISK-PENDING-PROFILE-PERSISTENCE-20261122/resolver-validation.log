@@ -1,0 +1,21 @@
+........................................................................ [ 12%]
+........................................................................ [ 24%]
+........................................................................ [ 36%]
+........................................................................ [ 48%]
+........................................................................ [ 60%]
+........................................................................ [ 72%]
+........................................................................ [ 84%]
+........................................................................ [ 97%]
+.................                                                        [100%]
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/045268d29bbfad84/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/045268d29bbfad84/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/control-plane/bff/test_persona_provisioning_coordinator.py::test_retired_ledger_projects_as_retired_not_paper_running
+services/control-plane/bff/test_persona_provisioning_coordinator.py::test_retired_ledger_projects_as_retired_not_paper_running
+  /tmp/pantheon-worker-worktrees/pantheon/paper-risk-pending-profile-persistence-20261122/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+593 passed, 3 warnings in 82.71s (0:01:22)

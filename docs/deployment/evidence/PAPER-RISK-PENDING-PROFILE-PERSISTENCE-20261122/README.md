@@ -51,6 +51,43 @@ existing hosted cases keep their IDs for unchanged requests:
 | 039ad01f8bcd2b4aa466 | apv-risk-profile-a1cdc8408fe251534581 |
 | a81b4fd15944698341aa | apv-risk-profile-6bf0cafe806a1e89fb34 |
 
+## Independent review regression: unknown request must hold
+
+Antigravity reopened PR #7755 at `f1959a0aa62652cfdfcbc7bd0997f9279cfe70e1`.
+The released typed CapitalPool could select an approved catalog low policy
+without a requested-profile source: with no inline policy it reported low,
+and with a legacy generic inline policy it reported null while enabling risk.
+The same six-case synthetic non-trading reviewer control was rerun before and
+after this repair. `typed-control-before.jsonl` preserves the original reviewer
+receipt; `typed-control-after.jsonl` records the local corrected run. Low passes,
+high holds, and both unknown-source cases now hold and report null.
+
+Capital discovery no longer supplies a default low. The resolver compares all
+request/pool/binding aliases, including typed CapitalPool metadata, and returns
+`requested_profile_missing`, `requested_profile_conflict` or
+`requested_profile_invalid` in `owner_decision_request.absence_source` before
+any required profile mapping can authorize increased risk. Candidate policy
+profile metadata cannot establish what the Persona requested. Inline policies
+are validated before this hold so existing policy validation errors remain
+intact, and a valid bound policy remains available for governed reductions and
+exits. Explicit policies with no required profile mapping remain compatible.
+No persistent writer, cadence or storage budget changes in this correction.
+
+`services/capital/test_requested_profile_resolution.py` contains 32 controls for
+typed/wire pools, low/medium/high/unknown, source conflicts, invalid sources,
+discovery, implicit legacy mapping, explicit contracts and runtime reduction,
+close, increase and reversal behavior. The full owner/provisioning regression
+was rerun against disposable PostgreSQL 16.16 (593 passed, no skips), and the
+independent-connection row-update test passed again separately. The container
+was removed after the bounded batch.
+
+The previous-head CI additionally found four lifecycle/enrollment fixture
+files that omitted the actual risk request and depended on inferred low.
+Those tests now explicitly request low, preserving their lifecycle assertions;
+the 107 affected tests pass. No lifecycle production code changed. These are
+narrow validation fixtures for the same provenance guard, including tests
+outside the brief's suggested coordinator test file.
+
 ## Runtime budget and cleanup
 
 This is event driven through existing provisioning/repair calls, with no poller
