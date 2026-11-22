@@ -532,6 +532,7 @@ class ResearchKnowledgeSourcePort:
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -2657,6 +2658,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Optional[Dict[str, Any]]:
@@ -2683,6 +2685,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
+                **({"query": query} if query is not None else {}),
             )
 
         offset = 0
@@ -2709,10 +2712,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             effective_tenant = None
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        norm_query = (
+            str(query).strip().lower()
+            if query is not None and str(query).strip() != ""
+            else None
+        )
         state_counts: Optional[Dict[str, int]] = {
             k: 0 for k in self._STRATEGY_DEFAULT_STATE_COUNT_KEYS
         }
-        items: List[Dict[str, Any]] = []
+        matched_candidates: List[Tuple[Any, ...]] = []
         for strategy_spec in self._strategy_specs.values():
             if not isinstance(strategy_spec, dict):
                 continue
@@ -2799,6 +2807,68 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 if isinstance(raw_current.get("provenance"), dict)
                 else {}
             )
+            if norm_query is not None:
+                candidate_title = str(
+                    raw_current.get("title")
+                    or raw_current.get("name")
+                    or strategy_spec.get("title")
+                    or strategy_spec.get("name")
+                    or raw_meta.get("title")
+                    or raw_meta.get("name")
+                    or spec_meta.get("title")
+                    or spec_meta.get("name")
+                    or strategy_id
+                )
+                if (
+                    norm_query not in strategy_id.lower()
+                    and norm_query not in candidate_title.lower()
+                ):
+                    continue
+            last_mod = str(
+                raw_current.get("updated_at")
+                or raw_current.get("last_modified_at")
+                or raw_current.get("created_at")
+                or provenance.get("created_at")
+                or strategy_spec.get("updated_at")
+                or strategy_spec.get("last_modified_at")
+                or strategy_spec.get("created_at")
+                or ""
+            ) or None
+            matched_candidates.append(
+                (
+                    _naive_utc(_parse_rfc3339(last_mod)),
+                    str(strategy_id or ""),
+                    strategy_spec,
+                    raw_current,
+                    raw_meta,
+                    spec_meta,
+                    selected_index,
+                    candidate_count,
+                    version_count,
+                    raw_lifecycle,
+                    persona_list,
+                    provenance,
+                )
+            )
+
+        matched_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        total = len(matched_candidates)
+        page_candidates = matched_candidates[offset : offset + page_size]
+        sliced: List[Dict[str, Any]] = []
+        for (
+            _sort_dt,
+            strategy_id,
+            strategy_spec,
+            raw_current,
+            raw_meta,
+            spec_meta,
+            selected_index,
+            candidate_count,
+            version_count,
+            raw_lifecycle,
+            persona_list,
+            provenance,
+        ) in page_candidates:
             current_source_kind = str(
                 raw_current.get("source_kind")
                 or provenance.get("source_kind")
@@ -2813,12 +2883,25 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 candidate_count=candidate_count,
                 include_detail_bundles=False,
             )
+            gov = (
+                current_version.get("governance")
+                if isinstance(current_version.get("governance"), dict)
+                else {}
+            )
+            owner = (
+                raw_current.get("owner")
+                or strategy_spec.get("owner")
+                or raw_meta.get("owner")
+                or spec_meta.get("owner")
+                or gov.get("owner")
+            )
             item_dict: Dict[str, Any] = {
                 "object_ref": dict(current_version.get("object_ref") or {}),
                 "strategy_id": strategy_id,
                 "current_spec_version_id": current_version.get("spec_version_id"),
                 "current_spec_version": current_version.get("spec_version"),
                 "title": current_version.get("title"),
+                "name": current_version.get("title"),
                 "lifecycle_state": raw_lifecycle,
                 "source_kind": current_source_kind,
                 "hypothesis_excerpt": self._kw05_hypothesis_excerpt(
@@ -2839,21 +2922,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     "strategy_spec_registry_id"
                 ),
             }
+            if owner:
+                item_dict["owner"] = owner
             if current_version.get("capital_pool_id"):
                 item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
             if current_version.get("metadata"):
                 item_dict["metadata"] = current_version.get("metadata")
-            items.append(item_dict)
+            sliced.append(item_dict)
 
-        items.sort(
-            key=lambda item: (
-                _naive_utc(_parse_rfc3339(item.get("last_modified_at"))),
-                str(item.get("strategy_id") or ""),
-            ),
-            reverse=True,
-        )
-        total = len(items)
-        sliced = items[offset : offset + page_size]
         next_token = str(offset + page_size) if (offset + page_size) < total else None
         return {
             "items": sliced,
@@ -3028,6 +3104,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -3058,6 +3135,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 ) from exc
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        norm_query = str(query).strip() if query is not None and str(query).strip() != "" else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
 
         def read_page() -> Dict[str, Any]:
@@ -3065,6 +3143,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 return self._fetch_canonical_strategy_specs_page_uncached(
                     state=norm_state, exclude_state=norm_exclude_state,
                     persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
+                    **({"query": norm_query} if norm_query is not None else {}),
                 )
 
             auth = authorization.get()
@@ -3078,7 +3157,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 (
                     tenant, hashlib.sha256(auth.encode()).digest(),
                     registry_url("/api/registry/strategy-specs"),
-                    norm_state, norm_exclude_state, norm_persona, norm_token, int(page_size),
+                    norm_state, norm_exclude_state, norm_persona, norm_query, norm_token, int(page_size),
                 ),
                 fetch,
             )
@@ -3091,6 +3170,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_state,
                 norm_exclude_state,
                 norm_persona,
+                norm_query,
                 norm_token,
                 int(page_size),
             ),
@@ -3103,6 +3183,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -3128,6 +3209,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             query_params.append(("exclude_state", exclude_state))
         if persona_id:
             query_params.append(("persona_id", persona_id))
+        if query:
+            query_params.append(("query", query))
         if page_token:
             query_params.append(("page_token", page_token))
         path = "/api/registry/strategy-specs?" + urllib.parse.urlencode(query_params)

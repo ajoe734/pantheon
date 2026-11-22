@@ -1003,6 +1003,103 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.list_strategy_summaries()
         raise AttributeError("Research port operation 'list_strategy_summaries' not implemented")
 
+    def _read_surface_uses_custom_unpaged_strategy_list(self) -> bool:
+        if self._read_surface is None:
+            return False
+        if getattr(self._read_surface, "allow_local_snapshot_fallback", False):
+            return True
+        from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+        if isinstance(self._read_surface, ReadSurfacePorts):
+            return False
+        rs_dict = getattr(self._read_surface, "__dict__", {}) or {}
+        rs_cls = type(self._read_surface)
+        has_page_method = (
+            "list_strategy_summaries_page" in rs_dict
+            or "list_strategy_specs_page" in rs_dict
+            or hasattr(rs_cls, "list_strategy_summaries_page")
+            or hasattr(rs_cls, "list_strategy_specs_page")
+        )
+        if has_page_method:
+            return False
+        has_unpaged_method = (
+            "list_strategies" in rs_dict
+            or "list_strategy_summaries" in rs_dict
+            or "list_strategy_specs" in rs_dict
+            or hasattr(rs_cls, "list_strategies")
+            or hasattr(rs_cls, "list_strategy_summaries")
+            or hasattr(rs_cls, "list_strategy_specs")
+        )
+        if not has_unpaged_method:
+            return False
+        has_registry_url = bool(
+            os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
+        )
+        has_ks_injected = bool(getattr(self._ks, "_strategy_specs", None))
+        return not (has_registry_url or has_ks_injected)
+
+    def list_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface_uses_custom_unpaged_strategy_list():
+            return None
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_specs_page"):
+            return self._read_surface.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        if self._ks is not None and hasattr(self._ks, "list_strategy_specs_page"):
+            return self._ks.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        return None
+
+    def list_strategy_summaries_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface_uses_custom_unpaged_strategy_list():
+            return None
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_summaries_page"):
+            return self._read_surface.list_strategy_summaries_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        return self.list_strategy_specs_page(
+            state=state,
+            exclude_state=exclude_state,
+            persona_id=persona_id,
+            query=query,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
     def list_personas(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_personas"):
             return self._read_surface.list_personas()
@@ -3325,36 +3422,90 @@ class ResearchRouterService:
                 return result
             records = list(result or [])
         else:
-            records = []
             def _matches(value: Any) -> bool:
                 return not needle or needle in str(value or "").lower()
 
+            def _project_strategy_search_record(raw: Mapping[str, Any]) -> Dict[str, Any]:
+                item_id = str(raw.get("strategy_id") or raw.get("id") or "").strip()
+                name_value = raw.get("title") or raw.get("name") or item_id
+                meta_obj = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                gov_obj = raw.get("governance") if isinstance(raw.get("governance"), dict) else {}
+                owner_val = (
+                    raw.get("owner")
+                    or gov_obj.get("owner")
+                    or meta_obj.get("owner")
+                    or "pantheon-bff"
+                )
+                return {
+                    "id": item_id,
+                    "type": "strategy",
+                    "name": str(name_value),
+                    "state": raw.get("lifecycle_state") or raw.get("state") or raw.get("status"),
+                    "owner": owner_val,
+                    "risk": "medium",
+                    "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
+                }
+
+            self.page_slice([], page_token, effective_page_size)
+            start = 0
+            if page_token is not None and str(page_token).strip() != "":
+                start = int(str(page_token).strip())
+            owner_page_token = str(start) if start > 0 else None
+
             port = self._port()
+            owner_strategy_page: Optional[Dict[str, Any]] = None
+            strategy_records: List[Dict[str, Any]] = []
             if not requested_types or "strategy" in requested_types:
-                strategy_reader = getattr(port, "list_strategies", None) or getattr(port, "list_strategy_summaries", None)
-                if callable(strategy_reader):
-                    for raw in strategy_reader() or []:
-                        item_id = str(raw.get("strategy_id") or raw.get("id") or "")
-                        name_value = raw.get("title") or raw.get("name") or item_id
-                        if _matches(item_id) or _matches(name_value):
-                            records.append({
-                                "id": item_id,
-                                "type": "strategy",
-                                "name": str(name_value),
-                                "state": raw.get("lifecycle_state") or raw.get("status"),
-                                "owner": raw.get("owner") or "pantheon-bff",
-                                "risk": "medium",
-                                "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
-                            })
+                page_reader = (
+                    getattr(port, "list_strategy_summaries_page", None)
+                    or getattr(port, "list_strategy_specs_page", None)
+                )
+                if callable(page_reader):
+                    with self._map_port_errors("list_strategy_summaries_page"):
+                        owner_strategy_page = page_reader(
+                            query=query,
+                            page_token=owner_page_token,
+                            page_size=effective_page_size,
+                        )
+                if owner_strategy_page is None:
+                    strategy_reader = (
+                        getattr(port, "list_strategies", None)
+                        or getattr(port, "list_strategy_summaries", None)
+                    )
+                    if callable(strategy_reader):
+                        with self._map_port_errors("list_strategies"):
+                            raw_strategies = strategy_reader() or []
+                        for raw in raw_strategies:
+                            if not isinstance(raw, dict):
+                                self._raise_error(
+                                    503,
+                                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                    "Invalid strategy search record",
+                                    "strategy_store_unavailable",
+                                )
+                            item_id = str(raw.get("strategy_id") or raw.get("id") or "")
+                            name_value = raw.get("title") or raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                strategy_records.append(_project_strategy_search_record(raw))
+            persona_records: List[Dict[str, Any]] = []
             if not requested_types or "persona" in requested_types:
                 persona_reader = getattr(port, "list_personas", None)
                 if callable(persona_reader):
-                    for raw in persona_reader() or []:
+                    with self._map_port_errors("list_personas"):
+                        raw_personas = persona_reader() or []
+                    for raw in raw_personas:
+                        if not isinstance(raw, dict):
+                            self._raise_error(
+                                503,
+                                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Invalid persona search record",
+                                "persona_store_unavailable",
+                            )
                         item_id = str(raw.get("persona_id") or raw.get("id") or "")
                         name_value = raw.get("name") or item_id
                         if _matches(item_id) or _matches(name_value):
                             metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-                            records.append({
+                            persona_records.append({
                                 "id": item_id,
                                 "type": "persona",
                                 "name": str(name_value),
@@ -3363,14 +3514,24 @@ class ResearchRouterService:
                                 "risk": metadata.get("risk_level") or "medium",
                                 "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
                             })
+            pool_records: List[Dict[str, Any]] = []
             if not requested_types or "capital_pool" in requested_types or "capitalpool" in requested_types:
                 pool_reader = getattr(port, "list_capital_pools", None)
                 if callable(pool_reader):
-                    for raw in pool_reader() or []:
+                    with self._map_port_errors("list_capital_pools"):
+                        raw_pools = pool_reader() or []
+                    for raw in raw_pools:
+                        if not isinstance(raw, dict):
+                            self._raise_error(
+                                503,
+                                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Invalid capital pool search record",
+                                "capital_pool_store_unavailable",
+                            )
                         item_id = str(raw.get("pool_id") or raw.get("id") or "")
                         name_value = raw.get("name") or item_id
                         if _matches(item_id) or _matches(name_value):
-                            records.append({
+                            pool_records.append({
                                 "id": item_id,
                                 "type": "capital_pool",
                                 "name": str(name_value),
@@ -3379,6 +3540,78 @@ class ResearchRouterService:
                                 "risk": raw.get("risk_level") or "medium",
                                 "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
                             })
+
+            if owner_strategy_page is not None:
+                if not isinstance(owner_strategy_page, dict):
+                    self._raise_error(
+                        503,
+                        ErrorCode.DEPENDENCY_UNAVAILABLE,
+                        "Invalid strategy summary page payload",
+                        "strategy_store_unavailable",
+                    )
+                raw_page_items = owner_strategy_page.get("items")
+                raw_strategy_total = owner_strategy_page.get("total")
+                raw_next_token = owner_strategy_page.get("next_page_token")
+                if (
+                    not isinstance(raw_page_items, list)
+                    or not isinstance(raw_strategy_total, int)
+                    or isinstance(raw_strategy_total, bool)
+                    or raw_strategy_total < 0
+                    or (raw_next_token is not None and not isinstance(raw_next_token, str))
+                ):
+                    self._raise_error(
+                        503,
+                        ErrorCode.DEPENDENCY_UNAVAILABLE,
+                        "Invalid strategy summary page payload",
+                        "strategy_store_unavailable",
+                    )
+                strategy_page_items: List[Dict[str, Any]] = []
+                for raw in raw_page_items:
+                    if not isinstance(raw, dict):
+                        self._raise_error(
+                            503,
+                            ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            "Invalid strategy summary page entry",
+                            "strategy_store_unavailable",
+                        )
+                    projected = _project_strategy_search_record(raw)
+                    if not projected["id"]:
+                        self._raise_error(
+                            503,
+                            ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            "Invalid strategy summary page entry",
+                            "strategy_store_unavailable",
+                        )
+                    strategy_page_items.append(projected)
+                strategy_page_items = strategy_page_items[:effective_page_size]
+                tail_records = persona_records + pool_records
+                total_records = raw_strategy_total + len(tail_records)
+                need_from_tail = max(0, effective_page_size - len(strategy_page_items))
+                tail_start = max(0, start - raw_strategy_total)
+                tail_slice = (
+                    tail_records[tail_start : tail_start + need_from_tail]
+                    if need_from_tail > 0
+                    else []
+                )
+                items = strategy_page_items + tail_slice
+                next_offset = start + effective_page_size
+                next_token = str(next_offset) if (next_offset < total_records and items) else None
+                meta = self.snapshot_meta(snap)
+                meta["surfaces"] = {
+                    "search": self._surface("personas", snapshot_at=snap, has_data=bool(total_records > 0))
+                }
+                return {
+                    "data": items,
+                    "items": items,
+                    "page_info": {
+                        "next_page_token": next_token,
+                        "total": total_records,
+                        "returned": len(items),
+                    },
+                    "meta": meta,
+                }
+
+            records = strategy_records + persona_records + pool_records
         items, next_token = self.page_slice(records, page_token, effective_page_size)
         meta = self.snapshot_meta(snap)
         meta["surfaces"] = {

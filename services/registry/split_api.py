@@ -394,9 +394,22 @@ class RegistryService:
         )
 
     def list_strategy_spec_summary_index_rows(
-        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected by the owner store for Phase 1 of strategy_summary_page."""
+        if include_title:
+            try:
+                return self.store.list_strategy_spec_summary_index_rows(
+                    visible_tenants=visible_tenants,
+                    artifact_type=artifact_type,
+                    include_title=True,
+                )
+            except TypeError:
+                pass
         return self.store.list_strategy_spec_summary_index_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
@@ -422,6 +435,7 @@ class RegistryService:
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
     ) -> dict[str, object]:
@@ -432,11 +446,14 @@ class RegistryService:
             page_token=page_token,
             page_size=page_size,
         )
+        has_query = bool(query is not None and str(query).strip() != "")
         if hasattr(self.store, "list_strategy_spec_summary_index_rows") and hasattr(
             self.store, "get_strategy_spec_summary_rows_by_ids"
         ):
             index_rows = self.list_strategy_spec_summary_index_rows(
-                visible_tenants=visible_tenants, artifact_type=artifact_type,
+                visible_tenants=visible_tenants,
+                artifact_type=artifact_type,
+                include_title=has_query,
             )
             return project_strategy_spec_summary_page(
                 index_rows,
@@ -444,6 +461,7 @@ class RegistryService:
                 state=state,
                 exclude_state=exclude_state,
                 persona_id=persona_id,
+                query=query,
                 page_token=page_token,
                 page_size=page_size,
                 full_row_loader=lambda reg_ids: self.get_strategy_spec_summary_rows_by_ids(
@@ -459,6 +477,7 @@ class RegistryService:
             state=state,
             exclude_state=exclude_state,
             persona_id=persona_id,
+            query=query,
             page_token=page_token,
             page_size=page_size,
         )

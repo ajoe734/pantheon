@@ -539,6 +539,7 @@ STRATEGY_SUMMARY_INDEX_INNER_META_KEYS = (
     "persona_id", "lifecycle_state", "state", "status",
 )
 STRATEGY_SUMMARY_INDEX_PROV_KEYS = ("created_at",)
+STRATEGY_SUMMARY_INDEX_TITLE_KEYS = ("title", "name")
 
 _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP: dict[str, str] = {
     "draft": "draft",
@@ -689,12 +690,18 @@ def strategy_spec_summary_row(entry: RegistryEntry) -> dict:
     return row
 
 
-def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
+def strategy_spec_summary_index_row(
+    entry: RegistryEntry,
+    *,
+    include_title: bool = False,
+) -> dict:
     """Minimal candidate-index row for StrategySpec summary selection, counts, filtering, and sorting.
 
     Extracts only the fields read before page slicing; heavy summary fields
     (titles, governance, market_scope, execution_profile, evaluation_summary,
     full metadata) are deferred to Phase 2 for the returned page slice alone.
+    When ``include_title`` is True (for owner-side ``query`` search), the four
+    compact scalar title/name leaves are also projected into the candidate row.
     """
     row: dict[str, Any] = {
         "registry_id": entry.registry_id,
@@ -715,8 +722,13 @@ def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
     }
     meta = entry.metadata
     if isinstance(meta, dict):
+        meta_keys = (
+            STRATEGY_SUMMARY_INDEX_META_KEYS + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+            if include_title
+            else STRATEGY_SUMMARY_INDEX_META_KEYS
+        )
         light_meta: dict[str, Any] = {
-            k: meta[k] for k in STRATEGY_SUMMARY_INDEX_META_KEYS if k in meta
+            k: meta[k] for k in meta_keys if k in meta
         }
         meta_prov = meta.get("provenance")
         if isinstance(meta_prov, dict):
@@ -725,8 +737,13 @@ def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
             }
         inner = meta.get("strategy_spec")
         if isinstance(inner, dict):
+            spec_keys = (
+                STRATEGY_SUMMARY_INDEX_SPEC_KEYS + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+                if include_title
+                else STRATEGY_SUMMARY_INDEX_SPEC_KEYS
+            )
             light_inner: dict[str, Any] = {
-                k: inner[k] for k in STRATEGY_SUMMARY_INDEX_SPEC_KEYS if k in inner
+                k: inner[k] for k in spec_keys if k in inner
             }
             inner_prov = inner.get("provenance")
             if isinstance(inner_prov, dict):
@@ -929,6 +946,19 @@ def _extract_strategy_summary_persona_ids(row: dict) -> list[str]:
     return [str(v) for v in raw if str(v).strip()]
 
 
+def _extract_strategy_summary_title(sid: str, row: dict) -> str:
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    val = (
+        inner.get("title")
+        or inner.get("name")
+        or meta.get("title")
+        or meta.get("name")
+        or sid
+    )
+    return str(val or sid)
+
+
 def project_strategy_spec_summary_page(
     rows: list[dict],
     *,
@@ -936,6 +966,7 @@ def project_strategy_spec_summary_page(
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
+    query: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = 20,
     full_row_loader: Optional[Callable[[list[str]], Mapping[str, dict]]] = None,
@@ -1012,6 +1043,11 @@ def project_strategy_spec_summary_page(
         if persona_id is not None and str(persona_id).strip() != ""
         else None
     )
+    wanted_query = (
+        str(query).strip().lower()
+        if query is not None and str(query).strip() != ""
+        else None
+    )
 
     matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
     for sid, row in winning_row.items():
@@ -1044,6 +1080,12 @@ def project_strategy_spec_summary_page(
         persona_list = _extract_strategy_summary_persona_ids(row)
         if wanted_persona is not None and wanted_persona not in persona_list:
             continue
+        if wanted_query is not None:
+            if (
+                wanted_query not in sid.lower()
+                and wanted_query not in _extract_strategy_summary_title(sid, row).lower()
+            ):
+                continue
         last_mod = _strategy_summary_last_modified_at(row)
         matched.append(
             (_binding_utc(last_mod), sid, row, version_counts[sid], current_state, persona_list, last_mod)
@@ -1393,6 +1435,7 @@ class RegistryStore:
         *,
         visible_tenants: Optional[frozenset] = None,
         artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
     ) -> list[dict]:
         """Return lightweight candidate-index rows for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -1406,7 +1449,7 @@ class RegistryStore:
                 continue
             if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
                 continue
-            rows.append(strategy_spec_summary_index_row(entry))
+            rows.append(strategy_spec_summary_index_row(entry, include_title=include_title))
         return rows
 
     def get_strategy_spec_summary_rows_by_ids(

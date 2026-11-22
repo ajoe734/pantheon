@@ -661,6 +661,23 @@ class ReadSurfacePorts:
     def list_strategy_specs_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
         if getattr(self, "allow_local_snapshot_fallback", False):
             return None
+        cls = type(self)
+        if (
+            cls is not ReadSurfacePorts
+            and "list_strategy_specs_page" not in getattr(self, "__dict__", {})
+            and "list_strategy_summaries_page" not in getattr(self, "__dict__", {})
+            and (
+                getattr(cls, "list_strategies", None) is not ReadSurfacePorts.list_strategies
+                or getattr(cls, "list_strategy_summaries", None) is not ReadSurfacePorts.list_strategy_summaries
+                or getattr(cls, "list_strategy_specs", None) is not ReadSurfacePorts.list_strategy_specs
+                or "list_strategies" in getattr(self, "__dict__", {})
+                or "list_strategy_summaries" in getattr(self, "__dict__", {})
+                or "list_strategy_specs" in getattr(self, "__dict__", {})
+            )
+            and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            and not getattr(self.research_knowledge_source, "_strategy_specs", None)
+        ):
+            return None
         return self.research_knowledge_source.list_strategy_specs_page(**kwargs)
 
     def list_strategy_summaries_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
