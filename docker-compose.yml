@@ -248,6 +248,9 @@ services:
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS:-180}
+      CONSULTATION_WORKFLOW_LEASE_SECONDS: ${CONSULTATION_WORKFLOW_LEASE_SECONDS:-120}
+      CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS: ${CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS:-15.0}
       # Consult-policy persona panels: outcome memory writeback (memory) and
       # the harness-patch decision owner (evolution). Governance is the
       # handoff sink above. A panel blocks, never silently skips, if absent.
