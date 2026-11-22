@@ -2493,6 +2493,11 @@ class PersonaProvisioningCoordinator:
                 request_hash=record.request_hash,
             )
         )
+        if isinstance(base_pool, Mapping):
+            base_meta = base_pool.get("metadata") if isinstance(base_pool.get("metadata"), Mapping) else {}
+            pool_profile = self._extract_request_risk_profile_context({"metadata": base_meta})[0]
+            if pool_profile is not None:
+                self._verified_requested_profile(("request", requested_profile), ("capital_pool", pool_profile))
         explicit_req_version = (
             str(req.get("risk_policy_version") or req_meta.get("risk_policy_version") or "").strip() or None
         )
@@ -2535,11 +2540,6 @@ class PersonaProvisioningCoordinator:
 
         if require_approved_mapping and not clean_ref and not has_explicit_policy:
             eff_profile = self._verified_requested_profile(("provisioning_request", requested_profile))
-            if isinstance(base_pool, Mapping):
-                base_pool = self._persist_requested_profile(
-                    pool=base_pool, tenant_id=record.tenant_id, persona_id=record.persona_id,
-                    pool_id=ids.capital_pool_id, profile=eff_profile,
-                )
             approval_reader = self._governance_approval_reader()
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=ids.capital_pool_id,
@@ -2661,6 +2661,12 @@ class PersonaProvisioningCoordinator:
                     require_limits=("gross_limit",),
                     raise_on_error=False,
                 )
+            if isinstance(base_pool, Mapping):
+                self._persist_requested_profile(
+                    pool=base_pool, tenant_id=record.tenant_id, persona_id=record.persona_id,
+                    pool_id=ids.capital_pool_id, profile=eff_profile,
+                    dry_run=(base_pool.get("status") == "active" and "deployment_dispatch" not in record.references),
+                )
             routed_req = self._route_or_reuse_risk_policy_owner_decision_request(
                 tenant_id=record.tenant_id,
                 persona_id=record.persona_id,
@@ -2674,7 +2680,6 @@ class PersonaProvisioningCoordinator:
                 and "deployment_dispatch" not in record.references
             ):
                 pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
-                base_meta = dict(base_pool.get("metadata")) if isinstance(base_pool.get("metadata"), Mapping) else {}
                 try:
                     self.transport.patch(
                         "capital",
@@ -2684,7 +2689,6 @@ class PersonaProvisioningCoordinator:
                             "actor_role": "capital.admin",
                             "status": "suspended",
                             "metadata": {
-                                **base_meta,
                                 "provisional_unresolved_risk_policy": True,
                                 "requested_risk_profile": eff_profile,
                                 "require_approved_profile_mapping": True,
@@ -5308,14 +5312,20 @@ class PersonaProvisioningCoordinator:
                 binding_id=resolved_binding_id,
             )
 
+        pool_profile = self._extract_request_risk_profile_context({"metadata": pool_meta})[0]
         ledger_profile = (
             self._extract_request_risk_profile_context(ledger_record.request_payload)[0]
             if ledger_record is not None else None
         )
-        effective_profile = self._verified_requested_profile(
+        profile_sources = (
             ("repair_request", requested_profile),
             ("provisioning_request", ledger_profile),
-            ("capital_pool", pool_meta.get("requested_risk_profile")),
+            ("capital_pool", pool_profile),
+        )
+        effective_profile = (
+            self._verified_requested_profile(*profile_sources)
+            if any(value is not None and str(value).strip() for _, value in profile_sources)
+            else None
         )
         caller_approval_id = str(approval_decision_id or "").strip() or None
         effective_approval_id = (
@@ -5380,6 +5390,7 @@ class PersonaProvisioningCoordinator:
             )
         )
         if should_discover_profile:
+            effective_profile = self._verified_requested_profile(("verified_request", effective_profile))
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=resolved_pool_id,
                 effective_tenant_id=tenant_id,

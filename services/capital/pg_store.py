@@ -53,7 +53,8 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             or pool.single_runtime_enforced is not True
         ):
             raise CapitalPoolError("requested_profile_identity_invalid")
-        if meta.get("requested_risk_profile") not in (None, "", profile):
+        if any(meta.get(key) not in (None, "", profile) for key in
+               ("requested_risk_profile", "risk_profile", "requested_risk", "risk")):
             raise CapitalPoolError("requested_profile_source_conflict")
         return {**meta, "requested_risk_profile": profile, "require_approved_profile_mapping": True}
 

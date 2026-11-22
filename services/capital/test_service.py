@@ -2252,3 +2252,88 @@ def test_retained_holdings_of_departed_or_skipped_personas_count_toward_the_pape
     for persona in held:
         assert weights[persona] == pytest.approx(held[persona])  # departed personas keep their holding
     assert sum(weights.values()) <= 1.0 + 1e-9
+
+
+@pytest.mark.parametrize("profile", ["low", "medium", "high"])
+def test_requested_profile_provenance_patch_http_is_bounded_and_idempotent(client, profile):
+    api, data_dir = client
+    from services.capital import main as capital
+    class NoApprovals:
+        def get(self, decision_id):
+            return None
+    capital.capital_guard._approval_reader = NoApprovals()
+    created = api.post("/api/capital-pools", json=_pool_payload(
+        status="suspended", risk_policy_ref=None,
+        metadata={"tenant_id": "tenant-a", "persona_id": "persona-a", "execution_context": "paper",
+                  "other": {"keep": True}, "risk_policy": {
+                      "risk_policy_id": "rp-pool-001", "version": "1.0", "status": "active",
+                      "allowed_stages": ["paper"], "gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0,
+                  }},
+    ))
+    assert created.status_code == 201, created.text
+    path = "/api/capital-pools/pool-001"
+    patch = {"actor_id": "capital-admin-1", "actor_role": "capital.admin", "expected_persona_id": "persona-a",
+             "metadata": {"requested_risk_profile": profile, "require_approved_profile_mapping": True}}
+    first = api.patch(f"{path}/status", json=patch)
+    assert first.status_code == 200, first.text
+    audit_before = (data_dir / "capital_audit.jsonl").read_bytes()
+    state_before = (data_dir / "capital_pools.json").read_bytes()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        replies = list(executor.map(lambda _: api.patch(f"{path}/status", json=patch), range(8)))
+    assert all(reply.status_code == 200 for reply in replies)
+    assert (data_dir / "capital_audit.jsonl").read_bytes() == audit_before
+    assert (data_dir / "capital_pools.json").read_bytes() == state_before
+    resolution = api.get(f"{path}/risk-policy").json()
+    assert resolution["requested_profile"] == profile
+    assert resolution["status"] == "unresolved_profile_mapping"
+    assert resolution["allow_new_or_increased_risk"] is False
+    assert resolution["allow_risk_reducing_actions"] is True
+    final = api.get(path).json()
+    assert final["metadata"]["other"] == {"keep": True}
+    assert final["metadata"]["risk_policy"] == created.json()["metadata"]["risk_policy"]
+    assert final["status"] == "suspended"
+    assert final["approval_digest"] == created.json()["approval_digest"]
+    for invalid in [
+        {**patch, "expected_persona_id": "other"},
+        {**patch, "metadata": {**patch["metadata"], "requested_risk_profile": "high" if profile != "high" else "low"}},
+        {**patch, "metadata": {**patch["metadata"], "risk_policy": {"gross_limit": 3.0}}},
+        {**patch, "metadata": {**patch["metadata"], "require_approved_profile_mapping": False}},
+        {**patch, "risk_policy_ref": "unauthorized"},
+    ]:
+        assert api.patch(f"{path}/status", json=invalid).status_code == 400
+    assert (data_dir / "capital_audit.jsonl").read_bytes() == audit_before
+    assert (data_dir / "capital_pools.json").read_bytes() == state_before
+
+
+def test_pg_requested_profile_updates_one_row_and_concurrent_retries_noop(pg_identity_dsn):
+    import uuid
+    from services.capital.pg_store import CapitalPool, PostgresCapitalPoolStore
+    table = "capital.test_profile_" + uuid.uuid4().hex[:10]
+    store = PostgresCapitalPoolStore(pg_identity_dsn, table=table)
+    try:
+        for pool_id in ("target", "unrelated"):
+            pool = CapitalPool(pool_id=pool_id, name=pool_id, owner_id="tenant-a", owner_type="org",
+                               status="suspended", created_at="2026-11-22T00:00:00Z",
+                               metadata={"persona_id": "persona-a", "execution_context": "paper", "unrelated": "keep"})
+            object.__setattr__(pool, "tenant_id", "tenant-a")
+            store.create(pool)
+        def rows():
+            with store._records._connect() as conn:
+                return conn.execute(f"SELECT record_id,payload,tenant_id,updated_at FROM {store._records.table} ORDER BY record_id").fetchall()
+        before = rows()
+        # Independent store facades use separate locks/connections, like retrying
+        # owner requests. The database row lock must supply the shared exclusion.
+        stores = [PostgresCapitalPoolStore(pg_identity_dsn, table=table) for _ in range(6)]
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            outcomes = list(executor.map(lambda s: s.record_requested_profile("target", persona_id="persona-a", profile="high"), stores))
+        assert sum(changed for _, changed in outcomes) == 1
+        after = rows()
+        assert after[1] == before[1]  # unrelated payload and DB timestamp both unchanged
+        assert after[0][1]["metadata"] == {**before[0][1]["metadata"], "requested_risk_profile": "high", "require_approved_profile_mapping": True}
+        assert after[0][2] == "tenant-a"
+        assert after[0][1]["status"] == "suspended"
+        assert store.record_requested_profile("target", persona_id="persona-a", profile="high")[1] is False
+        assert rows() == after
+    finally:
+        with store._records._connect() as conn:
+            conn.execute(f"DROP TABLE {store._records.table}")
