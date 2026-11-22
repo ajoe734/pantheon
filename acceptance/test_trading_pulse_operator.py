@@ -261,3 +261,27 @@ def test_rankings_keep_navigation_without_loading_journey_evidence():
         for item in block["items"]:
             item["links"] = {k: v for k, v in item["links"].items() if k != "journey"}
     assert probe.check(fetcher(world), "tenant-a")["passed"]
+
+
+@pytest.mark.parametrize("quantity", [452, None])
+def test_live_journey_uses_viewer_allowed_binding_resolver(quantity):
+    world = fixture()
+    for b in world["bindings"]:
+        b["deployment_stage"] = "live"
+    scope = world["pulse"]["summary"]["operator_scope"]
+    scope["by_stage"] = {"live": scope["by_stage"]["paper"]}
+    world["rankings"]["summary"]["operator_scope"] = copy.deepcopy(scope)
+    world["pulse"]["summary"]["pnl_groups"][0]["stage"] = "live"
+    world["pulse"]["runtime_rows"][1]["latest_outcome"]["requested_quantity"] = quantity
+    world["journey"].update(runtime_id="r-p2", quantity=quantity if quantity is not None else "***")
+    def fetch(path):
+        parsed = urlsplit(path)
+        q = parse_qs(parsed.query)
+        if parsed.path.endswith("/resolve"):
+            assert q["environment"] == ["live"] and q["identifier_type"] == ["binding_id"]
+            return {"data": {"journey_ids": ["tj-refused"] if q["q"] == ["b-p2"] else []}}
+        if parsed.path == "/bff/management/trade-journeys":
+            assert "q" not in q and q["page_size"] == ["200"] and q["to"] == [AT]
+            return {"data": {"items": [world["journey"]] if q["persona_id"] == ["p2"] else []}}
+        return fetcher(world)(path)
+    assert probe.check(fetch, "tenant-a")["passed"]

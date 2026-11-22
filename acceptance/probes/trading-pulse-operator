@@ -151,12 +151,30 @@ def check(fetch, tenant):
             if not same(metrics.get("fill_rate"), rate):
                 failures.append("fill_rate_mismatch")
         # Independent latest journey query, constrained by binding, persona and snapshot.
-        query = urlencode({"tenant_id": tenant, "environment": binding.get("deployment_stage") or binding.get("deployment_mode"),
-            "persona_id": binding["persona_id"], "q": key[1], "to": ctx.get("snapshot_at"), "page_size": 1})
-        journeys = source(fetch, "/bff/management/trade-journeys?" + query)
+        params = {"tenant_id": tenant, "environment": binding.get("deployment_stage") or binding.get("deployment_mode"),
+            "persona_id": binding["persona_id"], "q": key[1], "to": ctx.get("snapshot_at"), "page_size": 1}
+        journey_ids = None
+        if params["environment"] == "live":
+            # Live viewers may search journey IDs, not arbitrary identifiers.
+            # Reuse the allowed scoped binding resolver and Persona list; do
+            # not elevate the viewer or derive expected IDs from Pulse itself.
+            resolved = source(fetch, "/bff/management/trade-journeys/resolve?" + urlencode({
+                "tenant_id": tenant, "environment": "live", "identifier_type": "binding_id", "q": key[1]}))
+            journey_ids = set(resolved.get("journey_ids") or [])
+            if len(journey_ids) >= 200:
+                raise Unverifiable("live_journey_scope_cap_exceeded")
+            params.pop("q")
+            params["page_size"] = 200
+        path = "/bff/management/trade-journeys?" + urlencode(params)
+        body = fetch(path)
+        journeys = source(lambda _: body, path)
         if not isinstance(journeys, dict):
             raise Unverifiable("independent_journey_unavailable")
         items = journeys.get("items") or []
+        if journey_ids is not None:
+            items = [i for i in items if i.get("journey_id") in journey_ids and i.get("runtime_id") == key[0]]
+            if not items and journey_ids and (body.get("page_info") or {}).get("has_more"):
+                raise Unverifiable("live_journey_page_incomplete")
         actual = row.get("latest_outcome") or {}
         if items:
             item = items[0]
@@ -169,6 +187,8 @@ def check(fetch, tenant):
                     value = detail.get(field) if isinstance(detail, dict) else None
                     if field == "requested_quantity" and value is None:
                         value = item.get("quantity")
+                    if field == "requested_quantity" and item.get("quantity") == "***":
+                        value = None
                     if not same(actual.get(field), value):
                         failures.append("rejection_fact_mismatch:" + field)
                 if not outcome.get("source_event_id"):

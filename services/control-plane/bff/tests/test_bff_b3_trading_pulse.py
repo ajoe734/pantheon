@@ -964,14 +964,27 @@ def test_stale_and_undefined_sharpe_preserve_source_reasons_and_skip_rankings():
     assert not next(b for b in blocks if b["metric"] == "pnl")["items"]
 
 
-def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding():
+@pytest.fixture
+def outcome_caller(request):
+    from services.control_plane.bff.core.owner_reads import authorization
+    stage, role, quantity = request.param
+    token = authorization.set(f"Bearer outcome:{role}:tenant-test")
+    yield stage, quantity
+    authorization.reset(token)
+
+
+@pytest.mark.parametrize("outcome_caller", [
+    ("paper", "viewer", 452), ("live", "viewer", None), ("live", "operator", 452),
+], indirect=True)
+def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding(outcome_caller):
     from types import SimpleNamespace
     from services.trade_journey.materializer import JourneyProjection
     event = {"event_id": "projected", "source_event_id": "immutable", "occurred_at": "2026-11-19T23:46:17Z",
         "stage": "risk_evaluation", "stage_status": "rejected", "reason_code": "insufficient_cash",
         "submitted_to_broker": False, "requested_quantity": 452,
         "reason_detail": {"required": 100034.3461, "available": 100000, "currency": "TWD", "requested_quantity": 452}}
-    projection = JourneyProjection("tj-refusal", "tenant-test", "paper", [event], {
+    stage, quantity = outcome_caller
+    projection = JourneyProjection("tj-refusal", "tenant-test", stage, [event], {
         "status": "failed", "stages": {"risk_evaluation": {"status": "rejected"}},
         "identifiers": {"runtime_id": ["r-p2"], "binding_id": ["b-p2"], "persona_id": ["p2"]},
         "updated_at": event["occurred_at"]})
@@ -981,12 +994,14 @@ def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding():
             assert kwargs["filters"]["binding_id"] in {"b-p1", "b-p2"}
             return SimpleNamespace(items=[projection] if kwargs["filters"]["binding_id"] == "b-p2" else [])
     store = _OperatorStore()
+    for binding in store.bindings:
+        binding["deployment_stage"] = stage
     store.reader = Reader()
     row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
     outcome = row["latest_outcome"]
     assert outcome["reason_code"] == "insufficient_cash" and outcome["submitted_to_broker"] is False
     assert outcome["required"] == 100034.3461 and outcome["available"] == 100000
-    assert outcome["requested_quantity"] == 452 and outcome["source_event_id"] == "immutable"
+    assert outcome["requested_quantity"] == quantity and outcome["source_event_id"] == "immutable"
     assert outcome["currency"] == "TWD" and "tj-refusal" in row["links"]["journey"]
     projection.snapshot["identifiers"]["binding_id"] = ["old-binding"]
     row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
