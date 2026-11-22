@@ -1,0 +1,74 @@
+{
+  "schema_version": "pantheon_task_evidence.v1",
+  "task_id": "COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122",
+  "title": "Keep Collector backfill advancing through identical repeated publisher runs",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "problem_register_class_owner": "cb4f6795",
+  "branch": "task/COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122",
+  "base_commit": "bac80d7569e5d1943c3c948791dfaa283362f9dc",
+  "captured_at": "2026-11-22T14:05:00Z",
+  "rc2_reference_artifacts": [
+    {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113-20261121.d9lvsr5j/tpex-native-retained-boundary-20261122T123135Z.json",
+      "sha256": "2d6ab0ac722ceb71bace1eeeb1ace3142aa628c5ceab341df08e7c99ded53f27",
+      "summary": "Retained TPEx partial cursor 2026-11-11T12:35:01Z#backfill-2026-10-28|items=804 (6,642 rows, 8,993,131 metadata bytes, 5,838 rows and 66 index entries remaining)."
+    },
+    {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113-20261121.d9lvsr5j/tpex-priority-receipt-comparison-20261122T123532Z.json",
+      "sha256": "8f43d6a2f43c29d835476141e0ff82ee2646604861ca977379a19928b4f91edf",
+      "summary": "Persisted latest_priority.json receipt acknowledges 2026-11-20 (13,807 TPEx rows, done=true) at 2026-11-21T18:16:40Z#run-20261121T181640Z; latest published run 2026-11-22T12:19:41Z#run-20261122T121941Z has identical bundle_sha256 9df48fdf18d0561db953357030ae7d8c337e9af9eacf10f347d0ad85358b13b5 and 13,807 matching item hashes (21,756,325 metadata bytes, 1977.4 ms read time)."
+    },
+    {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113-20261121.d9lvsr5j/tpex-priority-manifest-workset-20261122T123648Z.json",
+      "sha256": "d3ea3a566769438f67d4d506f63bf65745fdfed6096b39644cbca3b82bddca07",
+      "summary": "12 eligible upper-bound priority candidates with digest groups [9, 2, 1]; 4 measured runs (manifest.json 5,674,342 + items.jsonl 16,081,983 = 21,756,325 bytes each) total 87,025,300 bytes, exceeding the 71,680,000-byte _METADATA_CACHE cap under the 15.0s pull read budget."
+    },
+    {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113-20261121.d9lvsr5j/survivorship-due-and-scheduled-priority-20261122T1226Z.json",
+      "sha256": "f6c85488c02612a781a0e0f0b7458aa77ac1c8ab49693a738d424ff380ab2c04",
+      "summary": "Due collector-tw-trading-holidays (last_success_at 2026-11-21T12:21:21Z) and collector-tw-trading-suspension (last_success_at 2026-11-21T12:21:36Z) starved behind failing due collector-tw-tpex-price-history (last_failure_at 2026-11-22T12:25:18Z > last_success_at 2026-11-22T00:17:45Z)."
+    }
+  ],
+  "root_causes_and_fixes": {
+    "priority_metadata_reverification_and_key_change_livelock": {
+      "root_cause": "When a new 6-hourly publisher run republished an already-acknowledged TPEx close session (bundle_sha256 9df48fdf..., 13,807 items), _PRIORITY_DELIVERED_MEMO missed on the changed index fingerprint and _pull_priority_latest walked all 12 upper-bound candidates through _verified_metadata. Because _PRIORITY_TRADE_DATE_MEMO only skipped known_day < best[0] and 4 full TPEx metadata pairs (87,025,300 bytes) exceeded VERIFIED_METADATA_CACHE_BYTES (71,680,000 bytes), candidates evicted each other and the active historical bundle (backfill-2026-10-28, 8,993,131 bytes) from _METADATA_CACHE. When pending items were empty and state_key != key, _pull_priority_latest returned records=[] without updating _PRIORITY_DELIVERED_MEMO and _pull_bounded skipped _pull_ordered after the 15s deadline, returning an unverified empty outcome (collector_complete_boundary_unverified, cursor_lag_over_7_days) that failed before latest_priority.json or the historical cursor could be acknowledged.",
+      "fix": [
+        "Store verified (trade_date, entry_sig, item_hashes) in _PRIORITY_TRADE_DATE_MEMO (deduplicating item_hashes dict references across identical runs) so candidate runs already verified in-process are reused without re-downloading manifest.json/items.jsonl even after _METADATA_CACHE evicts their 21.75 MB VerifiedBundle under the 71.68 MB byte cap.",
+        "When an unmemoized candidate's index bundle_sha256 matches a trusted verified digest (from the completed latest_priority.json receipt or an already full-verified bundle of that digest), verify its manifest.json header, attribution, URLs, raw_paths, bundle_sha256, and exact {item_id: content_sha256} row identities (_verified_manifest_matching_trusted) to skip downloading the redundant 16.08 MB items.jsonl unless row identities or trade_date differ or the candidate owns an undelivered pending item.",
+        "Register a resumed partial cursor's (date, run_id) in _HISTORY_READING upfront and evict non-reading entries from _METADATA_CACHE before active _HISTORY_READING entries.",
+        "Populate _PRIORITY_DELIVERED_MEMO whenever pending_ids is empty, and in _pull_bounded do not skip _pull_ordered when priority returned zero records (key-only advance on equivalent republish)."
+      ]
+    },
+    "steady_pull_selector_starvation_on_failing_price_history": {
+      "root_cause": "limit_collector_pull_batch placed any tw_price_daily connector with freshness.is_due=True into newest_pending regardless of whether its latest attempt failed. Because is_due depends on last_success_at, a repeatedly failing collector-tw-tpex-price-history stayed in newest_pending on every tick and monopolized the single steady pull slot (STEADY_PULLS_PER_REQUEST=1) ahead of due collector-tw-trading-holidays and collector-tw-trading-suspension.",
+      "fix": [
+        "In controller_worker._collector_continuation_pending and limit_collector_pull_batch, check last_attempt_failed (last_failure > last_success, fetch_state.last_error, source_health.last_error / consecutive_failures > 0, or latest_run/latest_receipt status != completed).",
+        "Exclude a failing tw_price_daily connector from newest_pending and newest_continuing so it rotates behind due connectors with older last_attempt timestamps (allowing due holiday and suspension intake to run) and retries through the existing scheduler once other due connectors have more recent attempts, while preserving fresh market session and held-symbol priority when healthy."
+      ]
+    }
+  },
+  "runtime_budget": {
+    "new_persistent_writers": [],
+    "new_recurring_jobs_or_emitters": [],
+    "preserved_bounds": {
+      "COLLECTOR_REQUEST_READ_BUDGET_SECONDS": 15.0,
+      "VERIFIED_METADATA_CACHE_BYTES": 71680000,
+      "VERIFIED_METADATA_CACHE_ENTRIES": 16,
+      "PRIORITY_TRADE_DATE_MEMO_ENTRIES": 512,
+      "PRIORITY_DELIVERED_MEMO_ENTRIES": 64,
+      "STEADY_PULLS_PER_REQUEST": 1
+    }
+  },
+  "validation": {
+    "command": "/tmp/pantheon-worker-worktrees/pantheon/collector-priority-metadata-reverify-r2-20261122/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_collector_priority_metadata_reads.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_newest_session_hosted_throughput.py services/source_ingestion/tests/test_collector_bundle_whole_market_day.py services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_market_early_fetch_pit.py services/source_ingestion/tests/test_tw_suspension_holidays_intake.py",
+    "passed": 497,
+    "skipped": 4,
+    "failed": 0,
+    "duration_seconds": 274.99
+  },
+  "hosted_acceptance_ownership": {
+    "collector_hosted_intake_acceptance": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113",
+    "survivorship_data_collector_deploy": "SURVIVORSHIP-DATA-COLLECTOR-DEPLOY-20261115"
+  }
+}

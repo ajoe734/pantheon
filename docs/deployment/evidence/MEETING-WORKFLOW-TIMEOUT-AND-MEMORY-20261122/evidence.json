@@ -1,0 +1,95 @@
+{
+  "task_id": "MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "source_verified": true,
+  "hosted_verified": false,
+  "review_status": "pending independent exact-head review",
+  "scope": {
+    "A1": "Executor defaults: provider/API timeout 180 seconds, durable lease 120 seconds. Meeting ensure_agents and obtain run in a joined, single-worker ThreadPoolExecutor; wait loop renews the fenced claim every lease_seconds/3. Compose wires both settings on consultation-svc.",
+    "A2": "Participant pre-read timeout 15 seconds via CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS (also wired in Compose); case-file http_json default 15 seconds, with explicit per-call overrides preserved.",
+    "A3": "Validated persona_meeting own_pre_read, including empty entries, suppresses adapter memory_fetcher. When both shared credential settings are blank and the adapter token file is configured, use OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE with PANTHEON_OPENCLAW_MEMORY_ACTOR_ID/ROLES and a 15-second read timeout. Configured shared credential files retain precedence and fail closed. Token files are read per call.",
+    "A4": "Focused regressions cover an actual >=35-second provider turn with SQLite fencing against a competing worker, slow ensure renewal, transport TimeoutError propagation, joined provider on renewal failure, memory timeout defaults/overrides, own_pre_read suppression on rounds 1/2 and synthesis, and credential/identity precedence and rotation."
+  },
+  "prior_hosted_proof": {
+    "source": "Supervisor task-scoped dispatch brief; not re-probed by this worker",
+    "bff_commit_prefix": "bac80d756",
+    "root_workflow_run": "45018810312",
+    "meeting_id": "mtg-ce73f5966e7f23be",
+    "status": "closed",
+    "outcome": "proposals_issued",
+    "rounds": 2,
+    "rejected_positions": 0,
+    "research_demand_id": "rd-975bb89106f1c696a680",
+    "institutional_memory_entry_id": "mem-cd201de0-a7db-5e64-b37c-830a51a7d946",
+    "persona_writeback_count": 3,
+    "bff_readback_status": 200,
+    "limitation": "Prior meeting used a manual HttpContributionProvider timeout_seconds=180.0 override. It does not prove this automatic executor change is deployed or accepted."
+  },
+  "runtime_budget": {
+    "manifest_entries": [
+      "docs/operations/storage-manifest.json: sqlite consult_workflow_state.sqlite3",
+      "docs/operations/storage-manifest.json: table consultation_work_items"
+    ],
+    "cadence": "Existing executor ticks every 15 seconds after a completed batch (max 10 claims per tick by default). New renewals run only while a meeting provider call is pending: every 120/3 = 40 seconds by default, never an independent recurring timer.",
+    "size_and_count_at_hosted_scale": "Three trading personas: at most one provider thread per sequential executor claim; one existing coordination row per request. Each renewal updates only lease_expires_at and updated_at (two numeric timestamps); inserts 0 rows and creates 0 new files/tables.",
+    "growth_per_day": "Additional retained rows/files = 0/day; additional retained logical data is O(1) per existing claim. At continuous 24-hour provider occupancy the default cadence is <=2160 timed renewals/day per executor, plus existing between-call renewals. Physical SQLite/WAL bytes are not measured by this task.",
+    "cap": "One joined thread per provider call; no post-call timer or renewal backlog. Meeting policy retains existing max_calls_per_meeting (default 16) and finite HTTP timeout (180 seconds per call); no new retention store. Existing SQLite/table file-size/row-count cap remains unverified under RC3.",
+    "cleanup": "ThreadPoolExecutor joins on success/error/fencing failure; renewals cease on call return. Existing SQLite journal lifecycle applies; historical workflow-row pruning is not implemented here and stays with RC3."
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/consultation/test_workflow_executor.py services/consultation/tests/test_persona_meetings.py services/knowledge/test_case_file.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/consultation/tests/test_panel_case_file.py services/consultation/tests/test_persona_panel_integration.py services/consultation/tests/test_panel_agent_provisioning.py",
+      "timeout 90 .venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/meeting-timeout-storage.json",
+      "timeout 30 .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest",
+      "git diff --check",
+      "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_consult_agent_provisioning.py integrations/openclaw/test_persona_memory_bridge.py",
+      "timeout 30 docker compose --profile core config --format json",
+      "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py"
+    ],
+    "results": {
+      "focused_and_panel_suites": "138 passed, 1 StarletteDeprecationWarning, 140.61s, exit 0",
+      "adjacent_adapter_and_memory_bridge": "17 passed, 1 StarletteDeprecationWarning, 3.64s, exit 0",
+      "storage_manifest": "passed=true, failures=[], exit 0",
+      "storage_manifest_unit_tests": "10 tests, OK, exit 0",
+      "compose_core": "docker compose --profile core config --format json: exit 0; verified consultation-svc timeout=180, lease=120, memory_read=15.0",
+      "read_only_probe_contract": "local synthetic GET response validation: positive + 6 negative + missing-configuration cases passed; no token in output. Hosted not executed.",
+      "diff_check": "git diff --check: exit 0",
+      "adapter_after_formatting": "18 passed, 1 StarletteDeprecationWarning, 3.43s, exit 0"
+    }
+  },
+  "hosted_acceptance": {
+    "status": "pending deployment and automatic executor observation",
+    "prerequisite": "Use an automatically executed meeting created after deployment of this PR; confirm exact hosted manifest/service identities. Do not use the manually driven prior meeting as proof. Read-only probe does not convene/replay meetings or change write authority.",
+    "command": "python3 -c 'import json; exec(json.load(open(\"docs/deployment/evidence/MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122/evidence.json\"))[\"hosted_acceptance\"][\"python_source\"])'",
+    "python_source": "import json, os, urllib.parse, urllib.request\nrequired = (\"ACCEPTANCE_CONSULTATION_URL\", \"ACCEPTANCE_CONSULTATION_TOKEN\", \"ACCEPTANCE_TENANT_ID\", \"ACCEPTANCE_MEETING_ID\")\nif any(not os.environ.get(key, \"\").strip() for key in required):\n    print(\"skipped: consultation read-only probe configuration missing\")\n    raise SystemExit(77)\nbase, token, tenant, meeting_id = (os.environ[key] for key in required)\npath = \"/api/consult/meetings/\" + urllib.parse.quote(meeting_id, safe=\"\")\nrequest = urllib.request.Request(base.rstrip(\"/\") + path, headers={\"Authorization\": \"Bearer \" + token, \"X-Tenant-Id\": tenant, \"X-Pantheon-Tenant-Id\": tenant}, method=\"GET\")\ntry:\n    with urllib.request.urlopen(request, timeout=20) as response:\n        meeting = json.load(response)\n    assert meeting.get(\"tenant_id\") == tenant\n    assert meeting.get(\"status\") == \"closed\"\n    assert (meeting.get(\"execution_state\") or {}).get(\"status\") == \"completed\"\n    assert meeting.get(\"round\", 0) >= 2 and len(meeting.get(\"rounds\") or []) >= 2\n    assert meeting.get(\"outcome\") in {\"proposals_issued\", \"completed_no_proposal\", \"no_testable_hypothesis\"}\n    assert not meeting.get(\"memory_read_refusals\")\n    assert not meeting.get(\"rejected_positions\")\n    assert (meeting.get(\"minutes\") or {}).get(\"institutional_entry_id\")\n    assert len(meeting.get(\"writebacks\") or []) == len(meeting.get(\"participants\") or []) > 0\n    assert all(row.get(\"entry_id\") for row in meeting[\"writebacks\"])\nexcept Exception as error:\n    print(\"failed: \" + type(error).__name__)\n    raise SystemExit(1)\nprint(\"passed: automatic meeting closed with completed workflow, rounds and recorded memory writebacks\")\n",
+    "required_environment": [
+      "ACCEPTANCE_CONSULTATION_URL",
+      "ACCEPTANCE_CONSULTATION_TOKEN",
+      "ACCEPTANCE_TENANT_ID",
+      "ACCEPTANCE_MEETING_ID"
+    ],
+    "exit_codes": {
+      "0": "passed",
+      "1": "failed",
+      "77": "skipped: missing configuration; never counted as pass"
+    }
+  },
+  "residual_findings": [
+    {
+      "register_class": "RC2 / RC1",
+      "owner": "persona-loop / stack-health owner",
+      "finding": "workflow_executor.main updates workflow-health.json and LoopControllerWriter only after an entire tick. Compose requires health-file freshness <=90 seconds; controller lease is interval_seconds + timeout_seconds + 1 (196 seconds by default). A multi-turn meeting can outlast both despite successful durable work-claim renewal.",
+      "disposition": "Recorded in RC2 problem-register row for coordinator attachment; not repaired in this scoped timeout/auth task."
+    },
+    {
+      "register_class": "RC3",
+      "owner": "storage writer owner",
+      "finding": "Workflow SQLite/table manifest entries are already unreviewed with no verified cap or cleanup. New heartbeats update timestamps in place but do not bound historical request rows or measure physical WAL churn.",
+      "disposition": "Existing RC3 WP3.1 writer obligation; no new writer introduced."
+    }
+  ],
+  "tokens_in_evidence": false,
+  "anchor_commit": "fc47c8499"
+}

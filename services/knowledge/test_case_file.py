@@ -590,3 +590,15 @@ class CaseFileTests(unittest.TestCase):
         self.assertEqual(len(seen_search_bodies), 1)
         self.assertEqual(seen_search_bodies[0]["actor_ref"], "persona_cycle_controller")
         self.assertEqual(seen_search_bodies[0]["role_refs"], ["researcher", "persona_session"])
+
+
+def test_http_json_memory_owner_timeout_default_and_override():
+    import io
+
+    with mock.patch.object(cf.urllib.request, "urlopen") as open_url:
+        open_url.return_value.__enter__.side_effect = lambda: io.BytesIO(b'{"hits": []}')
+        endpoint = cf.OwnerEndpoint("http://memory.invalid", "synthetic-token")
+        assert cf.http_json(endpoint, "/api/memory/retrieve", tenant_id="t1") == {"hits": []}
+        assert open_url.call_args.kwargs["timeout"] == 15.0
+        cf.http_json(endpoint, "/api/memory/retrieve", tenant_id="t1", timeout=23.0)
+        assert open_url.call_args.kwargs["timeout"] == 23.0

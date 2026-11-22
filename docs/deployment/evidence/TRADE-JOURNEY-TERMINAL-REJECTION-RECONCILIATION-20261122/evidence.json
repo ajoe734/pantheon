@@ -1,0 +1,109 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TRADE-JOURNEY-TERMINAL-REJECTION-RECONCILIATION-20261122",
+  "title": "Stop reconciliation retries for a terminal pre-broker paper rejection",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "register_class": "RC6",
+  "work_packages": [
+    "WP6.1",
+    "WP6.2",
+    "WP6.3",
+    "WP6.4"
+  ],
+  "depends_on": [
+    "TRADE-JOURNEY-FAILURE-CAUSE-20261121",
+    "TRADE-JOURNEY-HISTORICAL-CAUSE-REPAIR-20261121"
+  ],
+  "upstream_prs": [
+    "https://github.com/ajoe734/pantheon/pull/7721",
+    "https://github.com/ajoe734/pantheon/pull/7729"
+  ],
+  "hosted_observation_reproduced": {
+    "release_run_id": "45018810312",
+    "backend_sha": "bac80d756dec67b19c9af5183eae7a9869835015",
+    "frontend_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "readonly_join_artifact": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/TELEMETRY-HEARTBEAT-HOSTED-ACCEPTANCE-20261117-root-45018810312/reconciliation-pending-join-20261122T133352Z.json",
+    "readonly_join_artifact_sha256": "816aa2b2c7b50f5fcba281361058a5cc7d4b01e18ad41fbde12696878bf04d92",
+    "pending_claims_observed": {
+      "binding_digest": "526b4d060c283aa8",
+      "ticks": 277,
+      "first_at": "2026-11-21 13:34:56.566879+00",
+      "last_at": "2026-11-22 13:31:31.548119+00",
+      "zero_dispatch_attempts": 277,
+      "no_event_minted": 277
+    },
+    "witness_event": {
+      "fixture_source": "docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/historical-events.json",
+      "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+      "event_digest": "99383a35c664c529",
+      "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+      "binding_digest": "526b4d060c283aa8",
+      "runtime_id": "rt-3252fa75",
+      "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+      "tenant_id": "tenant-dev",
+      "environment": "paper",
+      "event_type": "order_rejection",
+      "created_at": "2026-11-19T23:46:17Z",
+      "reject_reason": "insufficient_cash",
+      "expression_reason_code": "long_cash",
+      "submitted_to_broker": false,
+      "requested_quantity": 452.0,
+      "required": 100034.3461,
+      "available": 100000.0,
+      "limit": 100000.0,
+      "snapshot_present": false
+    }
+  },
+  "implementation_summary": {
+    "modified_files": [
+      "services/reconciliation-drift/main.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "docs/operations/problem-register.md"
+    ],
+    "scheduled_lifecycle_resolver": {
+      "file": "services/reconciliation-drift/main.py",
+      "functions": [
+        "_paper_lifecycle_identity",
+        "_is_terminal_prebroker_paper_rejection",
+        "_scheduled_lifecycle_event"
+      ],
+      "behavior": "Authoritative terminal pre-broker paper order_rejection identities (explicit submitted_to_broker=False, zero/absent fill quantities, no broker/fill/ledger/reconciliation/booking identifiers or uncertain outcome flags, explicit pre-broker risk rejection status, and a single concrete non-expression pre-broker rejection reason) take the existing ineligible branch (reason='lifecycle_noop_order_closed', status='not_eligible', terminal=True, retryable=False, attempt_count=0, event_id=None) instead of falling through to the generic non-position_snapshot lifecycle_in_flight branch.",
+      "preserved_invariants": [
+        "Committed position snapshot precedence is preserved in _paper_lifecycle_identity before inspecting last_lifecycle_identity.",
+        "Tenant alignment (summary, identity, correlation_envelope, and metadata) and paper boundaries (summary, identity, correlation_envelope, metadata, and authority_refs) fail closed.",
+        "Genuine in-flight stages (signal_generation, trade_decision, risk_evaluation, order_submitted, order_accepted, paper_fill_simulated) and order_rejection records with absent, conflicting, uncertain, broker-submitted, or contradictory fill/booking evidence remain pending (lifecycle_in_flight).",
+        "Global no-op order filtering (services/trade_journey/lifecycle_noop_order.py::is_noop_order) is unchanged and returns False for the witnessed order_rejection.",
+        "The witnessed rejection tj_79726064-4cc2-5510-8e11-7f5e59ff89bd remains visible in the BFF trade-journeys routes with status='failed', current_stage='risk_evaluation', quantity=452.0, reason_code='insufficient_cash', expression_reason_code='long_cash', submitted_to_broker=False, order_status='not_submitted', reason_detail={required: 100034.3461, available: 100000.0, limit: 100000.0, requested_quantity: 452.0}, and no invented reconciliation stage or fabricated variance/completion.",
+        "Independent bindings in the same scheduled pass receive their normal drift/health evaluation and genuine booking reconciliation result (reconciliation_completed or reconciliation_failed with trade-specific checks)."
+      ]
+    }
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_journey_booking_reconciliation.py services/trade_journey/test_lifecycle_noop_order.py services/trade_journey/test_materializer.py",
+        "result": "117 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/control-plane/bff/tests/test_trade_journey_readable_residuals.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py services/telemetry/test_runtime_summary_projection.py",
+        "result": "349 passed, 19 subtests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+        "result": "passed: true, failures: []"
+      }
+    ]
+  },
+  "runtime_budget": {
+    "new_persistent_writers": 0,
+    "new_recurring_jobs": 0,
+    "new_queues_or_tables": 0,
+    "storage_manifest_changed": false,
+    "net_effect_at_hosted_scale": "Eliminates 277 false pending lifecycle_in_flight work-claim failures per 24h on bindings whose latest lifecycle event is an authoritative terminal pre-broker paper order_rejection; mints 0 synthetic reconciliation events."
+  },
+  "post_deploy_acceptance_ownership": {
+    "work_package": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+    "delivery_state": "merged_pending_deploy_and_hosted_proof"
+  }
+}

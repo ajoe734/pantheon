@@ -1611,9 +1611,12 @@ def _collector_continuation_pending(item: Mapping[str, Any], freshness: Mapping[
     outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
     observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
     latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+    last_success = _attempt_sort_key(freshness.get("last_success_at"))
+    last_failure = _attempt_sort_key(freshness.get("last_failure_at"))
     return (
         observed.get("continuation_pending") is True
         and not state.get("last_error")
+        and not (last_failure and last_failure > last_success)
         and latest_run.get("status") == "completed"
         and freshness.get("status") not in {"degraded", "disabled", "unscheduled"}
     )
@@ -1691,24 +1694,37 @@ def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str
     for item in actual.get("connectors") or []:
         if isinstance(item, Mapping):
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-            attempts = [
-                _attempt_sort_key(freshness.get("last_success_at")),
-                _attempt_sort_key(freshness.get("last_failure_at")),
-            ]
+            last_success = _attempt_sort_key(freshness.get("last_success_at"))
+            last_failure = _attempt_sort_key(freshness.get("last_failure_at"))
+            attempts = [last_success, last_failure]
             cid = str(item.get("connector_id") or "")
             last_attempt[cid] = max(attempts)
             connector = item.get("connector") or {}
             definition = definitions.get(str((connector.get("metadata") or {}).get("definition_id") or ""))
             collector = (definition.metadata.get("collector") or {}) if definition else {}
-            outcome = (item.get("fetch_state") or {}).get("collector_outcome") or {}
-            observed = outcome.get("observed") or {}
+            state = item.get("fetch_state") if isinstance(item.get("fetch_state"), Mapping) else {}
+            source_health = item.get("source_health") if isinstance(item.get("source_health"), Mapping) else {}
+            outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
+            observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
+            latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+            latest_receipt = (
+                freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), Mapping) else {}
+            )
+            last_attempt_failed = (
+                bool(last_failure and last_failure > last_success)
+                or bool(state.get("last_error"))
+                or bool(source_health.get("last_error"))
+                or int(source_health.get("consecutive_failures") or 0) > 0
+                or (bool(latest_run.get("status")) and latest_run.get("status") != "completed")
+                or (bool(latest_receipt.get("status")) and latest_receipt.get("status") != "completed")
+            )
+            continuing = _collector_continuation_pending(item, freshness) and not last_attempt_failed
             if (collector.get("dataset") == "tw_price_daily"
+                    and not last_attempt_failed
                     and (freshness.get("is_due") is True
-                         or (_collector_continuation_pending(item, freshness)
-                             and observed.get("newest_session_pending") is not False))):
+                         or (continuing and observed.get("newest_session_pending") is not False))):
                 newest_pending.add(cid)
-                if (_collector_continuation_pending(item, freshness)
-                        and observed.get("newest_session_pending") is True):
+                if continuing and observed.get("newest_session_pending") is True:
                     newest_continuing.add(cid)
     ranked = sorted(selected, key=lambda connector_id: (connector_id not in newest_continuing,
                                                        connector_id not in newest_pending,
