@@ -22,15 +22,47 @@ class SnapshotApprovalReader:
     def __init__(self, snapshot):
         self.snapshot = snapshot
 
-    def get(self, decision_id):
+    def _snapshots(self):
         body = self.snapshot() if callable(self.snapshot) else self.snapshot
-        try:
-            evidence = ApprovalEvidence.model_validate(body)
-        except ValueError as exc:
-            raise ApprovalInvalid('Malformed Governance decision') from exc
-        if evidence.decision_id != decision_id:
-            raise ApprovalInvalid('Governance exact decision ID mismatch')
-        return evidence
+        if isinstance(body, (list, tuple)):
+            return list(body)
+        return [body]
+
+    def get(self, decision_id):
+        last_error = None
+        for body in self._snapshots():
+            try:
+                evidence = ApprovalEvidence.model_validate(body)
+            except ValueError as exc:
+                raise ApprovalInvalid('Malformed Governance decision') from exc
+            if evidence.decision_id == decision_id:
+                return evidence
+            last_error = ApprovalInvalid('Governance exact decision ID mismatch')
+        raise last_error or ApprovalInvalid('Governance exact decision ID mismatch')
+
+    def list_for_target(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        decision_state: str | None = 'decided',
+        max_items: int = 16,
+    ):
+        results = []
+        for body in self._snapshots():
+            if not isinstance(body, dict):
+                continue
+            if body.get('target_type') != target_type or body.get('target_id') != target_id:
+                continue
+            if decision_state and body.get('decision_state') != decision_state:
+                continue
+            try:
+                results.append(ApprovalEvidence.model_validate(body))
+            except ValueError:
+                continue
+            if len(results) >= max_items:
+                break
+        return results
 
     def verify(self, decision_id, *, expected, now=None, usage_context=None):
         return self.get(decision_id).require_valid(expected=expected, now=now, usage_context=usage_context)

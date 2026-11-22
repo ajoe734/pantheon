@@ -1,0 +1,220 @@
+{
+  "task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+  "title": "依 Persona 風險等級解析既有核准政策，將缺少的政策交回風控治理",
+  "delivery_state": "open_pr_pending_review_and_merge",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "parent_chain": [
+    "PAPER-RISK-POLICY-PROVENANCE-20261121",
+    "PAPER-RISK-POLICY-BINDING-20261121",
+    "PAPER-SIZING-BOUND-RISK-POLICY-20261121",
+    "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+    "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+    "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+  ],
+  "problem_register_class": {
+    "id": "RC2",
+    "file": "docs/operations/problem-register.md",
+    "domain": "persona-loop / capital risk policy binding",
+    "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+    "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+  },
+  "rc2_residual_reproduction_on_hosted_d585efa53f": {
+    "evidence_label": "actual_hosted_observation",
+    "hosted_release_inspected": "d585efa53fb213e63726c2a53c07234d9219a38b",
+    "request_contract_traced": {
+      "frontend_caller": "execute-plans createPersona({ name, archetype, risk: 'low', mandate, symbols, market, budget })",
+      "bff_route": "POST /bff/personas",
+      "request_payload_fields": {
+        "risk": "low",
+        "risk_policy_ref": null,
+        "risk_policy_present": false,
+        "profile_mapping_approval_id_present": false,
+        "approval_decision_id_present": false
+      }
+    },
+    "residual_defect_on_d585efa53f": {
+      "resolve_requested_pool_risk_policy": "Constructed generic 2.0 inline policy (_default_paper_pool_risk_policy: rp-pool-persona-paper-<token>, gross_limit=2.0, net_limit=2.0, max_leverage=2.0) without discovering approved policies by (tenant_id, requested_profile, stage) from CAPITAL_RISK_POLICY_DIR or bounded Governance capital_pool_activation decisions.",
+      "coordinate_capital_pool": "Hardcoded effective_approval_id = candidate_approval_id or f'apv-capital-pool-{ids.capital_pool_id}', overwriting or missing any valid Governance ApprovalDecision whose decision_id was not apv-capital-pool-{pool_id}.",
+      "verify_policy_owner_approval_decision": "When no explicit decision_id was supplied on the request or pool metadata, only checked reader.get(f'apv-capital-pool-{resolved_pool_id}') instead of bounded target lookup for capital_pool_activation / pool_policy_parameter_proposal.",
+      "repair_paper_pool_risk_policy": "Returned unresolved_profile_mapping without routing or reusing a deterministic Governance Human Inbox proposal or distinguishing policy_definition_and_approval_absent from policy_approval_missing / policy_approval_pending / policy_candidates_ambiguous."
+    },
+    "domain_authority_and_concept_separation": {
+      "financial_risk_policy_author": {
+        "owner_module": "services/capital/risk_policy.py",
+        "control_plane_governance_surface": "services/control-plane/governance/risk_policy.py",
+        "policy_catalog_dir": "CAPITAL_RISK_POLICY_DIR (config/risk_policies or services/capital/risk_policies)",
+        "governance_approval_targets": [
+          "capital_pool_activation",
+          "pool_policy_parameter_proposal"
+        ],
+        "decider_roles_for_medium_or_high_risk": [
+          "governance_reviewer",
+          "risk_owner",
+          "governance_committee"
+        ],
+        "required_distinct_deciders_for_risk_increase": 2
+      },
+      "financial_risk_policy_binder": {
+        "owner_service": "services/capital/main.py (POST /api/capital-pools, PATCH /api/capital-pools/{pool_id}/status)",
+        "guard": "services/capital/capital_guard.py (CapitalGuard.authorize)",
+        "coordinator": "services/control-plane/bff/persona_provisioning_coordinator.py (_coordinate_capital_pool, repair_paper_pool_risk_policy)",
+        "runtime_consumers": [
+          "services/capital/risk_policy.py (resolve_bound_pool_risk_policy)",
+          "services/execution/lean_runtime/expression_inputs.py (ExpressionInputsProvider)",
+          "services/execution/lean_runtime/paper_runtime.py (PaperExecutionAlgorithm.EvaluateOrderRiskGate)"
+        ]
+      },
+      "distinct_non_financial_policy_concepts": {
+        "strategy_risk_style": "StrategyArtifact.expression_policy.risk_profile='low' and strategy_logic.risk_limits (max_gross_exposure=1.0, max_net_exposure=1.0, max_position_weight=0.25) — strategy execution style, NOT CapitalPool financial RiskPolicy.",
+        "registry_admission": "Governance ApprovalDecision target_type='registry_entry', risk_level='low' decided by automated_gate (pantheon-dev-paper-provisioner) with 24h candidate admission TTL consumed at advance_artifact_state — does NOT authorize capital_pool_activation.",
+        "allocation_artifacts": "AllocationPolicyArtifact and rebalance_apply proposals in services/capital/allocation_policy.py / quarterly paper allocation cycle — govern sleeve/persona weight rebalances within a pool, NOT pool-level RiskPolicy limits."
+      }
+    }
+  },
+  "actual_hosted_dev_state": {
+    "evidence_label": "actual_hosted_observation",
+    "observed_at": "2026-11-22T06:26:07Z",
+    "policy_files_on_hosted_containers": {
+      "pantheon_capital_1": {
+        "CAPITAL_RISK_POLICY_DIR": "",
+        "config_risk_policies_exists": false,
+        "services_capital_risk_policies_exists": false,
+        "json_policy_file_count": 0
+      },
+      "pantheon_operator_bff_1": {
+        "CAPITAL_RISK_POLICY_DIR": "",
+        "config_risk_policies_exists": false,
+        "services_capital_risk_policies_exists": false,
+        "json_policy_file_count": 0
+      },
+      "pantheon_paper_signal_producer_1": {
+        "CAPITAL_RISK_POLICY_DIR": "",
+        "config_risk_policies_exists": false,
+        "services_capital_risk_policies_exists": false,
+        "json_policy_file_count": 0
+      }
+    },
+    "governance_decisions_on_hosted_dev": {
+      "capital_pool_activation_count": 0,
+      "pool_policy_parameter_proposal_count": 0,
+      "allocation_policy_count": 0
+    },
+    "three_active_dev_paper_pools": [
+      {
+        "persona_id": "persona-06d4775a9b6a",
+        "persona_name": "澄川 凛",
+        "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "active_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311-pool-v2",
+        "active_runtime_id": "rt-05644a4c4b394dc0-r1",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "requested_profile": "low",
+        "current_inline_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "current_inline_policy_version": "1.0",
+        "current_inline_policy_digest": "82491b9763c72bc0c4db0969ef3651d26e1068d80172b5e764e714496d786371",
+        "current_pool_approval_digest": "0963876b59dfba5442a743b2476a2ac389a67275c6e7da4659029758d2bf71a3",
+        "resolution_status": "unresolved_profile_mapping",
+        "absence_source": "policy_definition_and_approval_absent",
+        "allow_new_or_increased_risk": false,
+        "allow_risk_reducing_actions": true,
+        "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+      },
+      {
+        "persona_id": "persona-039ad01f8bcd",
+        "persona_name": "沈 弈謙",
+        "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "active_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466-pool-v2",
+        "active_runtime_id": "rt-2893e36459204543-r1",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "requested_profile": "low",
+        "current_inline_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+        "current_inline_policy_version": "1.0",
+        "current_inline_policy_digest": "c1f30c29e37882315f38fb94d6df490a3c431f6d7f2c5244bf0d6d4ec1fc18f0",
+        "current_pool_approval_digest": "411d72cf4dc45e4967c0619a212e854d11805d9fa8ff186cf5821d32a78db180",
+        "resolution_status": "unresolved_profile_mapping",
+        "absence_source": "policy_definition_and_approval_absent",
+        "allow_new_or_increased_risk": false,
+        "allow_risk_reducing_actions": true,
+        "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+      },
+      {
+        "persona_id": "persona-a81b4fd15944",
+        "persona_name": "Rhea Vance",
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "active_binding_id": "pcb-persona-paper-a81b4fd15944698341aa-pool-v2",
+        "active_runtime_id": "rt-c0b0d06743fc4284-r1",
+        "currency": "USD",
+        "budget": 100000.0,
+        "requested_profile": "low",
+        "current_inline_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+        "current_inline_policy_version": "1.0",
+        "current_inline_policy_digest": "a5469529100991f66f0c14f80df8ab9c5fa296809822d04cc86bd62f514a48ca",
+        "current_pool_approval_digest": "50ccba3c34931d691916d9ed15f17c836924eb74fb5919ff1cf1c1df3c5aa96c",
+        "resolution_status": "unresolved_profile_mapping",
+        "absence_source": "policy_definition_and_approval_absent",
+        "allow_new_or_increased_risk": false,
+        "allow_risk_reducing_actions": true,
+        "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+      }
+    ]
+  },
+  "scoped_dev_paper_policy_owner_decision_packet": {
+    "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+    "attached_hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+    "accountable_domain": "capital_risk_policy_owner (services/capital/risk_policy.py + services/control-plane/governance/risk_policy.py)",
+    "no_guessed_policy_activated": true,
+    "options_for_capital_risk_owner": [
+      {
+        "option_id": "option_a_approve_existing_inline_v1_paper_baseline",
+        "description": "Approve the existing inline v1.0 paper RiskPolicy (gross_limit=2.0, net_limit=2.0, max_leverage=2.0, allowed_stages=['paper'], allowed_asset_classes=['equity', 'future']) for each of the three dev paper pools via Governance capital_pool_activation ApprovalDecisions (two distinct authorized reviewers: governance_reviewer / risk_owner).",
+        "automated_convergence_after_owner_approval": "POST /bff/personas/{persona_id}/provisioning/paper-capital/risk-policy with empty body {} auto-discovers the approved decision by target_id=capital_pool_id (regardless of decision_id), binds profile_mapping_approval_id, and passes GET readback."
+      },
+      {
+        "option_id": "option_b_author_and_approve_dedicated_dev_paper_low_policy_ref",
+        "description": "Author a dedicated tenant-dev paper low RiskPolicy file in CAPITAL_RISK_POLICY_DIR (e.g. rp-tenant-dev-paper-low-v1.json with owner-determined gross_limit, net_limit, max_leverage, max_single_name_weight, metadata.tenant_id='tenant-dev', metadata.requested_profile='low') and record its Governance ApprovalDecision.",
+        "automated_convergence_after_owner_approval": "Both new POST /bff/personas (risk='low', risk_policy_ref=null) and POST /bff/personas/{persona_id}/provisioning/paper-capital/risk-policy with empty body {} auto-resolve rp-tenant-dev-paper-low-v1, persist risk_policy_ref and profile_mapping_approval_id, and pass GET readback."
+      },
+      {
+        "option_id": "option_c_explicit_non_approval",
+        "description": "Record decision='rejected' on the routed capital_pool_activation proposal in Governance (/management/approvals).",
+        "automated_convergence_after_owner_approval": "Coordinator records governance_proposal_status='explicit_non_approval_recorded', absence_source='policy_approval_rejected', does not re-propose on retry, and keeps new/increasing risk fail-closed while permitting risk-reducing closes."
+      }
+    ]
+  },
+  "implemented_changes_and_local_validation": {
+    "evidence_label": "local_test_fixture_not_hosted_state",
+    "files_modified": [
+      "services/governance/approval_authority.py",
+      "services/governance/test_approval_authority.py",
+      "services/capital/risk_policy.py",
+      "services/capital/capital_guard.py",
+      "services/capital/main.py",
+      "services/capital/test_risk_policy.py",
+      "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+      "services/control-plane/bff/personas/routes/collection.py",
+      "services/control-plane/bff/personas/service.py",
+      "docs/operations/problem-register.md"
+    ],
+    "runtime_budget": {
+      "new_persistent_writers_added": 0,
+      "storage_manifest_check_passed": true,
+      "bounded_catalog_lookup_max_files": 64,
+      "bounded_governance_target_lookup_max_items": 16,
+      "runtime_order_gate_lookup_complexity": "1 exact-ID GET via persisted profile_mapping_approval_id (0 unfiltered decision list scans)"
+    },
+    "validation_matrix_passed": [
+      "Clean create with risk='low' and no internal policy/approval IDs auto-resolving arbitrary decision_id (not apv-capital-pool-{pool_id})",
+      "Clean create with risk='low' and no internal policy/approval IDs auto-resolving approved catalog policy from CAPITAL_RISK_POLICY_DIR",
+      "Retry after response loss on POST /api/capital-pools and POST /api/governance/approvals with GET-first convergence and 0 duplicate proposals",
+      "Provisional active-looking unresolved pool record suspended (provisional_unresolved_risk_policy=True) on unresolved coordinate() and reactivated upon approval",
+      "Existing three dev paper pools (06d4775a9b6a8f63b311, 039ad01f8bcd2b4aa466, a81b4fd15944698341aa): absence classification, idempotent proposal routing, explicit non-approval, and auto-resolved repair",
+      "Policy version upgrade (1.0 -> 2.0) auto-resolving v2 approval without caller supplying approval_decision_id",
+      "Fail-closed rejection on absent, ambiguous (multiple policies or multiple decisions), revoked, expired, superseded, cross-tenant, and unapproved matches",
+      "No label inference (name='Low Risk Generic') and no generic 2x baseline inference without explicit profile metadata and valid Governance approval",
+      "Observable BFF UI/API pending reason (provisioning_waiting_reason, risk_policy_resolution, risk_policy_owner_decision_request) on POST /bff/personas and Persona readback"
+    ]
+  }
+}

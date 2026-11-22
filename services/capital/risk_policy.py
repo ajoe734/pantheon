@@ -1570,8 +1570,70 @@ class CapitalOwnerApprovalReader:
         if effective_tenant and evidence.tenant_id != effective_tenant:
             raise ApprovalInvalid("Capital owner approval tenant mismatch")
         if effective_pool_id and evidence.target_id != effective_pool_id:
-            raise ApprovalInvalid("Capital owner approval pool target mismatch")
+            ev_dump = evidence.model_dump()
+            ev_meta = ev_dump.get("metadata") if isinstance(ev_dump.get("metadata"), Mapping) else {}
+            ev_subj = ev_meta.get("subject") if isinstance(ev_meta.get("subject"), Mapping) else {}
+            subj_pol_id = _optional_text(ev_subj.get("risk_policy_id"))
+            if not subj_pol_id or evidence.target_id != subj_pol_id:
+                raise ApprovalInvalid("Capital owner approval pool target mismatch")
         return evidence
+
+    def list_for_target(
+        self,
+        *,
+        target_type: str = "capital_pool_activation",
+        target_id: str | None = None,
+        pool_id: str | None = None,
+        tenant_id: str | None = None,
+        decision_state: str | None = "decided",
+        max_items: int = 16,
+    ) -> list[Any]:
+        from services.governance.approval_authority import (
+            ApprovalEvidence,
+            ApprovalInvalid,
+            ApprovalUnavailable,
+        )
+
+        effective_pool_id = _optional_text(pool_id) or self.pool_id or _optional_text(target_id)
+        if not effective_pool_id:
+            return []
+        url = (
+            f"{self.base_url}/api/capital-pools/"
+            f"{urllib.parse.quote(effective_pool_id, safe='')}/approvals"
+        )
+        headers = self._headers(tenant_id=tenant_id)
+        fetcher = self._fetch_json or _capital_owner_http_get_json
+        try:
+            body = fetcher(url, headers, self.timeout_seconds)
+        except (ApprovalInvalid, ApprovalUnavailable):
+            return []
+        except Exception:
+            return []
+        raw_items = body.get("items") if isinstance(body, Mapping) else body
+        if not isinstance(raw_items, list):
+            return []
+        effective_tenant = _optional_text(tenant_id) or self.tenant_id
+        bound = max(1, min(int(max_items or 16), 64))
+        results: list[Any] = []
+        for item in raw_items:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                ev = ApprovalEvidence.model_validate(dict(item))
+            except ValueError:
+                continue
+            if effective_tenant and ev.tenant_id != effective_tenant:
+                continue
+            if target_type and ev.target_type != target_type:
+                continue
+            if target_id and ev.target_id not in {target_id, effective_pool_id}:
+                continue
+            if decision_state and ev.decision_state != decision_state:
+                continue
+            results.append(ev)
+            if len(results) >= bound:
+                break
+        return results
 
     def verify(
         self,
@@ -1679,84 +1741,42 @@ def _capital_owner_approval_reader_from_pool_reader(
         return None
 
 
-def _verify_policy_owner_approval_decision(
+MAX_POLICY_CATALOG_FILES = 64
+MAX_BOUNDED_APPROVAL_CANDIDATES = 16
+
+_ABSENCE_SOURCE_PRIORITY: dict[str, int] = {
+    "policy_candidates_ambiguous": 100,
+    "policy_approval_revoked": 90,
+    "policy_approval_expired": 85,
+    "policy_approval_superseded": 80,
+    "policy_approval_rejected": 75,
+    "policy_approval_pending": 70,
+    "policy_approval_missing": 60,
+    "policy_expired_or_stale": 50,
+    "cross_tenant_policy_or_approval_rejected": 45,
+    "policy_version_mismatch": 40,
+    "policy_invalid_or_stage_not_allowed": 35,
+    "policy_definition_and_approval_absent": 10,
+}
+
+
+def _higher_priority_absence_source(current: str | None, candidate: str | None) -> str | None:
+    if not candidate:
+        return current
+    if not current:
+        return candidate
+    if _ABSENCE_SOURCE_PRIORITY.get(candidate, 0) > _ABSENCE_SOURCE_PRIORITY.get(current, 0):
+        return candidate
+    return current
+
+
+def _build_approval_readers(
     *,
+    approval_reader: Any | None,
+    capital_pool_reader: Any | None,
     resolved_pool_id: str,
     effective_tenant_id: str | None,
-    clean_stage: str | None,
-    clean_profile: str | None,
-    policy_model: RiskPolicy,
-    computed_digest: str,
-    raw_policy_mapping: Mapping[str, Any] | None,
-    pool_obj: Any,
-    pool_meta: Mapping[str, Any],
-    b_map: Mapping[str, Any],
-    b_meta: Mapping[str, Any],
-    policy_meta: Mapping[str, Any],
-    approval_decision_id: str | None,
-    approval_decision: Any | None,
-    approval_decisions: Sequence[Any] | None,
-    approval_reader: Any | None,
-    capital_pool_reader: Any | None = None,
-    now_dt: datetime,
-) -> str | None:
-    """Verify a tenant-scoped policy-owner ApprovalDecision via canonical owner readback and ApprovalEvidence.require_valid."""
-    candidate_ids: list[str] = []
-
-    def _add_ref(ref_candidate: Any) -> None:
-        dec_ref = _extract_decision_id_reference(ref_candidate)
-        if dec_ref and dec_ref not in candidate_ids:
-            candidate_ids.append(dec_ref)
-
-    _add_ref(approval_decision_id)
-    _add_ref(approval_decision)
-    if approval_decisions is not None and not isinstance(approval_decisions, (str, bytes)):
-        for item in approval_decisions:
-            _add_ref(item)
-
-    if isinstance(pool_obj, Mapping):
-        _add_ref(_first_text_or_none(pool_obj, "approval_decision_id", "profile_mapping_approval_id", "decision_id"))
-    elif pool_obj is not None:
-        _add_ref(getattr(pool_obj, "approval_decision_id", None))
-        _add_ref(getattr(pool_obj, "profile_mapping_approval_id", None))
-
-    pool_sub = dict(b_map.get("capital_pool")) if isinstance(b_map.get("capital_pool"), Mapping) else {}
-    pool_sub_meta = dict(pool_sub.get("metadata")) if isinstance(pool_sub.get("metadata"), Mapping) else {}
-
-    for container in (pool_meta, b_map, b_meta, policy_meta, pool_sub, pool_sub_meta):
-        if not isinstance(container, Mapping):
-            continue
-        for exp_key in ("profile_mapping_expires_at", "approval_expires_at"):
-            raw_exp = container.get(exp_key)
-            if raw_exp not in (None, ""):
-                exp_str = _optional_text(raw_exp)
-                exp_dt = _parse_iso_timestamp(exp_str) if exp_str else None
-                if exp_dt is None or exp_dt <= now_dt:
-                    return None
-        _add_ref(
-            _first_text_or_none(
-                container,
-                "profile_mapping_approval_id",
-                "approval_decision_id",
-                "decision_id",
-            )
-        )
-        for attached_key in ("profile_mapping_approval", "approval_decision"):
-            attached = container.get(attached_key)
-            if attached is not None:
-                _add_ref(attached)
-        attached_list = container.get("approval_decisions")
-        if isinstance(attached_list, Sequence) and not isinstance(attached_list, (str, bytes)):
-            for item in attached_list:
-                _add_ref(item)
-
-    explicit_candidate_ids = frozenset(candidate_ids)
-    if not candidate_ids and resolved_pool_id:
-        _add_ref(f"apv-capital-pool-{resolved_pool_id}")
-
-    if not candidate_ids or not effective_tenant_id or not resolved_pool_id:
-        return None
-
+) -> list[Any]:
     readers: list[Any] = []
     seen_reader_ids: set[int] = set()
 
@@ -1812,9 +1832,132 @@ def _verify_policy_owner_approval_decision(
                         continue
         except Exception:
             pass
-    if not readers:
-        return None
+    return readers
 
+
+def _classify_decision_payload_rejection(
+    raw_dec: Mapping[str, Any],
+    *,
+    effective_tenant_id: str | None,
+    clean_profile: str | None,
+    now_dt: datetime,
+) -> str | None:
+    meta = raw_dec.get("metadata") if isinstance(raw_dec.get("metadata"), Mapping) else {}
+    subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+    subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
+    if clean_profile and subj_risk and subj_risk != clean_profile:
+        return None
+    dec_tenant = _optional_text(raw_dec.get("tenant_id"))
+    if effective_tenant_id and dec_tenant and dec_tenant != effective_tenant_id:
+        return "cross_tenant_policy_or_approval_rejected"
+    dec_state = _optional_text(raw_dec.get("decision_state")) or ""
+    if raw_dec.get("revoked_at") not in (None, "") or dec_state == "revoked":
+        return "policy_approval_revoked"
+    if raw_dec.get("superseded_by") not in (None, "") or dec_state == "superseded":
+        return "policy_approval_superseded"
+    if dec_state in {"proposed", "under_review"}:
+        return "policy_approval_pending"
+    if dec_state == "decided" and _optional_text(raw_dec.get("decision")) == "rejected":
+        return "policy_approval_rejected"
+    raw_exp = _optional_text(raw_dec.get("expires_at"))
+    if raw_exp:
+        exp_dt = _parse_iso_timestamp(raw_exp)
+        if exp_dt is None or exp_dt <= now_dt:
+            return "policy_approval_expired"
+    return None
+
+
+def _verify_policy_owner_approval_decisions(
+    *,
+    resolved_pool_id: str,
+    effective_tenant_id: str | None,
+    clean_stage: str | None,
+    clean_profile: str | None,
+    policy_model: RiskPolicy,
+    computed_digest: str,
+    raw_policy_mapping: Mapping[str, Any] | None,
+    pool_obj: Any,
+    pool_meta: Mapping[str, Any],
+    b_map: Mapping[str, Any],
+    b_meta: Mapping[str, Any],
+    policy_meta: Mapping[str, Any],
+    approval_decision_id: str | None,
+    approval_decision: Any | None,
+    approval_decisions: Sequence[Any] | None,
+    approval_reader: Any | None,
+    capital_pool_reader: Any | None = None,
+    now_dt: datetime,
+    allow_target_discovery: bool = True,
+) -> tuple[str | None, list[str], str | None]:
+    """Verify tenant-scoped policy-owner ApprovalDecisions and detect ambiguity or specific rejection sources."""
+    caller_explicit_ids: list[str] = []
+    container_candidate_ids: list[str] = []
+
+    def _add_caller_ref(ref_candidate: Any) -> None:
+        dec_ref = _extract_decision_id_reference(ref_candidate)
+        if dec_ref and dec_ref not in caller_explicit_ids:
+            caller_explicit_ids.append(dec_ref)
+
+    def _add_container_ref(ref_candidate: Any) -> None:
+        dec_ref = _extract_decision_id_reference(ref_candidate)
+        if dec_ref and dec_ref not in caller_explicit_ids and dec_ref not in container_candidate_ids:
+            container_candidate_ids.append(dec_ref)
+
+    _add_caller_ref(approval_decision_id)
+    _add_caller_ref(approval_decision)
+    if approval_decisions is not None and not isinstance(approval_decisions, (str, bytes)):
+        for item in approval_decisions:
+            _add_caller_ref(item)
+
+    if isinstance(pool_obj, Mapping):
+        _add_container_ref(_first_text_or_none(pool_obj, "approval_decision_id", "profile_mapping_approval_id", "decision_id"))
+    elif pool_obj is not None:
+        _add_container_ref(getattr(pool_obj, "approval_decision_id", None))
+        _add_container_ref(getattr(pool_obj, "profile_mapping_approval_id", None))
+
+    pool_sub = dict(b_map.get("capital_pool")) if isinstance(b_map.get("capital_pool"), Mapping) else {}
+    pool_sub_meta = dict(pool_sub.get("metadata")) if isinstance(pool_sub.get("metadata"), Mapping) else {}
+
+    for container in (pool_meta, b_map, b_meta, policy_meta, pool_sub, pool_sub_meta):
+        if not isinstance(container, Mapping):
+            continue
+        for exp_key in ("profile_mapping_expires_at", "approval_expires_at"):
+            raw_exp = container.get(exp_key)
+            if raw_exp not in (None, ""):
+                exp_str = _optional_text(raw_exp)
+                exp_dt = _parse_iso_timestamp(exp_str) if exp_str else None
+                if exp_dt is None or exp_dt <= now_dt:
+                    return None, [], "policy_approval_expired"
+        _add_container_ref(
+            _first_text_or_none(
+                container,
+                "profile_mapping_approval_id",
+                "approval_decision_id",
+                "decision_id",
+            )
+        )
+        for attached_key in ("profile_mapping_approval", "approval_decision"):
+            attached = container.get(attached_key)
+            if attached is not None:
+                _add_container_ref(attached)
+        attached_list = container.get("approval_decisions")
+        if isinstance(attached_list, Sequence) and not isinstance(attached_list, (str, bytes)):
+            for item in attached_list:
+                _add_container_ref(item)
+
+    if not effective_tenant_id or not resolved_pool_id:
+        return None, [], None
+
+    readers = _build_approval_readers(
+        approval_reader=approval_reader,
+        capital_pool_reader=capital_pool_reader,
+        resolved_pool_id=resolved_pool_id,
+        effective_tenant_id=effective_tenant_id,
+    )
+    if not readers:
+        return None, [], None
+
+    from services.governance import approval_targets
     from services.governance.approval_authority import ApprovalEvidence
     from services.governance.paper_approval_scope import ApprovalUsageContext, current_environment
 
@@ -1849,6 +1992,13 @@ def _verify_policy_owner_approval_decision(
         except Exception:
             pass
 
+    is_default_inline_id = (
+        str(policy_model.risk_policy_id).startswith("rp-pool-")
+        or (bool(resolved_pool_id) and str(policy_model.risk_policy_id) == f"rp-{resolved_pool_id}")
+        or policy_meta.get("default_paper_baseline") is True
+        or pool_meta.get("default_paper_baseline") is True
+    )
+
     target_stage_val = clean_stage or "paper"
     raw_scale = pool_meta.get("capital_scale_pct")
     if raw_scale is not None and isinstance(raw_scale, (int, float)) and not isinstance(raw_scale, bool):
@@ -1866,34 +2016,71 @@ def _verify_policy_owner_approval_decision(
         capital_scale_pct=scale_pct,
     )
 
-    for cand_id in candidate_ids:
-        loaded_ev = None
-        for reader in readers:
-            try:
-                if hasattr(reader, "get"):
-                    loaded_ev = reader.get(cand_id)
-                elif callable(reader):
-                    loaded_ev = reader(cand_id)
-                else:
-                    loaded_ev = None
-            except Exception:
-                loaded_ev = None
-            if loaded_ev is not None:
-                break
-        if loaded_ev is None:
-            continue
+    explicit_candidate_ids = frozenset([*caller_explicit_ids, *container_candidate_ids])
+    diagnostic_source: str | None = None
 
-        expected_binding: dict[str, Any] = {
-            "tenant_id": effective_tenant_id,
-            "target_type": "capital_pool_activation",
-            "target_id": resolved_pool_id,
-            "subject.pool_id": resolved_pool_id,
-            "subject.risk_direction": "increase",
-            "subject.risk_policy_id": policy_model.risk_policy_id,
-            "subject.risk_policy_version": str(policy_model.version),
-        }
-        if pool_approval_digest:
-            expected_binding["target_version"] = pool_approval_digest
+    def _validate_loaded_evidence(loaded_ev: Any, expected_decision_id: str | None = None) -> str | None:
+        nonlocal diagnostic_source
+        if loaded_ev is None:
+            return None
+        raw_dict: dict[str, Any] | None = None
+        if isinstance(loaded_ev, Mapping):
+            raw_dict = dict(loaded_ev)
+        elif hasattr(loaded_ev, "model_dump"):
+            try:
+                raw_dict = dict(loaded_ev.model_dump())
+            except Exception:
+                raw_dict = None
+        if raw_dict is not None:
+            diag = _classify_decision_payload_rejection(
+                raw_dict,
+                effective_tenant_id=effective_tenant_id,
+                clean_profile=clean_profile,
+                now_dt=now_dt,
+            )
+            diagnostic_source = _higher_priority_absence_source(diagnostic_source, diag)
+
+        ev_target_type = _optional_text(raw_dict.get("target_type")) if raw_dict else "capital_pool_activation"
+        ev_target_id = _optional_text(raw_dict.get("target_id")) if raw_dict else resolved_pool_id
+        ev_target_ver = _optional_text(raw_dict.get("target_version")) if raw_dict else pool_approval_digest
+
+        is_policy_scoped_target = (
+            not is_default_inline_id
+            and ev_target_id == policy_model.risk_policy_id
+            and ev_target_type in {"capital_pool_activation", "pool_policy_parameter_proposal"}
+        )
+
+        if is_policy_scoped_target:
+            if ev_target_ver not in (valid_digests | {str(policy_model.version)}):
+                return None
+            raw_meta = raw_dict.get("metadata") if raw_dict and isinstance(raw_dict.get("metadata"), Mapping) else {}
+            raw_subj = raw_meta.get("subject") if isinstance(raw_meta.get("subject"), Mapping) else {}
+            expected_binding: dict[str, Any] = {
+                "tenant_id": effective_tenant_id,
+                "target_type": ev_target_type,
+                "target_id": policy_model.risk_policy_id,
+                "target_version": ev_target_ver,
+                "subject.risk_policy_id": policy_model.risk_policy_id,
+                "subject.risk_policy_version": str(policy_model.version),
+            }
+            if ev_target_type == "capital_pool_activation":
+                subj_pool = _optional_text(raw_subj.get("pool_id"))
+                if subj_pool not in {resolved_pool_id, policy_model.risk_policy_id, "*"}:
+                    return None
+                expected_binding["subject.pool_id"] = subj_pool
+                expected_binding["subject.risk_direction"] = "increase"
+        else:
+            expected_binding = {
+                "tenant_id": effective_tenant_id,
+                "target_type": "capital_pool_activation",
+                "target_id": resolved_pool_id,
+                "subject.pool_id": resolved_pool_id,
+                "subject.risk_direction": "increase",
+                "subject.risk_policy_id": policy_model.risk_policy_id,
+                "subject.risk_policy_version": str(policy_model.version),
+            }
+            if pool_approval_digest:
+                expected_binding["target_version"] = pool_approval_digest
 
         try:
             if isinstance(loaded_ev, ApprovalEvidence):
@@ -1902,7 +2089,10 @@ def _verify_policy_owner_approval_decision(
                 evidence = ApprovalEvidence.model_validate(dict(loaded_ev))
             elif hasattr(loaded_ev, "model_dump"):
                 evidence = ApprovalEvidence.model_validate(loaded_ev.model_dump())
-            elif cand_id in explicit_candidate_ids and callable(getattr(loaded_ev, "require_valid", None)):
+            elif (
+                expected_decision_id in explicit_candidate_ids
+                and callable(getattr(loaded_ev, "require_valid", None))
+            ):
                 res_ev = loaded_ev.require_valid(
                     expected={
                         **expected_binding,
@@ -1919,14 +2109,14 @@ def _verify_policy_owner_approval_decision(
                 elif hasattr(res_ev, "model_dump"):
                     evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
                 else:
-                    continue
+                    return None
             else:
-                continue
+                return None
         except Exception:
-            continue
+            return None
 
-        if evidence.decision_id != cand_id:
-            continue
+        if expected_decision_id and evidence.decision_id != expected_decision_id:
+            return None
 
         try:
             evidence.require_valid(
@@ -1935,22 +2125,760 @@ def _verify_policy_owner_approval_decision(
                 usage_context=usage_ctx,
             )
         except Exception:
-            continue
+            return None
 
         d = evidence.model_dump()
         meta = d.get("metadata") if isinstance(d.get("metadata"), Mapping) else {}
+        if is_policy_scoped_target and ev_target_type == "pool_policy_parameter_proposal":
+            owner_user_id = d.get("owner_user_id")
+            if isinstance(owner_user_id, str) and owner_user_id.strip():
+                if owner_user_id == evidence.actor_id or owner_user_id in approval_targets.approvers(meta):
+                    return None
+
         subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
         if _optional_text(subject.get("risk_policy_digest")) not in valid_digests:
-            continue
+            return None
         subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
         if clean_profile:
             if subj_risk != clean_profile:
-                continue
+                return None
         elif not subj_risk:
-            continue
+            return None
 
         return evidence.decision_id
+
+    def _fetch_by_id(cand_id: str) -> Any:
+        for reader in readers:
+            loaded_ev = None
+            try:
+                if hasattr(reader, "get"):
+                    loaded_ev = reader.get(cand_id)
+                elif callable(reader):
+                    loaded_ev = reader(cand_id)
+            except Exception:
+                loaded_ev = None
+            if loaded_ev is not None:
+                return loaded_ev
+        return None
+
+    # 1. If the caller explicitly provided approval_decision_id(s), verify only those exact IDs.
+    if caller_explicit_ids:
+        verified_caller: list[str] = []
+        for cand_id in caller_explicit_ids:
+            matched_id = _validate_loaded_evidence(_fetch_by_id(cand_id), cand_id)
+            if matched_id and matched_id not in verified_caller:
+                verified_caller.append(matched_id)
+        if len(verified_caller) == 1:
+            return verified_caller[0], verified_caller, None
+        if len(verified_caller) > 1:
+            return None, verified_caller, "policy_candidates_ambiguous"
+        return None, [], diagnostic_source
+
+    # 2. Check decision IDs already persisted on the pool/container metadata.
+    if container_candidate_ids:
+        verified_container: list[str] = []
+        for cand_id in container_candidate_ids:
+            matched_id = _validate_loaded_evidence(_fetch_by_id(cand_id), cand_id)
+            if matched_id and matched_id not in verified_container:
+                verified_container.append(matched_id)
+        if len(verified_container) == 1:
+            return verified_container[0], verified_container, None
+        if len(verified_container) > 1:
+            return None, verified_container, "policy_candidates_ambiguous"
+
+    # 3. Bounded target discovery in Governance / Capital owner reader.
+    discovered_verified: list[str] = []
+    checked_ids: set[str] = set(container_candidate_ids)
+
+    if allow_target_discovery:
+        targets: list[tuple[str, str]] = [("capital_pool_activation", resolved_pool_id)]
+        if not is_default_inline_id and policy_model.risk_policy_id:
+            targets.append(("capital_pool_activation", policy_model.risk_policy_id))
+            targets.append(("pool_policy_parameter_proposal", policy_model.risk_policy_id))
+        for t_type, t_id in targets:
+            for reader in readers:
+                if not hasattr(reader, "list_for_target"):
+                    continue
+                items: list[Any] = []
+                try:
+                    items = list(
+                        reader.list_for_target(
+                            target_type=t_type,
+                            target_id=t_id,
+                            decision_state=None,
+                            max_items=MAX_BOUNDED_APPROVAL_CANDIDATES,
+                        )
+                        or []
+                    )
+                except TypeError:
+                    try:
+                        items = list(
+                            reader.list_for_target(
+                                target_type=t_type,
+                                target_id=t_id,
+                            )
+                            or []
+                        )
+                    except Exception:
+                        items = []
+                except Exception:
+                    items = []
+                for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+                    item_id = _extract_decision_id_reference(item)
+                    if item_id:
+                        checked_ids.add(item_id)
+                    matched_id = _validate_loaded_evidence(item, item_id)
+                    if matched_id and matched_id not in discovered_verified:
+                        discovered_verified.append(matched_id)
+
+    # 4. Fallback exact-ID lookup for deterministic default ID if not already checked.
+    default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
+    if not discovered_verified and default_apv_id not in checked_ids:
+        matched_default = _validate_loaded_evidence(_fetch_by_id(default_apv_id), default_apv_id)
+        if matched_default and matched_default not in discovered_verified:
+            discovered_verified.append(matched_default)
+
+    if len(discovered_verified) == 1:
+        return discovered_verified[0], discovered_verified, None
+    if len(discovered_verified) > 1:
+        return None, discovered_verified, "policy_candidates_ambiguous"
+    return None, [], diagnostic_source
+
+
+def _verify_policy_owner_approval_decision(
+    *,
+    resolved_pool_id: str,
+    effective_tenant_id: str | None,
+    clean_stage: str | None,
+    clean_profile: str | None,
+    policy_model: RiskPolicy,
+    computed_digest: str,
+    raw_policy_mapping: Mapping[str, Any] | None,
+    pool_obj: Any,
+    pool_meta: Mapping[str, Any],
+    b_map: Mapping[str, Any],
+    b_meta: Mapping[str, Any],
+    policy_meta: Mapping[str, Any],
+    approval_decision_id: str | None,
+    approval_decision: Any | None,
+    approval_decisions: Sequence[Any] | None,
+    approval_reader: Any | None,
+    capital_pool_reader: Any | None = None,
+    now_dt: datetime,
+) -> str | None:
+    """Verify a tenant-scoped policy-owner ApprovalDecision via canonical owner readback and ApprovalEvidence.require_valid."""
+    verified_id, _, _ = _verify_policy_owner_approval_decisions(
+        resolved_pool_id=resolved_pool_id,
+        effective_tenant_id=effective_tenant_id,
+        clean_stage=clean_stage,
+        clean_profile=clean_profile,
+        policy_model=policy_model,
+        computed_digest=computed_digest,
+        raw_policy_mapping=raw_policy_mapping,
+        pool_obj=pool_obj,
+        pool_meta=pool_meta,
+        b_map=b_map,
+        b_meta=b_meta,
+        policy_meta=policy_meta,
+        approval_decision_id=approval_decision_id,
+        approval_decision=approval_decision,
+        approval_decisions=approval_decisions,
+        approval_reader=approval_reader,
+        capital_pool_reader=capital_pool_reader,
+        now_dt=now_dt,
+    )
+    return verified_id
+
+
+@dataclass(frozen=True)
+class ProfilePolicyAutoResolution:
+    """Result of auto-resolving a RiskPolicy for (tenant_id, requested_profile, stage, capital_pool_id)."""
+
+    resolved: bool
+    status: str
+    reason_code: str | None = None
+    reason: str | None = None
+    absence_source: str | None = None
+    risk_policy_ref: str | None = None
+    policy: RiskPolicy | None = None
+    raw_policy: Mapping[str, Any] | None = None
+    approval_decision_id: str | None = None
+    candidate_policy: RiskPolicy | None = None
+    ambiguous_policy_ids: tuple[str, ...] = ()
+    ambiguous_decision_ids: tuple[str, ...] = ()
+
+
+def _configured_policy_catalog_root(policy_dir: str | os.PathLike[str] | None = None) -> Path | None:
+    if policy_dir is not None and str(policy_dir).strip():
+        root = Path(str(policy_dir).strip())
+        return root if root.exists() else None
+    env_dir = os.getenv("CAPITAL_RISK_POLICY_DIR", "").strip()
+    if env_dir:
+        root = Path(env_dir)
+        return root if root.exists() else None
+    repo_config_dir = Path(__file__).resolve().parents[2] / "config" / "risk_policies"
+    if repo_config_dir.exists():
+        return repo_config_dir
+    local_dir = Path(__file__).parent / "risk_policies"
+    if local_dir.exists():
+        return local_dir
     return None
+
+
+def _is_policy_Candidate_valid_for_profile_window(
+    policy_model: RiskPolicy,
+    raw_mapping: Mapping[str, Any] | None,
+    *,
+    clean_stage: str | None,
+    require_limits: Sequence[str],
+    now_dt: datetime,
+) -> tuple[bool, str | None]:
+    policy_meta = dict(policy_model.metadata) if isinstance(policy_model.metadata, Mapping) else {}
+    raw_status = str(policy_model.status or "").strip().lower()
+    if raw_status in {"stale", "superseded", "expired"} or policy_meta.get("stale") is True:
+        return False, "policy_expired_or_stale"
+    if _first_text_or_none(policy_meta, "superseded_by"):
+        return False, "policy_expired_or_stale"
+    if raw_status not in _ACTIVE_POLICY_STATUSES:
+        return False, "policy_invalid_or_stage_not_allowed"
+
+    for key in ("effective_from",):
+        for src in (raw_mapping or {}, policy_meta):
+            if not isinstance(src, Mapping):
+                continue
+            val = src.get(key)
+            if val not in (None, ""):
+                dt = _parse_iso_timestamp(val)
+                if dt is None:
+                    return False, "policy_invalid_or_stage_not_allowed"
+                if dt > now_dt:
+                    return False, "policy_expired_or_stale"
+
+    for key in ("expires_at", "effective_to"):
+        for src in (raw_mapping or {}, policy_meta):
+            if not isinstance(src, Mapping):
+                continue
+            val = src.get(key)
+            if val not in (None, ""):
+                dt = _parse_iso_timestamp(val)
+                if dt is None:
+                    return False, "policy_invalid_or_stage_not_allowed"
+                if dt <= now_dt:
+                    return False, "policy_expired_or_stale"
+
+    if clean_stage:
+        if not policy_model.allowed_stages or clean_stage not in policy_model.allowed_stages:
+            return False, "policy_invalid_or_stage_not_allowed"
+
+    for field_name in _NON_NEGATIVE_SCALAR_LIMIT_FIELDS:
+        val = getattr(policy_model, field_name, None)
+        if val is None:
+            continue
+        if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(float(val)):
+            return False, "policy_invalid_or_stage_not_allowed"
+        if field_name in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
+            return False, "policy_invalid_or_stage_not_allowed"
+        if float(val) < 0.0:
+            return False, "policy_invalid_or_stage_not_allowed"
+
+    for req_lim in require_limits:
+        val = getattr(policy_model, req_lim, None)
+        if val in (None, (), {}, []):
+            return False, "policy_invalid_or_stage_not_allowed"
+        if req_lim in _POSITIVE_EXPOSURE_LIMIT_FIELDS and float(val) <= 0.0:
+            return False, "policy_invalid_or_stage_not_allowed"
+
+    return True, None
+
+
+def discover_approved_profile_risk_policy(
+    *,
+    resolved_pool_id: str,
+    effective_tenant_id: str | None,
+    clean_stage: str | None = "paper",
+    clean_profile: str = "low",
+    expected_version: str | None = None,
+    base_pool: Mapping[str, Any] | None = None,
+    currency: str | None = None,
+    budget: Any = None,
+    owner_id: str | None = None,
+    owner_type: str | None = None,
+    single_runtime_enforced: bool | None = None,
+    approval_decision_id: str | None = None,
+    approval_reader: Any | None = None,
+    capital_pool_reader: Any | None = None,
+    risk_policy_loader: Callable[[str], Any] | None = None,
+    policy_dir: str | os.PathLike[str] | None = None,
+    require_limits: Sequence[str] = ("gross_limit",),
+    as_of: str | None = None,
+    now_dt: datetime | None = None,
+) -> ProfilePolicyAutoResolution:
+    """Bounded discovery of an applicable approved RiskPolicy for (tenant_id, requested_profile, stage)."""
+    effective_now = now_dt or _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
+    eff_profile = _optional_text(clean_profile) or "low"
+    eff_stage = _optional_text(clean_stage) or "paper"
+    req_version = _optional_text(expected_version)
+
+    diagnostic_source: str | None = None
+    catalog_candidates: list[tuple[RiskPolicy, dict[str, Any]]] = []
+    unapproved_catalog_policies: list[RiskPolicy] = []
+    catalog_by_id: dict[str, tuple[RiskPolicy, dict[str, Any]]] = {}
+
+    # 1. Bounded scan of CAPITAL_RISK_POLICY_DIR for policies explicitly declaring requested_profile.
+    catalog_root = _configured_policy_catalog_root(policy_dir)
+    if catalog_root is not None and catalog_root.is_dir():
+        for path in sorted(catalog_root.glob("*.json"))[:MAX_POLICY_CATALOG_FILES]:
+            stem = path.stem.strip()
+            if not stem or stem.startswith(".") or stem.startswith("rp-pool-"):
+                continue
+            try:
+                raw_loaded = (
+                    risk_policy_loader(stem)
+                    if risk_policy_loader is not None
+                    else load_risk_policy(stem, policy_dir=catalog_root)
+                )
+                if not isinstance(raw_loaded, Mapping):
+                    continue
+                raw_dict = dict(raw_loaded)
+                cand_policy = normalize_risk_policy(raw_dict, default_id=stem)
+            except Exception:
+                continue
+
+            cand_meta = dict(cand_policy.metadata) if isinstance(cand_policy.metadata, Mapping) else {}
+            if cand_meta.get("default_paper_baseline") is True or str(cand_policy.risk_policy_id).startswith("rp-pool-"):
+                continue
+            # Never infer a profile mapping by searching labels/names; require explicit profile metadata.
+            cand_profile = _first_text_or_none(cand_meta, "requested_profile", "risk_profile", "requested_risk")
+            if cand_profile != eff_profile:
+                continue
+
+            cand_tenant = _first_text_or_none(cand_meta, "tenant_id")
+            if not effective_tenant_id or cand_tenant != effective_tenant_id:
+                diagnostic_source = _higher_priority_absence_source(
+                    diagnostic_source,
+                    "cross_tenant_policy_or_approval_rejected",
+                )
+                continue
+
+            if req_version and str(cand_policy.version) != req_version:
+                diagnostic_source = _higher_priority_absence_source(
+                    diagnostic_source,
+                    "policy_version_mismatch",
+                )
+                continue
+
+            window_ok, window_diag = _is_policy_Candidate_valid_for_profile_window(
+                cand_policy,
+                raw_dict,
+                clean_stage=eff_stage,
+                require_limits=require_limits,
+                now_dt=effective_now,
+            )
+            if not window_ok:
+                diagnostic_source = _higher_priority_absence_source(diagnostic_source, window_diag)
+                continue
+
+            approval_status_str = str(cand_meta.get("approval_status") or "").strip().lower()
+            if cand_meta.get("approved") is False or approval_status_str in {
+                "unapproved",
+                "pending",
+                "proposed",
+                "rejected",
+                "revoked",
+            }:
+                unapproved_catalog_policies.append(cand_policy)
+                diagnostic_source = _higher_priority_absence_source(
+                    diagnostic_source,
+                    "policy_approval_revoked"
+                    if approval_status_str == "revoked"
+                    else ("policy_approval_rejected" if approval_status_str == "rejected" else "policy_approval_missing"),
+                )
+                continue
+
+            catalog_candidates.append((cand_policy, raw_dict))
+            catalog_by_id[cand_policy.risk_policy_id] = (cand_policy, raw_dict)
+
+    readers = _build_approval_readers(
+        approval_reader=approval_reader,
+        capital_pool_reader=capital_pool_reader,
+        resolved_pool_id=resolved_pool_id,
+        effective_tenant_id=effective_tenant_id,
+    )
+
+    base = dict(base_pool) if isinstance(base_pool, Mapping) else {}
+    base_meta = dict(base.get("metadata")) if isinstance(base.get("metadata"), Mapping) else {}
+
+    def _build_candidate_pool(cand_ref: str | None, cand_pol: RiskPolicy) -> dict[str, Any]:
+        cand_pool: dict[str, Any] = {
+            **base,
+            "pool_id": resolved_pool_id,
+            "tenant_id": effective_tenant_id,
+            "owner_id": owner_id if owner_id is not None else base.get("owner_id", effective_tenant_id),
+            "owner_type": owner_type if owner_type is not None else base.get("owner_type", "org"),
+            "currency": currency if currency is not None else base.get("currency", "USD"),
+            "budget": budget if (budget is not None or "budget" not in base) else base.get("budget"),
+            "risk_policy_ref": cand_ref,
+            "single_runtime_enforced": (
+                single_runtime_enforced
+                if single_runtime_enforced is not None
+                else base.get("single_runtime_enforced", True)
+            ),
+            "metadata": {
+                **base_meta,
+                "tenant_id": effective_tenant_id,
+                "requested_risk_profile": eff_profile,
+                "require_approved_profile_mapping": True,
+                "risk_policy": cand_pol.to_dict(),
+            },
+        }
+        cand_pool["approval_digest"] = capital_pool_approval_digest(cand_pool)
+        return cand_pool
+
+    # 2. Bounded lookup of pool-targeted ApprovalDecisions to discover any policy referenced by an approved decision.
+    pool_decisions: list[dict[str, Any]] = []
+    seen_dec_ids: set[str] = set()
+
+    def _collect_decision_obj(item: Any) -> None:
+        nonlocal diagnostic_source
+        if item is None:
+            return
+        d: dict[str, Any] | None = None
+        if isinstance(item, Mapping):
+            d = dict(item)
+        elif hasattr(item, "model_dump"):
+            try:
+                d = dict(item.model_dump())
+            except Exception:
+                d = None
+        if not isinstance(d, Mapping):
+            return
+        dec_id = _optional_text(d.get("decision_id"))
+        if not dec_id or dec_id in seen_dec_ids:
+            return
+        seen_dec_ids.add(dec_id)
+        diag = _classify_decision_payload_rejection(
+            d,
+            effective_tenant_id=effective_tenant_id,
+            clean_profile=eff_profile,
+            now_dt=effective_now,
+        )
+        diagnostic_source = _higher_priority_absence_source(diagnostic_source, diag)
+        pool_decisions.append(d)
+
+    if approval_decision_id:
+        for reader in readers:
+            try:
+                if hasattr(reader, "get"):
+                    _collect_decision_obj(reader.get(approval_decision_id))
+            except Exception:
+                continue
+    else:
+        for container in (base, base_meta):
+            cid = _first_text_or_none(container, "profile_mapping_approval_id", "approval_decision_id", "decision_id")
+            if cid and cid not in seen_dec_ids:
+                for reader in readers:
+                    try:
+                        if hasattr(reader, "get"):
+                            _collect_decision_obj(reader.get(cid))
+                    except Exception:
+                        continue
+        for reader in readers:
+            if not hasattr(reader, "list_for_target"):
+                continue
+            items: list[Any] = []
+            try:
+                items = list(
+                    reader.list_for_target(
+                        target_type="capital_pool_activation",
+                        target_id=resolved_pool_id,
+                        decision_state=None,
+                        max_items=MAX_BOUNDED_APPROVAL_CANDIDATES,
+                    )
+                    or []
+                )
+            except TypeError:
+                try:
+                    items = list(
+                        reader.list_for_target(
+                            target_type="capital_pool_activation",
+                            target_id=resolved_pool_id,
+                        )
+                        or []
+                    )
+                except Exception:
+                    items = []
+            except Exception:
+                items = []
+            for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+                _collect_decision_obj(item)
+        default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
+        if not pool_decisions and default_apv_id not in seen_dec_ids:
+            for reader in readers:
+                try:
+                    if hasattr(reader, "get"):
+                        _collect_decision_obj(reader.get(default_apv_id))
+                except Exception:
+                    continue
+
+    # Extract any candidate policies referenced by pool_decisions that are not already in catalog_candidates.
+    decision_policy_candidates: list[tuple[str | None, RiskPolicy, dict[str, Any]]] = []
+    for d in pool_decisions:
+        meta = d.get("metadata") if isinstance(d.get("metadata"), Mapping) else {}
+        subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+        subj_risk = _first_text_or_none(subject, "requested_risk", "requested_profile", "risk_profile")
+        if subj_risk and subj_risk != eff_profile:
+            continue
+        subj_pol_id = _optional_text(subject.get("risk_policy_id"))
+        subj_pol_ver = _optional_text(subject.get("risk_policy_version")) or (req_version or "1.0")
+        if req_version and subj_pol_ver != req_version:
+            continue
+        if not subj_pol_id:
+            continue
+        if subj_pol_id in catalog_by_id:
+            continue
+        # Try loading from policy catalog by exact ID if it is not a default pool inline ID.
+        is_def_id = subj_pol_id.startswith("rp-pool-") or subj_pol_id == f"rp-{resolved_pool_id}"
+        if not is_def_id:
+            try:
+                loaded_raw = (
+                    risk_policy_loader(subj_pol_id)
+                    if risk_policy_loader is not None
+                    else load_risk_policy(subj_pol_id, policy_dir=catalog_root)
+                )
+                if isinstance(loaded_raw, Mapping):
+                    raw_d = dict(loaded_raw)
+                    loaded_pol = normalize_risk_policy(raw_d, default_id=subj_pol_id)
+                    l_meta = dict(loaded_pol.metadata) if isinstance(loaded_pol.metadata, Mapping) else {}
+                    l_tenant = _first_text_or_none(l_meta, "tenant_id")
+                    if effective_tenant_id and l_tenant and l_tenant != effective_tenant_id:
+                        diagnostic_source = _higher_priority_absence_source(
+                            diagnostic_source,
+                            "cross_tenant_policy_or_approval_rejected",
+                        )
+                    else:
+                        w_ok, w_diag = _is_policy_Candidate_valid_for_profile_window(
+                            loaded_pol,
+                            raw_d,
+                            clean_stage=eff_stage,
+                            require_limits=require_limits,
+                            now_dt=effective_now,
+                        )
+                        if w_ok:
+                            decision_policy_candidates.append((loaded_pol.risk_policy_id, loaded_pol, raw_d))
+                            continue
+                        diagnostic_source = _higher_priority_absence_source(diagnostic_source, w_diag)
+            except Exception:
+                pass
+
+        # Check if an inline policy object is embedded in the decision metadata/subject or base_pool.
+        embedded_pol = subject.get("risk_policy") if isinstance(subject.get("risk_policy"), Mapping) else (
+            meta.get("risk_policy") if isinstance(meta.get("risk_policy"), Mapping) else None
+        )
+        if isinstance(embedded_pol, Mapping) and _is_policy_content_mapping(embedded_pol):
+            try:
+                raw_d = dict(embedded_pol)
+                norm_p = normalize_risk_policy(raw_d, default_id=subj_pol_id)
+                w_ok, _ = _is_policy_Candidate_valid_for_profile_window(
+                    norm_p,
+                    raw_d,
+                    clean_stage=eff_stage,
+                    require_limits=require_limits,
+                    now_dt=effective_now,
+                )
+                if w_ok:
+                    decision_policy_candidates.append((None, norm_p, raw_d))
+                    continue
+            except Exception:
+                pass
+
+        if isinstance(base_meta.get("risk_policy"), Mapping):
+            base_pol_dict = dict(base_meta["risk_policy"])
+            if str(base_pol_dict.get("risk_policy_id") or "") == subj_pol_id:
+                if is_def_id:
+                    base_pol_dict["version"] = subj_pol_ver
+                try:
+                    norm_p = normalize_risk_policy(base_pol_dict, default_id=subj_pol_id)
+                    w_ok, _ = _is_policy_Candidate_valid_for_profile_window(
+                        norm_p,
+                        base_pol_dict,
+                        clean_stage=eff_stage,
+                        require_limits=require_limits,
+                        now_dt=effective_now,
+                    )
+                    if w_ok:
+                        decision_policy_candidates.append((None, norm_p, base_pol_dict))
+                        continue
+                except Exception:
+                    pass
+
+        if is_def_id:
+            default_raw = {
+                "risk_policy_id": subj_pol_id,
+                "version": subj_pol_ver,
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+                "allowed_asset_classes": ["equity", "future"],
+            }
+            norm_p = normalize_risk_policy(default_raw, default_id=subj_pol_id)
+            decision_policy_candidates.append((None, norm_p, default_raw))
+
+    #Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
+    # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.
+    fallback_inline_raw: dict[str, Any]
+    if isinstance(base_meta.get("risk_policy"), Mapping) and _is_policy_content_mapping(base_meta["risk_policy"]):
+        fallback_inline_raw = dict(base_meta["risk_policy"])
+        if req_version and str(fallback_inline_raw.get("risk_policy_id") or "").startswith(
+            ("rp-pool-", "paper-inline-policy:")
+        ):
+            fallback_inline_raw["version"] = req_version
+    else:
+        fallback_inline_raw = {
+            "risk_policy_id": f"rp-{resolved_pool_id}",
+            "version": req_version or "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+            "allowed_asset_classes": ["equity", "future"],
+        }
+    fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
+    decision_policy_candidates.append((None, fallback_inline_policy, fallback_inline_raw))
+
+    # 3. Verify each candidate policy against Governance approvals.
+    verified_matches: list[tuple[str | None, RiskPolicy, dict[str, Any], str]] = []
+    seen_match_keys: set[tuple[str, str, str, str]] = set()
+    ambiguous_decision_ids: list[str] = []
+
+    all_candidates_to_check: list[tuple[str | None, RiskPolicy, dict[str, Any], bool]] = [
+        (cand_pol.risk_policy_id, cand_pol, raw_d, True)
+        for cand_pol, raw_d in catalog_candidates
+    ] + [
+        (pref_ref, cand_pol, raw_d, pref_ref is not None)
+        for pref_ref, cand_pol, raw_d in decision_policy_candidates
+    ]
+
+    for pref_ref, cand_pol, raw_d, is_catalog in all_candidates_to_check:
+        cand_digest = risk_policy_digest(cand_pol)
+        cand_meta = dict(cand_pol.metadata) if isinstance(cand_pol.metadata, Mapping) else {}
+        ref_options: list[str | None] = [pref_ref, None] if pref_ref is not None else [None]
+        matched_for_this_policy = False
+        for ref_opt in ref_options:
+            cand_pool = _build_candidate_pool(ref_opt, cand_pol)
+            ver_id, all_ver_ids, ver_diag = _verify_policy_owner_approval_decisions(
+                resolved_pool_id=resolved_pool_id,
+                effective_tenant_id=effective_tenant_id,
+                clean_stage=eff_stage,
+                clean_profile=eff_profile,
+                policy_model=cand_pol,
+                computed_digest=cand_digest,
+                raw_policy_mapping=raw_d,
+                pool_obj=cand_pool,
+                pool_meta=cand_pool["metadata"],
+                b_map={},
+                b_meta={},
+                policy_meta=cand_meta,
+                approval_decision_id=approval_decision_id,
+                approval_decision=None,
+                approval_decisions=None,
+                approval_reader=approval_reader,
+                capital_pool_reader=capital_pool_reader,
+                now_dt=effective_now,
+            )
+            diagnostic_source = _higher_priority_absence_source(diagnostic_source, ver_diag)
+            if len(all_ver_ids) > 1:
+                for aid in all_ver_ids:
+                    if aid not in ambiguous_decision_ids:
+                        ambiguous_decision_ids.append(aid)
+            if ver_id is not None:
+                match_key = (cand_pol.risk_policy_id, str(cand_pol.version), cand_digest, ver_id)
+                if match_key not in seen_match_keys:
+                    seen_match_keys.add(match_key)
+                    verified_matches.append((ref_opt, cand_pol, raw_d, ver_id))
+                matched_for_this_policy = True
+                break
+        if not matched_for_this_policy and is_catalog:
+            diagnostic_source = _higher_priority_absence_source(
+                diagnostic_source,
+                "policy_approval_missing",
+            )
+
+    if len(verified_matches) > 1 or ambiguous_decision_ids:
+        pol_ids = tuple(dict.fromkeys(m[1].risk_policy_id for m in verified_matches)) or tuple(
+            dict.fromkeys(c[0].risk_policy_id for c in catalog_candidates)
+        )
+        dec_ids = tuple(
+            dict.fromkeys([*(m[3] for m in verified_matches), *ambiguous_decision_ids])
+        )
+        return ProfilePolicyAutoResolution(
+            resolved=False,
+            status="ambiguous_profile_mapping",
+            reason_code="risk_policy_profile_mapping_ambiguous",
+            reason=(
+                f"Ambiguous risk policy candidates for profile {eff_profile!r} on pool {resolved_pool_id!r}: "
+                f"policies={list(pol_ids)!r}, decisions={list(dec_ids)!r}; explicit risk_policy_ref or "
+                f"single authoritative approval is required."
+            ),
+            absence_source="policy_candidates_ambiguous",
+            candidate_policy=verified_matches[0][1] if verified_matches else (
+                catalog_candidates[0][0] if catalog_candidates else fallback_inline_policy
+            ),
+            ambiguous_policy_ids=pol_ids,
+            ambiguous_decision_ids=dec_ids,
+        )
+
+    if len(verified_matches) == 1:
+        win_ref, win_pol, win_raw, win_dec_id = verified_matches[0]
+        return ProfilePolicyAutoResolution(
+            resolved=True,
+            status="valid",
+            risk_policy_ref=win_ref,
+            policy=win_pol,
+            raw_policy=win_raw,
+            approval_decision_id=win_dec_id,
+        )
+
+    if len(catalog_candidates) > 1:
+        pol_ids = tuple(dict.fromkeys(c[0].risk_policy_id for c in catalog_candidates))
+        return ProfilePolicyAutoResolution(
+            resolved=False,
+            status="ambiguous_profile_mapping",
+            reason_code="risk_policy_profile_mapping_ambiguous",
+            reason=(
+                f"Multiple unapproved risk policy definitions match profile {eff_profile!r} in tenant "
+                f"{effective_tenant_id!r} ({list(pol_ids)!r}); cannot auto-resolve uniquely."
+            ),
+            absence_source="policy_candidates_ambiguous",
+            candidate_policy=catalog_candidates[0][0],
+            ambiguous_policy_ids=pol_ids,
+        )
+
+    best_candidate_policy = (
+        catalog_candidates[0][0]
+        if catalog_candidates
+        else (unapproved_catalog_policies[0] if unapproved_catalog_policies else fallback_inline_policy)
+    )
+    final_absence = diagnostic_source or (
+        "policy_approval_missing"
+        if (catalog_candidates or unapproved_catalog_policies)
+        else "policy_definition_and_approval_absent"
+    )
+    return ProfilePolicyAutoResolution(
+        resolved=False,
+        status="unresolved_profile_mapping",
+        reason_code="risk_policy_profile_mapping_unapproved",
+        reason=(
+            f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
+            f"{eff_profile!r} on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r} "
+            f"(absence_source={final_absence}); policy owner must approve explicit gross_limit/net_limit/"
+            f"max_leverage/max_single_name_weight or bind an approved risk_policy_ref."
+        ),
+        absence_source=final_absence,
+        candidate_policy=best_candidate_policy,
+    )
 
 
 def _caller_is_risk_reducing_order_gate() -> bool:
@@ -2268,27 +3196,86 @@ def resolve_pool_risk_policy_binding(
 
     if needs_approved_mapping and not resolved_ref and not explicit_inline_key:
         effective_req_profile = clean_profile or "low"
-        decision_req = {
-            "policy_owner": "services/capital/risk_policy.py",
-            "governance_surface": "services/control-plane/governance/risk_policy.py",
-            "requested_profile": effective_req_profile,
-            "capital_pool_id": resolved_pool_id,
-            "tenant_id": effective_tenant_id,
-            "stage": clean_stage or "paper",
-            "decision_required": (
-                f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
-                f"{effective_req_profile!r}; policy owner must approve explicit gross_limit/net_limit/max_leverage/"
-                f"max_single_name_weight or bind an approved risk_policy_ref."
-            ),
-            "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
-        }
-        return _fail(
-            "unresolved_profile_mapping",
-            "risk_policy_profile_mapping_unapproved",
-            decision_req["decision_required"],
-            profile_status="unresolved_owner_decision_required",
-            owner_decision=decision_req,
+        auto_now = _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
+        auto_res = discover_approved_profile_risk_policy(
+            resolved_pool_id=resolved_pool_id,
+            effective_tenant_id=effective_tenant_id,
+            clean_stage=clean_stage or "paper",
+            clean_profile=effective_req_profile,
+            expected_version=_optional_text(expected_version),
+            base_pool=pool_obj if isinstance(pool_obj, Mapping) else None,
+            approval_decision_id=approval_decision_id,
+            approval_reader=approval_reader,
+            capital_pool_reader=capital_pool_reader,
+            risk_policy_loader=risk_policy_loader,
+            require_limits=require_limits,
+            now_dt=auto_now,
         )
+        if auto_res.resolved and auto_res.policy is not None and auto_res.approval_decision_id is not None:
+            resolved_ref = auto_res.risk_policy_ref
+            inline_policy = auto_res.raw_policy or auto_res.policy.to_dict()
+            explicit_inline_key = True
+            source = "risk_policy_ref" if resolved_ref else "pool_metadata_inline"
+            if not approval_decision_id:
+                approval_decision_id = auto_res.approval_decision_id
+        elif auto_res.status == "ambiguous_profile_mapping":
+            decision_req = {
+                "policy_owner": "services/capital/risk_policy.py",
+                "governance_surface": "services/control-plane/governance/risk_policy.py",
+                "accountable_domain": "capital_risk_policy_owner",
+                "absence_source": "policy_candidates_ambiguous",
+                "requested_profile": effective_req_profile,
+                "capital_pool_id": resolved_pool_id,
+                "tenant_id": effective_tenant_id,
+                "stage": clean_stage or "paper",
+                "ambiguous_policy_ids": list(auto_res.ambiguous_policy_ids),
+                "ambiguous_approval_decision_ids": list(auto_res.ambiguous_decision_ids),
+                "decision_required": auto_res.reason
+                or (
+                    f"Ambiguous risk policy candidates for profile {effective_req_profile!r}; "
+                    f"policy owner must select a single authoritative policy or approval."
+                ),
+                "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+                "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+                "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+                "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+            }
+            return _fail(
+                "ambiguous_profile_mapping",
+                "risk_policy_profile_mapping_ambiguous",
+                decision_req["decision_required"],
+                policy_obj=auto_res.candidate_policy,
+                profile_status="ambiguous_owner_decision_required",
+                owner_decision=decision_req,
+            )
+        else:
+            absence_src = auto_res.absence_source or "policy_definition_and_approval_absent"
+            decision_req = {
+                "policy_owner": "services/capital/risk_policy.py",
+                "governance_surface": "services/control-plane/governance/risk_policy.py",
+                "accountable_domain": "capital_risk_policy_owner",
+                "absence_source": absence_src,
+                "requested_profile": effective_req_profile,
+                "capital_pool_id": resolved_pool_id,
+                "tenant_id": effective_tenant_id,
+                "stage": clean_stage or "paper",
+                "decision_required": (
+                    f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
+                    f"{effective_req_profile!r} (absence_source={absence_src}); policy owner must approve explicit "
+                    f"gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref."
+                ),
+                "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+                "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+                "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+                "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+            }
+            return _fail(
+                "unresolved_profile_mapping",
+                "risk_policy_profile_mapping_unapproved",
+                decision_req["decision_required"],
+                profile_status="unresolved_owner_decision_required",
+                owner_decision=decision_req,
+            )
 
     if not resolved_ref and not explicit_inline_key:
         return _fail(
@@ -2709,7 +3696,7 @@ def resolve_pool_risk_policy_binding(
         or policy_meta.get("require_approved_profile_mapping") is True
         or (require_approved_profile_mapping is not False and (clean_profile is not None or is_default_inline_id))
     )
-    verified_decision_id = _verify_policy_owner_approval_decision(
+    verified_decision_id, all_verified_decision_ids, verification_diag = _verify_policy_owner_approval_decisions(
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
         clean_stage=clean_stage,
@@ -2730,6 +3717,40 @@ def resolve_pool_risk_policy_binding(
         now_dt=now_dt,
     )
 
+    if needs_approved_mapping and len(all_verified_decision_ids) > 1:
+        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        ambig_req = {
+            "policy_owner": "services/capital/risk_policy.py",
+            "governance_surface": "services/control-plane/governance/risk_policy.py",
+            "accountable_domain": "capital_risk_policy_owner",
+            "absence_source": "policy_candidates_ambiguous",
+            "requested_profile": effective_req_profile,
+            "capital_pool_id": resolved_pool_id,
+            "tenant_id": effective_tenant_id,
+            "stage": clean_stage or "paper",
+            "candidate_risk_policy_id": policy_model.risk_policy_id,
+            "candidate_risk_policy_version": policy_model.version,
+            "candidate_risk_policy_digest": computed_digest,
+            "ambiguous_approval_decision_ids": list(all_verified_decision_ids),
+            "decision_required": (
+                f"Ambiguous risk policy approval mapping for profile {effective_req_profile!r} on pool "
+                f"{resolved_pool_id!r}: multiple valid ApprovalDecisions match ({list(all_verified_decision_ids)!r})."
+            ),
+            "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+            "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+            "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+            "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+        }
+        return _fail(
+            "ambiguous_profile_mapping",
+            "risk_policy_profile_mapping_ambiguous",
+            ambig_req["decision_required"],
+            policy_obj=policy_model,
+            policy_tenant=policy_tenant_id,
+            profile_status="ambiguous_owner_decision_required",
+            owner_decision=ambig_req,
+        )
+
     owner_verified_explicit_contract = False
     if not is_default_inline_id:
         owner_ref_policy = authoritative_ref_policy
@@ -2747,7 +3768,22 @@ def resolve_pool_risk_policy_binding(
             owner_meta = dict(owner_ref_policy.metadata) if isinstance(owner_ref_policy.metadata, Mapping) else {}
             owner_tenant = _first_text_or_none(owner_meta, "tenant_id")
             owner_profile = _first_text_or_none(owner_meta, "requested_profile", "risk_profile", "requested_risk")
-            if (
+            owner_approval_status = str(owner_meta.get("approval_status") or "").strip().lower()
+            explicitly_unapproved = (
+                owner_meta.get("approved") is False
+                or owner_approval_status in {"unapproved", "pending", "proposed", "rejected", "revoked"}
+                or owner_meta.get("require_approved_profile_mapping") is True
+                or policy_meta.get("require_approved_profile_mapping") is True
+                or pool_meta.get("profile_auto_resolved") is True
+            )
+            if explicitly_unapproved:
+                if owner_approval_status == "revoked":
+                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_revoked")
+                elif owner_approval_status == "rejected":
+                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_rejected")
+                else:
+                    verification_diag = _higher_priority_absence_source(verification_diag, "policy_approval_missing")
+            elif (
                 owner_ref_policy.risk_policy_id == policy_model.risk_policy_id
                 and str(owner_ref_policy.version) == str(policy_model.version)
                 and risk_policy_digest(owner_ref_policy) == computed_digest
@@ -2755,6 +3791,66 @@ def resolve_pool_risk_policy_binding(
                 and (not clean_profile or not owner_profile or owner_profile == clean_profile)
             ):
                 owner_verified_explicit_contract = True
+
+    if needs_approved_mapping and verified_decision_id is None and not owner_verified_explicit_contract:
+        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        if is_default_inline_id and not resolved_ref:
+            auto_res = discover_approved_profile_risk_policy(
+                resolved_pool_id=resolved_pool_id,
+                effective_tenant_id=effective_tenant_id,
+                clean_stage=clean_stage or "paper",
+                clean_profile=effective_req_profile,
+                expected_version=target_expected_version or (str(policy_model.version) if explicit_inline_key else None),
+                base_pool=pool_obj if isinstance(pool_obj, Mapping) else None,
+                approval_decision_id=approval_decision_id,
+                approval_reader=approval_reader,
+                capital_pool_reader=capital_pool_reader,
+                risk_policy_loader=risk_policy_loader,
+                require_limits=require_limits,
+                now_dt=now_dt,
+            )
+            if auto_res.resolved and auto_res.policy is not None and auto_res.approval_decision_id is not None:
+                policy_model = auto_res.policy
+                computed_digest = risk_policy_digest(policy_model)
+                verified_decision_id = auto_res.approval_decision_id
+                if auto_res.risk_policy_ref:
+                    resolved_ref = auto_res.risk_policy_ref
+                    source = "risk_policy_ref"
+                policy_meta = dict(policy_model.metadata) if isinstance(policy_model.metadata, Mapping) else {}
+                policy_tenant_id = _first_text_or_none(policy_meta, "tenant_id") or policy_tenant_id
+            elif auto_res.status == "ambiguous_profile_mapping":
+                ambig_req = {
+                    "policy_owner": "services/capital/risk_policy.py",
+                    "governance_surface": "services/control-plane/governance/risk_policy.py",
+                    "accountable_domain": "capital_risk_policy_owner",
+                    "absence_source": "policy_candidates_ambiguous",
+                    "requested_profile": effective_req_profile,
+                    "capital_pool_id": resolved_pool_id,
+                    "tenant_id": effective_tenant_id,
+                    "stage": clean_stage or "paper",
+                    "ambiguous_policy_ids": list(auto_res.ambiguous_policy_ids),
+                    "ambiguous_approval_decision_ids": list(auto_res.ambiguous_decision_ids),
+                    "decision_required": auto_res.reason
+                    or f"Ambiguous risk policy candidates for profile {effective_req_profile!r} on pool {resolved_pool_id!r}.",
+                    "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+                    "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+                    "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+                    "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+                }
+                return _fail(
+                    "ambiguous_profile_mapping",
+                    "risk_policy_profile_mapping_ambiguous",
+                    ambig_req["decision_required"],
+                    policy_obj=auto_res.candidate_policy or policy_model,
+                    policy_tenant=policy_tenant_id,
+                    profile_status="ambiguous_owner_decision_required",
+                    owner_decision=ambig_req,
+                )
+            else:
+                verification_diag = _higher_priority_absence_source(verification_diag, auto_res.absence_source)
+                if auto_res.candidate_policy is not None and not str(auto_res.candidate_policy.risk_policy_id).startswith("rp-pool-"):
+                    policy_model = auto_res.candidate_policy
+                    computed_digest = risk_policy_digest(policy_model)
 
     if needs_approved_mapping and verified_decision_id is None and not owner_verified_explicit_contract:
         effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
@@ -2778,9 +3874,14 @@ def resolve_pool_risk_policy_binding(
                 else None
             )
         )
+        absence_src = verification_diag or (
+            "policy_approval_missing" if not is_default_inline_id else "policy_definition_and_approval_absent"
+        )
         decision_req = {
             "policy_owner": "services/capital/risk_policy.py",
             "governance_surface": "services/control-plane/governance/risk_policy.py",
+            "accountable_domain": "capital_risk_policy_owner",
+            "absence_source": absence_src,
             "requested_profile": effective_req_profile,
             "capital_pool_id": resolved_pool_id,
             "tenant_id": effective_tenant_id,
@@ -2795,11 +3896,14 @@ def resolve_pool_risk_policy_binding(
             ),
             "decision_required": (
                 f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
-                f"{effective_req_profile!r} on policy {policy_model.risk_policy_id!r}@{policy_model.version!r}; "
-                f"policy owner must approve explicit gross_limit/net_limit/max_leverage/"
-                f"max_single_name_weight or bind an approved risk_policy_ref."
+                f"{effective_req_profile!r} on policy {policy_model.risk_policy_id!r}@{policy_model.version!r} "
+                f"(absence_source={absence_src}); policy owner must approve explicit gross_limit/net_limit/"
+                f"max_leverage/max_single_name_weight or bind an approved risk_policy_ref."
             ),
+            "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+            "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
             "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+            "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
         }
         return _fail(
             "unresolved_profile_mapping",

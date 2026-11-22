@@ -171,6 +171,64 @@ class ApprovalReader:
                usage_context: Any = None) -> ApprovalEvidence:
         return self.get(decision_id).require_valid(expected=expected, now=now, usage_context=usage_context)
 
+    def list_for_target(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        decision_state: str | None = 'decided',
+        max_items: int = 16,
+    ) -> list[ApprovalEvidence]:
+        clean_type = str(target_type or '').strip()
+        clean_id = str(target_id or '').strip()
+        if not clean_type or not clean_id:
+            raise ApprovalInvalid('Target type and target ID required for bounded approval lookup')
+        bound = max(1, min(int(max_items or 16), 64))
+        try:
+            token = self.token_provider() if self.token_provider else self.service_token
+            if not token:
+                raise RuntimeError('Missing service credential')
+        except RuntimeError as exc:
+            raise ApprovalUnavailable('Governance read principal unavailable') from exc
+        query = f'target_type={quote(clean_type, safe="")}&target_id={quote(clean_id, safe="")}'
+        if decision_state is not None and str(decision_state).strip():
+            query += f'&decision_state={quote(str(decision_state).strip(), safe="")}'
+        request = Request(
+            f'{self.base_url}/api/governance/approvals?{query}',
+            headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + token},
+            method='GET',
+        )
+        try:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                if response.status != 200 or response.headers.get_content_type() != 'application/json':
+                    raise ApprovalUnavailable('Governance did not return a JSON decision list')
+                body = json.loads(response.read().decode('utf-8'))
+        except HTTPError as exc:
+            if exc.code in {401, 403, 404}:
+                raise ApprovalInvalid('Governance denied target decision lookup') from exc
+            raise ApprovalUnavailable('Governance read unavailable') from exc
+        except (URLError, OSError, TimeoutError, ValueError) as exc:
+            raise ApprovalUnavailable('Governance read unavailable or malformed') from exc
+        raw_items = body.get('items') if isinstance(body, Mapping) else body
+        if not isinstance(raw_items, list):
+            raise ApprovalInvalid('Malformed Governance decision list')
+        results: list[ApprovalEvidence] = []
+        for item in raw_items:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                evidence = ApprovalEvidence.model_validate(dict(item))
+            except ValueError:
+                continue
+            if evidence.target_type != clean_type or evidence.target_id != clean_id:
+                continue
+            if decision_state and evidence.decision_state != decision_state:
+                continue
+            results.append(evidence)
+            if len(results) >= bound:
+                break
+        return results
+
 
 def configured_approval_reader(domain: str, *, base_url: str | None = None) -> ApprovalReader:
     from services.service_token_file import configured_service_token

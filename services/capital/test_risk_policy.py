@@ -1762,3 +1762,320 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
     assert events[-1].event_type == "paper_fill_simulated"
     assert algo_exec._holding("2330.TW").Quantity == 0.0
 
+
+def test_profile_policy_autoresolve_arbitrary_decision_id_catalog_ambiguity_and_fail_closed_sources(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+    from services.capital.risk_policy import (
+        capital_pool_approval_digest,
+        discover_approved_profile_risk_policy,
+        resolve_bound_pool_risk_policy,
+        resolve_pool_risk_policy_binding,
+        risk_policy_digest,
+    )
+    from services.governance.test_approval_authority import SnapshotApprovalReader, approval_snapshot
+
+    policy_dir = tmp_path / "risk_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+
+    pool_id = "pool-persona-paper-06d4775a9b6a8f63b311"
+    base_pool = {
+        "pool_id": pool_id,
+        "tenant_id": "tenant-dev",
+        "owner_id": "tenant-dev",
+        "owner_type": "org",
+        "status": "active",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": "tenant-dev",
+        },
+    }
+
+    # 1. Label-only policy (no metadata.requested_profile="low") and generic 2x policy are NEVER inferred as "low"
+    label_only_policy = {
+        "risk_policy_id": "rp-low-label-only",
+        "name": "Low Risk Generic Label Policy",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.8,
+        "net_limit": 0.6,
+        "max_leverage": 1.0,
+        "metadata": {"tenant_id": "tenant-dev", "description": "low risk label only"},
+    }
+    generic_2x_policy = {
+        "risk_policy_id": "rp-generic-2x",
+        "name": "Default Paper 2x Policy",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "metadata": {"tenant_id": "tenant-dev", "default_paper_baseline": True, "requested_profile": "low"},
+    }
+    (policy_dir / "rp-low-label-only.json").write_text(json.dumps(label_only_policy), encoding="utf-8")
+    (policy_dir / "rp-generic-2x.json").write_text(json.dumps(generic_2x_policy), encoding="utf-8")
+
+    no_infer_res = discover_approved_profile_risk_policy(
+        resolved_pool_id=pool_id,
+        effective_tenant_id="tenant-dev",
+        clean_stage="paper",
+        clean_profile="low",
+        base_pool=base_pool,
+        approval_reader=SnapshotApprovalReader([]),
+    )
+    assert no_infer_res.resolved is False
+    assert no_infer_res.status == "unresolved_profile_mapping"
+    assert no_infer_res.absence_source == "policy_definition_and_approval_absent"
+
+    # 2. Cross-tenant catalog policy fails closed with cross_tenant_policy_or_approval_rejected
+    cross_tenant_low = {
+        "risk_policy_id": "rp-foreign-low",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.7,
+        "net_limit": 0.5,
+        "max_leverage": 1.0,
+        "metadata": {"tenant_id": "tenant-foreign", "requested_profile": "low"},
+    }
+    (policy_dir / "rp-foreign-low.json").write_text(json.dumps(cross_tenant_low), encoding="utf-8")
+    cross_res = discover_approved_profile_risk_policy(
+        resolved_pool_id=pool_id,
+        effective_tenant_id="tenant-dev",
+        clean_stage="paper",
+        clean_profile="low",
+        base_pool=base_pool,
+        approval_reader=SnapshotApprovalReader([]),
+    )
+    assert cross_res.resolved is False
+    assert cross_res.absence_source == "cross_tenant_policy_or_approval_rejected"
+    (policy_dir / "rp-foreign-low.json").unlink()
+
+    # 3. Expired catalog policy fails closed with policy_expired_or_stale
+    expired_low = {
+        "risk_policy_id": "rp-expired-low",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 0.7,
+        "net_limit": 0.5,
+        "max_leverage": 1.0,
+        "expires_at": "2020-01-01T00:00:00Z",
+        "metadata": {"tenant_id": "tenant-dev", "requested_profile": "low"},
+    }
+    (policy_dir / "rp-expired-low.json").write_text(json.dumps(expired_low), encoding="utf-8")
+    exp_pol_res = discover_approved_profile_risk_policy(
+        resolved_pool_id=pool_id,
+        effective_tenant_id="tenant-dev",
+        clean_stage="paper",
+        clean_profile="low",
+        base_pool=base_pool,
+        approval_reader=SnapshotApprovalReader([]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert exp_pol_res.resolved is False
+    assert exp_pol_res.absence_source == "policy_expired_or_stale"
+    (policy_dir / "rp-expired-low.json").unlink()
+
+    # 4. Valid catalog policy for (tenant-dev, low, paper) without Governance approval fails closed with policy_approval_missing
+    valid_low_policy = {
+        "risk_policy_id": "rp-tenant-dev-paper-low-v1",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity"],
+        "gross_limit": 0.8,
+        "net_limit": 0.6,
+        "max_leverage": 1.0,
+        "max_single_name_weight": 0.25,
+        "metadata": {"tenant_id": "tenant-dev", "requested_profile": "low"},
+    }
+    (policy_dir / "rp-tenant-dev-paper-low-v1.json").write_text(json.dumps(valid_low_policy), encoding="utf-8")
+    unapproved_cat_res = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=base_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_reader=SnapshotApprovalReader([]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert unapproved_cat_res.resolved is False
+    assert unapproved_cat_res.status == "unresolved_profile_mapping"
+    assert unapproved_cat_res.reason_code == "risk_policy_profile_mapping_unapproved"
+    assert unapproved_cat_res.owner_decision_request["absence_source"] == "policy_approval_missing"
+    assert unapproved_cat_res.owner_decision_request["disposition_task_id"] == "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+
+    # 5. Revoked and expired Governance decisions fail closed with exact absence_source
+    valid_low_digest = risk_policy_digest(valid_low_policy)
+    policy_scoped_decision = approval_snapshot(
+        decision_id="apv-arbitrary-gov-low-901",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id="rp-tenant-dev-paper-low-v1",
+        target_version=valid_low_digest,
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": "rp-tenant-dev-paper-low-v1",
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": "rp-tenant-dev-paper-low-v1",
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": valid_low_digest,
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    revoked_dec = {**policy_scoped_decision, "revoked_at": "2026-11-21T00:00:00Z", "decision_state": "revoked"}
+    revoked_res = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=base_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_reader=SnapshotApprovalReader([revoked_dec]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert revoked_res.resolved is False
+    assert revoked_res.owner_decision_request["absence_source"] == "policy_approval_revoked"
+
+    expired_dec = {**policy_scoped_decision, "expires_at": "2020-01-01T00:00:00Z"}
+    expired_res = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=base_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_reader=SnapshotApprovalReader([expired_dec]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert expired_res.resolved is False
+    assert expired_res.owner_decision_request["absence_source"] == "policy_approval_expired"
+
+    # 6. Uniquely established catalog policy + arbitrary valid Governance decision_id auto-resolves without caller supplying internal IDs
+    resolved_cat = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=base_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_reader=SnapshotApprovalReader([policy_scoped_decision]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert resolved_cat.resolved is True
+    assert resolved_cat.status == "valid"
+    assert resolved_cat.risk_policy_id == "rp-tenant-dev-paper-low-v1"
+    assert resolved_cat.risk_policy_version == "1.0"
+    assert resolved_cat.profile_mapping_approval_id == "apv-arbitrary-gov-low-901"
+    assert resolved_cat.effective_limits["gross_limit"] == 0.8
+    assert resolved_cat.effective_limits["max_single_name_weight"] == 0.25
+
+    # 7. Ambiguous multiple candidate policies or multiple valid approval decisions fail closed
+    second_low_policy = {
+        **valid_low_policy,
+        "risk_policy_id": "rp-tenant-dev-paper-low-v2-alt",
+        "gross_limit": 0.9,
+    }
+    (policy_dir / "rp-tenant-dev-paper-low-v2-alt.json").write_text(json.dumps(second_low_policy), encoding="utf-8")
+    second_decision = approval_snapshot(
+        decision_id="apv-arbitrary-gov-low-902",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id="rp-tenant-dev-paper-low-v2-alt",
+        target_version=risk_policy_digest(second_low_policy),
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": "rp-tenant-dev-paper-low-v2-alt",
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": "rp-tenant-dev-paper-low-v2-alt",
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(second_low_policy),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    ambig_res = resolve_pool_risk_policy_binding(
+        capital_pool_id=pool_id,
+        pool=base_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        requested_profile="low",
+        require_approved_profile_mapping=True,
+        approval_reader=SnapshotApprovalReader([policy_scoped_decision, second_decision]),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert ambig_res.resolved is False
+    assert ambig_res.status == "ambiguous_profile_mapping"
+    assert ambig_res.reason_code == "risk_policy_profile_mapping_ambiguous"
+    assert ambig_res.owner_decision_request["absence_source"] == "policy_candidates_ambiguous"
+    assert ambig_res.allow_new_or_increased_risk is False
+
+    # 8. Bounded lookup on runtime order evaluation: once profile_mapping_approval_id is persisted on the pool,
+    # resolve_bound_pool_risk_policy performs 1 exact-ID get() call and 0 list_for_target() scans.
+    (policy_dir / "rp-tenant-dev-paper-low-v2-alt.json").unlink()
+    get_calls: list[str] = []
+    list_calls: list[tuple[str, str]] = []
+
+    class CountingReader:
+        def get(self, decision_id: str):
+            get_calls.append(decision_id)
+            return SnapshotApprovalReader([policy_scoped_decision]).get(decision_id)
+
+        def list_for_target(self, *, target_type: str, target_id: str, **kwargs):
+            list_calls.append((target_type, target_id))
+            return SnapshotApprovalReader([policy_scoped_decision]).list_for_target(
+                target_type=target_type,
+                target_id=target_id,
+                **kwargs,
+            )
+
+    converged_pool = {
+        **base_pool,
+        "risk_policy_ref": "rp-tenant-dev-paper-low-v1",
+        "metadata": {
+            **base_pool["metadata"],
+            "requested_risk_profile": "low",
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-arbitrary-gov-low-901",
+            "risk_policy": valid_low_policy,
+        },
+    }
+    converged_pool["approval_digest"] = capital_pool_approval_digest(converged_pool)
+    bound_pol = resolve_bound_pool_risk_policy(
+        capital_pool_id=pool_id,
+        pool=converged_pool,
+        expected_tenant_id="tenant-dev",
+        expected_stage="paper",
+        approval_reader=CountingReader(),
+        as_of="2026-11-22T00:00:00Z",
+    )
+    assert bound_pol is not None
+    assert bound_pol.risk_policy_id == "rp-tenant-dev-paper-low-v1"
+    assert bound_pol.gross_limit == 0.8
+    assert get_calls == ["apv-arbitrary-gov-low-901"]
+    assert list_calls == []
+
+

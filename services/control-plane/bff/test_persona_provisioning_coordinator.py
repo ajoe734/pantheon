@@ -249,13 +249,32 @@ class FakeOwnerTransport:
         return result
 
     def list(self, owner: str, path: str) -> list[Mapping[str, Any]]:
+        from urllib.parse import parse_qs
+
         self.calls.append(("GET", owner, path, None))
-        base = path.split("?", 1)[0]
-        return [
+        base, _, query_str = path.partition("?")
+        filters = parse_qs(query_str) if query_str else {}
+        items = [
             deepcopy(v)
             for (o, p), v in self.objects.items()
             if o == owner and p.startswith(f"{base}/") and p.count("/") == base.count("/") + 1
         ]
+        if filters:
+            filtered: list[Mapping[str, Any]] = []
+            for item in items:
+                if not isinstance(item, Mapping):
+                    continue
+                ok = True
+                for f_key, f_vals in filters.items():
+                    if not f_vals or not f_vals[0]:
+                        continue
+                    if str(item.get(f_key) or "") != str(f_vals[0]):
+                        ok = False
+                        break
+                if ok:
+                    filtered.append(item)
+            return filtered
+        return items
 
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         body = deepcopy(dict(payload))
@@ -518,6 +537,15 @@ class FakeOwnerTransport:
             decision_path = f"/api/governance/approvals/{body['decision_id']}"
             if (owner, decision_path) in self.objects:
                 raise ValueError("HTTP 409: Approval decision already exists")
+            initial_metadata = (
+                deepcopy(dict(body["metadata"]))
+                if isinstance(body.get("metadata"), Mapping)
+                else (
+                    {"subject": deepcopy(dict(body["subject"]))}
+                    if isinstance(body.get("subject"), Mapping)
+                    else None
+                )
+            )
             decision = {
                 **{key: value for key, value in body.items() if key != "expected_version"},
                 "decision": None,
@@ -531,7 +559,7 @@ class FakeOwnerTransport:
                 "evidence_refs": [],
                 "superseded_by": None,
                 "revoked_at": None,
-                "metadata": None,
+                "metadata": initial_metadata,
                 "controller_record_ref": None,
                 "recorded_at": None,
                 "authority_status": None,
@@ -4030,3 +4058,462 @@ def test_coordinator_ref_only_policies_validated_on_deployment_rebinding_and_pub
     receipt_pub = coord_pub.publish_pool_envelope(pub_request)
     assert receipt_pub["envelope_artifact_id"] == "artifact-pool-envelope-v2"
     assert receipt_pub["pool_version"] == 2
+
+
+def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes_idempotent_owner_disposition(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+    from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+    from services.governance.test_approval_authority import approval_snapshot
+
+    policy_dir = tmp_path / "autoresolve_risk_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+
+    # 1. Clean create with ordinary risk="low" and NO internal IDs (risk_policy_ref=None, no risk_policy,
+    # no profile_mapping_approval_id) auto-resolves an approved pool-targeted decision whose ID is an
+    # arbitrary UUID (NOT apv-capital-pool-{pool_id}) and recovers across POST /api/capital-pools response loss.
+    store_arb, record_arb = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    assert "profile_mapping_approval_id" not in record_arb.request_payload
+    assert "risk_policy_ref" not in record_arb.request_payload
+    assert "risk_policy" not in record_arb.request_payload
+    ids_arb = deterministic_provisioning_ids(record_arb)
+    tx_arb = FakeOwnerTransport(response_loss={"/api/capital-pools"}, seed_pool_policy_approval=False)
+    coord_arb = _coordinator(store_arb, tx_arb, _schedule_receipt, seed_pool_approval=False)
+    baseline_arb = coord_arb._default_paper_pool_risk_policy(ids_arb.capital_pool_id, version="1.0")
+    arb_pool_digest = capital_pool_approval_digest(
+        {
+            "pool_id": ids_arb.capital_pool_id,
+            "owner_id": record_arb.tenant_id,
+            "owner_type": "org",
+            "currency": "USD",
+            "budget": 25000,
+            "risk_policy_ref": None,
+            "single_runtime_enforced": True,
+            "metadata": {"risk_policy": baseline_arb},
+        }
+    )
+    arbitrary_dec_id = "apv-arbitrary-uuid-7729c10e"
+    tx_arb.objects[("governance", f"/api/governance/approvals/{arbitrary_dec_id}")] = approval_snapshot(
+        decision_id=arbitrary_dec_id,
+        tenant_id=record_arb.tenant_id,
+        target_type="capital_pool_activation",
+        target_id=ids_arb.capital_pool_id,
+        target_version=arb_pool_digest,
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": ids_arb.capital_pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": baseline_arb["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(baseline_arb),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    res_arb = coord_arb.coordinate(record_arb)
+    assert res_arb.state == "provisioning", res_arb.error
+    persisted_arb_pool = tx_arb.get("capital", f"/api/capital-pools/{ids_arb.capital_pool_id}")
+    assert persisted_arb_pool is not None
+    assert persisted_arb_pool["metadata"]["requested_risk_profile"] == "low"
+    assert persisted_arb_pool["metadata"]["require_approved_profile_mapping"] is True
+    assert persisted_arb_pool["metadata"]["profile_mapping_approval_id"] == arbitrary_dec_id
+    assert res_arb.references["capital_pool_risk_policy_resolution"]["resolved"] is True
+    assert res_arb.references["capital_pool_risk_policy_resolution"]["profile_mapping_approval_id"] == arbitrary_dec_id
+    assert tx_arb.mutations[("capital", "/api/capital-pools")] == 1
+
+    # 2. Clean create with ordinary risk="low" and NO internal IDs auto-resolves an approved catalog policy
+    # from CAPITAL_RISK_POLICY_DIR (with policy-scoped Governance decision apv-catalog-low-881) and persists
+    # risk_policy_ref, version, limits, and profile_mapping_approval_id.
+    catalog_low_policy = {
+        "risk_policy_id": "rp-tenant-a-paper-low-v1",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "allowed_asset_classes": ["equity", "future"],
+        "gross_limit": 0.85,
+        "net_limit": 0.65,
+        "max_leverage": 1.0,
+        "max_single_name_weight": 0.2,
+        "metadata": {"tenant_id": "tenant-a", "requested_profile": "low"},
+    }
+    (policy_dir / "rp-tenant-a-paper-low-v1.json").write_text(json.dumps(catalog_low_policy), encoding="utf-8")
+    store_cat, record_cat = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    tx_cat = FakeOwnerTransport(seed_pool_policy_approval=False)
+    tx_cat.objects[("governance", "/api/governance/approvals/apv-catalog-low-881")] = approval_snapshot(
+        decision_id="apv-catalog-low-881",
+        tenant_id="tenant-a",
+        target_type="capital_pool_activation",
+        target_id="rp-tenant-a-paper-low-v1",
+        target_version=risk_policy_digest(catalog_low_policy),
+        owner_user_id="proposer-1",
+        risk_level="low",
+        metadata={
+            "subject": {
+                "pool_id": "rp-tenant-a-paper-low-v1",
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": "rp-tenant-a-paper-low-v1",
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(catalog_low_policy),
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+            ],
+        },
+    )
+    res_cat = _coordinator(store_cat, tx_cat, _schedule_receipt, seed_pool_approval=False).coordinate(record_cat)
+    assert res_cat.state == "provisioning", res_cat.error
+    created_cat_pool = _post_payload(tx_cat, "/api/capital-pools")
+    assert created_cat_pool["risk_policy_ref"] == "rp-tenant-a-paper-low-v1"
+    assert created_cat_pool["metadata"]["risk_policy"]["risk_policy_id"] == "rp-tenant-a-paper-low-v1"
+    assert created_cat_pool["metadata"]["risk_policy"]["gross_limit"] == 0.85
+    assert created_cat_pool["metadata"]["risk_policy"]["max_single_name_weight"] == 0.2
+    assert created_cat_pool["metadata"]["profile_mapping_approval_id"] == "apv-catalog-low-881"
+    (policy_dir / "rp-tenant-a-paper-low-v1.json").unlink()
+
+    # 3. Provisional active-looking unresolved pool record is suspended on unresolved coordinate(),
+    # routes a deterministic Governance proposal without duplicates on retry (including response loss),
+    # and recovers to active once the owner approves the proposal.
+    store_prov, record_prov = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    ids_prov = deterministic_provisioning_ids(record_prov)
+    tx_prov = FakeOwnerTransport(
+        response_loss={"/api/governance/approvals"},
+        governance_subject="pantheon-dev-persona-enrollment-proposer",
+        governance_roles=("approval_proposer",),
+        seed_pool_policy_approval=False,
+    )
+    prov_pool_path = f"/api/capital-pools/{ids_prov.capital_pool_id}"
+    tx_prov.objects[("capital", prov_pool_path)] = {
+        "pool_id": ids_prov.capital_pool_id,
+        "owner_id": record_prov.tenant_id,
+        "tenant_id": record_prov.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "USD",
+        "budget": 25000,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": record_prov.tenant_id,
+            "persona_id": record_prov.persona_id,
+        },
+    }
+    coord_prov = PersonaProvisioningCoordinator(
+        store=store_prov,
+        transport=tx_prov,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="test-worker",
+        actor_id="pantheon-persona-provisioner",
+        governance_proposer=tx_prov,
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+    res_prov_fail = coord_prov.coordinate(record_prov)
+    assert res_prov_fail.state == "failed"
+    assert res_prov_fail.error["failed_step"] == "capital_pool"
+    assert res_prov_fail.error["reason_code"] == "risk_policy_profile_mapping_unapproved"
+    assert res_prov_fail.error["absence_source"] == "policy_definition_and_approval_absent"
+    routed_req = res_prov_fail.error["owner_decision_request"]
+    prop_id = routed_req["deterministic_proposal_id"]
+    assert routed_req["governance_proposal_id"] == prop_id
+    assert routed_req["governance_proposal_status"] == "proposed_to_governance_human_inbox"
+    assert tx_prov.mutations[("governance", "/api/governance/approvals")] == 1
+    # Provisional pool was suspended and marked provisional_unresolved_risk_policy=True so it cannot add risk
+    assert tx_prov.objects[("capital", prov_pool_path)]["status"] == "suspended"
+    assert tx_prov.objects[("capital", prov_pool_path)]["metadata"]["provisional_unresolved_risk_policy"] is True
+
+    # Retry while proposal is still pending reuses the existing proposal with 0 duplicate POSTs
+    res_prov_retry = coord_prov.coordinate(record_prov)
+    assert res_prov_retry.state == "failed"
+    assert res_prov_retry.error["owner_decision_request"]["governance_proposal_status"] == "reused_existing_pending_proposal"
+    assert res_prov_retry.error["owner_decision_request"]["governance_proposal_id"] == prop_id
+    assert tx_prov.mutations[("governance", "/api/governance/approvals")] == 1
+
+    # Now approve the proposal in Governance (and switch transport principal back to automated gate for registry admission)
+    tx_prov.governance_subject = "pantheon-persona-provisioner"
+    tx_prov.governance_roles = {"approval_proposer", "automated_gate"}
+    tx_prov.objects[("governance", f"/api/governance/approvals/{prop_id}")] = approval_snapshot(
+        decision_id=prop_id,
+        tenant_id=record_prov.tenant_id,
+        target_type="capital_pool_activation",
+        target_id=ids_prov.capital_pool_id,
+        target_version=routed_req["candidate_pool_approval_digest"],
+        owner_user_id="pantheon-dev-persona-enrollment-proposer",
+        risk_level="medium",
+        metadata={
+            "subject": {
+                "pool_id": ids_prov.capital_pool_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": routed_req["candidate_risk_policy_id"],
+                "risk_policy_version": routed_req["candidate_risk_policy_version"],
+                "risk_policy_digest": routed_req["candidate_risk_policy_digest"],
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "risk_owner"},
+            ],
+        },
+    )
+    res_prov_ok = coord_prov.coordinate(record_prov)
+    assert res_prov_ok.state == "provisioning", res_prov_ok.error
+    converged_prov_pool = tx_prov.get("capital", prov_pool_path)
+    assert converged_prov_pool["status"] == "active"
+    assert converged_prov_pool["metadata"].get("provisional_unresolved_risk_policy") is False
+    assert converged_prov_pool["metadata"]["profile_mapping_approval_id"] == prop_id
+
+    # 4. Existing three dev paper pools (06d4775a9b6a8f63b311, 039ad01f8bcd2b4aa466, a81b4fd15944698341aa):
+    # reproduce actual absence, idempotent proposal routing, explicit non-approval, and auto-resolved repair without internal IDs.
+    three_pools = [
+        ("persona-06d4775a9b6a", "pool-persona-paper-06d4775a9b6a8f63b311", "pcb-persona-paper-06d4775a9b6a8f63b311", "TWD"),
+        ("persona-039ad01f8bcd", "pool-persona-paper-039ad01f8bcd2b4aa466", "pcb-persona-paper-039ad01f8bcd2b4aa466", "TWD"),
+        ("persona-a81b4fd15944", "pool-persona-paper-a81b4fd15944698341aa", "pcb-persona-paper-a81b4fd15944698341aa", "USD"),
+    ]
+    store_3 = TrackingStore()
+    tx_3 = FakeOwnerTransport(
+        governance_subject="pantheon-dev-persona-enrollment-proposer",
+        governance_roles=("approval_proposer",),
+        seed_pool_policy_approval=False,
+    )
+    coord_3 = PersonaProvisioningCoordinator(
+        store=store_3,
+        transport=tx_3,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="test-worker",
+        actor_id="pantheon-persona-provisioner",
+        governance_proposer=tx_3,
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+    for idx, (p_id, cp_id, b_id, curr) in enumerate(three_pools):
+        p_path = f"/api/capital-pools/{cp_id}"
+        tx_3.objects[("capital", p_path)] = {
+            "pool_id": cp_id,
+            "owner_id": "tenant-dev",
+            "tenant_id": "tenant-dev",
+            "owner_type": "org",
+            "status": "active",
+            "currency": curr,
+            "budget": 100000.0,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "tenant_id": "tenant-dev",
+                "persona_id": p_id,
+                "risk_policy": coord_3._default_paper_pool_risk_policy(cp_id, version="1.0"),
+            },
+        }
+        first_rep = coord_3.repair_paper_pool_risk_policy(
+            tenant_id="tenant-dev",
+            persona_id=p_id,
+            capital_pool_id=cp_id,
+            binding_id=b_id,
+        )
+        assert first_rep["repaired"] is False
+        assert first_rep["after_resolution"]["status"] == "unresolved_profile_mapping"
+        assert first_rep["after_resolution"]["allow_new_or_increased_risk"] is False
+        assert first_rep["after_resolution"]["allow_risk_reducing_actions"] is True
+        od_req = first_rep["owner_decision_request"]
+        assert od_req["disposition_task_id"] == "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+        assert od_req["hosted_proof_task_id"] == "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+        assert od_req["governance_proposal_status"] == "proposed_to_governance_human_inbox"
+        assert tx_3.mutations[("governance", "/api/governance/approvals")] == idx + 1
+
+        # Second call reuses existing pending proposal with 0 duplicate POSTs
+        second_rep = coord_3.repair_paper_pool_risk_policy(
+            tenant_id="tenant-dev",
+            persona_id=p_id,
+            capital_pool_id=cp_id,
+            binding_id=b_id,
+        )
+        assert second_rep["repaired"] is False
+        assert second_rep["owner_decision_request"]["governance_proposal_status"] == "reused_existing_pending_proposal"
+        assert tx_3.mutations[("governance", "/api/governance/approvals")] == idx + 1
+
+        # Once owner approves the routed proposal (with its deterministic apv-risk-profile-* ID),
+        # repair_paper_pool_risk_policy with NO approval_decision_id argument auto-resolves and converges
+        routed_prop_id = od_req["deterministic_proposal_id"]
+        tx_3.objects[("governance", f"/api/governance/approvals/{routed_prop_id}")] = approval_snapshot(
+            decision_id=routed_prop_id,
+            tenant_id="tenant-dev",
+            target_type="capital_pool_activation",
+            target_id=cp_id,
+            target_version=od_req["candidate_pool_approval_digest"],
+            owner_user_id="pantheon-dev-persona-enrollment-proposer",
+            risk_level="medium",
+            metadata={
+                "subject": {
+                    "pool_id": cp_id,
+                    "risk_direction": "increase",
+                    "requested_risk": "low",
+                    "risk_policy_id": od_req["candidate_risk_policy_id"],
+                    "risk_policy_version": "1.0",
+                    "risk_policy_digest": od_req["candidate_risk_policy_digest"],
+                },
+                "approvals": [
+                    {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                    {"actor_id": "reviewer-2", "actor_role": "risk_owner"},
+                ],
+            },
+        )
+        converged_rep = coord_3.repair_paper_pool_risk_policy(
+            tenant_id="tenant-dev",
+            persona_id=p_id,
+            capital_pool_id=cp_id,
+            binding_id=b_id,
+        )
+        assert converged_rep["repaired"] is True
+        assert converged_rep["after_resolution"]["resolved"] is True
+        assert converged_rep["after_resolution"]["profile_mapping_approval_id"] == routed_prop_id
+        assert converged_rep["capital_pool"]["metadata"]["profile_mapping_approval_id"] == routed_prop_id
+
+    # 5. Version upgrade (1.0 -> 2.0) auto-discovers v2 approval without caller passing approval_decision_id,
+    # and explicit non-approval (decision="rejected") fails closed without re-proposing.
+    p0_id, cp0_id, b0_id, _ = three_pools[0]
+    v2_unapproved = coord_3.repair_paper_pool_risk_policy(
+        tenant_id="tenant-dev",
+        persona_id=p0_id,
+        capital_pool_id=cp0_id,
+        binding_id=b0_id,
+        risk_policy_version="2.0",
+    )
+    assert v2_unapproved["repaired"] is False
+    v2_prop_id = v2_unapproved["owner_decision_request"]["deterministic_proposal_id"]
+    proposals_after_v2_req = tx_3.mutations[("governance", "/api/governance/approvals")]
+
+    # Simulate explicit non-approval (decision="rejected") by risk_owner
+    tx_3.objects[("governance", f"/api/governance/approvals/{v2_prop_id}")] = {
+        **tx_3.objects[("governance", f"/api/governance/approvals/{v2_prop_id}")],
+        "decision_state": "decided",
+        "decision": "rejected",
+        "actor_id": "risk-owner-1",
+        "actor_role": "risk_owner",
+        "decided_at": _owner_now(),
+        "recorded_at": _owner_now(),
+        "authority_status": "authoritative",
+        "controller_record_ref": f"governance-controller://approval-{v2_prop_id}",
+    }
+    v2_rejected_retry = coord_3.repair_paper_pool_risk_policy(
+        tenant_id="tenant-dev",
+        persona_id=p0_id,
+        capital_pool_id=cp0_id,
+        binding_id=b0_id,
+        risk_policy_version="2.0",
+    )
+    assert v2_rejected_retry["repaired"] is False
+    assert v2_rejected_retry["owner_decision_request"]["governance_proposal_status"] == "explicit_non_approval_recorded"
+    assert v2_rejected_retry["owner_decision_request"]["absence_source"] == "policy_approval_rejected"
+    assert tx_3.mutations[("governance", "/api/governance/approvals")] == proposals_after_v2_req
+
+    # Once a separate v2 approval decision with an arbitrary ID is approved, repair with risk_policy_version="2.0"
+    # and NO approval_decision_id auto-discovers it and upgrades the pool.
+    tx_3.objects.pop(("governance", f"/api/governance/approvals/{v2_prop_id}"), None)
+    tx_3.objects[("governance", "/api/governance/approvals/apv-arbitrary-v2-upgrade-551")] = approval_snapshot(
+        decision_id="apv-arbitrary-v2-upgrade-551",
+        tenant_id="tenant-dev",
+        target_type="capital_pool_activation",
+        target_id=cp0_id,
+        target_version=v2_unapproved["owner_decision_request"]["candidate_pool_approval_digest"],
+        owner_user_id="pantheon-dev-persona-enrollment-proposer",
+        risk_level="medium",
+        metadata={
+            "subject": {
+                "pool_id": cp0_id,
+                "risk_direction": "increase",
+                "requested_risk": "low",
+                "risk_policy_id": v2_unapproved["owner_decision_request"]["candidate_risk_policy_id"],
+                "risk_policy_version": "2.0",
+                "risk_policy_digest": v2_unapproved["owner_decision_request"]["candidate_risk_policy_digest"],
+            },
+            "approvals": [
+                {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                {"actor_id": "reviewer-2", "actor_role": "risk_owner"},
+            ],
+        },
+    )
+    v2_converged = coord_3.repair_paper_pool_risk_policy(
+        tenant_id="tenant-dev",
+        persona_id=p0_id,
+        capital_pool_id=cp0_id,
+        binding_id=b0_id,
+        risk_policy_version="2.0",
+    )
+    assert v2_converged["repaired"] is True
+    assert v2_converged["after_resolution"]["resolved"] is True
+    assert v2_converged["after_resolution"]["risk_policy_version"] == "2.0"
+    assert v2_converged["after_resolution"]["profile_mapping_approval_id"] == "apv-arbitrary-v2-upgrade-551"
+
+    # 6. Observable BFF UI/API metadata projection on unresolved vs resolved provisioning records
+    from services.control_plane.bff.personas import service as personas_service
+    from services.control_plane.bff.personas.service import (
+        _persona_create_response,
+        _persona_provisioning_authoritative_meta,
+        _persona_provisioning_metadata,
+    )
+
+    monkeypatch.setattr(
+        personas_service,
+        "_overlay_source_health_truth",
+        lambda status, sources, **kw: (status, sources, []),
+    )
+
+    unresolved_meta = _persona_provisioning_metadata(
+        res_prov_retry,
+        ids=ids_prov,
+        payload=res_prov_retry.request_payload,
+        owner="operator-a",
+        archetype="generalist",
+        risk="low",
+        mandate="Paper-only momentum research",
+        strategy_family="momentum",
+        traits={"risk_appetite": "low"},
+        lifecycle_state="provisioning_failed",
+    )
+    assert unresolved_meta["provisioning_waiting_reason"] == "policy_approval_pending"
+    assert unresolved_meta["recommended_governance_action"] == "approve_capital_pool_risk_policy_mapping"
+    assert unresolved_meta["risk_policy_resolution"]["resolved"] is False
+    assert unresolved_meta["risk_policy_owner_decision_request"]["governance_proposal_id"] == prop_id
+    auth_meta_unresolved = _persona_provisioning_authoritative_meta({"metadata": unresolved_meta})
+    assert auth_meta_unresolved["provisioning_waiting_reason"] == "policy_approval_pending"
+    assert auth_meta_unresolved["risk_policy_owner_decision_request"]["governance_proposal_id"] == prop_id
+
+    resolved_meta = _persona_provisioning_metadata(
+        res_prov_ok,
+        ids=ids_prov,
+        payload=res_prov_ok.request_payload,
+        owner="operator-a",
+        archetype="generalist",
+        risk="low",
+        mandate="Paper-only momentum research",
+        strategy_family="momentum",
+        traits={"risk_appetite": "low"},
+        lifecycle_state="provisioning",
+    )
+    assert resolved_meta["risk_policy_resolution"]["resolved"] is True
+    assert resolved_meta["risk_policy_resolution"]["profile_mapping_approval_id"] == prop_id
+    create_resp = _persona_create_response(
+        res_prov_ok,
+        persona={
+            "id": res_prov_ok.persona_id,
+            "persona_id": res_prov_ok.persona_id,
+            "name": "Trader A",
+            "lifecycle_state": "provisioning",
+            "metadata": resolved_meta,
+        },
+        metadata=resolved_meta,
+        payload=res_prov_ok.request_payload,
+        snapshot_at="2026-11-22T00:00:00Z",
+    )
+    assert create_resp["meta"]["risk_policy_resolution"]["resolved"] is True
+    assert create_resp["meta"]["risk_policy_resolution"]["profile_mapping_approval_id"] == prop_id
+
+
