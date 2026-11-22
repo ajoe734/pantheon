@@ -26,6 +26,14 @@ from services.control_plane.bff.management_read_models.router import (
 from services.control_plane.bff.models import utc_now
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
+@pytest.fixture(autouse=True)
+def _tenant_scope():
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    token = selected_tenant.set("tenant-test")
+    yield
+    selected_tenant.reset(token)
+
+
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
 
 
@@ -218,6 +226,10 @@ def _fresh_client(
     }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
     for record in telemetry_summaries.values():
+        record.update(tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
+    for runtime_id, record in drift_reports.items():
+        record.update(tenant_id="tenant-test", binding_id="binding-" + runtime_id.removeprefix("runtime-"))
+    for record in monitoring_sessions.values():
         record["tenant_id"] = "tenant-test"
     store.list_telemetry_summaries = lambda: list(telemetry_summaries.values())
     store.get_paper_live_drift_report = lambda runtime_id: drift_reports.get(runtime_id)
@@ -708,3 +720,244 @@ def test_baseline_partial_paper_coverage_stays_degraded() -> None:
 
     order = svc._TRADING_PULSE_BASELINE_OPERATOR_ORDER
     assert all(order["not_required"] > v for k, v in order.items() if k != "not_required")
+
+
+# Operator facts: exercise raw owner shapes, independent of wire DTO snapshots.
+SNAP = "2026-11-22T12:00:00Z"
+
+
+class _OperatorStore:
+    def __init__(self):
+        self.people = [
+            {"id": "p1", "name": "青禾", "tenant_id": "tenant-test"},
+            {"id": "p2", "name": "澄川", "tenant_id": "tenant-test"},
+            {"id": "probe", "name": "release persona", "tenant_id": "tenant-test", "metadata": {"is_probe": True}},
+            {"id": "foreign", "name": "private", "tenant_id": "other"},
+        ]
+        self.bindings = [{"id": "b-" + pid, "binding_id": "b-" + pid, "runtime_id": "r-" + pid,
+            "persona_id": pid, "tenant_id": tenant, "deployment_stage": "paper", "status": "active"}
+            for pid, tenant in (("p1", "tenant-test"), ("p2", "tenant-test"), ("probe", "tenant-test"), ("foreign", "other"))]
+        self.records = [{"binding_id": b["binding_id"], "runtime_id": b["runtime_id"], "tenant_id": b["tenant_id"],
+            "deployment_stage": "paper", "collected_at": SNAP, "last_event_at": SNAP,
+            "pnl": -168.085 if b["persona_id"] == "p1" else None,
+            "pnl_currency": "TWD", "pnl_period_start_at": "2026-11-01T00:00:00Z", "pnl_at": SNAP,
+            "pnl_definition": "net_ledger_pnl", "ledger_fill_count": 1 if b["persona_id"] == "p1" else 0,
+            "avg_slippage_bps": 0, "avg_slippage": 99, "sharpe_ratio_reason": "insufficient_samples",
+            "fill_rate_details": {"status": "known", "numerator": 0, "denominator": 452, "unit": "shares",
+                                  "basis": "filled_quantity_over_submitted_quantity", "window": {"start_at": "2026-11-01T00:00:00Z", "end_exclusive_at": SNAP}}}
+            for b in self.bindings]
+        self.calls = 0
+        self.reader = None
+
+    def list_personas(self):
+        self.calls += 1
+        return self.people
+
+    def list_runtime_bindings(self):
+        return self.bindings
+
+    def list_telemetry_summaries(self):
+        return self.records
+
+    def trade_journey_projection_reader(self):
+        return self.reader
+
+
+def _operator_pulse(store):
+    return ManagementService(read_store=store).get_trading_pulse(snapshot_at=SNAP)
+
+
+def test_operator_scope_filters_every_output_and_counts_distinct_people():
+    store = _OperatorStore()
+    store.bindings.append({**store.bindings[0], "id": "b-extra", "binding_id": "b-extra", "runtime_id": "r-extra"})
+    body = _operator_pulse(store)
+    data = body["data"]
+    scope = data["summary"]["operator_scope"]
+    assert scope["status"] == "verified"
+    assert scope["persona_count"] == 2 and scope["runtime_count"] == 3
+    assert scope["by_stage"] == {"paper": {"persona_count": 2, "runtime_count": 3}}
+    assert store.calls == 1
+    assert {r["persona_id"] for r in data["runtime_rows"]} == {"p1", "p2"}
+    assert "probe" not in str(body) and "foreign" not in str(body) and "private" not in str(body)
+    ranked = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)
+    assert ranked["data"]["summary"]["operator_scope"] == scope
+    assert "probe" not in str(ranked) and "foreign" not in str(ranked)
+
+
+def test_operator_zero_fill_ledger_and_unknown_pnl_are_distinct():
+    data = _operator_pulse(_OperatorStore())["data"]
+    row = next(r for r in data["runtime_rows"] if r["persona_id"] == "p2")
+    metrics = row["telemetry_summary"]["metrics"]
+    assert metrics["total_trades"] == 0 and metrics["pnl"] is None
+    assert metrics["fill_rate"] == 0 and metrics["avg_slippage_bps"] == 0
+    ctx = row["performance_context"]
+    assert ctx["ledger_fill_count"] == 0
+    assert ctx["metric_reasons"]["pnl"] == "no_fills"
+    assert ctx["metric_reasons"]["sharpe_ratio"] == "insufficient_samples"
+    assert ctx["fill_rate_details"]["denominator"] == 452
+    assert ctx["last_fill_at"] is None and ctx["latest_report_at"] == SNAP
+    assert data["summary"]["pnl_groups"][0]["covered_persona_count"] == 1
+    assert data["summary"]["pnl_groups"][0]["eligible_persona_count"] == 2
+
+
+def test_no_intents_is_not_zero_percent_and_real_zero_pnl_is_preserved():
+    store = _OperatorStore()
+    store.records[0].update(pnl=0, drawdown=0, sharpe_ratio=0, sharpe_ratio_reason=None)
+    store.records[1]["fill_rate_details"].update(numerator=0, denominator=0, reason="no_submitted_orders")
+    rows = {r["persona_id"]: r for r in _operator_pulse(store)["data"]["runtime_rows"]}
+    assert rows["p1"]["telemetry_summary"]["metrics"]["pnl"] == 0
+    assert rows["p1"]["telemetry_summary"]["metrics"]["drawdown"] == 0
+    assert rows["p2"]["telemetry_summary"]["metrics"]["fill_rate"] is None
+    assert rows["p2"]["performance_context"]["metric_reasons"]["fill_rate"] == "no_submitted_orders"
+
+
+@pytest.mark.parametrize("change", [{"binding_id": "old"}, {"tenant_id": "other"}, {"deployment_stage": "live"}, {"collected_at": "2027-01-01T00:00:00Z"}])
+def test_operator_rejects_mismatched_telemetry(change):
+    store = _OperatorStore()
+    store.records[0].update(change)
+    rows = {r["persona_id"]: r for r in _operator_pulse(store)["data"]["runtime_rows"]}
+    assert rows["p1"]["telemetry_summary"] is None
+    assert rows["p1"]["total_trades"] is None
+    assert rows["p1"]["performance_context"]["source_status"] == "unavailable"
+
+
+@pytest.mark.parametrize("failure", ["personas", "bindings"])
+def test_roster_failure_is_unknown_and_never_leaks_identity(failure):
+    store = _OperatorStore()
+    def fail():
+        raise RuntimeError("owner unavailable")
+    if failure == "personas":
+        store.list_personas = fail
+    else:
+        store.list_runtime_bindings = fail
+    data = _operator_pulse(store)["data"]
+    assert data["runtime_rows"] == [] and data["rankings"] == []
+    assert data["summary"]["operator_scope"]["status"] == "unavailable"
+    assert data["summary"]["operator_scope"]["persona_count"] is None
+    assert data["summary"]["runtime_count"] is None
+    assert data["cards"][0]["value"] is None
+
+
+def test_partial_directory_does_not_expose_unverified_binding():
+    store = _OperatorStore()
+    store.people = store.people[1:]
+    data = _operator_pulse(store)["data"]
+    assert data["summary"]["operator_scope"]["status"] == "partial"
+    assert data["summary"]["operator_scope"]["persona_count"] is None
+    assert {r["persona_id"] for r in data["runtime_rows"]} == {"p2"}
+    assert "r-p1" not in str(data)
+
+
+@pytest.mark.parametrize("people", [[], [{"id": "probe", "tenant_id": "tenant-test", "metadata": {"is_probe": True}}]])
+def test_verified_empty_and_all_probe_fleets(people):
+    store = _OperatorStore()
+    store.people = people
+    store.bindings = [b for b in store.bindings if b["persona_id"] in {p["id"] for p in people}]
+    data = _operator_pulse(store)["data"]
+    assert data["summary"]["operator_scope"]["status"] == "verified"
+    assert data["summary"]["runtime_count"] == 0
+    assert data["summary"]["operator_scope"]["persona_count"] == 0
+    assert data["runtime_rows"] == []
+
+
+def test_mixed_currency_mode_and_period_are_never_summed_or_competed():
+    store = _OperatorStore()
+    store.records[1].update(pnl=5, pnl_currency="USD")
+    body = _operator_pulse(store)
+    assert body["data"]["summary"]["total_pnl"] is None
+    assert len(body["data"]["summary"]["pnl_groups"]) == 2
+    blocks = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]["items"]
+    pnl = next(b for b in blocks if b["metric"] == "pnl")
+    assert [i["rank"] for i in pnl["items"]] == [1, 1]
+    assert {i["ranking_unit"] for i in pnl["items"]} == {"USD", "TWD"}
+    for change in ({"pnl_at": "2026-11-22T11:00:00Z"}, {"deployment_stage": "live"}):
+        store.records[1].update(pnl_currency="TWD", **change)
+        if "deployment_stage" in change:
+            store.bindings[1].update(change)
+        assert _operator_pulse(store)["data"]["summary"]["total_pnl"] is None
+
+
+def test_stale_and_undefined_sharpe_preserve_source_reasons_and_skip_rankings():
+    store = _OperatorStore()
+    store.records[0].update(staleness={"age_seconds": 1000, "threshold_seconds": 180}, sharpe_ratio_reason="zero_variance")
+    body = _operator_pulse(store)
+    row = next(r for r in body["data"]["runtime_rows"] if r["persona_id"] == "p1")
+    assert row["performance_context"]["source_status"] == "stale"
+    assert row["performance_context"]["metric_reasons"]["sharpe_ratio"] == "zero_variance"
+    blocks = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]["items"]
+    assert not next(b for b in blocks if b["metric"] == "pnl")["items"]
+
+
+def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding():
+    from types import SimpleNamespace
+    from services.trade_journey.materializer import JourneyProjection
+    event = {"event_id": "projected", "source_event_id": "immutable", "occurred_at": "2026-11-19T23:46:17Z",
+        "stage": "risk_evaluation", "stage_status": "rejected", "reason_code": "insufficient_cash",
+        "submitted_to_broker": False, "requested_quantity": 452,
+        "reason_detail": {"required": 100034.3461, "available": 100000, "currency": "TWD", "requested_quantity": 452}}
+    projection = JourneyProjection("tj-refusal", "tenant-test", "paper", [event], {
+        "status": "failed", "stages": {"risk_evaluation": {"status": "rejected"}},
+        "identifiers": {"runtime_id": ["r-p2"], "binding_id": ["b-p2"], "persona_id": ["p2"]},
+        "updated_at": event["occurred_at"]})
+    class Reader:
+        def page_journeys(self, **kwargs):
+            assert kwargs["page_size"] == 1 and kwargs["filters"]["date_to"] == SNAP
+            assert kwargs["filters"]["binding_id"] in {"b-p1", "b-p2"}
+            return SimpleNamespace(items=[projection] if kwargs["filters"]["binding_id"] == "b-p2" else [])
+    store = _OperatorStore()
+    store.reader = Reader()
+    row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
+    outcome = row["latest_outcome"]
+    assert outcome["reason_code"] == "insufficient_cash" and outcome["submitted_to_broker"] is False
+    assert outcome["required"] == 100034.3461 and outcome["available"] == 100000
+    assert outcome["requested_quantity"] == 452 and outcome["source_event_id"] == "immutable"
+    assert outcome["currency"] == "TWD" and "tj-refusal" in row["links"]["journey"]
+    projection.snapshot["identifiers"]["binding_id"] = ["old-binding"]
+    row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
+    assert row["latest_outcome"]["reason_code"] is None and "journey" not in row["links"]
+
+
+def test_actual_owner_port_directory_failure_cannot_become_empty_fleet():
+    from services.control_plane.bff.ports.persona_capital_runtime import PersonaFleetPort, PersonaCapitalRuntimeDomainPort
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    def fail():
+        raise RuntimeError("persona registry offline")
+    port = PersonaFleetPort(records_provider=fail)
+    store = ReadSurfacePorts(persona_capital_runtime=PersonaCapitalRuntimeDomainPort(persona_port=port))
+    store.list_runtime_bindings = lambda: []
+    scope = _operator_pulse(store)["data"]["summary"]["operator_scope"]
+    assert scope["status"] == "unavailable" and scope["persona_count"] is None
+
+
+def test_no_caller_scope_fails_closed_even_with_readable_owners():
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    token = selected_tenant.set(None)
+    try:
+        body = _operator_pulse(_OperatorStore())
+        assert body["data"]["runtime_rows"] == []
+        assert body["data"]["summary"]["operator_scope"]["reason"] == "tenant_scope_unverified"
+    finally:
+        selected_tenant.reset(token)
+
+
+def test_metric_own_binding_and_nonfinite_values_cannot_supply_facts():
+    store = _OperatorStore()
+    store.records[0].update(pnl_binding_id="old-binding", drawdown=float("nan"), sharpe_ratio=float("inf"))
+    row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p1")
+    assert row["telemetry_summary"]["metrics"]["pnl"] is None
+    assert row["telemetry_summary"]["metrics"]["drawdown"] is None
+    assert row["telemetry_summary"]["metrics"]["sharpe_ratio"] is None
+    assert row["performance_context"]["metric_reasons"]["pnl"] == "binding_mismatch"
+
+
+def test_known_quarter_equity_provenance_can_name_pnl_definition():
+    store = _OperatorStore()
+    store.records[0].pop("pnl_definition")
+    store.records[0]["quarter_equity_observations"] = [{"status": "known", "binding_id": "b-p1", "as_of": SNAP,
+        "valuation_method": "fill_cash_ledger_mark_to_market"}]
+    data = _operator_pulse(store)["data"]
+    assert data["summary"]["pnl_groups"][0]["pnl_definition"] == "fill_cash_ledger_mark_to_market"
+    store.records[0]["quarter_equity_observations"][0]["binding_id"] = "old"
+    data = _operator_pulse(store)["data"]
+    assert not any(g["value"] is not None for g in data["summary"]["pnl_groups"])
+    assert not next(r for r in data["rankings"] if r["persona_id"] == "p1")["ranking_eligible"]

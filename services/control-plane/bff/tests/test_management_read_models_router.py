@@ -35,6 +35,14 @@ from services.control_plane.bff.management_read_models.service import Management
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
+@pytest.fixture(autouse=True)
+def _operator_tenant_scope():
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    token = selected_tenant.set("tenant-test")
+    yield
+    selected_tenant.reset(token)
+
+
 EXPECTED_17_ROUTES = {
     ("GET", "/bff/management/shell-summary"),
     ("GET", "/api/v1/operator/home"),
@@ -1026,6 +1034,9 @@ def _fresh_trading_pulse_router_client(*, include_gap: bool = False) -> TestClie
                 "artifact_version": "v3",
             }
         )
+    for binding in runtime_bindings:
+        binding.update(persona_id="p-" + binding["runtime_id"], tenant_id="tenant-test")
+    store.list_personas = lambda: [{"id": b["persona_id"], "name": b["persona_id"], "tenant_id": "tenant-test"} for b in runtime_bindings]
     store.list_runtime_bindings = lambda: list(runtime_bindings)
     telemetry_summaries = {
         "runtime-alpha": {
@@ -1169,6 +1180,12 @@ def _fresh_trading_pulse_router_client(*, include_gap: bool = False) -> TestClie
         }
     }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
+    for record in telemetry_summaries.values():
+        record.update(tenant_id="tenant-test", pnl_currency="TWD", pnl_period_start_at="2026-05-23T00:00:00Z", pnl_at="2026-05-23T08:00:00Z", pnl_definition="net_ledger_pnl")
+    for runtime_id, record in drift_reports.items():
+        record.update(tenant_id="tenant-test", binding_id="binding-" + runtime_id.removeprefix("runtime-"))
+    for record in monitoring_sessions.values():
+        record["tenant_id"] = "tenant-test"
     store.list_telemetry_summaries = lambda: list(telemetry_summaries.values())
     store.get_paper_live_drift_report = lambda runtime_id: drift_reports.get(runtime_id)
     store.list_paper_live_drift_reports = lambda: list(drift_reports.values())
@@ -1214,7 +1231,7 @@ def test_router_mounted_trading_pulse_returns_card_aggregate_and_runtime_ranking
     assert "summary" not in body
     assert summary["runtime_count"] == 2
     assert summary["telemetry_coverage_count"] == 2
-    assert summary["total_pnl"] == 0.3
+    assert summary["total_pnl"] is None
     assert summary["worst_drawdown"] == 0.11
     assert summary["average_fill_rate"] == 0.89
     assert summary["worst_slippage_bps"] == 4.8
@@ -1403,6 +1420,8 @@ def test_plan_ref_href_canonical_operator_route() -> None:
     mock_store.runtime_bindings = [  # type: ignore[assignment]
         {
             "id": "runtime-1",
+            "persona_id": "persona-a",
+            "tenant_id": "tenant-test",
             "runtime_id": "runtime-1",
             "plan_id": "plan-12345",
             "status": "running",
@@ -1410,6 +1429,7 @@ def test_plan_ref_href_canonical_operator_route() -> None:
             "capital_pool_id": "pool-main",
         }
     ]
+    mock_store.personas[0]["tenant_id"] = "tenant-test"
     service = ManagementService(read_store=mock_store)
     pulse = service.get_trading_pulse()
     items = pulse["data"]["runtime_rows"]
