@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Header, Query
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 from ..service import (
+    PersonaProvisioningCoordinator,
     PersonaProvisioningCoordinationError,
     ProvisioningConflict,
     ProvisioningRecord,
@@ -23,6 +24,7 @@ from ..service import (
     _normalize_risk_level,
     _persona_create_canonical_payload,
     _persona_create_declared_data_scope,
+    _persona_create_effective_profile_payload,
     _persona_create_identity,
     _persona_create_required_data_sources,
     _persona_create_response,
@@ -260,6 +262,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "payload": canonical_payload,
             }
         )
+        # Preserve the historical wire hash (including omitted risk) for replay.
+        # Only this new-request boundary supplies the existing Persona default.
+        canonical_payload = _persona_create_effective_profile_payload(canonical_payload)
         snapshot_at = utc_now()
         record = ProvisioningRecord(
             tenant_id=tenant_id,
@@ -275,7 +280,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         if _request_dry_run_requested():
             ids = deterministic_provisioning_ids(record)
             archetype = str(canonical_payload.get("archetype") or "generalist")
-            risk = _normalize_risk_level(canonical_payload.get("risk") or "low")
+            risk = _normalize_risk_level(
+                PersonaProvisioningCoordinator._extract_request_risk_profile_context(canonical_payload)[0] or "low"
+            )
             mandate = str(canonical_payload.get("mandate") or "").strip() or None
             strategy_family = str(
                 canonical_payload.get("strategy_family")

@@ -2318,6 +2318,46 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError("requested_profile_persistence_readback_failed")
         return dict(readback)
 
+    def _record_risk_profile_context(self, record: ProvisioningRecord) -> tuple[str | None, bool, str | None]:
+        """Recover an old omitted request only from its real tenant-owned Persona.
+
+        Do not normalize old ledger payloads or change their idempotency hashes.
+        A pool/catalog/strategy default is never evidence of a Persona request.
+        """
+        profile, required, approval_id = self._extract_request_risk_profile_context(record.request_payload)
+        if profile is not None or not required:
+            return profile, required, approval_id
+        try:
+            owner = self.persona_owner_provider()
+            getter = getattr(owner, "get_persona", None)
+            persona = getter(record.persona_id) if callable(getter) else None
+        except Exception:
+            persona = None
+        if not isinstance(persona, Mapping):
+            return profile, required, approval_id
+        meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+        ids = deterministic_provisioning_ids(record)
+        tenant_values = [v for v in (persona.get("tenant_id"), persona.get("tenantId"),
+                                     meta.get("tenant_id"), meta.get("tenantId")) if v not in (None, "")]
+        identity_values = [v for v in (persona.get("persona_id"), persona.get("id")) if v not in (None, "")]
+        if (not identity_values or any(v != record.persona_id for v in identity_values)
+                or not tenant_values or any(v != record.tenant_id for v in tenant_values)
+                or meta.get("provisioning_request_hash") not in (None, "", record.request_hash)
+                or any(meta.get(k) not in (None, "", ids.capital_pool_id)
+                       for k in ("capital_pool_id", "legacy_paper_capital_pool_id"))):
+            raise PersonaProvisioningCoordinationError("requested_profile_identity_invalid")
+        owner_profile = self._extract_request_risk_profile_context(persona)[0]
+        metadata_profile = self._extract_request_risk_profile_context({
+            "risk_level": meta.get("risk_level"), "metadata": meta,
+        })[0]
+        if owner_profile is not None or metadata_profile is not None:
+            profile = self._verified_requested_profile(("persona", owner_profile), ("persona.metadata", metadata_profile))
+            record.references["requested_risk_profile_provenance"] = {
+                "source": "verified_persona_owner", "persona_id": record.persona_id,
+                "tenant_id": record.tenant_id, "requested_profile": profile,
+            }
+        return profile, required, approval_id
+
     @staticmethod
     def _extract_request_risk_profile_context(
         req: Mapping[str, Any],
@@ -2494,10 +2534,7 @@ class PersonaProvisioningCoordinator:
         has_explicit_policy = "risk_policy" in req or "risk_policy" in req_meta
         explicit_policy = req.get("risk_policy") if "risk_policy" in req else req_meta.get("risk_policy")
         requested_profile, require_approved_mapping, candidate_approval_id = (
-            self._extract_request_risk_profile_context(
-                req,
-                request_hash=record.request_hash,
-            )
+            self._record_risk_profile_context(record)
         )
         if isinstance(base_pool, Mapping):
             base_meta = base_pool.get("metadata") if isinstance(base_pool.get("metadata"), Mapping) else {}
@@ -2870,10 +2907,7 @@ class PersonaProvisioningCoordinator:
         pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
         existing = self._owner_get("capital", pool_path)
         requested_profile, require_approved_mapping, candidate_approval_id = (
-            self._extract_request_risk_profile_context(
-                record.request_payload,
-                request_hash=record.request_hash,
-            )
+            self._record_risk_profile_context(record)
         )
         (
             requested_ref,
@@ -4824,10 +4858,7 @@ class PersonaProvisioningCoordinator:
             pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
             ledger_record = self.store.get_by_persona(tenant_id, persona_id) if self.store is not None else None
             ledger_profile, _, _ = (
-                self._extract_request_risk_profile_context(
-                    ledger_record.request_payload,
-                    request_hash=ledger_record.request_hash,
-                )
+                self._record_risk_profile_context(ledger_record)
                 if ledger_record is not None
                 else (None, False, None)
             )
@@ -5320,7 +5351,7 @@ class PersonaProvisioningCoordinator:
 
         pool_profile = self._extract_request_risk_profile_context({"metadata": pool_meta})[0]
         ledger_profile = (
-            self._extract_request_risk_profile_context(ledger_record.request_payload)[0]
+            self._record_risk_profile_context(ledger_record)[0]
             if ledger_record is not None else None
         )
         profile_sources = (

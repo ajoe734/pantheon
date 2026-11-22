@@ -6331,6 +6331,22 @@ def _persona_create_canonical_payload(
     return canonical
 
 
+def _persona_create_effective_profile_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Label the existing new-Persona default after hashing the original input.
+
+    This is create ingress normalization, never a fallback for an older pool.
+    Explicit policies retain their existing independent contract.
+    """
+    effective = deepcopy(dict(payload))
+    profile, required, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(effective)
+    if profile is None and required:
+        effective["risk"] = "low"
+        metadata = dict(effective.get("metadata") or {})
+        metadata["requested_risk_profile_provenance"] = "persona_create_default"
+        effective["metadata"] = metadata
+    return effective
+
+
 def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str, Any]]:
     """Project the declared source requirements for a provisioned persona."""
     market = str(item.get("market") or "").upper()
@@ -6394,7 +6410,8 @@ def _persona_record_for_provisioning(
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
+    requested_profile, _, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(payload)
+    risk = _normalize_risk_level(requested_profile or "low")
     mandate = str(payload.get("mandate") or "").strip() or None
     strategy_family = str(
         payload.get("strategy_family") or payload.get("strategyFamily") or ""

@@ -383,7 +383,7 @@ def test_persona_creation_initial_state_is_provisioning() -> None:
         # Create a persona
         resp = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader A", "traits": {"risk_appetite": "low"}},
+            json={"name": "Trader A", "traits": {"risk_appetite": "low"}},
             headers={**HEADERS, "Idempotency-Key": "create-trader-a"},
         )
         assert resp.status_code == 201, resp.text
@@ -404,7 +404,7 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
         # Create a persona
         resp = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader B"},
+            json={"name": "Trader B"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-b"},
         )
         assert resp.status_code == 201, resp.text
@@ -452,7 +452,7 @@ def test_persona_provisioning_fails_on_downstream_failure() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader C"},
+            json={"name": "Trader C"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-c"},
         )
         assert resp.status_code == 201, resp.text
@@ -490,7 +490,7 @@ def test_persona_provisioning_fails_on_timeout() -> None:
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader D"},
+            json={"name": "Trader D"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-d"},
         )
         data = resp.json()["data"]
@@ -534,7 +534,7 @@ def test_persona_provisioning_reconcile_remains_provisioning_without_downstream_
         client = _fresh_client(td)
         resp = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader Repeated Polling"},
+            json={"name": "Trader Repeated Polling"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-repeated-poll"},
         )
         assert resp.status_code == 201, resp.text
@@ -563,7 +563,7 @@ def test_persona_duplicate_create_converges() -> None:
         # Create first time
         resp1 = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader Unique"},
+            json={"name": "Trader Unique"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-unique-1"},
         )
         assert resp1.status_code == 201, resp1.text
@@ -573,7 +573,7 @@ def test_persona_duplicate_create_converges() -> None:
         # Create second time with a different idempotency key but same name
         resp2 = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader Unique"},
+            json={"name": "Trader Unique"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-unique-2"},
         )
         assert resp2.status_code == 201, resp2.text
@@ -600,7 +600,7 @@ def test_persona_duplicate_create_rejects_registry_only_success_projection() -> 
         # 1. Create the persona
         resp1 = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader Safety"},
+            json={"name": "Trader Safety"},
             headers={**HEADERS, "Idempotency-Key": "create-safety-1"},
         )
         assert resp1.status_code == 201, resp1.text
@@ -621,7 +621,7 @@ def test_persona_duplicate_create_rejects_registry_only_success_projection() -> 
         # 3. Request creation again with same name but new idempotency key
         resp2 = client.post(
             "/bff/personas",
-            json={"risk": "low", "name": "Trader Safety"},
+            json={"name": "Trader Safety"},
             headers={**HEADERS, "Idempotency-Key": "create-safety-2"},
         )
         assert resp2.status_code == 201, resp2.text

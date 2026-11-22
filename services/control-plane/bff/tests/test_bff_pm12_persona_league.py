@@ -590,7 +590,7 @@ def _create_persona(client: TestClient, name: str, *, archetype: str, key: str) 
     response = client.post(
         "/bff/personas",
         headers={**HEADERS, "Idempotency-Key": key},
-        json={"risk": "low", "name": name, "archetype": archetype},
+        json={"name": name, "archetype": archetype},
     )
     assert response.status_code == 201, response.text
     return str(response.json()["data"]["id"])
