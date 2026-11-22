@@ -2469,6 +2469,38 @@ class PaperExecutionAlgorithm:
             },
         }
 
+    SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320
+
+    @classmethod
+    def _compact_submission_sizing_evidence(
+        cls, sizing_ev: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Compact submission sizing evidence for persisted event/ledger metadata (<= 320 bytes)."""
+        if not isinstance(sizing_ev, Mapping) or not sizing_ev:
+            return None
+        binding = str(sizing_ev.get("binding_limit") or "requested_quantity")
+        if len(binding) > 64:
+            binding = binding[:64]
+        compact: dict[str, Any] = {
+            "dated_price": sizing_ev.get("dated_price"),
+            "capital": sizing_ev.get("capital"),
+            "requested_units": int(sizing_ev.get("requested_units") or 0),
+            "permitted_units": int(sizing_ev.get("permitted_units") or 0),
+            "binding_limit": binding,
+            "fee_inclusive_required_cash": sizing_ev.get("fee_inclusive_required_cash"),
+            "remaining_cash": sizing_ev.get("remaining_cash"),
+            "after_trade_concentration": sizing_ev.get("after_trade_concentration"),
+        }
+        res_applied = int(sizing_ev.get("reservations_applied") or 0)
+        if res_applied > 0:
+            compact["reservations_applied"] = res_applied
+        encoded = json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > cls.SUBMISSION_SIZING_EVIDENCE_MAX_BYTES:
+            raise ValueError(
+                f"_compact_submission_sizing_evidence exceeded {cls.SUBMISSION_SIZING_EVIDENCE_MAX_BYTES} bytes ({len(encoded)})"
+            )
+        return compact
+
     def _reject_invalid_paper_fill(
         self,
         symbol: str,
@@ -2975,6 +3007,7 @@ class PaperExecutionAlgorithm:
             ):
                 self.release_order_reservation(clean_sig_id)
                 nt_reason = str(sizing_ev.get("binding_limit") or gate_result.get("reason") or "no_feasible_instrument")
+                compact_noop_ev = self._compact_submission_sizing_evidence(sizing_ev)
                 noop_meta = {
                     **base_metadata,
                     "no_trade_at_submission": True,
@@ -2986,7 +3019,7 @@ class PaperExecutionAlgorithm:
                     "risk_policy_id": gate_result.get("risk_policy_id"),
                     "risk_policy_version": gate_result.get("risk_policy_version"),
                     "risk_policy_digest": gate_result.get("risk_policy_digest"),
-                    "submission_sizing_evidence": dict(sizing_ev),
+                    "submission_sizing_evidence": compact_noop_ev,
                 }
                 self._last_risk_gate_result = gate_result
                 self._record_completed_submission(
@@ -2998,7 +3031,6 @@ class PaperExecutionAlgorithm:
                         "requested_quantity": requested_quantity,
                         "permitted_units": 0,
                         "submitted_to_broker": False,
-                        "submission_sizing_evidence": dict(sizing_ev),
                     },
                 )
                 self._publish(
@@ -3016,6 +3048,7 @@ class PaperExecutionAlgorithm:
         if not gate_result["accepted"]:
             self.release_order_reservation(clean_sig_id)
             reason = str(gate_result["reason"])
+            compact_rej_ev = self._compact_submission_sizing_evidence(sizing_ev)
             rej_meta = {
                 **base_metadata,
                 "reason": reason,
@@ -3038,7 +3071,7 @@ class PaperExecutionAlgorithm:
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
                 "risk_policy_digest": gate_result.get("risk_policy_digest"),
-                "submission_sizing_evidence": dict(sizing_ev) if sizing_ev else None,
+                "submission_sizing_evidence": compact_rej_ev,
             }
             self._last_submission_outcome = {
                 "status": "rejected",
@@ -3047,7 +3080,7 @@ class PaperExecutionAlgorithm:
                 "requested_quantity": requested_quantity,
                 "permitted_units": rej_meta["permitted_units"],
                 "submitted_to_broker": False,
-                "submission_sizing_evidence": rej_meta["submission_sizing_evidence"],
+                "submission_sizing_evidence": compact_rej_ev,
             }
             self._publish(
                 "order_rejection",
@@ -3239,8 +3272,9 @@ class PaperExecutionAlgorithm:
         fill_metadata["risk_policy_id"] = gate_result.get("risk_policy_id")
         fill_metadata["risk_policy_version"] = gate_result.get("risk_policy_version")
         fill_metadata["risk_policy_digest"] = gate_result.get("risk_policy_digest")
-        if gate_result.get("sizing_evidence") is not None:
-            fill_metadata["submission_sizing_evidence"] = dict(gate_result["sizing_evidence"])
+        compact_fill_ev = self._compact_submission_sizing_evidence(gate_result.get("sizing_evidence"))
+        if compact_fill_ev is not None:
+            fill_metadata["submission_sizing_evidence"] = compact_fill_ev
         self.release_order_reservation(clean_sig_id)
         self._record_completed_submission(
             clean_sig_id,
@@ -3258,8 +3292,6 @@ class PaperExecutionAlgorithm:
                 "submitted_to_broker": True,
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
-                "risk_policy_digest": gate_result.get("risk_policy_digest"),
-                "submission_sizing_evidence": dict(gate_result["sizing_evidence"]) if gate_result.get("sizing_evidence") else None,
             },
         )
         self._publish(

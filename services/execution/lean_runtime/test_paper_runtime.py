@@ -6917,11 +6917,19 @@ def test_set_holdings_records_native_order_quantity_not_percent():
 
 
 class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
-    """PAPER-SIZING-BOUND-RISK-POLICY-20261121 AC2 & AC3: submission re-evaluation, resize, no-trade, rejection, retry & exits."""
+    """PAPER-SIZING-BOUND-RISK-POLICY-20261121 AC2 & AC3: submission re-evaluation, resize, no-trade, rejection, retry & exits.
+
+    Note: On hosted dev, pool-persona-paper-039ad01f8bcd2b4aa466 carries the observed historical inline v1.0
+    policy rp-pool-persona-paper-039ad01f8bcd2b4aa466 with requested_risk_profile='low' and unresolved owner
+    profile-mapping approval (PAPER-RISK-POLICY-PROVENANCE-20261121 / PAPER-RISK-POLICY-BINDING-20261121).
+    `_make_2317_algo` injects a synthetic local test fixture approval reader (`with_synthetic_approval=True`)
+    to test post-approval submission re-evaluation mechanics, while `with_synthetic_approval=False` verifies
+    fail-closed rejection of unapproved opening orders on the observed hosted inline state.
+    """
 
     TJ_2317_DECISION_ID = "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09"
 
-    def _baseline_policy_dict(self, **overrides):
+    def _observed_historical_inline_v1_policy_dict(self, **overrides):
         base = {
             "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
             "version": "1.0",
@@ -6935,14 +6943,14 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         base.update(overrides)
         return base
 
-    def _make_2317_algo(self, events, *, policy_dict=None, initial_cash=100_000.0):
+    def _make_2317_algo(self, events, *, policy_dict=None, initial_cash=100_000.0, with_synthetic_approval=True):
         from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
         from services.governance.test_approval_authority import (
             SnapshotApprovalReader,
             approval_snapshot,
         )
 
-        pol = self._baseline_policy_dict(**(policy_dict or {}))
+        pol = self._observed_historical_inline_v1_policy_dict(**(policy_dict or {}))
         pool_id = "pool-persona-paper-039ad01f8bcd2b4aa466"
         pool_record = {
             "pool_id": pool_id,
@@ -6955,13 +6963,19 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
             "metadata": {
                 "tenant_id": "tenant-dev",
                 "requested_risk_profile": "low",
-                "profile_mapping_approval_id": "apv-2317",
+                **(
+                    {"profile_mapping_approval_id": "apv-synthetic-fixture-2317"}
+                    if with_synthetic_approval
+                    else {}
+                ),
                 "risk_policy": pol,
             },
         }
 
-        class _DynamicApprovalReader:
+        class _SyntheticFixtureApprovalReader:
             def get(self, decision_id: str, **_kwargs):
+                if not with_synthetic_approval:
+                    return None
                 cur_pol = pool_record["metadata"]["risk_policy"]
                 pool_record["approval_digest"] = capital_pool_approval_digest(pool_record)
                 snap = approval_snapshot(
@@ -6990,7 +7004,7 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
                 return SnapshotApprovalReader(snap).get(decision_id)
 
         from services.capital import risk_policy as _rp_mod
-        reader_inst = _DynamicApprovalReader()
+        reader_inst = _SyntheticFixtureApprovalReader()
         self.addCleanup(
             setattr,
             _rp_mod,
@@ -7028,9 +7042,8 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
                 "target_notional": 182648.401826484,
             },
             "pre_trade_sizing": {
-                "decision_id": self.TJ_2317_DECISION_ID,
-                "underlying": "2317",
-                "direction": "LONG",
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
                 "dated_price": 221.0,
                 "capital": 100000.0,
                 "target_notional": 182648.401826,
@@ -7039,11 +7052,29 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
                 "fee_inclusive_required_cash": 99813.031175,
                 "remaining_cash": 186.968825,
                 "after_trade_concentration": 0.998128,
-                "existing_underlying_exposure": 0.0,
             },
         }
         ctx.update(extra)
         algo.SetCurrentSignalContext(ctx)
+
+    def test_observed_unapproved_inline_v1_pool_fails_closed_for_opening_orders(self):
+        events = []
+        algo, _ = self._make_2317_algo(events, with_synthetic_approval=False)
+        self._set_2317_signal_context(algo, price=221.0)
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-2317-unapproved-profile-mapping",
+                side="buy",
+                quantity=451,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertFalse(events[0].submitted_to_broker)
+        self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
 
     def test_baseline_451_share_2317_fills_and_retry_is_idempotent(self):
         events = []
@@ -7068,6 +7099,11 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         self.assertAlmostEqual(ev["fee_inclusive_required_cash"], 99813.031175, places=5)
         self.assertAlmostEqual(ev["remaining_cash"], 186.968825, places=5)
         self.assertAlmostEqual(ev["after_trade_concentration"], 0.998128, places=5)
+        self.assertNotIn("constraint_unit_caps", ev)
+        self.assertLessEqual(
+            len(json.dumps(ev, sort_keys=True, separators=(",", ":")).encode("utf-8")),
+            PaperExecutionAlgorithm.SUBMISSION_SIZING_EVIDENCE_MAX_BYTES,
+        )
 
         # Retry with the same signal_id must not create a duplicate reservation or fill
         res_retry = algo.reserve_order(
@@ -7117,7 +7153,7 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         # 2. Changed policy at submission (tightened to v1.1 with fixture max_single_name_weight=0.25 -> 451 resizes to 113)
         events_pol = []
         algo_pol, pool_pol = self._make_2317_algo(events_pol)
-        pool_pol["metadata"]["risk_policy"] = self._baseline_policy_dict(
+        pool_pol["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
             version="1.1",
             max_single_name_weight=0.25,
         )

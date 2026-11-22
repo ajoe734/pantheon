@@ -3543,7 +3543,9 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             self.assertNotEqual(exc.code, "feature_not_in_catalogue")
 
     def test_producer_attaches_pre_trade_sizing_and_resolved_policy_version(self) -> None:
-        """PAPER-SIZING-BOUND-RISK-POLICY-20261121: producer attaches pre_trade_sizing and resolved policy identity."""
+        """PAPER-SIZING-BOUND-RISK-POLICY-20261121: producer attaches compact pre_trade_sizing derived from the single normal decision, respects injected decider and exit_reason override, and does not recompute on legacy envelope reads."""
+        from services.execution.lean_runtime import expression_policy
+        from services.execution.lean_runtime.paper_signal_producer import apply_expression_record
         from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 
         helper = TestExpressionDecisionStep()
@@ -3552,14 +3554,21 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             **helper.INPUTS["risk_budget"],
             "equity": 100000.0,
             "raw_cash": 100000.0,
-            "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
-            "risk_policy_version": "1.0",
+            "risk_policy_id": "fixture-single-name-25pct",
+            "risk_policy_version": "fixture-1.0",
             "risk_policy_digest": "digest-1",
             "max_single_name_weight": 0.25,
             "max_single_name_notional": 25000.0,
         }
+        decider_calls: list[str] = []
+
+        def tracking_decider(view, candidates, book, budget, params):
+            decider_calls.append(view["decision_id"])
+            return expression_policy.decide(view, candidates, book, budget, params)
+
         producer = helper._producer(
             store,
+            decider=tracking_decider,
             expression_inputs=lambda _b: {
                 "persona_book": {"positions": [], "gross_notional": 0.0},
                 "risk_budget": budget_with_policy,
@@ -3567,15 +3576,61 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
         )
         binding = helper._binding(helper._artifact(bearish=False), closes=(100.0, 102.0))
         self.assertEqual(producer.produce(binding, helper.NOW), 1)
+        # Single normal calculation: decider runs once and evaluate_pre_trade_sizing reuses its record.
+        self.assertEqual(len(decider_calls), 1)
         [signal] = store.get_pending()
         meta = signal["metadata"]
         self.assertIn("pre_trade_sizing", meta)
         sizing = meta["pre_trade_sizing"]
-        self.assertEqual(sizing["risk_policy_id"], "rp-pool-persona-paper-039ad01f8bcd2b4aa466")
-        self.assertEqual(sizing["risk_policy_version"], "1.0")
+        self.assertEqual(sizing["risk_policy_id"], "fixture-single-name-25pct")
+        self.assertEqual(sizing["risk_policy_version"], "fixture-1.0")
         self.assertEqual(sizing["binding_limit"], "max_single_name_weight")
-        self.assertEqual(meta["risk_policy_id"], "rp-pool-persona-paper-039ad01f8bcd2b4aa466")
-        self.assertEqual(meta["risk_policy_version"], "1.0")
+        self.assertEqual(meta["risk_policy_id"], "fixture-single-name-25pct")
+        self.assertEqual(meta["risk_policy_version"], "fixture-1.0")
+        self.assertEqual(meta["risk_policy_digest"], "digest-1")
         self.assertEqual(signal["quantity"], sizing["permitted_units"])
         self.assertLessEqual(sizing["after_trade_concentration"], 0.25)
+        self.assertNotIn("decision", sizing)
+        self.assertNotIn("constraint_unit_caps", sizing)
+
+        # Candidate pool exit override: view with exit_reason and no held close_leg overrides to held_position NoTrade,
+        # and pre_trade_sizing derives from that exact overridden NoTrade record rather than recomputing decide_for_policy.
+        strategy = helper._strategy(
+            decider=tracking_decider,
+            expression_inputs=lambda _b: {
+                "persona_book": {"positions": [], "gross_notional": 0.0},
+                "risk_budget": budget_with_policy,
+            },
+        )
+        exit_eval = strategy._expression_step(
+            view={"direction": "SHORT", "strength": 1.0, "exit_reason": "removed_from_candidate_pool"},
+            decision_id="dec-exit-override",
+            symbol="0050.TWSE",
+            closes=(100.0, 99.0),
+            market_input={"event_time": helper.BAR, "closes": [100.0, 99.0], "symbol": "0050.TWSE"},
+            strategy_artifact=helper._artifact(bearish=True),
+            b_dict=binding,
+            metadata={},
+            now_iso=helper.NOW,
+        )
+        self.assertEqual(len(decider_calls), 2)
+        self.assertEqual(exit_eval["decision"]["reason_code"], "candidates_unavailable")
+        self.assertIn("held_position", exit_eval["decision"]["detail"])
+        self.assertEqual(exit_eval["pre_trade_sizing"]["permitted_units"], 0)
+        self.assertEqual(exit_eval["pre_trade_sizing"]["binding_limit"], exit_eval["decision"]["detail"])
+
+        # Legacy stored envelope without pre_trade_sizing does not silently recompute during apply_expression_record.
+        legacy_decision: dict = {"decision_id": "dec-legacy", "metadata": {}}
+        apply_expression_record(
+            legacy_decision,
+            {"direction": "LONG", "strength": 1.0},
+            {
+                "record": exit_eval["decision"],
+                "kind": None,
+                "multiplier": None,
+                "replay_input": exit_eval["replay_input"],
+            },
+        )
+        self.assertNotIn("pre_trade_sizing", legacy_decision["metadata"])
+        self.assertEqual(legacy_decision["metadata"]["risk_policy_id"], "fixture-single-name-25pct")
 

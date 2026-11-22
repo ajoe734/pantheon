@@ -2,13 +2,23 @@
   "task_id": "PAPER-SIZING-BOUND-RISK-POLICY-20261121",
   "register_class": "RC2",
   "title": "Size paper orders from the effective risk budget and recheck before submission",
-  "delivery_state": "merged_pending_review",
   "upstream_dependencies": {
     "PAPER-RISK-POLICY-PROVENANCE-20261121": "done (#7703)",
     "PAPER-RISK-POLICY-BINDING-20261121": "done (#7726)",
     "PAPER-CASH-SHARE-SIZING-COMMISSION-20261120": "done (#7657)"
   },
-  "approved_runtime_policy_baseline": {
+  "hosted_profile_mapping_approval_status": {
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "observed_inline_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+    "observed_inline_policy_version": "1.0",
+    "requested_risk": "low",
+    "hosted_profile_mapping_status": "unresolved_profile_mapping",
+    "hosted_reason_code": "risk_policy_profile_mapping_unapproved",
+    "runtime_fail_closed_when_unapproved": true,
+    "outstanding_owner_approval_and_hosted_proof_task": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+  },
+  "observed_historical_inline_v1_policy_fixture": {
+    "evidence_kind": "local_historical_replay_with_observed_inline_v1_fixture_not_approved_hosted_runtime",
     "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
     "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
     "risk_policy_version": "1.0",
@@ -23,6 +33,7 @@
     "min_cash_reserve": null
   },
   "baseline_2317_pre_trade_replay": {
+    "evidence_kind": "local_historical_replay_with_observed_inline_v1_fixture_not_approved_hosted_runtime",
     "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
     "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
     "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
@@ -41,6 +52,8 @@
     "remaining_cash": 186.968825,
     "after_trade_concentration": 0.998128,
     "after_trade_concentration_of_initial_capital": 0.99671,
+    "compact_pre_trade_sizing_serialized_bytes": 266,
+    "compact_pre_trade_sizing_max_bytes_cap": 384,
     "constraint_unit_caps": {
       "target_notional": 826,
       "gross_limit": 904,
@@ -53,7 +66,8 @@
     }
   },
   "labelled_explicit_limit_test_fixtures": {
-    "note": "Test fixtures only; delivered runtime policy and acceptance remain based on approved runtime settings.",
+    "evidence_kind": "local_synthetic_test_fixtures_not_hosted_observation",
+    "note": "Synthetic local test fixtures only; genuine policy-owner capital_pool_activation approval and post-deploy hosted proof remain tracked under PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121.",
     "fixtures": [
       {
         "fixture_label": "FIXTURE_EXPLICIT_SINGLE_NAME_25PCT",
@@ -111,21 +125,49 @@
         "fee_inclusive_required_cash": 18811.768625,
         "remaining_cash": 51188.231375,
         "after_trade_concentration": 0.29843
+      },
+      {
+        "fixture_label": "FIXTURE_OVERLAPPING_CASH_10K_VS_SINGLE_NAME_80PCT",
+        "configured_limit": {
+          "equity": 100000.0,
+          "raw_cash": 10000.0,
+          "available_cash": 10000.0,
+          "max_single_name_weight": 0.80,
+          "dated_price": 221.0
+        },
+        "permitted_units": 45,
+        "available_cash_after_fees_cap": 45,
+        "max_single_name_weight_cap": 361,
+        "binding_limit": "available_cash_after_fees"
       }
     ]
   },
   "submission_time_reevaluation_scenarios": [
     {
-      "scenario": "baseline_unchanged_at_submission",
+      "scenario": "observed_unapproved_inline_v1_pool_opening_order_rejected_fail_closed",
+      "evidence_kind": "observed_hosted_unapproved_profile_mapping_state",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 0,
+      "outcome": "order_rejection",
+      "reason": "risk_policy_unavailable",
+      "submitted_to_broker": false
+    },
+    {
+      "scenario": "baseline_unchanged_at_submission_with_synthetic_fixture_approval",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 451,
       "permitted_units": 451,
       "outcome": "filled",
       "binding_limit": "available_cash_after_fees",
-      "submitted_to_broker": true
+      "submitted_to_broker": true,
+      "compact_submission_sizing_evidence_serialized_bytes": 215,
+      "compact_submission_sizing_evidence_max_bytes_cap": 320
     },
     {
       "scenario": "changed_price_at_d_plus_1_open",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 225.0,
       "requested_units": 451,
       "permitted_units": 443,
@@ -135,6 +177,7 @@
     },
     {
       "scenario": "changed_policy_at_submission_v1_1_single_name_25pct",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 451,
       "permitted_units": 113,
@@ -144,6 +187,7 @@
     },
     {
       "scenario": "competing_order_reservation_40057_twd_cash",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 451,
       "permitted_units": 270,
@@ -153,6 +197,7 @@
     },
     {
       "scenario": "changed_holdings_already_at_target",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 180,
       "permitted_units": 0,
@@ -162,6 +207,7 @@
     },
     {
       "scenario": "duplicate_signal_retry_deduplication",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 451,
       "permitted_units": 451,
@@ -170,6 +216,7 @@
     },
     {
       "scenario": "risk_reducing_exit_holdings_partially_reserved_then_flat",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
       "price_at_submission": 221.0,
       "requested_units": 200,
       "permitted_units": 80,
@@ -180,12 +227,51 @@
   ],
   "runtime_budget": {
     "new_persistent_writers": 0,
-    "changed_persistent_writers": 0,
-    "paper_performance_ledger_schema_changed": false,
-    "pending_signal_store_decision_record_schema_changed": false,
+    "changed_existing_writers": [
+      {
+        "writer": "telemetry_events / public.telemetry_events",
+        "cadence": "0 extra events emitted; attaches to existing paper trade_decision, paper_fill_simulated, paper_order_simulated (no_trade_at_submission), and order_rejection events (1 daily cycle/persona/day across 3 enrolled dev paper personas, ~3-15 decision events/day and ~0-9 order/fill/rejection events/day)",
+        "serialized_size_bytes": {
+          "compact_pre_trade_sizing_measured": 266,
+          "compact_pre_trade_sizing_cap": 384,
+          "compact_submission_sizing_evidence_measured": 215,
+          "compact_submission_sizing_evidence_cap": 320,
+          "policy_identity_fields_measured": 162,
+          "total_incremental_on_fill_or_rejection_measured": 643
+        },
+        "count_at_hosted_scale": "3 enrolled dev paper personas (~3-15 decision events/day, ~0-9 order/fill/rejection events/day; 0 extra rows)",
+        "growth_per_day": "~1.5-12 KB/day (< 0.4 MB/month)",
+        "cap": "PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 and SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320 per event; whole-table retention for non-heartbeat/non-snapshot rows tracked under RC3",
+        "cleanup_retention": "heartbeat/runtime_state_snapshot pruned by HeartbeatRetentionJob; order/fill/decision row retention tracked under RC3 WP3.1"
+      },
+      {
+        "writer": "paper_performance_ledger.v1 (/data/runtime/paper-performance/<scope>.json pending_fill_publications) & LifecycleTelemetryOutbox (/data/runtime/lifecycle-outbox/<scope>.json)",
+        "cadence": "in-place atomic file rewrite on each paper fill (_stage_fill_publication followed by ack_fill_publication on telemetry admission; ~0-3 fills/persona/day)",
+        "serialized_size_bytes": {
+          "transient_in_flight_per_fill_measured": 643,
+          "steady_state_after_ack_fill_publication": 0
+        },
+        "count_at_hosted_scale": "1 ledger file and 1 lifecycle outbox file per active paper runtime (3 enrolled dev paper personas)",
+        "growth_per_day": "0 B/day steady-state (pending_fill_publications cleared to [] on ack_fill_publication)",
+        "cap": "1 file per runtime binding; LifecycleTelemetryOutbox capped at MAX_CHAINS = 64",
+        "cleanup_retention": "ack_fill_publication removes staged fill records on telemetry admission; atomic_write_text + sweep_stale_temp_siblings overwrite in place"
+      },
+      {
+        "writer": "RedisPendingSignalStore (pantheon:paper:decisions:v1:{decision_id} & pantheon:signals:pending:{binding_id})",
+        "cadence": "1 decision record (put_decision_record) and 0-1 pending queue entry (enqueue) per evaluated symbol bar (~3-15/day across 3 enrolled dev paper personas)",
+        "serialized_size_bytes": {
+          "compact_pre_trade_sizing_measured": 266,
+          "compact_pre_trade_sizing_cap": 384
+        },
+        "count_at_hosted_scale": "~3-15 decisions/day across 3 enrolled dev paper personas",
+        "growth_per_day": "0 B/day steady-state in pending queue (deleted on ack); ~0.8-4.0 KB/day in decision records bounded by 30-day Redis EX TTL (~24-120 KB steady-state window)",
+        "cap": "PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 per record; DECISION_RECORD_TTL_SECONDS = 30 * 86400",
+        "cleanup_retention": "pending queue entries deleted on ack(); decision records expire automatically after 30 days via Redis EX TTL"
+      }
+    ],
     "in_memory_bounds": {
       "_order_reservations": "active in-flight reservations only; released immediately on fill, no-trade, or rejection (0 steady-state growth)",
-      "_completed_signal_submissions": "FIFO-capped at 2048 entries per PaperExecutionAlgorithm instance (~512 KB max in-memory, 0 disk writes)"
+      "_completed_signal_submissions": "FIFO-capped at 2048 compact outcome entries per PaperExecutionAlgorithm instance (~320 KB max in-memory, 0 disk writes)"
     }
   }
 }

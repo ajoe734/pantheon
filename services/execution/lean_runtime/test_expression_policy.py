@@ -414,7 +414,12 @@ TJ_2317_CANDIDATES = [
         "max_units_by_risk": 0,
     },
 ]
-APPROVED_BASELINE_BUDGET_2317 = {
+# Observed historical inline v1.0 fixture from tj_79726064-4cc2-5510-8e11-7f5e59ff89bd
+# (pool-persona-paper-039ad01f8bcd2b4aa466 / rp-pool-persona-paper-039ad01f8bcd2b4aa466 v1.0).
+# Note: on hosted dev, owner capital_pool_activation profile-mapping approval for requested_risk="low"
+# remains unresolved (PAPER-RISK-POLICY-PROVENANCE-20261121 / PAPER-RISK-POLICY-BINDING-20261121);
+# this fixture replays the pure expression-policy sizing calculation once the policy is resolved.
+OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317 = {
     "equity": 100000.0,
     "raw_cash": 100000.0,
     "available_cash": 100000.0,
@@ -442,11 +447,13 @@ APPROVED_BASELINE_BUDGET_2317 = {
 
 def test_exact_2317_incident_replay_451_share_baseline() -> None:
     """AC2: Exact pre-trade view replay for tj_79726064-4cc2-5510-8e11-7f5e59ff89bd at price 221 and capital 100000."""
+    import json
+
     sizing = ep.evaluate_pre_trade_sizing(
         TJ_2317_VIEW,
         TJ_2317_CANDIDATES,
         {"positions": [], "gross_notional": 0.0},
-        APPROVED_BASELINE_BUDGET_2317,
+        OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         PARAMS,
     )
     assert sizing["decision_id"] == TJ_2317_DECISION_ID
@@ -466,13 +473,17 @@ def test_exact_2317_incident_replay_451_share_baseline() -> None:
     assert sizing["after_trade_concentration_of_initial_capital"] == pytest.approx(0.99671, abs=1e-6)
     assert sizing["decision"]["instrument_id"] == "eq:2317"
     assert sizing["decision"]["units"] == 451
+    compact = ep.compact_pre_trade_sizing(sizing)
+    assert "decision" not in compact
+    assert "constraint_unit_caps" not in compact
+    assert len(json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")) <= ep.PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES
 
 
 def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None:
     """AC1 & AC2: Test nontrivial explicit limits with clearly labelled fixture values across long and target-position paths."""
     # Fixture 1 (labelled test fixture): explicit per-name max_single_name_weight = 0.25 (25,000 TWD)
     FIXTURE_EXPLICIT_SINGLE_NAME_BUDGET = {
-        **APPROVED_BASELINE_BUDGET_2317,
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         "risk_policy_id": "fixture-explicit-single-name-25pct",
         "risk_policy_version": "fixture-1.0",
         "max_single_name_weight": 0.25,
@@ -489,7 +500,7 @@ def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None
 
     # Fixture 2 (labelled test fixture): explicit cash-reserve rule min_cash_reserve_pct = 0.20 (20,000 TWD reserve)
     FIXTURE_EXPLICIT_CASH_RESERVE_BUDGET = {
-        **APPROVED_BASELINE_BUDGET_2317,
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         "risk_policy_id": "fixture-explicit-cash-reserve-20pct",
         "risk_policy_version": "fixture-1.0",
         "min_cash_reserve_pct": 0.20,
@@ -508,7 +519,7 @@ def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None
 
     # Fixture 3 (labelled test fixture): explicit max_leverage = 0.60 (60,000 TWD) tighter than gross_limit = 2.0 (200,000 TWD)
     FIXTURE_EXPLICIT_LEVERAGE_BUDGET = {
-        **APPROVED_BASELINE_BUDGET_2317,
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         "risk_policy_id": "fixture-explicit-leverage-60pct",
         "risk_policy_version": "fixture-1.0",
         "max_leverage": 0.60,
@@ -521,13 +532,13 @@ def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None
         PARAMS,
     )
     assert s_lev["permitted_units"] == 271
-    assert s_lev["binding_limit"] in {"max_leverage", "target_notional"}
+    assert s_lev["binding_limit"] == "max_leverage"
     assert s_lev["order_notional"] == pytest.approx(59891.0)
     assert s_lev["after_trade_gross_exposure"] <= 0.60
 
     # Fixture 4 (labelled test fixture): explicit net_limit = 40,000 TWD with existing long exposure 10,000 TWD -> 30,000 remaining
     FIXTURE_EXPLICIT_NET_LIMIT_BUDGET = {
-        **APPROVED_BASELINE_BUDGET_2317,
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         "risk_policy_id": "fixture-explicit-net-limit-40pct",
         "risk_policy_version": "fixture-1.0",
         "net_limit": 40000.0,
@@ -552,7 +563,7 @@ def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None
         "gross_notional": 11050.0,
     }
     FIXTURE_TARGET_POS_BUDGET = {
-        **APPROVED_BASELINE_BUDGET_2317,
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
         "risk_policy_id": "fixture-target-pos-single-name-30pct",
         "risk_policy_version": "fixture-1.0",
         "gross_used": 11050.0,
@@ -578,4 +589,82 @@ def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None
     assert s_target["permitted_units"] == 85
     assert s_target["binding_limit"] == "max_single_name_weight"
     assert s_target["after_trade_concentration"] <= 0.30
+
+
+def test_overlapping_limits_report_most_restrictive_binding_cap() -> None:
+    """AC2 regression: when multiple limits are active simultaneously, binding_limit reports the actually restrictive cap."""
+    # 1. Exact review reproduction: equity=100,000, raw/available cash=10,000, max_single_name_weight=0.80, price=221.
+    # Single-name cap is 361 shares, cash cap after fees is 45 shares -> permitted=45, binding_limit=available_cash_after_fees.
+    s_cash_tighter_than_single = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW,
+        TJ_2317_CANDIDATES,
+        {"positions": [], "gross_notional": 0.0},
+        {
+            **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
+            "risk_policy_id": "fixture-overlapping-cash-10k-single-80pct",
+            "risk_policy_version": "fixture-1.0",
+            "raw_cash": 10000.0,
+            "available_cash": 10000.0,
+            "available_buying_power": 10000.0,
+            "max_single_name_weight": 0.80,
+            "max_single_name_notional": 80000.0,
+        },
+        PARAMS,
+    )
+    assert s_cash_tighter_than_single["permitted_units"] == 45
+    assert s_cash_tighter_than_single["constraint_unit_caps"]["available_cash_after_fees"] == 45
+    assert s_cash_tighter_than_single["constraint_unit_caps"]["max_single_name_weight"] == 361
+    assert s_cash_tighter_than_single["binding_limit"] == "available_cash_after_fees"
+
+    # 2. Overlapping max_single_name_weight=0.80 (361 shares), min_cash_reserve_pct=0.20 (361 shares),
+    # and max_leverage=0.60 (271 shares) -> max_leverage is tightest at 271 shares.
+    s_lev_tighter_than_single = ep.evaluate_pre_trade_sizing(
+        {**TJ_2317_VIEW, "strength": 1.0},
+        TJ_2317_CANDIDATES,
+        {"positions": [], "gross_notional": 0.0},
+        {
+            **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
+            "risk_policy_id": "fixture-overlapping-lev-60-single-80",
+            "risk_policy_version": "fixture-1.0",
+            "max_single_name_weight": 0.80,
+            "max_single_name_notional": 80000.0,
+            "min_cash_reserve_pct": 0.20,
+            "cash_reserve_required": 20000.0,
+            "available_cash": 80000.0,
+            "available_buying_power": 80000.0,
+            "max_leverage": 0.60,
+        },
+        PARAMS,
+    )
+    assert s_lev_tighter_than_single["permitted_units"] == 271
+    assert s_lev_tighter_than_single["constraint_unit_caps"]["max_single_name_weight"] == 361
+    assert s_lev_tighter_than_single["constraint_unit_caps"]["max_leverage"] == 271
+    assert s_lev_tighter_than_single["binding_limit"] == "max_leverage"
+
+    # 3. Overlapping max_single_name_weight=0.80 (361 shares), max_leverage=0.60 (271 shares),
+    # and net_limit=40,000 with 10,000 existing long (135 shares) -> net_limit is tightest at 135 shares.
+    s_net_tighter_than_single = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW,
+        TJ_2317_CANDIDATES,
+        {"positions": [], "gross_notional": 10000.0},
+        {
+            **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
+            "risk_policy_id": "fixture-overlapping-net-40k-single-80",
+            "risk_policy_version": "fixture-1.0",
+            "max_single_name_weight": 0.80,
+            "max_single_name_notional": 80000.0,
+            "max_leverage": 0.60,
+            "net_limit": 40000.0,
+            "net_limit_multiple": 0.40,
+            "gross_used": 10000.0,
+            "net_used": 10000.0,
+            "signed_net_used": 10000.0,
+        },
+        PARAMS,
+    )
+    assert s_net_tighter_than_single["permitted_units"] == 135
+    assert s_net_tighter_than_single["constraint_unit_caps"]["max_single_name_weight"] == 361
+    assert s_net_tighter_than_single["constraint_unit_caps"]["net_limit"] == 135
+    assert s_net_tighter_than_single["binding_limit"] == "net_limit"
+
 

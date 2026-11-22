@@ -1299,13 +1299,30 @@ def evaluate_pre_trade_sizing(
     parameters: Mapping[str, Any] | None = None,
     *,
     policy_kind: str = POLICY_KIND,
+    decision: Mapping[str, Any] | None = None,
+    decider: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate pre-trade sizing and return complete policy/limit/cash/concentration breakdown."""
+    """Evaluate pre-trade sizing and return complete policy/limit/cash/concentration breakdown.
+
+    When ``decision`` is provided (the normal producer path), derive all sizing evidence
+    from that actual ``Chosen``/``NoTrade`` record without recomputing ``decide_for_policy``.
+    """
     params = _resolved_parameters(parameters)
     direction = str(view.get("direction") or "FLAT").upper()
     underlying = str(view.get("underlying") or "")
     state = _resolve_sizing_state(underlying, direction, candidates, book, budget)
-    decision = decide_for_policy(policy_kind, view, candidates, book, budget, parameters)
+    if decision is not None:
+        resolved_decision = dict(decision)
+    else:
+        if policy_kind == TARGET_POLICY_KIND or decider is None:
+            resolved_decision = decide_for_policy(policy_kind, view, candidates, book, budget, parameters)
+        else:
+            resolved_decision = decide_validated(view, candidates, book, budget, params, decider=decider)
+        if view.get("exit_reason") and resolved_decision.get("reason_code") != "close_leg":
+            resolved_decision = budget_unavailable_no_trade(
+                view, "held_position", "candidate pool exit has no validated close leg"
+            )
+    decision = resolved_decision
 
     by_id = {str(c.get("instrument_id")): c for c in candidates}
     chosen_id = decision.get("instrument_id") if not is_no_trade(decision) else None
@@ -1339,9 +1356,14 @@ def evaluate_pre_trade_sizing(
         if state["single_name_limit"] is not None and raw_target > 0
         else raw_target
     )
-    if policy_kind == TARGET_POLICY_KIND or (state["underlying_same_dir_notional"] > 0 and params.get("allow_pyramiding")):
+    has_existing_offset = policy_kind == TARGET_POLICY_KIND or (
+        state["underlying_same_dir_notional"] > 0 and params.get("allow_pyramiding")
+    )
+    if has_existing_offset:
+        raw_desired_delta = max(raw_target - state["underlying_same_dir_notional"], Decimal(0))
         desired_delta = max(effective_target - state["underlying_same_dir_notional"], Decimal(0))
     else:
+        raw_desired_delta = raw_target
         desired_delta = effective_target
 
     permitted_units = int(decision.get("units") or 0) if not is_no_trade(decision) else 0
@@ -1350,13 +1372,48 @@ def evaluate_pre_trade_sizing(
     price = float(winner["price"]) if (winner is not None and winner.get("price") is not None) else 0.0
     per_unit = _unit_notional(winner) if winner is not None else Decimal(0)
 
+    def _post_fee_cap(u_start: int | None, limit_mult: Decimal | None, used_before: Decimal, *, directional_net: bool = False) -> int | None:
+        if u_start is None:
+            return None
+        u = max(int(u_start), 0)
+        eq = state.get("equity")
+        if limit_mult is None or eq is None or eq <= 0 or winner is None or per_unit <= 0:
+            return u
+        eps = Decimal("1e-9")
+        while u > 0:
+            notional_u = per_unit * u
+            if winner.get("kind") == "cash_share" and direction == "LONG":
+                fee_u = max(_cash_buy_required(winner, u) - notional_u, Decimal(0))
+            else:
+                fee_u = (
+                    _dec(winner.get("fee_per_unit_per_side") or 0) * u
+                    + notional_u * _dec(winner.get("tax_rate_per_side") or 0)
+                )
+            eq_after_u = eq - fee_u
+            if eq_after_u <= 0:
+                u -= 1
+                continue
+            if directional_net:
+                s_delta = notional_u if direction == "LONG" else -notional_u
+                after_val = abs(used_before + s_delta)
+            else:
+                after_val = used_before + notional_u
+            if after_val <= limit_mult * eq_after_u + eps:
+                break
+            u -= 1
+        return max(u, 0)
+
     constraint_unit_caps: dict[str, int | None] = {}
+    u_single_eff: int | None = None
+    u_lev_eff: int | None = None
+    u_net_eff: int | None = None
+    u_gross_eff: int | None = None
     if winner is not None and per_unit > 0:
         risk_caps = _candidate_risk_unit_caps(winner, state)
         u_target = (
-            max(int((desired_delta / per_unit).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 0)
+            max(int((raw_desired_delta / per_unit).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 0)
             if policy_kind == POLICY_KIND
-            else max(int(desired_delta // per_unit), 0)
+            else max(int(raw_desired_delta // per_unit), 0)
         )
         u_raw_cash = (
             max(int(state["raw_cash"] // per_unit), 0)
@@ -1374,6 +1431,14 @@ def evaluate_pre_trade_sizing(
             while start_u > 0 and _cash_buy_required(winner, start_u) > state["spendable_cash"]:
                 start_u -= 1
             u_cash_after_fees = max(start_u, 0)
+        u_single_eff = _post_fee_cap(
+            risk_caps["max_single_name_weight"], state["max_single_name_weight"], state["existing_underlying_gross"]
+        )
+        u_lev_eff = _post_fee_cap(risk_caps["max_leverage"], state["max_leverage"], state["gross_used"])
+        u_net_eff = _post_fee_cap(
+            risk_caps["net_limit"], state["net_limit_multiple"], state["signed_net_used"], directional_net=True
+        )
+        u_gross_eff = _post_fee_cap(risk_caps["gross_limit"], state["gross_limit_multiple"], state["gross_used"])
         constraint_unit_caps = {
             "target_notional": u_target,
             "gross_limit": risk_caps["gross_limit"],
@@ -1387,7 +1452,7 @@ def evaluate_pre_trade_sizing(
             "initial_margin": risk_caps["initial_margin"],
         }
 
-    # Determine binding limit
+    # Determine binding limit: only a constraint whose cap actually equals permitted_units can bind
     if is_close_leg:
         binding_limit = "existing_holding_close_leg"
     elif is_no_trade(decision):
@@ -1411,16 +1476,8 @@ def evaluate_pre_trade_sizing(
             u_raw_pre = constraint_unit_caps.get("raw_cash_pre_fee")
             u_margin = constraint_unit_caps.get("initial_margin")
 
-            # Check if a specific policy limit or cash constraint capped permitted_units below u_target
             candidates_binding: list[tuple[int, int, str]] = []
-            if u_single is not None and permitted_units <= u_single and (u_t is None or u_single <= u_t):
-                candidates_binding.append((permitted_units, 0, "max_single_name_weight"))
-            elif (
-                state["max_single_name_weight"] is not None
-                and not _satisfies_post_fee_equity_limits(winner, permitted_units + 1, state)
-                and u_single is not None
-                and permitted_units + 1 >= u_single
-            ):
+            if u_single is not None and permitted_units in (u_single, u_single_eff) and (u_t is None or permitted_units <= u_t):
                 candidates_binding.append((permitted_units, 0, "max_single_name_weight"))
             if u_cash_fee is not None and permitted_units == u_cash_fee:
                 if state["cash_reserve_required"] > 0 and u_unres_pre is not None and u_spend_pre is not None and u_spend_pre < u_unres_pre:
@@ -1436,16 +1493,16 @@ def evaluate_pre_trade_sizing(
                     candidates_binding.append((u_margin, 2, "cash_reserved"))
                 else:
                     candidates_binding.append((u_margin, 3, "initial_margin"))
-            if u_lev is not None and u_gross is not None and u_lev < u_gross and permitted_units <= u_lev:
-                candidates_binding.append((u_lev, 4, "max_leverage"))
-            if u_net is not None and (u_gross is None or u_net < u_gross) and permitted_units <= u_net:
-                candidates_binding.append((u_net, 5, "net_limit"))
-            if u_gross is not None and permitted_units <= u_gross and (u_t is None or u_gross < u_t):
-                candidates_binding.append((u_gross, 6, "gross_limit"))
-            if u_net is not None and permitted_units <= u_net and (u_t is None or u_net < u_t):
-                candidates_binding.append((u_net, 7, "net_limit"))
-            if u_lev is not None and permitted_units <= u_lev and (u_t is None or u_lev < u_t):
-                candidates_binding.append((u_lev, 8, "max_leverage"))
+            if u_lev is not None and u_gross is not None and u_lev < u_gross and permitted_units in (u_lev, u_lev_eff):
+                candidates_binding.append((permitted_units, 4, "max_leverage"))
+            if u_net is not None and (u_gross is None or u_net < u_gross) and permitted_units in (u_net, u_net_eff):
+                candidates_binding.append((permitted_units, 5, "net_limit"))
+            if u_gross is not None and permitted_units in (u_gross, u_gross_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 6, "gross_limit"))
+            if u_net is not None and permitted_units in (u_net, u_net_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 7, "net_limit"))
+            if u_lev is not None and permitted_units in (u_lev, u_lev_eff) and (u_t is None or permitted_units < u_t):
+                candidates_binding.append((permitted_units, 8, "max_leverage"))
             if u_t is not None and permitted_units == u_t:
                 candidates_binding.append((u_t, 9, "target_notional"))
             if candidates_binding:
@@ -1544,6 +1601,36 @@ def evaluate_pre_trade_sizing(
         "constraint_unit_caps": constraint_unit_caps,
         "decision": decision,
     }
+
+
+PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384
+
+
+def compact_pre_trade_sizing(sizing: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bounded compact pre-trade sizing summary without duplicate calculation state."""
+    compact: dict[str, Any] = {
+        "risk_policy_id": sizing.get("risk_policy_id"),
+        "risk_policy_version": sizing.get("risk_policy_version"),
+        "dated_price": sizing.get("dated_price"),
+        "capital": sizing.get("capital"),
+        "target_notional": sizing.get("target_notional"),
+        "permitted_units": int(sizing.get("permitted_units") or 0),
+        "binding_limit": str(sizing.get("binding_limit") or "no_feasible_instrument"),
+        "fee_inclusive_required_cash": sizing.get("fee_inclusive_required_cash"),
+        "remaining_cash": sizing.get("remaining_cash"),
+        "after_trade_concentration": sizing.get("after_trade_concentration"),
+    }
+    existing_u = sizing.get("existing_underlying_exposure")
+    if existing_u:
+        compact["existing_underlying_exposure"] = existing_u
+    if len(compact["binding_limit"]) > 96:
+        compact["binding_limit"] = compact["binding_limit"][:96]
+    encoded = json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES:
+        raise ValueError(
+            f"compact_pre_trade_sizing exceeded {PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES} bytes ({len(encoded)})"
+        )
+    return compact
 
 
 def decide_for_policy(kind, view, candidates, book, budget, parameters):
