@@ -833,15 +833,57 @@ def _book_and_reservation_exposures(
             if u_code:
                 res_underlying_gross[u_code] = res_underlying_gross.get(u_code, Decimal(0)) + notional
 
-    budget_already_folded = "raw_cash" in risk_budget and "underlying_exposures" in risk_budget
+    pos_margin = Decimal(0)
+    for pos in positions:
+        if isinstance(pos, Mapping):
+            raw_pm = pos.get("margin_reserved") if pos.get("margin_reserved") is not None else pos.get("initial_margin_reserved")
+            if raw_pm is not None:
+                pos_margin += max(Decimal(0), _decimal(raw_pm))
+
+    scalar_cash_res = _decimal(risk_budget.get("cash_reserved") or risk_budget.get("reserved_cash") or 0)
+    cash_reserved = max(scalar_cash_res, res_cash)
+    unfolded_cash_res = max(res_cash - scalar_cash_res, Decimal(0))
+
+    scalar_margin_res = _decimal(
+        risk_budget.get("margin_reserved")
+        or risk_budget.get("order_margin_reserved")
+        or risk_budget.get("reserved_margin")
+        or 0
+    )
+    if risk_budget.get("order_margin_reserved") is not None:
+        folded_order_margin = _decimal(risk_budget["order_margin_reserved"])
+        inferred_pos_margin = max(scalar_margin_res - folded_order_margin, pos_margin)
+    else:
+        folded_order_margin = scalar_margin_res
+        inferred_pos_margin = pos_margin
+    margin_reserved = max(scalar_margin_res, inferred_pos_margin + res_margin)
+    unfolded_margin_res = max(res_margin - folded_order_margin, Decimal(0))
+
+    folded_res_u_map = (
+        risk_budget.get("reserved_underlying_notional")
+        if isinstance(risk_budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_decimal(v or 0) for v in folded_res_u_map.values())
+    reservations_folded_in_budget = (
+        "reserved_underlying_notional" in risk_budget
+        and folded_res_gross >= sum(res_underlying_gross.values(), Decimal(0))
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _decimal(risk_budget.get("gross_used") or 0) >= pos_gross + res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded_in_budget else max(res_gross - folded_res_gross, Decimal(0))
+
     raw_gross_used = risk_budget.get("gross_used")
     if raw_gross_used is None:
         raw_gross_used = book.get("gross_notional", 0)
-    gross_used = max(_decimal(raw_gross_used or 0), pos_gross + res_gross)
+        gross_used = max(_decimal(raw_gross_used or 0) + res_gross, pos_gross + res_gross)
+    else:
+        gross_used = max(_decimal(raw_gross_used or 0) + unfolded_res_gross, pos_gross + res_gross)
 
     if risk_budget.get("signed_net_used") is not None:
         signed_net_used = _decimal(risk_budget["signed_net_used"])
-        if not budget_already_folded and res_signed_net != 0:
+        if not reservations_folded_in_budget and unfolded_res_gross > 0 and res_signed_net != 0:
             signed_net_used += res_signed_net
     else:
         signed_net_used = pos_signed_net + res_signed_net
@@ -852,29 +894,24 @@ def _book_and_reservation_exposures(
         for k, v in budget_u_map.items():
             if v is not None:
                 underlying_gross[str(k)] = _decimal(v)
-    for u_code, val in pos_underlying_gross.items():
-        combined = val + res_underlying_gross.get(u_code, Decimal(0))
-        if combined > underlying_gross.get(u_code, Decimal(0)):
-            underlying_gross[u_code] = combined
-    for u_code, val in res_underlying_gross.items():
-        if u_code not in pos_underlying_gross:
-            combined = (
-                underlying_gross.get(u_code, Decimal(0))
-                if budget_already_folded
-                else underlying_gross.get(u_code, Decimal(0)) + val
-            )
-            underlying_gross[u_code] = combined
-
-    scalar_cash_res = _decimal(risk_budget.get("cash_reserved") or risk_budget.get("reserved_cash") or 0)
-    cash_reserved = max(scalar_cash_res, res_cash)
+    all_u_codes = set(underlying_gross.keys()) | set(pos_underlying_gross.keys()) | set(res_underlying_gross.keys())
+    for u_code in all_u_codes:
+        pos_u = pos_underlying_gross.get(u_code, Decimal(0))
+        res_u = res_underlying_gross.get(u_code, Decimal(0))
+        budget_u = underlying_gross.get(u_code, Decimal(0))
+        folded_u = res_u if reservations_folded_in_budget else min(res_u, _decimal(folded_res_u_map.get(u_code) or 0))
+        unfolded_u = max(res_u - folded_u, Decimal(0))
+        underlying_gross[u_code] = max(budget_u + unfolded_u, pos_u + res_u)
 
     return {
         "gross_used": gross_used,
         "signed_net_used": signed_net_used,
         "underlying_gross": underlying_gross,
         "cash_reserved": cash_reserved,
-        "margin_reserved": res_margin,
-        "budget_already_folded": budget_already_folded,
+        "unfolded_cash_reserved": unfolded_cash_res,
+        "margin_reserved": margin_reserved,
+        "unfolded_margin_reserved": unfolded_margin_res,
+        "budget_already_folded": reservations_folded_in_budget,
     }
 
 
@@ -956,18 +993,35 @@ def _available_cash(
     exposures = _book_and_reservation_exposures(persona_book, risk_budget)
     cash_reserved = exposures["cash_reserved"]
     margin_reserved = exposures["margin_reserved"]
+    unfolded_cash_res = exposures["unfolded_cash_reserved"]
+    unfolded_margin_res = exposures["unfolded_margin_reserved"]
 
     if "raw_cash" in risk_budget:
         raw_cash = _decimal(risk_budget["raw_cash"])
-        free_margin = (
-            _decimal(risk_budget["free_margin"])
-            if risk_budget.get("free_margin") is not None
-            else raw_cash
-        )
-        raw_bp = max(min(raw_cash - cash_reserved, free_margin - margin_reserved), Decimal(0))
+        base_margin_eq = equity if (equity is not None and equity > 0) else raw_cash
+        if risk_budget.get("free_margin") is not None:
+            free_margin = min(
+                _decimal(risk_budget["free_margin"]) - unfolded_margin_res,
+                base_margin_eq - margin_reserved,
+            )
+        else:
+            free_margin = base_margin_eq - margin_reserved
+        raw_bp = max(min(raw_cash - cash_reserved, free_margin), Decimal(0))
         return max(min(avail, raw_bp - reserve_req), Decimal(0))
 
-    return max(avail - cash_reserved - margin_reserved - reserve_req, Decimal(0))
+    if risk_budget.get("free_margin") is not None:
+        free_margin = _decimal(risk_budget["free_margin"]) - unfolded_margin_res
+        if equity is not None and equity > 0:
+            free_margin = min(free_margin, equity - margin_reserved)
+        unreserved = max(min(avail - unfolded_cash_res, free_margin), Decimal(0))
+    elif (cash_reserved > 0 or margin_reserved > 0) and equity is not None and equity > 0:
+        unreserved = max(
+            min(avail - unfolded_cash_res - unfolded_margin_res, equity - cash_reserved - margin_reserved),
+            Decimal(0),
+        )
+    else:
+        unreserved = max(avail - cash_reserved - margin_reserved, Decimal(0))
+    return max(unreserved - reserve_req, Decimal(0))
 
 
 def _cash_candidate(

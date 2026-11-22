@@ -7781,4 +7781,77 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         self.assertEqual(events[-1].broker_submission_status, "duplicate_signal_retry")
         self.assertEqual(algo._holding("2317.TW").Quantity, 45.0)
 
+    def test_transport_level_malformed_json_non_object_and_read_failure_preserve_reservation_and_block_retry(self):
+        # Transport-level regression through the real HTTP adapter (_post_broker_paper_order with in_process_broker=False)
+        # and mocked urllib.request.urlopen: malformed JSON, non-object JSON, stream read failures, and missing-order
+        # responses must preserve the reservation as uncertain_broker_outcome and block a second POST on retry.
+        class _FakeResp:
+            def __init__(self, body_bytes=None, read_exc=None):
+                self._body_bytes = body_bytes
+                self._read_exc = read_exc
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                if self._read_exc is not None:
+                    raise self._read_exc
+                return self._body_bytes
+
+        ambiguous_cases = (
+            ("malformed_json", _FakeResp(body_bytes=b"{broken")),
+            ("non_object_list", _FakeResp(body_bytes=b'["not","an","object"]')),
+            ("non_object_scalar", _FakeResp(body_bytes=b"123")),
+            ("read_failure", _FakeResp(read_exc=OSError("socket read interrupted after POST"))),
+            ("missing_order_key", _FakeResp(body_bytes=b'{"status":"accepted_without_order"}')),
+        )
+        for case_name, fake_resp in ambiguous_cases:
+            with self.subTest(case=case_name):
+                events = []
+                algo, _ = self._make_2317_algo(events)
+                algo._in_process_broker = False
+                self._set_2317_signal_context(algo, price=221.0)
+                sig_id = f"sig-http-{case_name}"
+                algo.reserve_order(sig_id, symbol="2317.TW", side="buy", quantity=10, price=221.0)
+                self.assertEqual(len(algo.active_order_reservations()), 1)
+
+                with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+                    algo.SubmitTaiwanBrokerOrder(
+                        "2317.TW",
+                        signal_id=sig_id,
+                        side="buy",
+                        quantity=10,
+                        quantity_type="SHARES",
+                        action="BUY",
+                    )
+                    self.assertEqual(mock_urlopen.call_count, 1)
+                    self.assertEqual(events[-1].event_type, "order_rejection")
+                    self.assertEqual(events[-1].metadata["broker_outcome"], "uncertain")
+                    self.assertFalse(events[-1].metadata["reservation_released"])
+                    self.assertTrue(events[-1].metadata["reconciliation_required"])
+                    self.assertEqual(len(algo._uncertain_broker_submissions), 1)
+                    self.assertEqual(len(algo.active_order_reservations()), 1)
+
+                    # Repeating the same signal must NOT make a second HTTP POST
+                    algo.SubmitTaiwanBrokerOrder(
+                        "2317.TW",
+                        signal_id=sig_id,
+                        side="buy",
+                        quantity=10,
+                        quantity_type="SHARES",
+                        action="BUY",
+                    )
+                    self.assertEqual(mock_urlopen.call_count, 1)
+                    self.assertEqual(
+                        events[-1].broker_submission_status,
+                        "uncertain_broker_outcome_pending_reconciliation",
+                    )
+                    self.assertFalse(events[-1].submitted_to_broker)
+                    self.assertFalse(events[-1].metadata["reservation_released"])
+                    self.assertEqual(len(algo.active_order_reservations()), 1)
+
+
 

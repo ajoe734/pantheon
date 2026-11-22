@@ -226,10 +226,53 @@ def _resolve_sizing_state(
         if u_code:
             res_underlying_gross[u_code] = res_underlying_gross.get(u_code, Decimal(0)) + notional
 
-    budget_already_folded = "raw_cash" in budget and "underlying_exposures" in budget
+    pos_margin = Decimal(0)
+    for p in pos_list:
+        if isinstance(p, Mapping):
+            raw_pm = p.get("margin_reserved") if p.get("margin_reserved") is not None else p.get("initial_margin_reserved")
+            if raw_pm is not None:
+                pos_margin += max(Decimal(0), _dec(raw_pm))
+
+    scalar_cash_res = _dec(budget.get("cash_reserved") or budget.get("reserved_cash") or 0)
+    cash_reserved = max(scalar_cash_res, res_cash)
+    unfolded_cash_res = max(res_cash - scalar_cash_res, Decimal(0))
+
+    scalar_margin_res = _dec(
+        budget.get("margin_reserved")
+        or budget.get("order_margin_reserved")
+        or budget.get("reserved_margin")
+        or 0
+    )
+    if budget.get("order_margin_reserved") is not None:
+        folded_order_margin = _dec(budget["order_margin_reserved"])
+        inferred_pos_margin = max(scalar_margin_res - folded_order_margin, pos_margin)
+    else:
+        folded_order_margin = scalar_margin_res
+        inferred_pos_margin = pos_margin
+    margin_reserved = max(scalar_margin_res, inferred_pos_margin + res_margin)
+    unfolded_margin_res = max(res_margin - folded_order_margin, Decimal(0))
+
+    if (cash_reserved > 0 or margin_reserved > 0) and active_res_count == 0:
+        active_res_count = 1
+
+    folded_res_u_map = (
+        budget.get("reserved_underlying_notional")
+        if isinstance(budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_dec(v or 0) for v in folded_res_u_map.values())
+    reservations_folded_in_budget = (
+        "reserved_underlying_notional" in budget
+        and folded_res_gross >= sum(res_underlying_gross.values(), Decimal(0))
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _dec(budget.get("gross_used") or 0) >= pos_gross + res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded_in_budget else max(res_gross - folded_res_gross, Decimal(0))
+
     if "gross_used" in budget and budget.get("gross_used") is not None:
         base_gross_used = _dec(budget["gross_used"])
-        gross_used = base_gross_used if budget_already_folded else (base_gross_used + res_gross)
+        gross_used = base_gross_used + unfolded_res_gross
     elif isinstance(book, Mapping) and book.get("gross_notional") is not None:
         gross_used = _dec(book["gross_notional"]) + res_gross
     else:
@@ -237,7 +280,7 @@ def _resolve_sizing_state(
 
     if budget.get("signed_net_used") is not None:
         signed_net_used = _dec(budget["signed_net_used"])
-        if not budget_already_folded:
+        if not reservations_folded_in_budget and unfolded_res_gross > 0 and res_signed_net != 0:
             signed_net_used += res_signed_net
     elif budget.get("net_used") is not None and not pos_list:
         net_mag = abs(_dec(budget["net_used"]))
@@ -251,10 +294,9 @@ def _resolve_sizing_state(
         existing_u_from_budget = _dec(budget_u_map[norm_underlying])
     pos_u = underlying_gross_by_code.get(norm_underlying, Decimal(0))
     res_u = res_underlying_gross.get(norm_underlying, Decimal(0))
-    if budget_already_folded:
-        existing_underlying_gross = max(existing_u_from_budget, pos_u + res_u)
-    else:
-        existing_underlying_gross = max(existing_u_from_budget + res_u, pos_u + res_u)
+    folded_u = res_u if reservations_folded_in_budget else min(res_u, _dec(folded_res_u_map.get(norm_underlying) or 0))
+    unfolded_u = max(res_u - folded_u, Decimal(0))
+    existing_underlying_gross = max(existing_u_from_budget + unfolded_u, pos_u + res_u)
 
     equity_raw = budget.get("equity")
     equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
@@ -265,7 +307,7 @@ def _resolve_sizing_state(
         gross_limit_raw = _dec(budget["gross_limit_multiple"]) * equity
     gross_limit_dec = _dec(gross_limit_raw) if gross_limit_raw is not None else None
     if explicit_rem is not None:
-        remaining_by_gross_limit = max(_dec(explicit_rem) - (Decimal(0) if budget_already_folded else res_gross), Decimal(0))
+        remaining_by_gross_limit = max(_dec(explicit_rem) - unfolded_res_gross, Decimal(0))
     elif gross_limit_dec is not None:
         remaining_by_gross_limit = max(gross_limit_dec - gross_used, Decimal(0))
     else:
@@ -311,11 +353,6 @@ def _resolve_sizing_state(
         single_name_limit_dec = None
         remaining_by_single_name = None
 
-    scalar_cash_res = _dec(budget.get("cash_reserved") or budget.get("reserved_cash") or 0)
-    cash_reserved = max(scalar_cash_res, res_cash)
-    if cash_reserved > 0 and active_res_count == 0:
-        active_res_count = 1
-
     has_cash_field = any(k in budget and budget.get(k) is not None for k in ("available_cash", "available_buying_power", "raw_cash"))
     if has_cash_field:
         avail_field = budget.get("available_buying_power")
@@ -323,7 +360,6 @@ def _resolve_sizing_state(
             avail_field = budget.get("available_cash")
         avail_dec = max(_dec(avail_field if avail_field is not None else budget.get("raw_cash") or 0), Decimal(0))
         raw_cash_dec = _dec(budget["raw_cash"]) if budget.get("raw_cash") is not None else avail_dec
-        free_margin_dec = _dec(budget["free_margin"]) if budget.get("free_margin") is not None else raw_cash_dec
 
         reserve_req = Decimal(0)
         if budget.get("cash_reserve_required") is not None:
@@ -335,10 +371,29 @@ def _resolve_sizing_state(
             reserve_req = max(reserve_req, _dec(budget["min_cash_reserve_pct"]) * base_eq)
 
         if "raw_cash" in budget:
-            unreserved_cash = max(min(raw_cash_dec - cash_reserved, free_margin_dec - res_margin), Decimal(0))
+            base_margin_eq = equity if (equity is not None and equity > 0) else raw_cash_dec
+            if budget.get("free_margin") is not None:
+                free_margin_dec = min(
+                    _dec(budget["free_margin"]) - unfolded_margin_res,
+                    base_margin_eq - margin_reserved,
+                )
+            else:
+                free_margin_dec = base_margin_eq - margin_reserved
+            unreserved_cash = max(min(raw_cash_dec - cash_reserved, free_margin_dec), Decimal(0))
             spendable_cash: Decimal | None = max(min(avail_dec, unreserved_cash - reserve_req), Decimal(0))
         else:
-            unreserved_cash = max(avail_dec - cash_reserved - res_margin, Decimal(0))
+            if budget.get("free_margin") is not None:
+                free_margin_dec = _dec(budget["free_margin"]) - unfolded_margin_res
+                if equity is not None and equity > 0:
+                    free_margin_dec = min(free_margin_dec, equity - margin_reserved)
+                unreserved_cash = max(min(avail_dec - unfolded_cash_res, free_margin_dec), Decimal(0))
+            elif (cash_reserved > 0 or margin_reserved > 0) and equity is not None and equity > 0:
+                unreserved_cash = max(
+                    min(avail_dec - unfolded_cash_res - unfolded_margin_res, equity - cash_reserved - margin_reserved),
+                    Decimal(0),
+                )
+            else:
+                unreserved_cash = max(avail_dec - cash_reserved - margin_reserved, Decimal(0))
             spendable_cash = max(unreserved_cash - reserve_req, Decimal(0))
     else:
         raw_cash_dec = None
@@ -370,7 +425,7 @@ def _resolve_sizing_state(
         "raw_cash": raw_cash_dec,
         "unreserved_cash": unreserved_cash,
         "cash_reserved": cash_reserved,
-        "margin_reserved": res_margin,
+        "margin_reserved": margin_reserved,
         "cash_reserve_required": reserve_req,
         "spendable_cash": spendable_cash,
         "gross_limit": gross_limit_dec,
@@ -399,13 +454,58 @@ def _resolve_sizing_state(
 
 def remaining_gross_notional(budget: Mapping[str, Any]) -> Decimal:
     """Gross notional still spendable; a missing limit leaves nothing."""
+    raw_res = budget.get("order_reservations")
+    if raw_res is None:
+        raw_res = budget.get("reservations")
+    res_items = list(raw_res.values()) if isinstance(raw_res, Mapping) else (raw_res if isinstance(raw_res, list) else [])
+    res_gross = Decimal(0)
+    res_cash = Decimal(0)
+    res_margin = Decimal(0)
+    for item in res_items:
+        if not isinstance(item, Mapping):
+            continue
+        if bool(item.get("is_risk_reducing") or item.get("close_leg") or item.get("reason_code") == "close_leg"):
+            continue
+        qty = abs(_dec(item.get("units") if item.get("units") is not None else (item.get("quantity") or 0)))
+        mult = _dec(item.get("multiplier") if item.get("multiplier") is not None else (item.get("unit") or 1))
+        px = _dec(item.get("price") if item.get("price") is not None else (item.get("mark_price") or 0))
+        raw_n = item.get("notional") if item.get("notional") is not None else item.get("gross_notional")
+        notional = abs(_dec(raw_n)) if raw_n is not None else (qty * mult * px)
+        res_gross += notional
+        raw_c = item.get("cash_reserved") if item.get("cash_reserved") is not None else item.get("cash_required")
+        if raw_c is not None:
+            res_cash += max(Decimal(0), _dec(raw_c))
+        raw_m = item.get("margin_reserved") if item.get("margin_reserved") is not None else item.get("margin_required")
+        if raw_m is not None:
+            res_margin += max(Decimal(0), _dec(raw_m))
+    folded_res_u_map = (
+        budget.get("reserved_underlying_notional")
+        if isinstance(budget.get("reserved_underlying_notional"), Mapping)
+        else {}
+    )
+    folded_res_gross = sum(_dec(v or 0) for v in folded_res_u_map.values())
+    scalar_cash_res = _dec(budget.get("cash_reserved") or budget.get("reserved_cash") or 0)
+    scalar_margin_res = _dec(
+        budget.get("margin_reserved")
+        or budget.get("order_margin_reserved")
+        or budget.get("reserved_margin")
+        or 0
+    )
+    reservations_folded = (
+        "reserved_underlying_notional" in budget
+        and scalar_cash_res >= res_cash
+        and scalar_margin_res >= res_margin
+        and _dec(budget.get("gross_used") or 0) >= res_gross
+    )
+    unfolded_res_gross = Decimal(0) if reservations_folded else max(res_gross - folded_res_gross, Decimal(0))
+
     explicit = budget.get("max_gross_notional_remaining")
     if explicit is not None:
-        return max(_dec(explicit), Decimal(0))
+        return max(_dec(explicit) - unfolded_res_gross, Decimal(0))
     limit = _effective_gross_limit(budget)
     if limit <= 0:
         return Decimal(0)
-    return max(limit - _dec(budget.get("gross_used") or 0), Decimal(0))
+    return max(limit - (_dec(budget.get("gross_used") or 0) + unfolded_res_gross), Decimal(0))
 
 
 def _unit_notional(candidate: Mapping[str, Any]) -> Decimal:
@@ -595,7 +695,7 @@ def _binding_constraint(
         if spendable is not None and one_req > spendable:
             if unreserved is not None and one_req <= unreserved and state["cash_reserve_required"] > 0:
                 return "cash_reserve"
-            if raw_cash is not None and one_req <= raw_cash and state["cash_reserved"] > 0:
+            if raw_cash is not None and one_req <= raw_cash and (state["cash_reserved"] > 0 or state["margin_reserved"] > 0):
                 return "cash_reserved"
             if min_unit <= spendable < one_req:
                 return "insufficient_cash_for_commission"
@@ -1482,7 +1582,7 @@ def evaluate_pre_trade_sizing(
             if u_cash_fee is not None and permitted_units == u_cash_fee:
                 if state["cash_reserve_required"] > 0 and u_unres_pre is not None and u_spend_pre is not None and u_spend_pre < u_unres_pre:
                     candidates_binding.append((u_cash_fee, 1, "cash_reserve"))
-                elif state["cash_reserved"] > 0 and u_raw_pre is not None and u_unres_pre is not None and u_unres_pre < u_raw_pre:
+                elif (state["cash_reserved"] > 0 or state["margin_reserved"] > 0) and u_raw_pre is not None and u_unres_pre is not None and u_unres_pre < u_raw_pre:
                     candidates_binding.append((u_cash_fee, 2, "cash_reserved"))
                 else:
                     candidates_binding.append((u_cash_fee, 3, "available_cash_after_fees"))
@@ -1535,7 +1635,12 @@ def evaluate_pre_trade_sizing(
         if state["equity"] is not None and state["equity"] > 0
         else (raw_cash_before if raw_cash_before > 0 else _effective_gross_limit(budget))
     )
-    remaining_cash = max(raw_cash_before - state["cash_reserved"] - fee_inclusive_cash, Decimal(0))
+    unreserved_before = (
+        state["unreserved_cash"]
+        if state["unreserved_cash"] is not None
+        else max(raw_cash_before - state["cash_reserved"], Decimal(0))
+    )
+    remaining_cash = max(unreserved_before - fee_inclusive_cash, Decimal(0))
     remaining_spendable_cash = max(spendable_before - fee_inclusive_cash, Decimal(0))
 
     if is_close_leg:

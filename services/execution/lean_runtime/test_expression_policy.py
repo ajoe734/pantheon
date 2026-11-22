@@ -668,3 +668,79 @@ def test_overlapping_limits_report_most_restrictive_binding_cap() -> None:
     assert s_net_tighter_than_single["binding_limit"] == "net_limit"
 
 
+def test_integrated_provider_to_candidate_to_decision_deducts_futures_and_cash_reservations_once() -> None:
+    """Integrated provider -> candidate -> decision regression: deduct each reservation once across folded and raw budgets."""
+    from services.capital.risk_policy import RiskPolicy
+    from services.execution.lean_runtime import instrument_candidates as ic
+    from services.execution.lean_runtime.expression_inputs import build_expression_inputs
+
+    fut_reservation = {
+        "reservation_id": "res-fut-60k",
+        "underlying": "2330",
+        "instrument_id": "ssf:CDF:202612",
+        "kind": "stock_future",
+        "side": "buy",
+        "quantity": 1,
+        "multiplier": 2000,
+        "price": 30.0,
+        "notional": 60000.0,
+        "margin_reserved": 60000.0,
+    }
+    policy = RiskPolicy.from_mapping(
+        {
+            "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+            "version": "1.0",
+            "status": "active",
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+            "max_drawdown": 0.15,
+            "max_daily_loss": 0.05,
+            "allowed_asset_classes": ["equity", "future"],
+        }
+    )
+    folded = build_expression_inputs(
+        pool={"pool_id": "pool-1", "budget": 100000.0},
+        policy=policy,
+        summary={
+            "runtime_id": "rt-1",
+            "binding_id": "rb-1",
+            "ledger_fill_count": 0,
+            "positions": [],
+            "order_reservations": [fut_reservation],
+        },
+    )
+    assert folded["risk_budget"]["free_margin"] == 40000.0
+    assert folded["risk_budget"]["available_cash"] == 40000.0
+
+    cands_folded = ic.build_candidates(
+        "2317", "2026-11-19", folded["persona_book"], folded["risk_budget"], cash_price=221.0
+    )
+    assert cands_folded[0]["max_units_by_risk"] == 180
+
+    sizing_folded = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_folded, folded["persona_book"], folded["risk_budget"], PARAMS
+    )
+    assert sizing_folded["available_buying_power"] == pytest.approx(40000.0)
+    assert sizing_folded["permitted_units"] == 180
+    assert sizing_folded["decision"]["units"] == 180
+    assert sizing_folded["binding_limit"] == "cash_reserved"
+    assert sizing_folded["fee_inclusive_required_cash"] == pytest.approx(39836.6865)
+    assert sizing_folded["remaining_cash"] == pytest.approx(163.3135)
+
+    # Raw fixture budget with the same reservation must yield identical candidate cap, spendable cash, and permitted units
+    raw_budget = {
+        **OBSERVED_HISTORICAL_INLINE_V1_BUDGET_2317,
+        "order_reservations": [fut_reservation],
+    }
+    cands_raw = ic.build_candidates("2317", "2026-11-19", {"positions": [], "gross_notional": 0.0}, raw_budget, cash_price=221.0)
+    assert cands_raw[0]["max_units_by_risk"] == 180
+    sizing_raw = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_raw, {"positions": [], "gross_notional": 0.0}, raw_budget, PARAMS
+    )
+    assert sizing_raw["available_buying_power"] == pytest.approx(40000.0)
+    assert sizing_raw["permitted_units"] == 180
+    assert sizing_raw["binding_limit"] == "cash_reserved"
+
+
+

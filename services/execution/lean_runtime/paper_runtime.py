@@ -2596,31 +2596,69 @@ class PaperExecutionAlgorithm:
 
     @staticmethod
     def _is_uncertain_broker_error(exc: Exception) -> bool:
-        if getattr(exc, "definitive_rejection", False) is True or getattr(exc, "uncertain_outcome", None) is False:
-            return False
         if getattr(exc, "uncertain_outcome", False) is True:
             return True
-        if isinstance(exc, (TimeoutError, ConnectionError)):
-            return True
-        if isinstance(exc, urllib.error.URLError) and not isinstance(exc, urllib.error.HTTPError):
+        if getattr(exc, "definitive_rejection", False) is True or getattr(exc, "uncertain_outcome", None) is False:
+            return False
+        if isinstance(exc, urllib.error.HTTPError):
+            code = int(getattr(exc, "code", 0) or 0)
+            return not (400 <= code < 500 and code not in {408, 425, 429})
+        if isinstance(
+            exc,
+            (
+                TimeoutError,
+                ConnectionError,
+                urllib.error.URLError,
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                LookupError,
+            ),
+        ):
             return True
         msg_lower = str(exc).lower()
-        return any(
+        if any(
             tok in msg_lower
             for tok in (
                 "timeout",
                 "timed out",
-                "connection reset",
-                "connection aborted",
+                "connection",
                 "broken pipe",
-                "unexpected eof",
-                "broker http 5",
-                "broker http 408",
-                "broker response missing order",
+                "eof",
+                "reset",
+                "aborted",
+                "decode",
+                "json",
+                "parse",
+                "malformed",
+                "non-object",
+                "read",
+                "incomplete",
+                "missing order",
                 "uncertain",
                 "ambiguous",
             )
-        )
+        ):
+            return True
+        if "broker http " in msg_lower:
+            after = msg_lower.split("broker http ", 1)[1].strip()
+            code_token = after[:3]
+            if code_token.isdigit():
+                code = int(code_token)
+                return not (400 <= code < 500 and code not in {408, 425, 429})
+        if any(
+            tok in msg_lower
+            for tok in (
+                "definitive_rejection",
+                "definitive rejection",
+                "broker rejection",
+                "order rejected",
+            )
+        ):
+            return False
+        return True
 
     def _hold_uncertain_broker_submission(
         self,
@@ -3680,8 +3718,9 @@ class PaperExecutionAlgorithm:
                     raise ValueError("Taiwan broker fill produces non-finite ledger values")
             else:
                 signed_fill_qty = fill_qty if side == "buy" else -fill_qty
-        except ValueError as exc:
-            order_status_raw = str(order.get("status") or order.get("order_status") or "").strip().lower()
+        except (ValueError, TypeError, AttributeError) as exc:
+            order_map = order if isinstance(order, Mapping) else {}
+            order_status_raw = str(order_map.get("status") or order_map.get("order_status") or "").strip().lower()
             is_definitive_reject = order_status_raw in {"rejected", "cancelled", "canceled", "expired"}
             if is_definitive_reject:
                 self._release_current_signal_reservation(clean_sig_id)
@@ -3732,8 +3771,8 @@ class PaperExecutionAlgorithm:
                 metadata={
                     **base_metadata,
                     "diagnostic": str(exc),
-                    "broker_fill_qty": repr(order.get("fill_qty")),
-                    "broker_fill_price": repr(order.get("fill_price")),
+                    "broker_fill_qty": repr(order_map.get("fill_qty")),
+                    "broker_fill_price": repr(order_map.get("fill_price")),
                     "broker_outcome": "definitive_rejection" if is_definitive_reject else "uncertain",
                     "reconciliation_required": not is_definitive_reject,
                     "reservation_released": is_definitive_reject,
@@ -4450,14 +4489,45 @@ class PaperExecutionAlgorithm:
         try:
             timeout = int(os.getenv("PANTHEON_BROKER_TIMEOUT_SECONDS", "5"))
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8") or "{}")
+                raw_body = resp.read()
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "ignore")[:300]
-            raise RuntimeError(f"broker HTTP {exc.code}: {detail}") from exc
+            try:
+                detail = exc.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                detail = ""
+            code = int(getattr(exc, "code", 0) or 0)
+            err = RuntimeError(f"broker HTTP {code}: {detail}")
+            is_definitive_http_reject = 400 <= code < 500 and code not in {408, 425, 429}
+            setattr(err, "definitive_rejection", is_definitive_http_reject)
+            setattr(err, "uncertain_outcome", not is_definitive_http_reject)
+            raise err from exc
+        except Exception as exc:
+            try:
+                setattr(exc, "uncertain_outcome", True)
+            except Exception:
+                pass
+            raise
+        try:
+            decoded_text = (
+                raw_body.decode("utf-8")
+                if isinstance(raw_body, (bytes, bytearray))
+                else str(raw_body or "")
+            )
+            body = json.loads(decoded_text or "{}")
+        except Exception as exc:
+            err = RuntimeError(f"broker response decode failure: {exc}")
+            setattr(err, "uncertain_outcome", True)
+            raise err from exc
+        if not isinstance(body, Mapping):
+            err = RuntimeError(f"broker response non-object payload: {str(body)[:200]}")
+            setattr(err, "uncertain_outcome", True)
+            raise err
         order = body.get("order")
-        if not isinstance(order, dict):
-            raise RuntimeError(f"broker response missing order: {str(body)[:200]}")
-        return order
+        if not isinstance(order, Mapping):
+            err = RuntimeError(f"broker response missing order: {str(body)[:200]}")
+            setattr(err, "uncertain_outcome", True)
+            raise err
+        return dict(order)
 
     def _publish(
         self,

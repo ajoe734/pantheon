@@ -531,6 +531,7 @@ def build_expression_inputs(
         "min_cash_reserve": min_reserve_abs,
         "cash_reserve_required": round(cash_reserve_required, 2),
         "margin_reserved": round(total_margin_reserved, 2),
+        "order_margin_reserved": round(book["reserved_margin"], 2),
         "cash_reserved": round(cash_reserved, 2),
         "underlying_exposures": book["underlying_gross_by_code"],
         "underlying_signed_exposures": book["underlying_signed_by_code"],

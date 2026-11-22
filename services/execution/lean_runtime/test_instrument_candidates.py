@@ -1124,5 +1124,61 @@ def test_candidates_respect_single_name_net_limit_cash_reserve_and_reservations(
     [cash_res_cap] = ic.build_candidates("2317", "2026-11-19", {}, budget_reserved, cash_price=221.0)
     assert cash_res_cap["max_units_by_risk"] == 226
 
+    # 5. Competing futures reservation of margin=60,000 on 100,000 capital leaves 40,000 free_margin/available_cash
+    # -> deducted once across both build_expression_inputs (folded provider budget) and raw fixture budgets (floor(40000 / 221) = 180)
+    from decimal import Decimal
+    from services.capital.risk_policy import RiskPolicy
+    from services.execution.lean_runtime.expression_inputs import build_expression_inputs
+
+    fut_res = {
+        "reservation_id": "r-fut-60k",
+        "underlying": "2330",
+        "instrument_id": "ssf:CDF:202612",
+        "side": "buy",
+        "kind": "stock_future",
+        "quantity": 1,
+        "multiplier": 2000,
+        "price": 30.0,
+        "notional": 60000.0,
+        "margin_reserved": 60000.0,
+    }
+    folded_inputs = build_expression_inputs(
+        pool={"pool_id": "pool-1", "budget": 100000.0},
+        policy=RiskPolicy.from_mapping(
+            {
+                "risk_policy_id": "rp-pool-1",
+                "version": "1.0",
+                "status": "active",
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+                "max_drawdown": 0.15,
+                "max_daily_loss": 0.05,
+                "allowed_asset_classes": ["equity", "future"],
+            }
+        ),
+        summary={"runtime_id": "rt-1", "binding_id": "rb-1", "ledger_fill_count": 0, "positions": [], "order_reservations": [fut_res]},
+    )
+    assert folded_inputs["risk_budget"]["free_margin"] == 40000.0
+    assert folded_inputs["risk_budget"]["available_cash"] == 40000.0
+    assert ic._available_cash(folded_inputs["risk_budget"], folded_inputs["persona_book"]) == Decimal("40000")
+    [cash_folded_fut_res] = ic.build_candidates(
+        "2317", "2026-11-19", folded_inputs["persona_book"], folded_inputs["risk_budget"], cash_price=221.0
+    )
+    assert cash_folded_fut_res["max_units_by_risk"] == 180
+
+    raw_fut_res_budget = {
+        "equity": 100000.0,
+        "raw_cash": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "order_reservations": [fut_res],
+    }
+    assert ic._available_cash(raw_fut_res_budget, {}) == Decimal("40000")
+    [cash_raw_fut_res] = ic.build_candidates("2317", "2026-11-19", {}, raw_fut_res_budget, cash_price=221.0)
+    assert cash_raw_fut_res["max_units_by_risk"] == 180
+
+
 
 
