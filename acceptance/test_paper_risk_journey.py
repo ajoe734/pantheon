@@ -47,11 +47,13 @@ def fixture():
                             "binding_id": "active-binding", "journey_id": jid,
                             "authority_refs": {"persona_id": "fixture-persona"}, "metadata": meta}
             events[stage] = {"event_id": eid, "occurred_at": "2026-11-22T17:00:00Z",
-                             "source_mode": "live", "accepted_live": True}
+                             "source_mode": "live", "accepted_live": True, "binding_id": "active-binding"}
         row = {"journey_id": jid, "persona_id": "fixture-persona", "persona_is_probe": False,
                "binding_id": "active-binding", "created_at": "2026-11-22T17:00:00Z"}
         rows.append(row)
-        details[jid] = {**row, "snapshot": {"stage_events": events}}
+        # Recorded hosted _detail DTO: binding lives in identifiers, events at root.
+        details[jid] = {k: v for k, v in row.items() if k != "binding_id"}
+        details[jid].update(identifiers={"binding_id": ["active-binding"]}, stage_events=events)
     return payload, manifest, history, rows, details, sources
 
 
@@ -123,6 +125,36 @@ def test_history_never_counts_as_a_fresh_fill_or_refusal():
     assert len(report["historical"]) == 2
     assert "no_fresh_pre_broker_rejection_with_amounts" in report["failed"]
     assert "no_fresh_broker_position_cash_reconciled_fill" in report["failed"]
+
+
+@pytest.mark.parametrize("mutation", ["missing_binding", "foreign_binding", "foreign_stage", "missing_stage_binding",
+                                     "snapshot_only", "source_binding", "source_persona", "source_journey", "source_stale"])
+def test_hosted_dto_shape_preserves_stage_and_immutable_source_identity(mutation):
+    state = fixture()
+    for row in state[4].values():
+        if mutation == "missing_binding":
+            row["identifiers"].clear()
+        elif mutation == "foreign_binding":
+            row["identifiers"]["binding_id"] = ["foreign"]
+        elif mutation in {"foreign_stage", "missing_stage_binding"}:
+            # Even membership in a multi-binding journey cannot authorize a foreign stage.
+            row["identifiers"]["binding_id"].append("foreign")
+            for event in row["stage_events"].values():
+                event["binding_id"] = "foreign" if mutation == "foreign_stage" else None
+        elif mutation == "snapshot_only":
+            row["snapshot"] = {"stage_events": row.pop("stage_events")}
+    for event in state[5].values():
+        if mutation == "source_binding":
+            event["binding_id"] = "foreign"
+        elif mutation == "source_persona":
+            event["authority_refs"]["persona_id"] = "foreign"
+        elif mutation == "source_journey":
+            event["journey_id"] = "foreign"
+        elif mutation == "source_stale":
+            event["created_at"] = state[1]["deployedAt"]
+    report = run(state)
+    assert not report["passed"]
+    assert not report["fresh_reconciled_fills"] and not report["fresh_rejections"]
 
 
 def test_missing_configuration_is_skip(monkeypatch, capsys):

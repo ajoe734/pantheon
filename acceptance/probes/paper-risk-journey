@@ -120,16 +120,21 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
             samples["inspected"] += 1
             row = binding.data(fetch(BASE + "/" + urllib.parse.quote(item["journey_id"], safe="")
                                      + "?tenant_id=" + urllib.parse.quote(owner["tenant_id"], safe="") + "&environment=paper"))
-            if row.get("journey_id") != item["journey_id"] or row.get("binding_id") != owner.get("binding_id"):
+            binding_ids = (row.get("identifiers") or {}).get("binding_id")
+            if (row.get("journey_id") != item["journey_id"] or not isinstance(binding_ids, list)
+                    or owner.get("binding_id") not in binding_ids):
                 failed.append("journey_active_binding_mismatch:" + item["journey_id"])
                 continue
-            events = (row.get("snapshot") or {}).get("stage_events") or {}
+            events = row.get("stage_events") or {}
             originals = {}
             for stage in ("trade_decision", "order_submission", "fill_management", "reconciliation"):
                 event = events.get(stage) or {}
                 if not event or timestamp(event.get("occurred_at", "")) <= cutoff:
                     continue
                 if event.get("source_mode") != "live" or event.get("accepted_live") is not True:
+                    continue
+                if event.get("binding_id") != owner.get("binding_id"):
+                    failed.append("stage_active_binding_mismatch:" + item["journey_id"] + ":" + stage)
                     continue
                 eid = event.get("source_event_id") or event.get("canonical_event_id") or event.get("event_id")
                 try:
