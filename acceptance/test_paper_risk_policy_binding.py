@@ -127,6 +127,41 @@ def test_reference_never_falls_back_to_nearby_inline_policy():
     assert not check(payload, referenced_policy_reader=lambda ref: policy)["passed"]
 
 
+@pytest.mark.parametrize("scope", ["*", "fixture-policy", "fixture-pool"])
+def test_catalog_approval_with_exact_owner_reference(scope):
+    payload = evidence()
+    pool = payload["/bff/capital-pools/fixture-pool"]["data"]
+    policy = pool["metadata"]["risk_policy"]
+    pool["risk_policy_ref"] = policy["risk_policy_id"]
+    approval = payload["/api/v1/approval-decisions"]["data"][0]
+    approval.update(target_id=policy["risk_policy_id"], target_version=policy["version"])
+    approval["metadata"]["subject"]["pool_id"] = scope
+    approval["metadata"]["subject"]["risk_policy_digest"] = probe.risk_policy_digest(policy)
+    owner = {"capital_pool_id": "fixture-pool", "tenant_id": "fixture-tenant", "stage": "paper",
+             "resolved": True, "policy": policy}
+    assert check(payload, pool_policy_reader=lambda pool: owner)["passed"]
+    owner["tenant_id"] = "foreign-tenant"
+    assert not check(payload, pool_policy_reader=lambda pool: owner)["passed"]
+
+
+@pytest.mark.parametrize("mutation", ["foreign_pool", "wrong_digest", "wrong_version", "ambiguous"])
+def test_catalog_mapping_rejects_foreign_stale_or_ambiguous_proof(mutation):
+    payload = evidence()
+    approval = payload["/api/v1/approval-decisions"]["data"][0]
+    approval.update(target_id="fixture-policy", target_version="fixture-v1")
+    if mutation == "foreign_pool":
+        approval["metadata"]["subject"]["pool_id"] = "foreign-pool"
+    elif mutation == "wrong_digest":
+        approval["metadata"]["subject"]["risk_policy_digest"] = "stale"
+    elif mutation == "wrong_version":
+        approval["target_version"] = "old"
+    else:
+        duplicate = copy.deepcopy(approval)
+        duplicate["decision_id"] = "another-approval"
+        payload["/api/v1/approval-decisions"]["data"].append(duplicate)
+    assert not check(payload)["passed"]
+
+
 @pytest.mark.parametrize("kind", ["retired", "probe", "missing_binding", "foreign_pool", "duplicate_binding"])
 def test_no_eligible_traders_and_wrong_tenant_cannot_pass(kind):
     payload = evidence()

@@ -19,6 +19,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from services.capital.risk_policy import risk_policy_digest
 
 DEFAULT_PERSONAS = (
     "persona-2448c7053e33ea48da47",
@@ -45,8 +49,7 @@ def effective_policy(pool, referenced_policy_reader=None):
     """Follow owner ref precedence. A null ref can have a valid inline policy.
 
     A referenced policy needs an authoritative loader; a nearby inline policy
-    cannot substitute for an unreadable reference. The public BFF currently
-    exposes no referenced-policy readback, so the CLI fails closed for that case.
+    cannot substitute for an unreadable reference.
     """
     ref = pool.get("risk_policy_ref")
     if ref:
@@ -87,13 +90,24 @@ def approved_mapping(approvals, persona, pool, policy, now):
     No such subject was found on hosted. Registry admission risk_level=low and
     pool activation digests alone do not bind the financial policy contents.
     """
+    matches = set()
+    digests = {policy_digest(policy), risk_policy_digest(policy)}
     for approval in approvals:
         subject = (approval.get("metadata") or {}).get("subject") or {}
+        policy_target = (approval.get("target_id") == policy.get("risk_policy_id")
+                         and not str(policy.get("risk_policy_id")).startswith("rp-pool-"))
+        target_ok = (
+            approval.get("target_version") in digests | {str(policy.get("version"))}
+            and subject.get("pool_id") in {pool.get("pool_id"), policy.get("risk_policy_id"), "*"}
+        ) if policy_target else (
+            approval.get("target_id") == pool.get("pool_id")
+            and bool(pool.get("approval_digest"))
+            and approval.get("target_version") == pool.get("approval_digest")
+            and subject.get("pool_id") == pool.get("pool_id")
+        )
         if (approval.get("tenant_id") != persona.get("tenantId")
                 or approval.get("target_type") != "capital_pool_activation"
-                or approval.get("target_id") != pool.get("pool_id")
-                or not pool.get("approval_digest")
-                or approval.get("target_version") != pool["approval_digest"]
+                or not target_ok
                 or approval.get("decision_state") != "decided"
                 or approval.get("decision") != "approved"
                 or not approval.get("decision_id")
@@ -102,11 +116,10 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or not approval.get("actor_id") or not approval.get("decided_at")
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
-                or subject.get("pool_id") != pool.get("pool_id")
                 or subject.get("requested_risk") != persona.get("risk")
                 or subject.get("risk_policy_id") != policy.get("risk_policy_id")
                 or subject.get("risk_policy_version") != policy.get("version")
-                or subject.get("risk_policy_digest") != policy_digest(policy)):
+                or subject.get("risk_policy_digest") not in digests):
             continue
         expiry = approval.get("expires_at")
         if expiry:
@@ -115,8 +128,8 @@ def approved_mapping(approvals, persona, pool, policy, now):
                     continue
             except (ValueError, TypeError):
                 continue
-        return approval["decision_id"]
-    return None
+        matches.add(approval["decision_id"])
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def rows(body):
@@ -126,7 +139,8 @@ def rows(body):
     return value
 
 
-def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None):
+def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None,
+        pool_policy_reader=None):
     now = now or datetime.now(timezone.utc)
     expected = tuple(expected)
     report = {"checked": 0, "expected": len(expected), "personas": {}, "failed": [],
@@ -175,7 +189,13 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
                           pool_id=pool_id, artifact_id=binding.get("artifact_id"),
                           artifact_version=binding.get("artifact_version"), risk_policy_ref=pool.get("risk_policy_ref"),
                           persona_display_binding_id=persona.get("runtimeBindingId"))
-            policy, origin = effective_policy(pool, referenced_policy_reader)
+            owner = data(pool_policy_reader(pool)) if pool_policy_reader else None
+            if owner is not None:
+                if (owner.get("capital_pool_id") != pool_id or owner.get("tenant_id") != tenant
+                        or owner.get("stage") != "paper" or owner.get("resolved") is not True):
+                    raise ValueError("policy_owner_resolution_invalid")
+            reader = (lambda ref: owner["policy"]) if owner is not None else referenced_policy_reader
+            policy, origin = effective_policy(pool, reader)
             failures.extend(policy_errors(policy))
             result.update(policy_origin=origin, effective_policy=policy)
             if origin == "reference" and policy.get("risk_policy_id") != pool.get("risk_policy_ref"):
@@ -193,7 +213,7 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
     return report
 
 
-def main():
+def main(report_runner=None):
     missing = [key for key in REQUIRED if not os.environ.get(key, "").strip()]
     if missing:
         print("skipped: missing " + ", ".join(missing))
@@ -201,7 +221,7 @@ def main():
     base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
     deadline, requests = time.monotonic() + MAX_SECONDS, 0
 
-    def request(path, body=None, token=None):
+    def request(path, body=None, token=None, origin=None, tenant=None):
         nonlocal requests
         requests += 1
         remaining = deadline - time.monotonic()
@@ -210,7 +230,9 @@ def main():
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
-        req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body else None,
+        if tenant:
+            headers["X-Tenant-Id"] = tenant
+        req = urllib.request.Request((origin or base) + path, data=json.dumps(body).encode() if body else None,
                                      method="POST" if body else "GET", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
@@ -224,6 +246,28 @@ def main():
             raise
         except Exception as exc:
             raise RuntimeError("request_failed:" + type(exc).__name__) from None
+
+    def owner_read(pool):
+        nonlocal requests
+        base_owner = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_URL", "").rstrip("/")
+        owner_token = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_TOKEN", "")
+        if not base_owner or not owner_token:
+            raise RuntimeError("referenced_policy_owner_readback_unavailable")
+        requests += 1
+        remaining = deadline - time.monotonic()
+        if requests > MAX_REQUESTS or remaining <= 0:
+            raise RuntimeError("probe_budget_exceeded")
+        req = urllib.request.Request(base_owner + "/api/capital-pools/"
+            + urllib.parse.quote(pool["pool_id"], safe="") + "/risk-policy?stage=paper",
+            headers={"Authorization": "Bearer " + owner_token, "X-Tenant-Id": pool["tenant_id"]})
+        try:
+            with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
+                payload = response.read(MAX_BYTES + 1)
+            if len(payload) > MAX_BYTES:
+                raise RuntimeError("response_size_exceeded")
+            return json.loads(payload)
+        except Exception as exc:
+            raise RuntimeError("policy_owner_read_failed:" + type(exc).__name__) from None
 
     try:
         token = request("/bff/auth/dev-login", {
@@ -245,7 +289,13 @@ def main():
                 raise RuntimeError("policy_reader_access_token_missing")
         configured = os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS")
         expected = DEFAULT_PERSONAS if configured is None else tuple(x.strip() for x in configured.split(",") if x.strip())
-        report = run(lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token), expected)
+        fetch = lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token)
+        pool_reader = lambda pool: owner_read(pool) if pool.get("risk_policy_ref") else None
+        if report_runner:
+            report = report_runner(fetch, expected, pool_reader,
+                lambda: request("/deployment.json", origin=os.environ["ACCEPTANCE_FE_URL"].rstrip("/")), request)
+        else:
+            report = run(fetch, expected, pool_policy_reader=pool_reader)
     except (RuntimeError, ValueError) as exc:
         print(json.dumps({"passed": False, "failed": [str(exc)]}))
         return 1
