@@ -49,11 +49,11 @@
     },
     {
       "path": "services/control-plane/bff/core/app_factory.py",
-      "summary": "Forwarded any explicit decision_lock_owner/agora_owner dependency into create_agora_router and bound Management Attribution's _read_agora_lock (and platform_source_router fallback) to the shared agora_router.decision_lock_owner accessor/instance so native Trading Room and Management Shadow share the exact same Agora decision-lock owner without duplicate writable owners or default substitutes."
+      "summary": "Forwarded any explicit decision_lock_owner/agora_owner dependency into create_agora_router (which resolves a callable factory once at composition) and bound Management Attribution's _read_agora_lock and platform_source_router to reuse getattr(agora_router, 'decision_lock_owner', None) without re-invoking a callable dependency on each read, so native Trading Room and Management Shadow share the exact same resolved Agora decision-lock owner instance without duplicate writable owners or default substitutes."
     },
     {
       "path": "services/control-plane/bff/tests/test_attribution_views.py",
-      "summary": "Added test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow exercising compose_bff_app() to prove a single AgoraWriteService owner instance serves both native Trading Room and Management Shadow, unknown locks with no attribution return 404 on both routes, real store refusal/unconfigured owner stays distinguishable as degraded agora_owner_unavailable, and same-tenant trader/operator and cross-tenant negative visibility rules hold on both routes."
+      "summary": "Added test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow exercising compose_bff_app() to prove a single AgoraWriteService owner instance serves both native Trading Room and Management Shadow (under default DSN composition as well as callable factory injection through both decision_lock_owner and agora_owner dependency names), explicit None injection through either dependency name never falls back to a default substitute even when AGORA_STORE_DSN is set, unknown locks with no attribution return 404 on both routes, real store refusal/unconfigured owner stays distinguishable as degraded agora_owner_unavailable, and same-tenant trader/operator and cross-tenant negative visibility rules hold on both routes."
     },
     {
       "path": "docs/operations/problem-register.md",
@@ -61,7 +61,7 @@
     }
   ],
   "acceptance_criteria_verification": {
-    "ac1_shared_owner_instance_and_404_vs_unavailable": "Verified through compose_bff_app() in test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow: build_agora_write_service is called once, get_active_trading_room_service().decision_lock_owner is app.state.agora_router.decision_lock_owner, a permitted known lock is readable on both /bff/agora/trading-room/decision-events/{id}/decision-lock and /bff/management/attribution/shadow/{id}, an unknown decision with no attribution resolves to HTTP 404 on both routes, store refusal degrades with agora_owner_unavailable while keeping settlement data, and unconfigured DSN leaves decision_lock_owner as None without a substitute.",
+    "ac1_shared_owner_instance_and_404_vs_unavailable": "Verified through compose_bff_app() in test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow: build_agora_write_service (or an injected callable factory via either decision_lock_owner or agora_owner) is called once at composition, get_active_trading_room_service().decision_lock_owner is app.state.agora_router.decision_lock_owner, a permitted known lock is readable on both /bff/agora/trading-room/decision-events/{id}/decision-lock and /bff/management/attribution/shadow/{id} from the same owner instance (owners_read == [1, 1]), an unknown decision with no attribution resolves to HTTP 404 on both routes, store refusal degrades with agora_owner_unavailable while keeping settlement data, and explicit None or unconfigured DSN leaves decision_lock_owner as None without a default substitute.",
     "ac2_tenant_and_actor_visibility_preserved": "Verified in test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow and existing test_attribution_views.py / test_agora_shadow_mode.py tests: same-tenant trader reads only their own lock (without operator-only trader_identity block on shadow), same-tenant operator reads full lock and trader_identity/account_id + four arms with independent attribution/agora source statuses, and same-tenant other trader plus cross-tenant trader/operator receive HTTP 404 on both routes.",
     "ac3_validation_and_register_record": "Ran BFF composition, Trading Room, shadow mode, and attribution test suites; recorded the exact hosted read differential in docs/operations/problem-register.md while keeping genuine hosted lock, settlement, and Management browser acceptance in AGORA-SHADOW-ATTRIBUTION-HOSTED-ACCEPTANCE-20261116 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
   },
@@ -74,14 +74,24 @@
   "residual_findings": [],
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py services/control-plane/bff/tests/test_agora_shadow_mode.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py -k test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow",
       "exit_code": 0,
-      "result": "22 passed, 3 warnings in 20.91s"
+      "result": "1 passed, 11 deselected, 3 warnings in 38.73s"
     },
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_attribution_views.py services/control-plane/bff/tests/test_agora_shadow_mode.py -k \"not test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow\"",
       "exit_code": 0,
-      "result": "150 passed, 100 warnings in 88.41s"
+      "result": "21 passed, 1 deselected, 3 warnings in 9.38s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_router.py",
+      "exit_code": 0,
+      "result": "106 passed, 3 warnings in 47.78s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "exit_code": 0,
+      "result": "22 passed, 100 warnings in 24.47s"
     }
   ],
   "credentials_present": false

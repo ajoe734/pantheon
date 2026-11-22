@@ -1683,8 +1683,6 @@ def mount_bff_routers(
     from ..attribution.router import create_attribution_router
 
     def _resolve_agora_decision_lock_owner() -> Any:
-        if callable(_agora_owner_dep):
-            return _agora_owner_dep()
         return getattr(agora_router, "decision_lock_owner", None)
 
     def _read_agora_lock(decision_id, tenant_id, user_id, roles):
@@ -1730,11 +1728,7 @@ def mount_bff_routers(
     install_evidence_worker(app, app.state.dataset_store)
     from ..agora.platform_source_router import create_platform_source_router
     platform_source_router = create_platform_source_router(
-        agora_owner=(
-            dependencies["agora_owner"]
-            if "agora_owner" in dependencies
-            else _resolve_agora_decision_lock_owner
-        ),
+        agora_owner=_resolve_agora_decision_lock_owner,
         dataset_store=app.state.dataset_store,
         journal_write_owner=journal_owner,
         extract_identity=_dep("_extract_identity"),

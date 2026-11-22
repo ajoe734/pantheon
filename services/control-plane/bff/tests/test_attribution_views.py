@@ -511,7 +511,96 @@ def test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_ro
     assert sh_degraded_body["data"]["arms"][0]["settlement_source"] == "pantheon_paper_proxy"
     state["agora_store_offline"] = False
 
-    # 4. Unconfigured Agora DSN creates no default substitute owner.
+    # 4. Callable injection via both dependency names resolves once at composition
+    # and never builds duplicate writable owners or diverges between native and Shadow.
+    for dep_name in ("decision_lock_owner", "agora_owner"):
+        factory_owners: List[AgoraWriteService] = []
+        owners_read: List[int] = []
+
+        def _make_factory() -> Any:
+            def _factory() -> AgoraWriteService:
+                idx = len(factory_owners) + 1
+                owner = real_build(dsn="postgresql://test/agora", schema=f"agora_{dep_name}_{idx}")
+                if idx == 1:
+                    owner.create_decision_lock(
+                        build_decision_lock(
+                            human_decision_id=owner.store.decision_lock_id("tenant-a", "dec-factory-only"),
+                            decision_record_id=f"rec-factory-{dep_name}",
+                            event={**event, "decision_event_id": "dec-factory-only"},
+                            decision_event_id="dec-factory-only",
+                            tenant_id="tenant-a",
+                            user_id="trader-alice",
+                            body_decision="approve",
+                            rationale="callable factory single owner",
+                            modifications=None,
+                            decision_time="2026-11-11T00:01:00Z",
+                            execution_observation_kind=None,
+                            account_id="acct-alice-01",
+                            broker_ids=["BRK-01"],
+                            actor_roles=["trader"],
+                        ),
+                        ["trader"],
+                    )
+                orig_get = owner.get_decision_lock_for_event
+
+                def _tracked_get(*a: Any, **kw: Any) -> Any:
+                    owners_read.append(idx)
+                    return orig_get(*a, **kw)
+
+                owner.get_decision_lock_for_event = _tracked_get  # type: ignore[method-assign]
+                factory_owners.append(owner)
+                return owner
+
+            return _factory
+
+        injected_app = compose_bff_app(
+            dependency_resolver=resolve_with_stand_ins,
+            **{dep_name: _make_factory()},
+        )
+        assert len(factory_owners) == 1, f"{dep_name} callable must be resolved once at composition"
+        assert injected_app.state.decision_lock_owner is factory_owners[0]
+        assert get_active_trading_room_service().decision_lock_owner is factory_owners[0]
+        injected_client = TestClient(injected_app)
+        tr_inj = injected_client.get(
+            "/bff/agora/trading-room/decision-events/dec-factory-only/decision-lock",
+            headers=op_a,
+        )
+        sh_inj = injected_client.get(
+            "/bff/management/attribution/shadow/dec-factory-only",
+            headers=op_a,
+        )
+        assert tr_inj.status_code == 200, (dep_name, tr_inj.text)
+        assert sh_inj.status_code == 200, (dep_name, sh_inj.text)
+        assert sh_inj.json()["meta"]["sources"] == {
+            "attribution": "shadow_not_settled_or_unknown",
+            "agora": "ok",
+        }
+        assert len(factory_owners) == 1
+        assert owners_read == [1, 1]
+
+    # 5. Explicit None through either dependency name does not fall back to default substitution
+    # even when AGORA_STORE_DSN is configured.
+    builds_before_none = len(owner_builds)
+    for dep_name in ("decision_lock_owner", "agora_owner"):
+        explicit_none_app = compose_bff_app(
+            dependency_resolver=resolve_with_stand_ins,
+            **{dep_name: None},
+        )
+        assert len(owner_builds) == builds_before_none
+        assert explicit_none_app.state.decision_lock_owner is None
+        assert get_active_trading_room_service().decision_lock_owner is None
+        explicit_none_client = TestClient(explicit_none_app)
+        assert (
+            explicit_none_client.get(
+                "/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_a
+            ).status_code
+            == 503
+        )
+        none_shadow = explicit_none_client.get("/bff/management/attribution/shadow/dec-1", headers=op_a).json()
+        assert none_shadow["status"] == "degraded"
+        assert none_shadow["meta"]["sources"]["agora"] == "agora_owner_unavailable"
+
+    # 6. Unconfigured Agora DSN creates no default substitute owner.
     monkeypatch.delenv("AGORA_STORE_DSN", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     unconfigured_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
