@@ -1,0 +1,11 @@
+{
+  "task_id": "BFF-RESEARCH-TASK-VIEW-FILTER-20261122",
+  "work_package": "RC6 WP6.4 / FE-RISK-STRATEGY-RESEARCH-UI-20261120",
+  "continuation": "FE-RESEARCH-OPERATOR-READABILITY-20261122",
+  "verification": {
+    "command": "python -m pytest -q services/control-plane/bff/tests/test_research_tasks_read.py services/research/tests/test_query_plan.py",
+    "result": "22 passed",
+    "scope": "Default all-view compatibility, category filtering before pagination, tenant isolation, structured source and dataset references, and legacy runner states"
+  },
+  "hosted_acceptance": "Pending exact FE/BFF deploy and authenticated research readback under EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104."
+}
