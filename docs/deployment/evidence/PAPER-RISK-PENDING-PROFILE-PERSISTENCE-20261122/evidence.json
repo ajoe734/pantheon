@@ -141,6 +141,12 @@
       "exit_code": 0,
       "result": "passed; zero failures",
       "log": "continuation-storage-check.json"
+    },
+    {
+      "command": "timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital/test_requested_profile_resolution.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_futures_session_inputs.py",
+      "exit_code": 0,
+      "result": "80 passed, 1 warning, 10 subtests passed in 8.03s",
+      "log": "existing-pool-approval-controls.log"
     }
   ],
   "runtime_budget": {
@@ -224,5 +230,20 @@
     "product_guard_changes": 0,
     "hosted_mutations": 0
   },
-  "validated_source_commit": "6255a80ae"
+  "validated_source_commit": "6255a80ae",
+  "existing_pool_approval_regression": {
+    "ci_run": 45069768318,
+    "rejected_head": "4bdead7f4235cb663c406be7aed7b8f7f6ed4b7f",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/45069768318/job/137354623101",
+    "failure_receipt": "ci-existing-pool-approval-failure.log",
+    "cause": "Missing profile guard returned before verification of existing exact-pool approval for implicitly mapped legacy inline policy",
+    "resolution": "Verify existing exact-pool approval including computed pool digest before the missing-only hold; no target discovery/catalog mapping or invented profile; explicit mapping requirements and invalid/conflicting sources still hold",
+    "new_typed_wire_controls": 24,
+    "unchanged_execution_test_files": [
+      "services/execution/lean_runtime/test_runtime_bootstrap.py",
+      "services/execution/lean_runtime/test_futures_session_inputs.py"
+    ],
+    "hosted_mutations": 0,
+    "new_persistent_writers": 0
+  }
 }

@@ -4014,14 +4014,28 @@ def resolve_pool_risk_policy_binding(
         or policy_meta.get("default_paper_baseline") is True
         or pool_meta.get("default_paper_baseline") is True
     )
-    needs_approved_mapping = bool(
+    explicit_profile_mapping = bool(
         needs_approved_mapping
         or policy_meta.get("require_approved_profile_mapping") is True
-        or (require_approved_profile_mapping is not False and (policy_profile is not None or is_default_inline_id))
+        or (require_approved_profile_mapping is not False and policy_profile is not None)
     )
-    if needs_approved_mapping and profile_absence is not None:
+    needs_approved_mapping = bool(
+        explicit_profile_mapping
+        or (require_approved_profile_mapping is not False and is_default_inline_id)
+    )
+    # Older pools may already have an exact pool/limits approval without a
+    # separate profile-mapping request. Preserve that contract, but never use
+    # catalog discovery or policy metadata to invent the missing request.
+    legacy_pool_contract = (
+        profile_absence == "requested_profile_missing"
+        and is_default_inline_id and not explicit_profile_mapping
+    )
+    if needs_approved_mapping and profile_absence is not None and not legacy_pool_contract:
         # Retain the validated bound policy for governed reductions and exits.
         return _profile_provenance_failure(policy_model, policy_tenant_id)
+    verification_pool = pool_obj
+    if legacy_pool_contract and isinstance(pool_obj, Mapping):
+        verification_pool = {**pool_obj, "approval_digest": capital_pool_approval_digest(pool_obj)}
     verified_decision_id, all_verified_decision_ids, verification_diag = _verify_policy_owner_approval_decisions(
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
@@ -4030,7 +4044,7 @@ def resolve_pool_risk_policy_binding(
         policy_model=policy_model,
         computed_digest=computed_digest,
         raw_policy_mapping=raw_policy_mapping,
-        pool_obj=pool_obj,
+        pool_obj=verification_pool,
         pool_meta=pool_meta,
         b_map=b_map,
         b_meta=b_meta,
@@ -4041,7 +4055,10 @@ def resolve_pool_risk_policy_binding(
         approval_reader=approval_reader,
         capital_pool_reader=capital_pool_reader,
         now_dt=now_dt,
+        allow_target_discovery=not legacy_pool_contract,
     )
+    if needs_approved_mapping and profile_absence is not None and verified_decision_id is None:
+        return _profile_provenance_failure(policy_model, policy_tenant_id)
 
     if needs_approved_mapping and (
         len(all_verified_decision_ids) > 1

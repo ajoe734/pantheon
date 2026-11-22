@@ -226,3 +226,25 @@ The corrected full rerun uses the expected `pantheon` database and passed;
 `continuation-owner-retry.log` is the acceptance receipt. Both disposable
 containers were removed after collecting terminal results. Subsequent delivery
 commits only add these evidence records; source remains the tested version.
+
+## Existing exact-pool approval compatibility
+
+CI on `4bdead7f4` exposed a second regression: `Service suites (misc)` failed
+21 execution contracts because the new missing-profile guard returned before
+validating existing exact-pool Governance approval evidence. The original
+Bootstrap and futures fixtures remain unchanged. The terminal failure summary
+is retained in `ci-existing-pool-approval-failure.log`.
+
+For a legacy generic inline policy with no explicit profile-mapping requirement,
+the resolver now verifies existing exact-pool approval evidence before returning
+the missing-profile hold. This path verifies pool and policy digests, tenant,
+version, validity and lifecycle; it disables target discovery and cannot use a
+catalog policy approval. It preserves the existing approved limits without
+assigning any requested profile. Required-profile mappings and contradictory
+or invalid sources retain the guard. A bare legacy pool without an exact-pool
+approval still holds; no policy discovery is allowed to invent low.
+
+Twenty-four typed/wire controls cover a valid exact-pool approval and required
+request, conflict, tenant/pool/digest/version mismatch, pending/rejected,
+revoked and expired approvals. All 80 focused Capital/Bootstrap/futures tests
+passed with 10 subtests (8.03s; `existing-pool-approval-controls.log`).

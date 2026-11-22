@@ -6,6 +6,7 @@ import pytest
 
 from services.capital.pg_store import CapitalPool
 from services.capital.risk_policy import (
+    capital_pool_approval_digest,
     discover_approved_profile_risk_policy,
     resolve_pool_risk_policy_binding,
     risk_policy_digest,
@@ -129,6 +130,66 @@ def test_legacy_generic_inline_implicitly_requires_request_but_explicit_contract
         )
         assert result.resolved and result.allow_new_or_increased_risk
         assert result.requested_profile is None
+
+
+@pytest.mark.parametrize("typed", [True, False])
+@pytest.mark.parametrize("fault", [
+    None, "required_request", "conflict", "tenant", "pool", "pool_digest",
+    "policy_digest", "policy_version", "pending", "rejected", "revoked", "expired",
+])
+def test_existing_exact_pool_approval_survives_without_inventing_a_profile(typed, fault):
+    pool = requested_pool("tenant-legacy-approved", True, {})
+    pool.metadata.pop("require_approved_profile_mapping")
+    decision_id = "synthetic-existing-pool-approval"
+    pool.metadata["profile_mapping_approval_id"] = decision_id
+    policy = pool.metadata["risk_policy"]
+    subject = {
+        "pool_id": pool.pool_id, "risk_direction": "increase", "requested_risk": "low",
+        "risk_policy_id": policy["risk_policy_id"], "risk_policy_version": policy["version"],
+        "risk_policy_digest": risk_policy_digest(policy),
+    }
+    decision = approval_snapshot(
+        decision_id=decision_id, tenant_id=pool.owner_id, target_type="capital_pool_activation",
+        owner_user_id="fixture-proposer",
+        target_id=pool.pool_id, target_version=capital_pool_approval_digest(pool),
+        metadata={"subject": subject, "approvals": [
+            {"actor_id": "fixture-1", "actor_role": "governance_reviewer"},
+            {"actor_id": "fixture-2", "actor_role": "governance_reviewer"},
+        ]},
+    )
+    if fault == "required_request":
+        pool.metadata["require_approved_profile_mapping"] = True
+    elif fault == "conflict":
+        pool.metadata.update(requested_risk_profile="low", risk="high")
+    elif fault == "tenant":
+        decision["tenant_id"] = "foreign"
+    elif fault == "pool":
+        decision["target_id"] = "foreign"
+    elif fault == "pool_digest":
+        decision["target_version"] = "stale-pool-digest"
+    elif fault == "policy_digest":
+        subject["risk_policy_digest"] = "stale-policy-digest"
+    elif fault == "policy_version":
+        subject["risk_policy_version"] = "stale-version"
+    elif fault == "pending":
+        decision.update(decision_state="under_review", decision=None)
+    elif fault == "rejected":
+        decision["decision"] = "rejected"
+    elif fault == "revoked":
+        decision["revoked_at"] = "2026-01-02T00:00:00Z"
+    elif fault == "expired":
+        decision["expires_at"] = "2000-01-01T00:00:00Z"
+    result = resolve_pool_risk_policy_binding(
+        pool=pool if typed else asdict(pool), expected_tenant_id=pool.owner_id,
+        approval_reader=SnapshotApprovalReader([decision]),
+    )
+    assert result.resolved is (fault is None)
+    assert result.allow_new_or_increased_risk is (fault is None)
+    assert result.allow_risk_reducing_actions is True
+    assert result.requested_profile is None
+    if fault is None:
+        assert result.profile_mapping_approval_id == decision_id
+    assert "requested_risk_profile" not in pool.metadata or fault == "conflict"
 
 
 @pytest.mark.parametrize("conflict", [False, True])
