@@ -98,6 +98,12 @@
       "log": "fresh-owner-before.log",
       "acceptance_evidence": false,
       "scope": "Reproduced remaining fresh-simulator fixture before authorized artifact-contract expansion; no product authorization guard changed"
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<disposable PostgreSQL 16 gov_approval_test> timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+      "exit_code": 0,
+      "result": "1 passed, 3 warnings in 14.16s; real Governance/Registry approval and separate-process reload; disposable container removed",
+      "log": "fresh-owner-after.log"
     }
   ],
   "runtime_budget": {
@@ -173,10 +179,12 @@
     "hosted_mutations": 0,
     "new_persistent_writers": 0
   },
-  "continuation_hold": {
-    "required_artifact": "services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
-    "reason": "Current canonical artifacts omit the directly reserved fresh-simulator fixture. Task brief authorizes normalizing the same wire input but requires an owner blocker before coordination can add the path and resume.",
-    "planned_change": "Use the genuine _persona_create_effective_profile_payload helper on the unchanged synthetic fresh request before reserve; preserve truly source-less negative controls.",
-    "source_delivery": "PR #7755 remains open; no merge, hosted deployment or acceptance claimed"
+  "fresh_simulator_continuation": {
+    "canonical_artifact_added_at": "2026-11-22T20:54:20Z",
+    "authorized_by": "Human/Ops",
+    "fixture": "services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+    "change": "Unchanged synthetic wire input passes through genuine create ingress normalization before reserve; original omissions asserted; all real owner approval/reload assertions retained",
+    "product_guard_changes": 0,
+    "hosted_mutations": 0
   }
 }

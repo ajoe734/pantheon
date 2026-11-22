@@ -196,22 +196,20 @@ test runs the same probe against low/medium/high and rejects a null readback.
   tests that actual service shape; legacy integer-record compatibility needs
   assessment by the existing RC2 capital/risk chain before changing hashes.
 
-## Fresh simulator continuation hold (2026-11-22)
+## Fresh simulator continuation (2026-11-22)
 
-The bounded PostgreSQL rerun of
-`services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py`
-failed: 1 failed in 7.13s, exit 1 (`fresh-owner-before.log`). Its fresh
-synthetic request calls `store.reserve` directly, bypassing the actual BFF
-`_persona_create_effective_profile_payload` normalization. It therefore has
-no requested-profile source and correctly stops at `capital_pool` with
-`requested_profile_source_missing`, before exercising its intended real
-Governance/Registry approval and reload contract. PostgreSQL was disposable
-and removed after the terminal result; no hosted services were touched.
+The initial isolated PostgreSQL run failed with `requested_profile_source_missing`
+(`fresh-owner-before.log`, exit 1): the synthetic fresh request directly reserved
+its record and bypassed create ingress. Human/Ops added the exact fixture path
+to the canonical artifacts contract on 2026-11-22 at 20:54:20Z.
 
-The task-scoped continuation authorizes using the same production normalization
-helper on this unchanged fresh wire input. The exact test path is absent from
-the current canonical artifacts. Per that continuation, the owner must block
-for coordination to add this path and immediately resume before editing it.
-Truly source-less negative controls must stay source-less; no coordinator or
-Capital authorization fallback is justified by this fixture. PR #7755 is still
-open and is not ready for review handoff until this contract passes.
+The fixture now calls the genuine `_persona_create_effective_profile_payload`
+helper on its unchanged wire input before reserve. It checks that the original
+input still omits risk and metadata, and that the effective new-create request
+carries the labelled existing default. The independent Governance/Registry
+approval, actor, digest, scope and separate-process reload assertions are intact.
+The isolated rerun passed (1 passed, 3 warnings in 14.16s, exit 0;
+`fresh-owner-after.log`). Its disposable PostgreSQL container was removed.
+Bare typed/legacy negative controls retain their original source-less inputs;
+no product provenance or authorization guard changed for this fixture repair.
+Hosted deployment/three-account repair remains with the existing proof task.
