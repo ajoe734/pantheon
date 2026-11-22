@@ -2493,6 +2493,9 @@ def _project_persona_dto(
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
+        ("risk_policy_resolution", "riskPolicyResolution"),
+        ("risk_policy_owner_decision_request", "riskPolicyOwnerDecisionRequest"),
+        ("provisioning_waiting_reason", "provisioningWaitingReason"),
     ):
         value = metadata.get(source_key)
         if value is not None:
@@ -14476,6 +14479,8 @@ def _persona_provisioning_metadata(
         metadata["runtime_id"] = runtime_id
     if record.error:
         metadata["provisioning_error"] = deepcopy(record.error)
+    else:
+        metadata["provisioning_error"] = None
     if isinstance(record.references.get("capital_pool_risk_policy_resolution"), Mapping):
         metadata["risk_policy_resolution"] = deepcopy(dict(record.references["capital_pool_risk_policy_resolution"]))
     owner_dec_req = record.references.get("risk_policy_owner_decision_request") or (
@@ -14501,6 +14506,9 @@ def _persona_provisioning_metadata(
                 "absence_source": owner_dec_copy.get("absence_source"),
                 "owner_decision_request": owner_dec_copy,
             }
+    elif isinstance(metadata.get("risk_policy_resolution"), Mapping) and metadata["risk_policy_resolution"].get("resolved") is True:
+        metadata["risk_policy_owner_decision_request"] = None
+        metadata["provisioning_waiting_reason"] = None
     if record.compensation:
         metadata["provisioning_compensation"] = deepcopy(record.compensation)
     cleanup = record.references.get("first_evaluation_schedule_cleanup")

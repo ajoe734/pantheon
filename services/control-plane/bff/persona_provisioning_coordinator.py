@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import quote
 
 from services.capital.risk_policy import (
+    BoundPoolRiskPolicyResolution,
     capital_pool_approval_digest,
     discover_approved_profile_risk_policy,
     resolve_pool_risk_policy_binding,
@@ -2318,6 +2319,64 @@ class PersonaProvisioningCoordinator:
         return candidate
 
     @staticmethod
+    def _ambiguous_profile_resolution(
+        *,
+        pool_id: str,
+        tenant_id: str,
+        requested_profile: str,
+        auto_res: Any,
+    ) -> BoundPoolRiskPolicyResolution:
+        pol_ids = list(getattr(auto_res, "ambiguous_policy_ids", ()) or ())
+        dec_ids = list(getattr(auto_res, "ambiguous_decision_ids", ()) or ())
+        reason_text = (
+            str(getattr(auto_res, "reason", None) or "").strip()
+            or (
+                f"Ambiguous risk policy candidates for profile {requested_profile!r} on pool {pool_id!r}: "
+                f"policies={pol_ids!r}, decisions={dec_ids!r}; explicit risk_policy_ref or "
+                f"single authoritative approval is required."
+            )
+        )
+        owner_decision_req: dict[str, Any] = {
+            "policy_owner": "services/capital/risk_policy.py",
+            "governance_surface": "services/control-plane/governance/risk_policy.py",
+            "accountable_domain": "capital_risk_policy_owner",
+            "absence_source": "policy_candidates_ambiguous",
+            "requested_profile": requested_profile,
+            "capital_pool_id": pool_id,
+            "tenant_id": tenant_id,
+            "stage": "paper",
+            "ambiguous_policy_ids": pol_ids,
+            "ambiguous_approval_decision_ids": dec_ids,
+            "decision_required": reason_text,
+            "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+            "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+            "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
+            "autoresolve_task_id": "PAPER-RISK-PROFILE-AUTORESOLVE-20261122",
+        }
+        return BoundPoolRiskPolicyResolution(
+            capital_pool_id=pool_id,
+            resolved=False,
+            status="ambiguous_profile_mapping",
+            source="unresolved",
+            policy=None,
+            risk_policy_id=None,
+            risk_policy_version=None,
+            risk_policy_digest=None,
+            tenant_id=tenant_id,
+            policy_tenant_id=tenant_id,
+            stage="paper",
+            requested_profile=requested_profile,
+            profile_mapping_status="ambiguous_owner_decision_required",
+            profile_mapping_approval_id=None,
+            effective_limits={},
+            reason_code="risk_policy_profile_mapping_ambiguous",
+            reason=reason_text,
+            allow_new_or_increased_risk=False,
+            allow_risk_reducing_actions=True,
+            owner_decision_request=owner_decision_req,
+        )
+
+    @staticmethod
     def _pool_with_authoritative_approval_digest(
         pool: Mapping[str, Any],
         *,
@@ -2452,87 +2511,94 @@ class PersonaProvisioningCoordinator:
                         verified_res.profile_mapping_approval_id or resolved_apv_id,
                     )
 
-            candidate_fallback = (
-                auto_res.candidate_policy.to_dict()
-                if auto_res.candidate_policy is not None
-                else self._default_paper_pool_risk_policy(
-                    ids.capital_pool_id,
-                    version=requested_version,
-                )
-            )
-            candidate_pool = self._candidate_pool_with_approval_digest(
-                base_pool=base_pool,
-                pool_id=ids.capital_pool_id,
-                tenant_id=record.tenant_id,
-                currency=currency,
-                budget=budget,
-                risk_policy_ref=None,
-                metadata={
-                    "tenant_id": record.tenant_id,
-                    "requested_risk_profile": eff_profile,
-                    "require_approved_profile_mapping": True,
-                    "risk_policy": candidate_fallback,
-                    **(
-                        {"profile_mapping_approval_id": candidate_approval_id}
-                        if candidate_approval_id
-                        else {}
-                    ),
-                },
-            )
-            unmapped = resolve_pool_risk_policy_binding(
-                capital_pool_id=ids.capital_pool_id,
-                pool=candidate_pool,
-                expected_tenant_id=record.tenant_id,
-                expected_stage="paper",
-                requested_profile=eff_profile,
-                require_approved_profile_mapping=True,
-                approval_decision_id=candidate_approval_id,
-                approval_reader=approval_reader,
-                require_active=True,
-                require_limits=("gross_limit",),
-                raise_on_error=False,
-            )
-            if not unmapped.resolved or unmapped.policy is None:
-                routed_req = self._route_or_reuse_risk_policy_owner_decision_request(
-                    tenant_id=record.tenant_id,
-                    persona_id=record.persona_id,
+            if auto_res.status == "ambiguous_profile_mapping":
+                unmapped = self._ambiguous_profile_resolution(
                     pool_id=ids.capital_pool_id,
+                    tenant_id=record.tenant_id,
                     requested_profile=eff_profile,
-                    resolution=unmapped,
+                    auto_res=auto_res,
                 )
-                if (
-                    isinstance(base_pool, Mapping)
-                    and str(base_pool.get("status") or "") == "active"
-                    and "deployment_dispatch" not in record.references
-                ):
-                    pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
-                    base_meta = dict(base_pool.get("metadata")) if isinstance(base_pool.get("metadata"), Mapping) else {}
-                    try:
-                        self.transport.patch(
-                            "capital",
-                            f"{pool_path}/status",
-                            {
-                                "actor_id": self.actor_id,
-                                "actor_role": "capital.admin",
-                                "status": "suspended",
-                                "metadata": {
-                                    **base_meta,
-                                    "provisional_unresolved_risk_policy": True,
-                                    "requested_risk_profile": eff_profile,
-                                    "require_approved_profile_mapping": True,
-                                },
+            else:
+                candidate_fallback = (
+                    auto_res.candidate_policy.to_dict()
+                    if auto_res.candidate_policy is not None
+                    else self._default_paper_pool_risk_policy(
+                        ids.capital_pool_id,
+                        version=requested_version,
+                    )
+                )
+                candidate_pool = self._candidate_pool_with_approval_digest(
+                    base_pool=base_pool,
+                    pool_id=ids.capital_pool_id,
+                    tenant_id=record.tenant_id,
+                    currency=currency,
+                    budget=budget,
+                    risk_policy_ref=None,
+                    metadata={
+                        "tenant_id": record.tenant_id,
+                        "requested_risk_profile": eff_profile,
+                        "require_approved_profile_mapping": True,
+                        "profile_auto_resolved": True,
+                        "risk_policy": candidate_fallback,
+                        **(
+                            {"profile_mapping_approval_id": candidate_approval_id}
+                            if candidate_approval_id
+                            else {}
+                        ),
+                    },
+                )
+                unmapped = resolve_pool_risk_policy_binding(
+                    capital_pool_id=ids.capital_pool_id,
+                    pool=candidate_pool,
+                    expected_tenant_id=record.tenant_id,
+                    expected_stage="paper",
+                    requested_profile=eff_profile,
+                    require_approved_profile_mapping=True,
+                    approval_decision_id=candidate_approval_id,
+                    approval_reader=approval_reader,
+                    require_active=True,
+                    require_limits=("gross_limit",),
+                    raise_on_error=False,
+                )
+            routed_req = self._route_or_reuse_risk_policy_owner_decision_request(
+                tenant_id=record.tenant_id,
+                persona_id=record.persona_id,
+                pool_id=ids.capital_pool_id,
+                requested_profile=eff_profile,
+                resolution=unmapped,
+            )
+            if (
+                isinstance(base_pool, Mapping)
+                and str(base_pool.get("status") or "") == "active"
+                and "deployment_dispatch" not in record.references
+            ):
+                pool_path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
+                base_meta = dict(base_pool.get("metadata")) if isinstance(base_pool.get("metadata"), Mapping) else {}
+                try:
+                    self.transport.patch(
+                        "capital",
+                        f"{pool_path}/status",
+                        {
+                            "actor_id": self.actor_id,
+                            "actor_role": "capital.admin",
+                            "status": "suspended",
+                            "metadata": {
+                                **base_meta,
+                                "provisional_unresolved_risk_policy": True,
+                                "requested_risk_profile": eff_profile,
+                                "require_approved_profile_mapping": True,
                             },
-                        )
-                    except Exception:
-                        pass
-                raise PersonaProvisioningCoordinationError(
-                    f"{unmapped.reason} ({unmapped.reason_code})",
-                    reason_code=unmapped.reason_code,
-                    absence_source=str(routed_req.get("absence_source") or ""),
-                    resolution_status=unmapped.status,
-                    owner_decision_request=routed_req,
-                )
-            return None, candidate_fallback, True, unmapped.profile_mapping_approval_id
+                        },
+                    )
+                except Exception:
+                    pass
+            raise PersonaProvisioningCoordinationError(
+                f"{unmapped.reason} ({unmapped.reason_code})",
+                reason_code=unmapped.reason_code,
+                absence_source=str(routed_req.get("absence_source") or ""),
+                resolution_status=unmapped.status,
+                owner_decision_request=routed_req,
+            )
 
         if has_explicit_policy:
             if not isinstance(explicit_policy, Mapping):
@@ -5184,22 +5250,35 @@ class PersonaProvisioningCoordinator:
             raise_on_error=False,
         )
 
-        clean_ref = (
+        caller_clean_ref = (
             str(risk_policy_ref).strip()
             if risk_policy_ref is not None and str(risk_policy_ref).strip()
-            else (
-                str(pool.get("risk_policy_ref")).strip()
-                if pool.get("risk_policy_ref") is not None and str(pool.get("risk_policy_ref")).strip()
-                else None
-            )
+            else None
         )
+        pool_existing_ref = (
+            str(pool.get("risk_policy_ref")).strip()
+            if pool.get("risk_policy_ref") is not None and str(pool.get("risk_policy_ref")).strip()
+            else None
+        )
+        clean_ref = caller_clean_ref or pool_existing_ref
         explicit_repair_version = (
             str(risk_policy_version).strip()
             if risk_policy_version is not None and str(risk_policy_version).strip()
             else None
         )
         auto_discovered_policy: dict[str, Any] | None = None
-        if require_approved_profile_mapping and risk_policy is None and not clean_ref:
+        should_discover_profile = bool(
+            require_approved_profile_mapping
+            and risk_policy is None
+            and not caller_clean_ref
+            and (
+                not pool_existing_ref
+                or pool_meta.get("require_approved_profile_mapping") is True
+                or requested_profile is not None
+                or not before_resolution.resolved
+            )
+        )
+        if should_discover_profile:
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=resolved_pool_id,
                 effective_tenant_id=tenant_id,
@@ -5217,11 +5296,39 @@ class PersonaProvisioningCoordinator:
                     if isinstance(auto_res.raw_policy, Mapping)
                     else auto_res.policy.to_dict()
                 )
-                if auto_res.risk_policy_ref:
-                    clean_ref = auto_res.risk_policy_ref
+                clean_ref = auto_res.risk_policy_ref
                 effective_approval_id = auto_res.approval_decision_id
                 caller_approval_id = auto_res.approval_decision_id
-            else:
+            elif auto_res.status == "ambiguous_profile_mapping":
+                owner_decision_res = self._ambiguous_profile_resolution(
+                    pool_id=resolved_pool_id,
+                    tenant_id=tenant_id,
+                    requested_profile=effective_profile,
+                    auto_res=auto_res,
+                )
+                routed_req = self._route_or_reuse_risk_policy_owner_decision_request(
+                    tenant_id=tenant_id,
+                    persona_id=persona_id,
+                    pool_id=resolved_pool_id,
+                    requested_profile=effective_profile,
+                    resolution=owner_decision_res,
+                    dry_run=dry_run,
+                )
+                after_dict = owner_decision_res.to_dict()
+                after_dict["owner_decision_request"] = routed_req
+                return {
+                    "tenant_id": tenant_id,
+                    "persona_id": persona_id,
+                    "capital_pool_id": resolved_pool_id,
+                    "persona_capital_binding_id": resolved_binding_id,
+                    "repaired": False,
+                    "idempotent_noop": False,
+                    "dry_run": dry_run,
+                    "before_resolution": before_resolution.to_dict(),
+                    "after_resolution": after_dict,
+                    "owner_decision_request": routed_req,
+                }
+            elif not pool_existing_ref or not before_resolution.resolved or before_resolution.profile_mapping_status != "explicit_policy":
                 candidate_baseline = (
                     auto_res.candidate_policy.to_dict()
                     if auto_res.candidate_policy is not None
@@ -5243,6 +5350,7 @@ class PersonaProvisioningCoordinator:
                     candidate_baseline["version"] = explicit_repair_version
                 candidate_owner_meta = {
                     **pool_meta,
+                    "profile_auto_resolved": True,
                     "risk_policy": candidate_baseline,
                 }
                 if effective_approval_id is not None:

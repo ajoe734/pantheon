@@ -4274,9 +4274,9 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     # 4. Existing three dev paper pools (06d4775a9b6a8f63b311, 039ad01f8bcd2b4aa466, a81b4fd15944698341aa):
     # reproduce actual absence, idempotent proposal routing, explicit non-approval, and auto-resolved repair without internal IDs.
     three_pools = [
-        ("persona-06d4775a9b6a", "pool-persona-paper-06d4775a9b6a8f63b311", "pcb-persona-paper-06d4775a9b6a8f63b311", "TWD"),
-        ("persona-039ad01f8bcd", "pool-persona-paper-039ad01f8bcd2b4aa466", "pcb-persona-paper-039ad01f8bcd2b4aa466", "TWD"),
-        ("persona-a81b4fd15944", "pool-persona-paper-a81b4fd15944698341aa", "pcb-persona-paper-a81b4fd15944698341aa", "USD"),
+        ("persona-2448c7053e33ea48da47", "pool-persona-paper-06d4775a9b6a8f63b311", "pcb-persona-paper-06d4775a9b6a8f63b311", "TWD"),
+        ("persona-6507750312870d03a241", "pool-persona-paper-039ad01f8bcd2b4aa466", "pcb-persona-paper-039ad01f8bcd2b4aa466", "TWD"),
+        ("persona-ee7112a829d38b9135ac", "pool-persona-paper-a81b4fd15944698341aa", "pcb-persona-paper-a81b4fd15944698341aa", "TWD"),
     ]
     store_3 = TrackingStore()
     tx_3 = FakeOwnerTransport(
@@ -4515,5 +4515,427 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     )
     assert create_resp["meta"]["risk_policy_resolution"]["resolved"] is True
     assert create_resp["meta"]["risk_policy_resolution"]["profile_mapping_approval_id"] == prop_id
+
+    # 7. Two approved catalog policies (ambiguous_profile_mapping) preserve ambiguity across create, resume
+    # (including provisional active pool suspension), and repair — never promoting an arbitrary candidate.
+    # Also verify lesson-shaped pool_policy_parameter_proposal is rejected as activation authority.
+    store_amb, rec_amb = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    ids_amb = deterministic_provisioning_ids(rec_amb)
+    tx_amb = FakeOwnerTransport(
+        governance_subject="pantheon-dev-persona-enrollment-proposer",
+        governance_roles=("approval_proposer",),
+        seed_pool_policy_approval=False,
+    )
+    coord_amb = PersonaProvisioningCoordinator(
+        store=store_amb,
+        transport=tx_amb,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="test-worker",
+        actor_id="pantheon-persona-provisioner",
+        governance_proposer=tx_amb,
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+    amb_policies = []
+    for n in (1, 2):
+        pol = {
+            "risk_policy_id": f"rp-review-low-{n}",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": n * 0.4,
+            "net_limit": 0.6,
+            "max_leverage": 1.0,
+            "metadata": {"tenant_id": rec_amb.tenant_id, "requested_profile": "low"},
+        }
+        (policy_dir / f"{pol['risk_policy_id']}.json").write_text(json.dumps(pol), encoding="utf-8")
+        dec = approval_snapshot(
+            decision_id=f"apv-review-{n}",
+            tenant_id=rec_amb.tenant_id,
+            target_type="capital_pool_activation",
+            target_id=pol["risk_policy_id"],
+            target_version=risk_policy_digest(pol),
+            owner_user_id="proposer",
+            risk_level="medium",
+            metadata={
+                "subject": {
+                    "pool_id": pol["risk_policy_id"],
+                    "risk_direction": "increase",
+                    "requested_risk": "low",
+                    "risk_policy_id": pol["risk_policy_id"],
+                    "risk_policy_version": "1.0",
+                    "risk_policy_digest": risk_policy_digest(pol),
+                },
+                "approvals": [
+                    {"actor_id": "reviewer-1", "actor_role": "risk_owner"},
+                    {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                ],
+            },
+        )
+        tx_amb.objects[("governance", f"/api/governance/approvals/{dec['decision_id']}")] = dec
+        amb_policies.append(pol)
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc_amb:
+        coord_amb._resolve_requested_pool_risk_policy_with_provenance(rec_amb, ids_amb)
+    assert exc_amb.value.reason_code == "risk_policy_profile_mapping_ambiguous"
+    assert exc_amb.value.resolution_status == "ambiguous_profile_mapping"
+    assert exc_amb.value.absence_source == "policy_candidates_ambiguous"
+
+    # Full coordinate (create) fails closed with ambiguous_profile_mapping and creates no pool in Capital
+    full_amb_create = coord_amb.coordinate(rec_amb)
+    assert full_amb_create.state == "failed"
+    assert full_amb_create.error["failed_step"] == "capital_pool"
+    assert full_amb_create.error["reason_code"] == "risk_policy_profile_mapping_ambiguous"
+    assert full_amb_create.error["resolution_status"] == "ambiguous_profile_mapping"
+    assert full_amb_create.error["absence_source"] == "policy_candidates_ambiguous"
+    assert full_amb_create.error["owner_decision_request"]["ambiguous_policy_ids"] == [
+        "rp-review-low-1",
+        "rp-review-low-2",
+    ]
+    assert full_amb_create.error["owner_decision_request"]["ambiguous_approval_decision_ids"] == [
+        "apv-review-1",
+        "apv-review-2",
+    ]
+    amb_pool_path = f"/api/capital-pools/{ids_amb.capital_pool_id}"
+    assert tx_amb.get("capital", amb_pool_path) is None
+    assert tx_amb.mutations[("governance", "/api/governance/approvals")] == 0
+
+    # Resume when a provisional active pool record exists suspends the provisional pool and preserves ambiguity
+    tx_amb.objects[("capital", amb_pool_path)] = {
+        "pool_id": ids_amb.capital_pool_id,
+        "owner_id": rec_amb.tenant_id,
+        "tenant_id": rec_amb.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "USD",
+        "budget": 25000,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": rec_amb.tenant_id,
+            "persona_id": rec_amb.persona_id,
+            "risk_policy": amb_policies[0],
+            "profile_mapping_approval_id": "apv-review-1",
+        },
+    }
+    full_amb_resume = coord_amb.coordinate(rec_amb)
+    assert full_amb_resume.state == "failed"
+    assert full_amb_resume.error["reason_code"] == "risk_policy_profile_mapping_ambiguous"
+    assert full_amb_resume.error["resolution_status"] == "ambiguous_profile_mapping"
+    assert tx_amb.get("capital", amb_pool_path)["status"] == "suspended"
+    assert tx_amb.get("capital", amb_pool_path)["metadata"]["provisional_unresolved_risk_policy"] is True
+
+    # Repair on the pool also preserves ambiguous_profile_mapping and never promotes an arbitrary candidate
+    rep_amb = coord_amb.repair_paper_pool_risk_policy(
+        tenant_id=rec_amb.tenant_id,
+        persona_id=rec_amb.persona_id,
+    )
+    assert rep_amb["repaired"] is False
+    assert rep_amb["after_resolution"]["resolved"] is False
+    assert rep_amb["after_resolution"]["status"] == "ambiguous_profile_mapping"
+    assert rep_amb["after_resolution"]["reason_code"] == "risk_policy_profile_mapping_ambiguous"
+    assert rep_amb["owner_decision_request"]["absence_source"] == "policy_candidates_ambiguous"
+    assert rep_amb["owner_decision_request"]["ambiguous_policy_ids"] == [
+        "rp-review-low-1",
+        "rp-review-low-2",
+    ]
+
+    # Remove the second policy and replace apv-review-1 with a lesson-shaped pool_policy_parameter_proposal:
+    # coordinator must reject it as activation authority.
+    (policy_dir / "rp-review-low-2.json").unlink()
+    tx_amb.objects.pop(("governance", "/api/governance/approvals/apv-review-1"), None)
+    tx_amb.objects.pop(("governance", "/api/governance/approvals/apv-review-2"), None)
+    tx_amb.objects[("governance", "/api/governance/approvals/apv-parameter-only")] = approval_snapshot(
+        decision_id="apv-parameter-only",
+        tenant_id=rec_amb.tenant_id,
+        target_type="pool_policy_parameter_proposal",
+        target_id=amb_policies[0]["risk_policy_id"],
+        target_version="1.0",
+        owner_user_id="proposer",
+        persona_id=rec_amb.persona_id,
+        risk_level="high",
+        actor_role="risk_owner",
+        metadata={
+            "subject": {
+                "proposal_kind": "pool_policy",
+                "lesson_ids": "lesson-review",
+                "case_file_id": "case-review",
+                "proposal_digest": "a" * 64,
+                "requested_risk": "low",
+                "risk_policy_id": amb_policies[0]["risk_policy_id"],
+                "risk_policy_version": "1.0",
+                "risk_policy_digest": risk_policy_digest(amb_policies[0]),
+            }
+        },
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc_param:
+        coord_amb._resolve_requested_pool_risk_policy_with_provenance(rec_amb, ids_amb)
+    assert exc_param.value.reason_code == "risk_policy_profile_mapping_unapproved"
+    rep_param = coord_amb.repair_paper_pool_risk_policy(
+        tenant_id=rec_amb.tenant_id,
+        persona_id=rec_amb.persona_id,
+    )
+    assert rep_param["repaired"] is False
+    assert rep_param["after_resolution"]["status"] == "unresolved_profile_mapping"
+    (policy_dir / "rp-review-low-1.json").unlink()
+
+    # 8. Full-path credentials-scoped HTTP route requests (POST /bff/personas, GET /bff/personas/{id},
+    # POST /bff/personas/{id}/provisioning/paper-capital/risk-policy) via mounted FastAPI router.
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.command_queue import CommandStore
+    from services.control_plane.bff.personas.router import create_personas_router
+    from services.control_plane.bff.tests.conftest import make_composed_persona_service
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    AUTH_HEADERS = {"Authorization": "Bearer test-operator:operator,reviewer,admin"}
+
+    route_personas: dict[str, dict[str, Any]] = {}
+    route_store = TrackingStore()
+    route_tx = FakeOwnerTransport(
+        governance_subject="pantheon-dev-persona-enrollment-proposer",
+        governance_roles=("approval_proposer",),
+        seed_pool_policy_approval=False,
+    )
+    route_coord = PersonaProvisioningCoordinator(
+        store=route_store,
+        transport=route_tx,
+        schedule_registrar=_schedule_receipt,
+        lease_owner="route-test-worker",
+        actor_id="pantheon-persona-provisioner",
+        governance_proposer=route_tx,
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+
+    class _RouteWriteOwner:
+        def create_persona(self, record_in: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+            saved = deepcopy(dict(record_in or kwargs))
+            pid = str(saved.get("persona_id") or saved.get("id"))
+            saved.setdefault("id", pid)
+            saved.setdefault("persona_id", pid)
+            route_personas[pid] = saved
+            return deepcopy(saved)
+
+        def update_persona(self, pid: str, **kwargs: Any) -> dict[str, Any]:
+            cur = deepcopy(route_personas.get(pid) or {"id": pid, "persona_id": pid, "metadata": {}})
+            if "lifecycle_state" in kwargs and kwargs["lifecycle_state"] is not None:
+                cur["lifecycle_state"] = kwargs["lifecycle_state"]
+            if isinstance(kwargs.get("metadata"), Mapping):
+                cur["metadata"] = {**(cur.get("metadata") or {}), **dict(kwargs["metadata"])}
+            route_personas[pid] = cur
+            return deepcopy(cur)
+
+        def patch_persona(self, pid: str, patch_in: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+            return self.update_persona(pid, **(dict(patch_in or {}) | kwargs))
+
+    from services.control_plane.bff.ports import ReadSurfacePorts
+
+    class _RouteReadStore(ReadSurfacePorts):
+        def get_persona(self, pid: str) -> dict[str, Any] | None:
+            found = route_personas.get(pid)
+            return deepcopy(found) if found is not None else None
+
+        def list_personas(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return [deepcopy(v) for v in route_personas.values()]
+
+        def list_strategy_specs(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def get_persona_containment(self, _pid: str) -> dict[str, Any] | None:
+            return None
+
+    composed_svc = make_composed_persona_service(
+        write_owner=_RouteWriteOwner(),
+        read_store=_RouteReadStore(),
+        command_store=CommandStore(str(tmp_path / "route_commands.jsonl")),
+    )
+    monkeypatch.setattr(personas_service, "_composed_persona_service", composed_svc)
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: route_store)
+    monkeypatch.setattr(personas_service, "PersonaProvisioningCoordinator", lambda **_kw: route_coord)
+    monkeypatch.setattr(
+        personas_service,
+        "_get_persona_directory_snapshot",
+        lambda tenant_id=None: SimpleNamespace(
+            records_by_id=dict(route_personas),
+            records=list(route_personas.values()),
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(create_personas_router(service=composed_svc))
+    route_client = TestClient(app)
+
+    # 8a. Credentials-scoped POST /bff/personas with risk="low" and no internal policy/approval IDs when unapproved
+    unapproved_headers = {**AUTH_HEADERS, "Idempotency-Key": "idem-route-low-unapproved-1"}
+    resp_unapproved = route_client.post(
+        "/bff/personas",
+        headers=unapproved_headers,
+        json={
+            "name": "Route Low Trader",
+            "archetype": "momentum",
+            "risk": "low",
+            "mandate": "Route paper low profile test",
+            "market": "TW",
+            "symbols": ["2330.TW"],
+            "budget": 100000,
+        },
+    )
+    assert resp_unapproved.status_code == 502, resp_unapproved.text
+    raw_unapproved = resp_unapproved.json()
+    err_unapproved = raw_unapproved.get("detail", raw_unapproved)["error"]
+    assert err_unapproved["details"]["reasonCode"] == "risk_policy_profile_mapping_unapproved"
+    assert err_unapproved["details"]["absenceSource"] == "policy_definition_and_approval_absent"
+    routed_from_post = err_unapproved["details"]["riskPolicyOwnerDecisionRequest"]
+    created_pid = err_unapproved["details"]["personaId"]
+    created_pool_id = routed_from_post["capital_pool_id"]
+    routed_gov_id = routed_from_post["governance_proposal_id"]
+    assert routed_from_post["governance_proposal_status"] == "proposed_to_governance_human_inbox"
+    assert routed_from_post["disposition_task_id"] == "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122"
+    assert routed_from_post["hosted_proof_task_id"] == "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+
+    # 8b. Credentials-scoped POST /bff/personas/{persona_id}/provisioning/paper-capital/risk-policy when ambiguous
+    route_tenant_id = routed_from_post["tenant_id"]
+    route_tx.objects[("capital", f"/api/capital-pools/{created_pool_id}")] = {
+        "pool_id": created_pool_id,
+        "owner_id": route_tenant_id,
+        "tenant_id": route_tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "currency": "TWD",
+        "budget": 100000.0,
+        "single_runtime_enforced": True,
+        "metadata": {
+            "internal": True,
+            "execution_context": "paper",
+            "tenant_id": route_tenant_id,
+            "persona_id": created_pid,
+            "risk_policy": route_coord._default_paper_pool_risk_policy(created_pool_id, version="1.0"),
+        },
+    }
+    for n in (1, 2):
+        r_pol = {
+            "risk_policy_id": f"rp-route-low-{n}",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": n * 0.4,
+            "net_limit": 0.6,
+            "max_leverage": 1.0,
+            "metadata": {"tenant_id": route_tenant_id, "requested_profile": "low"},
+        }
+        (policy_dir / f"{r_pol['risk_policy_id']}.json").write_text(json.dumps(r_pol), encoding="utf-8")
+        r_dec = approval_snapshot(
+            decision_id=f"apv-route-low-{n}",
+            tenant_id=route_tenant_id,
+            target_type="capital_pool_activation",
+            target_id=r_pol["risk_policy_id"],
+            target_version=risk_policy_digest(r_pol),
+            owner_user_id="proposer",
+            risk_level="medium",
+            metadata={
+                "subject": {
+                    "pool_id": r_pol["risk_policy_id"],
+                    "risk_direction": "increase",
+                    "requested_risk": "low",
+                    "risk_policy_id": r_pol["risk_policy_id"],
+                    "risk_policy_version": "1.0",
+                    "risk_policy_digest": risk_policy_digest(r_pol),
+                },
+                "approvals": [
+                    {"actor_id": "reviewer-1", "actor_role": "risk_owner"},
+                    {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                ],
+            },
+        )
+        route_tx.objects[("governance", f"/api/governance/approvals/{r_dec['decision_id']}")] = r_dec
+
+    resp_repair_ambig = route_client.post(
+        f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
+        headers=AUTH_HEADERS,
+        json={},
+    )
+    assert resp_repair_ambig.status_code == 200, resp_repair_ambig.text
+    repair_ambig_data = resp_repair_ambig.json()["data"]
+    assert repair_ambig_data["repaired"] is False
+    assert repair_ambig_data["after_resolution"]["status"] == "ambiguous_profile_mapping"
+    assert repair_ambig_data["owner_decision_request"]["ambiguous_policy_ids"] == [
+        "rp-route-low-1",
+        "rp-route-low-2",
+    ]
+    # Also verify POST /bff/personas returns 502 with ambiguous_profile_mapping when catalog is ambiguous
+    resp_create_ambig = route_client.post(
+        "/bff/personas",
+        headers=unapproved_headers,
+        json={
+            "name": "Route Low Trader",
+            "archetype": "momentum",
+            "risk": "low",
+            "mandate": "Route paper low profile test",
+            "market": "TW",
+            "symbols": ["2330.TW"],
+            "budget": 100000,
+        },
+    )
+    assert resp_create_ambig.status_code == 502, resp_create_ambig.text
+    err_create_ambig = resp_create_ambig.json().get("detail", resp_create_ambig.json())["error"]
+    assert err_create_ambig["details"]["reasonCode"] == "risk_policy_profile_mapping_ambiguous"
+    assert err_create_ambig["details"]["resolutionStatus"] == "ambiguous_profile_mapping"
+    assert err_create_ambig["details"]["riskPolicyOwnerDecisionRequest"]["ambiguous_policy_ids"] == [
+        "rp-route-low-1",
+        "rp-route-low-2",
+    ]
+
+    # 8c. Once ambiguity is resolved to a single approved policy, both repair route and POST /bff/personas succeed
+    (policy_dir / "rp-route-low-2.json").unlink()
+    route_tx.objects.pop(("governance", "/api/governance/approvals/apv-route-low-2"), None)
+    route_tx.objects.pop(("governance", f"/api/governance/approvals/{routed_gov_id}"), None)
+    route_tx.governance_subject = "pantheon-persona-provisioner"
+    route_tx.governance_roles = {"approval_proposer", "automated_gate"}
+
+    resp_repair_ok = route_client.post(
+        f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
+        headers=AUTH_HEADERS,
+        json={},
+    )
+    assert resp_repair_ok.status_code == 200, resp_repair_ok.text
+    repair_ok_data = resp_repair_ok.json()["data"]
+    assert repair_ok_data["repaired"] is True
+    assert repair_ok_data["after_resolution"]["resolved"] is True
+    assert repair_ok_data["after_resolution"]["risk_policy_id"] == "rp-route-low-1"
+    assert repair_ok_data["after_resolution"]["profile_mapping_approval_id"] == "apv-route-low-1"
+
+    resp_create_ok = route_client.post(
+        "/bff/personas",
+        headers=unapproved_headers,
+        json={
+            "name": "Route Low Trader",
+            "archetype": "momentum",
+            "risk": "low",
+            "mandate": "Route paper low profile test",
+            "market": "TW",
+            "symbols": ["2330.TW"],
+            "budget": 100000,
+        },
+    )
+    assert resp_create_ok.status_code == 201, resp_create_ok.text
+    create_ok_json = resp_create_ok.json()
+    assert create_ok_json["meta"]["risk_policy_resolution"]["resolved"] is True
+    assert create_ok_json["meta"]["risk_policy_resolution"]["risk_policy_id"] == "rp-route-low-1"
+    assert create_ok_json["meta"]["risk_policy_resolution"]["profile_mapping_approval_id"] == "apv-route-low-1"
+
+    resp_get_ok = route_client.get(
+        f"/bff/personas/{created_pid}",
+        headers=AUTH_HEADERS,
+    )
+    assert resp_get_ok.status_code == 200, resp_get_ok.text
+    get_ok_data = resp_get_ok.json()["data"]
+    assert get_ok_data["riskPolicyResolution"]["resolved"] is True
+    assert get_ok_data["riskPolicyResolution"]["risk_policy_id"] == "rp-route-low-1"
+    assert get_ok_data["riskPolicyResolution"]["profile_mapping_approval_id"] == "apv-route-low-1"
+    assert get_ok_data.get("riskPolicyOwnerDecisionRequest") is None
+    (policy_dir / "rp-route-low-1.json").unlink()
+
 
 

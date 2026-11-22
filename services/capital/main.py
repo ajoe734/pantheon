@@ -490,7 +490,7 @@ class CapitalBoundaryService:
             raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
         if tenant and evidence.tenant_id != tenant:
             raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
-        if evidence.target_type not in {"capital_pool_activation", "pool_policy_parameter_proposal"}:
+        if evidence.target_type != "capital_pool_activation":
             raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
         if pool is not None:
             pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
@@ -528,7 +528,6 @@ class CapitalBoundaryService:
             targets: list[tuple[str, str]] = [("capital_pool_activation", pool.pool_id)]
             if bound_policy_id and not bound_policy_id.startswith("rp-pool-") and bound_policy_id != f"rp-{pool.pool_id}":
                 targets.append(("capital_pool_activation", bound_policy_id))
-                targets.append(("pool_policy_parameter_proposal", bound_policy_id))
             for t_type, t_id in targets:
                 try:
                     items = reader.list_for_target(

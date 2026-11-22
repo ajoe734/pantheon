@@ -407,6 +407,8 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 details_extra["reasonCode"] = err_info["reason_code"]
             if err_info.get("absence_source"):
                 details_extra["absenceSource"] = err_info["absence_source"]
+            if err_info.get("resolution_status"):
+                details_extra["resolutionStatus"] = err_info["resolution_status"]
             if isinstance(owner_decision_req, dict):
                 details_extra["riskPolicyOwnerDecisionRequest"] = owner_decision_req
             raise _bff_error(
