@@ -1065,3 +1065,64 @@ def test_lookup_final_settlement_price_reads_dataset_root_and_callable(tmp_path:
     assert resolved_src is not None and resolved_src["final_settlement_price"] == 95.25
 
 
+def test_candidates_respect_single_name_net_limit_cash_reserve_and_reservations() -> None:
+    """PAPER-SIZING-BOUND-RISK-POLICY-20261121: most restrictive constraint bounds max_units_by_risk."""
+    # 1. Explicit fixture max_single_name_weight=0.25 on 100k equity -> 25,000 cap -> floor(25000 / 221) = 113
+    budget_single = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "max_single_name_weight": 0.25,
+    }
+    [cash_single] = ic.build_candidates("2317", "2026-11-19", {}, budget_single, cash_price=221.0)
+    assert cash_single["max_units_by_risk"] == 113
+
+    # With existing 100 shares (22,100) of 2317 in persona_book, remaining single-name notional is 2,900 -> 13 shares
+    book_with_2317 = {
+        "positions": [
+            {"underlying": "2317", "instrument_id": "eq:2317", "direction": "LONG", "units": 100, "notional": 22100.0}
+        ],
+        "gross_notional": 22100.0,
+    }
+    [cash_single_held] = ic.build_candidates("2317", "2026-11-19", book_with_2317, budget_single, cash_price=221.0)
+    assert cash_single_held["max_units_by_risk"] == 13
+
+    # 2. Explicit fixture min_cash_reserve_pct=0.20 on 100k -> 80,000 spendable -> floor(80000 / 221) = 361
+    budget_reserve = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "min_cash_reserve_pct": 0.20,
+    }
+    [cash_reserve] = ic.build_candidates("2317", "2026-11-19", {}, budget_reserve, cash_price=221.0)
+    assert cash_reserve["max_units_by_risk"] == 361
+
+    # 3. Explicit fixture net_limit=40,000 with existing signed_net_used=15,000 -> 25,000 remaining -> 113
+    budget_net = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 15000.0,
+        "net_limit": 40000.0,
+        "signed_net_used": 15000.0,
+    }
+    [cash_net] = ic.build_candidates("2317", "2026-11-19", {}, budget_net, cash_price=221.0)
+    assert cash_net["max_units_by_risk"] == 113
+
+    # 4. Competing cash reservation of 50,000 leaves 50,000 spendable -> floor(50000 / 221) = 226
+    budget_reserved = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "order_reservations": [
+            {"reservation_id": "r1", "underlying": "2330", "side": "buy", "kind": "cash_share", "cash_reserved": 50000.0, "notional": 49900.0}
+        ],
+    }
+    [cash_res_cap] = ic.build_candidates("2317", "2026-11-19", {}, budget_reserved, cash_price=221.0)
+    assert cash_res_cap["max_units_by_risk"] == 226
+
+
+

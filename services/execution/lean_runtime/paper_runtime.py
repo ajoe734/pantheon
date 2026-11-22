@@ -1483,6 +1483,7 @@ class PaperExecutionAlgorithm:
         price_source: str | None = None,
         price_as_of: str | None = None,
         persona_binding_id: str | None = None,
+        signal_id: str | None = None,
     ) -> dict[str, Any]:
         """Evaluate the pre-trade order-level risk gate without mutating the ledger."""
         binding_id = self._resolve_persona_binding_id(persona_binding_id)
@@ -1699,7 +1700,9 @@ class PaperExecutionAlgorithm:
                 }
 
         ref_price = float(price or 0.0)
-        current_sig_id = str(self._current_signal_metadata.get("signal_id") or "").strip() or None
+        current_sig_id = (
+            str(signal_id or self._current_signal_metadata.get("signal_id") or "").strip() or None
+        )
         active_res = self.active_order_reservations(exclude_id=current_sig_id)
         reserved_cash = sum(float(r.get("cash_reserved") or 0.0) for r in active_res if not r.get("is_risk_reducing"))
         reserved_margin = sum(float(r.get("margin_reserved") or 0.0) for r in active_res if not r.get("is_risk_reducing"))
@@ -1890,6 +1893,7 @@ class PaperExecutionAlgorithm:
             underlying_same_dir_before=underlying_same_dir_before + reserved_underlying.get(norm_u, 0.0),
             margin_reserved_before=margin_reserved_before + reserved_margin,
             active_reservations_count=len(active_res),
+            current_sig_id=current_sig_id,
         )
         policy_provenance = {
             "risk_policy_id": policy.risk_policy_id,
@@ -2174,6 +2178,7 @@ class PaperExecutionAlgorithm:
         underlying_same_dir_before: float,
         margin_reserved_before: float,
         active_reservations_count: int,
+        current_sig_id: str | None = None,
     ) -> dict[str, Any]:
         """Compute maximum permitted units and binding constraint at submission time."""
         clean_side = str(side or "buy").strip().lower()
@@ -2182,7 +2187,9 @@ class PaperExecutionAlgorithm:
         pol_digest = risk_policy_digest(policy)
 
         if not is_opening_or_increasing:
-            clean_sig = str(self._current_signal_metadata.get("signal_id") or "").strip() or None
+            clean_sig = (
+                str(current_sig_id or self._current_signal_metadata.get("signal_id") or "").strip() or None
+            )
             reserved_close = self._reserved_close_quantity_for(
                 instrument_id, underlying, side=clean_side, exclude_id=clean_sig
             )
@@ -2331,12 +2338,12 @@ class PaperExecutionAlgorithm:
             else replay_params.get("allow_pyramiding", False)
         )
         raw_target_notional = (
-            pre_sizing.get("target_notional")
-            if pre_sizing.get("target_notional") is not None
+            self._current_signal_metadata.get("target_notional")
+            if self._current_signal_metadata.get("target_notional") is not None
             else (
-                exp_dec.get("target_notional")
-                if exp_dec.get("target_notional") is not None
-                else self._current_signal_metadata.get("target_notional")
+                pre_sizing.get("target_notional")
+                if pre_sizing.get("target_notional") is not None
+                else exp_dec.get("target_notional")
             )
         )
         pre_existing_u = float(pre_sizing.get("existing_underlying_exposure") or 0.0)
@@ -2905,6 +2912,7 @@ class PaperExecutionAlgorithm:
             price_basis=resolved_price_basis,
             price_source=market_price_source,
             price_as_of=market_price_as_of,
+            signal_id=clean_sig_id,
         )
         sizing_ev = gate_result.get("sizing_evidence") if isinstance(gate_result.get("sizing_evidence"), Mapping) else {}
         permitted_units = sizing_ev.get("permitted_units")

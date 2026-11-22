@@ -360,3 +360,222 @@ def test_closes_and_non_cash_share_are_not_commission_fitted() -> None:
     cands = [future]
     # a non cash_share candidate is never passed through the commission fit
     assert ep.fit_cash_share_buy is not None and cands[0]["kind"] != "cash_share"
+
+
+# --- PAPER-SIZING-BOUND-RISK-POLICY-20261121: AC1 & AC2 replay and explicit limit fixtures ---
+
+TJ_2317_JOURNEY_ID = "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd"
+TJ_2317_DECISION_ID = "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09"
+TJ_2317_VIEW = {
+    "decision_id": TJ_2317_DECISION_ID,
+    "underlying": "2317",
+    "direction": "LONG",
+    "strength": 0.91324200913242,
+}
+TJ_2317_CANDIDATES = [
+    {
+        "decision_id": TJ_2317_DECISION_ID,
+        "instrument_id": "eq:2317",
+        "kind": "cash_share",
+        "underlying": "2317",
+        "side_capability": ["long"],
+        "unit": 1,
+        "multiplier": 1,
+        "price": 221.0,
+        "price_date": "2026-11-18",
+        "price_basis": "stock_close_prev_session",
+        "initial_margin_per_unit": 221.0,
+        "maintenance_margin_per_unit": 0,
+        "fee_per_unit_per_side": 0.0,
+        "tax_rate_per_side": 0.0,
+        "expiry": None,
+        "last_trading_day": None,
+        "liquidity": None,
+        "max_units_by_risk": 452,
+    },
+    {
+        "decision_id": TJ_2317_DECISION_ID,
+        "instrument_id": "ssf:DHF:202612",
+        "kind": "stock_future",
+        "underlying": "2317",
+        "side_capability": ["long", "short"],
+        "unit": 2000,
+        "multiplier": 2000,
+        "price": 220.0,
+        "price_date": "2026-11-18",
+        "price_basis": "futures_daily_settlement_prev_session",
+        "initial_margin_per_unit": 59400.0,
+        "maintenance_margin_per_unit": 45540.0,
+        "fee_per_unit_per_side": 20.0,
+        "tax_rate_per_side": 0.00002,
+        "expiry": "2026-12-16",
+        "last_trading_day": "2026-12-16",
+        "liquidity": {"open_interest": 412, "volume": 128},
+        "max_units_by_risk": 0,
+    },
+]
+APPROVED_BASELINE_BUDGET_2317 = {
+    "equity": 100000.0,
+    "raw_cash": 100000.0,
+    "available_cash": 100000.0,
+    "available_buying_power": 100000.0,
+    "gross_limit": 200000.0,
+    "gross_limit_multiple": 2.0,
+    "gross_used": 0.0,
+    "net_limit": 200000.0,
+    "net_limit_multiple": 2.0,
+    "net_used": 0.0,
+    "signed_net_used": 0.0,
+    "margin_reserved": 0.0,
+    "cash_reserved": 0.0,
+    "max_leverage": 2.0,
+    "max_single_name_weight": None,
+    "max_single_name_notional": None,
+    "min_cash_reserve_pct": None,
+    "min_cash_reserve": None,
+    "cash_reserve_required": 0.0,
+    "underlying_exposures": {},
+    "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+    "risk_policy_version": "1.0",
+}
+
+
+def test_exact_2317_incident_replay_451_share_baseline() -> None:
+    """AC2: Exact pre-trade view replay for tj_79726064-4cc2-5510-8e11-7f5e59ff89bd at price 221 and capital 100000."""
+    sizing = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW,
+        TJ_2317_CANDIDATES,
+        {"positions": [], "gross_notional": 0.0},
+        APPROVED_BASELINE_BUDGET_2317,
+        PARAMS,
+    )
+    assert sizing["decision_id"] == TJ_2317_DECISION_ID
+    assert sizing["underlying"] == "2317"
+    assert sizing["dated_price"] == 221.0
+    assert sizing["capital"] == 100000.0
+    assert sizing["risk_policy_id"] == "rp-pool-persona-paper-039ad01f8bcd2b4aa466"
+    assert sizing["risk_policy_version"] == "1.0"
+    assert sizing["target_notional"] == pytest.approx(182648.401826, rel=1e-9)
+    assert sizing["permitted_units"] == 451
+    assert sizing["binding_limit"] == "available_cash_after_fees"
+    assert sizing["order_notional"] == pytest.approx(99671.0)
+    assert sizing["commission_fee"] == pytest.approx(142.031175)
+    assert sizing["fee_inclusive_required_cash"] == pytest.approx(99813.031175)
+    assert sizing["remaining_cash"] == pytest.approx(186.968825)
+    assert sizing["after_trade_concentration"] == pytest.approx(0.998128, abs=1e-6)
+    assert sizing["after_trade_concentration_of_initial_capital"] == pytest.approx(0.99671, abs=1e-6)
+    assert sizing["decision"]["instrument_id"] == "eq:2317"
+    assert sizing["decision"]["units"] == 451
+
+
+def test_2317_replay_under_labelled_nontrivial_explicit_limit_fixtures() -> None:
+    """AC1 & AC2: Test nontrivial explicit limits with clearly labelled fixture values across long and target-position paths."""
+    # Fixture 1 (labelled test fixture): explicit per-name max_single_name_weight = 0.25 (25,000 TWD)
+    FIXTURE_EXPLICIT_SINGLE_NAME_BUDGET = {
+        **APPROVED_BASELINE_BUDGET_2317,
+        "risk_policy_id": "fixture-explicit-single-name-25pct",
+        "risk_policy_version": "fixture-1.0",
+        "max_single_name_weight": 0.25,
+        "max_single_name_notional": 25000.0,
+    }
+    s_single = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, TJ_2317_CANDIDATES, {"positions": [], "gross_notional": 0.0}, FIXTURE_EXPLICIT_SINGLE_NAME_BUDGET, PARAMS
+    )
+    assert s_single["permitted_units"] == 113
+    assert s_single["binding_limit"] == "max_single_name_weight"
+    assert s_single["fee_inclusive_required_cash"] == pytest.approx(25008.586525)
+    assert s_single["remaining_cash"] == pytest.approx(74991.413475)
+    assert s_single["after_trade_concentration"] <= 0.25
+
+    # Fixture 2 (labelled test fixture): explicit cash-reserve rule min_cash_reserve_pct = 0.20 (20,000 TWD reserve)
+    FIXTURE_EXPLICIT_CASH_RESERVE_BUDGET = {
+        **APPROVED_BASELINE_BUDGET_2317,
+        "risk_policy_id": "fixture-explicit-cash-reserve-20pct",
+        "risk_policy_version": "fixture-1.0",
+        "min_cash_reserve_pct": 0.20,
+        "cash_reserve_required": 20000.0,
+        "available_cash": 80000.0,
+        "available_buying_power": 80000.0,
+    }
+    s_reserve = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, TJ_2317_CANDIDATES, {"positions": [], "gross_notional": 0.0}, FIXTURE_EXPLICIT_CASH_RESERVE_BUDGET, PARAMS
+    )
+    assert s_reserve["permitted_units"] == 361
+    assert s_reserve["binding_limit"] == "cash_reserve"
+    assert s_reserve["fee_inclusive_required_cash"] == pytest.approx(79894.687925)
+    assert s_reserve["remaining_cash"] == pytest.approx(20105.312075)
+    assert s_reserve["remaining_cash"] >= 20000.0
+
+    # Fixture 3 (labelled test fixture): explicit max_leverage = 0.60 (60,000 TWD) tighter than gross_limit = 2.0 (200,000 TWD)
+    FIXTURE_EXPLICIT_LEVERAGE_BUDGET = {
+        **APPROVED_BASELINE_BUDGET_2317,
+        "risk_policy_id": "fixture-explicit-leverage-60pct",
+        "risk_policy_version": "fixture-1.0",
+        "max_leverage": 0.60,
+    }
+    s_lev = ep.evaluate_pre_trade_sizing(
+        {**TJ_2317_VIEW, "strength": 1.0},
+        TJ_2317_CANDIDATES,
+        {"positions": [], "gross_notional": 0.0},
+        FIXTURE_EXPLICIT_LEVERAGE_BUDGET,
+        PARAMS,
+    )
+    assert s_lev["permitted_units"] == 271
+    assert s_lev["binding_limit"] in {"max_leverage", "target_notional"}
+    assert s_lev["order_notional"] == pytest.approx(59891.0)
+    assert s_lev["after_trade_gross_exposure"] <= 0.60
+
+    # Fixture 4 (labelled test fixture): explicit net_limit = 40,000 TWD with existing long exposure 10,000 TWD -> 30,000 remaining
+    FIXTURE_EXPLICIT_NET_LIMIT_BUDGET = {
+        **APPROVED_BASELINE_BUDGET_2317,
+        "risk_policy_id": "fixture-explicit-net-limit-40pct",
+        "risk_policy_version": "fixture-1.0",
+        "net_limit": 40000.0,
+        "net_limit_multiple": 0.40,
+        "gross_used": 10000.0,
+        "net_used": 10000.0,
+        "signed_net_used": 10000.0,
+    }
+    s_net = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, TJ_2317_CANDIDATES, {"positions": [], "gross_notional": 10000.0}, FIXTURE_EXPLICIT_NET_LIMIT_BUDGET, PARAMS
+    )
+    assert s_net["permitted_units"] == 135
+    assert s_net["binding_limit"] == "net_limit"
+    assert s_net["after_trade_net_exposure"] <= 0.40
+
+    # Fixture 5 (labelled test fixture): target_position_v1 path with existing 2317 holding (50 shares = 11,050 TWD),
+    # competing reservation (30,000 TWD cash reserved), and explicit max_single_name_weight = 0.30 (30,000 TWD)
+    FIXTURE_TARGET_POS_BOOK = {
+        "positions": [
+            {"underlying": "2317", "instrument_id": "eq:2317", "direction": "LONG", "units": 50, "notional": 11050.0}
+        ],
+        "gross_notional": 11050.0,
+    }
+    FIXTURE_TARGET_POS_BUDGET = {
+        **APPROVED_BASELINE_BUDGET_2317,
+        "risk_policy_id": "fixture-target-pos-single-name-30pct",
+        "risk_policy_version": "fixture-1.0",
+        "gross_used": 11050.0,
+        "signed_net_used": 11050.0,
+        "max_single_name_weight": 0.30,
+        "max_single_name_notional": 30000.0,
+        "underlying_exposures": {"2317": 11050.0},
+        "cash_reserved": 30000.0,
+        "available_cash": 70000.0,
+        "available_buying_power": 70000.0,
+    }
+    alloc = ep.allocate_targets({"2317.TW": TJ_2317_VIEW}, FIXTURE_TARGET_POS_BUDGET, PARAMS)
+    assert alloc["targets"]["2317.TW"] == pytest.approx(30000.0)
+    s_target = ep.evaluate_pre_trade_sizing(
+        {**TJ_2317_VIEW, "target_notional": 50000.0},
+        TJ_2317_CANDIDATES,
+        FIXTURE_TARGET_POS_BOOK,
+        FIXTURE_TARGET_POS_BUDGET,
+        PARAMS,
+        policy_kind=ep.TARGET_POLICY_KIND,
+    )
+    # 30,000 single-name cap - 11,050 existing = 18,950 remaining -> floor(18950 / 221) = 85 shares (85 * 221 = 18,785)
+    assert s_target["permitted_units"] == 85
+    assert s_target["binding_limit"] == "max_single_name_weight"
+    assert s_target["after_trade_concentration"] <= 0.30
+

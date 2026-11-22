@@ -3541,3 +3541,41 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             strategy(self._factor_rule_binding_with_features({"rev_yoy": [ok]}), "2026-05-15T06:05:00Z")
         except SignalDecisionUnavailable as exc:
             self.assertNotEqual(exc.code, "feature_not_in_catalogue")
+
+    def test_producer_attaches_pre_trade_sizing_and_resolved_policy_version(self) -> None:
+        """PAPER-SIZING-BOUND-RISK-POLICY-20261121: producer attaches pre_trade_sizing and resolved policy identity."""
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+
+        helper = TestExpressionDecisionStep()
+        store = InMemoryPendingSignalStore()
+        budget_with_policy = {
+            **helper.INPUTS["risk_budget"],
+            "equity": 100000.0,
+            "raw_cash": 100000.0,
+            "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+            "risk_policy_version": "1.0",
+            "risk_policy_digest": "digest-1",
+            "max_single_name_weight": 0.25,
+            "max_single_name_notional": 25000.0,
+        }
+        producer = helper._producer(
+            store,
+            expression_inputs=lambda _b: {
+                "persona_book": {"positions": [], "gross_notional": 0.0},
+                "risk_budget": budget_with_policy,
+            },
+        )
+        binding = helper._binding(helper._artifact(bearish=False), closes=(100.0, 102.0))
+        self.assertEqual(producer.produce(binding, helper.NOW), 1)
+        [signal] = store.get_pending()
+        meta = signal["metadata"]
+        self.assertIn("pre_trade_sizing", meta)
+        sizing = meta["pre_trade_sizing"]
+        self.assertEqual(sizing["risk_policy_id"], "rp-pool-persona-paper-039ad01f8bcd2b4aa466")
+        self.assertEqual(sizing["risk_policy_version"], "1.0")
+        self.assertEqual(sizing["binding_limit"], "max_single_name_weight")
+        self.assertEqual(meta["risk_policy_id"], "rp-pool-persona-paper-039ad01f8bcd2b4aa466")
+        self.assertEqual(meta["risk_policy_version"], "1.0")
+        self.assertEqual(signal["quantity"], sizing["permitted_units"])
+        self.assertLessEqual(sizing["after_trade_concentration"], 0.25)
+

@@ -350,6 +350,23 @@ def apply_expression_record(
         if isinstance(replay_input.get("book_before"), Mapping):
             book_before = replay_input["book_before"]
     pre_trade_sizing = stored.get("pre_trade_sizing")
+    if not isinstance(pre_trade_sizing, Mapping) and isinstance(replay_input, Mapping) and not replay_input.get("inputs_unavailable"):
+        try:
+            from services.execution.lean_runtime.expression_policy import (
+                POLICY_KIND,
+                evaluate_pre_trade_sizing,
+            )
+
+            pre_trade_sizing = evaluate_pre_trade_sizing(
+                replay_input.get("view") or view,
+                candidates_list,
+                book_before,
+                replay_input.get("budget") or {},
+                replay_input.get("parameters") or {},
+                policy_kind=str(replay_input.get("policy_kind") or POLICY_KIND),
+            )
+        except Exception:
+            pre_trade_sizing = None
     if isinstance(pre_trade_sizing, Mapping):
         metadata["pre_trade_sizing"] = dict(pre_trade_sizing)
         for pol_key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest"):
@@ -2707,11 +2724,6 @@ class PaperSignalProducer:
                             "kind": expression_view.get("kind"),
                             "multiplier": expression_view.get("multiplier"),
                             "replay_input": evaluated.get("replay_input"),
-                            **(
-                                {"pre_trade_sizing": evaluated["pre_trade_sizing"]}
-                                if evaluated.get("pre_trade_sizing") is not None
-                                else {}
-                            ),
                         },
                     )
                 apply_expression_record(out, expression_view, stored)

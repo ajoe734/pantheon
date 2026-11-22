@@ -749,8 +749,7 @@ def fit_cash_share_buy(
     max_by_risk = int(risk_caps["effective_risk_max_units"] or 0)
     if max_by_risk < 1:
         return 0
-    notional_cap = min(target, state["effective_remaining_notional"])
-    cap = notional_cap if cash_cap is None else min(notional_cap, cash_cap)
+    cap = target if cash_cap is None else min(target, cash_cap)
     units = min(int(units), max_by_risk)
     while units > 1 and (
         _cash_buy_required(candidate, units) > cap
@@ -998,7 +997,7 @@ def decide(
             units = fit_cash_share_buy(
                 c,
                 units,
-                desired_delta,
+                target,
                 budget,
                 floor_one=True,
                 sizing_state=state,
@@ -1272,7 +1271,8 @@ def decide_target_position(view, candidates, book, budget, parameters):
             continue
         units = min(clamped_units(c, delta), int(delta / unit), eff_max_units)
         if units >= 1 and direction == "LONG" and c.get("kind") == "cash_share":
-            units = fit_cash_share_buy(c, units, delta, budget, sizing_state=state)
+            raw_delta_target = max(target - exposure, Decimal(0))
+            units = fit_cash_share_buy(c, units, raw_delta_target, budget, sizing_state=state)
         elif units >= 1:
             while units > 0 and not _satisfies_post_fee_equity_limits(c, units, state):
                 units -= 1
