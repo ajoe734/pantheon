@@ -1,0 +1,162 @@
+{
+  "task_id": "BFF-STRATEGY-SEARCH-BOUNDED-OWNER-READ-20261122",
+  "title": "Bound the existing global strategy search at the Registry owner",
+  "status": "ready_for_review",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "work_package": {
+    "problem_register_class": "RC6 / WP6.3 and RC3 strategy-read work package",
+    "upstream_strategy_read_task": "BFF-STRATEGY-READ-REAL-SCALE-20261106",
+    "hosted_acceptance_task": "MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114"
+  },
+  "hosted_incident_correlation": {
+    "dev_root_run_id": "45018810312",
+    "paired_bff_sha": "bac80d756dec67b19c9af5183eae7a9869835015",
+    "paired_fe_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "management_crawl_summary": "108/109 pages passed; sole remaining page failure was /management/search due to GET /bff/search HTTP 503",
+    "search_request_replay_artifact": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114-root-45018810312/search-request-replay-20261122T135040Z.json",
+      "sha256": "4a3fd81e431cf745ff6b606002db6c80a33647c7e07cd7713b3574410046159e",
+      "captured_at": "2026-11-22T13:50:40Z",
+      "probes": {
+        "search_all": {
+          "status": 503,
+          "elapsed_ms": 2954,
+          "error_code": "DEPENDENCY_UNAVAILABLE"
+        },
+        "search_persona": {
+          "status": 200,
+          "elapsed_ms": 182
+        },
+        "search_capital_pool": {
+          "status": 200,
+          "elapsed_ms": 231
+        },
+        "search_strategy": {
+          "status": 503,
+          "elapsed_ms": 46,
+          "error_code": "DEPENDENCY_UNAVAILABLE"
+        },
+        "search_owner_ready": {
+          "status": 200,
+          "elapsed_ms": 31
+        }
+      }
+    },
+    "registry_oom_correlation_artifact": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114-root-45018810312/registry-restart-oom-correlation-20261122.json",
+      "sha256": "100cfa8a414ce9a49f5ac60c098a1cca81811c1a369ffbcd1f92ef2ff227c801",
+      "container_id": "c8d9c96a9b95",
+      "memory_limit_bytes": 268435456,
+      "restart_count": 3,
+      "kernel_cgroup_oom_timestamps_utc": [
+        "2026-11-22T13:30:15.447504+00:00",
+        "2026-11-22T13:50:45.180844+00:00"
+      ]
+    },
+    "no_unbounded_hosted_request_repeated": true
+  },
+  "root_cause_and_fix": {
+    "root_cause": "ResearchRouterService.search_knowledge (backing GET /bff/search) called port.list_strategies() without a bounded owner view or query parameter, and ResearchPortWiring did not forward list_strategy_summaries_page/list_strategy_specs_page. ReadSurfacePorts.list_strategies() therefore called DefaultResearchKnowledgeSourcePort.list_strategy_specs() -> GET /api/registry/strategy-specs (the unpaged full-entry route), forcing Registry to load and decode all 5,031+ full JSONB strategy entries (~24.35 MB) and construct full RegistryEntryView objects inside its 256 MiB container limit.",
+    "fix": [
+      "Extended Registry owner view GET /api/registry/strategy-specs?view=strategy_summary_page (service.py, split_api.py, storage.py, pg_store.py) to accept query/q. When query is non-empty, Phase 1 candidate-index extraction includes only the 4 compact scalar title/name leaves (metadata.title, metadata.name, metadata.strategy_spec.title, metadata.strategy_spec.name) and filters current winning non-retired strategy versions case-insensitively by strategy_id or title/name before sorting and page slicing; Phase 2 full summary leaf extraction still executes only for the <= page_size returned matching rows.",
+      "Extended ResearchKnowledgeSourcePort.list_strategy_specs_page, DefaultResearchKnowledgeSourcePort.list_strategy_specs_page, _fetch_canonical_strategy_specs_page, _fetch_canonical_strategy_specs_page_uncached, ReadSurfacePorts.list_strategy_specs_page, and ResearchPortWiring to forward query, page_token, and page_size to the bounded Registry owner view while preserving local overlay/custom test double fallback.",
+      "Updated ResearchRouterService.search_knowledge to query port.list_strategy_summaries_page(query=query, page_token=owner_page_token, page_size=effective_page_size) when strategies are in scope, validate the owner page payload fail-closed (503 DEPENDENCY_UNAVAILABLE on malformed payloads or owner errors), combine bounded strategy page items with persona and capital_pool matches with exact total and cross-source offset pagination, and skip strategy reads entirely when types excludes strategy (e.g. types=persona or types=capital_pool)."
+    ]
+  },
+  "local_5031_catalog_verification": {
+    "catalog_total_entries": 5031,
+    "catalog_active_non_retired_families": 4900,
+    "catalog_superseded_v1_revisions": 100,
+    "catalog_retired_families": 30,
+    "catalog_foreign_tenant_families": 1,
+    "unpaged_registry_strategy_spec_calls": 0,
+    "bounded_view_calls_per_search_request": 1,
+    "deep_catalog_single_match_beyond_first_page": {
+      "query": "Macro Horizon 1200",
+      "matched_strategy_id": "strat-dev-1200",
+      "matched_title": "Deep Catalog Macro Horizon 1200",
+      "phase2_full_summary_rows_extracted": 1,
+      "dto_keys_verified": [
+        "id",
+        "type",
+        "name",
+        "state",
+        "owner",
+        "risk",
+        "updatedAt"
+      ]
+    },
+    "multi_page_search_beyond_first_page": {
+      "query": "MultiPageBatchSignal",
+      "total_matches": 25,
+      "page_size": 10,
+      "pages_traversed": 3,
+      "returned_per_page": [
+        10,
+        10,
+        5
+      ],
+      "phase2_full_summary_rows_extracted_per_page": [
+        10,
+        10,
+        5
+      ]
+    },
+    "exclusion_and_scope_checks": {
+      "retired_strategy_excluded": true,
+      "superseded_v1_title_excluded": true,
+      "foreign_tenant_strategy_excluded": true,
+      "caller_tenant_mismatch_http_status": 403,
+      "caller_tenant_mismatch_error_code": "FORBIDDEN"
+    },
+    "mixed_and_isolated_source_checks": {
+      "mixed_sources": [
+        "strategy",
+        "persona",
+        "capital_pool"
+      ],
+      "mixed_query_total": 3,
+      "mixed_single_item_pages_verified": 3,
+      "persona_only_registry_calls": 0,
+      "persona_only_status_when_registry_503": 200,
+      "capital_pool_only_registry_calls": 0,
+      "capital_pool_only_status_when_registry_503": 200,
+      "strategy_search_status_when_registry_503": 503,
+      "strategy_search_error_code_when_registry_503": "DEPENDENCY_UNAVAILABLE"
+    }
+  },
+  "runtime_budget": {
+    "adds_persistent_writer": false,
+    "adds_recurring_job": false,
+    "adds_service": false
+  },
+  "verification_suites": {
+    "bff_strategy_persona_search_contract": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -k \"search or strategies or types\" -v",
+      "passed": 11,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "registry_and_bff_bounded_read_suites": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_strategy_summary_page_bounded.py services/registry/test_service.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_bff_b2_004_research_search.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py -v",
+      "passed": 237,
+      "skipped": 1,
+      "failed": 0,
+      "exit_code": 0
+    }
+  },
+  "files_changed": [
+    "services/control-plane/bff/research/service.py",
+    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/ports/research_knowledge_source.py",
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+    "services/registry/service.py",
+    "services/registry/split_api.py",
+    "services/registry/storage.py",
+    "services/registry/pg_store.py",
+    "services/registry/test_strategy_summary_page_bounded.py",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/BFF-STRATEGY-SEARCH-BOUNDED-OWNER-READ-20261122/evidence.json"
+  ]
+}
