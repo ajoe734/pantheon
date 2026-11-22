@@ -519,6 +519,7 @@ class PaperExecutionAlgorithm:
         self._last_risk_gate_result: dict[str, Any] | None = None
         self._order_reservations: dict[str, dict[str, Any]] = {}
         self._completed_signal_submissions: dict[str, dict[str, Any]] = {}
+        self._uncertain_broker_submissions: dict[str, dict[str, Any]] = {}
         self._last_submission_outcome: dict[str, Any] | None = None
         if risk_policy is not None:
             self.SetRiskPolicy(risk_policy)
@@ -829,6 +830,17 @@ class PaperExecutionAlgorithm:
             if item.get("signal_id") == clean_id or item.get("decision_id") == clean_id:
                 return self._order_reservations.pop(key, None)
         return None
+
+    def _release_current_signal_reservation(self, signal_id: str | None = None) -> dict[str, Any] | None:
+        """Release any active reservation bound to ``signal_id`` or current signal/reservation context."""
+        released = self.release_order_reservation(signal_id)
+        for ctx_key in ("reservation_id", "signal_id", "decision_id"):
+            ctx_val = str(self._current_signal_metadata.get(ctx_key) or "").strip()
+            if ctx_val and ctx_val != str(signal_id or "").strip():
+                extra = self.release_order_reservation(ctx_val)
+                if released is None:
+                    released = extra
+        return released
 
     def active_order_reservations(self, *, exclude_id: str | None = None) -> list[dict[str, Any]]:
         """Return active competing order reservations excluding ``exclude_id``."""
@@ -2067,7 +2079,47 @@ class PaperExecutionAlgorithm:
                 **policy_provenance,
             }
 
-        if evaluation.rejected:
+        is_pure_reducing_exit = (
+            not is_opening_or_increasing
+            and abs(q_before) > 1e-12
+            and abs(signed_order_qty) > 1e-12
+            and abs(q_after) < abs(q_before) - 1e-12
+        )
+        u_notional_before = underlying_notional_before.get(norm_u, 0.0)
+        u_notional_after = underlying_notional_after.get(norm_u, 0.0)
+        reduces_single_name = (
+            is_pure_reducing_exit
+            and (u_notional_after < u_notional_before - 1e-9)
+            and all(
+                underlying_notional_after.get(u_k, 0.0) <= underlying_notional_before.get(u_k, 0.0) + 1e-9
+                for u_k in underlying_notional_after
+            )
+        )
+        reduces_gross = is_pure_reducing_exit and (gross_notional_after < gross_notional_before - 1e-9)
+        reduces_leverage = is_pure_reducing_exit and (gross_notional_after < gross_notional_before - 1e-9)
+        reduces_net = is_pure_reducing_exit and (
+            abs(signed_net_notional_after) < abs(signed_net_notional_before) - 1e-9
+        )
+
+        def _is_excused_reducing_check(chk: Any) -> bool:
+            if not is_pure_reducing_exit:
+                return False
+            if chk.check_name == "max_single_name_weight" or chk.code in {
+                "pool_risk_policy",
+                "max_single_name_weight_limit_exceeded",
+            }:
+                return reduces_single_name
+            if chk.check_name == "gross_exposure" or chk.code == "gross_exposure_limit_exceeded":
+                return reduces_gross
+            if chk.check_name == "leverage" or chk.code == "leverage_limit_exceeded":
+                return reduces_leverage
+            if chk.check_name == "net_exposure" or chk.code == "net_exposure_limit_exceeded":
+                return reduces_net
+            return False
+
+        unexcused_failed_checks = [chk for chk in failed_checks if not _is_excused_reducing_check(chk)]
+
+        if evaluation.rejected and unexcused_failed_checks:
             max_single_w = max(target_weights.values(), default=0.0)
             code_to_reason = {
                 "pool_risk_policy": (
@@ -2101,7 +2153,7 @@ class PaperExecutionAlgorithm:
                     float(spendable_cash_before),
                 ),
             }
-            for chk in failed_checks:
+            for chk in unexcused_failed_checks:
                 if chk.check_name == "max_single_name_weight" or chk.code in code_to_reason:
                     reason_code, req_val, lim_val = code_to_reason.get(
                         chk.code,
@@ -2146,6 +2198,7 @@ class PaperExecutionAlgorithm:
             "instrument_id": instrument_id,
             "decision_id": decision_id,
             "evaluation": evaluation.to_dict(),
+            "risk_reducing_exit_preserved": bool(evaluation.rejected and not unexcused_failed_checks),
             **policy_provenance,
         }
 
@@ -2347,22 +2400,19 @@ class PaperExecutionAlgorithm:
             )
         )
         pre_existing_u = float(pre_sizing.get("existing_underlying_exposure") or 0.0)
+        holdings_increased_since_pretrade = underlying_same_dir_before > pre_existing_u + 1e-6
         u_target_cap: int | None = None
         already_at_target = False
         if raw_target_notional is not None and float(raw_target_notional) > 0:
             t_val = float(raw_target_notional)
-            if policy.max_single_name_weight is not None:
-                t_val = min(t_val, float(policy.max_single_name_weight) * equity_before)
-            # If holdings on this underlying increased since pre-trade sizing
-            if underlying_same_dir_before > pre_existing_u + 1e-6:
-                if not allow_pyramiding and underlying_same_dir_before >= t_val - 1e-6:
+            if underlying_same_dir_before >= t_val - 1e-6:
+                already_at_target = True
+                u_target_cap = 0
+            else:
+                rem_t = max(0.0, t_val - underlying_same_dir_before)
+                u_target_cap = max(int(rem_t // per_unit), 0)
+                if u_target_cap == 0:
                     already_at_target = True
-                    u_target_cap = 0
-                else:
-                    rem_t = max(0.0, t_val - underlying_same_dir_before)
-                    u_target_cap = max(int(rem_t // per_unit), 0)
-                    if u_target_cap == 0:
-                        already_at_target = True
 
         active_caps = [
             u
@@ -2370,9 +2420,13 @@ class PaperExecutionAlgorithm:
             if u is not None
         ]
         permitted = min(active_caps) if active_caps else 0
+        any_risk_or_cash_zero = any(
+            u is not None and u == 0
+            for u in (u_single, u_cash_after_fees, u_margin, u_lev, u_net, u_gross)
+        )
 
         # Determine binding limit at submission
-        if already_at_target:
+        if already_at_target and not any_risk_or_cash_zero:
             binding_limit = "already_at_target"
         else:
             candidates_binding: list[tuple[int, int, str]] = []
@@ -2406,12 +2460,20 @@ class PaperExecutionAlgorithm:
             if u_lev is not None and permitted == u_lev and (u_lev < req_units or permitted == 0):
                 candidates_binding.append((u_lev, 8, "max_leverage"))
             if u_target_cap is not None and permitted == u_target_cap and u_target_cap < req_units:
-                candidates_binding.append((u_target_cap, 9, "existing_holdings_target_notional"))
+                target_binding_name = (
+                    "existing_holdings_target_notional"
+                    if holdings_increased_since_pretrade
+                    else "target_notional"
+                )
+                candidates_binding.append((u_target_cap, 9, target_binding_name))
             if candidates_binding:
                 candidates_binding.sort(key=lambda item: (item[0], item[1]))
                 binding_limit = candidates_binding[0][2]
             else:
-                binding_limit = str(pre_sizing.get("binding_limit") or "requested_quantity")
+                binding_limit = str(
+                    pre_sizing.get("binding_limit")
+                    or ("target_notional" if (u_target_cap is not None and permitted == u_target_cap) else "requested_quantity")
+                )
 
         order_notional = permitted * per_unit
         fee_inc_cash = (
@@ -2511,6 +2573,9 @@ class PaperExecutionAlgorithm:
         submitted_to_broker: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        if not submitted_to_broker:
+            sig_id = str((metadata or {}).get("signal_id") or "").strip() or None
+            self._release_current_signal_reservation(sig_id)
         diagnostic = {
             "reject_reason": reason,
             "rejection_status": "rejected",
@@ -2528,6 +2593,314 @@ class PaperExecutionAlgorithm:
             submitted_to_broker=submitted_to_broker,
             metadata=diagnostic,
         )
+
+    @staticmethod
+    def _is_uncertain_broker_error(exc: Exception) -> bool:
+        if getattr(exc, "definitive_rejection", False) is True or getattr(exc, "uncertain_outcome", None) is False:
+            return False
+        if getattr(exc, "uncertain_outcome", False) is True:
+            return True
+        if isinstance(exc, (TimeoutError, ConnectionError)):
+            return True
+        if isinstance(exc, urllib.error.URLError) and not isinstance(exc, urllib.error.HTTPError):
+            return True
+        msg_lower = str(exc).lower()
+        return any(
+            tok in msg_lower
+            for tok in (
+                "timeout",
+                "timed out",
+                "connection reset",
+                "connection aborted",
+                "broken pipe",
+                "unexpected eof",
+                "broker http 5",
+                "broker http 408",
+                "broker response missing order",
+                "uncertain",
+                "ambiguous",
+            )
+        )
+
+    def _hold_uncertain_broker_submission(
+        self,
+        clean_sig_id: str,
+        *,
+        symbol: str,
+        native: str,
+        exchange: str,
+        resolved_inst_id: str,
+        resolved_kind: str,
+        side: str,
+        qty: float,
+        action: str,
+        is_market: bool,
+        resolved_multiplier: float,
+        contract_code: str | None,
+        resolved_month: str | None,
+        market_price: float | None,
+        limit_price: float | None,
+        market_price_as_of: str,
+        market_price_source: str,
+        resolved_price_basis: str | None,
+        base_metadata: Mapping[str, Any],
+        gate_result: Mapping[str, Any],
+        partial_clamped: bool,
+        resized_at_submission: bool,
+        resize_reason: str | None,
+        requested_quantity: float,
+        is_close_leg: bool,
+        reason: str,
+        diagnostic: str,
+    ) -> dict[str, Any]:
+        ref_px = float(market_price if market_price is not None else (limit_price or 0.0))
+        if clean_sig_id:
+            if clean_sig_id not in self._order_reservations:
+                self.reserve_order(
+                    clean_sig_id,
+                    symbol=symbol,
+                    side=side,
+                    quantity=qty,
+                    price=ref_px if ref_px > 0 else None,
+                    instrument_id=resolved_inst_id,
+                    kind=resolved_kind,
+                    multiplier=resolved_multiplier,
+                    signal_id=clean_sig_id,
+                    decision_id=str(gate_result.get("decision_id") or ""),
+                    is_risk_reducing=is_close_leg,
+                    metadata=self._current_signal_metadata,
+                )
+            if clean_sig_id in self._order_reservations:
+                self._order_reservations[clean_sig_id]["status"] = "uncertain_broker_outcome"
+                self._order_reservations[clean_sig_id]["reconciliation_required"] = True
+                self._order_reservations[clean_sig_id]["uncertain_reason"] = reason
+            self._uncertain_broker_submissions[clean_sig_id] = {
+                "signal_id": clean_sig_id,
+                "symbol": str(symbol),
+                "native": native,
+                "exchange": exchange,
+                "resolved_inst_id": resolved_inst_id,
+                "resolved_kind": resolved_kind,
+                "side": side,
+                "qty": float(qty),
+                "action": action,
+                "is_market": is_market,
+                "resolved_multiplier": float(resolved_multiplier),
+                "contract_code": contract_code,
+                "resolved_month": resolved_month,
+                "market_price": market_price,
+                "limit_price": limit_price,
+                "market_price_as_of": market_price_as_of,
+                "market_price_source": market_price_source,
+                "resolved_price_basis": resolved_price_basis,
+                "base_metadata": dict(base_metadata),
+                "gate_result": dict(gate_result),
+                "partial_clamped": partial_clamped,
+                "resized_at_submission": resized_at_submission,
+                "resize_reason": resize_reason,
+                "requested_quantity": float(requested_quantity),
+                "reason": reason,
+                "diagnostic": diagnostic,
+            }
+        outcome = {
+            "status": "uncertain_broker_outcome",
+            "reason": reason,
+            "broker_outcome": "uncertain",
+            "reconciliation_required": True,
+            "reservation_released": False,
+            "submitted_to_broker": True,
+            "diagnostic": diagnostic,
+        }
+        self._last_submission_outcome = dict(outcome)
+        return outcome
+
+    def reconcile_uncertain_broker_order(
+        self,
+        signal_id: str,
+        *,
+        outcome: str,
+        fill_price: float | None = None,
+        fill_qty: float | None = None,
+        order_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Reconcile an uncertain broker outcome ('rejected'/'cancelled'/'not_found' or 'filled')."""
+        clean_sig = str(signal_id or "").strip()
+        if not clean_sig or clean_sig not in self._uncertain_broker_submissions:
+            raise KeyError(f"no uncertain broker submission pending reconciliation for {clean_sig!r}")
+        clean_outcome = str(outcome or "").strip().lower()
+        pending = self._uncertain_broker_submissions[clean_sig]
+        if clean_outcome in {"rejected", "cancelled", "canceled", "not_found", "no_fill", "expired"}:
+            self._uncertain_broker_submissions.pop(clean_sig, None)
+            released = self._release_current_signal_reservation(clean_sig)
+            rec = {
+                "status": "reconciled_rejected",
+                "signal_id": clean_sig,
+                "broker_outcome": clean_outcome,
+                "reservation_released": released is not None,
+                "reconciliation_required": False,
+                "submitted_to_broker": True,
+            }
+            self._last_submission_outcome = dict(rec)
+            return rec
+        if clean_outcome != "filled":
+            raise ValueError(f"unsupported reconciliation outcome {outcome!r}")
+
+        raw_px = fill_price if fill_price is not None else (pending.get("market_price") or pending.get("limit_price"))
+        raw_qty = fill_qty if fill_qty is not None else pending.get("qty")
+        resolved_fill_price = _finite_float(raw_px, field="Taiwan reconciled broker fill_price", positive=True)
+        resolved_fill_qty = _finite_float(raw_qty, field="Taiwan reconciled broker fill_qty", positive=True)
+        symbol = str(pending["symbol"])
+        native = str(pending["native"])
+        exchange = str(pending["exchange"])
+        resolved_inst_id = str(pending["resolved_inst_id"])
+        resolved_kind = str(pending["resolved_kind"])
+        side = str(pending["side"])
+        action = str(pending["action"])
+        is_market = bool(pending["is_market"])
+        resolved_multiplier = float(pending["resolved_multiplier"])
+        contract_code = pending.get("contract_code")
+        resolved_month = pending.get("resolved_month")
+        market_price_as_of = str(pending.get("market_price_as_of") or _iso_now())
+        market_price_source = str(pending.get("market_price_source") or "paper_reconciled_fill")
+        base_metadata = dict(pending["base_metadata"])
+        gate_result = dict(pending["gate_result"])
+        partial_clamped = bool(pending["partial_clamped"])
+        resized_at_submission = bool(pending["resized_at_submission"])
+        resize_reason = pending.get("resize_reason")
+        requested_quantity = float(pending["requested_quantity"])
+        resolved_order_id = str(order_id or f"reconciled-{clean_sig}")
+
+        if resolved_kind == "cash_share":
+            current_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
+            if side == "sell" and resolved_fill_qty > current_quantity:
+                resolved_fill_qty = float(current_quantity)
+                partial_clamped = True
+            signed_fill_qty = resolved_fill_qty if side == "buy" else -resolved_fill_qty
+            current_cash = _finite_float(self._cash, field="Taiwan current cash")
+            next_quantity = current_quantity + signed_fill_qty
+            if side == "sell" and (next_quantity < 0 or abs(next_quantity) <= 1e-12):
+                next_quantity = 0.0
+            fill_commission, fill_tax = cash_share_costs(symbol, side, resolved_fill_qty, resolved_fill_price)
+            next_cash = current_cash - (signed_fill_qty * resolved_fill_price) - fill_commission - fill_tax
+            if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
+                raise ValueError("Taiwan reconciled broker fill produces non-finite ledger values")
+            self._commit_fill(
+                symbol,
+                next_quantity=next_quantity,
+                next_cash=next_cash,
+                cost_delta=fill_commission + fill_tax,
+                execution_price=resolved_fill_price,
+                price_as_of=market_price_as_of if is_market else _iso_now(),
+                price_source=market_price_source if is_market else "paper_limit_fill",
+            )
+            fill_metadata: dict[str, Any] = {
+                **base_metadata,
+                "broker_order_id": resolved_order_id,
+                "shioaji_trade_id": resolved_order_id,
+                "instrument_id": resolved_inst_id,
+                "kind": "cash_share",
+                "multiplier": 1.0,
+                "fee": fill_commission,
+                "tax": fill_tax,
+                "fill_quantity": float(resolved_fill_qty),
+                "fill_price": float(resolved_fill_price),
+                "position_quantity_before": float(current_quantity),
+                "position_quantity_after": float(next_quantity),
+                "cash_before": float(current_cash),
+                "cash_after": float(next_cash),
+                "risk_status": gate_result.get("risk_status"),
+                "risk_gate_status": gate_result.get("risk_status"),
+                "risk_decision_id": gate_result.get("decision_id"),
+                "decision_id": gate_result.get("decision_id"),
+                "reconciled_from_uncertain_broker_outcome": True,
+            }
+            if partial_clamped:
+                fill_metadata["paper_order_partial_clamped"] = True
+                fill_metadata["requested_quantity"] = float(requested_quantity)
+                fill_metadata["clamped_quantity"] = float(resolved_fill_qty)
+        else:
+            signed_fill_qty = resolved_fill_qty if side == "buy" else -resolved_fill_qty
+            fut_fill_info = self._commit_futures_fill(
+                symbol=symbol,
+                underlying=native,
+                instrument_id=resolved_inst_id,
+                contract=contract_code,
+                contract_month=resolved_month,
+                multiplier=resolved_multiplier,
+                signed_fill_qty=signed_fill_qty,
+                fill_price=resolved_fill_price,
+                price_as_of=market_price_as_of,
+                price_source=market_price_source or "futures_daily_settlement_prev_session",
+            )
+            fill_metadata = {
+                **base_metadata,
+                "broker_order_id": resolved_order_id,
+                "shioaji_trade_id": resolved_order_id,
+                "instrument_id": resolved_inst_id,
+                "kind": "stock_future",
+                "multiplier": resolved_multiplier,
+                "contract_month": resolved_month,
+                "fee": fut_fill_info["fee"],
+                "tax": fut_fill_info["tax"],
+                "fill_quantity": float(resolved_fill_qty),
+                "fill_price": float(resolved_fill_price),
+                "position_quantity_before": float(fut_fill_info["position_quantity_before"]),
+                "position_quantity_after": float(fut_fill_info["position_quantity"]),
+                "initial_margin_reserved": fut_fill_info["initial_margin_reserved"],
+                "price_basis": "futures_daily_settlement_prev_session",
+                "position_quantity": fut_fill_info["position_quantity"],
+                "realized_pnl_delta": fut_fill_info["realized_delta"],
+                "risk_status": gate_result.get("risk_status"),
+                "risk_gate_status": gate_result.get("risk_status"),
+                "risk_decision_id": gate_result.get("decision_id"),
+                "decision_id": gate_result.get("decision_id"),
+                "reconciled_from_uncertain_broker_outcome": True,
+            }
+        if resized_at_submission:
+            fill_metadata["resized_at_submission"] = True
+            fill_metadata["original_quantity"] = float(requested_quantity)
+            fill_metadata["resized_quantity"] = float(resolved_fill_qty)
+            fill_metadata["resize_reason"] = resize_reason
+            fill_metadata["binding_limit"] = resize_reason
+        fill_metadata["risk_policy_id"] = gate_result.get("risk_policy_id")
+        fill_metadata["risk_policy_version"] = gate_result.get("risk_policy_version")
+        fill_metadata["risk_policy_digest"] = gate_result.get("risk_policy_digest")
+        compact_fill_ev = self._compact_submission_sizing_evidence(gate_result.get("sizing_evidence"))
+        if compact_fill_ev is not None:
+            fill_metadata["submission_sizing_evidence"] = compact_fill_ev
+        self._uncertain_broker_submissions.pop(clean_sig, None)
+        self._release_current_signal_reservation(clean_sig)
+        completed = self._record_completed_submission(
+            clean_sig,
+            {
+                "status": "filled",
+                "reconciled": True,
+                "order_id": resolved_order_id,
+                "symbol": symbol,
+                "instrument_id": resolved_inst_id,
+                "side": side,
+                "requested_quantity": float(requested_quantity),
+                "fill_quantity": float(resolved_fill_qty),
+                "fill_price": float(resolved_fill_price),
+                "resized_at_submission": resized_at_submission,
+                "resize_reason": resize_reason,
+                "submitted_to_broker": True,
+                "reservation_released": True,
+                "reconciliation_required": False,
+                "risk_policy_id": gate_result.get("risk_policy_id"),
+                "risk_policy_version": gate_result.get("risk_policy_version"),
+            },
+        )
+        self._publish(
+            "paper_fill_simulated",
+            symbol,
+            signed_fill_qty,
+            action,
+            broker_submission_status="filled",
+            submitted_to_broker=True,
+            metadata=fill_metadata,
+        )
+        return completed
 
     def SubmitTaiwanBrokerOrder(  # noqa: N802
         self,
@@ -2641,7 +3014,7 @@ class PaperExecutionAlgorithm:
         clean_sig_id = str(signal_id or "").strip()
         if clean_sig_id and clean_sig_id in self._completed_signal_submissions:
             prev_outcome = dict(self._completed_signal_submissions[clean_sig_id])
-            self.release_order_reservation(clean_sig_id)
+            self._release_current_signal_reservation(clean_sig_id)
             dup_meta = {
                 **base_metadata,
                 "duplicate_retry": True,
@@ -2668,14 +3041,62 @@ class PaperExecutionAlgorithm:
             log.info("[%s] TW duplicate signal retry skipped for %s (%s)", signal_id, symbol, resolved_inst_id)
             return
 
+        if clean_sig_id and clean_sig_id in self._uncertain_broker_submissions:
+            unc_pending = self._uncertain_broker_submissions[clean_sig_id]
+            unc_meta = {
+                **base_metadata,
+                "reason": "uncertain_broker_outcome_pending_reconciliation",
+                "reject_reason": "uncertain_broker_outcome_pending_reconciliation",
+                "rejection_status": "rejected",
+                "order_status": "rejected",
+                "broker_outcome": "uncertain",
+                "reconciliation_required": True,
+                "reservation_released": False,
+                "duplicate_retry": True,
+                "rejected_order_count": 1,
+                "original_uncertain_reason": unc_pending.get("reason"),
+            }
+            self._last_submission_outcome = {
+                "status": "uncertain_broker_outcome",
+                "reason": "uncertain_broker_outcome_pending_reconciliation",
+                "broker_outcome": "uncertain",
+                "reconciliation_required": True,
+                "reservation_released": False,
+                "duplicate_retry": True,
+                "submitted_to_broker": False,
+            }
+            self._publish(
+                "order_rejection",
+                str(symbol),
+                0.0,
+                action,
+                broker_submission_status="uncertain_broker_outcome_pending_reconciliation",
+                submitted_to_broker=False,
+                metadata=unc_meta,
+            )
+            log.warning(
+                "[%s] TW retry blocked pending reconciliation of uncertain broker outcome for %s",
+                signal_id,
+                symbol,
+            )
+            return
+
         allowed_qtypes = ("SHARES", "CONTRACTS") if resolved_kind == "stock_future" else ("SHARES",)
         if quantity_type not in allowed_qtypes:
+            self._release_current_signal_reservation(clean_sig_id)
+            self._last_submission_outcome = {
+                "status": "rejected",
+                "reason": "tw_unsupported_quantity_type",
+                "submitted_to_broker": False,
+                "reservation_released": True,
+            }
             self._publish(
                 "order_rejection", str(symbol), 0.0, action,
                 broker_submission_status="tw_unsupported_quantity_type",
                 submitted_to_broker=False,
                 metadata={**base_metadata, "rejected_order_count": 1,
-                          "quantity_type": quantity_type},
+                          "quantity_type": quantity_type,
+                          "reservation_released": True},
             )
             log.warning("[%s] TW order rejected: unsupported quantity_type=%s", signal_id, quantity_type)
             return
@@ -2699,12 +3120,19 @@ class PaperExecutionAlgorithm:
                     positive=True,
                 )
             except ValueError as exc:
+                self._release_current_signal_reservation(clean_sig_id)
+                self._last_submission_outcome = {
+                    "status": "rejected",
+                    "reason": "invalid_taiwan_order_input",
+                    "submitted_to_broker": False,
+                    "reservation_released": True,
+                }
                 self._reject_invalid_paper_fill(
                     str(symbol),
                     action,
                     reason="invalid_taiwan_order_input",
                     broker_submission_status="tw_invalid_order_input",
-                    metadata={**base_metadata, "diagnostic": str(exc)},
+                    metadata={**base_metadata, "diagnostic": str(exc), "reservation_released": True},
                 )
                 return
             cand_settlement_price = (
@@ -2783,12 +3211,19 @@ class PaperExecutionAlgorithm:
                     )
                 holding_quantity = self._taiwan_underlying_holding_quantity(native, exchange)
             except ValueError as exc:
+                self._release_current_signal_reservation(clean_sig_id)
+                self._last_submission_outcome = {
+                    "status": "rejected",
+                    "reason": "invalid_taiwan_order_input",
+                    "submitted_to_broker": False,
+                    "reservation_released": True,
+                }
                 self._reject_invalid_paper_fill(
                     str(symbol),
                     action,
                     reason="invalid_taiwan_order_input",
                     broker_submission_status="tw_invalid_order_input",
-                    metadata={**base_metadata, "diagnostic": str(exc)},
+                    metadata={**base_metadata, "diagnostic": str(exc), "reservation_released": True},
                 )
                 log.warning("[%s] TW order rejected before broker: %s", signal_id, exc)
                 return
@@ -2814,7 +3249,7 @@ class PaperExecutionAlgorithm:
         if resolved_kind == "cash_share" and side == "sell":
             effective_holding_quantity = float(holding_quantity) - reserved_close_qty
             if effective_holding_quantity <= 0:
-                self.release_order_reservation(clean_sig_id)
+                self._release_current_signal_reservation(clean_sig_id)
                 if is_close_leg:
                     noop_meta = {
                         **base_metadata,
@@ -2826,6 +3261,7 @@ class PaperExecutionAlgorithm:
                         "holding_quantity": float(holding_quantity),
                         "reserved_close_quantity": float(reserved_close_qty),
                         "permitted_units": 0,
+                        "reservation_released": True,
                     }
                     self._record_completed_submission(
                         clean_sig_id,
@@ -2836,6 +3272,7 @@ class PaperExecutionAlgorithm:
                             "requested_quantity": requested_quantity,
                             "permitted_units": 0,
                             "submitted_to_broker": False,
+                            "reservation_released": True,
                         },
                     )
                     self._publish(
@@ -2848,6 +3285,15 @@ class PaperExecutionAlgorithm:
                         metadata=noop_meta,
                     )
                     return
+                self._last_submission_outcome = {
+                    "status": "rejected",
+                    "reason": "sell_without_holdings",
+                    "binding_limit": "sell_without_holdings",
+                    "requested_quantity": requested_quantity,
+                    "permitted_units": 0,
+                    "submitted_to_broker": False,
+                    "reservation_released": True,
+                }
                 self._publish(
                     "order_rejection",
                     str(symbol),
@@ -2867,6 +3313,7 @@ class PaperExecutionAlgorithm:
                         "requested_quantity": requested_quantity,
                         "holding_quantity": float(effective_holding_quantity),
                         "reserved_close_quantity": float(reserved_close_qty),
+                        "reservation_released": True,
                     },
                 )
                 log.warning(
@@ -2892,7 +3339,7 @@ class PaperExecutionAlgorithm:
                 else 0.0
             )
             if removable_fut <= 0:
-                self.release_order_reservation(clean_sig_id)
+                self._release_current_signal_reservation(clean_sig_id)
                 noop_meta = {
                     **base_metadata,
                     "no_trade_at_submission": True,
@@ -2903,6 +3350,7 @@ class PaperExecutionAlgorithm:
                     "holding_quantity": float(fut_q_before),
                     "reserved_close_quantity": float(reserved_close_qty),
                     "permitted_units": 0,
+                    "reservation_released": True,
                 }
                 self._record_completed_submission(
                     clean_sig_id,
@@ -2913,6 +3361,7 @@ class PaperExecutionAlgorithm:
                         "requested_quantity": requested_quantity,
                         "permitted_units": 0,
                         "submitted_to_broker": False,
+                        "reservation_released": True,
                     },
                 )
                 self._publish(
@@ -3002,10 +3451,11 @@ class PaperExecutionAlgorithm:
                     }
                     gate_result["sizing_evidence"] = sizing_ev
             elif (
-                sizing_ev.get("binding_limit") in {"already_at_target", "position_already_closed"}
+                sizing_ev.get("binding_limit")
+                in {"already_at_target", "position_already_closed", "target_notional", "existing_holdings_target_notional"}
                 or self._current_signal_metadata.get("no_trade_on_zero_permitted") is True
             ):
-                self.release_order_reservation(clean_sig_id)
+                self._release_current_signal_reservation(clean_sig_id)
                 nt_reason = str(sizing_ev.get("binding_limit") or gate_result.get("reason") or "no_feasible_instrument")
                 compact_noop_ev = self._compact_submission_sizing_evidence(sizing_ev)
                 noop_meta = {
@@ -3016,6 +3466,7 @@ class PaperExecutionAlgorithm:
                     "binding_limit": nt_reason,
                     "requested_quantity": requested_quantity,
                     "permitted_units": 0,
+                    "reservation_released": True,
                     "risk_policy_id": gate_result.get("risk_policy_id"),
                     "risk_policy_version": gate_result.get("risk_policy_version"),
                     "risk_policy_digest": gate_result.get("risk_policy_digest"),
@@ -3031,6 +3482,7 @@ class PaperExecutionAlgorithm:
                         "requested_quantity": requested_quantity,
                         "permitted_units": 0,
                         "submitted_to_broker": False,
+                        "reservation_released": True,
                     },
                 )
                 self._publish(
@@ -3043,10 +3495,17 @@ class PaperExecutionAlgorithm:
                     metadata=noop_meta,
                 )
                 return
+            elif int(permitted_units) <= 0 and gate_result.get("accepted"):
+                gate_result = {
+                    **gate_result,
+                    "accepted": False,
+                    "risk_status": "rejected",
+                    "reason": str(sizing_ev.get("binding_limit") or "no_feasible_instrument"),
+                }
 
         self._last_risk_gate_result = gate_result
         if not gate_result["accepted"]:
-            self.release_order_reservation(clean_sig_id)
+            self._release_current_signal_reservation(clean_sig_id)
             reason = str(gate_result["reason"])
             compact_rej_ev = self._compact_submission_sizing_evidence(sizing_ev)
             rej_meta = {
@@ -3068,6 +3527,7 @@ class PaperExecutionAlgorithm:
                 "requested_quantity": requested_quantity,
                 "permitted_units": int(sizing_ev.get("permitted_units", 0)) if sizing_ev else 0,
                 "binding_limit": str(sizing_ev.get("binding_limit") or reason),
+                "reservation_released": True,
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
                 "risk_policy_digest": gate_result.get("risk_policy_digest"),
@@ -3080,6 +3540,7 @@ class PaperExecutionAlgorithm:
                 "requested_quantity": requested_quantity,
                 "permitted_units": rej_meta["permitted_units"],
                 "submitted_to_broker": False,
+                "reservation_released": True,
                 "submission_sizing_evidence": compact_rej_ev,
             }
             self._publish(
@@ -3134,12 +3595,60 @@ class PaperExecutionAlgorithm:
         try:
             order = self._post_broker_paper_order(broker_url, payload)
         except Exception as exc:
+            is_uncertain = self._is_uncertain_broker_error(exc)
+            if is_uncertain:
+                self._hold_uncertain_broker_submission(
+                    clean_sig_id,
+                    symbol=str(symbol),
+                    native=native,
+                    exchange=exchange,
+                    resolved_inst_id=resolved_inst_id,
+                    resolved_kind=resolved_kind,
+                    side=side,
+                    qty=qty,
+                    action=action,
+                    is_market=is_market,
+                    resolved_multiplier=resolved_multiplier,
+                    contract_code=contract_code,
+                    resolved_month=resolved_month,
+                    market_price=market_price,
+                    limit_price=limit_price,
+                    market_price_as_of=market_price_as_of,
+                    market_price_source=market_price_source,
+                    resolved_price_basis=resolved_price_basis,
+                    base_metadata=base_metadata,
+                    gate_result=gate_result,
+                    partial_clamped=partial_clamped,
+                    resized_at_submission=resized_at_submission,
+                    resize_reason=resize_reason,
+                    requested_quantity=requested_quantity,
+                    is_close_leg=is_close_leg,
+                    reason="taiwan_broker_error",
+                    diagnostic=str(exc),
+                )
+            else:
+                self._release_current_signal_reservation(clean_sig_id)
+                self._last_submission_outcome = {
+                    "status": "rejected",
+                    "reason": "taiwan_broker_error",
+                    "broker_outcome": "definitive_rejection",
+                    "reconciliation_required": False,
+                    "reservation_released": True,
+                    "submitted_to_broker": True,
+                    "execution_error_message": str(exc),
+                }
             self._publish(
                 "order_rejection", str(symbol), 0.0, action,
                 broker_submission_status="taiwan_broker_error",
                 submitted_to_broker=True,
-                metadata={**base_metadata, "rejected_order_count": 1,
-                          "execution_error_message": str(exc)},
+                metadata={
+                    **base_metadata,
+                    "rejected_order_count": 1,
+                    "execution_error_message": str(exc),
+                    "broker_outcome": "uncertain" if is_uncertain else "definitive_rejection",
+                    "reconciliation_required": is_uncertain,
+                    "reservation_released": not is_uncertain,
+                },
             )
             log.error("[%s] TW broker order failed for %s: %s", signal_id, symbol, exc)
             return
@@ -3172,6 +3681,48 @@ class PaperExecutionAlgorithm:
             else:
                 signed_fill_qty = fill_qty if side == "buy" else -fill_qty
         except ValueError as exc:
+            order_status_raw = str(order.get("status") or order.get("order_status") or "").strip().lower()
+            is_definitive_reject = order_status_raw in {"rejected", "cancelled", "canceled", "expired"}
+            if is_definitive_reject:
+                self._release_current_signal_reservation(clean_sig_id)
+                self._last_submission_outcome = {
+                    "status": "rejected",
+                    "reason": "invalid_taiwan_broker_fill",
+                    "broker_outcome": "definitive_rejection",
+                    "reconciliation_required": False,
+                    "reservation_released": True,
+                    "submitted_to_broker": True,
+                }
+            else:
+                self._hold_uncertain_broker_submission(
+                    clean_sig_id,
+                    symbol=str(symbol),
+                    native=native,
+                    exchange=exchange,
+                    resolved_inst_id=resolved_inst_id,
+                    resolved_kind=resolved_kind,
+                    side=side,
+                    qty=qty,
+                    action=action,
+                    is_market=is_market,
+                    resolved_multiplier=resolved_multiplier,
+                    contract_code=contract_code,
+                    resolved_month=resolved_month,
+                    market_price=market_price,
+                    limit_price=limit_price,
+                    market_price_as_of=market_price_as_of,
+                    market_price_source=market_price_source,
+                    resolved_price_basis=resolved_price_basis,
+                    base_metadata=base_metadata,
+                    gate_result=gate_result,
+                    partial_clamped=partial_clamped,
+                    resized_at_submission=resized_at_submission,
+                    resize_reason=resize_reason,
+                    requested_quantity=requested_quantity,
+                    is_close_leg=is_close_leg,
+                    reason="invalid_taiwan_broker_fill",
+                    diagnostic=str(exc),
+                )
             self._reject_invalid_paper_fill(
                 str(symbol),
                 action,
@@ -3183,6 +3734,9 @@ class PaperExecutionAlgorithm:
                     "diagnostic": str(exc),
                     "broker_fill_qty": repr(order.get("fill_qty")),
                     "broker_fill_price": repr(order.get("fill_price")),
+                    "broker_outcome": "definitive_rejection" if is_definitive_reject else "uncertain",
+                    "reconciliation_required": not is_definitive_reject,
+                    "reservation_released": is_definitive_reject,
                 },
             )
             log.error("[%s] TW broker returned invalid fill for %s: %s", signal_id, symbol, exc)
@@ -3275,7 +3829,7 @@ class PaperExecutionAlgorithm:
         compact_fill_ev = self._compact_submission_sizing_evidence(gate_result.get("sizing_evidence"))
         if compact_fill_ev is not None:
             fill_metadata["submission_sizing_evidence"] = compact_fill_ev
-        self.release_order_reservation(clean_sig_id)
+        self._release_current_signal_reservation(clean_sig_id)
         self._record_completed_submission(
             clean_sig_id,
             {
@@ -3290,6 +3844,7 @@ class PaperExecutionAlgorithm:
                 "resized_at_submission": resized_at_submission,
                 "resize_reason": resize_reason,
                 "submitted_to_broker": True,
+                "reservation_released": True,
                 "risk_policy_id": gate_result.get("risk_policy_id"),
                 "risk_policy_version": gate_result.get("risk_policy_version"),
             },

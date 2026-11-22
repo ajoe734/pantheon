@@ -7325,3 +7325,460 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         self.assertTrue(events[-1].metadata["no_trade_at_submission"])
         self.assertEqual(events[-1].metadata["reason_code"], "position_already_closed")
 
+    def test_target_notional_rechecks_remaining_target_at_submission_price_for_zero_and_unchanged_holdings(self):
+        # 1. Exact review reproduction: zero holdings, target_position_v1 target=10000 consistently in
+        # metadata/pre_trade_sizing/expression_decision, pretrade price=221 and units=45, submission price=300
+        # must resize from 45 down to 33 shares (notional=9900 <= 10000; required cash=9920; binding=target_notional).
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(
+            algo,
+            price=300.0,
+            policy_kind="target_position_v1",
+            target_notional=10000.0,
+            expression_decision={
+                "decision_id": "dec-target-10k-zero-holdings",
+                "policy_kind": "target_position_v1",
+                "instrument_id": "eq:2317",
+                "side": "buy",
+                "units": 45,
+                "reason_code": "long_cash",
+                "target_notional": 10000.0,
+            },
+            pre_trade_sizing={
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
+                "policy_kind": "target_position_v1",
+                "dated_price": 221.0,
+                "capital": 100000.0,
+                "target_notional": 10000.0,
+                "existing_underlying_exposure": 0.0,
+                "permitted_units": 45,
+                "binding_limit": "target_notional",
+                "fee_inclusive_required_cash": 9965.0,
+                "remaining_cash": 90035.0,
+                "after_trade_concentration": 0.09947,
+            },
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-target-10k-price-300",
+            side="buy",
+            quantity=45,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["original_quantity"], 45.0)
+        self.assertEqual(events[-1].metadata["fill_quantity"], 33.0)
+        self.assertEqual(events[-1].metadata["binding_limit"], "target_notional")
+        ev_zero = events[-1].metadata["submission_sizing_evidence"]
+        self.assertEqual(ev_zero["requested_units"], 45)
+        self.assertEqual(ev_zero["permitted_units"], 33)
+        self.assertEqual(ev_zero["binding_limit"], "target_notional")
+        self.assertAlmostEqual(ev_zero["fee_inclusive_required_cash"], 9914.1075, places=5)
+
+        # 2. Unchanged non-zero share holdings (20 shares held at pretrade price=221 -> 4420 existing exposure;
+        # pretrade delta=5580 -> 25 shares). At submission price=300, the unchanged 20 shares are worth 6000,
+        # leaving 4000 remaining target -> resizes 25 down to 13 shares (total 33 shares * 300 = 9900 <= 10000).
+        events_unchanged = []
+        algo_unchanged, _ = self._make_2317_algo(events_unchanged)
+        self._set_2317_signal_context(algo_unchanged, price=221.0, target_notional=10000.0)
+        algo_unchanged.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-seed-20-shares",
+            side="buy",
+            quantity=20,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(algo_unchanged._holding("2317.TW").Quantity, 20.0)
+
+        self._set_2317_signal_context(
+            algo_unchanged,
+            price=300.0,
+            policy_kind="target_position_v1",
+            target_notional=10000.0,
+            expression_decision={
+                "decision_id": "dec-target-10k-unchanged-20",
+                "policy_kind": "target_position_v1",
+                "instrument_id": "eq:2317",
+                "side": "buy",
+                "units": 25,
+                "reason_code": "long_cash",
+                "target_notional": 10000.0,
+            },
+            pre_trade_sizing={
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
+                "policy_kind": "target_position_v1",
+                "dated_price": 221.0,
+                "capital": 100000.0,
+                "target_notional": 10000.0,
+                "existing_underlying_exposure": 6000.0,
+                "permitted_units": 25,
+                "binding_limit": "target_notional",
+                "fee_inclusive_required_cash": 5545.0,
+                "remaining_cash": 90015.0,
+                "after_trade_concentration": 0.09945,
+            },
+        )
+        algo_unchanged.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-target-10k-unchanged-holdings-price-300",
+            side="buy",
+            quantity=25,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_unchanged[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_unchanged[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_unchanged[-1].metadata["fill_quantity"], 13.0)
+        self.assertEqual(algo_unchanged._holding("2317.TW").Quantity, 33.0)
+
+    def test_partial_risk_reducing_exits_succeed_when_existing_exposure_exceeds_tightened_limits(self):
+        # Exact review reproduction: buy 200 shares at 221 (~44,200 TWD, concentration ~0.4423),
+        # tighten approved synthetic policy v1.1 max_single_name_weight=0.25, then close_leg sell 20:
+        # partial reducing exit must succeed and reduce holdings from 200 to 180.
+        events = []
+        algo, pool_rec = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-buy-200-before-tighten",
+            side="buy",
+            quantity=200,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(algo._holding("2317.TW").Quantity, 200.0)
+
+        tightened_cases = (
+            ("single_name", {"version": "1.1", "max_single_name_weight": 0.25}, 180.0, "single_name_limit"),
+            ("gross", {"version": "1.2", "gross_limit": 0.25}, 160.0, "gross_limit"),
+            ("net", {"version": "1.3", "net_limit": 0.25}, 140.0, "net_limit"),
+            ("leverage", {"version": "1.4", "max_leverage": 0.25}, 120.0, "leverage_limit"),
+        )
+        for label, pol_overrides, expected_qty_after, expected_buy_reject_reason in tightened_cases:
+            with self.subTest(limit=label):
+                pool_rec["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(**pol_overrides)
+                # Exposure-increasing buy while over the tightened limit must be rejected (with zero permitted)
+                self._set_2317_signal_context(algo, price=221.0, recheck_sizing_at_submission=False)
+                algo.SubmitTaiwanBrokerOrder(
+                    "2317.TW",
+                    signal_id=f"sig-inc-blocked-{label}",
+                    side="buy",
+                    quantity=10,
+                    quantity_type="SHARES",
+                    action="BUY",
+                )
+                self.assertEqual(events[-1].event_type, "order_rejection")
+                self.assertEqual(events[-1].metadata["reason"], expected_buy_reject_reason)
+
+                # Reversal attempt (selling 350 against <=200 held -> flips sign to <=-150 shares, >0.25 limit)
+                # must NOT be treated as a reducing exit even when |q_after| < |q_before|
+                rev_gate = algo.EvaluateOrderRiskGate(
+                    symbol="2317.TW",
+                    side="sell",
+                    quantity=350,
+                    price=221.0,
+                    instrument_id="eq:2317",
+                    kind="cash_share",
+                )
+                self.assertFalse(rev_gate["accepted"])
+                self.assertEqual(rev_gate["reason"], expected_buy_reject_reason)
+
+                # Partial risk-reducing close_leg sell 20 must succeed and reduce holdings by 20
+                self._set_2317_signal_context(
+                    algo,
+                    price=221.0,
+                    reason_code="close_leg",
+                    expression_decision={
+                        "decision_id": f"dec-partial-close-{label}",
+                        "instrument_id": "eq:2317",
+                        "side": "sell",
+                        "units": 20,
+                        "reason_code": "close_leg",
+                    },
+                )
+                algo.SubmitTaiwanBrokerOrder(
+                    "2317.TW",
+                    signal_id=f"sig-partial-close-20-{label}",
+                    side="sell",
+                    quantity=20,
+                    quantity_type="SHARES",
+                    action="SELL",
+                )
+                self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+                self.assertEqual(events[-1].metadata["fill_quantity"], 20.0)
+                self.assertEqual(algo._holding("2317.TW").Quantity, expected_qty_after)
+                self.assertTrue(algo._last_risk_gate_result.get("risk_reducing_exit_preserved"))
+
+        # Unrelated safety checks (e.g. asset_class_not_allowed) must NEVER be bypassed on a close_leg exit
+        pool_rec["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
+            version="1.5",
+            max_single_name_weight=0.25,
+            allowed_asset_classes=["future"],
+        )
+        self._set_2317_signal_context(
+            algo,
+            price=221.0,
+            reason_code="close_leg",
+            expression_decision={
+                "decision_id": "dec-close-blocked-by-asset-class",
+                "instrument_id": "eq:2317",
+                "side": "sell",
+                "units": 20,
+                "reason_code": "close_leg",
+            },
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-close-blocked-by-asset-class",
+            side="sell",
+            quantity=20,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "asset_class_not_allowed")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 120.0)
+
+    def test_reservation_cleanup_on_all_definitive_rejections_and_reconciliation_for_uncertain_broker_outcomes(self):
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+
+        # 1. Exact review reproduction: reserve_order(signal_id, 10 shares at 221) -> 2213.14925 reserved cash,
+        # then submit same signal with quantity_type="INVALID" -> pre-broker order_rejection must release reservation.
+        res_qtype = algo.reserve_order(
+            "sig-prebroker-bad-qtype",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertAlmostEqual(res_qtype["cash_reserved"], 2213.14925, places=5)
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qtype",
+            side="buy",
+            quantity=10,
+            quantity_type="INVALID",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(events[-1].broker_submission_status, "tw_unsupported_quantity_type")
+        self.assertTrue(events[-1].metadata["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify invalid order input (negative quantity) releases reservation
+        algo.reserve_order(
+            "sig-prebroker-bad-qty",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qty",
+            side="buy",
+            quantity=-5,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(events[-1].broker_submission_status, "tw_invalid_order_input")
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify sell_without_holdings releases reservation
+        algo.reserve_order(
+            "sig-prebroker-no-holdings",
+            symbol="2317.TW",
+            side="sell",
+            quantity=10,
+            price=221.0,
+            is_risk_reducing=True,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-no-holdings",
+            side="sell",
+            quantity=10,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].broker_submission_status, "sell_without_holdings")
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify definitive broker rejection (HTTP 403) releases reservation
+        algo.reserve_order(
+            "sig-broker-definitive-403",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: (_ for _ in ()).throw(RuntimeError("broker HTTP 403: forbidden"))),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-definitive-403",
+                side="buy",
+                quantity=10,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["broker_outcome"], "definitive_rejection")
+        self.assertTrue(events[-1].metadata["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # After pre-broker rejection, a corrected retry of sig-prebroker-bad-qtype can reserve and fill cleanly
+        algo.reserve_order(
+            "sig-prebroker-bad-qtype",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qtype",
+            side="buy",
+            quantity=10,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 10.0)
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # 2. Uncertain broker outcome (timeout): reservation stays held and duplicate retry is blocked until reconciled
+        algo.reserve_order(
+            "sig-broker-uncertain-timeout",
+            symbol="2317.TW",
+            side="buy",
+            quantity=20,
+            price=221.0,
+        )
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: (_ for _ in ()).throw(TimeoutError("broker HTTP 504 gateway timeout"))),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-timeout",
+                side="buy",
+                quantity=20,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["broker_outcome"], "uncertain")
+        self.assertTrue(events[-1].metadata["reconciliation_required"])
+        self.assertFalse(events[-1].metadata["reservation_released"])
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        # Blind retry while uncertain outcome is pending reconciliation must not call broker again
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-timeout",
+                side="buy",
+                quantity=20,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(
+            events[-1].broker_submission_status,
+            "uncertain_broker_outcome_pending_reconciliation",
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        # Reconcile uncertain timeout as rejected -> reservation is released and retry can now succeed
+        rec_rej = algo.reconcile_uncertain_broker_order(
+            "sig-broker-uncertain-timeout",
+            outcome="rejected",
+        )
+        self.assertEqual(rec_rej["status"], "reconciled_rejected")
+        self.assertTrue(rec_rej["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-broker-uncertain-timeout",
+            side="buy",
+            quantity=20,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 30.0)
+
+        # 3. Uncertain broker outcome (malformed fill) reconciled as filled -> books fill, releases reservation,
+        # and makes subsequent retry idempotent.
+        algo.reserve_order(
+            "sig-broker-uncertain-fill",
+            symbol="2317.TW",
+            side="buy",
+            quantity=15,
+            price=221.0,
+        )
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: {"order_id": "ord-unc-15", "fill_price": 0.0, "fill_qty": 15}),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-fill",
+                side="buy",
+                quantity=15,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].broker_submission_status, "tw_invalid_broker_fill")
+        self.assertTrue(events[-1].metadata["reconciliation_required"])
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        rec_fill = algo.reconcile_uncertain_broker_order(
+            "sig-broker-uncertain-fill",
+            outcome="filled",
+            fill_price=221.0,
+            fill_qty=15.0,
+            order_id="ord-unc-15",
+        )
+        self.assertEqual(rec_fill["status"], "filled")
+        self.assertTrue(rec_fill["reconciled"])
+        self.assertEqual(algo.active_order_reservations(), [])
+        self.assertEqual(algo._holding("2317.TW").Quantity, 45.0)
+
+        # Subsequent retry after reconciled fill is idempotently skipped
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-broker-uncertain-fill",
+            side="buy",
+            quantity=15,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 45.0)
+
+

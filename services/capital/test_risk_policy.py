@@ -1642,7 +1642,7 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
         },
     }
     algo_weight_ctrl = _seeded_algo(tight_single_name_pool)
-    partial_weight_rejected = algo_weight_ctrl.EvaluateOrderRiskGate(
+    partial_weight_preserved = algo_weight_ctrl.EvaluateOrderRiskGate(
         symbol="2330",
         side="sell",
         quantity=400.0,
@@ -1650,8 +1650,8 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
         instrument_id="eq:2330",
         persona_binding_id="pcb-review",
     )
-    assert partial_weight_rejected["accepted"] is False
-    assert partial_weight_rejected["reason"] == "single_name_limit"
+    assert partial_weight_preserved["accepted"] is True
+    assert partial_weight_preserved["risk_reducing_exit_preserved"] is True
     full_close_weight_ok = algo_weight_ctrl.EvaluateOrderRiskGate(
         symbol="2330",
         side="sell",

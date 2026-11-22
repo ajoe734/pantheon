@@ -223,6 +223,54 @@
       "outcome": "resized_close_leg_then_no_trade_when_flat",
       "binding_limit": "available_holding_quantity",
       "submitted_to_broker": true
+    },
+    {
+      "scenario": "target_notional_rechecked_at_submission_price_for_zero_and_unchanged_holdings",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "policy_kind": "target_position_v1",
+      "target_notional": 10000.0,
+      "pretrade_price": 221.0,
+      "price_at_submission": 300.0,
+      "requested_units": 45,
+      "permitted_units": 33,
+      "order_notional": 9900.0,
+      "fee_inclusive_required_cash": 9914.1075,
+      "outcome": "resized_and_filled",
+      "binding_limit": "target_notional",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "partial_risk_reducing_exit_preserved_when_existing_exposure_exceeds_tightened_limits",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "existing_holdings_units": 200,
+      "tightened_limits_covered": [
+        "max_single_name_weight=0.25",
+        "gross_limit=0.25",
+        "net_limit=0.25",
+        "max_leverage=0.25"
+      ],
+      "requested_units": 20,
+      "permitted_units": 20,
+      "outcome": "filled_partial_risk_reducing_exit_while_blocking_increase_reversal_and_unrelated_safety_failures",
+      "binding_limit": "existing_holding_close_leg",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "reservation_cleanup_on_definitive_rejections_and_reconciliation_for_uncertain_broker_outcomes",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "prebroker_terminal_rejections_released": [
+        "tw_unsupported_quantity_type",
+        "tw_invalid_order_input",
+        "sell_without_holdings",
+        "risk_gate_rejection",
+        "definitive_broker_http_4xx_rejection"
+      ],
+      "uncertain_broker_outcomes_reconciled": [
+        "broker_timeout_held_then_reconciled_rejected_and_retried",
+        "malformed_broker_fill_held_then_reconciled_filled_and_deduplicated"
+      ]
     }
   ],
   "runtime_budget": {
