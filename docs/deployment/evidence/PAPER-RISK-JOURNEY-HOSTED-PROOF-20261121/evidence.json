@@ -186,8 +186,8 @@
     "hosted-probe-execution.json": "47542cc02f46c232fc6e43c0d262f0264a0806f0cda52782d1f2c194a451a7b2",
     "hosted-runtime-owner.json": "284478ba6aed17aa1c3cfb08c53380e016c48267d175d3ddcc21fbf97de1ebb9",
     "hosted-manifest.json": "4143fa7f332d646c7e497152fa939992c30fd9b94b29a01cfacdd39dfbf4f61f",
-    "README.md": "55a81d67b62f8d6347a2882d13c9a82163be614f798cf2ace7e9aab7eafb9190",
-    "hosted-stack.json": "90976d4d61699c21625247b99a7f7b7772b8a8e38e29d42ba3d3b0b14477acde",
+    "README.md": "087ae87769180dff03fff54a2bf95fb55333cdc4ce5042618f5894ee1d5243ad",
+    "hosted-stack.json": "b8ce1a72f5409b1d501ee2420528e8d5c71a7c109c56cd632ac068659b6fa381",
     "hosted-browser.json": "0b6bc027869d5f2244f0fb8065e926079fde7a6b1c30ecb02fbd944a2bfd9c37",
     "hosted-bff-version.json": "479d091951a325c5a252a5b7562bfd292b672595e13091a95a2f417bc74f1a0d",
     "dto-regression.json": "09d04156d372609961cb305d76ae4e8760bbae93f7f660aa99d9b4f510277be5",
@@ -201,5 +201,11 @@
     "owner_read_transport": "existing scripts/dev_vm_ssh.sh; installed service credentials remain inside running containers",
     "owner_read_evidence": "owner-transport-readback.json",
     "new_credentials_or_grants": false
+  },
+  "ci_evidence_remediation": {
+    "failed_check": "Runtime mirror guard / Diff budget",
+    "run": 45049110353,
+    "reason": "Original hosted-stack inventory added 676 evidence lines above cap 400.",
+    "change": "Commit targeted service observations and aggregate inventory counts; preserve immutable original commit/blob/SHA256 in hosted-stack.json. No product or acceptance logic changes."
   }
 }

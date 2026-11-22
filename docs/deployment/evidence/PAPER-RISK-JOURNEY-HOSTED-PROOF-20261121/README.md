@@ -20,8 +20,9 @@ served backend. Deployment runs
 the latter stopped at payload validation before any switch. No rollback or
 admission bypass is requested by this evidence.
 
-`hosted-stack.json` records container/image observations separately from BFF
-identity. Runtime manager, paper signal producer and BFF are healthy on images
+`hosted-stack.json` summarizes container/image observations separately from BFF
+identity and pins the full original inventory by commit, blob and SHA256.
+Runtime manager, paper signal producer and BFF are healthy on images
 labelled `da78…`. The inventory includes stopped one-shot services and prebuilt
 images; it is not a new full-stack deployment acceptance. Runtime desired-state
 and the served paper process's policy resolver are read in
