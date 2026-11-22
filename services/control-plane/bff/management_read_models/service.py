@@ -76,6 +76,9 @@ from services.control_plane.bff.core.owner_reads import (
     management_read_deadline,
     remaining_management_read_budget,
     request_read_scope,
+    selected_tenant,
+    shared_persona_directory_list,
+    verified_caller_tenant,
     submit_owner_read,
 )
 from services.control_plane.bff.governance.human_inbox import (
@@ -92,6 +95,7 @@ from services.control_plane.bff.governance.human_inbox import (
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models.models import ManagementObservation
 from services.control_plane.bff.ports.persona_training import OwnerReadUnconfiguredError
+from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
 
 
 def _default_bff_error(
@@ -1360,7 +1364,7 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
             "drawdown": summary.get("drawdown"),
             "sharpe_ratio": summary.get("sharpe_ratio"),
             "fill_rate": summary.get("fill_rate"),
-            "avg_slippage_bps": summary.get("avg_slippage_bps") or summary.get("avg_slippage"),
+            "avg_slippage_bps": summary.get("avg_slippage_bps") if summary.get("avg_slippage_bps") is not None else summary.get("avg_slippage"),
             "total_trades": summary.get("total_trades"),
         },
     }
@@ -1725,6 +1729,176 @@ def _trading_pulse_monitoring_indexes(
 def _trading_pulse_binding_is_retired(binding: Dict[str, Any]) -> bool:
     status = str(binding.get("status") or "").strip().lower()
     return status == "retired" or binding.get("retired_at") not in (None, "")
+
+
+def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    """Read one owner directory and admit identities before any aggregate/fanout."""
+    tenant = selected_tenant.get()
+    if authorization.get():
+        try:
+            tenant = verified_caller_tenant()
+        except Exception:
+            return [], {}, {"status": "unavailable", "persona_count": None, "runtime_count": None,
+                            "by_stage": {}, "reason": "tenant_scope_unverified"}
+    try:
+        directory = shared_persona_directory_list(store, lambda: store.list_personas())
+        if not isinstance(directory, list):
+            raise ValueError("invalid persona directory")
+    except Exception:
+        return [], {}, {"status": "unavailable", "persona_count": None, "runtime_count": None,
+                        "by_stage": {}, "reason": "persona_directory_unavailable", "tenant_id": tenant}
+    personas = {}
+    for person in directory:
+        if not isinstance(person, dict) or (tenant and person.get("tenant_id") != tenant):
+            continue
+        pid = person.get("persona_id") or person.get("id")
+        if pid:
+            personas[str(pid)] = person
+    admitted, unresolved = [], 0
+    for binding in bindings:
+        if not isinstance(binding, dict) or _trading_pulse_binding_is_retired(binding):
+            continue
+        if tenant and binding.get("tenant_id") != tenant:
+            continue
+        if _trading_pulse_stage(binding) not in {"paper", "canary", "live", "broker_sandbox"}:
+            continue
+        person = personas.get(str(binding.get("persona_id") or ""))
+        if person is None:
+            unresolved += 1
+        elif not is_probe_or_test_persona(person):
+            admitted.append(binding)
+    stages = {}
+    for binding in admitted:
+        stage = _trading_pulse_stage(binding)
+        group = stages.setdefault(stage, {"persona_ids": set(), "runtime_count": 0})
+        group["persona_ids"].add(binding["persona_id"])
+        group["runtime_count"] += 1
+    return admitted, personas, {
+        "status": "partial" if unresolved else "verified", "tenant_id": tenant,
+        "persona_count": len({b["persona_id"] for b in admitted}) if not unresolved else None,
+        "runtime_count": len(admitted) if not unresolved else None,
+        "verified_runtime_count": len(admitted),
+        "reason": "binding_identity_unverified" if unresolved else None,
+        "by_stage": {stage: {"persona_count": len(g["persona_ids"]), "runtime_count": g["runtime_count"]}
+                     for stage, g in stages.items()},
+    }
+
+
+def _pulse_matching_record(record: Dict[str, Any], binding: Dict[str, Any], snap: str) -> bool:
+    """A runtime name alone cannot prove the binding, tenant or business period."""
+    bid = _trading_pulse_binding_id(binding) or str(binding.get("id") or "")
+    if _trading_pulse_binding_id(record) != bid:
+        return False
+    if binding.get("tenant_id") and record.get("tenant_id") != binding.get("tenant_id"):
+        return False
+    stage = record.get("deployment_stage") or record.get("environment")
+    if stage and stage != _trading_pulse_stage(binding):
+        return False
+    at = record.get("collected_at") or record.get("last_event_at")
+    start = binding.get("activated_at") or binding.get("created_at")
+    return not (at and (_parse_time(at) > _parse_time(snap) or (start and _parse_time(at) < _parse_time(start))))
+
+
+def _pulse_performance(row: Dict[str, Any], raw: Optional[Dict[str, Any]], snap: str) -> None:
+    raw = raw or {}
+    metrics = _trading_pulse_metric_map(row)
+    reasons = {}
+    ledger_count = _management_number(raw.get("ledger_fill_count"))
+    if ledger_count is not None and ledger_count >= 0:
+        metrics["total_trades"] = int(ledger_count)
+        row["total_trades"] = row["executed_trade_count"] = int(ledger_count)
+    details = raw.get("fill_rate_details")
+    if isinstance(details, dict):
+        numerator, denominator = _management_number(details.get("numerator")), _management_number(details.get("denominator"))
+        metrics["fill_rate"] = numerator / denominator if numerator is not None and denominator is not None and denominator > 0 else None
+        if metrics["fill_rate"] is None:
+            reasons["fill_rate"] = details.get("reason") or "no_submitted_orders"
+    for metric in _TRADING_PULSE_METRICS:
+        reason = raw.get(f"{metric}_unavailable_reason") or raw.get(f"{metric}_reason") or raw.get(f"{metric}_status")
+        metric_binding = raw.get(f"{metric}_binding_id")
+        at = raw.get(f"{metric}_at")
+        if metric_binding and metric_binding != row.get("runtime_binding_id"):
+            metrics[metric] = None
+            reason = "binding_mismatch"
+        elif at and _parse_time(at) > _parse_time(snap):
+            metrics[metric] = None
+            reason = "outside_snapshot"
+        if _management_number(metrics.get(metric)) is None:
+            reasons[metric] = reason or ("no_fills" if ledger_count == 0 and metric in {"pnl", "drawdown", "sharpe_ratio"} else "source_unavailable" if not raw else "not_observed")
+    stale = raw.get("staleness") or {}
+    row["performance_context"] = {
+        **{key: raw.get(key) for key in ("ledger_fill_count", "pnl_currency", "pnl_period_start_at", "pnl_at", "pnl_definition", "fill_rate_details", "sharpe_ratio_status", "sharpe_ratio_reason", "staleness")},
+        "metric_reasons": reasons, "latest_report_at": raw.get("last_event_at") or raw.get("collected_at"),
+        "last_fill_at": (raw.get("last_fill") or {}).get("occurred_at") or (raw.get("last_fill") or {}).get("created_at"),
+        "snapshot_at": snap, "source_status": "unavailable" if not raw else "stale" if isinstance(stale, dict) and (stale.get("is_stale") or stale.get("status") == "stale") else "available",
+    }
+
+
+def _pulse_latest_outcome(reader: Any, binding: Dict[str, Any], snap: str) -> Dict[str, Any]:
+    """Existing indexed journey projection: one latest row, never a ledger scan."""
+    result = {"status": "unavailable", **{key: None for key in (
+        "occurred_at", "reason_code", "submitted_to_broker", "requested_quantity", "required", "available", "currency", "journey_id", "source_event_id")}}
+    tenant, stage = binding.get("tenant_id"), _trading_pulse_stage(binding)
+    if reader is None or not tenant:
+        return result
+    try:
+        page = reader.page_journeys(tenant_id=tenant, environment=stage, filters={
+            "runtime_id": _trading_pulse_runtime_id(binding),
+            "binding_id": _trading_pulse_binding_id(binding) or binding.get("id"),
+            "persona_id": binding.get("persona_id"), "date_to": snap,
+        }, page_size=1, sort="updated_at_desc")
+        if not page.items:
+            return {**result, "status": "not_observed"}
+        projection = page.items[0]
+        from services.control_plane.bff.trade_journeys import _list_row, _timeline_event
+        item = _list_row(projection, now=_parse_time(snap))
+        if projection.tenant_id != tenant or projection.environment != stage:
+            return result
+        ids = projection.snapshot.get("identifiers") or {}
+        for key, value in (("runtime_id", _trading_pulse_runtime_id(binding)), ("binding_id", _trading_pulse_binding_id(binding) or binding.get("id")), ("persona_id", binding.get("persona_id"))):
+            if value not in (ids.get(key) if isinstance(ids.get(key), list) else [ids.get(key)]):
+                return result
+        outcome = item.get("outcome") or {}
+        event_id = outcome.get("source_event_id")
+        event = next((_timeline_event(e) for e in projection.timeline if _timeline_event(e).get("source_event_id") == event_id), {}) if event_id else {}
+        detail = outcome.get("reason_detail") if isinstance(outcome.get("reason_detail"), dict) else {}
+        at = event.get("occurred_at") or item.get("updated_at")
+        if at and _parse_time(at) > _parse_time(snap):
+            return result
+        return {**result, "status": "available", "occurred_at": at, "journey_id": projection.journey_id,
+                "reason_code": outcome.get("reason_code"), "source_event_id": event_id,
+                "submitted_to_broker": outcome.get("submitted_to_broker"),
+                "requested_quantity": detail.get("requested_quantity", item.get("quantity")),
+                "required": detail.get("required"), "available": detail.get("available"),
+                "currency": detail.get("currency") or event.get("currency"),
+                "focus_stage": outcome.get("rejected_stage") or item.get("current_stage")}
+    except Exception:
+        return result
+
+
+def _pulse_pnl_groups(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    groups = {}
+    for row in rows:
+        ctx = row["performance_context"]
+        # Exact valuation interval and definition: no implicit currency or period.
+        key = (row.get("deployment_stage"), ctx.get("pnl_currency"), ctx.get("pnl_period_start_at"), ctx.get("pnl_at"), ctx.get("pnl_definition"))
+        if not all(key):
+            continue
+        group = groups.setdefault(key, {"stage": key[0], "currency": key[1], "period_start_at": key[2],
+            "period_end_at": key[3], "as_of": key[3], "pnl_definition": key[4], "value": None,
+            "covered_persona_ids": set(), "eligible_persona_ids": set(), "covered_runtime_count": 0})
+        group["eligible_persona_ids"].add(row["persona_id"])
+        value = _management_number(_trading_pulse_metric_map(row).get("pnl"))
+        if value is not None:
+            group["value"] = (group["value"] or 0) + value
+            group["covered_persona_ids"].add(row["persona_id"])
+            group["covered_runtime_count"] += 1
+    out = []
+    for group in groups.values():
+        group["covered_persona_count"] = len(group.pop("covered_persona_ids"))
+        group["eligible_persona_count"] = len(group.pop("eligible_persona_ids"))
+        out.append(group)
+    return out
 
 
 def _trading_pulse_stage(row: Dict[str, Any]) -> str:
@@ -3706,10 +3880,12 @@ class ManagementService:
         drift_reports: List[Dict[str, Any]] = []
         monitoring_sessions: List[Dict[str, Any]] = []
 
+        binding_read_ok = False
         if store is not None:
             if hasattr(store, "list_runtime_bindings"):
                 try:
                     runtime_bindings = store.list_runtime_bindings() or []
+                    binding_read_ok = True
                 except Exception:
                     runtime_bindings = []
             if hasattr(store, "list_telemetry_summaries"):
@@ -3731,18 +3907,31 @@ class ManagementService:
                 except Exception:
                     monitoring_sessions = []
 
-        retired_runtime_count = sum(
-            1
-            for binding in runtime_bindings
-            if isinstance(binding, dict) and _trading_pulse_binding_is_retired(binding)
-        )
-        runtime_bindings = [
-            binding
-            for binding in runtime_bindings
-            if isinstance(binding, dict) and not _trading_pulse_binding_is_retired(binding)
-        ]
-        telemetry_by_runtime_id = _trading_pulse_index_by_runtime(telemetry_summaries)
+        runtime_bindings, personas, operator_scope = _pulse_operator_scope(store, runtime_bindings)
+        if not binding_read_ok:
+            operator_scope.update(status="unavailable", persona_count=None, runtime_count=None,
+                                  reason="runtime_bindings_unavailable")
+        # Excluded identities never contribute even to diagnostic counters.
+        retired_runtime_count = 0
+        telemetry_by_binding = {}
+        for record in telemetry_summaries:
+            if isinstance(record, dict):
+                key = (_trading_pulse_runtime_id(record), _trading_pulse_binding_id(record), record.get("tenant_id"))
+                prior = telemetry_by_binding.get(key)
+                if prior is None or str(record.get("collected_at") or "") > str(prior.get("collected_at") or ""):
+                    telemetry_by_binding[key] = record
         monitoring_by_runtime_id, monitoring_by_binding_id = _trading_pulse_monitoring_indexes(monitoring_sessions)
+        strategies = {}
+        try:
+            for strategy in store.list_strategies() or []:
+                if strategy.get("tenant_id") == operator_scope.get("tenant_id"):
+                    strategies[str(strategy.get("strategy_id") or strategy.get("id"))] = strategy
+        except Exception:
+            pass
+        try:
+            journey_reader = store.trade_journey_projection_reader()
+        except Exception:
+            journey_reader = None
 
         runtime_rows = []
         for binding in runtime_bindings:
@@ -3755,18 +3944,30 @@ class ManagementService:
                 or binding.get("id")
                 or ""
             )
-            runtime_rows.append(
-                _project_operator_runtime_state_row(
-                    store,
-                    binding,
-                    telemetry_summary_record=telemetry_by_runtime_id.get(runtime_id),
-                    monitoring_session_record=(
-                        monitoring_by_binding_id.get(binding_id)
-                        or monitoring_by_runtime_id.get(runtime_id)
-                    ),
-                    prefetched=True,
-                )
+            raw = telemetry_by_binding.get((runtime_id, binding_id, binding.get("tenant_id")))
+            if raw is not None and not _pulse_matching_record(raw, binding, snap):
+                raw = None
+            session = monitoring_by_binding_id.get(binding_id)
+            if session and not _pulse_matching_record(session, binding, snap):
+                session = None
+            row = _project_operator_runtime_state_row(
+                None, binding, telemetry_summary_record=raw,
+                monitoring_session_record=session, prefetched=True,
             )
+            person = personas[str(binding["persona_id"])]
+            strategy = strategies.get(str(binding.get("strategy_id") or binding.get("artifact_id")), {})
+            row.update(tenant_id=binding.get("tenant_id"), persona_name=person.get("name"),
+                       strategy_name=strategy.get("name") or strategy.get("title"),
+                       underlying_symbol=binding.get("underlying_symbol") or strategy.get("underlying_symbol") or (person.get("metadata") or {}).get("underlying_symbol"))
+            _pulse_performance(row, raw, snap)
+            row["latest_outcome"] = _pulse_latest_outcome(journey_reader, binding, snap)
+            row["links"] = {"persona": f"/management/personas/{binding['persona_id']}"}
+            if binding.get("strategy_id"):
+                row["links"]["strategy"] = f"/management/strategies/{binding['strategy_id']}"
+            if row["latest_outcome"].get("journey_id"):
+                from urllib.parse import urlencode
+                row["links"]["journey"] = f"/management/trade-journeys/{row['latest_outcome']['journey_id']}?" + urlencode({"tenant_id": binding.get("tenant_id"), "environment": row["deployment_stage"]})
+            runtime_rows.append(row)
 
         if store is not None and hasattr(store, "list_paper_live_drift_reports") and any(
             _trading_pulse_stage(row) in {"live", "canary"} for row in runtime_rows
@@ -3779,7 +3980,12 @@ class ManagementService:
                     drift_reports = d_res
             except Exception:
                 drift_reports = []
-        drift_by_runtime_id = _trading_pulse_index_by_runtime(drift_reports)
+        drift_by_runtime_id = _trading_pulse_index_by_runtime([
+            report for report in drift_reports if any(
+                _trading_pulse_runtime_id(report) == _trading_pulse_runtime_id(binding)
+                and _pulse_matching_record(report, binding, snap) for binding in runtime_bindings
+            )
+        ])
 
         all_comparisons = [
             _build_trading_pulse_baseline_comparison(
@@ -3855,6 +4061,7 @@ class ManagementService:
             baseline_comparison = baseline_by_runtime_id.get(str(row.get("runtime_id") or "")) or {}
             rankings.append(
                 {
+                    **{key: row.get(key) for key in ("persona_id", "persona_name", "strategy_id", "strategy_name", "underlying_symbol", "tenant_id", "links", "performance_context", "latest_outcome")},
                     "runtime_id": row.get("runtime_id"),
                     "runtime_binding_id": row.get("runtime_binding_id"),
                     "deployment_stage": row.get("deployment_stage"),
@@ -3933,6 +4140,9 @@ class ManagementService:
                 {"served_from": "unverifiable", "last_known_at": snap},
             )
 
+        if operator_scope["status"] != "verified":
+            runtime_surface.update(status="unavailable" if operator_scope["status"] == "unavailable" else "degraded",
+                                   message=operator_scope["reason"])
         monitoring_surface = _make_dataset_surface("paper_runtime_monitoring_sessions")
         paper_runtime_count = int(coverage.get("paper_runtime_count") or 0)
         monitoring_coverage_count = int(coverage.get("monitoring_coverage_count") or 0)
@@ -4003,17 +4213,22 @@ class ManagementService:
             degraded_message="Trading pulse aggregate is available, but runtime, telemetry, monitoring, row health, or baseline coverage is degraded.",
         )
 
+        pnl_groups = _pulse_pnl_groups(runtime_rows)
         summary = {
+            "operator_scope": operator_scope,
+            "pnl_groups": pnl_groups,
+            "fill_rate_aggregation": "arithmetic_mean_of_observed_runtime_rates",
+            "snapshot_at": snap,
             "runtime_count": len(runtime_rows),
             "retired_runtime_count": retired_runtime_count,
             "telemetry_coverage_count": len(telemetry_rows),
             "by_status": by_status,
             "by_stage": by_stage,
-            "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+            "total_pnl": pnl_groups[0]["value"] if len(pnl_groups) == 1 and pnl_groups[0]["covered_runtime_count"] == len(pnl_values) else None,
             "worst_drawdown": max(drawdown_values) if drawdown_values else None,
             "average_fill_rate": _management_avg(fill_rate_values),
             "worst_slippage_bps": max(slippage_values) if slippage_values else None,
-            "total_trades": int(sum(trade_values)) if trade_values else 0,
+            "total_trades": int(sum(trade_values)) if trade_values else None,
             "baseline_comparison_count": baseline_available_count,
             "baseline_required_count": coverage["baseline_required_count"],
             "baseline_breached_count": baseline_breached_count,
@@ -4166,6 +4381,8 @@ class ManagementService:
                 "Trading pulse rankings are degraded because one or more ranking metrics are missing."
             )
         summary = {
+            "operator_scope": (trading_pulse_payload.get("summary") or {}).get("operator_scope"),
+            "pnl_groups": (trading_pulse_payload.get("summary") or {}).get("pnl_groups"),
             "runtime_count": int((trading_pulse_payload.get("summary") or {}).get("runtime_count") or 0),
             "ranking_block_count": len(blocks),
             "ranked_item_count": ranked_item_count,

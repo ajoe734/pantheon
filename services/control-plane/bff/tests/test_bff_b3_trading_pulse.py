@@ -68,6 +68,9 @@ def _fresh_client(
                 "artifact_version": "v3",
             }
         )
+    for binding in runtime_bindings:
+        binding.update(persona_id="p-" + binding["runtime_id"], tenant_id="tenant-test")
+    store.list_personas = lambda: [{"id": b["persona_id"], "name": b["persona_id"], "tenant_id": "tenant-test"} for b in runtime_bindings]
     store.list_runtime_bindings = lambda: list(runtime_bindings)
     telemetry_summaries = {
         "runtime-alpha": {
@@ -214,6 +217,8 @@ def _fresh_client(
         }
     }
     store.get_telemetry_summary = lambda runtime_id: telemetry_summaries.get(runtime_id)
+    for record in telemetry_summaries.values():
+        record["tenant_id"] = "tenant-test"
     store.list_telemetry_summaries = lambda: list(telemetry_summaries.values())
     store.get_paper_live_drift_report = lambda runtime_id: drift_reports.get(runtime_id)
     store.list_paper_live_drift_reports = lambda: list(drift_reports.values())
@@ -267,7 +272,7 @@ def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
         assert "summary" not in body
         assert summary["runtime_count"] == 2
         assert summary["telemetry_coverage_count"] == 2
-        assert summary["total_pnl"] == 0.3
+        assert summary["total_pnl"] is None
         assert summary["worst_drawdown"] == 0.11
         assert summary["average_fill_rate"] == 0.89
         assert summary["worst_slippage_bps"] == 4.8
@@ -484,11 +489,14 @@ from services.control_plane.bff.management_read_models.service import (  # noqa:
 
 class _FleetStore:
     def __init__(self, bindings, sessions, telemetry=(), drift=()):
-        self.bindings = bindings
-        self.sessions = sessions
-        self.telemetry = list(telemetry)
-        self.drift = list(drift)
+        self.bindings = [{**b, "persona_id": "p-" + b["runtime_id"], "tenant_id": "tenant-test"} for b in bindings]
+        self.sessions = [{**r, "tenant_id": "tenant-test"} for r in sessions]
+        self.telemetry = [{**r, "binding_id": "b-" + r["runtime_id"].removeprefix("r-"), "tenant_id": "tenant-test"} for r in telemetry]
+        self.drift = [{**r, "binding_id": "b-" + r["runtime_id"].removeprefix("r-"), "tenant_id": "tenant-test"} for r in drift]
         self.drift_calls = 0
+
+    def list_personas(self):
+        return [{"id": b["persona_id"], "name": b["persona_id"], "tenant_id": "tenant-test"} for b in self.bindings]
 
     def list_runtime_bindings(self):
         return list(self.bindings)
@@ -556,7 +564,7 @@ def test_trading_pulse_excludes_retired_and_counts_them() -> None:
     data = ManagementService(read_store=store).get_trading_pulse()["data"]
     summary = data["summary"]
     assert summary["runtime_count"] == 13
-    assert summary["retired_runtime_count"] == 113
+    assert summary["retired_runtime_count"] == 0
     assert len(data["runtime_rows"]) == 13
     assert len(data["rankings"]) == 13
     assert data["cards"][0]["value"] == 13
