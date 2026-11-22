@@ -804,13 +804,17 @@ def test_operator_zero_fill_ledger_and_unknown_pnl_are_distinct():
 @pytest.mark.parametrize("location", ["metadata", "top_level", "both"])
 def test_operator_binding_tenant_wire_locations_preserve_scoped_joins(location):
     import copy
+    from services.control_plane.bff.ports.persona_capital_runtime import RuntimePort
     store = _OperatorStore()
     for binding in store.bindings:
         if location in {"metadata", "both"}:
             binding["metadata"] = {"tenant_id": binding["tenant_id"]}
         if location == "metadata":
             binding.pop("tenant_id")
+            binding["deployment_mode"] = binding.pop("deployment_stage")
     original = copy.deepcopy(store.bindings)
+    port = RuntimePort(runtime_bindings_provider=lambda: store.bindings)
+    store.list_runtime_bindings = port.list_runtime_bindings
     data = _operator_pulse(store)["data"]
     scope = data["summary"]["operator_scope"]
     assert scope["status"] == "verified"

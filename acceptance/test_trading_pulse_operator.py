@@ -143,7 +143,7 @@ def test_viewer_witness_wire_roster_has_three_operators_not_zero():
     world = fixture()
     world["people"] = [{"id": pid, "tenant_id": "tenant-dev", "data_scope": scope} for pid, _, _, scope in sample]
     world["bindings"] = [{"persona_id": pid, "runtime_id": rid, "binding_id": bid,
-        "metadata": {"tenant_id": "tenant-dev"}, "deployment_stage": "paper", "status": "active"}
+        "metadata": {"tenant_id": "tenant-dev"}, "deployment_mode": "paper", "status": "active"}
         for pid, rid, bid, _ in sample]
     world["pulse"]["runtime_rows"] = []
     report = probe.check(fetcher(world), "tenant-dev")

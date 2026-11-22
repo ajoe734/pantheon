@@ -1727,9 +1727,9 @@ def _trading_pulse_monitoring_indexes(
     return by_runtime, by_binding
 
 
-def _trading_pulse_binding_is_inactive(binding: Dict[str, Any]) -> bool:
+def _trading_pulse_binding_is_retired(binding: Dict[str, Any]) -> bool:
     status = str(binding.get("status") or "").strip().lower()
-    return status in {"retired", "failed"} or binding.get("retired_at") not in (None, "")
+    return status == "retired" or binding.get("retired_at") not in (None, "")
 
 
 def _pulse_number(value: Any) -> Optional[float]:
@@ -1775,7 +1775,9 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[L
             personas[str(pid)] = person
     admitted, unresolved = [], 0
     for binding in bindings:
-        if not isinstance(binding, dict) or _trading_pulse_binding_is_inactive(binding):
+        if not isinstance(binding, dict) or _trading_pulse_binding_is_retired(binding):
+            continue
+        if str(binding.get("status") or "").strip().lower() == "failed":
             continue
         if _trading_pulse_stage(binding) not in {"paper", "canary", "live", "broker_sandbox"}:
             continue
@@ -1963,7 +1965,7 @@ def _pulse_pnl_groups(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _trading_pulse_stage(row: Dict[str, Any]) -> str:
-    return str(row.get("deployment_stage") or row.get("deploymentStage") or "").strip().lower()
+    return str(row.get("deployment_stage") or row.get("deployment_mode") or row.get("deploymentStage") or "").strip().lower()
 
 
 def _trading_pulse_metric_map(row: Dict[str, Any]) -> Dict[str, Any]:

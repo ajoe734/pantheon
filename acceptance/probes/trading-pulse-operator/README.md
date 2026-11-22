@@ -33,8 +33,19 @@ Existing envelopes, `runtime_rows`, scalar metric names, cards and four ranking
 blocks stay present. `summary.operator_scope` is `verified`, `partial` or
 `unavailable`; unknown counts are null, verified counts and by-stage counts
 separate personas from runtime instances. Every business output and diagnostic
-ID comes from the admitted tenant directory and non-retired bindings, excluding
+ID comes from the admitted tenant directory and bindings that are neither
+retired nor failed, excluding
 `is_probe_or_test_persona` identities. A directory failure exposes no identities.
+
+Binding tenant provenance may be top-level `tenant_id`, `metadata.tenant_id`,
+or both when they agree. It must match the requested tenant and the persona
+directory. The runtime owner's `deployment_mode` and existing
+`deployment_stage` both supply the trading stage. A foreign binding is excluded; missing or conflicting tenant claims
+make the roster partial and the probe unverifiable. The read model normalizes
+only a copy for scoped telemetry, journey and baseline joins. It never infers a
+binding's tenant solely from a persona ID. The 2026-11-22 13:15Z independent
+viewer witness has four metadata-scoped active bindings and three operators
+after excluding the release test persona; a regression retains that wire shape.
 
 Each row and ranking carries `persona_id`, `persona_name`, `strategy_id`,
 `strategy_name`, `underlying_symbol`, `tenant_id`, `performance_context`,
