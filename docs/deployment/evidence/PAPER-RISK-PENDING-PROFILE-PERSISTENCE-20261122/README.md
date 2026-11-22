@@ -107,6 +107,10 @@ labels this source `verified_persona_owner`. Missing owners/profiles still hold;
 a bare older pool never receives low merely because it lacks provenance. Owner
 readback also feeds policy repair and publication. A recovered medium/high value
 survives Persona materialization instead of being overwritten by a display default.
+The real owner's nested `metadata.risk_profile` object is read as a profile
+object, with agreement checked against its scalar risk level. A previous
+`requested_profile_source_missing` failure's display default is excluded from
+recovery, so repeating an unknown legacy request cannot manufacture provenance.
 No policy or approval is inferred by any of these paths.
 
 ## Runtime budget and cleanup

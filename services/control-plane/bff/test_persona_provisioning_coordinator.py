@@ -5403,7 +5403,7 @@ def test_original_name_only_reservation_replays_from_verified_owner_without_reha
         request_payload=original)
     h.owner.create_persona({"persona_id": record.persona_id, "tenant_id": tenant_id,
                             "name": name, "lifecycle_state": "research_only",
-                            "metadata": {"risk_level": profile, "tenant_id": tenant_id,
+                            "metadata": {"risk_level": profile, "risk_profile": {"risk_level": profile}, "tenant_id": tenant_id,
                                          "provisioning_request_hash": request_hash,
                                          "internal_paper_capital_pool_id": deterministic_provisioning_ids(record).capital_pool_id}})
     response = h.client.post("/bff/personas", headers={**h.headers, "Idempotency-Key": "legacy-key"}, json={"name": name})
@@ -5427,6 +5427,29 @@ def test_conflicting_create_profile_is_traceable_and_writes_nothing(profile_ingr
     assert not h.tx.mutations
 
 
+def test_legacy_missing_request_cannot_gain_provenance_from_failed_display_default(profile_ingress):
+    h = profile_ingress
+    assert h.client.post("/bff/personas", headers=h.headers, json={"name": "Seed Tenant"}).status_code == 201
+    tenant_id = h.store.list_all()[0].tenant_id
+    name = "Missing Legacy Source"
+    canonical = h.service._persona_create_canonical_payload(
+        {"name": name}, name=name, tenant_id=tenant_id, requested_by="test-operator")
+    request_hash = h.service._stable_json_hash({"route": "POST /bff/personas", "tenant_id": tenant_id, "payload": canonical})
+    record, _ = h.store.reserve(
+        tenant_id=tenant_id, idempotency_key="missing-legacy-key", request_hash=request_hash,
+        normalized_name=h.service._normalize_persona_create_name(name),
+        persona_id=h.service._persona_create_identity(tenant_id, h.service._normalize_persona_create_name(name)),
+        request_payload=canonical)
+    for _ in range(2):
+        response = h.client.post("/bff/personas", headers={**h.headers, "Idempotency-Key": "missing-legacy-key"}, json={"name": name})
+        assert response.status_code == 502, response.text
+        saved = h.store.get(tenant_id, "missing-legacy-key")
+        assert saved.error["reason_code"] == "requested_profile_source_missing"
+        assert saved.request_payload == canonical
+        assert "requested_risk_profile_provenance" not in saved.references
+    assert ("capital", f"/api/capital-pools/{deterministic_provisioning_ids(record).capital_pool_id}") not in h.tx.objects
+
+
 @pytest.mark.parametrize("profile", ["low", "medium", "high"])
 @pytest.mark.parametrize("alias", ["riskLevel", "risk_profile", "riskProfile", "traits"])
 def test_actual_profile_aliases_retain_value_and_reject_conflicts(profile, alias):
@@ -5442,7 +5465,7 @@ def test_actual_profile_aliases_retain_value_and_reject_conflicts(profile, alias
         extract({**request, "risk": "high" if profile == "low" else "low"})
 
 
-@pytest.mark.parametrize("mismatch", [None, "tenant", "persona", "pool", "hash", "missing_profile", "conflict"])
+@pytest.mark.parametrize("mismatch", [None, "tenant", "persona", "pool", "hash", "missing_profile", "failed_missing", "conflict"])
 def test_old_request_requires_verified_matching_real_persona(mismatch):
     from types import SimpleNamespace
     store, record = _record_and_store({}, seed_pool_approval=False)
@@ -5462,6 +5485,8 @@ def test_old_request_requires_verified_matching_real_persona(mismatch):
         persona["metadata"]["provisioning_request_hash"] = "foreign"
     elif mismatch == "missing_profile":
         persona["metadata"].pop("risk_level")
+    elif mismatch == "failed_missing":
+        persona["metadata"]["provisioning_error"] = {"reason_code": "requested_profile_source_missing"}
     elif mismatch == "conflict":
         persona["risk_level"] = "high"
     coord = PersonaProvisioningCoordinator(

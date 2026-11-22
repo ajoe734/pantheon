@@ -2336,6 +2336,12 @@ class PersonaProvisioningCoordinator:
         if not isinstance(persona, Mapping):
             return profile, required, approval_id
         meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+        prior_error = meta.get("provisioning_error")
+        if (isinstance(prior_error, Mapping)
+                and prior_error.get("reason_code") == "requested_profile_source_missing"):
+            # Failed legacy materialization may carry the old display default.
+            # A missing-source failure cannot manufacture provenance for retry.
+            return profile, required, approval_id
         ids = deterministic_provisioning_ids(record)
         tenant_values = [v for v in (persona.get("tenant_id"), persona.get("tenantId"),
                                      meta.get("tenant_id"), meta.get("tenantId")) if v not in (None, "")]
@@ -2374,6 +2380,8 @@ class PersonaProvisioningCoordinator:
         risk_profile_map = req.get("risk_profile") if isinstance(req.get("risk_profile"), Mapping) else {}
         camel_profile = req.get("riskProfile") if isinstance(req.get("riskProfile"), Mapping) else {}
         traits = req.get("traits") if isinstance(req.get("traits"), Mapping) else {}
+        meta_profile = req_meta.get("risk_profile")
+        meta_profile_map = meta_profile if isinstance(meta_profile, Mapping) else {}
         profile_sources = [
             ("request.risk", req.get("risk")),
             ("request.risk_level", req.get("risk_level")),
@@ -2383,7 +2391,9 @@ class PersonaProvisioningCoordinator:
             ("request.riskProfile.risk_level", camel_profile.get("risk_level")),
             ("request.riskProfile.riskLevel", camel_profile.get("riskLevel")),
             ("request.metadata.requested_risk_profile", req_meta.get("requested_risk_profile")),
-            ("request.metadata.risk_profile", req_meta.get("risk_profile")),
+            ("request.metadata.risk_profile", None if isinstance(meta_profile, Mapping) else meta_profile),
+            ("request.metadata.risk_profile.risk_level", meta_profile_map.get("risk_level")),
+            ("request.metadata.risk_profile.riskLevel", meta_profile_map.get("riskLevel")),
             ("request.metadata.requested_risk", req_meta.get("requested_risk")),
         ]
         # Historical normal requests expressed their risk only in traits.
