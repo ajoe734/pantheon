@@ -2344,7 +2344,7 @@ class PersonaProvisioningCoordinator:
                 or not tenant_values or any(v != record.tenant_id for v in tenant_values)
                 or meta.get("provisioning_request_hash") not in (None, "", record.request_hash)
                 or any(meta.get(k) not in (None, "", ids.capital_pool_id)
-                       for k in ("capital_pool_id", "legacy_paper_capital_pool_id"))):
+                       for k in ("capital_pool_id", "legacy_paper_capital_pool_id", "internal_paper_capital_pool_id"))):
             raise PersonaProvisioningCoordinationError("requested_profile_identity_invalid")
         owner_profile = self._extract_request_risk_profile_context(persona)[0]
         metadata_profile = self._extract_request_risk_profile_context({
@@ -2372,16 +2372,26 @@ class PersonaProvisioningCoordinator:
         has_explicit_ref = bool(raw_ref is not None and str(raw_ref).strip())
 
         risk_profile_map = req.get("risk_profile") if isinstance(req.get("risk_profile"), Mapping) else {}
+        camel_profile = req.get("riskProfile") if isinstance(req.get("riskProfile"), Mapping) else {}
+        traits = req.get("traits") if isinstance(req.get("traits"), Mapping) else {}
         profile_sources = [
             ("request.risk", req.get("risk")),
             ("request.risk_level", req.get("risk_level")),
             ("request.riskLevel", req.get("riskLevel")),
             ("request.risk_profile.risk_level", risk_profile_map.get("risk_level")),
             ("request.risk_profile.riskLevel", risk_profile_map.get("riskLevel")),
+            ("request.riskProfile.risk_level", camel_profile.get("risk_level")),
+            ("request.riskProfile.riskLevel", camel_profile.get("riskLevel")),
             ("request.metadata.requested_risk_profile", req_meta.get("requested_risk_profile")),
             ("request.metadata.risk_profile", req_meta.get("risk_profile")),
             ("request.metadata.requested_risk", req_meta.get("requested_risk")),
         ]
+        # Historical normal requests expressed their risk only in traits.
+        # Once a financial profile/policy is explicit, it remains authoritative;
+        # the expression trait does not override that independent contract.
+        if (not has_explicit_policy and not has_explicit_ref
+                and not any(value is not None and str(value).strip() for _, value in profile_sources)):
+            profile_sources.append(("request.traits.risk_appetite", traits.get("risk_appetite")))
         requested_profile = (
             PersonaProvisioningCoordinator._verified_requested_profile(*profile_sources)
             if any(value is not None and str(value).strip() for _, value in profile_sources)

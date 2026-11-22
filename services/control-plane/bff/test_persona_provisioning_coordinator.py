@@ -5283,3 +5283,190 @@ def test_pending_or_rejected_proposal_must_match_entire_request(state, mismatch)
     retry = coord.coordinate(record)
     assert retry.error["owner_decision_request"]["governance_proposal_id"] == proposal_id
     assert tx.mutations[("governance", "/api/governance/approvals")] == 2
+
+
+@pytest.fixture
+def profile_ingress(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.personas import service
+    from services.control_plane.bff.personas.router import create_personas_router
+    from services.control_plane.bff.ports import ReadSurfacePorts
+    from services.control_plane.bff.tests.conftest import make_composed_persona_service
+
+    class Owner(ReadSurfacePorts):
+        def __init__(self):
+            self.rows = {}
+
+        def get_persona(self, pid):
+            return deepcopy(self.rows.get(pid))
+
+        def create_persona(self, record_in=None, **kwargs):
+            row = deepcopy(dict(record_in or kwargs))
+            pid = row.get("persona_id") or row["id"]
+            self.rows[pid] = {**row, "id": pid, "persona_id": pid}
+            return self.get_persona(pid)
+
+        def update_persona(self, pid, **kwargs):
+            row = self.rows[pid]
+            for key, value in kwargs.items():
+                if key == "metadata":
+                    row[key] = {**row.get(key, {}), **value}
+                elif value is not None:
+                    row[key] = value
+            return self.get_persona(pid)
+
+        def list_strategy_specs(self, **kwargs):
+            return []
+
+        def get_persona_containment(self, pid):
+            return None
+
+    owner = Owner()
+    store = TrackingStore()
+    tx = FakeOwnerTransport()
+    composed = make_composed_persona_service(write_owner=owner, read_store=owner)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-persona-provisioner")
+    monkeypatch.setattr(service, "_composed_persona_service", composed)
+    monkeypatch.setattr(service, "_persona_provisioning_store", lambda: store)
+    monkeypatch.setattr(service, "_PersonaOwnerHttpTransport", lambda **kw: tx)
+    monkeypatch.setattr(service, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(service, "_ensure_persona_ooda_packet", lambda *a, **kw: None)
+    app = FastAPI()
+    app.include_router(create_personas_router(service=composed))
+    return SimpleNamespace(client=TestClient(app), store=store, tx=tx, owner=owner, service=service,
+                           headers={"Authorization": "Bearer test-operator:operator,reviewer,admin",
+                                    "Idempotency-Key": "name-only-contract"})
+
+
+def test_name_only_create_labels_default_preserves_hash_and_retry_contract(profile_ingress):
+    h = profile_ingress
+    payload = {"name": "Name Only Trader"}
+    response = h.client.post("/bff/personas", headers=h.headers, json=payload)
+    assert response.status_code == 201, response.text
+    record = h.store.list_all()[0]
+    original = h.service._persona_create_canonical_payload(
+        payload, name=payload["name"], tenant_id=record.tenant_id, requested_by="test-operator")
+    assert record.request_hash == h.service._stable_json_hash({
+        "route": "POST /bff/personas", "tenant_id": record.tenant_id, "payload": original})
+    assert "risk" not in original
+    assert record.request_payload["risk"] == "low"
+    assert record.request_payload["metadata"]["requested_risk_profile_provenance"] == "persona_create_default"
+    ids = deterministic_provisioning_ids(record)
+    pool = h.tx.objects[("capital", f"/api/capital-pools/{ids.capital_pool_id}")]
+    assert pool["metadata"]["requested_risk_profile"] == "low"
+    assert h.owner.get_persona(record.persona_id)["metadata"]["risk_level"] == "low"
+    mutations = h.tx.mutations.copy()
+    replay = h.client.post("/bff/personas", headers=h.headers, json=payload)
+    assert replay.status_code == 201, replay.text
+    assert h.tx.mutations == mutations
+    changed = h.client.post("/bff/personas", headers=h.headers, json={**payload, "risk": "low"})
+    assert changed.status_code == 409
+
+
+def test_name_only_create_without_approved_policy_holds_and_reuses_case(profile_ingress):
+    h = profile_ingress
+    h.tx.seed_pool_policy_approval = False
+    payload = {"name": "Unapproved Name Only Trader"}
+    first = h.client.post("/bff/personas", headers=h.headers, json=payload)
+    assert first.status_code == 502, first.text
+    record = h.store.list_all()[0]
+    assert record.error["reason_code"] == "risk_policy_profile_mapping_unapproved"
+    request = record.error["owner_decision_request"]
+    assert request["requested_profile"] == "low"
+    assert record.request_payload["risk"] == "low"
+    # A new pool has no authority to exist/activate until policy admission.
+    assert not any(owner == "capital" for owner, path in h.tx.objects)
+    second = h.client.post("/bff/personas", headers=h.headers, json=payload)
+    assert second.status_code == 502, second.text
+    retried = h.store.list_all()[0]
+    assert retried.error["owner_decision_request"]["deterministic_proposal_id"] == request["deterministic_proposal_id"]
+
+
+def test_original_name_only_reservation_replays_from_verified_owner_without_rehash(profile_ingress):
+    h = profile_ingress
+    assert h.client.post("/bff/personas", headers=h.headers, json={"name": "Seed Tenant"}).status_code == 201
+    tenant_id = h.store.list_all()[0].tenant_id
+    name = "Legacy Name Only Trader"
+    original = h.service._persona_create_canonical_payload(
+        {"name": name}, name=name, tenant_id=tenant_id, requested_by="test-operator")
+    request_hash = h.service._stable_json_hash({"route": "POST /bff/personas", "tenant_id": tenant_id, "payload": original})
+    record, _ = h.store.reserve(
+        tenant_id=tenant_id, idempotency_key="legacy-key", request_hash=request_hash,
+        normalized_name=h.service._normalize_persona_create_name(name),
+        persona_id=h.service._persona_create_identity(tenant_id, h.service._normalize_persona_create_name(name)),
+        request_payload=original)
+    h.owner.create_persona({"persona_id": record.persona_id, "tenant_id": tenant_id,
+                            "name": name, "lifecycle_state": "research_only",
+                            "metadata": {"risk_level": "low", "tenant_id": tenant_id,
+                                         "provisioning_request_hash": request_hash,
+                                         "internal_paper_capital_pool_id": deterministic_provisioning_ids(record).capital_pool_id}})
+    response = h.client.post("/bff/personas", headers={**h.headers, "Idempotency-Key": "legacy-key"}, json={"name": name})
+    assert response.status_code == 201, response.text
+    saved = h.store.get(tenant_id, "legacy-key")
+    assert saved.request_hash == request_hash
+    assert saved.request_payload == original
+    assert saved.references["requested_risk_profile_provenance"]["source"] == "verified_persona_owner"
+
+
+def test_conflicting_create_profile_is_traceable_and_writes_nothing(profile_ingress):
+    h = profile_ingress
+    response = h.client.post("/bff/personas", headers=h.headers, json={
+        "name": "Conflicting Trader", "risk": "low", "metadata": {"requested_risk_profile": "high"}})
+    assert response.status_code == 422, response.text
+    assert "requested_profile_source_conflict" in response.text
+    assert not h.store.list_all()
+    assert not h.tx.mutations
+
+
+@pytest.mark.parametrize("profile", ["low", "medium", "high"])
+@pytest.mark.parametrize("alias", ["riskLevel", "risk_profile", "riskProfile", "traits"])
+def test_actual_profile_aliases_retain_value_and_reject_conflicts(profile, alias):
+    value = ({"riskLevel": profile} if alias in {"risk_profile", "riskProfile"}
+             else {"risk_appetite": profile} if alias == "traits" else profile)
+    request = {alias: value}
+    extract = PersonaProvisioningCoordinator._extract_request_risk_profile_context
+    assert extract(request)[0] == profile
+    if alias == "traits":
+        assert extract({**request, "risk": "low"})[0] == "low"
+        return
+    with pytest.raises(PersonaProvisioningCoordinationError, match="requested_profile_source_conflict"):
+        extract({**request, "risk": "high" if profile == "low" else "low"})
+
+
+@pytest.mark.parametrize("mismatch", [None, "tenant", "persona", "pool", "hash", "missing_profile", "conflict"])
+def test_old_request_requires_verified_matching_real_persona(mismatch):
+    from types import SimpleNamespace
+    store, record = _record_and_store({}, seed_pool_approval=False)
+    record.request_payload = {"name": "Old Request"}
+    original = deepcopy(record.request_payload)
+    ids = deterministic_provisioning_ids(record)
+    persona = {"persona_id": record.persona_id, "tenant_id": record.tenant_id,
+               "metadata": {"risk_level": "medium", "internal_paper_capital_pool_id": ids.capital_pool_id,
+                            "provisioning_request_hash": record.request_hash}}
+    if mismatch == "tenant":
+        persona["tenant_id"] = "foreign"
+    elif mismatch == "persona":
+        persona["persona_id"] = "foreign"
+    elif mismatch == "pool":
+        persona["metadata"]["internal_paper_capital_pool_id"] = "foreign"
+    elif mismatch == "hash":
+        persona["metadata"]["provisioning_request_hash"] = "foreign"
+    elif mismatch == "missing_profile":
+        persona["metadata"].pop("risk_level")
+    elif mismatch == "conflict":
+        persona["risk_level"] = "high"
+    coord = PersonaProvisioningCoordinator(
+        store=store, transport=FakeOwnerTransport(), schedule_registrar=_schedule_receipt,
+        lease_owner="old-request-test", persona_owner_provider=lambda: SimpleNamespace(get_persona=lambda pid: persona))
+    if mismatch in {"tenant", "persona", "pool", "hash", "conflict"}:
+        with pytest.raises(PersonaProvisioningCoordinationError):
+            coord._record_risk_profile_context(record)
+    else:
+        profile, required, _ = coord._record_risk_profile_context(record)
+        assert required is True
+        assert profile == (None if mismatch else "medium")
+    assert record.request_payload == original

@@ -6411,6 +6411,13 @@ def _persona_record_for_provisioning(
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
     requested_profile, _, _ = PersonaProvisioningCoordinator._extract_request_risk_profile_context(payload)
+    recovered = record.references.get("requested_risk_profile_provenance")
+    if (requested_profile is None and isinstance(recovered, Mapping)
+            and recovered.get("source") == "verified_persona_owner"
+            and recovered.get("persona_id") == record.persona_id
+            and recovered.get("tenant_id") == record.tenant_id):
+        requested_profile = PersonaProvisioningCoordinator._verified_requested_profile(
+            ("verified_persona_owner", recovered.get("requested_profile")))
     risk = _normalize_risk_level(requested_profile or "low")
     mandate = str(payload.get("mandate") or "").strip() or None
     strategy_family = str(

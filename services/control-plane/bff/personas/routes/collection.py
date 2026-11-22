@@ -264,7 +264,15 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         )
         # Preserve the historical wire hash (including omitted risk) for replay.
         # Only this new-request boundary supplies the existing Persona default.
-        canonical_payload = _persona_create_effective_profile_payload(canonical_payload)
+        try:
+            canonical_payload = _persona_create_effective_profile_payload(canonical_payload)
+        except PersonaProvisioningCoordinationError as exc:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED,
+                "Persona requested risk profile is inconsistent",
+                str(exc), precondition_failed="risk_level",
+                details_extra={"reasonCode": exc.reason_code},
+            ) from exc
         snapshot_at = utc_now()
         record = ProvisioningRecord(
             tenant_id=tenant_id,
