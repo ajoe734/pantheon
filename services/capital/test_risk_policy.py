@@ -2014,7 +2014,7 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
         },
     }
     algo_weight_ctrl = _seeded_algo(tight_single_name_pool)
-    partial_weight_rejected = algo_weight_ctrl.EvaluateOrderRiskGate(
+    partial_weight_preserved = algo_weight_ctrl.EvaluateOrderRiskGate(
         symbol="2330",
         side="sell",
         quantity=400.0,
@@ -2022,8 +2022,8 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
         instrument_id="eq:2330",
         persona_binding_id="pcb-review",
     )
-    assert partial_weight_rejected["accepted"] is False
-    assert partial_weight_rejected["reason"] == "single_name_limit"
+    assert partial_weight_preserved["accepted"] is True
+    assert partial_weight_preserved["risk_reducing_exit_preserved"] is True
     full_close_weight_ok = algo_weight_ctrl.EvaluateOrderRiskGate(
         symbol="2330",
         side="sell",
@@ -2134,4 +2134,95 @@ def test_runtime_order_risk_gate_retains_governed_reduction_and_close_for_unreso
     assert events[-1].event_type == "paper_fill_simulated"
     assert algo_exec._holding("2330.TW").Quantity == 0.0
 
+
+def test_cash_reserve_policy_limits_digest_binding_and_evaluator() -> None:
+    """PAPER-SIZING-BOUND-RISK-POLICY-20261121: governed cash-reserve rules on RiskPolicy."""
+    from services.capital.risk_policy import (
+        resolve_pool_risk_policy_binding,
+        risk_policy_digest,
+    )
+
+    baseline = RiskPolicy.from_mapping(
+        {
+            "risk_policy_id": "rp-baseline",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+        }
+    )
+    assert baseline.min_cash_reserve_pct is None
+    assert baseline.min_cash_reserve is None
+    assert "min_cash_reserve_pct" not in baseline.to_dict()
+    assert "min_cash_reserve" not in baseline.to_dict()
+
+    with_reserve = RiskPolicy.from_mapping(
+        {
+            **baseline.to_dict(),
+            "version": "1.1",
+            "min_cash_reserve_pct": 0.15,
+            "min_cash_reserve": 10000.0,
+        }
+    )
+    assert with_reserve.min_cash_reserve_pct == 0.15
+    assert with_reserve.min_cash_reserve == 10000.0
+    assert risk_policy_digest(with_reserve) != risk_policy_digest(baseline)
+
+    # Binding resolution validates min_cash_reserve_pct in [0, 1)
+    valid_res = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-reserve",
+        pool={"pool_id": "pool-reserve", "budget": 100000.0, "risk_policy": with_reserve.to_dict()},
+        require_approved_profile_mapping=False,
+    )
+    assert valid_res.resolved is True
+    assert valid_res.effective_limits["min_cash_reserve_pct"] == 0.15
+    assert valid_res.effective_limits["min_cash_reserve"] == 10000.0
+
+    invalid_res = resolve_pool_risk_policy_binding(
+        capital_pool_id="pool-reserve",
+        pool={
+            "pool_id": "pool-reserve",
+            "budget": 100000.0,
+            "risk_policy": {**with_reserve.to_dict(), "min_cash_reserve_pct": 1.0},
+        },
+        require_approved_profile_mapping=False,
+    )
+    assert invalid_res.resolved is False
+    assert invalid_res.reason_code == "risk_policy_invalid_limit"
+
+    evaluator = RiskPolicyEvaluator()
+    allowed_eval = evaluator.evaluate(
+        with_reserve,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-1",
+            "capital_pool_id": "pool-reserve",
+            "stage": "paper",
+            "gross_exposure": 0.8,
+            "net_exposure": 0.8,
+            "leverage": 0.8,
+            "cash_reserve_pct": 0.20,
+            "cash_reserve": 20000.0,
+        },
+    )
+    assert allowed_eval.allowed is True
+
+    rejected_eval = evaluator.evaluate(
+        with_reserve,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-2",
+            "capital_pool_id": "pool-reserve",
+            "stage": "paper",
+            "gross_exposure": 0.85,
+            "net_exposure": 0.85,
+            "leverage": 0.85,
+            "cash_reserve_pct": 0.12,
+            "cash_reserve": 12000.0,
+        },
+    )
+    assert rejected_eval.rejected is True
+    assert any(c.code == "cash_reserve_breach" for c in rejected_eval.checks)
 

@@ -72,11 +72,13 @@ def _setup(tmp_path, official=OFFICIAL):
     def fills():
         return [e for e in telemetry.events if e["event_type"] == "paper_fill_simulated"]
 
-    return decide, drain, positions, fills, store, producer, binding, service
+    return decide, drain, positions, fills, store, producer, binding, service, telemetry
 
 
 def test_two_sessions_fill_at_the_next_official_open_and_never_at_the_decision_close(tmp_path):
-    decide, drain, positions, fills, store, producer, binding, service = _setup(tmp_path)
+    decide, drain, positions, fills, store, producer, binding, service, telemetry = _setup(
+        tmp_path / "open_111_5"
+    )
 
     # Session 1: the 2026-11-13 bar decides on Friday evening -> parked, no order, no position.
     assert decide("2026-11-13", [100, 110]) == 0
@@ -92,15 +94,51 @@ def test_two_sessions_fill_at_the_next_official_open_and_never_at_the_decision_c
     first_fill = fills()[-1]
     price = _fill_price(first_fill)
     assert price == OFFICIAL["2026-11-16"][0] != OFFICIAL["2026-11-13"][1]  # open of D+1, not close of D
-    assert positions()
+    assert positions() == {"2330.TW": 363.0}
+    assert [_fill_price(f) for f in fills()] == [104.0]
 
-    # Session 2: the Monday decision settles at the 2026-11-17 open (Tuesday).
+    # Session 2 at official open 111.5: 363 * 111.5 = 40474.5 > 40000 target notional -> already_at_target guard holds.
     released = decide("2026-11-17", [112, 113])
     assert released == 1, (released, producer.degraded_bindings)
     drain()
-    assert _fill_price(fills()[-1]) == OFFICIAL["2026-11-17"][0]
-    assert fills()[-1]["metadata"]["market_price"] == OFFICIAL["2026-11-17"][0]
-    assert fills()[-1]["metadata"]["market_price_as_of"] == "2026-11-17T09:00:00+08:00"
+    assert positions() == {"2330.TW": 363.0}
+    assert [_fill_price(f) for f in fills()] == [104.0]
+    no_trade_events = [
+        e for e in telemetry.events
+        if e["event_type"] == "paper_order_simulated"
+        and e.get("metadata", {}).get("reason_code") == "already_at_target"
+    ]
+    assert len(no_trade_events) == 1
+    assert no_trade_events[-1]["metadata"]["market_price"] == OFFICIAL["2026-11-17"][0]
+    assert no_trade_events[-1]["metadata"]["market_price_as_of"] == "2026-11-17T09:00:00+08:00"
+    assert no_trade_events[-1]["metadata"]["submitted_to_broker"] is False
+    assert no_trade_events[-1]["metadata"]["submission_sizing_evidence"]["binding_limit"] == "already_at_target"
+    assert no_trade_events[-1]["metadata"]["submission_sizing_evidence"]["permitted_units"] == 0
+
+    # Session 2 with positive remaining target capacity at official open 105.0:
+    # 363 * 105.0 = 38115.0 < 40000.0 -> floor((40000.0 - 38115.0) / 105.0) = 17 additional shares fill at 105.0.
+    decide_2, drain_2, positions_2, fills_2, store_2, producer_2, _, _, _ = _setup(
+        tmp_path / "open_105_0",
+        official={**OFFICIAL, "2026-11-17": (105.0, 113.0)},
+    )
+    assert decide_2("2026-11-13", [100, 110]) == 0
+    drain_2()
+    assert decide_2("2026-11-16", [110, 112]) == 1
+    drain_2()
+    assert positions_2() == {"2330.TW": 363.0}
+    assert [_fill_price(f) for f in fills_2()] == [104.0]
+
+    released_2 = decide_2("2026-11-17", [112, 113])
+    assert released_2 == 1, (released_2, producer_2.degraded_bindings)
+    drain_2()
+    assert positions_2() == {"2330.TW": 380.0}
+    assert [_fill_price(f) for f in fills_2()] == [104.0, 105.0]
+    second_fill = fills_2()[-1]
+    assert _fill_price(second_fill) == 105.0 != OFFICIAL["2026-11-16"][1]
+    assert second_fill["metadata"]["market_price"] == 105.0
+    assert second_fill["metadata"]["market_price_as_of"] == "2026-11-17T09:00:00+08:00"
+    assert second_fill["metadata"]["submission_sizing_evidence"]["binding_limit"] == "existing_holdings_target_notional"
+    assert second_fill["metadata"]["submission_sizing_evidence"]["permitted_units"] == 17
 
 
 def _fill_price(event):
@@ -108,7 +146,7 @@ def _fill_price(event):
 
 
 def test_replay_and_restart_never_duplicate_the_order(tmp_path):
-    decide, drain, positions, fills, store, producer, binding, service = _setup(tmp_path)
+    decide, drain, positions, fills, store, producer, binding, service, _ = _setup(tmp_path)
     assert decide("2026-11-13", [100, 110]) == 0
     assert decide("2026-11-13", [100, 110]) == 0  # same bar polled again: still one parked decision
     assert decide("2026-11-16", [110, 112]) == 1
@@ -121,7 +159,7 @@ def test_replay_and_restart_never_duplicate_the_order(tmp_path):
 
 
 def test_missing_next_session_open_expires_without_a_close_fill(tmp_path):
-    decide, drain, positions, fills, store, producer, binding, service = _setup(
+    decide, drain, positions, fills, store, producer, binding, service, _ = _setup(
         tmp_path, official={"2026-11-17": (111.5, 113.0)}  # 2026-11-16 never reconciled
     )
     assert decide("2026-11-13", [100, 110]) == 0
