@@ -1750,6 +1750,8 @@ def list_all_strategy_spec_entries(
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
+    query: Optional[str] = None,
+    q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -1772,6 +1774,7 @@ def list_all_strategy_spec_entries(
     if view == "strategy_summary_page":
         ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
         wanted_artifact_state = artifact_state.value if artifact_state is not None else None
+        effective_query = query if query is not None else q
         try:
             page_payload = get_registry_service().strategy_spec_summary_page(
                 visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
@@ -1782,6 +1785,7 @@ def list_all_strategy_spec_entries(
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
+                **({"query": effective_query} if effective_query is not None else {}),
             )
         except ValueError as exc:
             msg = str(exc)

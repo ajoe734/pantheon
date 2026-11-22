@@ -49,6 +49,7 @@ from .storage import (
     STRATEGY_SUMMARY_INDEX_PROV_KEYS,
     STRATEGY_SUMMARY_INDEX_ROW_KEYS,
     STRATEGY_SUMMARY_INDEX_SPEC_KEYS,
+    STRATEGY_SUMMARY_INDEX_TITLE_KEYS,
     STRATEGY_SUMMARY_INNER_META_KEYS,
     STRATEGY_SUMMARY_MARKET_KEYS,
     STRATEGY_SUMMARY_META_KEYS,
@@ -1030,7 +1031,11 @@ class PostgresRegistryStore:
         return rows
 
     def list_strategy_spec_summary_index_rows(
-        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected inside Postgres for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -1039,18 +1044,25 @@ class PostgresRegistryStore:
             visible_tenants, artifact_type,
         )
         if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
-            sql = _strategy_spec_summary_index_single_pass_sql(self._entries.table, visible_sql)
+            sql = _strategy_spec_summary_index_single_pass_sql(
+                self._entries.table, visible_sql, include_title=include_title,
+            )
             with self._entries._use_conn(None) as conn:
                 cursor = conn.execute(sql, params) if params else conn.execute(sql)
                 raw_rows = [
                     tuple(r.values()) if isinstance(r, dict) else tuple(r)
                     for r in cursor.fetchall()
                 ]
-            return strategy_spec_summary_index_rows_from_columns(raw_rows)
+            return strategy_spec_summary_index_rows_from_columns(
+                raw_rows, include_title=include_title,
+            )
         return strategy_spec_summary_index_rows_from_columns(
             self._entries.list_all_selected(
-                strategy_spec_summary_index_select_sql(), visible_sql=visible_sql, keep_params=params,
-            )
+                strategy_spec_summary_index_select_sql(include_title=include_title),
+                visible_sql=visible_sql,
+                keep_params=params,
+            ),
+            include_title=include_title,
         )
 
     def get_strategy_spec_summary_rows_by_ids(
@@ -1418,12 +1430,12 @@ _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
 )
 
 
-def _strategy_summary_index_leaf_paths() -> list[tuple[str, ...]]:
+def _strategy_summary_index_leaf_paths(*, include_title: bool = False) -> list[tuple[str, ...]]:
     """Leaf paths read for a strategy-spec candidate-index row (Phase 1)."""
     meta = ("metadata",)
     spec = ("metadata", "strategy_spec")
     spec_meta = spec + ("metadata",)
-    return (
+    paths = (
         [(k,) for k in STRATEGY_SUMMARY_INDEX_ROW_KEYS]
         + [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_META_KEYS]
         + [meta + ("provenance", k) for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS]
@@ -1431,11 +1443,20 @@ def _strategy_summary_index_leaf_paths() -> list[tuple[str, ...]]:
         + [spec + ("provenance", k) for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS]
         + [spec_meta + (k,) for k in STRATEGY_SUMMARY_INDEX_INNER_META_KEYS]
     )
+    if include_title:
+        paths = (
+            paths
+            + [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_TITLE_KEYS]
+            + [spec + (k,) for k in STRATEGY_SUMMARY_INDEX_TITLE_KEYS]
+        )
+    return paths
 
 
-def strategy_spec_summary_index_select_sql() -> str:
+def strategy_spec_summary_index_select_sql(*, include_title: bool = False) -> str:
     """Plain column list over ``payload`` for candidate-index rows (Phase 1)."""
-    cols = ", ".join(f"({_sql_node(p)})::text" for p in _strategy_summary_index_leaf_paths())
+    cols = ", ".join(
+        f"({_sql_node(p)})::text" for p in _strategy_summary_index_leaf_paths(include_title=include_title)
+    )
     shapes = ", ".join(
         f"jsonb_typeof({_sql_node(p)})"
         for p in _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS
@@ -1443,10 +1464,24 @@ def strategy_spec_summary_index_select_sql() -> str:
     return f"{cols}, {shapes}"
 
 
-def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -> str:
+def _strategy_spec_summary_index_single_pass_sql(
+    table: str, visible_sql: str, *, include_title: bool = False,
+) -> str:
     """Single-pass Postgres query that detoasts ``payload`` once, extracts
     ``metadata`` and ``strategy_spec`` sub-objects once per visible row, and
     projects only the candidate-index fields before sorting."""
+    title_cols_expr = (
+        [f"(m -> '{k}')::text AS mt{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_TITLE_KEYS)]
+        + [f"(s -> '{k}')::text AS st{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_TITLE_KEYS)]
+        if include_title
+        else []
+    )
+    title_outer_cols = (
+        [f"mt{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_TITLE_KEYS))]
+        + [f"st{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_TITLE_KEYS))]
+        if include_title
+        else []
+    )
     cols_expr = (
         [f"(payload -> '{k}')::text AS c{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_ROW_KEYS)]
         + [f"(m -> '{k}')::text AS m{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_META_KEYS)]
@@ -1454,6 +1489,7 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
         + [f"(s -> '{k}')::text AS s{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SPEC_KEYS)]
         + [f"(sp -> '{k}')::text AS sp{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_PROV_KEYS)]
         + [f"(sm -> '{k}')::text AS sm{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_INNER_META_KEYS)]
+        + title_cols_expr
         + [
             "jsonb_typeof(mp) AS t0",
             "jsonb_typeof(s) AS t1",
@@ -1468,6 +1504,7 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
         + [f"s{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SPEC_KEYS))]
         + [f"sp{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_PROV_KEYS))]
         + [f"sm{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_INNER_META_KEYS))]
+        + title_outer_cols
         + ["t0", "t1", "t2", "t3"]
     )
     return (
@@ -1489,7 +1526,7 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
     )
 
 
-def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
+def strategy_spec_summary_index_rows_from_columns(rows, *, include_title: bool = False) -> list[dict]:
     """Assemble ``strategy_spec_summary_index_row``-shaped dicts from the index select columns."""
     loads = json.loads
 
@@ -1504,15 +1541,29 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
 
     out: list[dict] = []
     append = out.append
-    for (
-        c0, c1, c2, c3, c4, c5, c6,
-        m0, m1, m2, m3, m4, m5, m6, m7, m8,
-        mp0,
-        s0, s1, s2, s3, s4, s5, s6, s7, s8,
-        sp0,
-        sm0, sm1, sm2, sm3,
-        t0, t1, t2, t3,
-    ) in rows:
+    for raw_tuple in rows:
+        if include_title:
+            (
+                c0, c1, c2, c3, c4, c5, c6,
+                m0, m1, m2, m3, m4, m5, m6, m7, m8,
+                mp0,
+                s0, s1, s2, s3, s4, s5, s6, s7, s8,
+                sp0,
+                sm0, sm1, sm2, sm3,
+                mt0, mt1, st0, st1,
+                t0, t1, t2, t3,
+            ) = raw_tuple
+        else:
+            (
+                c0, c1, c2, c3, c4, c5, c6,
+                m0, m1, m2, m3, m4, m5, m6, m7, m8,
+                mp0,
+                s0, s1, s2, s3, s4, s5, s6, s7, s8,
+                sp0,
+                sm0, sm1, sm2, sm3,
+                t0, t1, t2, t3,
+            ) = raw_tuple
+            mt0 = mt1 = st0 = st1 = None
         meta: dict[str, Any] = {}
         if m0 is not None:
             meta["spec_version_id"] = _dec(m0)
@@ -1532,6 +1583,11 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
             meta["state"] = _dec(m7)
         if m8 is not None:
             meta["status"] = _dec(m8)
+        if include_title:
+            if mt0 is not None:
+                meta["title"] = _dec(mt0)
+            if mt1 is not None:
+                meta["name"] = _dec(mt1)
         if t0 == "object":
             meta["provenance"] = {"created_at": _dec(mp0)} if mp0 is not None else {}
         if t1 == "object":
@@ -1554,6 +1610,11 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
                 spec["updated_at"] = _dec(s7)
             if s8 is not None:
                 spec["last_modified_at"] = _dec(s8)
+            if include_title:
+                if st0 is not None:
+                    spec["title"] = _dec(st0)
+                if st1 is not None:
+                    spec["name"] = _dec(st1)
             if t2 == "object":
                 spec["provenance"] = {"created_at": _dec(sp0)} if sp0 is not None else {}
             if t3 == "object":
