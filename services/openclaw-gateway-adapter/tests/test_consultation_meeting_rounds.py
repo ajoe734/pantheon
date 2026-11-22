@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 _ADAPTER_DIR = Path(__file__).resolve().parents[1]
@@ -364,3 +365,242 @@ def test_private_memory_in_case_file_or_pre_read_is_refused(tmp_path: Path) -> N
     assert resp.status_code == 502
     assert "private memory cannot enter" in resp.json()["reason"]
     assert not double.invoked_agents
+
+
+def _extract_prompt_schema(prompt: str) -> dict[str, Any]:
+    marker = "satisfying this JSON schema:\n"
+    schema_line = prompt.split(marker, 1)[1].splitlines()[0]
+    return json.loads(schema_line)
+
+
+def test_round_1_round_2_and_chair_synthesis_prompt_schemas_validate_meeting_fields_and_fenced_json(
+    tmp_path: Path,
+) -> None:
+    import jsonschema
+
+    # 1. Round 1 prompt schema explicitly allows stance, citations, proposals, accepted, disputed, changed
+    r1_double = _ProviderDouble(
+        event_content_override={
+            "stance": "approve_with_conditions",
+            "confidence": 0.85,
+            "citations": ["facts:item:1"],
+            "claims": [{"claim": "Independent round 1 position", "evidence_refs": ["facts:item:1"]}],
+            "summary_evidence_refs": ["facts:item:1"],
+            "proposals": [
+                {
+                    "proposal_id": "prop-r1-1",
+                    "kind": "research_demand",
+                    "sponsor_persona_id": "persona-alpha",
+                    "citations": ["facts:item:1"],
+                    "payload": {"mandate": "momentum"},
+                }
+            ],
+        }
+    )
+    r1_resp = _post_turn(
+        r1_double,
+        tmp_path,
+        idem_key="schema-r1",
+        meeting={"meeting_id": "mtg-1", "meeting_type": "MT-1", "round": 1},
+    )
+    assert r1_resp.status_code == 200, r1_resp.text
+    r1_schema = _extract_prompt_schema(r1_double.prompts[0])
+    r1_ec_schema = r1_schema["properties"]["event_content"]
+    assert set(r1_ec_schema["required"]) >= {"stance", "citations", "claims", "summary_evidence_refs"}
+    for field in ("stance", "citations", "proposals", "accepted", "disputed", "changed"):
+        assert field in r1_ec_schema["properties"]
+    r1_contrib = dict(r1_resp.json()["contribution"])
+    r1_contrib.pop("author_type", None)
+    r1_contrib["event_content"] = dict(r1_contrib["event_content"])
+    r1_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(r1_contrib, r1_schema)
+
+    # 2. Round 2 prompt schema requires accepted, disputed, changed alongside stance, citations, claims, summary_evidence_refs
+    r2_double = _ProviderDouble()
+    r2_resp = _post_turn(
+        r2_double,
+        tmp_path,
+        idem_key="schema-r2",
+        meeting={
+            "meeting_id": "mtg-1",
+            "meeting_type": "MT-1",
+            "round": 2,
+            "prior_round_positions": [
+                {
+                    "label": "role:chair|style:momentum#1",
+                    "role": "chair",
+                    "style": "momentum",
+                    "stance": "approve",
+                    "confidence": 0.8,
+                    "citations": ["facts:item:1"],
+                }
+            ],
+        },
+    )
+    assert r2_resp.status_code == 200, r2_resp.text
+    r2_schema = _extract_prompt_schema(r2_double.prompts[0])
+    r2_ec_schema = r2_schema["properties"]["event_content"]
+    assert set(r2_ec_schema["required"]) == {
+        "stance",
+        "citations",
+        "claims",
+        "summary_evidence_refs",
+        "accepted",
+        "disputed",
+        "changed",
+    }
+    r2_contrib = dict(r2_resp.json()["contribution"])
+    r2_contrib.pop("author_type", None)
+    r2_contrib["event_content"] = dict(r2_contrib["event_content"])
+    r2_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(r2_contrib, r2_schema)
+
+    # 3. Chair synthesis turn schema requires synthesis={summary, outcome, proposals} and _persona_response strips markdown code fences
+    class _FencedSynthesisDouble(_ProviderDouble):
+        def invoke(self, prompt: str, **kwargs: Any) -> Any:
+            base = super().invoke(prompt, **kwargs)
+            raw_json = base.output["json_events"][0]["item"]["text"]
+            fenced = f"```json\n{raw_json}\n```\n"
+            return SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": kwargs.get("agent_id"),
+                    "json_events": [{"item": {"text": fenced}}],
+                },
+            )
+
+    synth_double = _FencedSynthesisDouble(
+        event_content_override={
+            "claims": [{"claim": "Chair synthesis conclusion", "evidence_refs": ["facts:item:1"]}],
+            "summary_evidence_refs": ["facts:item:1"],
+            "synthesis": {
+                "summary": "Chair synthesis with one sponsored research demand proposal",
+                "outcome": "proposals_issued",
+                "proposals": [
+                    {
+                        "proposal_id": "prop-mtg-1-1",
+                        "kind": "research_demand",
+                        "sponsor_persona_id": "persona-alpha",
+                        "citations": ["facts:item:1"],
+                        "payload": {
+                            "mandate": "momentum",
+                            "missing_datasets": [],
+                            "tried_families": ["momentum"],
+                            "short_measure": "effective_bets",
+                            "pool_version": 1,
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    synth_resp = _post_turn(
+        synth_double,
+        tmp_path,
+        idem_key="schema-synth-fenced",
+        meeting={
+            "meeting_id": "mtg-1",
+            "meeting_type": "MT-1",
+            "round": "synthesis",
+            "phase": "synthesis",
+        },
+    )
+    assert synth_resp.status_code == 200, synth_resp.text
+    synth_schema = _extract_prompt_schema(synth_double.prompts[0])
+    synth_ec_schema = synth_schema["properties"]["event_content"]
+    assert "synthesis" in synth_ec_schema["required"]
+    synth_obj_schema = synth_ec_schema["properties"]["synthesis"]
+    assert set(synth_obj_schema["required"]) == {"summary", "outcome", "proposals"}
+    assert set(synth_obj_schema["properties"]["outcome"]["enum"]) == {
+        "proposals_issued",
+        "completed_no_proposal",
+        "no_testable_hypothesis",
+    }
+    synth_contrib = dict(synth_resp.json()["contribution"])
+    assert synth_contrib["event_content"]["synthesis"]["outcome"] == "proposals_issued"
+    assert (
+        synth_contrib["event_content"]["synthesis"]["proposals"][0]["sponsor_persona_id"]
+        == "persona-alpha"
+    )
+    synth_contrib.pop("author_type", None)
+    synth_contrib["event_content"] = dict(synth_contrib["event_content"])
+    synth_contrib["event_content"].pop("committee_memory_status", None)
+    jsonschema.validate(synth_contrib, synth_schema)
+
+
+@pytest.mark.parametrize("round_value", [1, 2, "synthesis"])
+@pytest.mark.parametrize("entries", [[], [{"item_id": "pmem-1", "summary": "SUPPLIED-PRE-READ-SENTINEL"}]])
+def test_supplied_preread_skips_memory_fetch_even_when_empty(tmp_path, round_value, entries):
+    double = _ProviderDouble()
+    calls = []
+
+    def fetch(*args):
+        calls.append(args)
+        raise AssertionError("pre-read must be used without another memory read")
+
+    response = _post_turn(double, tmp_path, memory_fetcher=fetch, meeting={
+        "meeting_id": "mtg-1", "meeting_type": "MT-1", "round": round_value,
+        "own_pre_read": {"persona_id": "persona-alpha", "entries": entries},
+        **({"prior_round_positions": []} if round_value == 2 else {}),
+    })
+    assert response.status_code == 200, response.text
+    assert not calls and len(double.prompts) == 1
+    if entries:
+        assert "SUPPLIED-PRE-READ-SENTINEL" in double.prompts[0]
+
+
+def test_absent_preread_still_fetches_memory(tmp_path):
+    calls = []
+    response = _post_turn(_ProviderDouble(), tmp_path, memory_fetcher=lambda *a: calls.append(a) or {"hits": []},
+                          meeting={"meeting_id": "mtg-1", "meeting_type": "MT-1", "round": 1})
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1 and calls[0][0:2] == (TENANT, "persona-alpha")
+
+
+@pytest.mark.parametrize("shared_source", [None, "env", "file"])
+def test_memory_token_fallback_keeps_actor_and_roles_aligned(tmp_path, monkeypatch, shared_source):
+    import consultation_provider as cp
+
+    for name in ("PANTHEON_MEMORY_AUTH_TOKEN", "PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+                 "PANTHEON_MEMORY_ACTOR_ID", "PANTHEON_MEMORY_ACTOR_ROLES"):
+        monkeypatch.setenv(name, "")
+    adapter_file = tmp_path / "adapter-token"
+    adapter_file.write_text("synthetic-adapter-token\n")
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ID", "adapter-reader")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES", "persona_memory_reader, researcher")
+    monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory.invalid")
+    if shared_source:
+        monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "shared-reader")
+        monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "consultation_session")
+        if shared_source == "env":
+            monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "synthetic-shared-token")
+        else:
+            shared_file = tmp_path / "shared-token"
+            shared_file.write_text("synthetic-shared-token\n")
+            monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", str(shared_file))
+    calls = []
+    monkeypatch.setattr(cp, "fetch_canonical_memory", lambda url, **kw: calls.append((url, kw)) or {"hits": []})
+    assert cp._default_committee_memory_fetcher(TENANT, "persona-alpha", "s1", "decision") == {"hits": []}
+    url, params = calls[0]
+    assert url == "http://memory.invalid"
+    assert params["auth_token"] == ("synthetic-shared-token" if shared_source else "synthetic-adapter-token")
+    assert params["actor_id"] == ("shared-reader" if shared_source else "adapter-reader")
+    assert params["actor_roles"] == (["consultation_session"] if shared_source else ["persona_memory_reader", "researcher"])
+    assert params["timeout_seconds"] == 15.0
+    assert params["scope"] == "both" and params["persona_id"] == "persona-alpha"
+    if not shared_source:
+        adapter_file.write_text("synthetic-rotated-token\n")
+        assert cp._memory_auth_token() == "synthetic-rotated-token"
+
+
+def test_configured_missing_shared_token_file_does_not_downgrade_to_adapter(tmp_path, monkeypatch):
+    import consultation_provider as cp
+
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", str(tmp_path / "missing-shared"))
+    adapter_file = tmp_path / "adapter-token"
+    adapter_file.write_text("synthetic-adapter-token")
+    monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
+    with pytest.raises(FileNotFoundError):
+        cp._memory_auth_token()

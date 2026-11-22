@@ -1,0 +1,382 @@
+{
+  "task_id": "PAPER-SIZING-BOUND-RISK-POLICY-20261121",
+  "register_class": "RC2",
+  "title": "Size paper orders from the effective risk budget and recheck before submission",
+  "upstream_dependencies": {
+    "PAPER-RISK-POLICY-PROVENANCE-20261121": "done (#7703)",
+    "PAPER-RISK-POLICY-BINDING-20261121": "done (#7726)",
+    "PAPER-CASH-SHARE-SIZING-COMMISSION-20261120": "done (#7657)"
+  },
+  "hosted_profile_mapping_approval_status": {
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "observed_inline_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+    "observed_inline_policy_version": "1.0",
+    "requested_risk": "low",
+    "hosted_profile_mapping_status": "unresolved_profile_mapping",
+    "hosted_reason_code": "risk_policy_profile_mapping_unapproved",
+    "runtime_fail_closed_when_unapproved": true,
+    "outstanding_owner_approval_and_hosted_proof_task": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121"
+  },
+  "observed_historical_inline_v1_policy_fixture": {
+    "evidence_kind": "local_historical_replay_with_observed_inline_v1_fixture_not_approved_hosted_runtime",
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+    "risk_policy_version": "1.0",
+    "status": "active",
+    "allowed_stages": ["paper"],
+    "allowed_asset_classes": ["equity", "future"],
+    "gross_limit": 2.0,
+    "net_limit": 2.0,
+    "max_leverage": 2.0,
+    "max_single_name_weight": null,
+    "min_cash_reserve_pct": null,
+    "min_cash_reserve": null
+  },
+  "baseline_2317_pre_trade_replay": {
+    "evidence_kind": "local_historical_replay_with_observed_inline_v1_fixture_not_approved_hosted_runtime",
+    "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+    "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+    "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09",
+    "underlying": "2317",
+    "direction": "LONG",
+    "strength": 0.91324200913242,
+    "dated_price": 221.0,
+    "price_date": "2026-11-18",
+    "capital": 100000.0,
+    "target_notional": 182648.401826,
+    "permitted_units": 451,
+    "binding_limit": "available_cash_after_fees",
+    "order_notional": 99671.0,
+    "commission_fee": 142.031175,
+    "fee_inclusive_required_cash": 99813.031175,
+    "remaining_cash": 186.968825,
+    "after_trade_concentration": 0.998128,
+    "after_trade_concentration_of_initial_capital": 0.99671,
+    "compact_pre_trade_sizing_serialized_bytes": 266,
+    "compact_pre_trade_sizing_max_bytes_cap": 384,
+    "constraint_unit_caps": {
+      "target_notional": 826,
+      "gross_limit": 904,
+      "max_leverage": 904,
+      "net_limit": 904,
+      "max_single_name_weight": null,
+      "raw_cash_pre_fee": 452,
+      "spendable_cash_pre_fee": 452,
+      "available_cash_after_fees": 451
+    }
+  },
+  "labelled_explicit_limit_test_fixtures": {
+    "evidence_kind": "local_synthetic_test_fixtures_not_hosted_observation",
+    "note": "Synthetic local test fixtures only; genuine policy-owner capital_pool_activation approval and post-deploy hosted proof remain tracked under PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121.",
+    "fixtures": [
+      {
+        "fixture_label": "FIXTURE_EXPLICIT_SINGLE_NAME_25PCT",
+        "configured_limit": {"max_single_name_weight": 0.25, "max_single_name_notional": 25000.0},
+        "target_notional": 182648.401826,
+        "permitted_units": 113,
+        "binding_limit": "max_single_name_weight",
+        "fee_inclusive_required_cash": 25008.586525,
+        "remaining_cash": 74991.413475,
+        "after_trade_concentration": 0.249819
+      },
+      {
+        "fixture_label": "FIXTURE_EXPLICIT_CASH_RESERVE_20PCT",
+        "configured_limit": {"min_cash_reserve_pct": 0.20, "cash_reserve_required": 20000.0},
+        "target_notional": 182648.401826,
+        "permitted_units": 361,
+        "binding_limit": "cash_reserve",
+        "fee_inclusive_required_cash": 79894.687925,
+        "remaining_cash": 20105.312075,
+        "after_trade_concentration": 0.798718
+      },
+      {
+        "fixture_label": "FIXTURE_EXPLICIT_MAX_LEVERAGE_60PCT",
+        "configured_limit": {"max_leverage": 0.60, "gross_limit": 200000.0},
+        "target_notional": 60000.0,
+        "permitted_units": 271,
+        "binding_limit": "max_leverage",
+        "fee_inclusive_required_cash": 59976.344675,
+        "remaining_cash": 40023.655325,
+        "after_trade_concentration": 0.599422
+      },
+      {
+        "fixture_label": "FIXTURE_EXPLICIT_NET_LIMIT_40K_WITH_10K_LONG",
+        "configured_limit": {"net_limit": 40000.0, "signed_net_used": 10000.0},
+        "target_notional": 182648.401826,
+        "permitted_units": 135,
+        "binding_limit": "net_limit",
+        "fee_inclusive_required_cash": 29877.514875,
+        "remaining_cash": 70122.485125,
+        "after_trade_net_exposure": 0.398518
+      },
+      {
+        "fixture_label": "FIXTURE_TARGET_POSITION_EXISTING_HOLDINGS_AND_RESERVATION",
+        "policy_kind": "target_position_v1",
+        "configured_limit": {
+          "max_single_name_weight": 0.30,
+          "existing_2317_units": 50,
+          "existing_2317_notional": 11050.0,
+          "cash_reserved": 30000.0
+        },
+        "target_notional": 50000.0,
+        "effective_target_notional": 30000.0,
+        "permitted_units": 85,
+        "binding_limit": "max_single_name_weight",
+        "fee_inclusive_required_cash": 18811.768625,
+        "remaining_cash": 51188.231375,
+        "after_trade_concentration": 0.29843
+      },
+      {
+        "fixture_label": "FIXTURE_OVERLAPPING_CASH_10K_VS_SINGLE_NAME_80PCT",
+        "configured_limit": {
+          "equity": 100000.0,
+          "raw_cash": 10000.0,
+          "available_cash": 10000.0,
+          "max_single_name_weight": 0.80,
+          "dated_price": 221.0
+        },
+        "permitted_units": 45,
+        "available_cash_after_fees_cap": 45,
+        "max_single_name_weight_cap": 361,
+        "binding_limit": "available_cash_after_fees"
+      },
+      {
+        "fixture_label": "FIXTURE_INTEGRATED_FUTURES_RESERVATION_60K_DEDUCTED_ONCE_PROVIDER_AND_RAW",
+        "configured_limit": {
+          "equity": 100000.0,
+          "raw_cash": 100000.0,
+          "competing_futures_reservation_margin": 60000.0,
+          "provider_free_margin": 40000.0,
+          "provider_available_cash": 40000.0,
+          "candidate_available_cash": 40000.0,
+          "expression_spendable_cash": 40000.0,
+          "dated_price": 221.0
+        },
+        "candidate_max_units_by_risk": 180,
+        "permitted_units": 180,
+        "binding_limit": "cash_reserved",
+        "fee_inclusive_required_cash": 39836.6865,
+        "remaining_cash": 163.3135
+      }
+    ]
+  },
+  "submission_time_reevaluation_scenarios": [
+    {
+      "scenario": "observed_unapproved_inline_v1_pool_opening_order_rejected_fail_closed",
+      "evidence_kind": "observed_hosted_unapproved_profile_mapping_state",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 0,
+      "outcome": "order_rejection",
+      "reason": "risk_policy_unavailable",
+      "submitted_to_broker": false
+    },
+    {
+      "scenario": "baseline_unchanged_at_submission_with_synthetic_fixture_approval",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 451,
+      "outcome": "filled",
+      "binding_limit": "available_cash_after_fees",
+      "submitted_to_broker": true,
+      "compact_submission_sizing_evidence_serialized_bytes": 215,
+      "compact_submission_sizing_evidence_max_bytes_cap": 320
+    },
+    {
+      "scenario": "changed_price_at_d_plus_1_open",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 225.0,
+      "requested_units": 451,
+      "permitted_units": 443,
+      "outcome": "resized_and_filled",
+      "binding_limit": "available_cash_after_fees",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "changed_policy_at_submission_v1_1_single_name_25pct",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 113,
+      "outcome": "resized_and_filled",
+      "binding_limit": "max_single_name_weight",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "competing_order_reservation_40057_twd_cash",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 270,
+      "outcome": "resized_and_filled",
+      "binding_limit": "competing_reservation",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "own_reservation_excluded_across_every_resize_recheck_without_context_signal_id_while_retaining_competing_reservation",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "own_reservation": {"signal_id": "self-resize", "pretrade_price": 221.0, "reserved_units": 451, "cash_reserved": 99813.031175},
+      "changed_price_case": {"price_at_submission": 225.0, "context_duplicates_signal_id": false, "requested_units": 451, "permitted_units": 443, "outcome": "resized_and_filled_once_then_retry_deduplicated", "binding_limit": "available_cash_after_fees", "own_reservation_released": true},
+      "changed_policy_case": {"price_at_submission": 221.0, "risk_policy_version": "1.1", "max_single_name_weight": 0.25, "context_duplicates_signal_id": false, "requested_units": 451, "permitted_units": 113, "outcome": "resized_and_filled_once_then_retry_deduplicated_across_reservation_and_signal_aliases", "binding_limit": "max_single_name_weight", "own_reservation_released": true},
+      "own_plus_competing_reservation_case": {"competing_reservation_id": "competing-2330", "competing_cash_reserved": 40057.0, "price_at_submission": 225.0, "context_duplicates_signal_id": false, "requested_units": 451, "permitted_units": 266, "reservations_applied": 1, "outcome": "resized_and_filled_once_own_released_competing_retained", "binding_limit": "competing_reservation"}
+    },
+    {
+      "scenario": "changed_holdings_already_at_target",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 180,
+      "permitted_units": 0,
+      "outcome": "no_trade_at_submission",
+      "binding_limit": "already_at_target",
+      "submitted_to_broker": false
+    },
+    {
+      "scenario": "duplicate_signal_retry_deduplication",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 451,
+      "permitted_units": 451,
+      "outcome": "duplicate_signal_retry_idempotent_skip",
+      "submitted_to_broker": false
+    },
+    {
+      "scenario": "risk_reducing_exit_holdings_partially_reserved_then_flat",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "requested_units": 200,
+      "permitted_units": 80,
+      "outcome": "resized_close_leg_then_no_trade_when_flat",
+      "binding_limit": "available_holding_quantity",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "target_notional_rechecked_at_submission_price_for_zero_and_unchanged_holdings",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "policy_kind": "target_position_v1",
+      "target_notional": 10000.0,
+      "pretrade_price": 221.0,
+      "price_at_submission": 300.0,
+      "requested_units": 45,
+      "permitted_units": 33,
+      "order_notional": 9900.0,
+      "fee_inclusive_required_cash": 9914.1075,
+      "outcome": "resized_and_filled",
+      "binding_limit": "target_notional",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "partial_risk_reducing_exit_preserved_when_existing_exposure_exceeds_tightened_limits",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "existing_holdings_units": 200,
+      "tightened_limits_covered": [
+        "max_single_name_weight=0.25",
+        "gross_limit=0.25",
+        "net_limit=0.25",
+        "max_leverage=0.25"
+      ],
+      "requested_units": 20,
+      "permitted_units": 20,
+      "outcome": "filled_partial_risk_reducing_exit_while_blocking_increase_reversal_and_unrelated_safety_failures",
+      "binding_limit": "existing_holding_close_leg",
+      "submitted_to_broker": true
+    },
+    {
+      "scenario": "reservation_cleanup_on_definitive_rejections_and_reconciliation_for_uncertain_broker_outcomes",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "price_at_submission": 221.0,
+      "prebroker_terminal_rejections_released": [
+        "tw_unsupported_quantity_type",
+        "tw_invalid_order_input",
+        "sell_without_holdings",
+        "risk_gate_rejection",
+        "definitive_broker_http_4xx_rejection"
+      ],
+      "uncertain_broker_outcomes_reconciled": [
+        "broker_timeout_held_then_reconciled_rejected_and_retried",
+        "malformed_broker_fill_held_then_reconciled_filled_and_deduplicated",
+        "transport_malformed_json_held_and_retry_blocked",
+        "transport_non_object_json_held_and_retry_blocked",
+        "transport_stream_read_failure_held_and_retry_blocked",
+        "transport_missing_order_key_held_and_retry_blocked"
+      ]
+    },
+    {
+      "scenario": "daily_next_open_settlement_two_case_target_notional_guard_and_positive_capacity_fill",
+      "evidence_kind": "local_synthetic_fixture_with_owner_approval_not_hosted_observation",
+      "symbol": "2330.TW",
+      "target_notional": 40000.0,
+      "session_1_official_open": 104.0,
+      "session_1_filled_units": 363.0,
+      "session_2_cases": {
+        "111.5": {
+          "existing_holdings_notional_at_open": 40474.5,
+          "permitted_units": 0,
+          "outcome": "no_trade_at_submission",
+          "binding_limit": "already_at_target",
+          "positions": {"2330.TW": 363.0},
+          "fill_prices": [104.0]
+        },
+        "105.0": {
+          "existing_holdings_notional_at_open": 38115.0,
+          "remaining_target_notional": 1885.0,
+          "permitted_units": 17,
+          "outcome": "resized_and_filled",
+          "binding_limit": "existing_holdings_target_notional",
+          "positions": {"2330.TW": 380.0},
+          "fill_prices": [104.0, 105.0]
+        }
+      }
+    }
+  ],
+  "runtime_budget": {
+    "new_persistent_writers": 0,
+    "changed_existing_writers": [
+      {
+        "writer": "telemetry_events / public.telemetry_events",
+        "cadence": "0 extra events emitted; attaches to existing paper trade_decision, paper_fill_simulated, paper_order_simulated (no_trade_at_submission), and order_rejection events (1 daily cycle/persona/day across 3 enrolled dev paper personas, ~3-15 decision events/day and ~0-9 order/fill/rejection events/day)",
+        "serialized_size_bytes": {
+          "compact_pre_trade_sizing_measured": 266,
+          "compact_pre_trade_sizing_cap": 384,
+          "compact_submission_sizing_evidence_measured": 215,
+          "compact_submission_sizing_evidence_cap": 320,
+          "policy_identity_fields_measured": 162,
+          "total_incremental_on_fill_or_rejection_measured": 643
+        },
+        "count_at_hosted_scale": "3 enrolled dev paper personas (~3-15 decision events/day, ~0-9 order/fill/rejection events/day; 0 extra rows)",
+        "growth_per_day": "~1.5-12 KB/day (< 0.4 MB/month)",
+        "cap": "PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 and SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320 per event; whole-table retention for non-heartbeat/non-snapshot rows tracked under RC3",
+        "cleanup_retention": "heartbeat/runtime_state_snapshot pruned by HeartbeatRetentionJob; order/fill/decision row retention tracked under RC3 WP3.1"
+      },
+      {
+        "writer": "paper_performance_ledger.v1 (/data/runtime/paper-performance/<scope>.json pending_fill_publications) & LifecycleTelemetryOutbox (/data/runtime/lifecycle-outbox/<scope>.json)",
+        "cadence": "in-place atomic file rewrite on each paper fill (_stage_fill_publication followed by ack_fill_publication on telemetry admission; ~0-3 fills/persona/day)",
+        "serialized_size_bytes": {
+          "transient_in_flight_per_fill_measured": 643,
+          "steady_state_after_ack_fill_publication": 0
+        },
+        "count_at_hosted_scale": "1 ledger file and 1 lifecycle outbox file per active paper runtime (3 enrolled dev paper personas)",
+        "growth_per_day": "0 B/day steady-state (pending_fill_publications cleared to [] on ack_fill_publication)",
+        "cap": "1 file per runtime binding; LifecycleTelemetryOutbox capped at MAX_CHAINS = 64",
+        "cleanup_retention": "ack_fill_publication removes staged fill records on telemetry admission; atomic_write_text + sweep_stale_temp_siblings overwrite in place"
+      },
+      {
+        "writer": "RedisPendingSignalStore (pantheon:paper:decisions:v1:{decision_id} & pantheon:signals:pending:{binding_id})",
+        "cadence": "1 decision record (put_decision_record) and 0-1 pending queue entry (enqueue) per evaluated symbol bar (~3-15/day across 3 enrolled dev paper personas)",
+        "serialized_size_bytes": {
+          "compact_pre_trade_sizing_measured": 266,
+          "compact_pre_trade_sizing_cap": 384
+        },
+        "count_at_hosted_scale": "~3-15 decisions/day across 3 enrolled dev paper personas",
+        "growth_per_day": "0 B/day steady-state in pending queue (deleted on ack); ~0.8-4.0 KB/day in decision records bounded by 30-day Redis EX TTL (~24-120 KB steady-state window)",
+        "cap": "PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 per record; DECISION_RECORD_TTL_SECONDS = 30 * 86400",
+        "cleanup_retention": "pending queue entries deleted on ack(); decision records expire automatically after 30 days via Redis EX TTL"
+      }
+    ],
+    "in_memory_bounds": {
+      "_order_reservations": "active in-flight reservations only; released immediately on fill, no-trade, or rejection (0 steady-state growth)",
+      "_completed_signal_submissions": "FIFO-capped at 2048 compact outcome entries per PaperExecutionAlgorithm instance (~320 KB max in-memory, 0 disk writes)"
+    }
+  }
+}

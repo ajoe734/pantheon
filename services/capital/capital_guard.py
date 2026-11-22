@@ -283,6 +283,7 @@ class CapitalGuard:
             or has_requested_profile
             or pool_meta.get("risk_policy_required") is True
             or pool_meta.get("require_approved_profile_mapping") is True
+            or pool_meta.get("provisional_unresolved_risk_policy") is True
             or pool_meta.get("source") == "persona_provisioning_coordinator"
         )
         if not policy_required:

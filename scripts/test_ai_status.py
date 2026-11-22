@@ -8332,6 +8332,802 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     _command_reconcile_merged_done(self.state, [task["id"], "Must reject."])
                 self.assertEqual(task["status"], "review_approved")
 
+    def _init_regime_artifact_publication_repo(
+        self,
+        root: Path,
+        *,
+        task_id: str = "REGIME-DATA-HOSTED-ACCEPTANCE-20261114",
+        pub_task_id: str = "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+        evidence_payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, str]:
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Antigravity"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "antigravity-agent@pantheon.local"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"],
+            cwd=root,
+            check=True,
+        )
+        readme = root / "README.md"
+        readme.write_text("# Pantheon\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial base"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        base_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+
+        subprocess.run(
+            ["git", "checkout", "-b", f"task/{pub_task_id}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        evidence_rel = f"docs/deployment/evidence/{task_id}/evidence.json"
+        pub_manifest_rel = f"docs/deployment/evidence/{pub_task_id}/evidence.json"
+        payload = dict(
+            evidence_payload
+            or {
+                "schema_version": "pantheon.regime-data-hosted-observation.v1",
+                "task_id": task_id,
+                "probe_result": "stored_history_measured",
+                "accepted_release": {
+                    "root_workflow": 44915049855,
+                    "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+                    "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+                    "gate": "44918407417",
+                    "pair_id": "a3a38db06b52f24e57eaa69bc033e32c55bac631b466ebbf059390b2f0b6a1aa",
+                    "ready": 200,
+                },
+                "read_only_commands_and_method": [
+                    "GET public Dev /deployment.json, /bff/version and /bff/readyz"
+                ],
+            }
+        )
+        evidence_text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        evidence_file = root / evidence_rel
+        evidence_file.parent.mkdir(parents=True, exist_ok=True)
+        evidence_file.write_text(evidence_text, encoding="utf-8")
+        evidence_sha256 = hashlib.sha256(evidence_file.read_bytes()).hexdigest()
+
+        pub_manifest_file = root / pub_manifest_rel
+        pub_manifest_file.parent.mkdir(parents=True, exist_ok=True)
+        pub_manifest_file.write_text(
+            json.dumps(
+                {
+                    "schema_version": "pantheon.task-evidence.v1",
+                    "task_id": pub_task_id,
+                    "published_acceptance_evidence": {
+                        "path": evidence_rel,
+                        "publish_sha256": evidence_sha256,
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", evidence_rel, pub_manifest_rel],
+            cwd=root,
+            check=True,
+        )
+        commit_msg = (
+            f"{pub_task_id}: publish regime evidence\n\n"
+            f"LLM-Agent: Antigravity\n"
+            f"Task-ID: {pub_task_id}\n"
+            f"Reviewer: Codex2\n"
+        )
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        pub_head_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        pub_manifest_blob = subprocess.check_output(
+            ["git", "rev-parse", f"HEAD:{pub_manifest_rel}"], cwd=root, text=True
+        ).strip()
+        evidence_blob = subprocess.check_output(
+            ["git", "rev-parse", f"HEAD:{evidence_rel}"], cwd=root, text=True
+        ).strip()
+
+        subprocess.run(
+            ["git", "checkout", "dev"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "merge",
+                "--no-ff",
+                f"task/{pub_task_id}",
+                "-m",
+                f"Merge pull request #7732 from ajoe734/task/{pub_task_id}",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        pub_merge_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/dev", pub_merge_sha],
+            cwd=root,
+            check=True,
+        )
+        return {
+            "base_sha": base_sha,
+            "pub_head_sha": pub_head_sha,
+            "pub_merge_sha": pub_merge_sha,
+            "evidence_rel": evidence_rel,
+            "evidence_sha256": evidence_sha256,
+            "evidence_blob": evidence_blob,
+            "pub_manifest_rel": pub_manifest_rel,
+            "pub_manifest_blob": pub_manifest_blob,
+        }
+
+    def _setup_regime_human_ops_artifact_acceptance(
+        self,
+        delivery_root: Path,
+        *,
+        evidence_payload: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        task_id = "REGIME-DATA-HOSTED-ACCEPTANCE-20261114"
+        pub_task_id = "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121"
+        repo_info = self._init_regime_artifact_publication_repo(
+            delivery_root,
+            task_id=task_id,
+            pub_task_id=pub_task_id,
+            evidence_payload=evidence_payload,
+        )
+        evidence_rel = repo_info["evidence_rel"]
+        evidence_sha256 = repo_info["evidence_sha256"]
+        pub_head_sha = repo_info["pub_head_sha"]
+        pub_merge_sha = repo_info["pub_merge_sha"]
+
+        pub_task = {
+            "id": pub_task_id,
+            "title": "Publish the measured Regime inventory under the evidence budget",
+            "phase": "Acceptance",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+            "status": "done",
+            "terminal_outcome": "completed",
+            "generation": 1,
+            "depends_on": [],
+            "artifacts": [
+                evidence_rel,
+                f"docs/deployment/evidence/{pub_task_id}/",
+            ],
+            "acceptance": [
+                "Publish the formatted evidence at docs/deployment/evidence/REGIME-DATA-HOSTED-ACCEPTANCE-20261114/evidence.json."
+            ],
+            "review_file": repo_info["pub_manifest_rel"],
+            "review_binding": {
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "head_branch": f"task/{pub_task_id}",
+                "base": "dev",
+            },
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "head_branch": f"task/{pub_task_id}",
+                "base": "dev",
+                "base_sha": repo_info["base_sha"],
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": repo_info["pub_manifest_rel"],
+                    "blob_sha": repo_info["pub_manifest_blob"],
+                },
+            },
+            "integration_receipt": {
+                "version": 1,
+                "result": "landed",
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "merge_commit_sha": pub_merge_sha,
+                "target_branch": "dev",
+                "task_generation": 1,
+            },
+            "delivery": {
+                "repository_id": "pantheon",
+                "repository_slug": "ajoe734/pantheon",
+                "repository_path": str(delivery_root),
+                "commit": pub_head_sha,
+                "merge_target_ref": "origin/dev",
+                "merge_target_sha": pub_merge_sha,
+                "head_merged_to_target": True,
+            },
+        }
+        task_archive.archive_task_snapshot(
+            pub_task,
+            handoffs=[],
+            blockers=[],
+            archived_at="2026-11-21T18:52:19Z",
+        )
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {
+            pub_task_id: {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 1,
+                "recorded_at": "2026-11-21T18:52:19Z",
+            }
+        }
+
+        task = self.state["tasks"][0]
+        task.clear()
+        task.update(
+            {
+                "id": task_id,
+                "title": "Hosted acceptance of the regime input datasets after an accepted Dev release",
+                "phase": "Acceptance",
+                "owner": "Human/Ops",
+                "reviewer": "Codex2",
+                "status": "review_approved",
+                "generation": 4,
+                "depends_on": [],
+                "artifacts": [evidence_rel],
+                "acceptance": [
+                    "On hosted dev after an accepted release the stored history depth is measured read-only",
+                    "evidence.json records the release identity and the read-only commands and contains no credential",
+                ],
+                "completion_tracks": {
+                    "hosted": {
+                        "status": "done",
+                        "evidence": [
+                            evidence_rel,
+                            "https://github.com/ajoe734/pantheon/actions/runs/44915049855/artifacts/14713494901",
+                            "https://github.com/ajoe734/pantheon/actions/runs/44915049855/artifacts/14714227520",
+                            "https://github.com/ajoe734/pantheon/pull/7732",
+                        ],
+                        "message": (
+                            "Hosted data inventory accepted on Root 44915049855 with exact FE "
+                            "84ac2ac67fd2abc56ba22230fa7065f0c97342e8 / BFF "
+                            "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c. Original required "
+                            f"evidence.json is present at merged {pub_merge_sha}, SHA256 "
+                            f"{evidence_sha256}, independently reviewed in #7732."
+                        ),
+                        "updated_at": "2026-11-22T00:43:23Z",
+                        "updated_by": "Human/Ops",
+                    }
+                },
+                "last_update": "2026-11-22T00:56:54Z",
+                "next": "Independent Codex2 review passes.",
+            }
+        )
+        contract = ai_status._delivery_contract_payload(task)
+        delivery_binding = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": ai_status._canonical_json_sha256(contract),
+        }
+        task[ai_status.DELIVERY_BINDING_KEY] = delivery_binding
+
+        handoff_msg = (
+            "Handoff to Codex2: Review the hosted inventory criteria and milestone. "
+            f"Report is published on dev in PR #7732 at {pub_merge_sha}, {evidence_rel}, "
+            f"SHA256 {evidence_sha256}. Verify against accepted Root 44915049855."
+        )
+        handoff_event = ai_status._activity_event(
+            {
+                "ts": "2026-11-22T00:54:09Z",
+                "agent": "Human/Ops",
+                "type": "handoff",
+                "task_id": task_id,
+                "message": handoff_msg,
+                "delivery_binding": deepcopy(delivery_binding),
+            }
+        )
+        approval_msg = (
+            "Independent Codex2 review passes all hosted inventory acceptance criteria. "
+            "Verified official Root 44915049855 success; exact BFF "
+            "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c, FE "
+            f"84ac2ac67fd2abc56ba22230fa7065f0c97342e8. Evidence SHA256 {evidence_sha256} "
+            f"is byte-identical at PR 7732 head {pub_head_sha} and merged dev {pub_merge_sha}."
+        )
+        approval_event = ai_status._activity_event(
+            {
+                "ts": "2026-11-22T00:56:54Z",
+                "agent": "Codex2",
+                "type": "review_approved",
+                "task_id": task_id,
+                "message": approval_msg,
+                "status_command": {
+                    "worker_lease": {
+                        "schema_version": 1,
+                        "task_id": task_id,
+                        "actor": "Codex2",
+                        "task_generation": 4,
+                    }
+                },
+            }
+        )
+        self._test_log_file.write_text(
+            json.dumps(handoff_event) + "\n" + json.dumps(approval_event) + "\n",
+            encoding="utf-8",
+        )
+        self.state["handoffs"] = [
+            {
+                "task_id": task_id,
+                "from": "Human/Ops",
+                "to": "Codex2",
+                "message": handoff_msg,
+                "status": "done",
+                "created_at": "2026-11-22T00:54:09Z",
+                "resolved_at": "2026-11-22T00:56:54Z",
+            },
+            {
+                "task_id": task_id,
+                "from": "Codex2",
+                "to": "Human/Ops",
+                "message": approval_msg,
+                "status": "pending",
+                "created_at": "2026-11-22T00:56:54Z",
+            },
+        ]
+        return task, repo_info
+
+    def test_reconcile_merged_done_closes_human_ops_owned_artifact_acceptance_and_emits_archive_receipt(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-closeout-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(
+                    RuntimeError, "local Human/Ops cannot authorize done"
+                ):
+                    ai_status.validate_active_status_command_lease(
+                        "done",
+                        [task["id"], "Normal owner done is blocked for local Human/Ops."],
+                    )
+                _command_reconcile_merged_done(
+                    self.state,
+                    [
+                        task["id"],
+                        "Human/Ops closed peer-approved hosted artifact acceptance.",
+                    ],
+                )
+                self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+
+            self.assertIsNone(ai_status.get_task(self.state, task["id"]))
+            terminal_fact = self.state[ai_status.TERMINAL_FACTS_KEY][task["id"]]
+            self.assertEqual(terminal_fact["status"], "done")
+            self.assertEqual(terminal_fact["terminal_outcome"], "completed")
+            self.assertEqual(terminal_fact["generation"], 4)
+            self.assertEqual(
+                terminal_fact["completion_tracks"]["hosted"]["status"], "done"
+            )
+            receipt = self.state[ai_status.ARCHIVE_RECEIPTS_KEY][task["id"]]
+            self.assertEqual(
+                receipt["schema_version"], ai_status.ARCHIVE_RECEIPT_SCHEMA_VERSION
+            )
+            archived = ai_status.load_archived_snapshot(task["id"])
+            self.assertIsNotNone(archived)
+            self.assertEqual(archived["terminal_status"], "done")
+            self.assertEqual(archived["terminal_outcome"], "completed")
+            archived_task = archived["task"]
+            self.assertEqual(archived_task["owner"], "Human/Ops")
+            self.assertEqual(archived_task["reviewer"], "Codex2")
+            self.assertEqual(
+                archived_task["completion_tracks"]["hosted"]["status"], "done"
+            )
+            self.assertEqual(archived_task["review_file"], repo_info["evidence_rel"])
+            self.assertNotIn("review_binding", archived_task)
+            self.assertEqual(
+                archived_task["delivery_binding"]["kind"], "artifact_contract"
+            )
+            self.assertTrue(
+                archived_task["delivery"][
+                    "reconciled_from_human_ops_owner_review_approved"
+                ]
+            )
+            self.assertTrue(
+                archived_task["delivery"][
+                    "reconciled_from_human_ops_owner_artifact_review_approved"
+                ]
+            )
+            self.assertEqual(
+                archived_task["delivery"]["evidence_manifest"]["sha256"],
+                repo_info["evidence_sha256"],
+            )
+            self.assertEqual(
+                archived_task["delivery"]["publication_task"]["task_id"],
+                "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+            )
+
+    def test_artifact_contract_review_approval_preserved_across_ordinary_note(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-note-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            note_event = ai_status._activity_event(
+                {
+                    "ts": "2026-11-22T01:00:00Z",
+                    "agent": "Codex2",
+                    "type": "note",
+                    "task_id": task["id"],
+                    "message": (
+                        "No changes requested on the already approved evidence; "
+                        "ready for Human/Ops closeout."
+                    ),
+                }
+            )
+            with self._test_log_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(note_event) + "\n")
+
+            active_handoff, active_approval = (
+                ai_status._verified_artifact_contract_review_approval(
+                    task,
+                    delivery_binding=task[ai_status.DELIVERY_BINDING_KEY],
+                )
+            )
+            self.assertEqual(active_handoff["agent"], "Human/Ops")
+            self.assertEqual(active_approval["agent"], "Codex2")
+
+            env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                _command_reconcile_merged_done(
+                    self.state,
+                    [
+                        task["id"],
+                        "Human/Ops closed peer-approved hosted artifact acceptance after note.",
+                    ],
+                )
+                self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+
+            self.assertIsNone(ai_status.get_task(self.state, task["id"]))
+            self.assertEqual(
+                self.state[ai_status.TERMINAL_FACTS_KEY][task["id"]]["status"],
+                "done",
+            )
+            self.assertIn(task["id"], self.state[ai_status.ARCHIVE_RECEIPTS_KEY])
+
+    def test_reconcile_merged_done_human_ops_artifact_closeout_preserves_rejections(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-rejects-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            base_task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            base_state = deepcopy(self.state)
+            base_log = self._test_log_file.read_text(encoding="utf-8")
+            pub_archive_path = (
+                task_archive.ARCHIVE_TASKS_DIR
+                / "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121.json"
+            )
+            base_pub_archive = pub_archive_path.read_text(encoding="utf-8")
+            base_evidence_bytes = (
+                delivery_root / repo_info["evidence_rel"]
+            ).read_bytes()
+            base_env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+
+            def reset_fixture() -> dict[str, Any]:
+                self.state = deepcopy(base_state)
+                self._test_log_file.write_text(base_log, encoding="utf-8")
+                pub_archive_path.write_text(base_pub_archive, encoding="utf-8")
+                (delivery_root / repo_info["evidence_rel"]).write_bytes(
+                    base_evidence_bytes
+                )
+                return self.state["tasks"][0]
+
+            def append_audit_event(payload: dict[str, Any]) -> None:
+                ev = ai_status._activity_event(payload)
+                with self._test_log_file.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(ev) + "\n")
+
+            def mutate_reopen(_t: dict[str, Any]) -> None:
+                append_audit_event(
+                    {
+                        "ts": "2026-11-22T01:00:00Z",
+                        "agent": "Codex2",
+                        "type": "reopen",
+                        "task_id": base_task["id"],
+                        "message": "Reopened after approval.",
+                    }
+                )
+
+            def mutate_prose_approval(_t: dict[str, Any]) -> None:
+                lines = base_log.strip().splitlines()
+                prose_approval = ai_status._activity_event(
+                    {
+                        "ts": "2026-11-22T00:56:54Z",
+                        "agent": "Codex2",
+                        "type": "review_approved",
+                        "task_id": base_task["id"],
+                        "message": "Looks good, arbitrary prose approval without digest.",
+                        "status_command": {
+                            "worker_lease": {
+                                "schema_version": 1,
+                                "task_id": base_task["id"],
+                                "actor": "Codex2",
+                                "task_generation": 4,
+                            }
+                        },
+                    }
+                )
+                self._test_log_file.write_text(
+                    lines[0] + "\n" + json.dumps(prose_approval) + "\n",
+                    encoding="utf-8",
+                )
+
+            def mutate_non_evidence_artifact(t: dict[str, Any]) -> None:
+                t["artifacts"] = [
+                    repo_info["evidence_rel"],
+                    "services/control-plane/bff",
+                ]
+                contract = ai_status._delivery_contract_payload(t)
+                t[ai_status.DELIVERY_BINDING_KEY] = {
+                    "kind": "artifact_contract",
+                    **contract,
+                    "contract_sha256": ai_status._canonical_json_sha256(contract),
+                }
+
+            def mutate_superseded_pub_task(_t: dict[str, Any]) -> None:
+                snap = json.loads(base_pub_archive)
+                snap["terminal_outcome"] = "superseded"
+                snap["task"]["terminal_outcome"] = "superseded"
+                pub_archive_path.write_text(json.dumps(snap), encoding="utf-8")
+
+            def mutate_borrowed_source_pr(_t: dict[str, Any]) -> None:
+                snap = json.loads(base_pub_archive)
+                snap["task"]["artifacts"] = [
+                    "docs/deployment/evidence/REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121/"
+                ]
+                pub_archive_path.write_text(json.dumps(snap), encoding="utf-8")
+
+            cases = (
+                (
+                    "foreign_owner",
+                    lambda t: t.update(owner="Codex"),
+                    {},
+                    "only Human/Ops-owned tasks",
+                ),
+                (
+                    "wrong_actor",
+                    lambda _t: None,
+                    {"AI_NAME": "Codex2", "PANTHEON_LOCAL_HUMAN_OPS": ""},
+                    "Only explicit local Human/Ops",
+                ),
+                (
+                    "missing_local_flag",
+                    lambda _t: None,
+                    {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": ""},
+                    "Only explicit local Human/Ops",
+                ),
+                (
+                    "missing_independent_reviewer",
+                    lambda t: t.update(reviewer="Human/Ops"),
+                    {},
+                    "independent peer reviewer",
+                ),
+                (
+                    "absent_review_event",
+                    lambda _t: self._test_log_file.write_text(
+                        base_log.splitlines()[0] + "\n", encoding="utf-8"
+                    ),
+                    {},
+                    "no unrevoked audited review_approved event",
+                ),
+                (
+                    "superseded_by_reopen",
+                    mutate_reopen,
+                    {},
+                    "no unrevoked audited",
+                ),
+                (
+                    "wrong_review_actor",
+                    lambda t: t.update(reviewer="Claude"),
+                    {},
+                    "does not match the current assigned reviewer",
+                ),
+                (
+                    "wrong_generation",
+                    lambda t: t.update(generation=5),
+                    {},
+                    "does not match current task generation",
+                ),
+                (
+                    "arbitrary_prose_approval",
+                    mutate_prose_approval,
+                    {},
+                    "does not bind the exact published evidence SHA-256",
+                ),
+                (
+                    "missing_hosted_track",
+                    lambda t: t.pop("completion_tracks", None),
+                    {},
+                    "declared hosted completion must be done with evidence",
+                ),
+                (
+                    "pending_hosted_track",
+                    lambda t: t.update(
+                        completion_tracks={"hosted": {"status": "external_wait"}}
+                    ),
+                    {},
+                    "declared hosted completion must be done with evidence",
+                ),
+                (
+                    "naked_hosted_done_marker",
+                    lambda t: t.update(
+                        completion_tracks={
+                            "hosted": {
+                                "status": "done",
+                                "evidence": ["hosted ok"],
+                                "message": "done",
+                            }
+                        }
+                    ),
+                    {},
+                    "completion_tracks.hosted.evidence must cite the task evidence artifact",
+                ),
+                (
+                    "mismatched_artifact_contract",
+                    lambda t: t["acceptance"].append("unapproved extra criterion"),
+                    {},
+                    "artifact delivery contract is missing or stale",
+                ),
+                (
+                    "non_evidence_code_artifact",
+                    mutate_non_evidence_artifact,
+                    {},
+                    "restricted to task-scoped evidence artifacts",
+                ),
+                (
+                    "mismatched_env_review_file",
+                    lambda _t: None,
+                    {"REVIEW_FILE": "docs/deployment/evidence/OTHER/evidence.json"},
+                    "does not match expected task evidence path",
+                ),
+                (
+                    "mutated_working_evidence_bytes",
+                    lambda _t: (
+                        delivery_root / repo_info["evidence_rel"]
+                    ).write_text("{\"task_id\": \"tampered\"}\n", encoding="utf-8"),
+                    {},
+                    "working evidence file differs",
+                ),
+                (
+                    "wrong_delivery_commit",
+                    lambda _t: None,
+                    {"RECONCILE_DELIVERY_COMMIT": repo_info["base_sha"]},
+                    "absent at commit",
+                ),
+                (
+                    "missing_publication_task",
+                    lambda _t: pub_archive_path.unlink(),
+                    {},
+                    "separate publication task .* is not archived as completed",
+                ),
+                (
+                    "superseded_publication_task",
+                    mutate_superseded_pub_task,
+                    {},
+                    "separate publication task .* is not completed",
+                ),
+                (
+                    "borrowed_source_pr_without_evidence_artifact",
+                    mutate_borrowed_source_pr,
+                    {},
+                    "does not declare the acceptance evidence artifact",
+                ),
+                (
+                    "borrowed_publication_pr_on_acceptance_task",
+                    lambda t: t.update(
+                        review_binding={
+                            "pr": 7732,
+                            "head_sha": repo_info["pub_head_sha"],
+                            "head_branch": "task/REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+                            "base": "dev",
+                        }
+                    ),
+                    {},
+                    "carries pull-request delivery identity",
+                ),
+                (
+                    "protected_product_closeout_task",
+                    lambda t: t.update(requires_human_ops_signoff=True),
+                    {},
+                    "protected product closeout task .* requires exact-head PR delivery",
+                ),
+            )
+
+            for label, mutate, env_override, pattern in cases:
+                with self.subTest(label=label):
+                    task = reset_fixture()
+                    mutate(task)
+                    with (
+                        mock.patch.dict(
+                            os.environ, {**base_env, **env_override}, clear=False
+                        ),
+                        self.assertRaisesRegex(SystemExit, pattern),
+                    ):
+                        _command_reconcile_merged_done(
+                            self.state, [task["id"], "Must reject."]
+                        )
+                    self.assertEqual(task["status"], "review_approved")
+
+            # Also verify rejection when the committed evidence file has a wrong task_id
+            pub_archive_path.unlink(missing_ok=True)
+            other_root = Path(tmp) / "pantheon-wrong-task"
+            wrong_task, wrong_repo = self._setup_regime_human_ops_artifact_acceptance(
+                other_root,
+                evidence_payload={
+                    "schema_version": "pantheon.regime-data-hosted-observation.v1",
+                    "task_id": "REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115",
+                    "accepted_release": {
+                        "root_workflow": 44915049855,
+                        "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+                        "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+                    },
+                },
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        **base_env,
+                        "RECONCILE_DELIVERY_ROOT": str(other_root),
+                        "RECONCILE_DELIVERY_COMMIT": wrong_repo["pub_merge_sha"],
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    SystemExit, "published evidence file task_id .* does not match"
+                ),
+            ):
+                _command_reconcile_merged_done(
+                    self.state, [wrong_task["id"], "Must reject wrong task_id."]
+                )
+
     def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "blocked"

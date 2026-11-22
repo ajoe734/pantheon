@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+# acceptance-owner: BFF-TRADING-PULSE-OPERATOR-FACTS-20261122
+"""Read-only stage probe; login then GET only, 0 passed / 1 failed / 77 unverifiable.
+
+Uses the stage's BFF URL and viewer client ID/secret, verifies its tenant via
+/bff/me. No files written; at most 200 runtimes, 5 MiB/response, 30s/request.
+Daily storage growth zero; the stage owns its existing bounded stdout verdict.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlencode, quote
+
+# Allow standalone execution from an installed checkout, without PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
+
+
+class Unverifiable(RuntimeError):
+    pass
+
+
+def number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        result = float(value)
+        return result if math.isfinite(result) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def same(a, b):
+    if a is None or b is None:
+        return a is b
+    na, nb = number(a), number(b)
+    return math.isclose(na, nb, abs_tol=1e-6) if na is not None and nb is not None else a == b
+
+
+def source(fetch, path):
+    body = fetch(path)
+    meta = body.get("meta") or {}
+    if meta.get("status") in {"unavailable", "degraded"} or meta.get("read_state") == "unavailable":
+        raise Unverifiable("independent_source_unavailable")
+    for state in (meta.get("surfaces") or {}).values():
+        if isinstance(state, dict) and state.get("status") in {"unavailable", "degraded"}:
+            raise Unverifiable("independent_source_unavailable")
+    return body.get("data")
+
+
+def check(fetch, tenant):
+    """Never derive the expected fleet/metrics from the aggregate being tested."""
+    failures = []
+    people = source(fetch, "/api/v1/personas")
+    bindings = source(fetch, "/api/v1/runtime-bindings")
+    if not isinstance(people, list) or not isinstance(bindings, list):
+        raise Unverifiable("independent_roster_shape")
+    directory = {str(p.get("persona_id") or p.get("id")): p for p in people if p.get("tenant_id") == tenant}
+    expected = {}
+    for b in bindings:
+        if str(b.get("status") or "").strip().lower() in {"retired", "failed"} or b.get("retired_at"):
+            continue
+        stage = b.get("deployment_stage") or b.get("deployment_mode")
+        if stage not in {"paper", "canary", "live", "broker_sandbox"}:
+            continue
+        metadata = b.get("metadata") if isinstance(b.get("metadata"), dict) else {}
+        claims = {value for value in (b.get("tenant_id"), metadata.get("tenant_id")) if value not in (None, "")}
+        if claims and tenant not in claims:
+            continue
+        if claims != {tenant}:
+            raise Unverifiable("independent_binding_tenant_unverified")
+        pid = str(b.get("persona_id") or "")
+        if pid not in directory:
+            raise Unverifiable("independent_identity_missing")
+        if is_probe_or_test_persona(directory[pid]):
+            continue
+        bid = b.get("runtime_binding_id") or b.get("binding_id") or b.get("id")
+        expected[(b.get("runtime_id"), bid)] = b
+    if len(expected) > 200:
+        raise Unverifiable("runtime_count_cap_exceeded")
+    pulse = fetch("/bff/management/trading-pulse")["data"]
+    rankings = fetch("/bff/management/trading-pulse/rankings?limit=200")["data"]
+    summary = pulse.get("summary") or {}
+    scope = summary.get("operator_scope") or {}
+    if scope.get("status") != "verified":
+        raise Unverifiable("aggregate_scope_unverified")
+    rows = pulse.get("runtime_rows") or []
+    by_key = {(r.get("runtime_id"), r.get("runtime_binding_id")): r for r in rows}
+    if set(by_key) != set(expected) or len(rows) != len(expected):
+        failures.append("operator_roster_mismatch")
+    persona_count = len({b["persona_id"] for b in expected.values()})
+    if scope.get("runtime_count") != len(expected) or scope.get("persona_count") != persona_count or summary.get("runtime_count") != len(expected):
+        failures.append("operator_denominator_mismatch")
+    stages = {}
+    for b in expected.values():
+        stage = b.get("deployment_stage") or b.get("deployment_mode")
+        group = stages.setdefault(stage, {"persona_ids": set(), "runtime_count": 0})
+        group["persona_ids"].add(b["persona_id"])
+        group["runtime_count"] += 1
+    expected_stages = {s: {"runtime_count": g["runtime_count"], "persona_count": len(g["persona_ids"])} for s, g in stages.items()}
+    if scope.get("by_stage") != expected_stages:
+        failures.append("stage_denominator_mismatch")
+    if rankings.get("summary", {}).get("operator_scope") != scope:
+        failures.append("rankings_scope_mismatch")
+    expected_ids = {key[0] for key in expected}
+    for key in ("missing_telemetry_runtime_ids", "missing_monitoring_runtime_ids", "missing_baseline_runtime_ids"):
+        if set(summary.get(key) or []) - expected_ids:
+            failures.append("diagnostic_outside_scope:" + key)
+    for collection in (pulse.get("rankings") or [], pulse.get("baseline_comparisons") or []):
+        if any(item.get("runtime_id") not in expected_ids for item in collection):
+            failures.append("aggregate_collection_outside_scope")
+    raw_by_key = {}
+    for key, binding in expected.items():
+        row = by_key.get(key)
+        if row is None:
+            continue
+        raw = source(fetch, f"/api/v1/telemetry/{quote(key[0], safe='')}/summary")
+        if not isinstance(raw, dict):
+            raise Unverifiable("independent_telemetry_unavailable")
+        bid = raw.get("binding_id") or raw.get("runtime_binding_id")
+        if raw.get("tenant_id") != tenant or bid != key[1]:
+            raise Unverifiable("independent_telemetry_scope_changed")
+        ctx = row.get("performance_context") or {}
+        if ctx.get("latest_report_at") != (raw.get("last_event_at") or raw.get("collected_at")) or ctx.get("pnl_at") != raw.get("pnl_at"):
+            raise Unverifiable("source_changed_during_read")
+        raw_by_key[key] = raw
+        metrics = (row.get("telemetry_summary") or {}).get("metrics") or {}
+        if row.get("persona_name") != directory[binding["persona_id"]].get("name"):
+            failures.append("persona_name_mismatch")
+        expected_trades = raw.get("ledger_fill_count", raw.get("total_trades"))
+        if not same(metrics.get("total_trades"), expected_trades):
+            failures.append("ledger_fill_count_mismatch")
+        for metric in ("pnl", "drawdown", "sharpe_ratio", "avg_slippage_bps"):
+            value = raw.get(metric)
+            if metric == "avg_slippage_bps" and value is None:
+                value = raw.get("avg_slippage")
+            if not same(metrics.get(metric), value):
+                failures.append("metric_mismatch:" + metric)
+        details = raw.get("fill_rate_details")
+        if isinstance(details, dict):
+            if ctx.get("fill_rate_details") != details:
+                failures.append("fill_rate_details_mismatch")
+            n, d = number(details.get("numerator")), number(details.get("denominator"))
+            rate = n / d if n is not None and d is not None and d > 0 else None
+            if not same(metrics.get("fill_rate"), rate):
+                failures.append("fill_rate_mismatch")
+        # Independent latest journey query, constrained by binding, persona and snapshot.
+        params = {"tenant_id": tenant, "environment": binding.get("deployment_stage") or binding.get("deployment_mode"),
+            "persona_id": binding["persona_id"], "q": key[1], "to": ctx.get("snapshot_at"), "page_size": 1}
+        journey_ids = None
+        if params["environment"] == "live":
+            # Live viewers may search journey IDs, not arbitrary identifiers.
+            # Reuse the allowed scoped binding resolver and Persona list; do
+            # not elevate the viewer or derive expected IDs from Pulse itself.
+            resolved = source(fetch, "/bff/management/trade-journeys/resolve?" + urlencode({
+                "tenant_id": tenant, "environment": "live", "identifier_type": "binding_id", "q": key[1]}))
+            journey_ids = set(resolved.get("journey_ids") or [])
+            if len(journey_ids) >= 200:
+                raise Unverifiable("live_journey_scope_cap_exceeded")
+            params.pop("q")
+            params["page_size"] = 200
+        path = "/bff/management/trade-journeys?" + urlencode(params)
+        body = fetch(path)
+        journeys = source(lambda _: body, path)
+        if not isinstance(journeys, dict):
+            raise Unverifiable("independent_journey_unavailable")
+        items = journeys.get("items") or []
+        if journey_ids is not None:
+            items = [i for i in items if i.get("journey_id") in journey_ids and i.get("runtime_id") == key[0]]
+            if not items and journey_ids and (body.get("page_info") or {}).get("has_more"):
+                raise Unverifiable("live_journey_page_incomplete")
+        actual = row.get("latest_outcome") or {}
+        if items:
+            item = items[0]
+            outcome = item.get("outcome") or {}
+            if actual.get("journey_id") != item.get("journey_id") or actual.get("reason_code") != outcome.get("reason_code"):
+                failures.append("latest_outcome_mismatch")
+            if outcome.get("kind") == "rejected":
+                detail = outcome.get("reason_detail") or {}
+                for field in ("required", "available", "requested_quantity", "currency"):
+                    value = detail.get(field) if isinstance(detail, dict) else None
+                    if field == "requested_quantity" and value is None:
+                        value = item.get("quantity")
+                    if field == "requested_quantity" and item.get("quantity") == "***":
+                        value = None
+                    if not same(actual.get(field), value):
+                        failures.append("rejection_fact_mismatch:" + field)
+                if not outcome.get("source_event_id"):
+                    raise Unverifiable("refusal_source_evidence_missing")
+                for field in ("source_event_id", "submitted_to_broker"):
+                    if actual.get(field) != outcome.get(field):
+                        failures.append("rejection_evidence_mismatch:" + field)
+                if not (row.get("links") or {}).get("journey", "").startswith("/management/trade-journeys/" + item["journey_id"] + "?"):
+                    failures.append("journey_navigation_missing")
+        elif actual.get("journey_id") is not None:
+            failures.append("unproven_latest_outcome")
+    def definition(raw):
+        if raw.get("pnl_definition"):
+            return raw["pnl_definition"]
+        for observation in raw.get("quarter_equity_observations") or []:
+            if observation.get("status") == "known" and observation.get("binding_id") == (raw.get("binding_id") or raw.get("runtime_binding_id")) and observation.get("as_of") == raw.get("pnl_at"):
+                return observation.get("valuation_method")
+        return None
+    expected_groups = set()
+    for key, raw in raw_by_key.items():
+        parts = ((expected[key].get("deployment_stage") or expected[key].get("deployment_mode")), raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))
+        stale = raw.get("staleness") or {}
+        if all(parts) and not raw.get("_valuation_failure") and not (stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))):
+            expected_groups.add(parts)
+    actual_groups = {(g.get("stage"), g.get("currency"), g.get("period_start_at"), g.get("period_end_at"), g.get("pnl_definition")) for g in summary.get("pnl_groups") or []}
+    if actual_groups != expected_groups:
+        failures.append("pnl_group_scope_mismatch")
+    for group in summary.get("pnl_groups") or []:
+        matches = [(key, raw) for key, raw in raw_by_key.items() if
+            (expected[key].get("deployment_stage") or expected[key].get("deployment_mode")) == group.get("stage")
+            and raw.get("pnl_currency") == group.get("currency")
+            and raw.get("pnl_period_start_at") == group.get("period_start_at") and raw.get("pnl_at") == group.get("period_end_at")]
+        values = [number(raw.get("pnl")) for _, raw in matches if number(raw.get("pnl")) is not None]
+        if not same(group.get("value"), sum(values) if values else None):
+            failures.append("pnl_group_value_mismatch")
+        covered = {expected[key]["persona_id"] for key, raw in matches if number(raw.get("pnl")) is not None}
+        eligible = {b["persona_id"] for b in expected.values() if (b.get("deployment_stage") or b.get("deployment_mode")) == group.get("stage")}
+        if group.get("covered_persona_count") != len(covered) or group.get("eligible_persona_count") != len(eligible):
+            failures.append("pnl_group_denominator_mismatch")
+    # Coverage is a metric-specific count over the same independently read fleet.
+    for metric, coverage in (summary.get("metric_coverage") or {}).items():
+        missing = []
+        for key, raw in raw_by_key.items():
+            value = raw.get("ledger_fill_count", raw.get("total_trades")) if metric == "total_trades" else raw.get(metric)
+            if metric == "fill_rate" and isinstance(raw.get("fill_rate_details"), dict):
+                details = raw["fill_rate_details"]
+                n, d = number(details.get("numerator")), number(details.get("denominator"))
+                value = n / d if n is not None and d is not None and d > 0 else None
+            if number(value) is None:
+                missing.append(key[0])
+        if coverage.get("available_count") != len(expected) - len(missing) or coverage.get("missing_count") != len(missing) or sorted(coverage.get("missing_runtime_ids") or []) != sorted(missing):
+            failures.append("metric_coverage_denominator_mismatch:" + metric)
+    for block in rankings.get("items") or []:
+        metric = block.get("metric")
+        eligible_keys = set()
+        for key, raw in raw_by_key.items():
+            value = ((by_key.get(key, {}).get("telemetry_summary") or {}).get("metrics") or {}).get(metric)
+            stale = raw.get("staleness") or {}
+            stale_source = raw.get("_valuation_failure") or stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))
+            comparable = all((raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))) if metric == "pnl" else bool(raw.get(metric + "_at") and (raw.get("window") or raw.get(metric + "_period_start_at") or (raw.get("pnl_period_start_at") if metric == "drawdown" else None)))
+            if metric == "fill_rate":
+                window = (raw.get("fill_rate_details") or {}).get("window") or {}
+                comparable = comparable or bool(window.get("start_at") and window.get("end_exclusive_at"))
+            if number(value) is not None and comparable and not stale_source:
+                eligible_keys.add(key)
+        # Source availability can further restrict eligibility (for example a
+        # missing PnL interval); never admit more observations than exist.
+        if block.get("eligible_item_count", 0) != len(eligible_keys) or block.get("eligible_item_count", 0) + block.get("missing_metric_count", 0) != len(expected):
+            failures.append("ranking_denominator_mismatch:" + str(metric))
+        item_keys = {(item.get("runtime_id"), item.get("runtime_binding_id")) for item in block.get("items") or []}
+        if item_keys != eligible_keys:
+            failures.append("ranking_observation_coverage_mismatch:" + str(metric))
+        for item in block.get("items") or []:
+            key = (item.get("runtime_id"), item.get("runtime_binding_id"))
+            if key not in expected:
+                failures.append("ranked_identity_outside_scope")
+                continue
+            row = by_key.get(key) or {}
+            metric = block.get("metric")
+            value = ((row.get("telemetry_summary") or {}).get("metrics") or {}).get(metric)
+            if number(value) is None or not same(item.get("ranking_metric_value"), value):
+                failures.append("ranked_metric_mismatch")
+            # Rankings deliberately avoid journey hydration; stable Persona
+            # and strategy navigation still identifies the same operator.
+            if item.get("persona_name") != row.get("persona_name") or any(
+                    (item.get("links") or {}).get(k) != (row.get("links") or {}).get(k)
+                    for k in ("persona", "strategy")):
+                failures.append("ranked_identity_or_navigation_mismatch")
+    if source(fetch, "/api/v1/personas") != people or source(fetch, "/api/v1/runtime-bindings") != bindings:
+        raise Unverifiable("roster_changed_during_read")
+    return {"passed": not failures, "failed": sorted(set(failures)), "runtime_count": len(expected), "persona_count": persona_count}
+
+
+def main():
+    required = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+    if any(not os.getenv(k) for k in required):
+        print(json.dumps({"passed": False, "unverifiable": "missing_environment"}))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    def request(path, payload=None, token=None):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        req = urllib.request.Request(base + path, data=json.dumps(payload).encode() if payload is not None else None, headers=headers, method="POST" if payload is not None else "GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                # Cap input as well as output; do not persist raw private records.
+                body = response.read(5 * 1024 * 1024 + 1)
+                if len(body) > 5 * 1024 * 1024:
+                    raise Unverifiable("source_size_cap_exceeded")
+                return json.loads(body)
+        except urllib.error.HTTPError as exc:
+            raise Unverifiable(f"source_http_{exc.code}") from None
+    try:
+        login = request("/bff/auth/dev-login", {"grant_type": "client_credentials", "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"], "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]})
+        token = login.get("access_token")
+        if not token:
+            raise Unverifiable("login_token_missing")
+        me = request("/bff/me", token=token).get("data") or {}
+        tenant = me.get("tenant_id")
+        if not tenant or tenant not in (me.get("allowed_tenants") or []):
+            raise Unverifiable("viewer_tenant_unverified")
+        report = check(lambda path: request(path, token=token), tenant)
+    except (Unverifiable, OSError, ValueError, KeyError) as exc:
+        print(json.dumps({"passed": False, "unverifiable": str(exc) if isinstance(exc, Unverifiable) else type(exc).__name__}))
+        return 77
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

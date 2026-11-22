@@ -2493,6 +2493,9 @@ def _project_persona_dto(
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
+        ("risk_policy_resolution", "riskPolicyResolution"),
+        ("risk_policy_owner_decision_request", "riskPolicyOwnerDecisionRequest"),
+        ("provisioning_waiting_reason", "provisioningWaitingReason"),
     ):
         value = metadata.get(source_key)
         if value is not None:
@@ -6618,6 +6621,12 @@ def _persona_create_response(
         meta["terminal_error"] = deepcopy(record.error)
     if record.compensation:
         meta["compensation"] = deepcopy(record.compensation)
+    if isinstance(record.references.get("capital_pool_risk_policy_resolution"), Mapping):
+        meta["risk_policy_resolution"] = deepcopy(dict(record.references["capital_pool_risk_policy_resolution"]))
+    if isinstance(record.references.get("risk_policy_owner_decision_request"), Mapping):
+        meta["risk_policy_owner_decision_request"] = deepcopy(
+            dict(record.references["risk_policy_owner_decision_request"])
+        )
     return {"data": overlay, "meta": meta}
 
 
@@ -6778,6 +6787,10 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
     }
     if metadata.get("provisioning_waiting_reason"):
         result["provisioning_waiting_reason"] = metadata["provisioning_waiting_reason"]
+    if isinstance(metadata.get("risk_policy_resolution"), Mapping):
+        result["risk_policy_resolution"] = deepcopy(dict(metadata["risk_policy_resolution"]))
+    if isinstance(metadata.get("risk_policy_owner_decision_request"), Mapping):
+        result["risk_policy_owner_decision_request"] = deepcopy(dict(metadata["risk_policy_owner_decision_request"]))
     if runtime_binding:
         result["runtime_binding"] = {
             "runtime_binding_id": (
@@ -14466,6 +14479,36 @@ def _persona_provisioning_metadata(
         metadata["runtime_id"] = runtime_id
     if record.error:
         metadata["provisioning_error"] = deepcopy(record.error)
+    else:
+        metadata["provisioning_error"] = None
+    if isinstance(record.references.get("capital_pool_risk_policy_resolution"), Mapping):
+        metadata["risk_policy_resolution"] = deepcopy(dict(record.references["capital_pool_risk_policy_resolution"]))
+    owner_dec_req = record.references.get("risk_policy_owner_decision_request") or (
+        (record.error or {}).get("owner_decision_request") if isinstance(record.error, Mapping) else None
+    )
+    if isinstance(owner_dec_req, Mapping):
+        owner_dec_copy = deepcopy(dict(owner_dec_req))
+        metadata["risk_policy_owner_decision_request"] = owner_dec_copy
+        metadata["provisioning_waiting_reason"] = str(
+            owner_dec_copy.get("absence_source")
+            or owner_dec_copy.get("reason_code")
+            or "risk_policy_profile_mapping_unapproved"
+        )
+        metadata["recommended_governance_action"] = str(
+            owner_dec_copy.get("recommended_governance_action")
+            or "approve_capital_pool_risk_policy_mapping"
+        )
+        if "risk_policy_resolution" not in metadata:
+            metadata["risk_policy_resolution"] = {
+                "resolved": False,
+                "status": str(owner_dec_copy.get("resolution_status") or "unresolved_profile_mapping"),
+                "reason_code": str(owner_dec_copy.get("reason_code") or "risk_policy_profile_mapping_unapproved"),
+                "absence_source": owner_dec_copy.get("absence_source"),
+                "owner_decision_request": owner_dec_copy,
+            }
+    elif isinstance(metadata.get("risk_policy_resolution"), Mapping) and metadata["risk_policy_resolution"].get("resolved") is True:
+        metadata["risk_policy_owner_decision_request"] = None
+        metadata["provisioning_waiting_reason"] = None
     if record.compensation:
         metadata["provisioning_compensation"] = deepcopy(record.compensation)
     cleanup = record.references.get("first_evaluation_schedule_cleanup")

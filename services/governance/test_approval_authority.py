@@ -3,7 +3,7 @@
 The snapshot reader is only a transport double. Production DTO parsing and
 validity predicates still execute; real HTTP/Postgres proofs live alongside.
 """
-from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid
+from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid, BoundedApprovalList
 
 
 def approval_snapshot(**values):
@@ -22,15 +22,51 @@ class SnapshotApprovalReader:
     def __init__(self, snapshot):
         self.snapshot = snapshot
 
-    def get(self, decision_id):
+    def _snapshots(self):
         body = self.snapshot() if callable(self.snapshot) else self.snapshot
-        try:
-            evidence = ApprovalEvidence.model_validate(body)
-        except ValueError as exc:
-            raise ApprovalInvalid('Malformed Governance decision') from exc
-        if evidence.decision_id != decision_id:
-            raise ApprovalInvalid('Governance exact decision ID mismatch')
-        return evidence
+        if isinstance(body, (list, tuple)):
+            return list(body)
+        return [body]
+
+    def get(self, decision_id):
+        last_error = None
+        for body in self._snapshots():
+            try:
+                evidence = ApprovalEvidence.model_validate(body)
+            except ValueError as exc:
+                raise ApprovalInvalid('Malformed Governance decision') from exc
+            if evidence.decision_id == decision_id:
+                return evidence
+            last_error = ApprovalInvalid('Governance exact decision ID mismatch')
+        raise last_error or ApprovalInvalid('Governance exact decision ID mismatch')
+
+    def list_for_target(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        decision_state: str | None = 'decided',
+        max_items: int = 16,
+    ):
+        bound = max(1, int(max_items or 16))
+        results = []
+        overflow = False
+        for body in self._snapshots():
+            if not isinstance(body, dict):
+                continue
+            if body.get('target_type') != target_type or body.get('target_id') != target_id:
+                continue
+            if decision_state and body.get('decision_state') != decision_state:
+                continue
+            try:
+                ev = ApprovalEvidence.model_validate(body)
+            except ValueError:
+                continue
+            if len(results) >= bound:
+                overflow = True
+                break
+            results.append(ev)
+        return BoundedApprovalList(results, overflow=overflow)
 
     def verify(self, decision_id, *, expected, now=None, usage_context=None):
         return self.get(decision_id).require_valid(expected=expected, now=now, usage_context=usage_context)
@@ -168,3 +204,56 @@ def test_reader_connection_failure_is_unavailable():
 def test_invalid_reader_configuration_is_typed_unavailable(url, timeout):
     with pytest.raises(ApprovalUnavailable):
         ApprovalReader(base_url=url, service_token='isolated', timeout_seconds=timeout)
+
+
+def test_list_for_target_preserves_bound_and_signals_overflow():
+    records = [
+        approval_snapshot(decision_id=f'apv-bound-{i:02d}', target_type='capital_pool_activation', target_id='pool-overflow')
+        for i in range(17)
+    ]
+    snap_exact = SnapshotApprovalReader(records[:16]).list_for_target(
+        target_type='capital_pool_activation',
+        target_id='pool-overflow',
+        max_items=16,
+    )
+    assert isinstance(snap_exact, list)
+    assert len(snap_exact) == 16
+    assert snap_exact.overflow is False
+
+    snap_over = SnapshotApprovalReader(records).list_for_target(
+        target_type='capital_pool_activation',
+        target_id='pool-overflow',
+        max_items=16,
+    )
+    assert isinstance(snap_over, list)
+    assert len(snap_over) == 16
+    assert snap_over.overflow is True
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(records).encode())
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        reader = ApprovalReader(base_url=f'http://127.0.0.1:{server.server_port}', service_token='isolated-transport-token')
+        http_over = reader.list_for_target(
+            target_type='capital_pool_activation',
+            target_id='pool-overflow',
+            max_items=16,
+        )
+        assert isinstance(http_over, list)
+        assert len(http_over) == 16
+        assert http_over.overflow is True
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+

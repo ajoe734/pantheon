@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import json
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
@@ -286,3 +286,332 @@ def test_app_factory_mounts_attribution_routes():
         ("GET", "/bff/management/attribution/shadow/{decision_id}"),
     ):
         assert expected in route_set, expected
+
+
+def test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_room_and_shadow(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from services.agora import service as agora_service_mod
+    from services.agora.service import AgoraWriteService
+    from services.agora.shadow_mode import build_decision_lock
+    from services.control_plane.bff.agora.trading_room.service import get_active_trading_room_service
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "")
+    monkeypatch.delenv("PANTHEON_BFF_AUTH_STUB", raising=False)
+    monkeypatch.setenv("PANTHEON_EVALUATION_API_URL", "http://evaluation.test")
+    monkeypatch.setenv("EVALUATION_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("AGORA_STORE_DSN", "postgresql://test/agora")
+
+    created_tables: List[Any] = []
+    owner_builds: List[AgoraWriteService] = []
+    state: Dict[str, Any] = {
+        "evaluation_offline": False,
+        "agora_store_offline": False,
+        "shadow_by_tenant": {
+            ("tenant-a", "dec-1"): {
+                "decision_id": "dec-1",
+                "arms": [
+                    {
+                        "arm": "trader",
+                        "settlement_source": "pantheon_paper_proxy",
+                        "outcome": {"pnl": -0.01},
+                        "settled_at": "2026-11-12T00:00:00Z",
+                        "unavailable_reason": None,
+                    },
+                    {
+                        "arm": "base_strategy",
+                        "settlement_source": "market_data_replay",
+                        "outcome": {"pnl": 0.01},
+                        "settled_at": "2026-11-12T00:00:00Z",
+                        "unavailable_reason": None,
+                    },
+                    {
+                        "arm": "private_servant",
+                        "settlement_source": None,
+                        "outcome": None,
+                        "settled_at": None,
+                        "unavailable_reason": "no_suggestion",
+                    },
+                    {
+                        "arm": "institutional_view",
+                        "settlement_source": "market_data_replay",
+                        "outcome": {"pnl": 0.02},
+                        "settled_at": "2026-11-12T00:00:00Z",
+                        "unavailable_reason": None,
+                    },
+                ],
+            }
+        },
+    }
+
+    class _MemoryTable:
+        def __init__(self, **kw: Any) -> None:
+            self.kw = kw
+            self.rows: Dict[str, Dict[str, Any]] = {}
+            created_tables.append(self)
+
+        def put(self, record_id: str, payload: Mapping[str, Any]) -> None:
+            self.rows[record_id] = dict(payload)
+
+        def insert_if_absent(self, record_id: str, payload: Mapping[str, Any], **_kw: Any):
+            if record_id in self.rows:
+                return False, dict(self.rows[record_id])
+            self.rows[record_id] = dict(payload)
+            return True, dict(payload)
+
+        def get(self, record_id: str):
+            if state["agora_store_offline"]:
+                raise RuntimeError("agora_store_refused")
+            row = self.rows.get(record_id)
+            return dict(row) if row is not None else None
+
+        def list_all(self, **_kw: Any):
+            if state["agora_store_offline"]:
+                raise RuntimeError("agora_store_refused")
+            return [dict(r) for r in self.rows.values()]
+
+    monkeypatch.setattr("services.agora.store.PostgresJsonOwnerStore", _MemoryTable)
+    real_build = agora_service_mod.build_agora_write_service
+
+    def tracked_build(*args: Any, **kwargs: Any) -> AgoraWriteService:
+        built = real_build(*args, **kwargs)
+        owner_builds.append(built)
+        return built
+
+    monkeypatch.setattr(agora_service_mod, "build_agora_write_service", tracked_build)
+
+    def transport(req, timeout=5):
+        u = urlsplit(req.full_url)
+        hdrs = {k.lower(): v for k, v in req.header_items()}
+        assert u.hostname == "evaluation.test", req.full_url
+        assert hdrs.get("authorization") == f"Bearer {TOKEN}"
+        if state["evaluation_offline"]:
+            raise URLError("evaluation offline")
+        if u.path.startswith("/api/attribution/shadow/"):
+            did = u.path.rsplit("/", 1)[-1]
+            tenant = hdrs.get("x-pantheon-tenant-id", "")
+            payload = state["shadow_by_tenant"].get((tenant, did))
+            if payload is not None:
+                r = io.BytesIO(json.dumps(payload).encode())
+                r.status = 200
+                return r
+            raise HTTPError(req.full_url, 404, "nf", {}, io.BytesIO(b'{"detail":"nf"}'))
+        raise AssertionError(u.path)
+
+    monkeypatch.setattr("urllib.request.urlopen", transport)
+
+    # Compose through the real production entrypoint with no explicit agora_owner override.
+    app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
+    client = TestClient(app)
+
+    assert len(owner_builds) == 1, "Expected a single shared AgoraWriteService owner instance"
+    shared_owner = owner_builds[0]
+    assert isinstance(shared_owner, AgoraWriteService)
+    assert app.state.agora_router.decision_lock_owner is shared_owner
+    assert app.state.decision_lock_owner is shared_owner
+    assert get_active_trading_room_service().decision_lock_owner is shared_owner
+
+    op_a = headers("op-alice", ["operator"], tenant="tenant-a")
+    op_b = headers("op-bob", ["operator"], tenant="tenant-b")
+    trader_alice_a = headers("trader-alice", ["viewer", "trader"], tenant="tenant-a", agora_user_id="trader-alice")
+    trader_bob_a = headers("trader-bob", ["viewer", "trader"], tenant="tenant-a", agora_user_id="trader-bob")
+    trader_alice_b = headers("trader-alice", ["viewer", "trader"], tenant="tenant-b", agora_user_id="trader-alice")
+
+    # 1. Genuinely unknown lock with no attribution resolves to 404 on BOTH paths.
+    tr_unknown = client.get("/bff/agora/trading-room/decision-events/dec-unknown/decision-lock", headers=op_a)
+    sh_unknown_op = client.get("/bff/management/attribution/shadow/dec-unknown", headers=op_a)
+    sh_unknown_tr = client.get("/bff/management/attribution/shadow/dec-unknown", headers=trader_alice_a)
+    assert tr_unknown.status_code == 404
+    assert tr_unknown.json()["error"]["details"]["reason"] == "decision_lock_not_found"
+    assert sh_unknown_op.status_code == 404
+    assert sh_unknown_op.json()["error"]["details"]["reason"] == "decision_not_found"
+    assert sh_unknown_tr.status_code == 404
+
+    # 2. Record a decision lock in the single shared Agora owner.
+    event = {
+        "decision_event_id": "dec-1",
+        "tenant_id": "tenant-a",
+        "user_id": "trader-alice",
+        "event_kind": "entry",
+        "strategy_id": "s1",
+        "strategy_version_id": "sv-1",
+        "suggested_action": "enter",
+        "data_cutoff": "2026-11-11T00:00:00Z",
+        "institutional_view": {"persona_id": "inst-1", "stance": "hold"},
+    }
+    lock = build_decision_lock(
+        human_decision_id=shared_owner.store.decision_lock_id("tenant-a", "dec-1"),
+        decision_record_id="rec-lock-1",
+        event=event,
+        decision_event_id="dec-1",
+        tenant_id="tenant-a",
+        user_id="trader-alice",
+        body_decision="approve",
+        rationale="進場理由",
+        modifications=None,
+        decision_time="2026-11-11T00:01:00Z",
+        execution_observation_kind=None,
+        account_id="acct-alice-01",
+        broker_ids=["BRK-01"],
+        actor_roles=["trader"],
+    )
+    shared_owner.create_decision_lock(lock, ["trader"])
+
+    # Same-tenant authorized trader reads own lock on both native Trading Room and Management Shadow.
+    tr_alice = client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=trader_alice_a)
+    assert tr_alice.status_code == 200, tr_alice.text
+    assert tr_alice.json()["data"]["user_id"] == "trader-alice"
+    assert tr_alice.json()["data"]["account_id"] == "acct-alice-01"
+
+    sh_alice = client.get("/bff/management/attribution/shadow/dec-1", headers=trader_alice_a)
+    assert sh_alice.status_code == 200, sh_alice.text
+    sh_alice_body = sh_alice.json()
+    assert sh_alice_body["status"] == "ok"
+    assert sh_alice_body["meta"]["sources"] == {"attribution": "ok", "agora": "ok"}
+    assert sh_alice_body["data"]["account_id"] == "acct-alice-01"
+    assert "trader_identity" not in sh_alice_body["data"]
+
+    # Same-tenant authorized operator reads lock and intended operator fields on both paths.
+    tr_op = client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_a)
+    assert tr_op.status_code == 200, tr_op.text
+    assert tr_op.json()["data"]["human_decision_id"] == lock["human_decision_id"]
+
+    sh_op = client.get("/bff/management/attribution/shadow/dec-1", headers=op_a)
+    assert sh_op.status_code == 200, sh_op.text
+    sh_op_body = sh_op.json()
+    assert sh_op_body["status"] == "ok"
+    assert sh_op_body["meta"]["sources"] == {"attribution": "ok", "agora": "ok"}
+    assert sh_op_body["data"]["trader_identity"]["user_id"] == "trader-alice"
+    assert sh_op_body["data"]["account_id"] == "acct-alice-01"
+    arms_by_name = {a["arm"]: a for a in sh_op_body["data"]["arms"]}
+    assert arms_by_name["trader"]["decision_detail"]["decision"] == "enter"
+    assert arms_by_name["trader"]["settlement_source"] == "pantheon_paper_proxy"
+    assert arms_by_name["base_strategy"]["decision_detail"]["strategy_id"] == "s1"
+
+    # Same-tenant other trader is denied (404) on both native Trading Room and Management Shadow.
+    assert client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=trader_bob_a).status_code == 404
+    assert client.get("/bff/management/attribution/shadow/dec-1", headers=trader_bob_a).status_code == 404
+
+    # Cross-tenant trader and cross-tenant operator are denied (404) on both paths.
+    assert client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=trader_alice_b).status_code == 404
+    assert client.get("/bff/management/attribution/shadow/dec-1", headers=trader_alice_b).status_code == 404
+    assert client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_b).status_code == 404
+    assert client.get("/bff/management/attribution/shadow/dec-1", headers=op_b).status_code == 404
+
+    # 3. Real source refusal / store unavailability stays distinguishable from missing data (404).
+    state["agora_store_offline"] = True
+    sh_degraded = client.get("/bff/management/attribution/shadow/dec-1", headers=op_a)
+    assert sh_degraded.status_code == 200
+    sh_degraded_body = sh_degraded.json()
+    assert sh_degraded_body["status"] == "degraded"
+    assert sh_degraded_body["meta"]["sources"] == {"attribution": "ok", "agora": "agora_owner_unavailable"}
+    assert sh_degraded_body["data"]["arms"][0]["settlement_source"] == "pantheon_paper_proxy"
+    state["agora_store_offline"] = False
+
+    # 4. Callable injection via both dependency names resolves once at composition
+    # and never builds duplicate writable owners or diverges between native and Shadow.
+    for dep_name in ("decision_lock_owner", "agora_owner"):
+        factory_owners: List[AgoraWriteService] = []
+        owners_read: List[int] = []
+
+        def _make_factory() -> Any:
+            def _factory() -> AgoraWriteService:
+                idx = len(factory_owners) + 1
+                owner = real_build(dsn="postgresql://test/agora", schema=f"agora_{dep_name}_{idx}")
+                if idx == 1:
+                    owner.create_decision_lock(
+                        build_decision_lock(
+                            human_decision_id=owner.store.decision_lock_id("tenant-a", "dec-factory-only"),
+                            decision_record_id=f"rec-factory-{dep_name}",
+                            event={**event, "decision_event_id": "dec-factory-only"},
+                            decision_event_id="dec-factory-only",
+                            tenant_id="tenant-a",
+                            user_id="trader-alice",
+                            body_decision="approve",
+                            rationale="callable factory single owner",
+                            modifications=None,
+                            decision_time="2026-11-11T00:01:00Z",
+                            execution_observation_kind=None,
+                            account_id="acct-alice-01",
+                            broker_ids=["BRK-01"],
+                            actor_roles=["trader"],
+                        ),
+                        ["trader"],
+                    )
+                orig_get = owner.get_decision_lock_for_event
+
+                def _tracked_get(*a: Any, **kw: Any) -> Any:
+                    owners_read.append(idx)
+                    return orig_get(*a, **kw)
+
+                owner.get_decision_lock_for_event = _tracked_get  # type: ignore[method-assign]
+                factory_owners.append(owner)
+                return owner
+
+            return _factory
+
+        injected_app = compose_bff_app(
+            dependency_resolver=resolve_with_stand_ins,
+            **{dep_name: _make_factory()},
+        )
+        assert len(factory_owners) == 1, f"{dep_name} callable must be resolved once at composition"
+        assert injected_app.state.decision_lock_owner is factory_owners[0]
+        assert get_active_trading_room_service().decision_lock_owner is factory_owners[0]
+        injected_client = TestClient(injected_app)
+        tr_inj = injected_client.get(
+            "/bff/agora/trading-room/decision-events/dec-factory-only/decision-lock",
+            headers=op_a,
+        )
+        sh_inj = injected_client.get(
+            "/bff/management/attribution/shadow/dec-factory-only",
+            headers=op_a,
+        )
+        assert tr_inj.status_code == 200, (dep_name, tr_inj.text)
+        assert sh_inj.status_code == 200, (dep_name, sh_inj.text)
+        assert sh_inj.json()["meta"]["sources"] == {
+            "attribution": "shadow_not_settled_or_unknown",
+            "agora": "ok",
+        }
+        assert len(factory_owners) == 1
+        assert owners_read == [1, 1]
+
+    # 5. Explicit None through either dependency name does not fall back to default substitution
+    # even when AGORA_STORE_DSN is configured.
+    builds_before_none = len(owner_builds)
+    for dep_name in ("decision_lock_owner", "agora_owner"):
+        explicit_none_app = compose_bff_app(
+            dependency_resolver=resolve_with_stand_ins,
+            **{dep_name: None},
+        )
+        assert len(owner_builds) == builds_before_none
+        assert explicit_none_app.state.decision_lock_owner is None
+        assert get_active_trading_room_service().decision_lock_owner is None
+        explicit_none_client = TestClient(explicit_none_app)
+        assert (
+            explicit_none_client.get(
+                "/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_a
+            ).status_code
+            == 503
+        )
+        none_shadow = explicit_none_client.get("/bff/management/attribution/shadow/dec-1", headers=op_a).json()
+        assert none_shadow["status"] == "degraded"
+        assert none_shadow["meta"]["sources"]["agora"] == "agora_owner_unavailable"
+
+    # 6. Unconfigured Agora DSN creates no default substitute owner.
+    monkeypatch.delenv("AGORA_STORE_DSN", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    unconfigured_app = compose_bff_app(dependency_resolver=resolve_with_stand_ins)
+    assert unconfigured_app.state.decision_lock_owner is None
+    unconfigured_client = TestClient(unconfigured_app)
+    assert (
+        unconfigured_client.get(
+            "/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_a
+        ).status_code
+        == 503
+    )
+    unconfigured_shadow = unconfigured_client.get("/bff/management/attribution/shadow/dec-1", headers=op_a).json()
+    assert unconfigured_shadow["status"] == "degraded"
+    assert unconfigured_shadow["meta"]["sources"]["agora"] == "agora_owner_unavailable"

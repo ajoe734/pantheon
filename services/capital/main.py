@@ -492,13 +492,85 @@ class CapitalBoundaryService:
             raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
         if evidence.target_type != "capital_pool_activation":
             raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
-        if pool is not None and evidence.target_id != pool.pool_id:
-            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is not None:
+            pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+            raw_pol = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+            bound_policy_ids = {
+                str(cid).strip()
+                for cid in (pool.risk_policy_ref, raw_pol.get("risk_policy_id"))
+                if cid is not None and str(cid).strip()
+            }
+            if evidence.target_id != pool.pool_id and evidence.target_id not in bound_policy_ids:
+                raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
         if pool is None:
             target_pool = self.get_pool(evidence.target_id)
             if target_pool.pool_id != evidence.target_id:
                 raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
         return evidence.model_dump(mode="json")
+
+    def list_pool_approval_evidence(
+        self,
+        pool_id: str,
+    ) -> list[Dict[str, Any]]:
+        from services.governance.approval_authority import ApprovalEvidence
+
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        reader = self.guard._effective_approval_reader()
+        if reader is None:
+            raise CapitalServiceError("Governance approval reader is not configured")
+        pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+        raw_pol = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+        bound_policy_id = str(pool.risk_policy_ref or raw_pol.get("risk_policy_id") or "").strip()
+
+        found: dict[str, Dict[str, Any]] = {}
+        if hasattr(reader, "list_for_target"):
+            targets: list[tuple[str, str]] = [("capital_pool_activation", pool.pool_id)]
+            if bound_policy_id and not bound_policy_id.startswith("rp-pool-") and bound_policy_id != f"rp-{pool.pool_id}":
+                targets.append(("capital_pool_activation", bound_policy_id))
+            for t_type, t_id in targets:
+                try:
+                    items = reader.list_for_target(
+                        target_type=t_type,
+                        target_id=t_id,
+                        decision_state=None,
+                        max_items=17,
+                    )
+                except Exception:
+                    items = []
+                for item in items or []:
+                    try:
+                        ev = (
+                            item
+                            if isinstance(item, ApprovalEvidence)
+                            else ApprovalEvidence.model_validate(
+                                dict(item) if isinstance(item, dict) else item.model_dump()
+                            )
+                        )
+                    except Exception:
+                        continue
+                    if tenant and ev.tenant_id != tenant:
+                        continue
+                    if ev.decision_id not in found and len(found) < 17:
+                        found[ev.decision_id] = ev.model_dump(mode="json")
+
+        fallback_ids: list[str] = []
+        for candidate_key in ("profile_mapping_approval_id", "approval_decision_id"):
+            val = str(pool_meta.get(candidate_key) or "").strip()
+            if val and val not in fallback_ids:
+                fallback_ids.append(val)
+        default_cand = f"apv-capital-pool-{pool.pool_id}"
+        if default_cand not in fallback_ids:
+            fallback_ids.append(default_cand)
+        for cand_id in fallback_ids:
+            if cand_id in found or len(found) >= 17:
+                continue
+            try:
+                ev_dict = self.get_pool_approval_evidence(cand_id, pool_id=pool.pool_id)
+                found[cand_id] = ev_dict
+            except Exception:
+                continue
+        return list(found.values())
 
     def create_binding(
         self,
@@ -1438,6 +1510,17 @@ def get_capital_pool_risk_policy(
     service = get_capital_service()
     try:
         return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/approvals")
+def list_capital_pool_approval_evidence(
+    pool_id: str,
+) -> List[Dict[str, Any]]:
+    service = get_capital_service()
+    try:
+        return service.list_pool_approval_evidence(pool_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

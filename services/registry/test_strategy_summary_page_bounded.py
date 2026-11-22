@@ -1111,10 +1111,155 @@ def test_strategy_summary_page_preserves_error_statuses_for_invalid_tokens_confl
         updated_at="2026-10-01T00:00:00Z",
         owner_tenant="tenant-a",
     )
-    resp_owner_err = strict_client.get(
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+    try:
+        resp_owner_err = strict_client.get(
+            "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+            headers=_bearer(token_a),
+        )
+        assert resp_owner_err.status_code == 503
+        assert "Invalid strategy registry entry" in resp_owner_err.json()["detail"]
+        assert store.full_summary_rows_extracted == 0
+    finally:
+        store._entries.pop("reg-corrupt-entry", None)
+
+
+def test_strategy_summary_page_query_search_bounds_phase2_to_matching_page_and_respects_current_version_and_tenant(
+    strict_client,
+):
+    """Owner-side query filtering on strategy_summary_page matches current winning
+    versions by strategy_id or title/name (case-insensitive), ignores superseded
+    versions, retired families, and foreign tenants, and extracts Phase 2 full
+    summary rows only for the returned matching page slice.
+    """
+    from .pg_store import _strategy_spec_summary_index_single_pass_sql
+    from .storage import get_store
+
+    token_a = _jwt(subject="search-a", tenant="tenant-a")
+    store = get_store()
+    store._entries.clear()
+
+    # Populate 60 non-matching strategies plus multi-version, retired, and foreign-tenant strategies
+    for i in range(60):
+        sid = f"strat-bulk-{i:04d}"
+        rid = f"reg-{sid}-v1"
+        spec = _realistic_strategy_spec_payload(sid, version="1.0.0", lifecycle_state="approved")
+        store._entries[rid] = RegistryEntry(
+            registry_id=rid,
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=sid,
+            version="1.0.0",
+            artifact_state=ArtifactState.APPROVED,
+            lineage=Lineage(source_run_ids=[f"run-{rid}"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum=f"sha256:{rid}",
+            metadata={"strategy_spec": spec, "title": spec["title"]},
+            created_at="2026-10-01T00:00:00Z",
+            updated_at=f"2026-10-02T{(i % 24):02d}:00:00Z",
+            owner_tenant="tenant-a",
+        )
+
+    # Multi-version family: v1.0.0 had "Superseded Legacy Title", v1.2.0 has "Quantum Horizon Alpha"
+    spec_v1 = _realistic_strategy_spec_payload("strat-quantum-target", version="1.0.0", lifecycle_state="draft")
+    spec_v1["title"] = "Superseded Legacy Title"
+    spec_v1["name"] = "Superseded Legacy Title"
+    store._entries["reg-quantum-v1"] = RegistryEntry(
+        registry_id="reg-quantum-v1",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-target",
+        version="1.0.0",
+        artifact_state=ArtifactState.DRAFT,
+        lineage=Lineage(source_run_ids=["run-q-v1"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-v1",
+        metadata={"strategy_spec": spec_v1, "title": "Superseded Legacy Title"},
+        created_at="2026-09-01T00:00:00Z",
+        updated_at="2026-09-01T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+    spec_v2 = _realistic_strategy_spec_payload("strat-quantum-target", version="1.2.0", lifecycle_state="approved")
+    spec_v2["title"] = "Quantum Horizon Alpha"
+    spec_v2["name"] = "Quantum Horizon Alpha"
+    store._entries["reg-quantum-v2"] = RegistryEntry(
+        registry_id="reg-quantum-v2",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-target",
+        version="1.2.0",
+        artifact_state=ArtifactState.APPROVED,
+        lineage=Lineage(source_run_ids=["run-q-v2"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-v2",
+        metadata={"strategy_spec": spec_v2, "title": "Quantum Horizon Alpha", "owner": "desk-quantum"},
+        created_at="2026-09-02T00:00:00Z",
+        updated_at="2026-09-02T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+
+    # Retired strategy with "Quantum Horizon" in title (must be excluded)
+    spec_ret = _realistic_strategy_spec_payload("strat-quantum-retired", version="1.0.0", lifecycle_state="retired")
+    spec_ret["title"] = "Quantum Horizon Retired"
+    store._entries["reg-quantum-ret"] = RegistryEntry(
+        registry_id="reg-quantum-ret",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-retired",
+        version="1.0.0",
+        artifact_state=ArtifactState.RETIRED,
+        lineage=Lineage(source_run_ids=["run-q-ret"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-ret",
+        metadata={"strategy_spec": spec_ret, "title": "Quantum Horizon Retired"},
+        created_at="2026-09-03T00:00:00Z",
+        updated_at="2026-09-03T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+
+    # Foreign tenant strategy with "Quantum Horizon" in title (must be excluded)
+    spec_foreign = _realistic_strategy_spec_payload("strat-quantum-foreign", version="1.0.0", lifecycle_state="approved")
+    spec_foreign["title"] = "Quantum Horizon Foreign"
+    store._entries["reg-quantum-foreign"] = RegistryEntry(
+        registry_id="reg-quantum-foreign",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-foreign",
+        version="1.0.0",
+        artifact_state=ArtifactState.APPROVED,
+        lineage=Lineage(source_run_ids=["run-q-foreign"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-foreign",
+        metadata={"strategy_spec": spec_foreign, "title": "Quantum Horizon Foreign"},
+        created_at="2026-09-04T00:00:00Z",
+        updated_at="2026-09-04T00:00:00Z",
+        owner_tenant="tenant-b",
+    )
+
+    # 1. Superseded v1 title does not match
+    resp_superseded = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&query=Superseded+Legacy&page_size=20",
         headers=_bearer(token_a),
     )
-    assert resp_owner_err.status_code == 503
-    assert "Invalid strategy registry entry" in resp_owner_err.json()["detail"]
+    assert resp_superseded.status_code == 200
+    assert resp_superseded.json()["total"] == 0
+    assert resp_superseded.json()["items"] == []
     assert store.full_summary_rows_extracted == 0
+
+    # 2. Current version title matches (even though updated_at places it beyond the first 20 rows)
+    resp_match = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&query=quantum+horizon&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_match.status_code == 200
+    body = resp_match.json()
+    assert body["total"] == 1
+    assert body["next_page_token"] is None
+    assert len(body["items"]) == 1
+    assert body["items"][0]["strategy_id"] == "strat-quantum-target"
+    assert body["items"][0]["current_spec_version"] == "1.2.0"
+    assert body["items"][0]["title"] == "Quantum Horizon Alpha"
+    assert body["items"][0]["owner"] == "desk-quantum"
+    assert store.full_summary_rows_extracted == 1
+    assert store.full_summary_row_ids_extracted == ("reg-quantum-v2",)
+
+    # 3. Verify Postgres single-pass index SQL with include_title=True projects only compact title/name leaves
+    sql_with_title = _strategy_spec_summary_index_single_pass_sql("registry.entries", "TRUE", include_title=True)
+    assert "(m -> 'title')::text AS mt0" in sql_with_title
+    assert "(s -> 'title')::text AS st0" in sql_with_title
+    for heavy_leaf in ("market_scope", "execution_profile", "governance", "capital_pool_id", "source_kind"):
+        assert heavy_leaf not in sql_with_title

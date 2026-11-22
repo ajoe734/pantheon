@@ -1389,6 +1389,7 @@ def build_participant_pre_read(
                     query=topic,
                     limit=12,
                     auth_token=token or None,
+                    timeout_seconds=float(os.getenv("CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS", "15.0")),
                 )
                 if isinstance(retrieval, Mapping):
                     hits, _ = normalize_retrieval_hits(retrieval, persona_id=pid)
@@ -2958,12 +2959,23 @@ def _write_meeting_memory(
     if eff_memory_url:
         from services.runtime_auth import resolve_runtime_manager_auth
 
+        write_file_env = (
+            "PANTHEON_MEMORY_AUTH_TOKEN_FILE"
+            if os.getenv("PANTHEON_MEMORY_AUTH_TOKEN_FILE", "").strip()
+            else "CONSULTATION_MEMORY_WRITE_TOKEN_FILE"
+        )
+        write_token_env = (
+            "PANTHEON_MEMORY_AUTH_TOKEN"
+            if os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", "").strip()
+            or not os.getenv("CONSULTATION_MEMORY_WRITE_TOKEN", "").strip()
+            else "CONSULTATION_MEMORY_WRITE_TOKEN"
+        )
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             **resolve_runtime_manager_auth(
-                token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
-                token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+                token_env_key=write_token_env,
+                token_file_env_key=write_file_env,
                 default_token="",
             ).headers(),
         }

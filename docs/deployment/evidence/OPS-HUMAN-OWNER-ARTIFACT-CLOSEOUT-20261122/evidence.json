@@ -1,0 +1,78 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-HUMAN-OWNER-ARTIFACT-CLOSEOUT-20261122",
+  "title": "Complete the existing Human/Ops closeout for reviewed hosted evidence",
+  "phase": "Development",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "depends_on": [
+    "OPS-HUMAN-OWNER-MERGED-CLOSEOUT-20261021"
+  ],
+  "scoped_artifacts": [
+    "scripts/ai_status.py",
+    "scripts/test_ai_status.py",
+    ".orchestrator/skills/task-closeout-finalization.md",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/OPS-HUMAN-OWNER-ARTIFACT-CLOSEOUT-20261122/evidence.json"
+  ],
+  "reproduction_and_live_reference": {
+    "target_acceptance_task_id": "REGIME-DATA-HOSTED-ACCEPTANCE-20261114",
+    "target_owner": "Human/Ops",
+    "target_reviewer": "Codex2",
+    "target_generation": 4,
+    "target_status": "review_approved",
+    "delivery_binding_kind": "artifact_contract",
+    "contract_sha256": "5c237b12aca3df0a06a63f6bed6fb1b2c700173a5806d96f68680128ed10152e",
+    "published_evidence_path": "docs/deployment/evidence/REGIME-DATA-HOSTED-ACCEPTANCE-20261114/evidence.json",
+    "published_evidence_sha256": "527da3fdd1368c2875b31e9a22eeae0348328005e0c15c20a31a8e77abff8814",
+    "published_evidence_blob_sha": "13a8b3a42e3966ab0fb04c6bab8f81249a21f58a",
+    "separate_publication_task": {
+      "task_id": "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "pr": 7732,
+      "head_sha": "e9611bc1129e9a1e1c79ea81251d8c13c12ecb5e",
+      "merge_commit_sha": "909c707e4ea8d3cc585a651fe82a27fbb47ee8ce"
+    },
+    "accepted_release": {
+      "root_workflow": 44915049855,
+      "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+      "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+      "gate": "44918407417",
+      "pair_id": "a3a38db06b52f24e57eaa69bc033e32c55bac631b466ebbf059390b2f0b6a1aa"
+    },
+    "prior_gap": "validate_human_ops_owner_merged_delivery (#6709) called require_current_pr_delivery_binding unconditionally, rejecting a Human/Ops-owned read-only hosted acceptance task whose handoff-frozen delivery_binding.kind is artifact_contract while local done excludes Human/Ops."
+  },
+  "repair_summary": {
+    "mechanism": "Extended validate_human_ops_owner_merged_delivery and command_reconcile_merged_done to admit a Human/Ops-owned review_approved task with a current artifact_contract delivery_binding when: (1) all declared task artifacts are task-scoped evidence under docs/deployment/evidence/<TASK-ID>/, with no PR delivery markers or protected product closeout requirement; (2) completion_tracks.hosted is done and cites docs/deployment/evidence/<TASK-ID>/evidence.json, the exact published evidence SHA-256, the publication commit, and the accepted release identity; (3) the activity audit contains an unrevoked handoff matching the current delivery_binding and an unrevoked current-generation review_approved by the assigned independent reviewer citing the exact evidence SHA-256, publication commit, and accepted release identity (relying on canonical lifecycle and explicit invalidation events without generic note-text revocation), plus a pending finalize handoff from reviewer to Human/Ops; and (4) the delivery resolved via native _validated_reconcile_delivery(task) proves the evidence file on origin/dev is immutable, matches task_id, and was published by a separate completed publication task whose archived PR delivery/review bindings and commit trailers match the publication commit.",
+    "guardrails_preserved": {
+      "local_human_ops_done_whitelist_unchanged": true,
+      "no_borrowed_publication_pr_binding_on_acceptance_task": true,
+      "no_synthetic_review_or_operator_accept": true,
+      "no_product_or_code_delivery_shortcut": true,
+      "protected_product_closeout_verdict_preserved": true,
+      "no_live_canonical_or_promoted_runtime_mutation": true
+    },
+    "delivery_and_promotion_boundary": {
+      "source_delivery": "Delivered via normal exact-head task PR review and GitHub integration to dev.",
+      "runtime_promotion": "Separate governed command-runtime promotion is required before live Human/Ops invokes scripts/human-ops-status.sh reconcile_merged_done on REGIME-DATA-HOSTED-ACCEPTANCE-20261114."
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests -v",
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_ai_status",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "python3 scripts/check_storage_manifest.py"
+    ],
+    "results": {
+      "review_approved_workflow_tests": "Ran 174 tests in 2.752s - OK",
+      "full_test_ai_status_suite": "Ran 536 tests across 4 foreground batches - OK",
+      "storage_manifest_check": "passed: true (372 entries, 0 failures)",
+      "read_only_live_snapshot_dry_run": "validate_human_ops_owner_merged_delivery and isolated temp-dir reconcile_merged_done + recover_status_archive_outbox succeeded on a read-only copy of REGIME-DATA-HOSTED-ACCEPTANCE-20261114 with terminal_fact and archive_receipt emitted"
+    }
+  },
+  "runtime_budget": {
+    "new_or_changed_writers": "none (uses existing TaskStore reconcile_merged_done and archive outbox path)"
+  }
+}

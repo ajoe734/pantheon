@@ -108,6 +108,9 @@ def _default_decision_lock_owner() -> Optional[Any]:
         return None
 
 
+_UNSET_DECISION_LOCK_OWNER = object()
+
+
 def create_agora_router(
     *,
     extract_identity: Callable[..., Any],
@@ -125,7 +128,7 @@ def create_agora_router(
     get_trade_journey_store: Callable[[], Any] = lambda: None,
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
-    decision_lock_owner: Optional[Any] = None,
+    decision_lock_owner: Optional[Any] = _UNSET_DECISION_LOCK_OWNER,
     idempotency_store: Optional[Dict[str, Any]] = None,
     sse_buffers: Optional[Dict[str, Any]] = None,
     sse_subscribers: Optional[Dict[str, Any]] = None,
@@ -388,16 +391,18 @@ def create_agora_router(
     )
     router.include_router(research_router)
     router.research_store = getattr(research_router, "store", None)
+    if decision_lock_owner is _UNSET_DECISION_LOCK_OWNER:
+        resolved_decision_lock_owner = _default_decision_lock_owner()
+    elif callable(decision_lock_owner):
+        resolved_decision_lock_owner = decision_lock_owner()
+    else:
+        resolved_decision_lock_owner = decision_lock_owner
     router.include_router(create_trading_room_router(
         **_kw,
         require_write_role=require_write_role,
         trading_room_store=trading_room_store,
         workshop_store=workshop_store,
-        decision_lock_owner=(
-            decision_lock_owner
-            if decision_lock_owner is not None
-            else _default_decision_lock_owner()
-        ),
+        decision_lock_owner=resolved_decision_lock_owner,
     ))
     router.include_router(create_performance_router(
         **_kw,
@@ -568,6 +573,7 @@ def create_agora_router(
     router.dataset_store = ds_store
     router.proposal_store = proposal_store
     router.trading_room_store = trading_room_store
+    router.decision_lock_owner = resolved_decision_lock_owner
     router.agora_service = agora_service
 
     return router

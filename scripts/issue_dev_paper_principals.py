@@ -97,6 +97,14 @@ READERS = {
     # Meeting roster resolution -> persona owner directory (GET /api/personas) ONLY. viewer is the existing
     # read-only persona role (no write/admin/decide role); a file, never an env value.
     "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN": ("pantheon-dev-consultation-persona-directory-reader", "viewer"),
+    # Consultation executor case-file composition & meeting lesson-candidate episode verification ->
+    # telemetry owner read-only GET routes (runtime-summaries and trade-episodes; viewer + reviewer roles,
+    # no service/operator/admin write authority). File-delivered only so PANTHEON_TELEMETRY_SERVICE_TOKEN
+    # is never exported into the shared deploy env.
+    "CONSULTATION_TELEMETRY_READ_TOKEN": (
+        "pantheon-dev-consultation-telemetry-reader",
+        ("viewer", "reviewer"),
+    ),
     # Consultation executor -> memory learn-feedback writeback ONLY as write_authority consultation-svc.
     # Role consultation-svc is in the memory write set and satisfies the authority check; no
     # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.
@@ -283,7 +291,8 @@ CONSUMER_FILES = {
     ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
-                         "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN"),
+                         "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
+                         "CONSULTATION_TELEMETRY_READ_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
