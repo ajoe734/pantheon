@@ -1,0 +1,259 @@
+# Pending requested-profile provenance
+
+Task: PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122. Owner: Codex.
+Independent reviewer: Antigravity. Root cause: RC2 WP2.1, existing paper-risk
+binding row in `docs/operations/problem-register.md`. Source awaits independent
+review and merge; no deployed or accepted claim is made by these local tests.
+
+## Reproduction and change
+
+The existing hosted-proof receipts at
+`PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/`
+show the same three personas on build `f78d53689e2443338353f14a9cb40d595bbe8535`:
+`f78-profile-provenance-records.jsonl` has original Persona risk `low` and no
+pool profile fields; `f78-capital-guard-after-proposals.jsonl` (19:57Z) has
+Capital `requested_profile=null`, nested owner request `low`, policy unapproved,
+new risk disabled and reducing actions enabled. These are prior hosted
+observations, not a hosted execution of this change.
+
+Repair returned from its unresolved/ambiguous branches before reaching the
+successful-policy metadata PATCH. Provisioning similarly resolved policy before
+building its creation payload, and its suspension branch only handled active,
+not already suspended/admitted pools. Consequently creating a Governance case
+did not persist the request on CapitalPool.
+
+The repair now saves verified original request provenance before routing and
+returning an unresolved/ambiguous owner decision. Sources (request aliases,
+provisioning record and pool metadata) must agree; absent/invalid/conflicting
+sources fail with a named reason rather than falling back to `low`. Pool,
+tenant, persona and paper identity are checked before a write. Medium and high
+requests retain their own values. This source-only repair keeps `repaired=false`
+for policy repair until an actual approved policy is applied.
+
+The existing Capital status PATCH permits omitted `status` only for the exact
+metadata pair `requested_risk_profile` and `require_approved_profile_mapping=true`,
+with `expected_persona_id`. The owner keeps its current status, policy, limits,
+allocation and unrelated metadata. This operation cannot activate a pool or
+write approval evidence. The JSON owner uses its store lock; Postgres uses a
+row lock, current payload merge and one keyed UPDATE, avoiding the legacy
+whole-store `_save`. Same-data retries return without a state or audit write.
+Response loss is recovered only by authoritative GET readback.
+
+Governance GET/list reuse requires tenant, pool, profile, candidate policy ID,
+version, policy digest and pool digest to match. A conflicting deterministic ID
+returns `existing_proposal_request_mismatch`, with the conflicting case ID,
+without treating that case as the current request or posting over it. The three
+existing hosted cases keep their IDs for unchanged requests:
+
+| Pool suffix | Existing case |
+|---|---|
+| 06d4775a9b6a8f63b311 | apv-risk-profile-550ae83ccfeaafa69ec1 |
+| 039ad01f8bcd2b4aa466 | apv-risk-profile-a1cdc8408fe251534581 |
+| a81b4fd15944698341aa | apv-risk-profile-6bf0cafe806a1e89fb34 |
+
+## Independent review regression: unknown request must hold
+
+Antigravity reopened PR #7755 at `f1959a0aa62652cfdfcbc7bd0997f9279cfe70e1`.
+The released typed CapitalPool could select an approved catalog low policy
+without a requested-profile source: with no inline policy it reported low,
+and with a legacy generic inline policy it reported null while enabling risk.
+The same six-case synthetic non-trading reviewer control was rerun before and
+after this repair. `typed-control-before.jsonl` preserves the original reviewer
+receipt; `typed-control-after.jsonl` records the local corrected run. Low passes,
+high holds, and both unknown-source cases now hold and report null.
+
+Capital discovery no longer supplies a default low. The resolver compares all
+request/pool/binding aliases, including typed CapitalPool metadata, and returns
+`requested_profile_missing`, `requested_profile_conflict` or
+`requested_profile_invalid` in `owner_decision_request.absence_source` before
+any required profile mapping can authorize increased risk. Candidate policy
+profile metadata cannot establish what the Persona requested. Inline policies
+are validated before this hold so existing policy validation errors remain
+intact, and a valid bound policy remains available for governed reductions and
+exits. Explicit policies with no required profile mapping remain compatible.
+No persistent writer, cadence or storage budget changes in this correction.
+
+`services/capital/test_requested_profile_resolution.py` contains 32 controls for
+typed/wire pools, low/medium/high/unknown, source conflicts, invalid sources,
+discovery, implicit legacy mapping, explicit contracts and runtime reduction,
+close, increase and reversal behavior. The full owner/provisioning regression
+was rerun against disposable PostgreSQL 16.16 (593 passed, no skips), and the
+independent-connection row-update test passed again separately. The container
+was removed after the bounded batch.
+
+The operator reopened `a54100a3f`: the original normal name-only request passed
+on f78 but failed with `requested_profile_source_missing` on that head.
+Adding explicit low to four unrelated caller suites concealed a supported
+ingress regression. All four suites are restored byte-for-byte to their
+original inputs; the old `lifecycle-fixtures.log` only describes the rejected
+fixture modification, not acceptance of the original contract.
+
+At `POST /bff/personas`, the original canonical input is hashed unchanged before
+the existing new-Persona default is recorded as `risk=low` with
+`metadata.requested_risk_profile_provenance=persona_create_default`. The existing
+reservation writer stores it. Same-key retries still compare the original hash;
+an explicit-low request differs from an omitted-risk request as before. Explicit
+policies keep their separate contract. Actual financial-profile aliases remain
+validated for conflicts. A historical request with only `traits.risk_appetite`
+uses that supplied value when no financial profile or policy is explicit; it
+cannot override an explicit financial profile. These are actual request values,
+not a catalog policy default.
+
+An older reservation's payload and hash remain unchanged. When its profile is
+absent, the coordinator may recover a profile from the real Persona write owner,
+checking Persona/tenant IDs, declared pool IDs and the request hash when present.
+The owner value must actually exist and agree across its fields. The checkpoint
+labels this source `verified_persona_owner`. Missing owners/profiles still hold;
+a bare older pool never receives low merely because it lacks provenance. Owner
+readback also feeds policy repair and publication. A recovered medium/high value
+survives Persona materialization instead of being overwritten by a display default.
+The real owner's nested `metadata.risk_profile` object is read as a profile
+object, with agreement checked against its scalar risk level. A previous
+`requested_profile_source_missing` failure's display default is excluded from
+recovery, so repeating an unknown legacy request cannot manufacture provenance.
+No policy or approval is inferred by any of these paths.
+
+## Runtime budget and cleanup
+
+This is event driven through existing provisioning/repair calls, with no poller
+or job. Each verified account missing provenance gets at most one existing pool
+row update, adding <=96 bytes for a profile of <=6 characters and a boolean.
+The three hosted pools add <=288 bytes once, no pool rows, and <=3 existing
+capital audit events (<=512 bytes each at current hosted identity lengths,
+<=1536 bytes once). Steady growth is zero; daily incremental growth is <=96*N
+pool bytes plus <=512*N audit bytes for N newly repaired accounts. Retries,
+concurrent same-data submissions and dry_run add zero. Existing identical
+Governance cases are reused. Pre-admission provisioning retains its existing
+single suspension write, now carrying the profile as a narrow metadata merge.
+
+Create ingress adds <=96 bytes to an existing provisioning request for the
+default and label. Verified legacy Persona recovery adds <=512 bytes per
+existing provisioning row at current hosted identity lengths (<=1536 bytes
+once for the three accounts). Both are bounded replacing fields. Daily growth
+is <=96*N + 512*M bytes for N new omitted-profile requests and M newly recovered
+records; steady-state growth is zero. No additional rows, recurring writes or
+cleanup process are introduced; the existing provisioning row retention applies.
+This increment is registered on the provisioning writer in the storage manifest.
+
+Provenance is retained with the existing pool row and its archival policy;
+there is no new cleanup process. Whole-pool and audit-history retention remain
+under RC3 WP3.1. These increments are registered on the existing JSON, Postgres
+and audit writers in `docs/operations/storage-manifest.json`.
+
+## Validation and hosted handoff
+
+See `evidence.json`, `validation.log`, `final-focused.log` and `storage-check.json` for terminal local
+results. Tests exercise normal create/resume, the three existing paper pool
+fixtures, low/medium/high, real Capital dataclass/store/mapper, HTTP `/risk-policy`,
+dry_run, response loss, no-op retries, concurrent status/metadata preservation,
+Postgres independent connections updating exactly one row, mismatched
+pending/rejected proposals, and existing explicit policy/version/revocation/exit
+regressions. `original-lifecycle-contracts.log` verifies the 107 original callers
+unchanged. `ingress-owner-validation.log` and `ingress-pg.log` supersede the
+previous-head regression runs; the typed missing/conflict/invalid guard remains
+in force. Focused tests cover default provenance, old-hash replay, owner identity,
+aliases, missing old sources, conflicting sources and no-approved-policy holds.
+The final source run passed 620 owner/provisioning/Capital tests with no skips,
+107 original caller tests, and the independently connected PostgreSQL row-update
+test. The unchanged six-case reviewer control also passed. Disposable PostgreSQL
+was removed at the end of the successful bounded batch. All four restored caller
+files were compared directly with `origin/dev` and have no diff.
+
+After review/merge, `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121` owns deployment
+and normal repair of the three accounts, then read-only collection of original
+provisioning payload, Capital pool GET, Capital `/risk-policy` GET and the
+existing Governance case GET. Do not vote or activate a policy to validate this
+field repair. Verify the same case IDs above and unchanged policy/allocations.
+
+The executable read-only probe accepts those four owner receipts as an array
+of `{tenant_id, persona_id, request_payload, capital_pool,
+risk_policy_resolution, governance_proposal}`:
+
+```sh
+python3 docs/deployment/evidence/PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122/check_readback.py owner-receipts.json
+```
+
+It requires exactly three unique accounts by default, consistent requested
+profiles and identity/digests, and policy-unapproved risk-reducing-only state.
+It performs no HTTP calls or writes; the existing hosted-proof task collects
+receipts through its authenticated owner read transport. The local real-owner
+test runs the same probe against low/medium/high and rejects a null readback.
+
+## Residual findings and obligations
+
+- RC2 policy owner disposition remains in
+  `PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122`; source persistence does not
+  approve a limit mapping. Hosted acceptance stays with the existing proof task.
+- RC3 WP3.1: the existing general Postgres pool `_save` still snapshots all pools
+  on unrelated create/status/policy mutations. This task's dedicated provenance
+  method avoids it; broad writer amplification/retention is not repaired here.
+
+- RC2 residual observed in a local legacy-record fixture: `capital.main.pool_digest`
+  hashes a raw integer budget while `capital_pool_approval_digest` normalizes
+  it to float, producing different digests for an integer-valued dataclass.
+  Normal CreateCapitalPoolRequest wire parsing supplies floats (as do the
+  three hosted budgets). This task preserves existing approval hashes and
+  tests that actual service shape; legacy integer-record compatibility needs
+  assessment by the existing RC2 capital/risk chain before changing hashes.
+
+## Fresh simulator continuation (2026-11-22)
+
+The initial isolated PostgreSQL run failed with `requested_profile_source_missing`
+(`fresh-owner-before.log`, exit 1): the synthetic fresh request directly reserved
+its record and bypassed create ingress. Human/Ops added the exact fixture path
+to the canonical artifacts contract on 2026-11-22 at 20:54:20Z.
+
+The fixture now calls the genuine `_persona_create_effective_profile_payload`
+helper on its unchanged wire input before reserve. It checks that the original
+input still omits risk and metadata, and that the effective new-create request
+carries the labelled existing default. The independent Governance/Registry
+approval, actor, digest, scope and separate-process reload assertions are intact.
+The isolated rerun passed (1 passed, 3 warnings in 14.16s, exit 0;
+`fresh-owner-after.log`). Its disposable PostgreSQL container was removed.
+Bare typed/legacy negative controls retain their original source-less inputs;
+no product provenance or authorization guard changed for this fixture repair.
+Hosted deployment/three-account repair remains with the existing proof task.
+
+The final continuation rerun on source `6255a80ae` passed 620 full
+owner/provisioning/Capital contracts (82.40s, no skips), 108 lifecycle contracts
+including the original four caller suites and real Governance/Registry reload
+(58.64s), the six-connection PostgreSQL one-row update (1.11s), the original six
+reviewer controls with explicit result assertions, and the storage manifest check.
+The first combined harness used `gov_approval_test` for Capital and failed the
+existing migration test that names `pantheon` (619 passed, 1 failed); that failed
+receipt is retained as non-acceptance evidence in `continuation-owner-validation.log`.
+The corrected full rerun uses the expected `pantheon` database and passed;
+`continuation-owner-retry.log` is the acceptance receipt. Both disposable
+containers were removed after collecting terminal results. Subsequent delivery
+commits only add these evidence records; source remains the tested version.
+
+## Existing exact-pool approval compatibility
+
+CI on `4bdead7f4` exposed a second regression: `Service suites (misc)` failed
+21 execution contracts because the new missing-profile guard returned before
+validating existing exact-pool Governance approval evidence. The original
+Bootstrap and futures fixtures remain unchanged. The terminal failure summary
+is retained in `ci-existing-pool-approval-failure.log`.
+
+For a legacy generic inline policy with no explicit profile-mapping requirement,
+the resolver now verifies existing exact-pool approval evidence before returning
+the missing-profile hold. This path verifies pool and policy digests, tenant,
+version, validity and lifecycle; it disables target discovery and cannot use a
+catalog policy approval. It preserves the existing approved limits without
+assigning any requested profile. Required-profile mappings and contradictory
+or invalid sources retain the guard. A bare legacy pool without an exact-pool
+approval still holds; no policy discovery is allowed to invent low.
+
+Twenty-four typed/wire controls cover a valid exact-pool approval and required
+request, conflict, tenant/pool/digest/version mismatch, pending/rejected,
+revoked and expired approvals. All 80 focused Capital/Bootstrap/futures tests
+passed with 10 subtests (8.03s; `existing-pool-approval-controls.log`).
+
+The final source `61e490e5a` passed the complete 644-test owner/Capital batch
+(no skips, 85.18s), 843 execution tests and 93 subtests (14 existing skips,
+88.53s), all 108 caller/real-owner reload contracts (56.57s), the independent
+PostgreSQL row-update control (1.24s), the original six reviewer controls and
+the storage manifest check. These terminal `bound-*` receipts supersede prior
+source-head results. The four original BFF caller files and both execution
+fixtures have no diff against `origin/dev`. All disposable containers were
+removed. Only documentation and evidence change after that tested source.
