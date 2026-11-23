@@ -940,6 +940,24 @@ def _try_schedule_catchup_entry(entry: Any) -> Tuple[str, List[Any]]:
         return "scheduled", _ensure_workers_unlocked()
 
 
+CATCHUP_STORE_RESOLVE_ATTEMPTS = 3
+CATCHUP_STORE_RESOLVE_BACKOFF_SECONDS = 0.05
+
+
+def _resolve_catchup_store(store_or_factory: Any) -> Any:
+    """Resolve a lazily built canonical store; a transient build/read failure must not drop the catch-up."""
+    if not callable(store_or_factory):
+        return store_or_factory
+    for attempt in range(1, CATCHUP_STORE_RESOLVE_ATTEMPTS + 1):
+        try:
+            return store_or_factory()
+        except Exception:
+            if attempt >= CATCHUP_STORE_RESOLVE_ATTEMPTS:
+                raise
+            time.sleep(CATCHUP_STORE_RESOLVE_BACKOFF_SECONDS * attempt)
+    return None
+
+
 def _scan_catchup_batch(
     institutional_store: Any,
     persona_store: Any,
@@ -949,8 +967,8 @@ def _scan_catchup_batch(
     is_continuation: bool = False,
 ) -> dict:
     global _CATCHUP_CONTINUATION
-    resolved_institutional = institutional_store() if callable(institutional_store) else institutional_store
-    resolved_persona = persona_store() if callable(persona_store) else persona_store
+    resolved_institutional = _resolve_catchup_store(institutional_store)
+    resolved_persona = _resolve_catchup_store(persona_store)
     scheduled = 0
     deferred = 0
     already_mirrored = 0

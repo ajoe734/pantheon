@@ -487,7 +487,7 @@ def test_crash_after_authority_write_reclaims_same_attempt_without_duplicate(tmp
     claimed = queue.claim_next_pending(
         "tenant-a",
         claimant="crashing-worker",
-        lease_seconds=1,
+        lease_seconds=300,
     )
     assert claimed is not None
 
@@ -505,7 +505,7 @@ def test_crash_after_authority_write_reclaims_same_attempt_without_duplicate(tmp
     assert len(authority.runs) == 1
     assert queue.list_all()[0]["status"] == "claimed"
 
-    future = datetime.now(timezone.utc) + timedelta(seconds=301)
+    future = datetime.now(timezone.utc) + timedelta(seconds=3600)
     assert queue.recover_expired_claims("tenant-a", now=future) == 1
     result = _run_with_registry(worker, _registry_entry(payload))
 

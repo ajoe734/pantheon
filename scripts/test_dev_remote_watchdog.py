@@ -123,7 +123,7 @@ class TestDevRemoteWatchdog(unittest.TestCase):
 
     def test_large_envelope_exceeding_pause_succeeds_within_startup_timeout(self) -> None:
         # Simulate a ~350KB base64 deploy-dev envelope streaming over WAN SSH slower
-        # than runtime pause (0.10s) but well within startup_timeout (30s: the clock includes the
+        # than runtime pause (0.50s) but well within startup_timeout (30s: the clock includes the
         # child Python start, so a loaded runner must not be able to exhaust it; the fail-closed
         # startup-timeout test below keeps proving the timeout itself).
         padding = "# " + ("x" * 270000) + "\n"
@@ -131,7 +131,7 @@ class TestDevRemoteWatchdog(unittest.TestCase):
         raw_envelope = _envelope_bytes(script, seconds=5)
         self.assertGreaterEqual(len(raw_envelope), 350000)
 
-        process = self._spawn(startup_timeout=30.0, pause=0.10, silence_kill=2.0, poll=0.01)
+        process = self._spawn(startup_timeout=30.0, pause=0.50, silence_kill=20.0, poll=0.01)
         assert process.stdin is not None
         assert process.stdout is not None
         assert process.stderr is not None
@@ -140,9 +140,20 @@ class TestDevRemoteWatchdog(unittest.TestCase):
         for offset in range(0, len(raw_envelope), chunk_size):
             process.stdin.write(raw_envelope[offset : offset + chunk_size])
             process.stdin.flush()
-            time.sleep(0.04)  # 6 chunks * 0.04s = ~0.24s > pause (0.10s)
-        process.stdin.write(sender._frame(NONCE, 1))
-        process.stdin.flush()
+            time.sleep(0.60)  # every chunk gap exceeds pause (0.50s); the clock is startup_timeout
+        # Keep sending correctly sequenced heartbeats (5x below pause, and slow enough that a
+        # starved watchdog never sees the >32-frame flood limit) until the watchdog exits, so
+        # success never depends on the child finishing within one pause window.
+        deadline = time.monotonic() + 30.0
+        sequence = 0
+        while process.poll() is None and time.monotonic() < deadline:
+            sequence += 1
+            try:
+                process.stdin.write(sender._frame(NONCE, sequence))
+                process.stdin.flush()
+            except BrokenPipeError:
+                break
+            time.sleep(0.10)
 
         code = process.wait(timeout=30)
         stdout = process.stdout.read().decode("utf-8")
