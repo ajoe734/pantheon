@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from services.control_plane.bff.core.owner_reads import authorization, verified_caller_tenant
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -92,12 +93,31 @@ class ResearchServiceClient:
         raise ResearchCommandError(detail or f"Research command failed (HTTP {code})", status_code=code)
 
     # Tickets (RW-01)
+    def _ticket_headers(self) -> Dict[str, str]:
+        # Forward the authenticated caller; a body actor or service identity is
+        # never a substitute for the owner's tenant/role/transition checks.
+        auth = authorization.get()
+        if not auth:
+            raise ResearchCommandError("Research tickets require caller authorization", 401)
+        return {"Authorization": auth, "X-Tenant-Id": verified_caller_tenant()}
+
+    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
+        params = {k: v for k, v in filters.items() if v is not None}
+        params["meeting_linked"] = "true"
+        statuses = params.pop("statuses", None)
+        if statuses:
+            params["status"] = ",".join(statuses)
+        raw = self._call("GET", "/api/research/tickets?" + urllib.parse.urlencode(params), headers=self._ticket_headers())
+        if not isinstance(raw, dict) or not isinstance(raw.get("data"), list) or not isinstance(raw.get("page_info"), dict):
+            raise ResearchCommandUnavailableError("Invalid paged Research ticket response")
+        return raw
+
     def create_research_ticket(self, **kwargs: Any) -> Dict[str, Any]:
-        return self._call("POST", "/api/research/tickets", kwargs) or {}
+        return self._call("POST", "/api/research/tickets", kwargs, headers=self._ticket_headers()) or {}
     def patch_research_ticket(self, ticket_id: str, *, patch: Dict[str, Any], **kw: Any) -> Optional[Dict[str, Any]]:
-        return self._call("PATCH", f"/api/research/tickets/{ticket_id}", {"patch": patch, **kw}, allow_none=(404,))
+        return self._call("PATCH", f"/api/research/tickets/{urllib.parse.quote(ticket_id, safe='')}", {"patch": patch, **kw}, allow_none=(404,), headers=self._ticket_headers())
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self._call("GET", f"/api/research/tickets/{ticket_id}", allow_none=(404,)) if ticket_id else None
+        return self._call("GET", f"/api/research/tickets/{urllib.parse.quote(ticket_id, safe='')}", allow_none=(404,), headers=self._ticket_headers()) if ticket_id else None
     def list_research_tickets(self, *, statuses: Optional[Any] = None, owner: Optional[str] = None) -> List[Dict[str, Any]]:
         params = [f"status={','.join(str(s) for s in statuses) if isinstance(statuses, (list, tuple, set)) else statuses}"] if statuses else []
         if owner:

@@ -717,6 +717,9 @@ class ReadSurfacePorts:
     def get_institutional_memory(self, entry_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_institutional_memory(entry_id)
 
+    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
+        return self.research_knowledge_source.list_research_ticket_page(**filters)
+
     def list_research_tickets(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_tickets(**kwargs)
 

@@ -60,6 +60,8 @@ except (ImportError, ValueError):
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
+from .client import ResearchCommandError
+
 log = logging.getLogger(__name__)
 
 _CATALOG_CURSOR_PREFIX = "m1:"
@@ -537,6 +539,12 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     # Research Tickets (RW-01)
     # -------------------------------------------------------------------------
+    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "list_research_ticket_page"):
+                return owner.list_research_ticket_page(**filters)
+        raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+
     def list_research_tickets(
         self,
         *,
@@ -1150,6 +1158,12 @@ class ResearchRouterService:
             yield
         except (HTTPException, ResearchNotFoundError, ResearchValidationError, TypeError):
             raise
+        except ResearchCommandError as exc:
+            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
+                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
+                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
+                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
+                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -3784,9 +3798,17 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        meeting_linked: bool = False,
+        **meeting_filters: Any,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
+        if meeting_linked:
+            with self._map_port_errors("list_research_ticket_page"):
+                page = port.list_research_ticket_page(statuses=statuses, owner=owner,
+                    page_token=page_token, page_size=min(page_size, 100), **meeting_filters)
+            return {**page, "meta": {**self.snapshot_meta(snap),
+                    "surfaces": {"ticket_list": {"status": "ok", "source": "research"}}}}
         try:
             with self._map_port_errors("list_research_tickets"):
                 records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
@@ -3843,6 +3865,15 @@ class ResearchRouterService:
             ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
+
+        if ticket.get("meeting_action"):
+            # Owner alone validates state, actor, revision and idempotent replay.
+            # Preserve the full durable receipt, including input and history.
+            with self._map_port_errors("patch_research_ticket"):
+                updated = port.patch_research_ticket(ticket_id, patch=payload, actor_id=actor_id)
+            if not updated:
+                self._not_found("Research ticket", ticket_id)
+            return updated
 
         allowed_fields = {"status", "title", "description", "priority", "owner"}
         unknown_fields = sorted(set(payload) - allowed_fields)
@@ -4076,6 +4107,12 @@ class ResearchRouterService:
                     item = port.get_research_experiment(clean_id)
                 else:
                     item = None
+        except ResearchCommandError as exc:
+            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
+                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
+                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
+                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
+                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -4268,6 +4305,12 @@ class ResearchRouterService:
                         launch_context=payload.get("launch_context") or {"actor_id": actor_id},
                         queued_at=self.utc_now(),
                     )
+        except ResearchCommandError as exc:
+            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
+                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
+                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
+                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
+                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,

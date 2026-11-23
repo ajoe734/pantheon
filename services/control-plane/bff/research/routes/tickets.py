@@ -9,6 +9,7 @@ from .common import (
     ResearchRouteContext,
     _authorization,
     _body_parameter,
+    _idempotency_key,
     _path,
     _signature,
     _signature_query,
@@ -124,6 +125,10 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
                 owner=ctx.query(request, "owner"),
                 page_token=ctx.query(request, "page_token"),
                 page_size=page_size,
+                meeting_linked=str(ctx.query(request, "meeting_linked", "false")).lower() == "true",
+                **{key: ctx.query(request, key) for key in (
+                    "meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after"
+                ) if ctx.query(request, key) is not None},
             )
         except Exception as exc:
             ctx.raise_service_error(exc)
@@ -137,9 +142,16 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
             ctx.raise_service_error(exc)
 
     async def endpoint_patch_ticket(request: Request, **_kwargs: Any) -> Dict[str, Any]:
-        identity = ctx.identity(request)
+        identity = ctx.identity(request, operator=True)
         ticket_id = str(request.path_params.get("ticket_id") or "")
         payload = await ctx.body(request)
+        if "action" in payload:
+            key = request.headers.get("Idempotency-Key")
+            if key and payload.get("idempotency_key") not in (None, key):
+                raise ctx.bff_error(400, ErrorCode.VALIDATION_FAILED,
+                                    "Idempotency-Key mismatch", "idempotency_key_mismatch")
+            if key:
+                payload["idempotency_key"] = key
         try:
             return ctx.service.patch_research_ticket(
                 ticket_id,
@@ -193,10 +205,12 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
 
     endpoint_create_ticket.__signature__ = _signature(_body_parameter(), auth)
     endpoint_list_tickets.__signature__ = _signature(
-        _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=200), auth,
+        _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100),
+        _signature_query("meeting_linked", annotation=bool, default=False),
+        *[_signature_query(key) for key in ("meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after")], auth,
     )
     endpoint_get_ticket.__signature__ = _signature(_path("ticket_id"), auth)
-    endpoint_patch_ticket.__signature__ = _signature(_path("ticket_id"), _body_parameter(), auth)
+    endpoint_patch_ticket.__signature__ = _signature(_path("ticket_id"), _body_parameter(), _idempotency_key(), auth)
     endpoint_research_search.__signature__ = _signature(
         _signature_query("q", annotation=str, default=...),
         _signature_query("match_type", annotation=str, default="all"),

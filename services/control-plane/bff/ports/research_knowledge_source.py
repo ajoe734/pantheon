@@ -3710,6 +3710,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
         }
 
+    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
+        owner = self._get_research_write_owner()
+        if owner is None or not hasattr(owner, "list_research_ticket_page"):
+            raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+        return owner.list_research_ticket_page(**filters)
+
     def list_research_tickets(
         self,
         *,
@@ -3766,6 +3772,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             created_at=created_at,
         )
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
@@ -3785,6 +3793,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
         result = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
