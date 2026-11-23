@@ -14,11 +14,76 @@
   "postgres_change": "read_source_records_for_tenant limit-mode uses one named server-side read-only cursor, fetchmany(limit); legacy keyset fallback when connection has no cursor(); count/eligibility/order/transaction unchanged",
   "postgres_live_measurement": "not run by this worker (no hosted access); task brief supplies 4 keyset pages 1.94/1.60/1.13/1.38s vs one cursor 0.455s total",
   "runtime_budget": {
-    "cadence": "existing 60s tick, cap 100",
-    "writer": "one additive SQLite index on existing outbox; maintained on outbox writes, dropped with outbox rows via existing prune",
-    "growth": "~ (source_id+digest) per outbox row",
+    "cadence": "existing 60s tick, cap 100 per page; no new job or writer",
+    "writer": "one additive SQLite index distillation_outbox_source_version_idx(source_id, source_digest) on the existing distillation_job_queue.sqlite3, maintained synchronously by the existing outbox INSERT/UPDATE writes",
+    "measured_size": "3493888 bytes (dbstat) at 37461 outbox rows = 93.3 bytes/row; one-time build 0.199s on the legacy file",
+    "growth_per_day": "~93.3 bytes x new outbox versions per day (new source versions admitted per day); e.g. 1,000 new versions/day = ~93 KB/day; 37,461 rows = 3.49 MB",
+    "cap": "no cap on the index or its rows: outbox rows are retained indefinitely",
+    "cleanup": "existing prune (distillation_worker.py DistillationJobQueue.prune) does NOT delete outbox rows; terminal rows keep job id, source_id, digest and outcome forever (payload replaced by marker, inbox row deleted) so catch_up never re-enqueues. The index therefore grows 1:1 with retained receipts and is never shrunk; no receipts are deleted or changed by this task",
     "new_writers_or_jobs": false
   },
   "live_writes": false,
-  "index_size_note": "Not measured reliably (freed pages reused after drop); estimate ~ rows*(source_id+digest+rowid) \u2248 a few MB at 40k rows."
+  "index_size_note": "Measured exactly via dbstat (see near_hosted_benchmark); supersedes earlier estimate.",
+  "near_hosted_benchmark": {
+    "command": "docker run -d --rm --name bench-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55432:5432 postgres:16-alpine; SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:pw@127.0.0.1:55432/postgres /tmp/agy2venv/bin/python docs/deployment/evidence/DISTILLATION-OUTBOX-EXACT-LOOKUP-20261123/benchmark.py > docs/deployment/evidence/DISTILLATION-OUTBOX-EXACT-LOOKUP-20261123/benchmark-result.json",
+    "exit_status": 0,
+    "container_removed": true,
+    "hosted_access": false,
+    "setup": "isolated PG16 schema (dropped after) with 37666 tenant-a paper rows (~1.5KB body); temp SQLite built by real DistillationJobQueue.enqueue_source_record with 37461 admitted version receipts; index dropped + VACUUM to reproduce legacy schema, then rebuilt by real _bootstrap()",
+    "results": {
+      "admitted_receipts": 37461,
+      "new_sources": 205,
+      "sqlite": "3.45.1",
+      "pg_seed_seconds": 1.357,
+      "sqlite_receipt_seed_seconds": 450.321,
+      "outbox_rows": 37461,
+      "source_version_rows": 37461,
+      "db_bytes_legacy_schema": 107233280,
+      "wal_or_shm_present": [
+        "queue.sqlite3-shm",
+        "queue.sqlite3-wal"
+      ],
+      "legacy_no_index_100_keys_seconds": 0.9033,
+      "legacy_no_index_extrapolated_full_receipt_scan_seconds": 338.4,
+      "index_build_via_bootstrap_seconds": 0.1991,
+      "plan_after": [
+        "SEARCH distillation_outbox USING INDEX distillation_outbox_source_version_idx (source_id=? AND source_digest=?)"
+      ],
+      "index_bytes_dbstat": 3493888,
+      "db_bytes_with_index_vacuumed": 110727168,
+      "index_bytes_by_file_delta": 3493888,
+      "index_bytes_per_row": 93.3,
+      "indexed_first_scan_page_cold": [
+        100,
+        17.136
+      ],
+      "indexed_repeat_scan_page_warm": [
+        100,
+        15.987
+      ],
+      "indexed_100_keys_seconds": 0.0307,
+      "indexed_multipage_full_drain": {
+        "pages_with_data": 3,
+        "admitted_new": 205,
+        "total_seconds": 76.683,
+        "max_page_seconds": 23.156,
+        "eligible_source_count": 37666
+      },
+      "indexed_multipage_within_300s": true
+    },
+    "summary": {
+      "index_build_seconds": 0.1991,
+      "index_bytes_exact_dbstat": 3493888,
+      "index_bytes_per_row": 93.3,
+      "full_receipt_scan_one_page_cold_seconds": 17.136,
+      "full_receipt_scan_one_page_warm_seconds": 15.987,
+      "multipage_pg_cursor_plus_sqlite_already_admitted_total_seconds": 76.683,
+      "multipage_max_page_seconds": 23.156,
+      "within_300s": true,
+      "100_keys_seconds_indexed": 0.0307,
+      "100_keys_seconds_legacy_no_index": 0.9033,
+      "legacy_full_receipt_scan_extrapolated_seconds": 338.4
+    },
+    "note": "Pages are dominated by the PG-side cursor read of ~37.5k jsonb payloads plus per-source SQLite get(); 'legacy' is extrapolated (37461 x per-key cost) because running it to completion is the pre-fix failure mode. Lookup 100 keys here (0.90s) is faster than the 2.5s hosted figure; hosted disk/CPU differ."
+  }
 }
