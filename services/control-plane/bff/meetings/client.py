@@ -1958,7 +1958,16 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
         href = f"/management/meetings/{quote(meeting_id, safe='')}?action={quote(tid, safe='')}"
         request = ticket.get("input_request") or {}
         review = ticket.get("review_decision") or {}
-        reason = (review.get("reason") if state == "returned" else action.get("deliverable")) if direct else request.get("reason")
+        # The chair's human-only requirement is stored by Research in the
+        # existing description and included in its authorized human page.
+        # A deliverable alone does not explain why human help is required.
+        requirement = ticket.get("description") if direct else None
+        requirement = (requirement.strip() or None) if isinstance(requirement, str) else None
+        if direct:
+            reason = ((review.get("reason") if state == "returned" else None)
+                      or requirement or "Human-specific requirement was not recorded.")
+        else:
+            reason = request.get("reason")
         items.append({
             "id": f"meeting_action:{tid}", "inbox_id": f"meeting_action:{tid}", "item_id": tid,
             "kind": "meeting_action", "inboxType": "meeting", "inbox_type": "meeting",
@@ -1966,6 +1975,7 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
             "action_id": tid, "ticket_id": tid, "meeting_id": meeting_id,
             "title": ticket.get("title") or action.get("deliverable"),
             "summary": reason, "reason": reason,
+            "human_requirement": requirement,
             "requested_material": action.get("deliverable"),
             "acceptance_criterion": action.get("acceptance_criterion"),
             "owner": ticket.get("owner"), "assignee": ticket.get("assignee") or ticket.get("owner"),

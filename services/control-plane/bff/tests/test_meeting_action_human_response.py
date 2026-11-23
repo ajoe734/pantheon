@@ -676,3 +676,119 @@ def test_human_owner_filter_cursor_past_many_persona_items(human_delivery_stack)
     # Operators retain owner-authorized visibility of other people's work.
     admin_page = client.get(surface["href"], headers=_auth_headers())
     assert admin_page.status_code == 200 and any(r["ticket_id"] == "other-user" for r in admin_page.json()["data"])
+
+
+@pytest.mark.parametrize("description", ["Only the account holder can supply licensed observations", None, "", "   "])
+@pytest.mark.parametrize("state_name", ["open", "in_progress", "returned"])
+def test_authenticated_direct_human_reason_is_owner_requirement(human_delivery_stack, description, state_name):
+    client, state = human_delivery_stack
+    row = state["ticket"]
+    row.update(owner="op-inbox", action_state=state_name, description=description,
+               reviewer_id="chair-reviewer")
+    row["meeting_action"]["assignee_kind"] = "human"
+    if state_name == "returned":
+        row["review_decision"] = {"decision": "return", "reason": "Include observation dates"}
+    original = copy.deepcopy(row)
+    for _ in range(2):
+        response = client.get("/bff/management/human-inbox", headers=_human_headers())
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["items"]
+        assert any(item["kind"] == "meeting_review" for item in items)
+        work = [item for item in items if item["kind"] == "meeting_action"]
+        assert len(work) == 1
+        item = work[0]
+        requirement = description.strip() or None if isinstance(description, str) else None
+        assert item["human_requirement"] == requirement
+        expected = ("Include observation dates" if state_name == "returned" else
+                    requirement or "Human-specific requirement was not recorded.")
+        assert item["reason"] == item["summary"] == expected
+        assert item["requested_material"] == row["meeting_action"]["deliverable"]
+        assert item["acceptance_criterion"] == row["meeting_action"]["acceptance_criterion"]
+        assert item["resumes_with"] == "chair-reviewer"
+    assert len(state["calls"]) == 2  # One filtered page per reload, no ticket hydration.
+    assert row == original  # Old requirements are never backfilled by a read.
+
+
+@pytest.mark.parametrize("kind,action", [("human", "submit"), ("persona", "provide_input")])
+@pytest.mark.parametrize("with_refs", [False, True])
+@pytest.mark.parametrize("with_sources", [False, True])
+def test_authenticated_evidence_note_command_and_owner_receipt(
+    human_delivery_stack, research_stack, kind, action, with_refs, with_sources,
+):
+    """HTTP contract double only; Research integration tests own note persistence."""
+    client, state = human_delivery_stack
+    _, _, owner = research_stack
+    row = state["ticket"]
+    row.update(reviewer_id="chair-reviewer", evidence_refs=[{"kind": "research_artifact", "artifact_id": "prior-result"}])
+    row["meeting_action"]["assignee_kind"] = kind
+    if kind == "human":
+        row.update(owner="op-inbox", assignee="op-inbox", assignee_kind="human", action_state="open",
+                   description="Account holder must supply licensed observations")
+    headers = _human_headers(role="approver" if kind == "human" else "operator")
+    note = {"title": "Licensed observations", "body": "Observed on 2026-11-22; scoped source attached."}
+    if with_sources:
+        note["source_refs"] = ["licensed-source:observations-20261122"]
+    refs = [{"kind": "research_artifact", "artifact_id": "verified-owner-result"}] if with_refs else []
+    command = {"action": action, "expected_revision": 3, "evidence_note": note}
+    if with_refs:
+        command["evidence_refs"] = refs
+    observed = []
+    transport = owner.http_request
+    expected_key = "human-note-command"
+    note_ref = {"kind": "research_note", "artifact_id": "note-action-owner-issued",
+                "tenant_id": "tenant-a", "checksum": "owner-checksum"}
+
+    def note_owner(method, url, payload=None, headers=None):
+        if method != "PATCH":
+            return transport(method, url, payload, headers)
+        observed.append(copy.deepcopy(payload))
+        assert payload["actor_id"] == "op-inbox"
+        assert payload["patch"] == {**command, "idempotency_key": expected_key}
+        # Emulate the owner's note-to-ref receipt at the HTTP boundary. The
+        # BFF must forward the raw command, not create or synthesize this note.
+        forwarded = copy.deepcopy(payload)
+        forwarded["patch"].pop("evidence_note")
+        forwarded["patch"]["evidence_refs"] = [*refs, note_ref]
+        status, result = transport(method, url, forwarded, headers)
+        if status == 200:
+            row["evidence_notes"] = [{**note, "source_refs": note.get("source_refs", []),
+                "note_id": note_ref["artifact_id"], "actor_id": "op-inbox", "tenant_id": "tenant-a",
+                "ticket_id": row["ticket_id"], "checksum": note_ref["checksum"]}]
+            result = copy.deepcopy(row)
+        return status, result
+
+    owner.http_request = note_owner
+    inbox = client.get("/bff/management/human-inbox", headers=headers).json()
+    item = next(item for item in inbox["data"]["items"] if item["kind"] == "meeting_action")
+    assert item["response_action"] == action and item["revision"] == command["expected_revision"]
+    path = item["links"]["ticket"]
+    assert client.patch(path, headers=_human_headers(role="viewer"), json=command).status_code == 403
+    assert client.patch(path, headers={**headers, "X-Tenant-Id": "tenant-b"}, json=command).status_code == 403
+    assert not observed
+    write_headers = {**headers, "Idempotency-Key": "human-note-command"}
+    mismatch = {**command, "idempotency_key": "different-key"}
+    assert client.patch(path, headers=write_headers, json=mismatch).status_code == 400
+    assert not observed
+    response = client.patch(path, headers=write_headers, json=command)
+    assert response.status_code == 200, response.text
+    receipt = response.json()
+    assert receipt["revision"] == 4
+    assert receipt["required_actor"] == ("chair-reviewer" if kind == "human" else "persona-alpha")
+    assert receipt["action_state"] == ("submitted" if kind == "human" else "in_progress")
+    evidence = receipt["evidence_refs"] if kind == "human" else receipt["human_input"]["evidence_refs"]
+    assert evidence == [*refs, note_ref]
+    if kind == "persona":
+        assert receipt["human_input"]["provided_by"] == "op-inbox"
+        assert receipt["evidence_refs"] == item["evidence_refs"]  # Prior submission is retained.
+    assert receipt["evidence_notes"][0]["body"] == note["body"]
+    assert client.patch(path, headers=write_headers, json=command).json() == receipt
+    readback = client.get(path, headers=headers)
+    assert readback.status_code == 200
+    assert {key: readback.json()[key] for key in receipt} == receipt
+    expected_key = "stale-note"
+    assert client.patch(path, headers={**headers, "Idempotency-Key": "stale-note"}, json=command).status_code == 409
+    assert len(row["lifecycle_history"]) == 1 and len(observed) == 3
+    reloaded = client.get("/bff/management/human-inbox", headers=headers).json()
+    assert not any(item["kind"] == "meeting_action" for item in reloaded["data"]["items"])
+    assert all(urlsplit(url).path in {"/api/research/tickets", "/api/research/tickets/" + row["ticket_id"]}
+               for _, url, _, _ in state["calls"])  # No separate note-write endpoint.
