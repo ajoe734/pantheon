@@ -17,6 +17,21 @@
   "resource_measurements": "resources.json",
   "validation": [
     {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
+      "result": "326 passed, 100 warnings in 139.48s; caller permission plus existing ten-file regression; bounded foreground terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py --tb=short",
+      "exit_code": 0,
+      "result": "168 passed, 3 warnings in 66.15s; caller-specific can_respond and existing focused contracts; terminal exit collected"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/measure_resources.py",
+      "exit_code": 0,
+      "result": "100 owner rows, 100 projected with default-false can_respond; owner 772715 bytes, projection 1304450 bytes; synthetic ASCII data, no writes"
+    },
+    {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
       "result": "302 passed, 100 warnings in 140.36s; human requirement and evidence_note continuation plus existing ten-file regression; bounded foreground terminal exit collected"
@@ -162,6 +177,8 @@
     }
   ],
   "coverage": [
+    "Caller-specific can_respond from existing authenticated inbox identity and canonical PATCH role gate plus inspected Research actor/state rules; operator/admin/approver/reviewer/viewer GET/PATCH contracts for human submit and Persona provide_input",
+    "Visible reviewer of another person's work stays false unless operator/admin; read-only and unknown callers, unknown kind and terminal/unknown states fail closed; row removal after response, original response_action/human_requirement/reason/resumes_with, one owner page per reload and source records unchanged",
     "authenticated normal ticket/list/PATCH and meeting/inbox routes",
     "caller bearer and verified tenant propagation",
     "original revision and idempotency forwarding, durable readback and duplicate response",
@@ -183,6 +200,12 @@
     "Existing authenticated PATCH transparently forwards evidence_note title/body/optional source_refs for submit and provide_input, with/without evidence_refs; exact owner HTTP payload, signed actor, revision/idempotency/mismatch, readonly/tenant denial, owner full note receipt/readback, replay/stale and same-ticket resumption; HTTP doubles only, no claim of real note storage or atomicity"
   ],
   "residual_findings": [
+    {
+      "owner_task": "FE-MEETING-ACTION-FOLLOWTHROUGH-20261123",
+      "class": "RC2 WP2.3 / RC6 meetings",
+      "status": "pending_contract_composition",
+      "finding": "Read-only inspection of FE committed anchor 92340c0f09677290a6c12971631d65e98ef59a44 found can_respond consumed correctly, but nextTransition still reads next_transition rather than canonical response_action; resumesLabel reads resumes_label/resumes rather than resumes_with, and missingInput omits human_requirement/reason. FE owner must compose its ongoing adapter work with canonical BFF fields before integration; no FE files changed by this task."
+    },
     {
       "owner_task": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123",
       "class": "RC2 WP2.3 / RC6 meetings",
@@ -208,6 +231,9 @@
   "direct_human_test_anchor": "e13c76d0e",
   "research_human_filter_contract_head_inspected": "ad5dec939",
   "human_requirement_note_anchor": "b3596a8eb599951e67614399f45827f121877758",
+  "can_respond_source_anchor": "31a48fbc0",
+  "can_respond_test_anchor": "7ee7e276a",
+  "fe_contract_head_inspected": "92340c0f09677290a6c12971631d65e98ef59a44",
   "human_requirement_owner_contract_heads_inspected": {
     "research": "b99655d779b05e6c96fc3ebcce4b657d4d773511",
     "consultation": "50c566653033bc6e944391d2f3c37c9885a54836",

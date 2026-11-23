@@ -276,3 +276,50 @@ The ten-file regression passed 302 tests, 100 warnings in 140.36 s, terminal
 exit 0. Checkout import validation and whitespace checks also passed.
 Resource bounds and residual owners above remain unchanged; the reproducible
 synthetic measurement now includes a 2000-character direct-human requirement.
+
+## Caller-specific response permission
+
+Reopened head `17381897f` had no `can_respond`, so an eligible operator's
+original human response form stayed hidden. Source anchor `31a48fbc0` passes
+the inbox route's authenticated identity through the existing ManagementService
+contributor and emits a boolean on every original `meeting_action` row.
+Absent/unknown caller and view-only roles default false. The projection uses
+the same canonical `require_operator_role` gate as original ticket PATCH,
+then mirrors the inspected Research owner `b99655d779b0` actor/state rules:
+operator/admin may act for another owner; direct human open/in_progress/returned
+work permits its owner; waiting_for_input additionally requires the designated
+human and the owner's input role. A reviewer role alone cannot provide input.
+Submitted/accepted work stays out of the human queue. Research still validates
+every write, including revision, idempotency, evidence and current permissions.
+The flag describes caller permission at read time, not a future write receipt.
+
+`response_action`, `human_requirement`, `reason`, `resumes_with`, owner links,
+revision and historical evidence retain their existing canonical shape. No
+second writer, general authentication scheme, new route or owner request is
+introduced. Test anchor `7ee7e276a` includes signed operator/admin/approver/
+reviewer/viewer GET-to-original-PATCH cases for both submit and provide_input,
+visible-but-unwritable work, another owner's privileged response, unknown
+caller/kind/state and removal after response. The HTTP owner double now applies
+Research's owner/reviewer/required_actor read visibility and input-role check;
+these remain component contracts rather than real-owner execution evidence.
+
+The focused file passed 168 tests in 66.15 s, terminal exit 0. Synthetic
+100-row projection is now 1,304,450 bytes (owner page unchanged at 772,715).
+The added false boolean costs 2,200 bytes/page. Cadence, count/caps, zero daily
+BFF storage growth, no added cache and request cleanup stay as in resources.json.
+The read-only probe requires the boolean but accepts false for a view-only
+caller; real cross-component/hosted acceptance remains with the existing owners.
+
+Residual contract composition: read-only inspection of FE committed anchor
+`92340c0f09677290a6c12971631d65e98ef59a44` finds `can_respond` consumed by
+`src/lib/bff-v1/management.ts`, while its adapter still reads next_transition,
+resumes_label/resumes and missing_input/requested_material. Its response card
+requires both canRespond and a recognized nextTransition. The existing
+`FE-MEETING-ACTION-FOLLOWTHROUGH-20261123` owner must finish consuming canonical
+`response_action`, `resumes_with`, `human_requirement`/`reason` in ongoing work.
+This is recorded in evidence.json residual_findings; no frontend file changed.
+
+The final ten-file regression passed 326 tests, 100 warnings in 139.48 s,
+terminal exit 0. Checkout import validation, diff budget and whitespace checks
+passed. All required local batches have terminal outputs; CI, independent
+review, merge and hosted acceptance are not claimed by these local results.

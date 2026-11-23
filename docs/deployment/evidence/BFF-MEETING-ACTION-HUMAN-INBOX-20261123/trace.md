@@ -66,3 +66,14 @@ ticket facade forwards that filter and cursor; explicit action_state queries
 remain supported for their distinct existing consumers. No route or history
 is removed. The original PATCH/receipt already forwards both submit and
 provide_input, so it needs no second command handler or BFF transition logic.
+
+Caller-permission resumption: before editing, inspected clean PR #7761 head
+`17381897f`, current dev `0c806ffed`, the original inbox router's authenticated
+identity, ManagementService contributor context, original ticket PATCH's
+`ResearchRouteContext.identity(operator=True)` and canonical
+`auth.policy.require_operator_role`. Compared with Research owner
+`b99655d779b0` `_patch_meeting_ticket` actor/state checks. The existing caller
+identity now reaches that same contributor; `can_respond` is projected on
+the original meeting_action row. No extra owner read, authentication mechanism,
+writer or endpoint is added. Legacy REVIEW/refusal/proposal consumers and all
+ticket writes retain their supported purposes and authorization boundaries.
