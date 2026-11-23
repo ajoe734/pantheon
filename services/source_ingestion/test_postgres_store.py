@@ -640,3 +640,56 @@ def test_bounded_distillation_pg_limits_every_payload_query(monkeypatch, tmp_pat
     assert summary["eligible_source_count"] == 250
     assert len([sql for sql, _ in statements if sql.startswith("SELECT payload")]) == 3
     assert statements[0][0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+
+
+def test_bounded_distillation_pg_uses_one_server_cursor(monkeypatch, tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    payload = SourceRecord(source_id="s", connector_id="conn", source_type="paper", title="Paper",
+                           content_ref="ref://paper", metadata={"tenant_id": "tenant-a"}).to_dict()
+    executed, fetch_sizes, names = [], [], []
+
+    class Cursor:
+        def __init__(self):
+            self._rows = [(({**payload, "source_id": f"s-{i}"}), i) for i in range(1, 251)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params=()):
+            executed.append((sql, params))
+
+        def fetchmany(self, size):
+            fetch_sizes.append(size)
+            batch, self._rows = self._rows[:size], self._rows[size:]
+            return batch
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self, name=None):
+            names.append(name)
+            return Cursor()
+
+        def execute(self, sql, params=()):
+            return SimpleNamespace(fetchone=lambda: (250,))
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://unused/test")
+    records = read_source_records_for_tenant(
+        jsonl_path=tmp_path / "unused", tenant_id="tenant-a", limit=100, summary={},
+        already_admitted=lambda s: int(s.source_id.split("-")[1]) <= 150,
+    )
+    assert [s.source_id for s in records] == [f"s-{i}" for i in range(151, 251)]
+    assert len(names) == 1 and len(executed) == 1
+    assert "ORDER BY append_id ASC" in executed[0][0] and "append_id >" not in executed[0][0]
+    assert set(fetch_sizes) == {100} and len(fetch_sizes) == 3
