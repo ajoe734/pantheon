@@ -175,6 +175,9 @@ def test_direct_human_assignment_submit_return_and_accept_uses_original_owner(wo
 
     assert ticket["action_state"] == "open" and ticket["required_actor"] == "human-1"
     assert inbox()[0]["ticket_id"] == ticket["ticket_id"]
+    assert inbox()[0]["description"] == payload["description"]
+    ordinary_page = advance(client.get(URL, params={"meeting_linked": "true"}, headers=headers("human-1", ("viewer",))))
+    assert "description" not in ordinary_page["data"][0]
     started = advance(command(world, ticket, "start", actor="human-1", roles=("viewer",)))
     assert inbox()[0]["revision"] == started["revision"]
     result = note(world, started, actor="human-1", roles=("viewer",))
@@ -192,6 +195,153 @@ def test_direct_human_assignment_submit_return_and_accept_uses_original_owner(wo
     assert inbox() == [] and accepted["action_state"] == "accepted"
     assert accepted["owner"] == "human-1" and accepted["ticket_id"] == ticket["ticket_id"]
     assert len(accepted["lifecycle_history"]) == 6
+
+
+def inline_report(body="Report A and B: A has the supported risk assumptions."):
+    return {"title": "Human comparison", "body": body, "source_refs": ["licensed-report:page-3"]}
+
+
+def note_count(world):
+    store = world[2]._notes_store
+    with store._connect() as conn:
+        return conn.execute(f"SELECT count(*) FROM {store.table}").fetchone()[0]
+
+
+def human_assignment(world):
+    payload = assignment("inline-human", owner="human-1")
+    payload["meeting_action"]["assignee_kind"] = "human"
+    return create(world, payload)
+
+
+def test_inline_human_submission_persists_real_body_on_original_ticket(world):
+    client, owner = world[1:]
+    ticket = human_assignment(world)
+    report = inline_report()
+    submit = lambda: command(world, ticket, "submit", actor="human-1", roles=("viewer",),
+                             key="human-report", evidence_note=report)
+    submitted = advance(submit())
+    assert submitted["ticket_id"] == ticket["ticket_id"] and submitted["action_state"] == "submitted"
+    assert submitted["status"] != "closed" and submitted["revision"] == 1
+    body = submitted["evidence_notes"][0]
+    assert body == {**report, "note_id": submitted["evidence_refs"][0]["artifact_id"],
+        "actor_id": "human-1", "tenant_id": "tenant-a", "ticket_id": ticket["ticket_id"],
+        "checksum": submitted["evidence_refs"][0]["checksum"]}
+    saved = owner._notes_store.get(body["note_id"])
+    assert saved["body"] == report["body"] and saved["_meeting_binding"]["actor_id"] == "human-1"
+    assert "evidence_notes" not in owner._tickets_store.get(ticket["ticket_id"])
+    assert advance(submit()) == submitted and note_count(world) == 1
+    assert advance(client.get(f"{URL}/{ticket['ticket_id']}", headers=headers())) == submitted
+    assert advance(client.get(f"/api/research/notes/{body['note_id']}", headers=headers()))["body"] == report["body"]
+    returned = advance(command(world, submitted, "return", actor="consultation-svc", roles=("service",),
+                               reason="Include fees", review_source="mtg-week-48"))
+    corrected = inline_report("After fees, alternative B has the supported net return.")
+    resubmitted = advance(command(world, returned, "submit", actor="human-1", roles=("viewer",),
+                                 key="human-report-corrected", evidence_note=corrected))
+    assert note_count(world) == 2 and resubmitted["evidence_notes"][0]["body"] == corrected["body"]
+    assert owner._notes_store.get(body["note_id"])["body"] == report["body"]
+    accepted = advance(command(world, resubmitted, "accept", actor="consultation-svc", roles=("service",),
+                               reason="Fee comparison satisfies criterion", review_source="mtg-week-49"))
+    assert accepted["action_state"] == "accepted" and accepted["lifecycle_history"][1]["transitioned_by"] == "human-1"
+
+
+def test_inline_human_input_resumes_persona_and_recovers_lost_response(world):
+    client = world[1]
+    blocked = advance(command(world, create(world), "request_input", reason="Supply report excerpt",
+                              human_actor_id="human-1"))
+    provide = lambda: command(world, blocked, "provide_input", actor="human-1", roles=("human",),
+                              key="report-input", evidence_note=inline_report())
+    resumed = advance(provide())
+    assert resumed["owner"] == resumed["required_actor"] == "persona-1"
+    assert resumed["action_state"] == "in_progress" and resumed["revision"] == 2
+    assert resumed["human_input"]["provided_by"] == "human-1"
+    assert resumed["evidence_notes"][0]["body"] == inline_report()["body"]
+    assert advance(provide()) == resumed and note_count(world) == 1
+    for actor, roles in (("persona-1", ("persona",)), ("consultation-svc", ("service",))):
+        assert advance(client.get(f"{URL}/{blocked['ticket_id']}", headers=headers(actor, roles))) == resumed
+    # Exact reply recovery does not grant the provider later read/list or write access.
+    assert client.get(f"{URL}/{blocked['ticket_id']}", headers=headers("human-1", ("human",))).status_code == 404
+    assert command(world, resumed, "submit", actor="human-1", roles=("human",),
+                   evidence_note=inline_report()).status_code == 404
+    refs = [{"kind": r["kind"], "artifact_id": r["artifact_id"]} for r in resumed["human_input"]["evidence_refs"]]
+    submitted = advance(command(world, resumed, "submit", evidence_refs=refs))
+    assert submitted["ticket_id"] == blocked["ticket_id"] and submitted["action_state"] == "submitted"
+    assert provide().status_code == 404  # no access to later owner results through an old replay
+
+
+def test_inline_note_denied_stale_invalid_and_conflicting_commands_do_not_write(world):
+    client, owner = world[1:]
+    ticket = human_assignment(world)
+    report = inline_report()
+    for actor, roles in (("other-human", ("human",)), ("consultation-svc", ("service",))):
+        assert command(world, ticket, "submit", actor=actor, roles=roles, evidence_note=report).status_code in {403, 404}
+    for fields in ({"expected_revision": 99}, {"evidence_note": None},
+                   {"evidence_note": {"title": "Empty", "body": " "}},
+                   {"evidence_note": {**report, "actor_id": "forged"}},
+                   {"evidence_note": {**report, "body": "x" * 12001}},
+                   {"evidence_note": {**report, "source_refs": ["x"] * 9}},
+                   {"evidence_note": {**report, "body": "文" * 6000}},
+                   {"evidence_refs": [{"kind": "research_note", "artifact_id": "missing"}]}):
+        patch = {"action": "submit", "expected_revision": ticket["revision"], "idempotency_key": "report",
+                 "evidence_note": report, **fields}
+        response = client.patch(f"{URL}/{ticket['ticket_id']}", headers=headers("human-1", ("viewer",)), json={"patch": patch})
+        assert response.status_code in {400, 403, 409}, response.text
+        assert note_count(world) == 0
+    forged = client.patch(f"{URL}/{ticket['ticket_id']}", headers=headers("human-1", ("viewer",)),
+        json={"actor_id": "human-2", "patch": {"action": "submit", "expected_revision": 0,
+            "idempotency_key": "report", "evidence_note": report}})
+    assert forged.status_code == 403 and note_count(world) == 0
+    foreign = client.patch(f"{URL}/{ticket['ticket_id']}", headers=headers("human-1", ("viewer",), "tenant-b"),
+        json={"patch": {"action": "submit", "expected_revision": 0, "idempotency_key": "report", "evidence_note": report}})
+    assert foreign.status_code == 404 and note_count(world) == 0
+    submitted = advance(command(world, ticket, "submit", actor="human-1", roles=("viewer",), key="report", evidence_note=report))
+    assert command(world, ticket, "submit", actor="human-1", roles=("viewer",), key="report",
+                   evidence_note=inline_report("Conflicting report")).status_code == 409
+    assert command(world, ticket, "submit", actor="human-1", roles=("viewer",), key="different",
+                   evidence_note=report).status_code == 409
+    assert note_count(world) == 1
+    assert owner._tickets_store.get(ticket["ticket_id"])["revision"] == submitted["revision"]
+    assert client.get(f"{URL}/{ticket['ticket_id']}", headers=headers("unrelated", ("viewer",))).status_code == 404
+    assert client.get(f"/api/research/notes/{submitted['evidence_notes'][0]['note_id']}",
+                      headers=headers("unrelated", ("viewer",))).status_code == 404
+
+
+def test_inline_provider_requires_existing_input_permission_before_note_write(world):
+    ticket = advance(command(world, create(world), "request_input", reason="Supply report", human_actor_id="human-1"))
+    assert command(world, ticket, "provide_input", actor="human-1", roles=("viewer",),
+                   evidence_note=inline_report()).status_code == 403
+    assert note_count(world) == 0
+
+
+def test_inline_note_and_ticket_rollback_together_and_retry_after_failure(world, monkeypatch):
+    owner = world[2]
+    ticket = human_assignment(world)
+    original = owner._tickets_store.compare_and_set
+
+    def fail_after_note(*args, **kwargs):
+        # The actual owner note is visible inside this transaction, never committed alone.
+        conn = kwargs["conn"]
+        assert conn.execute(f"SELECT count(*) FROM {owner._notes_store.table}").fetchone()[0] == 1
+        raise RuntimeError("simulated ticket write failure after note insert")
+
+    monkeypatch.setattr(owner._tickets_store, "compare_and_set", fail_after_note)
+    submit = lambda: command(world, ticket, "submit", actor="human-1", roles=("viewer",), key="recover", evidence_note=inline_report())
+    with pytest.raises(RuntimeError, match="simulated ticket write failure"):
+        submit()
+    assert note_count(world) == 0 and owner._tickets_store.get(ticket["ticket_id"])["revision"] == 0
+    monkeypatch.setattr(owner._tickets_store, "compare_and_set", original)
+    submitted = advance(submit())
+    assert submitted["revision"] == 1 and note_count(world) == 1
+    assert advance(submit()) == submitted and note_count(world) == 1
+
+
+def test_concurrent_inline_note_replays_commit_one_body_and_one_transition(world):
+    ticket = human_assignment(world)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        responses = list(pool.map(lambda _: command(world, ticket, "submit", actor="human-1", roles=("viewer",),
+            key="same-report", evidence_note=inline_report()), range(6)))
+    results = [advance(r) for r in responses]
+    assert all(r == results[0] for r in results) and note_count(world) == 1
+    assert results[0]["revision"] == 1 and len(results[0]["lifecycle_history"]) == 2
 
 
 def test_human_actionable_pages_push_down_filter_without_widening_visibility(world, monkeypatch):

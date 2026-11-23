@@ -294,7 +294,7 @@ class ResearchWriteOwner:
         if isinstance(ticket, dict) and ticket.get("meeting_action") and not self._action_visible(ticket, context):
             self._action_auth(context)
             return None
-        return self._project_ticket_detail(ticket) if isinstance(ticket, dict) else None
+        return self._meeting_ticket_detail(ticket) if isinstance(ticket, dict) else None
 
     def list_research_tickets(
         self,
@@ -401,11 +401,40 @@ class ResearchWriteOwner:
         out["allowedActions"] = {"canEdit": False, "canClose": False, "canArchive": False}
         return out
 
+    def _meeting_ticket_detail(self, ticket: Dict[str, Any], *, conn: Any = None) -> Dict[str, Any]:
+        detail = self._project_ticket_detail(ticket)
+        if not ticket.get("meeting_action"):
+            return detail
+        # Bodies stay in KW-02, not in the ticket or its repeated history.
+        # Only call after ticket visibility has been checked. Lists stay bounded
+        # reference envelopes; detail resolves at most 8 submission + 8 input refs.
+        refs = [*ticket.get("evidence_refs", []),
+                *(ticket.get("human_input") or {}).get("evidence_refs", [])]
+        notes = {}
+        for ref in refs:
+            if ref.get("kind") != "research_note" or ref["artifact_id"] in notes:
+                continue
+            with self._notes_store._use_conn(conn) as read_conn:
+                row = read_conn.execute(f"SELECT payload FROM {self._notes_store.table} WHERE record_id = %s",
+                                        (ref["artifact_id"],)).fetchone()
+            note = self._notes_store._decode_payload(row[0]) if row else None
+            binding = (note or {}).get("_meeting_binding") or {}
+            if (binding.get("tenant_id") == ticket["tenant_id"]
+                    and binding.get("ticket_id") == ticket["ticket_id"]
+                    and note.get("_meeting_digest") == ref.get("checksum")):
+                notes[ref["artifact_id"]] = {"note_id": note["note_id"], "title": note["title"],
+                    "body": note["body"], "source_refs": note["source_refs"],
+                    "actor_id": binding["actor_id"], "tenant_id": binding["tenant_id"],
+                    "ticket_id": binding["ticket_id"], "checksum": note["_meeting_digest"]}
+        detail["evidence_notes"] = list(notes.values())
+        return detail
+
     def _bounded_action_insert(self, store: Any, record_id: str, payload: Dict[str, Any], *,
-                               group_sql: str, group_values: Sequence[str], cap: int) -> Any:
+                               group_sql: str, group_values: Sequence[str], cap: int,
+                               conn: Any = None) -> Any:
         # One transaction-scoped group lock serializes new origins/results across
         # processes. Exact retries remain readable even after the count cap.
-        with store.transaction() as conn:
+        with store._use_conn(conn) as conn:
             lock = "meeting-action:" + store.table_name + ":" + self._action_digest(list(group_values))
             store.advisory_xact_lock(lock, conn=conn)
             row = conn.execute(f"SELECT payload FROM {store.table} WHERE record_id = %s", (record_id,)).fetchone()
@@ -468,7 +497,7 @@ class ResearchWriteOwner:
             group_values=[ctx.tenant_id, action["meeting_id"]], cap=self._ACTION_PER_MEETING_MAX)
         if not inserted and (not canonical or canonical.get("assignment_digest") != record["assignment_digest"]):
             self._action_error("Conflicting replay of adopted action")
-        return self._project_ticket_detail(canonical)
+        return self._meeting_ticket_detail(canonical)
 
     def _resolve_action_evidence(self, refs: Any, ticket: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not isinstance(refs, list) or not 1 <= len(refs) <= 8:
@@ -491,18 +520,41 @@ class ResearchWriteOwner:
         return out
 
     def _patch_meeting_ticket(self, ticket: Dict[str, Any], *, patch: Dict[str, Any],
-                              actor_id: str, context: Any) -> Dict[str, Any]:
+                              actor_id: str, context: Any, conn: Any = None) -> Dict[str, Any]:
+        if "evidence_note" in patch and conn is None:
+            # Serialize with all CAS writers on the original ticket. The note
+            # owner and ticket owner share one commit: neither an invalid/stale
+            # command nor a partial failure can leave an unattached note behind.
+            with self._tickets_store.transaction() as write_conn:
+                row = write_conn.execute(f"SELECT payload FROM {self._tickets_store.table} "
+                    "WHERE record_id = %s FOR UPDATE", (ticket["ticket_id"],)).fetchone()
+                if not row:
+                    self._action_error("Research ticket not found", 404)
+                current = self._tickets_store._decode_payload(row[0])
+                result = self._patch_meeting_ticket(current, patch=patch, actor_id=actor_id,
+                                                    context=context, conn=write_conn)
+            return result
         ctx = self._action_auth(context, actor_id)
         if not self._action_visible(ticket, ctx):
-            self._action_error("Research ticket not found", 404)
+            # A provider stops being required_actor after successful input.
+            # Recover its exact acknowledged command without broadening ticket
+            # read/list permissions or permitting another write by that human.
+            input_retry = (ticket.get("tenant_id") == ctx.tenant_id and patch.get("action") == "provide_input"
+                and any(e.get("action") == "provide_input" and e.get("transitioned_by") == actor_id
+                        and e.get("idempotency_key") == patch.get("idempotency_key")
+                        and e.get("revision") == ticket["revision"]
+                        and e.get("command_digest") == self._action_digest([actor_id, patch])
+                        for e in ticket["lifecycle_history"]))
+            if not input_retry:
+                self._action_error("Research ticket not found", 404)
         if len(json.dumps(patch).encode()) > self._ACTION_INPUT_MAX_BYTES:
             self._action_error("Action command exceeds 16 KiB", 400)
         action = patch.get("action")
         if not isinstance(action, str) or action not in self._ACTION_STATES:
             self._action_error("Meeting work requires an explicit owner action; status PATCH is forbidden", 400)
         fields = {"action", "expected_revision", "idempotency_key"}
-        fields |= {"request_input": {"reason", "human_actor_id"}, "provide_input": {"evidence_refs", "reason"},
-                   "submit": {"evidence_refs"}, "return": {"reason", "review_source"},
+        fields |= {"request_input": {"reason", "human_actor_id"}, "provide_input": {"evidence_refs", "evidence_note", "reason"},
+                   "submit": {"evidence_refs", "evidence_note"}, "return": {"reason", "review_source"},
                    "accept": {"reason", "review_source"}}.get(action, set())
         if set(patch) - fields:
             self._action_error("Unsupported meeting command fields", 400)
@@ -513,7 +565,7 @@ class ResearchWriteOwner:
             if event.get("idempotency_key") == key and event.get("transitioned_by") == actor_id:
                 if event.get("command_digest") != digest:
                     self._action_error("Conflicting command replay")
-                return self._project_ticket_detail(ticket)
+                return self._meeting_ticket_detail(ticket, conn=conn)
         if type(patch.get("expected_revision")) is not int or patch["expected_revision"] != ticket["revision"]:
             self._action_error("Stale expected_revision")
         prev = ticket["action_state"]
@@ -540,7 +592,23 @@ class ResearchWriteOwner:
                                         "human_actor_id": human, "requested_at": now}
             updated["required_actor"] = human
         elif action in {"submit", "provide_input"}:
-            evidence = self._resolve_action_evidence(patch.get("evidence_refs"), ticket)
+            if "evidence_note" in patch:
+                note = patch["evidence_note"]
+                if not isinstance(note, dict) or set(note) - {"title", "body", "source_refs"}:
+                    self._action_error("evidence_note requires title, body and optional source_refs", 400)
+                refs = patch.get("evidence_refs", [])
+                if not isinstance(refs, list) or len(refs) > 7:
+                    self._action_error("evidence_note permits at most 7 additional evidence_refs", 400)
+                evidence = self._resolve_action_evidence(refs, ticket) if refs else []
+                saved = self._create_meeting_note({**note, "meeting_ticket_id": ticket["ticket_id"],
+                    "idempotency_key": self._action_digest(["ticket-command", key])},
+                    ctx, ticket=ticket, conn=conn)
+                evidence.append({"kind": "research_note", "artifact_id": saved["note_id"],
+                                 "tenant_id": ticket["tenant_id"], "checksum": saved["_meeting_digest"]})
+                if len(json.dumps(evidence).encode()) > 4096:
+                    self._action_error("Evidence metadata exceeds 4 KiB", 400)
+            else:
+                evidence = self._resolve_action_evidence(patch.get("evidence_refs"), ticket)
             if action == "submit":
                 updated["evidence_refs"] = evidence
                 updated["linked_artifacts"] = [r["artifact_id"] for r in evidence]
@@ -576,15 +644,15 @@ class ResearchWriteOwner:
         updated["lifecycle_history"].append(event)
         if len(updated["lifecycle_history"]) > self._ACTION_HISTORY_MAX or len(json.dumps(updated).encode()) > self._ACTION_MAX_BYTES:
             self._action_error("Ticket history capacity reached; preserve obligation for owner intervention")
-        ok, _ = self._tickets_store.compare_and_set(ticket["ticket_id"], ticket, updated)
+        ok, _ = self._tickets_store.compare_and_set(ticket["ticket_id"], ticket, updated, conn=conn)
         if not ok:
             # A simultaneous exact retry may have won. Re-read once; no stale overwrite.
             current = self._tickets_store.get(ticket["ticket_id"])
             for e in (current or {}).get("lifecycle_history", []):
                 if e.get("transitioned_by") == actor_id and e.get("idempotency_key") == key and e.get("command_digest") == digest:
-                    return self._project_ticket_detail(current)
+                    return self._meeting_ticket_detail(current, conn=conn)
             self._action_error("Concurrent ticket update; read current revision before retry")
-        return self._project_ticket_detail(updated)
+        return self._meeting_ticket_detail(updated, conn=conn)
 
     def _list_meeting_tickets(self, *, context: Any, statuses: Any, owner: Any,
                              meeting_type: Any, subject_ref: Any, action_states: Any,
@@ -644,6 +712,12 @@ class ResearchWriteOwner:
             rows = conn.execute(f"SELECT payload FROM {self._tickets_store.table} WHERE {' AND '.join(clauses)} ORDER BY record_id ASC LIMIT %s", tuple(params)).fetchall()
         tickets = [self._tickets_store._decode_payload(r[0] if isinstance(r, tuple) else r["payload"]) for r in rows]
         items = [self._project_ticket_summary(t) for t in tickets[:page_size]]
+        if human_actionable:
+            # Direct human requirements use the existing bounded description.
+            # No per-ticket read is needed by the authorized inbox consumer.
+            for item, ticket in zip(items, tickets):
+                if ticket["meeting_action"]["assignee_kind"] == "human":
+                    item["description"] = ticket.get("description")
         return {"data": items, "page_info": {"next_page_token": f"{fingerprint}:{tickets[page_size - 1]['ticket_id']}" if len(tickets) > page_size else None}}
 
     # -------------------------------------------------------------------------
@@ -1145,7 +1219,8 @@ class ResearchWriteOwner:
     # -------------------------------------------------------------------------
     # Notes (KW-02) Projections & Mutations
     # -------------------------------------------------------------------------
-    def _create_meeting_note(self, note: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    def _create_meeting_note(self, note: Dict[str, Any], context: Any, *,
+                             ticket: Optional[Dict[str, Any]] = None, conn: Any = None) -> Dict[str, Any]:
         ctx = self._action_auth(context)
         if any(str(k).startswith("_meeting_") for k in note):
             self._action_error("Reserved evidence binding fields", 400)
@@ -1153,7 +1228,7 @@ class ResearchWriteOwner:
             self._action_error("Evidence actor/tenant mismatch", 403)
         if set(note) - {"meeting_ticket_id", "idempotency_key", "title", "body", "source_refs", "tenant_id", "actor_id"}:
             self._action_error("Unsupported meeting note fields", 400)
-        ticket = self._tickets_store.get(str(note["meeting_ticket_id"]))
+        ticket = ticket if ticket is not None else self._tickets_store.get(str(note["meeting_ticket_id"]))
         if not ticket or not ticket.get("meeting_action") or not self._action_visible(ticket, ctx):
             self._action_error("Research ticket not found", 404)
         if ticket["action_state"] == "accepted":
@@ -1178,7 +1253,7 @@ class ResearchWriteOwner:
             self._action_error("Meeting note record exceeds 16 KiB", 400)
         ok, current = self._bounded_action_insert(self._notes_store, nid, payload,
             group_sql="payload->'_meeting_binding'->>'tenant_id' = %s AND payload->'_meeting_binding'->>'ticket_id' = %s",
-            group_values=[ctx.tenant_id, ticket["ticket_id"]], cap=self._ACTION_NOTES_PER_TICKET_MAX)
+            group_values=[ctx.tenant_id, ticket["ticket_id"]], cap=self._ACTION_NOTES_PER_TICKET_MAX, conn=conn)
         if not ok and (not current or current.get("_meeting_digest") != payload["_meeting_digest"]):
             self._action_error("Conflicting evidence note replay")
         return current
