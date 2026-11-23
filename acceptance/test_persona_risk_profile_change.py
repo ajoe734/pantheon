@@ -73,3 +73,10 @@ def test_refetch_must_agree_and_probe_requires_explicit_personas(monkeypatch):
     assert not report["passed"]
     monkeypatch.delenv("ACCEPTANCE_EXPECTED_PERSONA_IDS", raising=False)
     assert probe.main() == 77
+
+
+def test_explicit_persona_without_viewer_credentials_skips(monkeypatch):
+    monkeypatch.setenv("ACCEPTANCE_EXPECTED_PERSONA_IDS", "fixture-persona")
+    for name in probe.transport.REQUIRED:
+        monkeypatch.delenv(name, raising=False)
+    assert probe.main() == 77
