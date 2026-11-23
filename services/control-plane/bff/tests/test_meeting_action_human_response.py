@@ -144,17 +144,24 @@ def test_viewer_wrong_tenant_actor_forgery_and_owner_denial(research_stack):
     assert client.get(path, headers=_auth_headers()).status_code == 503
 
 
-def test_meeting_ticket_page_keeps_owner_filters_and_cursor(research_stack):
+@pytest.mark.parametrize("human_actionable", [None, "true", "false"])
+def test_meeting_ticket_page_keeps_owner_filters_and_cursor(research_stack, human_actionable):
     client, state, _ = research_stack
-    response = client.get("/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&meeting_type=MT-1&subject_ref=pool-alpha&page_size=2&page_token=opaque-scope", headers=_auth_headers())
+    filters = {
+        "meeting_linked": "true", "status": "open,in_progress", "owner": "persona-alpha",
+        "action_state": "waiting_for_input", "meeting_type": "MT-1", "subject_ref": "pool-alpha",
+        "due_before": "2026-11-24T00:00:00Z", "submitted_after": "2026-11-20T00:00:00Z",
+        "updated_after": "2026-11-21T00:00:00Z", "page_size": "2", "page_token": "opaque-scope",
+    }
+    if human_actionable is not None:
+        filters["human_actionable"] = human_actionable
+    response = client.get("/api/v1/research/tickets", params=filters, headers=_auth_headers())
     assert response.status_code == 200, response.text
     assert response.json()["page_info"]["next_page_token"] == "opaque-owner-next"
     assert response.json()["data"][0]["revision"] == 3
     assert len(state["calls"]) == 1
     query = parse_qs(urlsplit(state["calls"][0][1]).query)
-    assert query["page_token"] == ["opaque-scope"]
-    assert query["subject_ref"] == ["pool-alpha"]
-    assert query["action_state"] == ["waiting_for_input"]
+    assert query == {key: [value] for key, value in filters.items()}
 
 
 def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meetings_stack):
