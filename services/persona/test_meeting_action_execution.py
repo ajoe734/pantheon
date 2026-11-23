@@ -28,13 +28,14 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
 
-def ticket(n=1):
+def ticket(n=1, *, owner="persona-cycle-test", assignee_kind="persona", subject_ref="pool:persona-cycle-test",
+           meeting_type="MT-1", action_state="open", required_actor=None):
     tid = f"rt-action-{n:032d}"
-    return {"ticket_id": tid, "action_id": tid, "tenant_id": "tenant-a", "owner": "persona-cycle-test",
-            "revision": 0, "action_state": "open", "required_actor": "persona-cycle-test", "evidence_refs": [],
-            "meeting_action": {"meeting_id": "meeting-origin", "meeting_type": "MT-1",
-                "subject_ref": "persona:persona-cycle-test", "source_action_id": f"action-{n}",
-                "assignee_kind": "persona", "deliverable": "Compare staying flat with the current momentum allocation",
+    return {"ticket_id": tid, "action_id": tid, "tenant_id": "tenant-a", "owner": owner,
+            "revision": 0, "action_state": action_state, "required_actor": required_actor or owner, "evidence_refs": [],
+            "meeting_action": {"meeting_id": "meeting-origin", "meeting_type": meeting_type,
+                "subject_ref": subject_ref, "source_action_id": f"action-{n}",
+                "assignee_kind": assignee_kind, "deliverable": "Compare staying flat with the current momentum allocation",
                 "acceptance_criterion": "Cite the observed evidence and state the limitation",
                 "due_at": "2026-11-24T00:00:00Z", "source_refs": []}}
 
@@ -69,9 +70,17 @@ def action_system(system, tmp_path, monkeypatch):
             url = urlsplit(self.path)
             if url.path == "/api/research/tickets":
                 query = parse_qs(url.query)
-                assert query["owner"] == ["persona-cycle-test"] and query["meeting_linked"] == ["true"]
+                assert query["meeting_linked"] == ["true"]
+                states = query["action_state"][0].split(",")
+                if states == ["open", "in_progress", "returned"]:
+                    assert "owner" in query and "subject_ref" not in query
+                else:
+                    assert "subject_ref" in query
                 rows = [copy.deepcopy(r) for r in sorted(state["tickets"].values(), key=lambda r: r["ticket_id"])
-                        if r["action_state"] in query["action_state"][0].split(",")]
+                        if r["action_state"] in states
+                        and ("owner" not in query or r["owner"] == query["owner"][0])
+                        and ("subject_ref" not in query or r.get("_unfiltered")
+                             or r["meeting_action"].get("subject_ref") == query["subject_ref"][0])]
                 anchor = query.get("page_token", [""])[0]
                 rows = [r for r in rows if r["ticket_id"] > anchor]
                 size = int(query["page_size"][0])
@@ -243,7 +252,7 @@ def test_pagination_continues_without_hiding_unfinished_work(action_system):
         seen.update(r["ticket_id"] for r in observed["runnable"])
     assert seen == set(research["tickets"])
     assert cursor["runnable"] is None
-    assert len(research["calls"]) == 6  # two bounded list requests per normal tick
+    assert len(research["calls"]) == 9  # three bounded list requests per normal tick (runnable + pool series + persona series)
 
 
 @pytest.mark.parametrize("fault", ["decline", "uncited", "foreign_ticket", "no_tool_record", "timeout", "no_analysis", "unicode_record"])
@@ -397,7 +406,13 @@ def test_meeting_action_budget_measurement(action_system):
         "hosted_format_store_bytes": controller.path.stat().st_size,
         "retained_packet_count": len(read_packets(controller.path)), "notes": len(research["notes"]),
         "notes_total_bytes": len(json.dumps(research["notes"], ensure_ascii=False).encode())}
-    assert report["total_owner_requests"] == 18
+    report["three_persona_example_per_trading_day"] = {
+        "full_packet_bytes": 3 * report["packet_bytes"],
+        "hosted_format_store_bytes": 3 * report["hosted_format_store_bytes"],
+        "notes": 3 * report["notes"],
+        "notes_bytes": 3 * report["notes_total_bytes"],
+    }
+    assert report["total_owner_requests"] == 19
     assert report["meeting_envelope_bytes"] < 196608
     target = os.getenv("PERSONA_ACTION_MEASUREMENT_PATH")
     if target:
@@ -442,3 +457,236 @@ def test_title_only_research_artifact_is_not_evidence(action_system):
         "checksum": "abc", "tenant_id": "tenant-a"}}
     with pytest.raises(ValueError, match="evidence_content_missing"):
         controller.owners._action_evidence(persona, {"kind": "research_artifact", "artifact_id": "art-1"}, "t")
+
+
+REAL_GATED_DATA_SOURCES = [
+    {"dataset": "tw_price_daily", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+     "connector_candidates": ["tw-twse-tpex-official-market"],
+     "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok", "no_live_capital"]},
+    {"dataset": "tw_broker_top", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+     "connector_candidates": ["tw-finmind-broker-daily-report"],
+     "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok", "no_live_capital"]},
+]
+REAL_ENROLLED_PERSONA_IDS = (
+    "persona-2448c7053e33ea48da47",
+    "persona-6507750312870d03a241",
+    "persona-ee7112a829d38b9135ac",
+)
+
+
+def test_real_three_persona_gated_data_shape_executes_note_and_restricts_unavailable_feed(action_system):
+    controller, gateway, owner, cap, research = action_system
+    base_persona = owner.list_json()[0]
+    for pid in REAL_ENROLLED_PERSONA_IDS:
+        meta = copy.deepcopy(base_persona["metadata"])
+        meta["persona_harness"]["versions"][0]["persona_id"] = pid
+        real_persona = {
+            **base_persona,
+            "persona_id": pid,
+            "tenant_id": "tenant-dev",
+            "lifecycle_state": "paper_owner",
+            "status": "active",
+            "required_data_sources": copy.deepcopy(REAL_GATED_DATA_SOURCES),
+            "metadata": meta,
+        }
+        advisory = {
+            "snapshot_id": f"cap-advisory-{pid}",
+            "persona_id": pid,
+            "capabilities": ["persona_opinion"],
+            "allowed_capabilities": ["persona_opinion"],
+            "effective_tools": [],
+            "effective_skills": [],
+            "effective_workflows": [],
+            "restrictions": [],
+            "generated_at": "2026-11-23T05:45:54Z",
+            "source_refs": ["governance:paper_advisory"],
+            "metadata": {"canonical_write_authority": "persona_service", "scope": "paper_advisory", "accessible_data": []},
+        }
+        daily = evaluate_participant_action_capability(real_persona, advisory, run_purpose="daily_cycle")
+        assert daily["status"] == "allowed" and daily["executable"] is True
+        assert daily["can_be_assigned"] and daily["can_receive_persona_action"] and daily["can_execute_in_current_run"]
+        assert not daily["can_mutate_trading_state"] and daily["allowed_deliverables"] == ["research_note"]
+        assert daily["accessible_data"] == []  # never fabricate accessible_data
+        consult = evaluate_participant_action_capability(real_persona, advisory, run_purpose="consultation")
+        assert not consult["executable"] and not consult["can_execute_in_current_run"] and not consult["can_mutate_trading_state"]
+        for ds in ("tw_price_daily", "tw_broker_top", "foreign-private-bank"):
+            restricted = evaluate_participant_action_capability(
+                real_persona, advisory, run_purpose="daily_cycle", requirements={"required_data": [ds]})
+            assert restricted["status"] == "restricted_data" and not restricted["executable"]
+            assert restricted["reason"] == "deliverable_data_not_accessible" and restricted["missing_data"] == [ds]
+        market_req = evaluate_participant_action_capability(
+            real_persona, advisory, run_purpose="daily_cycle", requirements={"requires_market_data": True})
+        assert market_req["status"] == "restricted_data" and market_req["missing_data"] == ["tw_broker_top", "tw_price_daily"]
+        with_access = {**advisory, "metadata": {**advisory["metadata"], "accessible_data": ["tw_price_daily"]}}
+        allowed_feed = evaluate_participant_action_capability(
+            real_persona, with_access, run_purpose="daily_cycle", requirements={"required_data": ["tw_price_daily"]})
+        assert allowed_feed["status"] == "allowed" and allowed_feed["executable"] and allowed_feed["accessible_data"] == ["tw_price_daily"]
+        for bad_meta in (
+            {"unhealthy_data": ["tw_price_daily"]},
+            {"data_health": {"tw_price_daily": "unhealthy"}},
+            {"inactive_schedules": ["tw_price_daily"]},
+            {"unapproved_connectors": ["tw_price_daily"]},
+            {"revoked_data": ["tw_price_daily"]},
+            {"failed_policy_gates": {"tw_price_daily": ["require_source_health_ok"]}},
+        ):
+            denied = evaluate_participant_action_capability(
+                real_persona, {**advisory, "metadata": {**with_access["metadata"], **bad_meta}},
+                run_purpose="daily_cycle", requirements={"required_data": ["tw_price_daily"]})
+            assert denied["status"] == "restricted_data" and denied["missing_data"] == ["tw_price_daily"]
+        seed_persona = {**real_persona, "required_data_sources": [
+            {**REAL_GATED_DATA_SOURCES[0], "source_class": "seed_only"}]}
+        assert evaluate_participant_action_capability(
+            seed_persona, with_access, run_purpose="daily_cycle",
+            requirements={"required_data": ["tw_price_daily"]})["status"] == "restricted_data"
+
+    # End-to-end execution + later decision citation on the gated Persona record with accessible_data=[].
+    raw_record = owner._records.get("persona-cycle-test")
+    owner._records.compare_and_set("persona-cycle-test", raw_record, {
+        **raw_record, "required_data_sources": copy.deepcopy(REAL_GATED_DATA_SOURCES)})
+    cap._records = PersistentCapabilitySnapshotOwner.from_json_path(
+        controller.path.parent / "capability-advisory-only.json")._records
+    cap.upsert(UpsertCapabilitySnapshotRequest(
+        actor_id="operator", snapshot_id="cap-advisory-persona-cycle-test",
+        persona_id="persona-cycle-test", capabilities=["persona_opinion"],
+        generated_at="2026-11-24T00:00:00Z",
+        metadata={"canonical_write_authority": "persona_service", "scope": "paper_advisory", "accessible_data": []}))
+    persona = owner.list_json()[0]
+    tid = ticket()["ticket_id"]
+    propose(gateway, tid)
+    first = controller.consume_run(persona, "job-1", run(1))
+    assert first["persona_cycle"]["failure_reason"] is None
+    assert first["persona_cycle"]["decisions"][0]["status"] == "submitted"
+    gateway["answer"] = {"proposals": [{"kind": "no_action", "reason": "Same-ticket note suffices to keep course",
+        "evidence_refs": [], "case_file_item_ids": [f"facts:meeting_action_result:{tid}"]}]}
+    second = controller.consume_run(persona, "job-1", run(2))
+    assert second["persona_cycle"]["failure_reason"] is None
+    assert second["persona_cycle"]["decisions"][0]["cited_case_file_item_ids"] == [f"facts:meeting_action_result:{tid}"]
+    # A ticket explicitly requiring unavailable gated market data remains blocked at execution.
+    gated_ticket = ticket(2)
+    gated_ticket["meeting_action"]["required_data"] = ["tw_price_daily"]
+    research["tickets"][gated_ticket["ticket_id"]] = gated_ticket
+    propose(gateway, gated_ticket["ticket_id"])
+    third = controller.consume_run(persona, "job-1", run(3))
+    assert third["persona_cycle"]["decisions"][0]["status"] == "unavailable"
+    assert third["persona_cycle"]["decisions"][0]["reason"] == "deliverable_data_not_accessible"
+
+
+def test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semantic_hits(action_system, monkeypatch):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    pid = persona["persona_id"]
+
+    # 1. Accepted Persona-owned MT-1 row with M's normalized pool:<chair> subject_ref.
+    t_accepted = ticket(1, owner=pid, assignee_kind="persona", subject_ref=f"pool:{pid}", action_state="accepted")
+    t_accepted["review_decision"] = {"decision": "accept", "reason": "Verified pool analysis", "review_source": "mtg-w48"}
+    n_accepted = {"note_id": "note-persona-accepted", "title": "Pool drawdown review",
+                  "body": "Accepted Persona pool analysis: drawdown stayed within 1.8% budget.",
+                  "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_accepted["ticket_id"], "actor_id": "persona-pool-cycle"},
+                  "_meeting_digest": "digest-persona-accepted"}
+    t_accepted["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-persona-accepted", "checksum": "digest-persona-accepted"}]
+
+    # 2. Submitted (unreviewed) Persona-owned MT-1 row for the same pool.
+    t_submitted = ticket(2, owner=pid, assignee_kind="persona", subject_ref=f"pool:{pid}", action_state="submitted")
+    n_submitted = {"note_id": "note-persona-submitted", "title": "Pending turnover check",
+                   "body": "Submitted Persona analysis awaiting next chair review.",
+                   "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_submitted["ticket_id"], "actor_id": "persona-pool-cycle"},
+                   "_meeting_digest": "digest-persona-submitted"}
+    t_submitted["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-persona-submitted", "checksum": "digest-persona-submitted"}]
+
+    # 3. Reviewed human deliverable (owner=operator, assignee_kind=human) for the same pool:<chair>.
+    t_human = ticket(3, owner="operator", assignee_kind="human", subject_ref=f"pool:{pid}",
+                     action_state="accepted", required_actor="operator")
+    t_human["description"] = "Only a human can obtain the signed custodian fee schedule."
+    t_human["meeting_action"]["deliverable"] = "Verify custodian fee tier schedule for the pool"
+    t_human["review_decision"] = {"decision": "accept", "reason": "Custodian schedule verified", "review_source": "mtg-w48"}
+    n_human = {"note_id": "note-human-accepted", "title": "Custodian fee schedule",
+               "body": "Human operator verified custodian fee is 4 bps; no fee tier change.",
+               "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_human["ticket_id"], "actor_id": "signed-in-alice"},
+               "_meeting_digest": "digest-human-accepted"}
+    t_human["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-human-accepted", "checksum": "digest-human-accepted"}]
+
+    # 4. Supported genuine historical/persona series (MT-2 persona:<id>).
+    t_hist = ticket(4, owner=pid, assignee_kind="persona", subject_ref=f"persona:{pid}",
+                    meeting_type="MT-2", action_state="accepted")
+    n_hist = {"note_id": "note-hist-accepted", "title": "Historical MT-2 lesson",
+              "body": "Genuine historical persona series note.",
+              "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_hist["ticket_id"], "actor_id": "persona-pool-cycle"},
+              "_meeting_digest": "digest-hist-accepted"}
+    t_hist["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-hist-accepted", "checksum": "digest-hist-accepted"}]
+
+    # 5. Unrelated pools, invalid historical series, and open human ticket (must all be suppressed).
+    t_other_pool = ticket(5, owner="persona-6507750312870d03a241", assignee_kind="persona",
+                          subject_ref="pool:persona-6507750312870d03a241", action_state="accepted")
+    t_other_pool["_unfiltered"] = True  # even if an unfiltered response returned it, Python series check suppresses it
+    t_other_pool["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-other-pool", "checksum": "digest-other"}]
+    n_other = {"note_id": "note-other-pool", "title": "Foreign pool note", "body": "Unrelated pool secret",
+               "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_other_pool["ticket_id"], "actor_id": "persona-pool-cycle"},
+               "_meeting_digest": "digest-other"}
+    t_fake_hist = ticket(6, owner=pid, assignee_kind="persona", subject_ref=f"persona:{pid}",
+                         meeting_type="MT-3", action_state="accepted")
+    t_fake_hist["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-hist-accepted", "checksum": "digest-hist-accepted"}]
+    t_open_human = ticket(7, owner="operator", assignee_kind="human", subject_ref=f"pool:{pid}", action_state="open")
+
+    research["tickets"] = {t["ticket_id"]: t for t in (
+        t_accepted, t_submitted, t_human, t_hist, t_other_pool, t_fake_hist, t_open_human)}
+    research["notes"] = {n["note_id"]: n for n in (n_accepted, n_submitted, n_human, n_hist, n_other)}
+
+    # Force zero semantic memory/search hits in the composed case file.
+    orig_case_file = controller.owners.case_file
+    def zero_semantic_case_file(*args, **kwargs):
+        case = orig_case_file(*args, **kwargs)
+        for gname in ("similar_history", "lessons", "evidence"):
+            case["groups"][gname]["items"] = []
+        return case
+    monkeypatch.setattr(controller.owners, "case_file", zero_semantic_case_file)
+
+    gateway["answer"] = {"proposals": [{"kind": "no_action",
+        "reason": "Keep course: accepted pool analysis and verified human custodian fee schedule show no drift",
+        "evidence_refs": [],
+        "case_file_item_ids": [
+            f"facts:meeting_action_result:{t_accepted['ticket_id']}",
+            f"facts:meeting_action_result:{t_human['ticket_id']}",
+            f"facts:meeting_action_result:{t_submitted['ticket_id']}",
+            f"facts:meeting_action_result:{t_hist['ticket_id']}",
+        ]}]}
+
+    packet = controller.consume_run(persona, "job-1", run(1))
+    assert packet["persona_cycle"]["failure_reason"] is None
+    observed = packet["persona_cycle"]["observe_bundle"]["meeting_actions"]
+    assert observed["runnable"] == [] and observed["unavailable"] == []
+    by_id = {r["ticket_id"]: r for r in observed["verified_results"]}
+    assert set(by_id) == {t_accepted["ticket_id"], t_submitted["ticket_id"], t_human["ticket_id"], t_hist["ticket_id"]}
+    assert by_id[t_accepted["ticket_id"]]["review_status"] == "accepted" and by_id[t_accepted["ticket_id"]]["accepted"] is True
+    assert by_id[t_accepted["ticket_id"]]["accountable_persona_id"] == pid
+    assert by_id[t_submitted["ticket_id"]]["review_status"] == "submitted" and by_id[t_submitted["ticket_id"]]["accepted"] is False
+    assert by_id[t_human["ticket_id"]]["assignee_kind"] == "human" and by_id[t_human["ticket_id"]]["owner"] == "operator"
+    assert by_id[t_human["ticket_id"]]["accountable_persona_id"] is None
+    assert by_id[t_human["ticket_id"]]["review_status"] == "accepted" and by_id[t_human["ticket_id"]]["accepted"] is True
+
+    prompt = gateway["prompts"][pid]
+    assert "Human operator verified custodian fee is 4 bps" in prompt
+    assert "Unrelated pool secret" not in prompt and t_other_pool["ticket_id"] not in prompt and t_fake_hist["ticket_id"] not in prompt
+    case = next(iter(packet["persona_cycle"]["case_files"].values()))
+    fact_items = {i["item_id"]: i for i in case["groups"]["facts"]["items"] if i["kind"] == "meeting_action_result"}
+    assert fact_items[f"facts:meeting_action_result:{t_human['ticket_id']}"]["subject_fields"]["assignee_kind"] == "human"
+    assert fact_items[f"facts:meeting_action_result:{t_human['ticket_id']}"]["subject_fields"]["owner"] == "operator"
+    assert fact_items[f"facts:meeting_action_result:{t_human['ticket_id']}"]["subject_fields"]["accepted"] is True
+    assert fact_items[f"facts:meeting_action_result:{t_submitted['ticket_id']}"]["subject_fields"]["accepted"] is False
+    assert fact_items[f"facts:meeting_action_result:{t_submitted['ticket_id']}"]["subject_fields"]["review_status"] == "submitted"
+    assert "[accepted; human:operator]" in fact_items[f"facts:meeting_action_result:{t_human['ticket_id']}"]["excerpt"]
+    assert "[submitted; persona:" in fact_items[f"facts:meeting_action_result:{t_submitted['ticket_id']}"]["excerpt"]
+
+    # Shared peer-Persona research on the same pool is available as evidence without treating the peer as the deciding Persona.
+    t_peer = ticket(8, owner="persona-2448c7053e33ea48da47", assignee_kind="persona",
+                    subject_ref=f"pool:{pid}", action_state="accepted")
+    n_peer = {"note_id": "note-peer-accepted", "title": "Peer cross-check",
+              "body": "Peer persona confirmed liquidity capacity on 2330.TW.",
+              "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": t_peer["ticket_id"], "actor_id": "persona-pool-cycle"},
+              "_meeting_digest": "digest-peer-accepted"}
+    t_peer["evidence_refs"] = [{"kind": "research_note", "artifact_id": "note-peer-accepted", "checksum": "digest-peer-accepted"}]
+    research["tickets"] = {t_peer["ticket_id"]: t_peer}
+    research["notes"]["note-peer-accepted"] = n_peer
+    peer_obs = controller.owners.observe_meeting_actions(persona, {})
+    assert len(peer_obs["verified_results"]) == 1
+    assert peer_obs["verified_results"][0]["owner"] == "persona-2448c7053e33ea48da47"
+    assert peer_obs["verified_results"][0]["accountable_persona_id"] is None

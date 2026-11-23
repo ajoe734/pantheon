@@ -378,18 +378,40 @@ def evaluate_participant_action_capability(
     restrictions = set(snapshot.get("restrictions") or [])
     if restrictions & {"advisory_only", "no_execution", "read_only"}:
         return deny("advisory_only", "snapshot_advisory_only")
+    req = dict(requirements or {})
+    deliverable = req.get("deliverable_kind", "research_note")
     accessible = set(meta.get("accessible_data") or [])
-    required = set((requirements or {}).get("required_data") or [])
-    required |= {r["dataset"] for r in persona.get("required_data_sources", []) if r.get("policy_gates")}
-    if required - accessible or required & restrictions:
+    revoked = restrictions | set(meta.get("revoked_data") or [])
+    required = {str(d).strip() for d in (req.get("required_data") or []) if str(d).strip()}
+    gated = {r["dataset"]: r for r in (persona.get("required_data_sources") or [])
+             if isinstance(r, Mapping) and r.get("dataset") and r.get("policy_gates")}
+    if req.get("requires_market_data") or req.get("evidence_scope") == "market_data":
+        required |= set(gated)
+    unhealthy = set(meta.get("unhealthy_data") or []) | {
+        k for k, v in (meta.get("data_health") or {}).items()
+        if v in {False, "unhealthy", "degraded", "failed", "unavailable"}
+    }
+    failed_gates = meta.get("failed_policy_gates") if isinstance(meta.get("failed_policy_gates"), Mapping) else {}
+    missing = set(required - accessible) | (required & revoked)
+    for ds in required & set(gated):
+        src = gated[ds]
+        gates = set(src.get("policy_gates") or [])
+        if (src.get("source_class") == "seed_only"
+                or ("no_live_capital" in gates and run_purpose not in {"daily_cycle", "consultation", "panel_interpretation"})
+                or ("require_connector_approved" in gates and (not src.get("connector_candidates") or ds in set(meta.get("unapproved_connectors") or [])))
+                or ("require_schedule_active" in gates and ds in set(meta.get("inactive_schedules") or []))
+                or ("require_source_health_ok" in gates and ds in unhealthy)
+                or failed_gates.get(ds)):
+            missing.add(ds)
+    if missing:
+        out["missing_data"] = sorted(missing)
         return deny("restricted_data", "deliverable_data_not_accessible")
-    deliverable = (requirements or {}).get("deliverable_kind", "research_note")
     granted = advisory_receipt or "research_note" in snapshot.get("allowed_capabilities", [])
     if deliverable != "research_note" or not granted:
         return deny("downgraded_access", "deliverable_not_granted")
     out.update(status="allowed", reason="owner_access_and_daily_workflow_verified",
                blocked_reason=None, effective_tools=sorted(tools), effective_workflows=sorted(workflows),
-               accessible_data=sorted(accessible), allowed_deliverables=["research_note"],
+               accessible_data=sorted(accessible - revoked), allowed_deliverables=["research_note"],
                snapshot_id=snapshot.get("snapshot_id"), can_be_assigned=True, can_receive_persona_action=True)
     if run_purpose != "daily_cycle":
         out.update(status="advisory_only", reason="consultation_run_is_advisory", blocked_reason="consultation_run_is_advisory")

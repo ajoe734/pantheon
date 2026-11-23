@@ -48,8 +48,11 @@ def verify(ticket, note, packets, persona, tenant):
                      if r.get("ticket_id") == tid and r.get("status") == "submitted"]
     assert acknowledged, "an uncertain write is not an acknowledgement"
     citation = "facts:meeting_action_result:" + tid
-    later = [p for p in owned if p["created_at"] > original["created_at"] and any(
-        citation in d.get("cited_case_file_item_ids", []) for d in p.get("persona_cycle", {}).get("decisions", []))]
+    orig_order = (original["created_at"], (original.get("producer") or {}).get("cron_run_at_ms") or 0)
+    later = [p for p in owned if p["packet_id"] != original["packet_id"]
+             and (p["created_at"], (p.get("producer") or {}).get("cron_run_at_ms") or 0) >= orig_order
+             and any(citation in d.get("cited_case_file_item_ids", [])
+                     for d in p.get("persona_cycle", {}).get("decisions", []))]
     assert later, "no subsequent actual decision cited the result"
     for packet in later:
         assert any(i.get("item_id") == citation for case in packet["persona_cycle"]["case_files"].values()

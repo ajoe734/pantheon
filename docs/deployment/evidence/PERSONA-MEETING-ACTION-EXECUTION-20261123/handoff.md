@@ -91,6 +91,21 @@ cleared through existing governed recovery; show/progress subsequently succeeded
   daily denial/grant. Same check at assignment and execution. No backfilled grants.
 - Evidence: title/id/checksum-only artifact projection raises evidence_content_missing, so the ticket
   keeps requesting the genuine missing input; same-ticket note bodies remain consumable.
-- Residual: test_submit_next_same_subject_citation_and_restart_concurrency failed once under heavy
-  parallel load and passed on reruns; owner Persona chain to confirm no timing sensitivity.
-- Not yet shown: hosted acceptance. State is merged-pending (PR #7765 CI queued); not deployed/accepted.
+## Correction round 4 (Antigravity)
+
+- Deliverable capability semantics: a `research_note` based only on authorized same-ticket
+  evidence executes independently of unrelated market feed ingestion gates (`tw_price_daily`
+  and `tw_broker_top` on the three real enrolled dev Personas), without fabricating
+  `accessible_data` or disabling data gates. Any deliverable requiring market/licensed data
+  (`required_data` or `requires_market_data`) verifies authoritative `accessible_data`,
+  non-seed `source_class`, connector/schedule/health/purpose policy gates and explicit
+  revocations, or denies with `restricted_data` and surfaces `missing_data`.
+- Decision result lookup: aligned `observe_meeting_actions` with M's normalized MT-1 series
+  (`subject_ref=pool:<persona_id>`) via R's authorized bounded series query, while preserving
+  genuine historical/persona series (`subject_ref=persona:<persona_id>`, `MT-1`/`MT-2`/`MT-4`).
+  Only accountable Persona items enter `runnable`. Approved same-subject shared human and peer
+  research enters `verified_results` with actual `owner`/`assignee`/`assignee_kind` and
+  `accountable_persona_id=None`, accurately labeling `submitted` vs `accepted` in both Observe
+  and CaseFile `facts:meeting_action_result:<ticket_id>` items even with zero semantic hits.
+- Clock-tie guard in `probe.py`: uses `(created_at, cron_run_at_ms)` ordering across distinct
+  packet IDs so same-second test executions cannot flake.

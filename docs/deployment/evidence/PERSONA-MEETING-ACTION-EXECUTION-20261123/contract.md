@@ -38,7 +38,12 @@ closed. Inline BFF snapshots and chair/trading labels grant nothing. The receipt
 must grant research_note, persona_proposal_submit and a daily-cycle workflow;
 the harness must retain all five steps. Its established read permission permits
 the already brokered tools; read alone cannot replace a missing snapshot grant.
-Gated required datasets must be in snapshot metadata.accessible_data. Expiry,
+A research_note based only on authorized same-ticket evidence executes
+independently of unrelated market feed ingestion gates (such as tw_price_daily
+and tw_broker_top). A deliverable requiring market/licensed data must verify
+authoritative snapshot metadata.accessible_data, non-seed source class,
+connector/schedule/health/purpose policy gates and explicit revocations, or
+surface the exact missing_data. Expiry,
 revocation, suspension, restrictions, missing workflows and owner faults return
 named denials. Consultation runs cannot execute; trading mutation is always false.
 Execution repeats this same evaluator against both fresh owners. No missing
@@ -46,13 +51,20 @@ policy catalog, access receipt or enrollment is fabricated.
 
 ## Existing-cycle execution
 
-Each normal eligible cycle reads two Research pages of four tickets:
-open/in_progress/returned and submitted/accepted, filtered by accountable owner.
+Each normal eligible cycle reads up to three bounded Research pages (page size four):
+open/in_progress/returned filtered by accountable owner, and submitted/accepted
+queried by M's actual stable MT-1 pool series (subject_ref=pool:<persona_id>) plus
+genuine supported historical/persona series (subject_ref=persona:<persona_id>,
+owner=<persona_id>) when page capacity remains.
 next_page_token persists in existing packets and continues next cycle, resetting
 after exhaustion. pending_pages is explicit; owner/evidence failure retains the
-cursor. This avoids permanent first-page truncation. Every row is checked for
-tenant, owner, action_id and persona assignee kind. Results inform the current
-subject only when subject_ref=persona:{own_persona_id}.
+cursor. This avoids permanent first-page truncation. Runnable rows require exact
+tenant, accountable Persona owner, action_id and persona assignee kind. Verified
+result rows align with M's pool:<persona_id> series (and genuine persona:<persona_id>
+MT-1/MT-2/MT-4 series), admit approved same-subject shared human/other-assignee
+research without treating its assignee as the deciding Persona, and explicitly label
+submitted versus accepted (state, review_status, accepted, review_decision, owner,
+assignee, assignee_kind, accountable_persona_id).
 
 Chair source_refs are actual citation strings. They resolve from the original
 tenant-scoped public meeting case with origin/digest/content/sharing checks.
@@ -93,9 +105,9 @@ meetings/persona/week with eight actions each implies a theoretical 72 assignmen
 Four actions per Persona tick permit 60/week at weekday cadence: sustained maximum
 arrivals can outpace consumption. Open obligations remain preserved and paged.
 
-* Two list GETs plus <=64 evidence GETs/tick, caching meeting reads by origin.
+* Up to three list GETs plus <=64 evidence GETs/tick, caching meeting reads by origin.
   Four recoveries + four new executions need <=4 owner calls each (ticket GET,
-  note GET, optional note POST, PATCH): <=98 HTTP calls/tick, <=294 across three
+  note GET, optional note POST, PATCH): <=99 HTTP calls/tick, <=297 across three
   Personas. Each times out after 10 seconds, with <=1 MiB response reads. No
   recursive fetch or in-tick retry. Capability uses <=8 pairs of local owner reads.
 * Observe extension <=192 KiB; case anchors <=64 KiB/case; actual whole turn input
