@@ -1,0 +1,24 @@
+{
+  "task": "DISTILLATION-OUTBOX-EXACT-LOOKUP-20261123",
+  "rows": 40000,
+  "plan_before": [
+    "SCAN distillation_outbox"
+  ],
+  "plan_after": [
+    "SEARCH distillation_outbox USING INDEX distillation_outbox_source_version_idx (source_id=? AND source_digest=?)"
+  ],
+  "index_build_seconds": 0.0211,
+  "bootstrap_with_migration_seconds": 0.1017,
+  "lookup_100_keys_seconds_without_index": 0.3173,
+  "lookup_100_keys_seconds_with_index": 0.0015,
+  "postgres_change": "read_source_records_for_tenant limit-mode uses one named server-side read-only cursor, fetchmany(limit); legacy keyset fallback when connection has no cursor(); count/eligibility/order/transaction unchanged",
+  "postgres_live_measurement": "not run by this worker (no hosted access); task brief supplies 4 keyset pages 1.94/1.60/1.13/1.38s vs one cursor 0.455s total",
+  "runtime_budget": {
+    "cadence": "existing 60s tick, cap 100",
+    "writer": "one additive SQLite index on existing outbox; maintained on outbox writes, dropped with outbox rows via existing prune",
+    "growth": "~ (source_id+digest) per outbox row",
+    "new_writers_or_jobs": false
+  },
+  "live_writes": false,
+  "index_size_note": "Not measured reliably (freed pages reused after drop); estimate ~ rows*(source_id+digest+rowid) \u2248 a few MB at 40k rows."
+}

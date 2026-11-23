@@ -922,6 +922,35 @@ def read_source_records_for_tenant(
                 total = count_row[0] if isinstance(count_row, tuple) else next(iter(count_row.values()))
                 summary.update(eligible_source_count=int(total), source_read_limit=limit,
                                source_summary_origin="source-ingest.postgres.tenant_eligible_count")
+            if limit is not None and hasattr(conn, "cursor"):
+                # One read-only server-side cursor in the same snapshot replaces
+                # a Limit/Sort/Seq Scan per keyset page; still bounded to 100.
+                with conn.cursor(name="distillation_eligible_sources") as cur:
+                    cur.execute(
+                        f"SELECT payload, append_id FROM {table} WHERE {where} ORDER BY append_id ASC",
+                        params,
+                    )
+                    while True:
+                        rows = cur.fetchmany(limit)
+                        if not rows:
+                            break
+                        for row in rows:
+                            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+                            if isinstance(payload, str):
+                                payload = json.loads(payload)
+                            if not isinstance(payload, dict):
+                                raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+                            source = SourceRecord.from_dict(payload)
+                            if source.tenant_id != tenant:
+                                raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
+                            if eligible(source) and (
+                                already_admitted is None or not already_admitted(source)
+                            ):
+                                records.append(source)
+                                if len(records) == limit:
+                                    return records
+                        del rows
+                return records
             after = -1
             while True:
                 if limit is None:
