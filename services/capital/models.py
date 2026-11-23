@@ -85,6 +85,19 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class ChangePaperRiskProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    actor_id: str
+    actor_role: str
+    requested_by: str = Field(min_length=1, max_length=128)
+    expected_persona_id: str = Field(min_length=1, max_length=128)
+    expected_revision: int = Field(ge=0)
+    issued_at_ms: Optional[int] = Field(default=None, gt=0, le=9999999999999)
+    request_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requested_profile: str = Field(pattern=r"^(low|medium|high)$")
+
+
 class CreateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str

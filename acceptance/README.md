@@ -198,3 +198,17 @@ row, or lacks `meta.hidden_unbound_stub_strategy_count` / `meta.hidden_test_pers
 `GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks` lists an `is_non_real`
 row or lacks `meta.hidden_non_real_count`. Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
 `fixtures/hosted_mgmt_strategy_meeting_research_20261120.json`.
+
+## meeting-action-followthrough probe (`acceptance/probes/meeting-action-followthrough`)
+
+Task: MEETING-ACTION-TWO-MEETING-PROOF-20261123; the natural hosted observation stays owned by
+MEETING-HOSTED-ACCEPTANCE-20261115 (no second job or gate). Read-only (GET only) with the same viewer login as the
+other probes. `ACCEPTANCE_MEETING_ACTION_M1` / `ACCEPTANCE_MEETING_ACTION_M2` name the recorded meeting and the natural
+next meeting of the same series. Without them the observation is **pending**: it prints `pending` and exits 77, never 0.
+Fails on: the same meeting twice, legacy W47 (`mtg-0f7fa4993625ca47`) as proof, tenant/type/subject mismatch, an
+action without its canonical Research ticket or with another meeting/series origin, evidence that is nonexistent,
+checksum-drifted, or a non-owner reference (generic closed demand, inbox/membership ack), submitter equal to verifier
+or either missing, a prior action silently dropped at M2, and a submitted item M2 neither reviews nor cites. Bounded:
+two meeting reads plus at most 24 ticket reads, 8 MiB per response; no writer or storage. Pure checker and
+falsification tests: `acceptance/test_meeting_action_followthrough.py`. Real-owner regression (needs an isolated
+`RESEARCH_MEETING_TEST_DSN`, skipped otherwise): `services/consultation/tests/test_persona_meeting_action_loop.py`.

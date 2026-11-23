@@ -8,16 +8,20 @@ from __future__ import annotations
 import re
 import json
 import os
+import time
+from contextlib import contextmanager
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 from services.control_plane.bff.core.display_names import current_resolver
 from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
+    management_read_deadline,
     selected_tenant,
 )
 
@@ -789,12 +793,47 @@ def shape_meeting_list(
     }
 
 
+def _visible_action_data(
+    value: Any, *, tenant_id: Optional[str], is_operator: bool,
+    caller_user_id: Optional[str], withheld_ids: Optional[set[str]] = None,
+) -> Any:
+    """Apply the meeting visibility boundary to new owner action subtrees too."""
+    if isinstance(value, str) and value.strip() in (withheld_ids or set()):
+        return None
+    if isinstance(value, Mapping):
+        # A withheld reference's payload is private too; dropping only its ID
+        # would leave excerpts or metadata behind as an anonymous citation.
+        if withheld_ids and withheld_ids.intersection(_extract_item_ref_ids(value)):
+            return None
+        if _is_private_memory_item(value):
+            return None
+        if value.get("tenant_id") and tenant_id and value["tenant_id"] != tenant_id:
+            return None
+        kind = str(value.get("kind") or value.get("subject_kind") or "").strip().lower()
+        if kind in {"trader", "agora_user"}:
+            # Typed refs use the ordinary subject-ref redaction semantics,
+            # including when nested in action evidence or synthesis fallback.
+            value = _shape_subject_ref(value, is_operator=is_operator, caller_user_id=caller_user_id)
+        elif _is_agora_or_trader_record(value) and not _can_view_trader(
+            _extract_trader_id(value), is_operator=is_operator, caller_user_id=caller_user_id
+        ):
+            return None
+        return {str(k): cleaned for k, v in value.items() if str(k) not in _PRIVATE_FIELD_KEYS
+                and ((cleaned := _visible_action_data(v, tenant_id=tenant_id,
+                    is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)) is not None or v is None)}
+    if isinstance(value, list):
+        return [cleaned for v in value if (cleaned := _visible_action_data(v,
+            tenant_id=tenant_id, is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)) is not None]
+    return value
+
+
 def shape_meeting_detail(
     raw: Mapping[str, Any],
     *,
     is_operator: bool,
     caller_user_id: Optional[str],
     snapshot_at: str,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     meeting_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
     meeting_trader_id = _extract_trader_id(raw)
@@ -957,6 +996,51 @@ def shape_meeting_detail(
         synthesis["unreadable_reason"] = review_cause
         synthesis["cause"] = review_cause
 
+    def visible_action_data(value: Any) -> Any:
+        return _visible_action_data(value, tenant_id=tenant_id or raw.get("tenant_id"),
+            is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)
+
+    # Consultation's recorded contract uses these names. Filter the entire
+    # source container before extracting a nested value, so parent visibility
+    # restrictions also apply to series subjects and owner page receipts.
+    owner_action_sources = {
+        key: visible_action_data(raw.get(key)) for key in (
+            "participant_action_capabilities", "prior_actions_source", "meeting_series")
+    }
+    for key in ("participant_action_capabilities", "prior_actions_source", "meeting_series", "action_reviews"):
+        if key in synthesis:
+            synthesis[key] = visible_action_data(raw_synthesis[key])
+    source_receipt = owner_action_sources["prior_actions_source"]
+    series = owner_action_sources["meeting_series"]
+    owner_aliases = {
+        "participant_capabilities": owner_action_sources["participant_action_capabilities"],
+        "prior_action_reviews": synthesis.get("action_reviews"),
+        "series_subject_ref": series.get("subject_ref") if isinstance(series, Mapping) else None,
+        "action_read": source_receipt,
+        "action_page_info": source_receipt.get("pages") if isinstance(source_receipt, Mapping) else None,
+    }
+    action_fields: Dict[str, Any] = {}
+    for key in ("actions", "prior_actions", "participant_capabilities", "prior_action_reviews", "series_subject_ref", "action_read", "action_page_info"):
+        value = raw.get(key)
+        # Explicit null still uses the synthesis fallback; every returned
+        # action subtree must pass the same viewer visibility filter.
+        if value is None:
+            value = raw_synthesis.get(key)
+        if value is None:
+            value = owner_aliases.get(key)
+        if value is not None:
+            action_fields[key] = visible_action_data(value)
+            if key in synthesis:
+                synthesis[key] = action_fields[key]
+    action_fields.setdefault("actions", [])
+    action_fields.setdefault("prior_actions", [])
+    action_fields.setdefault("participant_capabilities", [])
+    has_actions = bool(action_fields["actions"] or action_fields["prior_actions"])
+    action_fields.setdefault("action_read", {
+        "status": "unavailable" if has_actions else "not_recorded", "source": "consultation",
+        "reason": "live_action_owner_status_not_recorded" if has_actions else "meeting_actions_not_recorded",
+    })
+
     # 6. Writebacks: never expose private memory text, only ids/status
     raw_writebacks = raw.get("writebacks") if isinstance(raw.get("writebacks"), list) else []
     writebacks: List[Dict[str, Any]] = []
@@ -1028,6 +1112,7 @@ def shape_meeting_detail(
         "label_reveal": label_reveal if is_operator else None,
         "anonymised_labels_revealed": bool(is_operator),
         "synthesis": synthesis,
+        **action_fields,
         "proposals": shaped_proposals,
         "writebacks": writebacks,
         "usage": _strip_private_fields(raw.get("usage")),
@@ -1279,6 +1364,8 @@ class MeetingsOwnerClient:
         rem = remaining_management_read_budget()
         if rem is not None and rem <= 0.0:
             raise MeetingsOwnerUnavailableError("read_timeout", status_code=504)
+        if rem is not None:
+            self.client._timeout_seconds = min(self.client._timeout_seconds, max(0.01, rem))
         if not self.client.is_configured():
             raise MeetingsOwnerUnavailableError("consultation_owner_unconfigured")
         if not self.client._token and os.getenv("CONSULTATION_AUTH_REQUIRED", "").strip().lower() in {
@@ -1861,11 +1948,134 @@ def project_human_inbox_meeting_items(
     return items
 
 
+def _action_is_overdue(due_at: Any, snapshot_at: str) -> Optional[bool]:
+    if not due_at:
+        return None
+    try:
+        due = datetime.fromisoformat(str(due_at).replace("Z", "+00:00"))
+        now = datetime.fromisoformat(snapshot_at.replace("Z", "+00:00"))
+        if due.tzinfo is None or now.tzinfo is None:
+            return None
+        return due.astimezone(timezone.utc) < now.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def _can_respond_to_human_ticket(ticket: Mapping[str, Any], identity: Any) -> bool:
+    """UI hint for the existing PATCH, including Research's narrower actor rules.
+
+    This never authorizes a write: Research rechecks actor, tenant, state,
+    revision and evidence on every command. Missing caller/state stays false.
+    """
+    from fastapi import HTTPException
+    from services.control_plane.bff.auth.policy import require_operator_role
+
+    actor = getattr(identity, "operator_id", None)
+    roles = getattr(identity, "roles", None)
+    if not actor or not roles:
+        return False
+    try:
+        require_operator_role(identity)  # Same BFF gate as original ticket PATCH.
+    except HTTPException:
+        return False
+    action = ticket.get("meeting_action")
+    if not isinstance(action, Mapping) or action.get("assignee_kind") not in {"human", "persona"}:
+        return False
+    privileged = bool(set(roles) & {"operator", "admin"})
+    state = ticket.get("action_state")
+    if action.get("assignee_kind") == "human" and state in {"open", "in_progress", "returned"}:
+        return privileged or actor == ticket.get("owner")
+    if state == "waiting_for_input":
+        return privileged or (actor == ticket.get("required_actor")
+                              and bool(set(roles) & {"operator", "approver", "human"}))
+    return False
+
+
+def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapshot_at: str,
+                             identity: Any = None) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for ticket in page.get("data") or []:
+        if not isinstance(ticket, Mapping) or ticket.get("tenant_id") != tenant_id:
+            continue
+        action = ticket.get("meeting_action")
+        if not isinstance(action, Mapping):
+            continue
+        state = ticket.get("action_state")
+        direct = action.get("assignee_kind") == "human" and state in {"open", "in_progress", "returned"}
+        if not direct and state != "waiting_for_input":
+            continue
+        tid = str(ticket.get("ticket_id") or "")
+        meeting_id = str(action.get("meeting_id") or "")
+        if not tid or not meeting_id or tid in seen:
+            continue
+        seen.add(tid)
+        href = f"/management/meetings/{quote(meeting_id, safe='')}?action={quote(tid, safe='')}"
+        request = ticket.get("input_request") or {}
+        review = ticket.get("review_decision") or {}
+        # The chair's human-only requirement is stored by Research in the
+        # existing description and included in its authorized human page.
+        # A deliverable alone does not explain why human help is required.
+        requirement = ticket.get("description") if direct else None
+        requirement = (requirement.strip() or None) if isinstance(requirement, str) else None
+        if direct:
+            reason = ((review.get("reason") if state == "returned" else None)
+                      or requirement or "Human-specific requirement was not recorded.")
+        else:
+            reason = request.get("reason")
+        items.append({
+            "id": f"meeting_action:{tid}", "inbox_id": f"meeting_action:{tid}", "item_id": tid,
+            "kind": "meeting_action", "inboxType": "meeting", "inbox_type": "meeting",
+            "source_type": "meeting", "source_dataset": "research_tickets", "source_id": tid,
+            "action_id": tid, "ticket_id": tid, "meeting_id": meeting_id,
+            "title": ticket.get("title") or action.get("deliverable"),
+            "summary": reason, "reason": reason,
+            "human_requirement": requirement,
+            "requested_material": action.get("deliverable"),
+            "acceptance_criterion": action.get("acceptance_criterion"),
+            "owner": ticket.get("owner"), "assignee": ticket.get("assignee") or ticket.get("owner"),
+            "assignee_kind": action.get("assignee_kind"),
+            "response_action": "submit" if direct else "provide_input",
+            "can_respond": _can_respond_to_human_ticket(ticket, identity),
+            "resumes_with": ticket.get("reviewer_id") if direct else ticket.get("owner"),
+            "reviewer_id": ticket.get("reviewer_id"), "review_decision": review,
+            "evidence_refs": ticket.get("evidence_refs") or [],
+            "required_actor": ticket.get("required_actor"), "input_request": request,
+            "status": ticket.get("action_state"), "action_state": "pending",
+            "owner_status": ticket.get("status"), "revision": ticket.get("revision"),
+            "due_at": action.get("due_at"), "next_review": action.get("next_review"),
+            "overdue": _action_is_overdue(action.get("due_at"), snapshot_at),
+            "created_at": ticket.get("created_at"), "updated_at": ticket.get("updated_at"),
+            "priority": ticket.get("priority") or "medium", "risk_level": "medium",
+            "can_decide": False, "can_proceed": False,
+            "href": href, "route": href, "detail_href": href,
+            "links": {"meeting": href, "manageHref": href, "primaryObjectHref": href,
+                      "ticket": f"/api/v1/research/tickets/{quote(tid, safe='')}"},
+        })
+    return items
+
+
+@contextmanager
+def _inbox_owner_budget():
+    # Each independent owner gets part of the existing contributor deadline;
+    # one slow source cannot consume the other source's entire read allowance.
+    from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
+    allowance = human_inbox_surface_timeout_seconds() * 0.4
+    remaining = remaining_management_read_budget(allowance)
+    budget = min(allowance, remaining) if remaining is not None else allowance
+    token = management_read_deadline.set(time.monotonic() + max(0, budget))
+    try:
+        yield
+    finally:
+        management_read_deadline.reset(token)
+
+
 def read_human_inbox_meeting_items(
     snapshot_at: str,
     *,
     store: Any = None,
     tenant_id: Optional[str] = None,
+    identity: Any = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Contributor reader for ManagementService.get_human_inbox."""
     if store is not None and hasattr(store, "list_meetings"):
@@ -1888,14 +2098,48 @@ def read_human_inbox_meeting_items(
         or os.getenv("PANTHEON_TENANT_ID")
         or "tenant-dev"
     )
+    from services.control_plane.bff.core.owner_reads import verified_caller_tenant
+    from services.control_plane.bff.research.client import ResearchServiceClient, ResearchCommandError, resolve_orchestrator_base_url
+
+    # Resolve from the authenticated caller, never the contributor service actor.
+    if resolve_orchestrator_base_url():
+        eff_tenant = verified_caller_tenant(tenant_id=tenant_id)
     client = MeetingsOwnerClient(tenant_id=eff_tenant, actor_id="human-inbox")
-    meetings_res = client.list_meetings()
-    proposals_res = client.list_proposals()
-    catalogue_res = client.get_catalogue()
-    items = project_human_inbox_meeting_items(
-        snapshot_at=snapshot_at,
-        meetings=meetings_res.get("items") or [],
-        proposals=proposals_res.get("items") or [],
-        catalogue=catalogue_res,
-    )
-    return items, {"status": "ok", "source": "consultation", "snapshot_at": snapshot_at}
+    surfaces: Dict[str, Any] = {}
+    items: List[Dict[str, Any]] = []
+    # A partial owner failure must not hide work from a different owner.
+    with _inbox_owner_budget():
+        try:
+            meetings_res = client.list_meetings(limit=100)
+            proposals_res = client.list_proposals()
+            catalogue_res = client.get_catalogue()
+            items.extend(project_human_inbox_meeting_items(
+                snapshot_at=snapshot_at, meetings=meetings_res.get("items") or [],
+                proposals=proposals_res.get("items") or [], catalogue=catalogue_res))
+            surfaces["consultation"] = {
+                "status": "degraded" if meetings_res.get("next_cursor") else "ok",
+                "reason": "owner_page_has_more" if meetings_res.get("next_cursor") else None,
+                "next_cursor": meetings_res.get("next_cursor"),
+            }
+        except (MeetingsOwnerUnavailableError, MeetingsOwnerValidationError, MeetingsOwnerNotFoundError) as exc:
+            surfaces["consultation"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
+                                        "reason": exc.reason}
+    if resolve_orchestrator_base_url():
+        with _inbox_owner_budget():
+            try:
+                page = ResearchServiceClient().list_research_ticket_page(human_actionable=True, page_size=100)
+                items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at,
+                                                      identity=identity))
+                surfaces["research"] = {
+                    "status": "degraded" if page["page_info"].get("next_page_token") else "ok",
+                    "reason": "owner_page_has_more" if page["page_info"].get("next_page_token") else None,
+                    "page_info": page["page_info"],
+                    "href": "/api/v1/research/tickets?meeting_linked=true&human_actionable=true&page_size=100"}
+            except ResearchCommandError as exc:
+                surfaces["research"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
+                                        "reason": str(exc), "status_code": exc.status_code}
+    else:
+        surfaces["research"] = {"status": "unavailable", "reason": "research_owner_unconfigured"}
+    states = [s["status"] for s in surfaces.values()]
+    return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if any(s in {"ok", "degraded"} for s in states) else "unavailable",
+                   "source": "bff_composed", "snapshot_at": snapshot_at, "surfaces": surfaces}

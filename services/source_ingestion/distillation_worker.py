@@ -702,6 +702,10 @@ class DistillationJobQueue:
                ON distillation_outbox(lease_expires_at) WHERE status = 'leased'""",
             """CREATE INDEX IF NOT EXISTS distillation_outbox_prune_idx
                ON distillation_outbox(status, processed_at) WHERE pruned_at IS NULL""",
+            # Exact (source_id, source_digest) readbacks (get/claim/due_tenants)
+            # would otherwise scan the whole outbox for every lookup.
+            """CREATE INDEX IF NOT EXISTS distillation_outbox_source_version_idx
+               ON distillation_outbox(source_id, source_digest)""",
             """CREATE INDEX IF NOT EXISTS distillation_dead_letters_resolved_idx
                ON distillation_dead_letters(resolved_at) WHERE resolved_at IS NOT NULL""",
         ):

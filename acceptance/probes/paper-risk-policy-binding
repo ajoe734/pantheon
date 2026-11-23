@@ -163,6 +163,63 @@ def policy_errors(policy):
     return errors
 
 
+DRAFT_PROFILES = ("low",)
+DRAFT_SOURCE = "risk_officer_draft"
+
+
+def _positive_below_one(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and 0 < value < 1)
+
+
+def _bounded_limits(policy):
+    """Single-name cap < 1 and a positive cash reserve; the reserve may be a pct or an absolute amount."""
+    errors = []
+    if not _positive_below_one(policy.get("max_single_name_weight")):
+        errors.append("draft_single_name_cap_missing_or_not_below_1")
+    pct, absolute = policy.get("min_cash_reserve_pct"), policy.get("min_cash_reserve")
+    if not (_positive_below_one(pct) or (not isinstance(absolute, bool) and isinstance(absolute, (int, float))
+                                          and math.isfinite(absolute) and absolute > 0)):
+        errors.append("draft_cash_reserve_missing_or_not_positive")
+    return errors
+
+
+def pending_risk_officer_draft(approvals, persona, pool):
+    """A pending Governance proposal that carries a risk-officer drafted policy for this pool, or None."""
+    for approval in approvals:
+        subject = (approval.get("metadata") or {}).get("subject") or {}
+        draft = subject.get("risk_officer_draft") or {}
+        policy = draft.get("policy")
+        if (approval.get("tenant_id") == persona.get("tenantId")
+                and approval.get("target_type") == "capital_pool_activation"
+                and approval.get("target_id") == pool.get("pool_id")
+                and approval.get("decision_state") in {"proposed", "under_review"}
+                and subject.get("pool_id") == pool.get("pool_id")
+                and (subject.get("requested_risk") or subject.get("requested_profile")) == persona.get("risk")
+                and isinstance(policy, dict)
+                and (policy.get("metadata") or {}).get("risk_officer_draft", {}).get("source") == DRAFT_SOURCE
+                and not _bounded_limits(policy)
+                and subject.get("risk_policy_digest") in {policy_digest(policy), risk_policy_digest(policy)}):
+            return approval.get("decision_id")
+    return None
+
+
+def risk_officer_draft_errors(policy, approvals, persona, pool):
+    """Active policy must be bounded and carry risk-officer provenance; else a pending draft must exist.
+
+    The former hardcoded 2x v1.0 (no single-name cap, no cash reserve, no provenance) fails here.
+    Returns (errors, pending_decision_id).
+    """
+    errors = _bounded_limits(policy)
+    prov = ((policy.get("metadata") or {}).get("risk_officer_draft") or {})
+    if prov.get("source") != DRAFT_SOURCE or prov.get("risk_persona_id") != "persona-risk-officer":
+        errors.append("draft_provenance_missing")
+    if not errors:
+        return [], None
+    pending = pending_risk_officer_draft(approvals, persona, pool)
+    return ([], pending) if pending else (errors, None)
+
+
 def approved_mapping(approvals, persona, pool, policy, now):
     """Look for explicit owner proof in existing governance decision subjects.
 
@@ -284,6 +341,11 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
             reader = (lambda ref: owner["policy"]) if owner is not None else referenced_policy_reader
             policy, origin = effective_policy(pool, reader)
             failures.extend(policy_errors(policy))
+            if persona.get("risk") in DRAFT_PROFILES:
+                draft_errors, pending_draft = risk_officer_draft_errors(policy, approvals, persona, pool)
+                failures.extend(draft_errors)
+                result["risk_officer_draft"] = "pending:" + pending_draft if pending_draft else (
+                    "active" if not draft_errors else "missing")
             policy_meta = policy.get("metadata") or {}
             if (policy.get("tenant_id") or policy_meta.get("tenant_id")) not in (None, tenant):
                 failures.append("policy_tenant_mismatch")

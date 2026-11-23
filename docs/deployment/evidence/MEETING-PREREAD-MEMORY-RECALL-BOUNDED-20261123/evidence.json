@@ -1,0 +1,17 @@
+{
+  "task": "MEETING-PREREAD-MEMORY-RECALL-BOUNDED-20261123",
+  "delivery_state": "source change only; not deployed, not accepted",
+  "validation": {
+    "command": "pytest services/memory services/consultation/tests/test_persona_meetings.py; pytest services/consultation/tests",
+    "results": ["299 passed, 33 skipped (memory + persona meetings, after id fix: new concurrency test passes in consultation run)", "193 passed, 23 skipped (consultation tests)"]
+  },
+  "changes": [
+    "services/memory/hindsight_index.py: recall_timeout_seconds, bounded_recall_canonical_ids (hindsight_recall_timeout)",
+    "services/memory/search_retrieval.py: uses bounded recall",
+    "services/memory/main.py: scope=both institutional and persona retrieval run concurrently (outside listed artifacts, required by acceptance 1)",
+    "services/consultation/meetings.py: concurrent participant pre-read (<=5 workers); canonical source_id used as pre-read entry id",
+    "docker-compose.yml: PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS default 8"
+  ],
+  "runtime_budget": "no new persistent writer; short-lived thread pools only (<=2 per retrieve, <=5 per meeting pre-read); abandoned timed-out recall thread ends when its socket times out (deadline+2 s)",
+  "hosted_acceptance": "pending: hands-off MT-1/MT-2 meeting must close with memory_read_refusals == {} and a canonical-sourced pre-read entry"
+}
