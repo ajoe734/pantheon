@@ -1,10 +1,10 @@
 {
   "task_id": "PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123",
   "owner": "Codex",
-  "assigned_independent_reviewer": "Antigravity2",
+  "assigned_independent_reviewer": "Codex2",
   "problem_register_class": "RC2 WP2.1",
   "evidence_kind": "source_validation_not_hosted_acceptance",
-  "source_review": "pending_independent_review",
+  "source_review": "pending_independent_re_review_after_rejection_of_c7aafbe575cce3b216fcbd94f8c7a16a28598678",
   "delivery_state": null,
   "frontend_task": "FE-PERSONA-RISK-PROFILE-CHANGE-20261123",
   "contract": {
@@ -23,7 +23,9 @@
     ],
     "null_semantics": "effectiveRisk/version/approval remain null without verified installed tier; unavailable read has requestedRisk null; no aliases",
     "get_authoritative": true,
-    "operator_and_idempotency_header_required": true
+    "operator_and_idempotency_header_required": true,
+    "idempotency_key_format": "idk_<base36 issued milliseconds>_<lowercase alphanumeric nonce>; keep timestamp and nonce unchanged across retries; opaque keys fail 422 before supported risk mutation",
+    "frontend_compatibility": "existing execute-plans src/lib/bff-v1/headers.ts idempotencyKey() already emits this shape; PersonaDetail.tsx risk saves use it; no public response/body changes"
   },
   "reproduction": {
     "base_commit": "bd47d73bc",
@@ -32,7 +34,62 @@
     "result": "normal PATCH 200 medium, GET 200 low, Capital requested profile low unchanged, later medium repair 409; original create risk low unchanged",
     "hosted_receipt": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/policy-version-change-live-dryrun-20261123.json"
   },
-  "validation": [
+  "controls": [
+    "approved later low/medium/high exact binding and reverse edits",
+    "sizing and order gate in the same running paper algorithm",
+    "pending request retains verified old effective policy or null; holds increases and preserves genuine reductions",
+    "unapproved/foreign/live/wrong tier/wrong digest/incomplete/ambiguous approval rejection",
+    "independent PostgreSQL facades: one actual update for six same-key writers; unrelated row unchanged; stale repair rejected",
+    "lost commit response, reload, superseded key, revision conflict, durable idempotency mismatch",
+    "normal BFF operator/header and tenant permissions, unrelated edits, Capital outage and later Persona-update failure",
+    "bounded explicit read-only probe: persisted latest request, scoped pool/grant, pending guard, authoritative reload",
+    "rolling issued-time receipt window; durable eviction watermark; delayed unseen keys and post-eviction restart-safe rejection",
+    "unrelated metadata/status annotation through real Capital API and independent PostgreSQL row writer",
+    "existing governed reconcile route after independent mapping approval converges same running evaluator without another risk PATCH"
+  ],
+  "runtime_budget": {
+    "cadence": "event-driven normal risk PATCH or approved reconciliation; no recurring job",
+    "state": "existing pool row only; <=64 KiB additional metadata per pool; <=128 rolling receipts plus latest intent and durable eviction watermark; no lifetime edit limit",
+    "hosted_count": "3 trading pools plus 1 isolated acceptance pool; <=256 KiB total increment; real trading pools untouched",
+    "growth": "0 B/day steady; <=384 B per new receipt until 128 entries, then zero net receipt growth; <=2 KiB fixed intent/watermark per pool; <=2 KiB existing audit event per actual mutation",
+    "cleanup": "inline oldest-receipt retirement under owner lock advances durable watermark and preserves current receipt for reconciliation; latest state follows pool retention/archive; no new sweeper; existing audit retention remains RC3 WP3.1",
+    "manifest": "docs/operations/storage-manifest.json"
+  },
+  "hosted_acceptance": {
+    "status": "pending_after_independent_source_review_and_exact_pair_integration",
+    "isolated_persona_id": "persona-d64835a203ce276b8fbb",
+    "probe": "acceptance/probes/persona-risk-profile-change",
+    "operator_edit_reload_required": true,
+    "real_three_pool_changes_authorized": false,
+    "business_votes_or_invented_limits_used": false,
+    "procedure": "README.md#verification-and-hosted-continuation"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 canonical BFF read/fixture chain",
+      "finding": "two baseline Persona list tests return 503 strategy_store_unavailable/caller authorization",
+      "evidence": "baseline-list-failures.log",
+      "disposition": "coordinator must attach instance to existing owning chain before closure; no weakened registry authorization"
+    },
+    {
+      "class": "RC2/RC6 risk read model",
+      "finding": "legacy Persona scalar remains original request hint for supported paper edits; detail GET/PATCH use Capital latest intent",
+      "disposition": "non-detail consumers must adopt Capital-owned contract; frontend counterpart covers detail only; tier hint never grants execution"
+    },
+    {
+      "class": "RC3 WP3.1",
+      "finding": "existing whole Capital audit journal retention remains unbounded/unreviewed",
+      "disposition": "existing retention owner; this task registers only incremental event size/cadence"
+    },
+    {
+      "class": "RC2 WP2.1",
+      "finding": "hosted operator edit/reload and exact-pair acceptance pending",
+      "disposition": "continue after source review/integration using isolated acceptance Persona only"
+    }
+  ],
+  "reviewer_family_exception": "Antigravity2 terminal quota recovery; Codex and Codex2 are distinct configured identities in the same model family; no reviewer approval is asserted by the owner",
+  "validated_source_commit": "6f87f424ed2c47b2c2339bdf102d14f253e7c2a9",
+  "historical_validation_at_rejected_head": [
     {
       "command": "timeout 240 bash /tmp/paper-risk-validation.sh (disposable postgres:16 with database pantheon; CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
       "exit_code": 0,
@@ -83,54 +140,35 @@
       "result": "passed"
     }
   ],
-  "controls": [
-    "approved later low/medium/high exact binding and reverse edits",
-    "sizing and order gate in the same running paper algorithm",
-    "pending request retains verified old effective policy or null; holds increases and preserves genuine reductions",
-    "unapproved/foreign/live/wrong tier/wrong digest/incomplete/ambiguous approval rejection",
-    "independent PostgreSQL facades: one actual update for six same-key writers; unrelated row unchanged; stale repair rejected",
-    "lost commit response, reload, superseded key, revision conflict, durable idempotency mismatch",
-    "normal BFF operator/header and tenant permissions, unrelated edits, Capital outage and later Persona-update failure",
-    "bounded explicit read-only probe: persisted latest request, scoped pool/grant, pending guard, authoritative reload"
-  ],
-  "runtime_budget": {
-    "cadence": "event-driven normal risk PATCH or approved reconciliation; no recurring job",
-    "state": "existing pool row only, <=32 KiB additional metadata/pool, <=128 receipts; refuse new keys at cap; no eviction",
-    "hosted_count": "3 trading pools plus 1 isolated acceptance pool; <=128 KiB total increment; real trading pools untouched in this task",
-    "growth": "0 B/day steady; <=256 B per distinct receipt plus <=2 KiB fixed intent/pool; <=2 KiB existing audit event per actual mutation",
-    "cleanup": "pool retention/archive; no new sweeper; existing audit journal retention remains RC3 WP3.1",
-    "manifest": "docs/operations/storage-manifest.json"
-  },
-  "hosted_acceptance": {
-    "status": "pending_after_independent_source_review_and_exact_pair_integration",
-    "isolated_persona_id": "persona-d64835a203ce276b8fbb",
-    "probe": "acceptance/probes/persona-risk-profile-change",
-    "operator_edit_reload_required": true,
-    "real_three_pool_changes_authorized": false,
-    "business_votes_or_invented_limits_used": false,
-    "procedure": "README.md#verification-and-hosted-continuation"
-  },
-  "residual_findings": [
+  "validation": [
     {
-      "class": "RC2 canonical BFF read/fixture chain",
-      "finding": "two baseline Persona list tests return 503 strategy_store_unavailable/caller authorization",
-      "evidence": "baseline-list-failures.log",
-      "disposition": "coordinator must attach instance to existing owning chain before closure; no weakened registry authorization"
+      "command": "timeout 240 bash /tmp/paper-risk-validation.sh: disposable postgres:16, database pantheon, CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "549 passed, 1 warning in 95.34s; no skips; independent PostgreSQL writers exercised; disposable container removed and absence verified",
+      "log": "revision-capital-validation.log"
     },
     {
-      "class": "RC2/RC6 risk read model",
-      "finding": "legacy Persona scalar remains original request hint for supported paper edits; detail GET/PATCH use Capital latest intent",
-      "disposition": "non-detail consumers must adopt Capital-owned contract; frontend counterpart covers detail only; tier hint never grants execution"
+      "command": "timeout 150 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_bff_test_architecture.py acceptance/test_persona_risk_profile_change.py --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page",
+      "exit_code": 0,
+      "result": "200 passed, 2 deselected, 3 warnings in 106.22s; baseline failures remain residuals and are not claimed passed",
+      "log": "revision-bff-validation.log"
     },
     {
-      "class": "RC3 WP3.1",
-      "finding": "existing whole Capital audit journal retention remains unbounded/unreviewed",
-      "disposition": "existing retention owner; this task registers only incremental event size/cadence"
+      "command": "timeout 45 python3 scripts/check_storage_manifest.py --output docs/deployment/evidence/PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123/storage-check.json",
+      "exit_code": 0,
+      "result": "passed; zero failures",
+      "log": "storage-check.json"
     },
     {
-      "class": "RC2 WP2.1",
-      "finding": "hosted operator edit/reload and exact-pair acceptance pending",
-      "disposition": "continue after source review/integration using isolated acceptance Persona only"
+      "command": "git diff --check origin/dev",
+      "exit_code": 0,
+      "result": "passed across complete base-to-result diff, including previously committed evidence logs; committed HEAD is rechecked before handoff"
     }
-  ]
+  ],
+  "review_remediation": {
+    "P1": "258 real low/medium/high edits pass beyond the 128 receipt boundary; JSON reload plus latest expected revision cannot replay the evicted first key; BFF post-boundary edit and cleared-cache old retry covered; old unseen timestamps conflict; future timestamps cannot poison the window",
+    "P2": "partial unrelated metadata merges at both JSON and PostgreSQL owner locks; active-status API annotation succeeds without fresh policy approval; tenant pinning retained; stale risk/scope/policy writes still refused",
+    "governed_reconcile": "pending normal PATCH -> separately issued fixture approval made available -> existing POST /bff/personas/{id}/provisioning/paper-capital/risk-policy with {} -> same running evaluator sizing/order gate converge; no second risk PATCH or new revision; viewer forbidden; actual trigger described in README",
+    "whitespace": "trimmed trailing whitespace in baseline-list-failures.log and bff-validation.log; validate whole base-to-HEAD diff, not only clean worktree"
+  }
 }

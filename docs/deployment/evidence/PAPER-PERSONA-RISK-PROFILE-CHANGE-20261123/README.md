@@ -1,6 +1,7 @@
 # PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123
 
-Owner: Codex. Independent reviewer: Antigravity2. Root cause: RC2 WP2.1,
+Owner: Codex. Assigned reviewer: Codex2 after Antigravity2 quota recovery
+(distinct configured identities, same model family exception). Root cause: RC2 WP2.1,
 continuing #7755; frontend counterpart: FE-PERSONA-RISK-PROFILE-CHANGE-20261123.
 Source implementation is awaiting independent review. Hosted acceptance is
 pending an integrated exact backend/frontend pair; no deployed or accepted
@@ -43,7 +44,13 @@ when capability or authority cannot be verified. Do not consume snake-case or
 other undeclared aliases or replace an explicit null with legacy hints.
 
 Normal mutation remains operator-authenticated `PATCH {"risk":"medium"}` with
-a nonempty `Idempotency-Key`. GET/refetch is authoritative. Pending means the
+a stable `Idempotency-Key` in the existing execute-plans `idempotencyKey()`
+format: `idk_<base36 issued milliseconds>_<lowercase alphanumeric nonce>`.
+Keep the exact key, including timestamp, across retries. Opaque keys return
+422 before mutation on this supported risk path; other Persona edits retain
+their existing key semantics. No body or public response field changes are
+required in the frontend counterpart, which already uses that generator.
+GET/refetch is authoritative. Pending means the
 requested tier cannot authorize new/increased exposure; existing governed
 position reductions/closures remain evaluated. A previous effective tier is
 evidence of the installed binding, not permission to increase exposure while
@@ -64,8 +71,14 @@ unsupported edit paths keep their existing behavior.
 
 New intent and its exact approved policy/version/digest are committed in one
 Capital owner mutation. PostgreSQL `SELECT ... FOR UPDATE` serializes separate
-service facades. Stale expected revisions conflict; a known superseded key
-observes the latest intent without replaying its old tier. The same current
+service facades. Stale expected revisions conflict. The last 128 keys are
+retained, with their immutable issued times and a durable eviction watermark;
+a known superseded key observes the latest intent without replaying its old tier.
+An evicted key or unseen key older than the latest admitted intent returns a
+stale conflict even if the BFF freshly reads the latest revision. Keys more
+than five minutes ahead of server time cannot advance the window. A new key
+at or below the eviction watermark requires a fresh operator edit after
+refetch, never an automatic re-key of the old command. The same current
 key can reconcile after independent approval. Missing/ambiguous/unapproved
 mapping keeps the installed policy and prior approvals, persists the new
 request and holds increases. Financial limits come only from existing policy
@@ -79,7 +92,10 @@ failure cannot return success from a Persona-only update. If a later Persona
 field update fails, refetch still exposes the committed Capital intent and a
 retry does not duplicate it. Older repair paths delegate reconciliation of the
 latest intent and cannot replace it from the immutable create request. Older
-in-flight metadata patches are rejected at the owner row boundary. Existing
+in-flight risk metadata patches are rejected at the owner row boundary.
+Unrelated partial metadata annotations merge under the same row lock without
+erasing receipts, changing policy, or requiring new approval for an already
+active pool. Tenant pinning and status activation authority remain intact. Existing
 PostgreSQL pool create/status writes now touch only their addressed row, so a
 stale full-store snapshot cannot overwrite another pool's new intent.
 
@@ -90,6 +106,17 @@ The focused normal-route tests exercise real Capital HTTP handlers and owner
 stores with synthetic local approval snapshots. One unchanged running paper
 algorithm reads the new approved policy at both submission sizing and order
 evaluation. These are software tests, not business approvals or hosted proof.
+
+The post-approval trigger is the existing operator-authenticated
+`POST /bff/personas/{id}/provisioning/paper-capital/risk-policy` with `{}`.
+It reads the persisted latest intent and current receipt and reconciles through
+Capital's ordered path, without another risk PATCH, new revision, policy
+parameters, or caller-supplied approval. GET/refetch alone is read-only and
+does not install a discovered mapping. A focused test removes the synthetic
+medium approval, PATCHes pending, restores the independently issued fixture
+approval, calls this actual governed route, and verifies new sizing and order
+gate behavior in the same running algorithm. Viewer calls are refused. No
+automatic approval watcher or recurring reconciliation job is added.
 
 The coordinator's existing isolated hosted acceptance Persona is
 `persona-d64835a203ce276b8fbb` (dataScope=test, paper, dedicated single pool).
@@ -125,13 +152,17 @@ After source review/integration and an exact-pair dev release:
 No recurring job, new table, file or queue. Each actual operator request or
 approved reconciliation updates one existing pool row and adds one existing
 Capital audit event; converged same-key retries write neither. Intent plus
-receipts add <=32 KiB per pool: at most 128 receipts of <=256 B plus <=2 KiB
+receipts add <=64 KiB per pool: at most 128 receipts of <=384 B plus <=2 KiB
 fixed latest intent. At three trading pools plus one acceptance pool the
-increment is <=128 KiB total, 0 B/day steady, <=256 B per new receipt/day plus
-the fixed per-pool intent. A full receipt set refuses new keys; it never evicts
-old keys and turns an old request into a new edit. Receipts follow pool
-retention/archival; no new cleanup job. This finite key budget is deliberate
-and visible as a failed request rather than silently losing idempotency.
+increment is <=256 KiB total, 0 B/day steady, <=384 B per new receipt until
+the 128-entry window fills, then 0 net receipt growth per new edit. The scalar
+eviction watermark replaces lifetime key accumulation and retires older keys
+without admitting their replay. Cleanup is inline during owner mutation; no
+new cleanup job. Intent and watermark follow pool retention/archival. Tests
+perform 258 actual edits, reload the store, reject the evicted first key even
+with a fresh revision, and retain a bounded serialized metadata size. The
+normal BFF route also accepts a post-boundary edit and rejects delayed replay
+after clearing process cache.
 Each actual mutation also appends <=2 KiB to the existing audit writer. Its
 whole-journal cap/cleanup remains the existing RC3 WP3.1 residual, not a new
 boundedness claim. Writers and budget are in storage-manifest.json.

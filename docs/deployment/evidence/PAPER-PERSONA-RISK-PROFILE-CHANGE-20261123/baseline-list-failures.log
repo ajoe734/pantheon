@@ -17,10 +17,10 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73f2eeb25190>
         assert created.status_code == 201, created.text
         persona_id = created.json()["data"]["id"]
         before = route_harness.read_store.get_persona(persona_id)
-    
+
         def forbidden_reconcile(*_args, **_kwargs):
             raise AssertionError("read route must not reconcile or mutate Persona lifecycle")
-    
+
         monkeypatch.setattr(
             personas_service_mod,
             "_evaluate_persona_provisioning_status",
@@ -39,7 +39,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73f2eeb25190>
             "/bff/personas?page_size=1",
             headers={"Authorization": "Bearer viewer-a:viewer"},
         )
-    
+
         assert detail.status_code == 200, detail.text
 >       assert listed.status_code == 200, listed.text
 E       AssertionError: {"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"Canonical strategy registry readback requires caller authorization","reason":"strategy_store_unavailable","status_code":503}}
@@ -68,11 +68,11 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73f2eeb1dfd0>
             )
         original = personas_service_mod._project_persona_list_records
         projected_sizes: list[int] = []
-    
+
         def capture(records):
             projected_sizes.append(len(records))
             return original(records)
-    
+
         monkeypatch.setattr(personas_service_mod, "_project_persona_list_records", capture)
         monkeypatch.setattr(
             "services.control_plane.bff.personas.routes.collection._project_persona_list_records",
@@ -83,7 +83,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73f2eeb1dfd0>
             "/bff/personas?page_size=1",
             headers={"Authorization": "Bearer viewer-a:viewer"},
         )
-    
+
 >       assert response.status_code == 200, response.text
 E       AssertionError: {"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"Canonical strategy registry readback requires caller authorization","reason":"strategy_store_unavailable","status_code":503}}
 E       assert 503 == 200
