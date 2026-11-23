@@ -56,3 +56,13 @@ Typed trader/agora_user mappings now reuse ordinary subject-reference
 redaction at every action depth. Other trader records retain their existing
 visibility rule. A readable paginated owner counts as partial availability.
 All callers above remain supported; this adds no owner call or stored state.
+
+Direct-human resumption: before editing, inspected current dev `0c806ffed`,
+PR #7761 head `323ac0cf336a`, the original contributor and ticket list/PATCH
+callers, and Research's canonical scope correction plus owner implementation.
+The obsolete waiting-for-input-only selection is replaced by the existing
+owner's `human_actionable=true` union before pagination. The original paged
+ticket facade forwards that filter and cursor; explicit action_state queries
+remain supported for their distinct existing consumers. No route or history
+is removed. The original PATCH/receipt already forwards both submit and
+provide_input, so it needs no second command handler or BFF transition logic.

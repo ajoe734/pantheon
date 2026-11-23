@@ -1,13 +1,16 @@
 {
-  "fixture": "100 distinct waiting tickets, 2000-char deliverable, criterion and input reason; simulated owner summaries, not hosted data",
+  "fixture": "100 distinct owner summaries: 50 Persona input requests and 50 returned human assignments; 2000-char deliverable, criterion and reason. Simulated summaries, not hosted data.",
   "ticket_count": 100,
   "projected_count": 100,
-  "owner_reply_bytes": 683570,
-  "projected_inbox_rows_bytes": 1192200,
+  "owner_reply_bytes": 792057,
+  "projected_inbox_rows_bytes": 1307250,
   "research_http_reply_cap_bytes": 4194304,
   "new_research_calls_per_inbox_read": 1,
   "max_meeting_contributor_direct_http_calls_per_read": 4,
   "persistent_writer_count": 0,
   "cache_entries_added": 0,
-  "bff_storage_growth_bytes_per_day": 0
+  "bff_storage_growth_bytes_per_day": 0,
+  "cadence": "on-demand inbox reload; no recurring job",
+  "hosted_scale": "three enrolled trading personas, at most nine scheduled meetings/week plus explicitly convened meetings; human pages remain capped at 100 independent of archive size",
+  "cleanup": "request data released on response; no cross-request ticket cache; persisted records and retention remain with Research owner"
 }

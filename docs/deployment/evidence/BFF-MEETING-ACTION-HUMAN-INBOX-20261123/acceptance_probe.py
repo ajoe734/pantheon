@@ -32,7 +32,7 @@ def main():
 
     try:
         meeting = read("/bff/management/meetings/" + urllib.parse.quote(os.environ["MEETING_ID"], safe=""))
-        tickets = read("/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&page_size=100")
+        tickets = read("/api/v1/research/tickets?meeting_linked=true&human_actionable=true&page_size=100")
         inbox = read("/bff/management/human-inbox?source_type=meeting&page_size=200")
         assert meeting.get("status") == "ok", "meeting_owner_unavailable"
         assert isinstance(meeting.get("actions"), list), "action_projection_absent"
@@ -44,6 +44,7 @@ def main():
         for item in work:
             assert item.get("ticket_id") and item.get("meeting_id") and item.get("required_actor"), "unlinked_input"
             assert item.get("resumes_with") and item.get("reason"), "input_context_absent"
+            assert item.get("response_action") in {"submit", "provide_input"}, "human_transition_absent"
         if not meeting["actions"] and not meeting["prior_actions"]:
             print(json.dumps({"status": "skipped", "reason": "no_real_meeting_actions", "reply_bytes": sizes}))
             return 77

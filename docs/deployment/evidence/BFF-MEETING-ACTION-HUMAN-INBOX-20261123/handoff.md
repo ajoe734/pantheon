@@ -188,3 +188,48 @@ The ten-file regression passed 269 tests, 100 warnings in 104.02 s (terminal
 exit 0). Checkout packaging/import, diff budget and whitespace checks passed.
 Resource bounds and residual owners above are unchanged. This requests fresh
 independent review of component validation; hosted acceptance remains unproven.
+
+## Direct human assignments and Persona input requests
+
+Operator reopened head `323ac0cf336a` because the contributor excluded directly
+human-owned open/in_progress/returned tickets. Source anchor `b1e162bf0`
+replaces the waiting-only query with one owner-filtered `human_actionable=true`
+page on the original ticket endpoint. Research implements this union before
+SQL pagination in `RESEARCH-MEETING-ACTION-TICKETS-20261123` (inspected owner
+head `ad5dec939`); no BFF archive scan, second inbox or local work store exists.
+The continuation href forwards the same filter/caller scope and opaque cursor.
+
+Each original inbox row exposes `response_action=submit` for a directly owned
+human assignment, its current `required_actor`, deliverable/acceptance criterion,
+revision and reviewer. `resumes_with` identifies that reviewer after submission.
+Returned work retains prior evidence and `review_decision`, and uses its return
+reason. Persona escalation exposes `response_action=provide_input` and resumes
+the same accountable Persona. Submitted/accepted direct work and runnable
+Persona work are absent from this human queue. Existing REVIEW disposition,
+refusal and proposal callers retain their separate supported purposes.
+
+The existing authenticated original-ticket PATCH already preserves explicit
+actions, actor, revision, idempotency and durable receipts. Its implementation
+is retained; owner permissions and transitions stay authoritative. The UI must
+use `response_action` and the original ticket link/current revision, present
+the criterion on direct submission and wait for the receipt. Inbox acknowledgement
+does not deliver work. The read-only probe now queries the same human union.
+
+Authenticated BFF route tests share one HTTP owner double between the real
+inbox and ticket routes: both response paths; direct open/in_progress/returned;
+submit -> reviewer return -> corrected submit; wrong approver, read-only viewer,
+tenant mismatch, absent evidence, duplicate writes, stale revision, durable
+receipt/readback, same Persona resumption and disappearance on reload. Pagination
+places 200 unrelated Persona rows before 105 direct human rows, verifies one
+100-item filtered call and continuation without duplicates, excludes another
+approver's work and preserves operator visibility. These are component tests,
+not a claim that the unmerged Research owner or hosted stack was exercised.
+Fresh real-owner integrated proof remains with the existing two-meeting task.
+
+Resource measurements in resources.json cover 50 returned direct-human and
+50 Persona-input rows with 2000-character fields. On-demand reads only: one
+Research call/page, four direct contributor owner calls maximum, 100 Research
+rows/page and 4 MiB HTTP reply cap; zero new recurring jobs, persistent writers,
+cache entries or daily BFF storage growth. Request data is released on response;
+Research owns persistence/retention and the chain storage manifest. Prior privacy
+and partial-source fixes remain covered. Residual owners listed above are unchanged.

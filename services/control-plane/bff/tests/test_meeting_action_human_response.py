@@ -315,7 +315,7 @@ def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetin
         assert body["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["page_info"]["next_page_token"] == "more-human-work"
     assert len(calls) == 2  # Exactly one Research list per reload; no per-ticket reads.
     assert calls[0][2]["Authorization"] == _auth_headers()["Authorization"]
-    assert parse_qs(urlsplit(calls[0][1]).query)["action_state"] == ["waiting_for_input"]
+    assert parse_qs(urlsplit(calls[0][1]).query)["human_actionable"] == ["true"]
     fail[0] = 403
     body = client.get("/bff/management/human-inbox", headers=_auth_headers()).json()
     assert body["meta"]["partial"] is True
@@ -389,7 +389,7 @@ def test_research_inbox_survives_missing_consultation_and_read_store(
         assert headers["Authorization"] == _auth_headers()["Authorization"]
         assert headers["X-Tenant-Id"] == "tenant-a"
         assert method == "GET" and urlsplit(url).path == "/api/research/tickets"
-        assert parse_qs(urlsplit(url).query)["action_state"] == ["waiting_for_input"]
+        assert parse_qs(urlsplit(url).query)["human_actionable"] == ["true"]
         assert parse_qs(urlsplit(url).query)["meeting_linked"] == ["true"]
         return 200, {"data": [ticket()], "page_info": {"next_page_token": next_page_token}}
 
@@ -495,3 +495,184 @@ def test_meeting_owner_denied_is_distinct_from_unavailable_and_historical(meetin
     state["offline"] = True
     response = client.get("/bff/management/meetings/mtg-001", headers=make_headers())
     assert response.status_code == 200 and response.json()["status"] == "unavailable"
+
+
+@pytest.fixture
+def human_delivery_stack(inbox_meetings_stack, research_stack, monkeypatch):
+    """Normal inbox + original ticket routes sharing one owner HTTP double."""
+    from services.control_plane.bff.auth.policy import extract_identity
+    inbox, _, _ = inbox_meetings_stack
+    research, state, owner = research_stack
+    inbox.app.router.routes.extend(research.app.router.routes)
+    inbox.app.add_middleware(OwnerReadContextMiddleware)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.test")
+    monkeypatch.setattr("services.control_plane.bff.research.client.ResearchServiceClient", lambda: owner)
+    original = owner.http_request
+    state["extra_tickets"] = []
+
+    def transport(method, url, payload=None, headers=None):
+        identity = extract_identity(headers["Authorization"])
+        row = state["ticket"]
+        roles = set(identity.roles)
+        privileged = bool(roles & {"operator", "admin"})
+        if headers["X-Tenant-Id"] != row["tenant_id"]:
+            return 404, {"detail": "not found"}
+        visible = privileged or identity.operator_id in {row["owner"], row["required_actor"], row.get("reviewer_id")}
+        if method == "GET" and urlsplit(url).path == "/api/research/tickets":
+            state["calls"].append((method, url, None, headers))
+            query = parse_qs(urlsplit(url).query)
+            assert query["human_actionable"] == ["true"]
+            assert query["meeting_linked"] == ["true"]
+            assert "action_state" not in query  # Filtering precedes the owner page boundary.
+            rows = [row, *state["extra_tickets"]]
+            rows = [r for r in rows if r["tenant_id"] == headers["X-Tenant-Id"]
+                    and (privileged or identity.operator_id == r["required_actor"])
+                    and (r["action_state"] == "waiting_for_input" or
+                         r["meeting_action"]["assignee_kind"] == "human" and
+                         r["action_state"] in {"open", "in_progress", "returned"})]
+            offset = int(query.get("page_token", ["owner:0"])[0].split(":")[1])
+            limit = int(query["page_size"][0])
+            return 200, {"data": copy.deepcopy(rows[offset:offset + limit]), "page_info": {
+                "next_page_token": f"owner:{offset + limit}" if len(rows) > offset + limit else None}}
+        if not visible:
+            return 404, {"detail": "not found"}
+        if method == "PATCH" and payload["actor_id"] != identity.operator_id:
+            return 403, {"detail": "actor mismatch"}
+        if method == "PATCH" and payload["patch"].get("action") == "return":
+            patch = payload["patch"]
+            if identity.operator_id != row["reviewer_id"] or "reviewer" not in roles:
+                return 403, {"detail": "reviewer required"}
+            if row["action_state"] != "submitted" or patch["expected_revision"] != row["revision"]:
+                return 409, {"detail": "stale submission"}
+            row.update(action_state="returned", revision=row["revision"] + 1, required_actor=row["owner"],
+                       review_decision={"decision": "return", "reason": patch["reason"],
+                                        "review_source": patch["review_source"]})
+            row["lifecycle_history"].append({"action": "return", "transitioned_by": identity.operator_id})
+            return 200, copy.deepcopy(row)
+        if method == "PATCH" and payload["patch"].get("action") == "submit":
+            state["calls"].append((method, url, copy.deepcopy(payload), headers))
+            patch = payload["patch"]
+            if not privileged and identity.operator_id != row["owner"]:
+                return 403, {"detail": "not accountable owner"}
+            if patch.get("idempotency_key") in state["replays"]:
+                return 200, copy.deepcopy(row)
+            if patch.get("expected_revision") != row["revision"]:
+                return 409, {"detail": "stale revision"}
+            if row["action_state"] not in {"open", "in_progress", "returned"} or not patch.get("evidence_refs"):
+                return 400, {"detail": "submission requires result evidence"}
+            state["replays"][patch["idempotency_key"]] = True
+            row.update(action_state="submitted", revision=row["revision"] + 1,
+                       required_actor=row["reviewer_id"], evidence_refs=patch["evidence_refs"],
+                       submitted_at="2026-11-23T02:00:00Z")
+            row["lifecycle_history"].append({"action": "submit", "transitioned_by": identity.operator_id})
+            return 200, copy.deepcopy(row)
+        return original(method, url, payload, headers)
+
+    owner.http_request = transport
+    return inbox, state
+
+
+def _human_headers(subject="op-inbox", role="approver"):
+    token = encode_jwt_hs256({"sub": subject, "roles": [role], "tenant_id": "tenant-a",
+                             "exp": 4102444800}, secret=INBOX_SECRET)
+    return {"Authorization": "Bearer " + token, "X-Tenant-Id": "tenant-a"}
+
+
+@pytest.mark.parametrize("kind,state_name,command", [
+    ("human", "open", "submit"), ("human", "in_progress", "submit"),
+    ("human", "returned", "submit"), ("persona", "waiting_for_input", "provide_input"),
+])
+def test_authenticated_inbox_to_original_ticket_delivery_and_reload(human_delivery_stack, kind, state_name, command):
+    client, state = human_delivery_stack
+    row = state["ticket"]
+    row.update(action_state=state_name, reviewer_id="chair-reviewer")
+    row["meeting_action"]["assignee_kind"] = kind
+    if kind == "human":
+        row.update(owner="op-inbox", assignee="op-inbox", assignee_kind="human")
+    if state_name == "returned":
+        row["review_decision"] = {"decision": "return", "reason": "Add dates", "submission_revision": 2}
+        row["evidence_refs"] = [{"kind": "research_artifact", "artifact_id": "old-result"}]
+    headers = _human_headers(role="operator" if kind == "persona" else "approver")
+
+    def work():
+        response = client.get("/bff/management/human-inbox", headers=headers)
+        assert response.status_code == 200, response.text
+        return [r for r in response.json()["data"]["items"] if r["kind"] == "meeting_action"]
+
+    first = work()
+    assert len(first) == 1 and work() == first
+    item = first[0]
+    assert item["response_action"] == command and item["required_actor"] == "op-inbox"
+    assert item["acceptance_criterion"] == row["meeting_action"]["acceptance_criterion"]
+    path = item["links"]["ticket"]
+    patch = {"action": command, "expected_revision": item["revision"],
+             "evidence_refs": [{"kind": "research_artifact", "artifact_id": "corrected-result"}]}
+    assert client.patch(path, headers=_human_headers("unrelated-user"), json=patch).status_code == 404
+    before = len(state["calls"])
+    assert client.patch(path, headers=_human_headers(role="viewer"), json=patch).status_code == 403
+    assert client.patch(path, headers={**headers, "X-Tenant-Id": "tenant-b"}, json=patch).status_code == 403
+    assert len(state["calls"]) == before
+    assert client.patch(path, headers=headers, json={**patch, "evidence_refs": []}).status_code == 400
+    write_headers = {**headers, "Idempotency-Key": "original-human-response"}
+    response = client.patch(path, headers=write_headers, json=patch)
+    assert response.status_code == 200, response.text
+    receipt = response.json()
+    assert receipt["ticket_id"] == item["ticket_id"] and receipt["revision"] == 4
+    assert receipt["required_actor"] == ("chair-reviewer" if kind == "human" else "persona-alpha")
+    assert receipt["action_state"] == ("submitted" if kind == "human" else "in_progress")
+    assert client.patch(path, headers=write_headers, json=patch).json() == receipt
+    readback = client.get(path, headers=headers).json()
+    assert {key: readback[key] for key in receipt} == receipt
+    assert len(row["lifecycle_history"]) == 1 and work() == []
+    assert client.patch(path, headers={**headers, "Idempotency-Key": "stale"}, json=patch).status_code == 409
+    if state_name == "returned":
+        assert item["reason"] == "Add dates" and item["evidence_refs"][0]["artifact_id"] == "old-result"
+        assert receipt["review_decision"] == item["review_decision"]
+    if kind == "human" and state_name == "open":
+        returned = client.patch(path, headers={**_human_headers("chair-reviewer", "reviewer"),
+                                              "Idempotency-Key": "return-on-criterion"},
+                                json={"action": "return", "expected_revision": 4,
+                                      "reason": "Add observation dates", "review_source": "next-meeting"})
+        assert returned.status_code == 200, returned.text
+        rework = work()
+        assert len(rework) == 1 and rework[0]["ticket_id"] == item["ticket_id"]
+        assert rework[0]["response_action"] == "submit" and rework[0]["revision"] == 5
+        assert rework[0]["reason"] == "Add observation dates"
+        assert rework[0]["evidence_refs"] == receipt["evidence_refs"]
+        corrected = client.patch(path, headers={**headers, "Idempotency-Key": "corrected-submission"},
+                                 json={**patch, "expected_revision": 5})
+        assert corrected.status_code == 200 and corrected.json()["revision"] == 6
+        assert work() == []
+        assert [event["action"] for event in row["lifecycle_history"]] == ["submit", "return", "submit"]
+
+
+def test_human_owner_filter_cursor_past_many_persona_items(human_delivery_stack):
+    client, state = human_delivery_stack
+    for index in range(305):
+        row = ticket()
+        row.update(ticket_id=f"rt-action-{index:032x}", action_state="open")
+        if index >= 200:
+            row.update(owner="op-inbox", required_actor="op-inbox")
+            row["meeting_action"]["assignee_kind"] = "human"
+        state["extra_tickets"].append(row)
+    other = copy.deepcopy(state["extra_tickets"][-1])
+    other.update(ticket_id="other-user", owner="other-user", required_actor="other-user")
+    state["extra_tickets"].insert(0, other)
+    headers = _human_headers()
+    response = client.get("/bff/management/human-inbox?page_size=200", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    items = [r for r in body["data"]["items"] if r["kind"] == "meeting_action"]
+    assert len(items) == 100 and all(r["required_actor"] == "op-inbox" for r in items)
+    surface = body["meta"]["surfaces"]["meetings"]["surfaces"]["research"]
+    assert surface["status"] == "degraded" and surface["page_info"]["next_page_token"] == "owner:100"
+    assert len(state["calls"]) == 1  # No archive scan or per-ticket fanout at the BFF.
+    next_page = client.get(surface["href"] + "&page_token=owner:100", headers=headers)
+    assert next_page.status_code == 200, next_page.text
+    assert len(next_page.json()["data"]) == 6 and next_page.json()["page_info"]["next_page_token"] is None
+    assert not {r["ticket_id"] for r in items} & {r["ticket_id"] for r in next_page.json()["data"]}
+    assert "other-user" not in next_page.text and "other-user" not in response.text
+    assert len(state["calls"]) == 2
+    # Operators retain owner-authorized visibility of other people's work.
+    admin_page = client.get(surface["href"], headers=_auth_headers())
+    assert admin_page.status_code == 200 and any(r["ticket_id"] == "other-user" for r in admin_page.json()["data"])
