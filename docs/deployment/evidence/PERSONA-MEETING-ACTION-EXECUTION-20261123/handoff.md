@@ -1,7 +1,7 @@
 # Persona consumer handoff
 
-RC2 WP2.3 / RC6 meeting follow-through. PR #7765 is published; canonical handoff is blocked;
-no hosted deployment or acceptance is asserted. Owner Codex, assigned reviewer Codex2.
+RC2 WP2.3 / RC6 meeting follow-through. Source rework continues on PR #7765;
+no merge, hosted deployment or acceptance is asserted. Owner Codex, assigned reviewer Codex2.
 
 The implemented interfaces and existing caller/owner trace are in contract.md.
 Research's approved #7760 contract, including original action_id=ticket_id, nested
@@ -33,7 +33,7 @@ integrated acceptance. Source acceptance must not label fixture sizes as hosted.
 
 ## Residual findings and owners
 
-* Canonical provenance / coordinator delivery owner: handoff of ff454c28a was
+* Historical canonical provenance / coordinator delivery finding: handoff of ff454c28a was
   rejected (exit 1). Inherited contract commit 364a1f1bd retains its genuine
   LLM-Agent: Antigravity2 and author time 2026-11-23T04:12:53Z. Rebase set its
   committer time to 2026-11-23T04:56:18Z, after Codex inherited this task. The
@@ -44,6 +44,8 @@ integrated acceptance. Source acceptance must not label fixture sizes as hosted.
   edit was attempted. The coordinator must disposition historical provenance or
   authorize the narrow published-history repair before a fresh exact-head handoff.
   The worktree is preserved in ordinary commits; approval/merge is not claimed.
+  This is the prior handoff result, not evidence of the new head's admission.
+  Current governed admission must determine whether this hold still applies.
 
 * RC2 WP2.3, Persona enrollment / two-meeting proof owner: hosted access provisioning
   remains unverified here. The three trading Personas need genuine owner-issued
@@ -59,11 +61,11 @@ integrated acceptance. Source acceptance must not label fixture sizes as hosted.
 * RC3 WP3.1/3.3, Research storage owner: existing overall Research retention remains
   the upstream residual recorded by #7760. Per-ticket history/note limits and bounded
   Persona envelopes do not prove a whole-database retention policy.
-* Review independence, coordinator: canonical assignment is Codex2, the same family
-  as this owner. No current task-scoped cross-family capacity observation was supplied
-  in this continuation. Preserve the canonical assignment until the coordinator either
-  records the live capacity exception or routes review to another available family.
-  This document does not claim such an exception has been established.
+* Review independence exception: canonical assignment remains Codex2, the same family
+  as owner Codex. The current command-runtime supervisor capacity lookup and actual
+  agent_can_take_task results are recorded in review-capacity.json. All configured
+  alternatives checked there are unavailable; preserve the assigned reviewer under
+  this capacity exception. This observation is not a review or approval.
 
 No new remediation task, global task edit, workflow gate, credential, deployment or
 second dispatcher was introduced. The transient status-outbox refusal at wake-up
@@ -124,3 +126,32 @@ cleared through existing governed recovery; show/progress subsequently succeeded
 - Fail-closed boundaries: no bypass for real denied datasets (`tw_price_daily`/`tw_broker_top`
   with `accessible_data=[]`), foreign tenants/tickets, private notes, persistent owner 5xx
   outages, empty `human_input`, or title-only references.
+
+## Correction round 6 (Codex)
+
+- Reproduced the coordinator's remaining incident on 716e3efb2 with a single accepted
+  operator-owned MT-2 ticket for persona:<deciding Persona>. The ordinary consume_run
+  produced zero verified_results before the fix (new positive regression failed).
+- Removed the obsolete owner prefilter on the existing bounded persona-subject result
+  query. The existing Python series check now admits human MT-2 work for that exact
+  subject, requiring independent accept review; normal owner-bound runnable admission
+  and Persona-owned historical series stay distinct. No route/service/store/job was added.
+- The ordinary decision reads the actual same-ticket note body and cites
+  facts:meeting_action_result:<ticket_id> with zero semantic hits. Observe and CaseFile
+  label real human assignee and reviewer separately, accountable_persona_id=None.
+- Sixteen normal-cycle negative cases cover other Persona subjects, unsupported MT-3,
+  peer-Persona assignees on a persona series, human runnable attempts, submitted or
+  missing/self/returned/malformed acceptance, cross-tenant or wrong-ticket evidence,
+  private evidence, changed checksum and title-only content. Suppressed series never
+  cause an evidence-owner lookup. Prior missing-origin human-resume regressions pass.
+- Resource limits/cadence/count/cleanup in contract.md remain unchanged: same three
+  bounded list queries, four results/tick, eight refs/result, existing envelope caps.
+  Reviewer labels fit those enforced caps; no new persistent runtime writer exists.
+- Current caller/storage trace: this correction changes only CycleOwners' existing
+  Research reader and _action_case_file's existing fact projection. Research remains
+  ticket/note/review owner, Consultation remains meeting-series producer. Prior owner
+  prefilter was the rejected obsolete restriction; no historical records were removed.
+- Validation and exact runtime blobs for the new review head are in evidence.json.
+  Existing executable probe.py checks Persona-issued submission plus later citation;
+  the hosted two-meeting proof owner must additionally prove this human MT-2 branch
+  with real accepted owner records. No hosted acceptance is inferred from HTTP stubs.

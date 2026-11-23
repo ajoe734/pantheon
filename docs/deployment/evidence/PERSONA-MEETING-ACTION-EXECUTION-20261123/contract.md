@@ -54,8 +54,9 @@ policy catalog, access receipt or enrollment is fabricated.
 Each normal eligible cycle reads up to three bounded Research pages (page size four):
 open/in_progress/returned filtered by accountable owner, and submitted/accepted
 queried by M's actual stable MT-1 pool series (subject_ref=pool:<persona_id>) plus
-genuine supported historical/persona series (subject_ref=persona:<persona_id>,
-owner=<persona_id>) when page capacity remains.
+genuine supported historical/persona series (subject_ref=persona:<persona_id>)
+when page capacity remains. Both result queries filter by the exact subject;
+only the runnable query filters by the deciding Persona's owner identity.
 next_page_token persists in existing packets and continues next cycle, resetting
 after exhaustion. pending_pages is explicit; owner/evidence failure retains the
 cursor. This avoids permanent first-page truncation. Runnable rows require exact
@@ -65,6 +66,14 @@ MT-1/MT-2/MT-4 series), admit approved same-subject shared human/other-assignee
 research without treating its assignee as the deciding Persona, and explicitly label
 submitted versus accepted (state, review_status, accepted, review_decision, owner,
 assignee, assignee_kind, accountable_persona_id).
+The persona-subject reader preserves Persona-owned MT-1/MT-2/MT-4 results and
+also admits human-owned MT-2 results for that exact Persona subject. Human
+MT-2 results require accepted state and an accept review with a nonempty reason,
+review source and reviewed_by distinct from the assignee. Actual reviewer_id
+and review_decision remain separate from owner/assignee in Observe and fact
+subject_fields. A shared human result is never labeled as the Persona's work
+or admitted to runnable. Other Persona subjects, peer-owned persona-series
+results and unsupported meeting types are rejected before evidence lookup.
 
 Chair source_refs are actual citation strings. They resolve from the original
 tenant-scoped public meeting case with origin/digest/content/sharing checks.

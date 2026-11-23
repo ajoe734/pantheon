@@ -1,12 +1,12 @@
 {
   "task_id": "PERSONA-MEETING-ACTION-EXECUTION-20261123",
-  "owner": "Antigravity",
-  "assigned_reviewer": "Codex",
+  "owner": "Codex",
+  "assigned_reviewer": "Codex2",
   "delivery_state": "ready_for_review",
   "hosted_accepted": false,
   "source_base": "454420828361de17e689e6d9ad307e12b4064d3c",
   "runtime_blobs": {
-    "services/persona/persona_cycle_controller.py": "82adc9860df78f5795a8ff250f4f45bf302d2ba3",
+    "services/persona/persona_cycle_controller.py": "e34ead337385ddf19aae64475e5ecf8ae538c998",
     "services/persona/write_owner.py": "ba152417c10c2fbd8beaaf6306c53c60030a15e4",
     "services/control-plane/persona/persona_policy_resolver.py": "68191fd9b6c9f27de2430e81c33b1c103433d95c",
     "integrations/openclaw/persona_ooda_runtime.py": "fe032094dbc093b96d703aa7aabff414e42d705c",
@@ -14,18 +14,19 @@
   },
   "validation": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_meeting_triggers.py services/persona/test_case_file_outcomes.py services/persona/test_persona_owner_read_roles.py services/control-plane/persona/test_persona_policy_resolver.py services/openclaw-gateway-adapter/test_persona_tool_broker.py integrations/openclaw/test_persona_agent_sync.py integrations/openclaw/test_persona_ooda_runtime.py --tb=short",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_meeting_triggers.py services/persona/test_case_file_outcomes.py services/persona/test_persona_owner_read_roles.py services/control-plane/persona/test_persona_policy_resolver.py services/openclaw-gateway-adapter/test_persona_tool_broker.py integrations/openclaw/test_persona_agent_sync.py integrations/openclaw/test_persona_ooda_runtime.py --tb=short",
+      "timeout_seconds": 240,
       "exit_code": 0,
-      "passed": 265,
+      "passed": 282,
       "skipped": 4,
-      "output": "validation.txt"
+      "output": "validation.txt",
+      "duration_seconds": 155.54
     },
     {
-      "command": "npm ci --ignore-scripts && npm test",
-      "cwd": "integrations/openclaw/plugins/pantheon-persona-tools",
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/persona/test_meeting_action_execution.py --tb=short",
       "exit_code": 0,
-      "passed": 19,
-      "failed": 0
+      "passed": 40,
+      "duration_seconds": 33.12
     },
     {
       "command": "git diff --check",
@@ -34,24 +35,14 @@
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev",
       "exit_code": 0
-    },
-    {
-      "command": "python3 docs/deployment/evidence/PERSONA-MEETING-ACTION-EXECUTION-20261123/probe.py --help",
-      "exit_code": 0
-    },
-    {
-      "command": "pytest services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_case_file_outcomes.py services/persona/test_meeting_triggers.py services/openclaw-gateway-adapter",
-      "exit_code": 0,
-      "passed": 821,
-      "note": "one run showed a single concurrency-test failure under parallel machine load; passes on isolated and combined reruns"
     }
   ],
   "acceptance_evidence": {
     "capability_join": "test_capability_joins_authorities_and_denies_labels_or_expired_access; test_capability_read_endpoint_is_tenant_scoped_and_rechecks_at_execution; test_real_three_persona_gated_data_shape_executes_note_and_restricts_unavailable_feed",
-    "ordinary_cycle": "test_submit_next_same_subject_citation_and_restart_concurrency; test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semantic_hits",
+    "ordinary_cycle": "test_submit_next_same_subject_citation_and_restart_concurrency; test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semantic_hits; test_mt2_accepted_human_result_reaches_normal_decision_without_semantic_hits",
     "human_resume": "test_request_exact_human_input_and_resume_original_ticket; test_human_replacement_prioritizes_bounds_requires_citation_and_never_bypasses_denied_dataset",
     "unknown_outcomes": "test_uncertain_write_journal_replays_without_new_note_or_model_work; test_claimed_packet_restart_replays_saved_plan_without_buying_original_turn",
-    "refusal_and_privacy": "test_declined_rejected_or_unrecorded_output_never_delivers; test_chair_string_citations_resolve_real_content_and_private_memory_is_refused",
+    "refusal_and_privacy": "test_declined_rejected_or_unrecorded_output_never_delivers; test_chair_string_citations_resolve_real_content_and_private_memory_is_refused; test_mt2_human_result_scope_and_evidence_fail_closed (16 cases)",
     "pagination_and_budget": "test_pagination_continues_without_hiding_unfinished_work; test_meeting_action_budget_measurement"
   },
   "component_boundary": "Real Persona owner/cron/broker-record/citation and packet paths; Research/meeting HTTP contract stubs. No hosted mutation or integrated-owner success inferred.",
@@ -63,5 +54,48 @@
     "RC2 WP2.3 Persona enrollment/two-meeting proof",
     "RC3 WP3.1/WP3.3 storage"
   ],
-  "review_status": "reopened by Codex on 4c63fa4ad; independent same-ticket human replacement resolution with preserved missing origin reference/reason remediated and verified alongside deliverable capability and M MT-1 pool:<chair> lookup"
+  "review_status": "Correction round 6: MT-2 accepted operator-owned human result omission reproduced then corrected on original bounded reader; new head pending independent canonical review.",
+  "implementation_anchor": "6b5f4f83174e7a286ec589ccd70caa95faf2554b",
+  "inherited_validation": {
+    "at_head": "716e3efb2d8361380a8dd612da766938833aae05",
+    "results": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_meeting_triggers.py services/persona/test_case_file_outcomes.py services/persona/test_persona_owner_read_roles.py services/control-plane/persona/test_persona_policy_resolver.py services/openclaw-gateway-adapter/test_persona_tool_broker.py integrations/openclaw/test_persona_agent_sync.py integrations/openclaw/test_persona_ooda_runtime.py --tb=short",
+        "exit_code": 0,
+        "passed": 265,
+        "skipped": 4,
+        "output": "validation.txt"
+      },
+      {
+        "command": "npm ci --ignore-scripts && npm test",
+        "cwd": "integrations/openclaw/plugins/pantheon-persona-tools",
+        "exit_code": 0,
+        "passed": 19,
+        "failed": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py --base origin/dev",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 docs/deployment/evidence/PERSONA-MEETING-ACTION-EXECUTION-20261123/probe.py --help",
+        "exit_code": 0
+      },
+      {
+        "command": "pytest services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_case_file_outcomes.py services/persona/test_meeting_triggers.py services/openclaw-gateway-adapter",
+        "exit_code": 0,
+        "passed": 821,
+        "note": "one run showed a single concurrency-test failure under parallel machine load; passes on isolated and combined reruns"
+      }
+    ]
+  },
+  "review_independence_exception": {
+    "evidence_file": "review-capacity.json",
+    "reason": "All checked alternative-family identities unavailable in current command-runtime supervisor snapshot; assigned reviewer Codex2 retained. Capacity observation only, no review attestation."
+  },
+  "resource_change": "No new cadence, storage or scheduled writer. Existing 3-query, 4-result, 8-ref and byte/retention caps unchanged; reviewer fields remain within enforced envelopes."
 }
