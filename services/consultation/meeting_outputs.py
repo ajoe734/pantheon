@@ -1229,6 +1229,213 @@ def _format_http_error(status_code: int, body: Mapping[str, Any]) -> str:
     return f"HTTP {status_code}: {msg}"
 
 
+ACTION_PAGE_SIZE = 8
+ACTION_SNAPSHOT_MAX_BYTES = 8192
+ACTION_STATES = frozenset({"open", "in_progress", "waiting_for_input", "submitted", "returned", "accepted"})
+
+
+def _action_headers(tenant_id: str, key: str | None = None) -> dict[str, str]:
+    """The meeting owner acts as itself, never as the assignee or an operator."""
+    token = _resolve_configured_token("CONSULTATION_RESEARCH_SERVICE_TOKEN")
+    if not token:
+        secret = (os.getenv("PANTHEON_RESEARCH_JWT_SECRET") or
+                  os.getenv("PANTHEON_BFF_JWT_SECRET") or
+                  os.getenv("PANTHEON_DEV_BFF_JWT_SECRET") or "").strip()
+        if not secret:
+            raise MeetingOutputRoutingError("research_owner_credential_unavailable", status_code=503)
+        token = _mint_jwt(subject="consultation-svc", tenant_id=tenant_id,
+                          roles=["service", "viewer"], secret=secret,
+                          issuer=os.getenv("PANTHEON_RESEARCH_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER"),
+                          audience=os.getenv("PANTHEON_RESEARCH_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE"))
+    headers = {"X-Tenant-Id": tenant_id, "Authorization": f"Bearer {token}"}
+    if key:
+        headers["Idempotency-Key"] = key
+    return headers
+
+
+def _action_request(method: str, path: str, tenant: str, body: dict | None = None,
+                    *, transport: HttpTransport | None = None, key: str | None = None) -> dict:
+    code, reply = _active_transport(transport)(method, _service_base_url("research_demand") + path,
+                                              _action_headers(tenant, key), body)
+    if code >= 400:
+        # Do not copy owner response bodies (which can contain credentials/private data).
+        raise MeetingOutputRoutingError(f"research_owner_http_{code}", status_code=code)
+    if not isinstance(reply, dict):
+        raise MeetingOutputRoutingError("research_owner_malformed_reply", status_code=502)
+    return reply
+
+
+def _ticket_receipt(reply: Mapping[str, Any], tenant: str, *, origin: Mapping[str, Any] | None = None,
+                    ticket_id: str | None = None) -> dict[str, Any]:
+    """Require a real owner receipt before freezing an id or suppressing a retry."""
+    tid = reply.get("ticket_id")
+    action = reply.get("meeting_action")
+    if (not isinstance(tid, str) or not tid.strip() or len(tid) > 256
+            or reply.get("tenant_id") != tenant or not isinstance(action, Mapping)
+            or reply.get("action_state") not in ACTION_STATES
+            or type(reply.get("revision")) is not int or reply["revision"] < 0
+            or (ticket_id is not None and tid != ticket_id)
+            or (origin is not None and any(action.get(k) != v for k, v in origin.items()))):
+        raise MeetingOutputRoutingError("research_owner_missing_or_invalid_ticket_receipt", status_code=502)
+    return dict(reply)
+
+
+def action_snapshot(ticket: Mapping[str, Any]) -> dict[str, Any]:
+    """Bound the minutes projection; full history and evidence stay at Research."""
+    origin = dict(ticket.get("meeting_action") or {})
+    tid = str(ticket["ticket_id"])
+    row = {"action_id": tid, "ticket_id": tid, "meeting_id": origin.get("meeting_id"),
+           "owner": ticket.get("owner"), "assignee": ticket.get("owner"),
+           "assignee_kind": origin.get("assignee_kind"), "deliverable": origin.get("deliverable"),
+           "acceptance_criterion": origin.get("acceptance_criterion"), "due_at": origin.get("due_at"),
+           "next_review": origin.get("next_review"), "state": ticket.get("action_state"),
+           "revision": ticket.get("revision"), "required_actor": ticket.get("required_actor"),
+           "updated_at": ticket.get("updated_at"), "submitted_at": ticket.get("submitted_at"),
+           "reviewed_at": ticket.get("reviewed_at"), "evidence_refs": list(ticket.get("evidence_refs") or [])[:8],
+           "review_decision": ticket.get("review_decision"), "input_request": ticket.get("input_request"),
+           "downstream": {"target": "research_tickets", "id": tid,
+                          "href": "/api/v1/research/tickets/" + urllib.parse.quote(tid, safe="")}}
+    due = origin.get("due_at")
+    row["overdue"] = bool(due and str(due) < _iso(_utc_now()) and row["state"] != "accepted")
+    if len(json.dumps(row, ensure_ascii=True).encode()) > ACTION_SNAPSHOT_MAX_BYTES:
+        # Preserve identity, criteria and continuation link; never pretend omitted evidence was read.
+        row.update(evidence_refs=[], review_decision=None, input_request=None, evidence_omitted=True)
+    if len(json.dumps(row, ensure_ascii=True).encode()) > ACTION_SNAPSHOT_MAX_BYTES:
+        raise MeetingOutputRoutingError("research_ticket_projection_exceeds_budget", status_code=502)
+    return row
+
+
+def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport | None = None) -> dict:
+    """Three bounded owner queries; no meeting archive or semantic-memory scan.
+
+    Each lane retains its own continuation, including submitted and accepted work,
+    so a large open backlog cannot conceal new submissions or dispositions.
+    """
+    series = meeting.get("meeting_series")
+    if not isinstance(series, Mapping):
+        return {"status": "unavailable", "reason": "stable_series_unavailable", "items": [], "pages": {}}
+    tenant = str(meeting["tenant_id"])
+    pages, items, failures = {}, [], []
+    tokens = (meeting.get("metadata") or {}).get("prior_actions_page_tokens") or {}
+    for lane, states in (("outstanding", "open,in_progress,waiting_for_input,returned"),
+                         ("submitted", "submitted"), ("reviewed", "accepted")):
+        query = {"meeting_linked": "true", "meeting_type": series["meeting_type"],
+                 "subject_ref": series["subject_ref"], "action_state": states, "page_size": ACTION_PAGE_SIZE}
+        if isinstance(tokens, Mapping) and tokens.get(lane):
+            query["page_token"] = str(tokens[lane])
+        try:
+            reply = _action_request("GET", "/api/research/tickets?" + urllib.parse.urlencode(query), tenant,
+                                    transport=transport)
+            rows, info = reply.get("data"), reply.get("page_info")
+            if not isinstance(rows, list) or len(rows) > ACTION_PAGE_SIZE or not isinstance(info, Mapping):
+                raise MeetingOutputRoutingError("research_owner_malformed_page", status_code=502)
+            page_items = []
+            for raw in rows:
+                ticket = _ticket_receipt(raw, tenant, origin=series)
+                if ticket["meeting_action"].get("meeting_id") != meeting.get("meeting_id"):
+                    page_items.append(action_snapshot(ticket))
+            items.extend(page_items)
+            pages[lane] = {"status": "ok", "next_page_token": info.get("next_page_token"),
+                           "has_more": bool(info.get("next_page_token")), "returned": len(page_items),
+                           "owner_query": query}
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__
+            failures.append(reason)
+            pages[lane] = {"status": "denied" if getattr(exc, "status_code", None) in {401, 403} else "unavailable",
+                           "reason": reason, "owner_query": query}
+    return {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
+            "items": items, "pages": pages}
+
+
+def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path | None = None,
+                             transport: HttpTransport | None = None) -> list[dict[str, Any]]:
+    """Reserve work at its existing owner, with an unchanged source on ambiguous retries."""
+    ledger = _DispatchLedger(Path(store_path) if store_path is not None else _default_store_path())
+    tenant, mid = str(meeting["tenant_id"]), str(meeting["meeting_id"])
+    actions = (meeting.get("synthesis") or {}).get("actions") or []
+    if len(actions) > ACTION_PAGE_SIZE:
+        raise ValueError("at most 8 adopted actions per meeting")
+    results = []
+    for action in actions:
+        source = str(action["source_action_id"])
+        key = f"meeting-action:{tenant}:{mid}:{source}"
+        saved = ledger.get(key) or {}
+        if saved.get("receipt"):
+            action.update(copy.deepcopy(saved["receipt"]))
+            results.append(action)
+            continue
+        origin = {"meeting_id": mid, "source_action_id": source, **meeting["meeting_series"],
+                  "assignee_kind": action["assignee_kind"], "deliverable": action["deliverable"],
+                  "acceptance_criterion": action["acceptance_criterion"], "reviewer_id": "consultation-svc",
+                  "source_refs": action["source_refs"]}
+        for field in ("due_at", "next_review"):
+            if action.get(field):
+                origin[field] = action[field]
+        body = {"title": action["deliverable"][:256], "description": action["acceptance_criterion"],
+                "priority": "normal", "owner": action["assignee"], "meeting_action": origin}
+        # Keep the original request even after a process restart; divergent replay must fail at the owner.
+        if saved.get("request") is not None and saved["request"] != body:
+            raise ValueError("adopted action changed after dispatch attempt")
+        ledger.put(key, {"request": body})
+        try:
+            ticket = _ticket_receipt(_action_request("POST", "/api/research/tickets", tenant, body,
+                                      transport=transport, key=key), tenant, origin=origin)
+            if ticket.get("owner") != action["assignee"]:
+                raise MeetingOutputRoutingError("research_owner_assignment_mismatch", status_code=502)
+            receipt = {"action_id": ticket["ticket_id"], "ticket_id": ticket["ticket_id"],
+                       "state": ticket["action_state"], "downstream": action_snapshot(ticket)["downstream"],
+                       "dispatch_error": None}
+            ledger.put(key, {"request": body, "receipt": receipt})
+            action.update(receipt)
+        except Exception as exc:
+            action.update(dispatch_error=str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__,
+                          state="dispatch_pending")
+        results.append(action)
+    return results
+
+
+def review_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path | None = None,
+                           transport: HttpTransport | None = None) -> list[dict[str, Any]]:
+    """Apply a chair's explicit criterion comparison to the same submitted owner revision."""
+    ledger = _DispatchLedger(Path(store_path) if store_path is not None else _default_store_path())
+    tenant, mid = str(meeting["tenant_id"]), str(meeting["meeting_id"])
+    prior = {r["action_id"]: r for r in meeting.get("prior_actions") or []}
+    results = []
+    for review in (meeting.get("synthesis") or {}).get("action_reviews") or []:
+        tid = review["action_id"]
+        key = f"meeting-action-review:{tenant}:{mid}:{tid}"
+        saved = ledger.get(key) or {}
+        if saved.get("receipt"):
+            results.append(copy.deepcopy(saved["receipt"]))
+            continue
+        snapshot = prior[tid]
+        patch = {"action": review["decision"], "expected_revision": snapshot["revision"],
+                 "idempotency_key": key, "reason": review["reason"], "review_source": mid}
+        if saved.get("request") is not None and saved["request"] != patch:
+            raise ValueError("chair review changed after dispatch attempt")
+        ledger.put(key, {"request": patch})
+        try:
+            reply = _action_request("PATCH", "/api/research/tickets/" + urllib.parse.quote(tid, safe=""), tenant,
+                                    {"patch": patch}, transport=transport, key=key)
+            ticket = _ticket_receipt(reply, tenant, ticket_id=tid)
+            receipt = {**review, "status": "recorded", "owner_receipt": action_snapshot(ticket)}
+            ledger.put(key, {"request": patch, "receipt": receipt})
+        except Exception as exc:
+            receipt = {**review, "status": "retry_pending", "error": str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__}
+        results.append(receipt)
+    return results
+
+
+def read_action_status(tenant_id: str, ticket_id: str, *, transport: HttpTransport | None = None) -> dict:
+    try:
+        reply = _action_request("GET", "/api/research/tickets/" + urllib.parse.quote(ticket_id, safe=""),
+                                tenant_id, transport=transport)
+        return {"status": "ok", "ticket": action_snapshot(_ticket_receipt(reply, tenant_id, ticket_id=ticket_id))}
+    except Exception as exc:
+        return {"status": "denied" if getattr(exc, "status_code", None) in {401, 403} else "unavailable",
+                "reason": str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__}
+
+
 def dispatch_proposals(
     meeting: dict[str, Any],
     *,

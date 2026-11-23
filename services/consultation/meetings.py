@@ -2028,6 +2028,143 @@ def _record_refusal_in_store(
     return refused_meeting
 
 
+def _meeting_series(meeting: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """Join only a verified stable subject, never a meeting-type global default."""
+    code = str(meeting.get("meeting_code") or "")
+    ref = str(meeting.get("subject_ref") or "").strip()
+    chair = str(meeting.get("chair_persona_id") or "")
+    convener = meeting.get("convened_by") or {}
+    if code == "MT-1":
+        # MT-1 is the owning Persona's pool; dates/weekly trigger IDs are not series identities.
+        if ref in {chair, f"persona:{chair}", f"pool:{chair}"} or (
+                convener.get("kind") == "persona" and convener.get("id") == chair
+                and (not ref or ref.startswith((f"{chair}:", f"{chair}|", "week:", "meeting:")))):
+            return {"meeting_type": code, "subject_ref": f"pool:{chair}"}
+    if ref and not ref.startswith(("meeting:", "mtg-", "week:", "trigger:")) and not re.search(r"\d{4}-W\d{2}", ref):
+        return {"meeting_type": code, "subject_ref": ref}
+    # Existing recurrence/committee identity may be propagated by the trusted trigger.
+    # Do not trust arbitrary metadata to join committees here.
+    return None
+
+
+def _participant_action_capability(tenant_id: str, persona_id: str) -> Dict[str, Any]:
+    """Read the Persona owner/broker decision; role labels grant no capability."""
+    base = (os.getenv("PANTHEON_PERSONA_API_URL") or os.getenv("PERSONA_API_URL") or "").rstrip("/")
+    result: Dict[str, Any] = {"persona_id": persona_id, "status": "owner_unavailable",
+                              "can_receive_persona_action": False, "can_mutate_trading_state": False,
+                              "consultation_can_mutate_trading_state": False}
+    if not base:
+        return {**result, "reason": "persona_owner_unconfigured"}
+    try:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        token = resolve_runtime_manager_auth(
+            token_env_key="CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
+            token_file_env_key=_DIRECTORY_FILE_ENV, default_token="").token
+        if not token:
+            token = os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN") or os.getenv("PERSONA_SERVICE_TOKEN") or ""
+        headers = {"X-Tenant-Id": tenant_id, "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        path = f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/action-capability?run_purpose=daily_cycle"
+        req = urllib.request.Request(base + path, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = json.loads(resp.read(16385).decode())
+        if not isinstance(raw, Mapping) or raw.get("persona_id") != persona_id:
+            return {**result, "reason": "persona_owner_invalid_receipt"}
+        # Never pass access credentials, private data, or an unbounded owner object to the model.
+        for key in ("status", "reason", "can_receive_persona_action", "can_be_assigned", "executable",
+                    "allowed_deliverables", "allowed_execution_targets", "denial_reasons", "run_purpose"):
+            value = raw.get(key)
+            if isinstance(value, (bool, str, list)) and len(json.dumps(value).encode()) <= 1024:
+                result[key] = value
+        return result
+    except urllib.error.HTTPError as exc:
+        return {**result, "status": "denied" if exc.code in {401, 403} else "owner_unavailable",
+                "reason": f"persona_owner_http_{exc.code}"}
+    except Exception as exc:
+        return {**result, "reason": f"persona_owner_{type(exc).__name__}"}
+
+
+def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any],
+                             allowed_citations: set[str]) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Only an explicit chair adoption produces work; rounds remain advisory."""
+    actions, reviews, rejected = [], [], []
+    if str(raw.get("outcome") or "").upper() == "REVIEW" or raw.get("unreadable"):
+        return actions, reviews, rejected
+    source_ids: set[str] = set()
+    capabilities = {c["persona_id"]: c for c in meeting.get("participant_action_capabilities") or []}
+    prior = {a["action_id"]: a for a in meeting.get("prior_actions") or []}
+    raw_actions = raw.get("actions") or []
+    if not isinstance(raw_actions, list) or len(raw_actions) > 8:
+        return [], [], [{"reason": "actions_must_be_bounded_list"}]
+    for idx, item in enumerate(raw_actions):
+        reason = None
+        if not isinstance(item, Mapping):
+            rejected.append({"index": idx, "reason": "action_not_object"})
+            continue
+        fields = ("source_action_id", "assignee", "assignee_kind", "deliverable", "acceptance_criterion")
+        action = {k: item.get(k) for k in fields}
+        if any(not isinstance(v, str) or not v.strip() or len(v) > (2000 if k in {"deliverable", "acceptance_criterion"} else 256)
+               for k, v in action.items()):
+            reason = "missing_or_unbounded_assignment_fields"
+        refs = item.get("source_refs")
+        if not isinstance(refs, list) or not 1 <= len(refs) <= 8 or any(not isinstance(r, str) or r not in allowed_citations for r in refs):
+            reason = "invalid_action_source_refs"
+        if not meeting.get("meeting_series"):
+            reason = "stable_series_unavailable"
+        if action.get("source_action_id") in source_ids:
+            reason = "duplicate_source_action_id"
+        if action.get("assignee_kind") == "persona":
+            cap = capabilities.get(action.get("assignee"), {})
+            if cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed":
+                reason = "persona_owner_did_not_allow_assignment"
+        elif action.get("assignee_kind") != "human":
+            reason = "invalid_assignee_kind"
+        # A human assignment must be deliberate, with a stated human-only requirement.
+        if action.get("assignee_kind") == "human" and not str(item.get("human_requirement") or "").strip():
+            reason = "human_requirement_required"
+        due, review = item.get("due_at"), item.get("next_review")
+        if due:
+            try:
+                parsed = datetime.fromisoformat(str(due).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError()
+                action["due_at"] = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            except (ValueError, TypeError):
+                reason = "invalid_due_at"
+        elif isinstance(review, str) and review.strip() and len(review) <= 256:
+            action["next_review"] = review
+        else:
+            reason = "due_or_explicit_next_review_required"
+        if reason:
+            rejected.append({"index": idx, "reason": reason})
+            continue
+        source_ids.add(action["source_action_id"])
+        actions.append({**action, "source_refs": list(refs), "state": "dispatch_pending",
+                        **({"human_requirement": str(item["human_requirement"])[:2000]} if item.get("human_requirement") else {})})
+    seen_reviews = set()
+    for item in (raw.get("action_reviews") or [])[:24]:
+        if not isinstance(item, Mapping):
+            continue
+        tid = item.get("action_id")
+        snapshot = prior.get(tid, {})
+        refs = item.get("evidence_refs")
+        # The model must compare the actual prior criterion and cite the submitted evidence it saw.
+        expected = snapshot.get("evidence_refs") or []
+        reason = item.get("reason")
+        if (tid in seen_reviews or snapshot.get("state") != "submitted" or snapshot.get("evidence_omitted")
+                or item.get("decision") not in {"accept", "return"}
+                or not isinstance(reason, str) or not reason.strip() or len(reason) > 2000
+                or item.get("acceptance_criterion") != snapshot.get("acceptance_criterion")
+                or not expected or refs != expected):
+            rejected.append({"action_id": tid, "reason": "invalid_review_criterion_or_evidence"})
+            continue
+        seen_reviews.add(tid)
+        reviews.append({"action_id": tid, "decision": item["decision"], "reason": reason,
+                        "acceptance_criterion": item["acceptance_criterion"], "evidence_refs": refs})
+    return actions, reviews, rejected
+
+
 def convene_persona_meeting(
     *,
     store: Any,
