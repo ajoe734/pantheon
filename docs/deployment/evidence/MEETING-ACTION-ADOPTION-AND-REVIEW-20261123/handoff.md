@@ -110,9 +110,51 @@ contents reach the context, unread evidence cannot be accepted, independent
 lanes finish, failed evidence retries, and requests/bytes stay bounded.
 Existing five-participant concurrent-insertion tests now traverse nine pages.
 
+## Interleaved-chair rejection (34ddc01c2)
+
+Review found that copying the chair's review state to every trading attendee
+reset independent pool scans: A chairs with B present, then B chairs with A
+present, and neither reaches page two. The close path now keeps peer-owned
+schedule fields and updates their attendance cadence only. Only the current
+chair replaces its own series, watermark and continuation. The obsolete
+all-participants-equal assertion was removed; cadence still updates every
+eligible attendee. No supported caller needs another chair's scan attached
+to a peer's schedule. No new collection, extra row, scan or cadence was added.
+Existing get_meeting_schedule/put_meeting_schedule and lifecycle replay remain
+the only schedule readers/writers for this path. Peer cadence merges under the
+existing store lock and emits a complete replay record; no stale peer cursor
+is sent through HTTP sync. The cadence writer and row key/count are unchanged.
+
+Eight committed regressions run the normal convene/two-round/close engine
+against scripted and frozen real-owner list SQL, both with and without a
+ConsultationStore restart before every meeting, through direct storage and
+the actual _HttpMeetingStoreProxy using authenticated ASGI detail/sync routes. Each scenario alternates six
+unique meetings between two chairs with both trading personas attending.
+Three open and three newly accepted tickets per pool all reach participant
+and chair inputs exactly once. Every peer attendance preserves its previous
+review state; the original per-pool scan boundary advances only after its
+third page, and survives final lifecycle replay. Existing concurrent earlier-key,
+fair-evidence and five-participant cadence tests remain in the full suite.
+The reviewer's independent /tmp reproducer also now visits all three open
+tickets in each pool for both owner variants (2 passed); committed tests add
+normal provider input, watermark and restart coverage.
+
+The first full-suite run found that _HttpMeetingStoreProxy has no direct
+schedule getter (5 failed, 105 passed). The existing detail route also inserts
+prior_actions=[] before execution; using that key as the read marker could
+skip the owner read entirely over HTTP. The corrected shared detail projection
+supplies the chair's bounded schedule state for an active, unread meeting.
+Execution uses the persisted prior_actions_source receipt as its read marker,
+so an empty projection cannot suppress retrieval. Both the direct path and
+HTTP path reuse one restore helper, with no new endpoint, proxy, global scan
+or extra mutable work store. Closed historical projections stay unchanged.
+The new HTTP matrix would fail on either missing-continuation or skipped-read
+behavior, and retains peer state across sync and replay.
+
 ## Validation and resource budget
 
-See evidence.json, validation.txt, fair-validation.txt, measurements.txt and
+See evidence.json, validation.txt, fair-validation.txt, interleaved-validation.txt,
+interleaved-focused-validation.txt, measurements.txt and
 storage.json. The normal adapter schema and engine cover two distinct meetings,
 pending plus submitted tickets, accept/return with reason, zero semantic hits,
 actual result contents in each turn, malformed-reply retry, partial close retry,

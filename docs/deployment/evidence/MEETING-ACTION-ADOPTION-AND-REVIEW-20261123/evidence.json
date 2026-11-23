@@ -7,6 +7,18 @@
   "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
   "verification": [
     {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner-independent.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "114 passed, 81 warnings in 103.77s; includes eight new direct/HTTP, restart and scripted/frozen-owner interleaved-chair cases",
+      "terminal_output": "interleaved-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner-independent.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'interleaved_pool_chairs or review_traversal' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "10 passed, 71 deselected, 1 warning in 20.51s",
+      "terminal_output": "interleaved-focused-validation.txt"
+    },
+    {
       "command": "git show cddd6188fc784ced558d6a800e95584aef17636a:services/research/write_owner.py > /tmp/meeting-review-research-owner.py",
       "exit_code": 0,
       "result": "Frozen real owner create/list source SHA256 056e0aa3a472e75de633e6a0553ae5578ab80a51911b54b5c64e11261a8c6290; persistence isolated, SQL filtering/order/limit executed using SQLite dialect translation"
@@ -50,11 +62,11 @@
     },
     {
       "criterion": 3,
-      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks."
+      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval."
     },
     {
       "criterion": 4,
-      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting."
+      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting. Eight interleaved-chair cases alternate six normal convene/two-round/close meetings between two participating chairs, with and without replay before each meeting, on direct and actual HTTP proxy paths. Each pool presents all three outstanding and all three accepted-since-watermark tickets exactly once, preserves peer-owned review state on attendance, and completes its original scan-start watermark independently."
     },
     {
       "criterion": 5,
@@ -103,5 +115,5 @@
       "disposition": "apply live independent-family capacity rule or record actual exception; owner has manufactured neither capacity nor approval"
     }
   ],
-  "independent_review": "Previous fa240d554 rejected for evidence budget starvation; whole-ticket bounded fair reads and independent lane continuation now await new frozen-head review. Same-family reviewer assignment remains for coordinator to reconcile with live capacity or evidenced exception before approval; owner records no approval."
+  "independent_review": "Previous 34ddc01c210a45cbe62a9e78383b4c0f16fa0f22 rejected because peer attendance overwrote the independently owned series scan. Chair-only review writes, atomic peer cadence merge and normal HTTP continuation now await new frozen-head review. Same-family Codex2/Codex assignment still requires coordinator live capacity reconciliation or an evidenced exception before approval. No independent approval, merge, deployment or hosted acceptance is claimed."
 }

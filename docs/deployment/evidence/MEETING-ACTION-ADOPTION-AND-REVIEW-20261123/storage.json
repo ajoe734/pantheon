@@ -47,7 +47,8 @@
     "provider_calls": "existing at most 16 per meeting; two rounds normally, third only with chair evidence",
     "pagination": "One whole ticket per lane, at most eight refs each (24 reads total), no partial evidence cache. Successful ticket pages advance independently even when evidence is unavailable; failed ticket pages retain their own cursor. At most three completed-lane names and one sticky evidence-failure flag persist alongside three 128-character cursors and the original scan start. Completed lanes wait for traversal completion. On any evidence failure the completed traversal clears cursors but retains the old watermark for a fair retry; otherwise the inclusive watermark advances only to the first page start. Concurrent earlier-key changes are revisited next scan; bare legacy cursors restart safely.",
     "live_action_detail_reads": "at most 8 current plus 3 prior direct owner reads per detail request; legacy proposal status reads remain a separate existing cost",
-    "throughput": "At most one ticket per lane per same-series meeting; N stable tickets in a lane require N meetings per traversal. At nine scheduled meetings/week across three personas this is at most 27 prior-ticket slots/week (nine per lane), plus up to 3*H/day from human meetings. No latency or hosted throughput acceptance is claimed. The smaller ticket page ensures every selected ticket can receive all eight evidence reads in one meeting."
+    "throughput": "At most one ticket per lane per same-series meeting; N stable tickets in a lane require N meetings per traversal. At nine scheduled meetings/week across three personas this is at most 27 prior-ticket slots/week (nine per lane), plus up to 3*H/day from human meetings. No latency or hosted throughput acceptance is claimed. The smaller ticket page ensures every selected ticket can receive all eight evidence reads in one meeting.",
+    "schedule_reads": "One existing keyed chair-schedule lookup when an active detail has no persisted prior_actions_source receipt; direct execution uses the same lookup. HTTP execution reuses detail state, with no extra endpoint or schedule-list/archive scan. Completed/frozen meeting reads retain their recorded state."
   },
   "existing_writers": [
     {
@@ -68,7 +69,7 @@
     {
       "name": "existing meeting_schedule",
       "cadence": "existing successful meeting close, at most 5 participant updates/meeting",
-      "counts": "same tenant/persona/meeting_type key; stable series, review watermark, at most three bounded cursors, three completed-lane names, one sticky evidence-failure flag and scan-start timestamp; no per-week or per-series collection",
+      "counts": "same tenant/persona/meeting_type key; stable series, review watermark, at most three bounded cursors, three completed-lane names, one sticky evidence-failure flag and scan-start timestamp; no per-week or per-series collection; only the chair updates review state. Peer attendance preserves its existing series/watermark/scan while updating cadence, including after lifecycle replay",
       "growth_per_day": "updates existing rows; total schedule metadata under 2 KiB/row at owner identifier/token limits; no new rows on repeated keys. Continuation clears at completed scan; at most 45 updates/week for nine meetings with five participants, plus at most 5*H/day.",
       "cap_and_cleanup": "same existing lifecycle retention; continuation replaced in place and cleared after each traversal, even on evidence failure. Inclusive watermark advances only to original scan start after complete source/evidence reads; a failed traversal retains the old watermark so unavailable obligations retry. No new timer or archive cleanup."
     }
