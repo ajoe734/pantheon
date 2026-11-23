@@ -19,6 +19,21 @@ The ticket ID is deterministically derived from tenant, meeting_id and
 source_action_id; action_id equals ticket_id. A replay must match the original
 assignment exactly. Ordinary tickets are unchanged and excluded from meeting queries.
 
+For a deliverable that needs specific datasets, `meeting_action` also accepts
+optional `required_data`, for example `["tw_price_daily","tw_broker_top"]`.
+Omit it for evidence-only work and old tickets; omission is preserved. When
+present it must be an array of 0..8 nonempty, unique dataset identifiers, each
+at most 256 characters after trimming (raw text also <=256 characters), and the
+normalized array must fit 4096 encoded JSON bytes. Null, non-string entries,
+duplicates after trimming and oversized arrays are 400. The whole assignment
+still fits 16 KiB. Explicit `[]` is preserved and differs from omission in the
+immutable assignment digest; changing/removing/adding this field on a replay
+returns 409. Authorized create/detail/list/transition readback includes it through
+the original meeting_action projection. It cannot be changed by a transition.
+This records the particular deliverable's requirements; it grants no dataset
+access. The existing Persona policy owner verifies actual scoped data capability
+at assignment/execution. No registry, roles or persistent writer is added.
+
 Meeting ticket requests require bearer authentication and `X-Tenant-Id`.
 Body actor_id, if supplied, must equal the verified principal. Read principals
 are the assignee, assigned reviewer, required human, operator/admin, and the

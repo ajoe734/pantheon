@@ -166,6 +166,39 @@ notes writer manifest now names both POST and inline entrypoints. Lists never
 load note bodies; details/probe resolve at most 16 distinct note records on demand.
 The existing RC2/RC3/RC6 residuals below retain their original owners.
 
+## Required-data integration correction (2026-11-23)
+
+The operator reopened the existing task/PR to compose with P's specific-data
+capability check. Before editing, confirmed the clean expected task branch at
+9b251e1a1, fetched current dev 0c806ffed (already contained), read the canonical
+task row and shared execution packet from PANTHEON_STATUS_ROOT, and traced the
+existing create allowlist, assignment digest, list/detail projections, strict
+HTTP ingress and PostgreSQL owner/CAS tests. Ordinary callers and historical
+readers retain the distinct supported cases recorded above. Nothing is removed
+or migrated for this additive optional field; no obsolete branch is introduced.
+
+RW-01 accepts optional meeting_action.required_data: <=8 distinct nonempty
+dataset identifiers <=256 characters, normalized array <=4096 encoded bytes.
+The original assignment digest covers the field, including presence/absence and
+order. Authorized original-ticket detail/list/transition responses preserve it;
+old omitted-field tickets and their original digests remain unchanged. The
+create assignment's existing 16 KiB cap still applies. No transition can edit
+requirements, and this metadata is no grant of data access. M owns validation
+and chair production of the same key, P owns actual data capability rechecks.
+Source/test anchor: 6147b4be9. The existing inline human-note transaction and
+historical response-recovery logic are unchanged and covered by regression.
+
+Actual HTTP/PostgreSQL tests cover gated tw_price_daily/tw_broker_top metadata,
+authorized list/detail reads, same-id retry after progress, conflicting dataset
+changes/removal, foreign tenant/actor refusal, empty/max arrays, malformed and
+oversized values with zero writes, unchanged omitted-field digest and ordinary
+ticket creation. Terminal commands/results: required-data-validation.txt.
+storage.json and the existing research_tickets manifest entry record the field
+budget within existing row/input caps; no new write cadence or cleanup is needed.
+Prior independent approval is superseded by this reopened scope; a fresh
+Antigravity review of the exact PR/head is required. No merged, deployed or
+hosted-accepted claim is made. Existing residuals below retain their owners.
+
 ## Residual findings and owning disposition
 
 1. **BFF saved-artifact surface metadata regression, RC6 existing research/read-source
