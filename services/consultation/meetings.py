@@ -2137,7 +2137,13 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
                for k, v in action.items()):
             rejected.append({"index": idx, "reason": "missing_or_unbounded_assignment_fields"})
             continue
+        # Research canonicalizes these owner fields before issuing a receipt.
+        # Normalize before identity/capability checks and decision freezing so
+        # every dispatch attempt carries exactly the same canonical origin.
+        action = {k: v.strip() for k, v in action.items()}
         refs = item.get("source_refs")
+        if isinstance(refs, list):
+            refs = [r.strip() if isinstance(r, str) else r for r in refs]
         if (not isinstance(refs, list) or not 1 <= len(refs) <= 8
                 or any(not isinstance(r, str) or len(r) > 256 or r not in allowed_citations for r in refs)
                 or len(json.dumps(refs).encode()) > 4096):
@@ -2166,7 +2172,7 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
             except (ValueError, TypeError):
                 reason = "invalid_due_at"
         elif isinstance(review, str) and review.strip() and len(review) <= 256:
-            action["next_review"] = review
+            action["next_review"] = review.strip()
         else:
             reason = "due_or_explicit_next_review_required"
         if reason:
@@ -3334,6 +3340,7 @@ def execute_persona_meeting(
         previous = store.get_meeting_schedule(tenant_id, chair_persona_id, str(meeting["meeting_type"])) if hasattr(store, "get_meeting_schedule") else None
         if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
             meeting["previous_action_review_at"] = previous.get("action_review_watermark")
+            meeting["action_review_scan"] = previous.get("action_review_scan") or {}
         action_read = read_meeting_actions(meeting)
         meeting["prior_actions"] = action_read["items"]
         meeting["prior_action_evidence"] = action_read.get("evidence") or []
@@ -3945,11 +3952,24 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
     next_due = compute_next_due_at(now_closed, cadence)
     source = meeting.get("prior_actions_source") or {}
     pages = source.get("pages") or {}
-    fully_read = source.get("status") == "ok" and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values())
-    fully_read = fully_read and all(e.get("status") == "ok" for e in meeting.get("prior_action_evidence") or [])
-    # Never advance past unread pages or failed evidence. Inclusive owner filters
-    # preserve updates made in the same timestamp unit as the previous review.
-    watermark = meeting["created_at"] if fully_read else meeting.get("previous_action_review_at")
+    evidence_read = all(e.get("status") == "ok" for e in meeting.get("prior_action_evidence") or [])
+    fully_read = (source.get("status") == "ok" and set(pages) == {"outstanding", "submitted", "reviewed"}
+                  and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values())
+                  and evidence_read)
+    scan = source.get("scan") or {}
+    # Keyset traversal is not a snapshot: updates behind a cursor must be read
+    # again. Advance only to the first page's start, never the last meeting's
+    # creation time. Inclusive owner filters retain same-timestamp updates.
+    watermark = scan.get("started_at") if fully_read else None
+    watermark = watermark or meeting.get("previous_action_review_at")
+    continuation = {}
+    if scan.get("started_at") and not fully_read:
+        tokens = dict(scan.get("page_tokens") or {})
+        if evidence_read:
+            for lane, page in pages.items():
+                if page.get("status") == "ok":
+                    tokens[lane] = page.get("next_page_token")
+        continuation = {"started_at": scan["started_at"], "page_tokens": tokens}
     for p in participants:
         if p.get("trading") or p["persona_id"] == chair_persona_id:
             store.put_meeting_schedule(
@@ -3962,6 +3982,7 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
                     "next_due_at": next_due,
                     "meeting_series": meeting.get("meeting_series"),
                     "action_review_watermark": watermark,
+                    "action_review_scan": continuation,
                 }
             )
 

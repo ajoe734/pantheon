@@ -1320,7 +1320,14 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
         return {"status": "unavailable", "reason": "stable_series_unavailable", "items": [], "pages": {}}
     tenant = str(meeting["tenant_id"])
     pages, items, failures = {}, [], []
-    tokens = (meeting.get("metadata") or {}).get("prior_actions_page_tokens") or {}
+    scan = meeting.get("action_review_scan") or {}
+    tokens = scan.get("page_tokens") or (meeting.get("metadata") or {}).get("prior_actions_page_tokens") or {}
+    started_at = scan.get("started_at")
+    if not started_at:
+        # A legacy/external cursor has no safe scan boundary. Restart it rather
+        # than advancing a watermark past updates behind that cursor.
+        tokens = {}
+        started_at = _iso(_utc_now())
     for lane, states in (("outstanding", "open,in_progress,waiting_for_input,returned"),
                          ("submitted", "submitted"), ("reviewed", "accepted")):
         query = {"meeting_linked": "true", "meeting_type": series["meeting_type"],
@@ -1396,7 +1403,8 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
                 record["reason"] = str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__
             evidence.append(record)
     result = {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
-              "items": items, "pages": pages, "evidence": evidence}
+              "items": items, "pages": pages, "evidence": evidence,
+              "scan": {"started_at": started_at, "page_tokens": dict(tokens)}}
     if len(json.dumps(result).encode()) > 524288:
         for record in evidence:
             record.pop("content", None)
