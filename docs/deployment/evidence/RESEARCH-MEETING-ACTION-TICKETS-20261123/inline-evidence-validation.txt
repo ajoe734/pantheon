@@ -1,0 +1,70 @@
+2026-11-23 inline human deliverable correction; owner Codex
+Baseline ad5dec939; origin/dev 0c806ffed already contained.
+Code anchor 7d706886122f303ff8f22dad841c4a17d2d2e339.
+All commands bounded in foreground; terminal output/status collected.
+Isolated local postgres:16 container research-inline-evidence-20261123;
+unique per-test schemas cleaned by existing fixtures. No hosted writes.
+
+Initial focused run: 21 passed, 1 failed. New test incorrectly forwarded
+owner-stamped checksum/tenant fields to the reference-only input contract.
+Corrected test to send kind/artifact_id; no contract relaxation.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/tests/test_recommended_measure_consumers.py --disable-warnings
+........................................................................ [ 39%]
+........................................................................ [ 78%]
+.............................ssss......                                  [100%]
+179 passed, 4 skipped, 583 warnings in 94.88s (0:01:34)
+exit_code=0
+Four optional candidate-consumer PostgreSQL cases skipped because their
+separate TEST_DATABASE_URL was unset. All meeting tests used real PostgreSQL.
+The final focused batch below also validates the last read-only probe/body
+falsification assertions added after the broad batch began.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+......................                                                   [100%]
+22 passed, 221 warnings in 22.69s
+exit_code=0
+
+$ timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 3.649s
+
+OK
+exit_code=0
+
+$ python3 scripts/check_storage_manifest.py
+{
+  "bound_status": {
+    "bounded": 17,
+    "unbounded": 21,
+    "unreviewed": 336
+  },
+  "discovered": {
+    "compose_path": 82,
+    "jsonl": 90,
+    "schema_table": 59,
+    "sqlite": 14,
+    "sqlite_connect": 14,
+    "table": 118
+  },
+  "entries": 374,
+  "failures": [],
+  "passed": true,
+  "schema_version": "storage_manifest_check.v1",
+  "waivers": 3
+}
+exit_code=0
+
+$ git diff --check
+No whitespace errors; exit_code=0
+
+Final reply-recovery source anchor 53ef5c168: after later Persona submit and
+review acceptance, exact original human input retry reconstructs only the
+original authorized input revision. Direct GET remains 404 for the provider;
+no later private body/review leaks and note count stays unchanged.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+......................                                                   [100%]
+22 passed, 221 warnings in 34.90s
+exit_code=0

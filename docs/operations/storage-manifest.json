@@ -325,7 +325,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -2092,7 +2101,16 @@
     "services/control-plane/bff/personas/cycle_views.py",
     "services/control-plane/bff/ports/persona_pool.py"
    ],
-   "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117"
+   "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -3714,7 +3732,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -3748,7 +3775,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4363,7 +4399,16 @@
     "services/foundation/postgres_json_store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4882,7 +4927,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -5844,6 +5898,48 @@
     "file": "services/control-plane/bff/downstream_health_monitor.py",
     "contains": "CREATE TABLE IF NOT EXISTS incident_recovery (\n                    target_name TEXT PRIMARY KEY"
    }
+  },
+  {
+   "kind": "schema_table",
+   "name": "research.research_tickets",
+   "owner": "research-svc",
+   "readers": [
+    "services/research/write_owner.py",
+    "services/research/main.py"
+   ],
+   "growth_driver": "Existing RW-01 JSONB row; meeting assignment insert plus explicit owner CAS actions. No cron or new store. At most 8 adopted actions per tenant/origin meeting; exact retries write 0 rows/events.",
+   "growth_per_day": "3 enrolled personas x <=3 meetings/persona/week = <=9 meetings/week. Up to 72 new tickets/week (~10.29/day); each separately human-convened meeting adds <=8 tickets. Local Postgres16 fixture: 1 accepted ticket 3203 JSONB-text bytes including 1665 bytes/3 history events; baseline 1 ticket/meeting -> ~4.12 KB/day, max 8 -> ~32.95 KB/day. Lifetime payload ceiling 256 KiB/ticket -> <=2.58 MiB/day for scheduled origins at 8 actions/meeting. Updates rewrite existing rows; WAL, MVCC bloat and hosted bytes require RC3 measurement.",
+   "cap": "Meeting ticket <=262144 encoded JSON bytes and <=256 history entries; assignment/command <=16384 bytes; source/evidence arrays <=8 refs and <=4096 bytes; optional required_data <=8 unique identifiers <=256 chars each and <=4096 encoded array bytes, within the same assignment/row caps (<=~42.4 KB/day extra field allocation at 72 tickets/week, no additional writes/history copies); <=8 tickets/tenant/origin. No global ticket-count/time retention cap; do not evict unfinished obligations. Legacy ordinary RW-01 rows keep their existing behavior.",
+   "cleanup": "No deletion or historical backfill. Open, returned, waiting and submitted obligations remain available by tenant/owner/series across periods. Accepted audit history retained; full-table retention/DB maintenance remains RC3 WP3.1. Capacity rejects new writes visibly, preserves existing work and idempotent retries.",
+   "bound_status": "unbounded",
+   "register_class": "RC3",
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "bound_proof": {
+    "file": "services/research/write_owner.py",
+    "contains": "_ACTION_HISTORY_MAX = 256"
+   },
+   "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
+  },
+  {
+   "kind": "schema_table",
+   "name": "research.research_notes",
+   "owner": "research-svc",
+   "readers": [
+    "services/research/write_owner.py",
+    "services/research/main.py"
+   ],
+   "growth_driver": "Existing KW-02 table. Explicit authenticated immutable meeting-bound analysis/evidence note, via note POST or inline ticket submit/provide_input evidence_note. Inline note insertion and original-ticket CAS share one transaction; rejected/failed commands and exact retries write 0 rows/events. Deterministic ticket/actor/key insertion. No extra scheduler; <=128 notes/ticket.",
+   "growth_per_day": "Same <=72 scheduled-origin tickets/week; each note local fixture 539 JSONB-text bytes (1 per completed ticket). Typical 1 action/meeting x1 note = ~693 B/day; 8 actions x1 note = ~5.54 KB/day. Lifetime maximum 128 notes x16 KiB per ticket -> <=20.58 MiB/day across scheduled origins; each human-convened meeting adds <=8 tickets x128 notes (<=16 MiB lifetime payload). Existing ordinary notes have no measured hosted rate.",
+   "cap": "Each meeting note command <=16384 bytes, body <=12000 characters, <=8 source refs; <=128 notes/tenant/ticket via advisory transaction lock and count. Whole table remains unbounded: preserve ordinary notes and open-obligation evidence; no speculative TTL or history deletion.",
+   "cleanup": "No new cleanup job. Immutable evidence retained with existing notes; no dangling accepted references introduced by automatic pruning. Whole-table archival/cleanup belongs to RC3 WP3.1.",
+   "bound_status": "unbounded",
+   "register_class": "RC3",
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "bound_proof": {
+    "file": "services/research/write_owner.py",
+    "contains": "_ACTION_NOTES_PER_TICKET_MAX = 128"
+   },
+   "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
@@ -5921,6 +6017,27 @@
    "task": "MEETING-E2E-EXECUTION-AND-AUTH-20261121",
    "volume": "dev-paper-consultation-tokens (/issued/consultation-svc -> /run/pantheon-principals:ro)",
    "writer": "scripts/issue_dev_paper_principals.py refresh_files (_atomic_private writes /issued/consultation-svc/CONSULTATION_TELEMETRY_READ_TOKEN; not discovered by check_storage_manifest.py static inventory because token files under /run/pantheon-principals have no .json/.jsonl/.sqlite/.db suffix)"
+  },
+  {
+   "name": "meeting_output_dispatches.json (existing consultation dispatch ledger)",
+   "owner": "consultation-svc",
+   "writer": "services/consultation/meeting_outputs.py _DispatchLedger.put / _write_unlocked",
+   "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+   "register_class": "RC3",
+   "cadence": "Existing meeting close/owner dispatch only; <=9 scheduled meetings/week across 3 enrolled trading personas plus separately counted human-convened meetings; retries reuse source identity.",
+   "count_at_hosted_scale": "At most 8 adopted RW-01 assignments/origin (72/week) accepted by Research, plus existing formal proposal dispatches with their original semantics. No new collection or recurring writer.",
+   "size_per_day": "Owner-side measured ticket/note bytes in task storage.json. Consultation-specific frozen reference envelope bytes must be measured by MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 before integrated acceptance; no fabricated hosted value.",
+   "growth_per_day": "Reference allocation: 9/7 meetings/day x8 action refs/meeting x4096 evidence-metadata bytes = ~42.1 KB/day plus bounded immutable origin/decision fields; actual producer envelope and full-file rewrite amplification remain producer/RC3 measurement obligations.",
+   "cap": "Whole existing JSON ledger has no verified historical row/byte retention cap. The owner bounds each adopted assignment to16 KiB and8 refs/4096 bytes, but producer snapshot bounds are independently verified; this entry is not a bounded-writer claim.",
+   "cleanup": "Existing _write_unlocked atomically replaces one JSON file and removes failed temporary files; it does not prune historical dispatch entries. Whole-ledger retention belongs to RC3 WP3.1. Open obligations live only in Research tickets and cannot be aged out with minutes.",
+   "measurement_status": "producer-envelope pending; existing unbounded writer explicitly recorded",
+   "readers": [
+    "services/consultation/meeting_outputs.py"
+   ],
+   "bound_proof": {
+    "file": "services/consultation/meeting_outputs.py",
+    "contains": "os.replace(tmp_name, self.path)"
+   }
   },
   {
    "task": "PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123",
