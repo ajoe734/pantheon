@@ -1,7 +1,8 @@
 # Persona consumer handoff
 
-RC2 WP2.3 / RC6 meeting follow-through. Source rework continues on PR #7765;
-no merge, hosted deployment or acceptance is asserted. Owner Codex, assigned reviewer Codex2.
+RC2 WP2.3 / RC6 meeting follow-through. Source rework is published on PR #7765;
+governed review admission is blocked by inherited commit provenance (details below).
+No merge, hosted deployment or acceptance is asserted. Owner Codex, assigned reviewer Codex2.
 
 The implemented interfaces and existing caller/owner trace are in contract.md.
 Research's approved #7760 contract, including original action_id=ticket_id, nested
@@ -32,6 +33,18 @@ not concurrently edited the manifest. Supply these figures to that owner before
 integrated acceptance. Source acceptance must not label fixture sizes as hosted.
 
 ## Residual findings and owners
+
+* Current canonical provenance blocker / Human/Ops or coordinator delivery owner:
+  governed handoff of tested head 9ed177a45947d5cd13c580767038912685fb7fe4 exited 1.
+  The runtime rejected inherited commit df9e0209c59799ff080aa9a23c79c8e97414d392:
+  `LLM-Agent: Antigravity2` does not match current owner Codex and no audited
+  task_reassigned chain following commit time 2026-11-23T06:07:55+00:00 explains it.
+  The gate requests amending that trailer to Codex. This ancestor is published;
+  no authorization to rewrite published history, alter original attribution or
+  fabricate reassignment was supplied. Preserve genuine provenance. Human/Ops or
+  the coordinator must resolve the audit/history authority before a fresh handoff.
+  No admission, reviewer approval, merge or acceptance is claimed. Do not retry
+  the same failed gate without new corrective authority/evidence.
 
 * Historical canonical provenance / coordinator delivery finding: handoff of ff454c28a was
   rejected (exit 1). Inherited contract commit 364a1f1bd retains its genuine
