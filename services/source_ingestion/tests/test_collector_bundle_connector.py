@@ -563,6 +563,13 @@ def test_social_pull_without_bare_symbols_never_reads_price_authority(tmp_path, 
     with cb.deferred_collector_acknowledgement():
         result = make().pull()
     assert result.next_cursor == f"{entry['finished_at']}#run1"
+    feature_symbols = {r.metadata["symbol"] for r in result.records
+                       if r.content_ref.startswith("collector-feature://")}
+    expected = {"2330.TWSE"} if symbols == "2330.TW" else (
+        {"2330.TWSE", "6488.TPEX"} if symbols == ["2330.TWSE", "6488.TWO"] else set()
+    )
+    assert feature_symbols == expected
+    assert result.feature_rejected == ()
     # Planning and failed persistence never acknowledge ledger/markers or cursor.
     assert not make()._community_ledger_path().exists()
     assert not make()._resume_cursor_path().exists()
@@ -582,6 +589,18 @@ def test_social_pull_without_bare_symbols_never_reads_price_authority(tmp_path, 
     if not symbols or symbols == ["", "  "]:
         assert not make()._community_ledger_path().exists()
         assert not make()._community_ledger_path().with_name("community_emitted.jsonl").exists()
+
+
+def test_qualified_social_symbol_rejection_does_not_consult_authority(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_feature_catalogue import _post
+
+    monkeypatch.setattr(cb, "stored_instrument_authority", lambda *a: pytest.fail("price scan"))
+    adapter = adapter_for({}, [], tmp_path, dataset="tw_community_daily")
+    plan = adapter._plan_governed_features([_post(1, "2026-11-10", ["2330.BAD"])])
+    assert not plan.rows and not plan.fresh_entries
+    assert len(plan.rejected) == 1
+    assert not adapter._community_ledger_path().exists()
 
 
 def test_empty_social_pull_still_flushes_persisted_ledger_after_day_close(tmp_path, monkeypatch):
