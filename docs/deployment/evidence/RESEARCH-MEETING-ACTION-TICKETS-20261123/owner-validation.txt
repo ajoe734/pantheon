@@ -1,0 +1,5 @@
+COMMAND: isolated Postgres DSN; pytest services/research/tests/test_meeting_action_tickets.py tests/research_write_owner/test_research_write_owner.py -q -s --disable-warnings
+EXIT: 0
+.......MEETING_ACTION_MEASURE={"history_bytes": 1665, "history_count": 3, "note_jsonb_text_bytes": 539, "notes": 1, "source": "local Postgres 16 actual HTTP fixture; not hosted measurement", "ticket_jsonb_text_bytes": 3203, "tickets": 1, "writes": {"note_insert": 1, "ticket_insert": 1, "ticket_updates": 2}}
+..................
+25 passed, 131 warnings in 20.01s
