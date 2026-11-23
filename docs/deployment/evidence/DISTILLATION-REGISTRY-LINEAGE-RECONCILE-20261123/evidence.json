@@ -109,6 +109,12 @@
     "single_job_retry": "POST /repos/ajoe734/pantheon/actions/jobs/137496374430/rerun returned HTTP 403: the containing workflow is still running. No retry was started and no other run was cancelled.",
     "source_disposition": "No distillation or Hindsight source correction is supported by this failure. Preserve the pinned model manifests, checksum verification and existing CI gates. Refresh against current dev and publish the new head for normal CI and a new independent exact-head review.",
     "refreshed_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+    "regression_rerun": {
+      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_queue_lifetime.py -q --disable-warnings --maxfail=3",
+      "exit_status": 0,
+      "result": "163 passed, 2 warnings in 93.28s (0:01:33)"
+    },
+    "other_reruns": "Storage manifest: exit 0, 372 entries, 3 waivers, failures=[]; py_compile, JSON parse, git diff --check and diff budget: exit 0. Production +41/-2, tests +196/-0; only evidence changed in this return.",
     "review_binding": "Prior approval does not cover the refreshed head; canonical handoff must freeze the new head and this manifest before reviewer approval. New-head CI results remain pending until GitHub reports terminal checks."
   },
   "independent_review": {
