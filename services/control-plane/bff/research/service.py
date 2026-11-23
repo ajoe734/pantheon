@@ -3806,15 +3806,11 @@ class ResearchRouterService:
         if meeting_linked:
             with self._map_port_errors("list_research_ticket_page"):
                 page = port.list_research_ticket_page(statuses=statuses, owner=owner,
-                    page_token=page_token, page_size=min(page_size, 100), **meeting_filters)
+                    page_token=page_token, page_size=page_size, **meeting_filters)
             return {**page, "meta": {**self.snapshot_meta(snap),
                     "surfaces": {"ticket_list": {"status": "ok", "source": "research"}}}}
-        try:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
-        except TypeError:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets() or [])
+        with self._map_port_errors("list_research_tickets"):
+            records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0

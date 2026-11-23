@@ -112,6 +112,13 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
 
     async def endpoint_list_tickets(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
+        meeting_linked = str(ctx.query(request, "meeting_linked", "false")).lower() == "true"
+        meeting_filters = {key: ctx.query(request, key) for key in (
+            "meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after"
+        ) if ctx.query(request, key) is not None}
+        if meeting_filters and not meeting_linked:
+            raise ctx.bff_error(400, ErrorCode.VALIDATION_FAILED,
+                                "Meeting filters require meeting_linked=true", "meeting_linked_required")
         statuses = [item.strip() for item in str(ctx.query(request, "status", "") or "").split(",") if item.strip()] or None
         if statuses:
             statuses = [_validate_ticket_status(status) for status in statuses]
@@ -125,10 +132,8 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
                 owner=ctx.query(request, "owner"),
                 page_token=ctx.query(request, "page_token"),
                 page_size=page_size,
-                meeting_linked=str(ctx.query(request, "meeting_linked", "false")).lower() == "true",
-                **{key: ctx.query(request, key) for key in (
-                    "meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after"
-                ) if ctx.query(request, key) is not None},
+                meeting_linked=meeting_linked,
+                **meeting_filters,
             )
         except Exception as exc:
             ctx.raise_service_error(exc)
@@ -205,7 +210,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
 
     endpoint_create_ticket.__signature__ = _signature(_body_parameter(), auth)
     endpoint_list_tickets.__signature__ = _signature(
-        _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100),
+        _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=200),
         _signature_query("meeting_linked", annotation=bool, default=False),
         *[_signature_query(key) for key in ("meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after")], auth,
     )

@@ -309,6 +309,7 @@ def create_meetings_router(
             is_operator=is_operator,
             caller_user_id=caller_user_id,
             snapshot_at=snap,
+            tenant_id=tenant_id,
         ))
 
     def _handle_convene_meeting(

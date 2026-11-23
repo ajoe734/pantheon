@@ -4827,7 +4827,8 @@ class ManagementService:
             if hasattr(store, "list_personas"):
                 readers["persona_readiness"] = _personas
         from services.consultation.client import ConsultationServiceClient
-        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured():
+        from services.control_plane.bff.research.client import resolve_orchestrator_base_url
+        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured() or resolve_orchestrator_base_url():
             readers["meetings"] = _meetings
         return readers
 
@@ -4863,6 +4864,8 @@ class ManagementService:
         for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness", "meetings"):
             if key in completed:
                 surfaces[key] = completed[key][1]
+                if surfaces[key].get("status") in {"degraded", "unavailable", "denied"}:
+                    failure_surfaces[key] = surfaces[key]
             elif key in failure_surfaces:
                 surfaces[key] = failure_surfaces[key]
         items = _human_inbox_project_items(

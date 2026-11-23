@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
@@ -791,9 +792,11 @@ def shape_meeting_list(
 
 def _visible_action_data(
     value: Any, *, tenant_id: Optional[str], is_operator: bool,
-    caller_user_id: Optional[str],
+    caller_user_id: Optional[str], withheld_ids: Optional[set[str]] = None,
 ) -> Any:
     """Apply the meeting visibility boundary to new owner action subtrees too."""
+    if isinstance(value, str) and value in (withheld_ids or set()):
+        return None
     if isinstance(value, Mapping):
         if _is_private_memory_item(value):
             return None
@@ -805,10 +808,10 @@ def _visible_action_data(
             return None
         return {str(k): cleaned for k, v in value.items() if str(k) not in _PRIVATE_FIELD_KEYS
                 and ((cleaned := _visible_action_data(v, tenant_id=tenant_id,
-                    is_operator=is_operator, caller_user_id=caller_user_id)) is not None or v is None)}
+                    is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)) is not None or v is None)}
     if isinstance(value, list):
         return [cleaned for v in value if (cleaned := _visible_action_data(v,
-            tenant_id=tenant_id, is_operator=is_operator, caller_user_id=caller_user_id)) is not None]
+            tenant_id=tenant_id, is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)) is not None]
     return value
 
 
@@ -818,6 +821,7 @@ def shape_meeting_detail(
     is_operator: bool,
     caller_user_id: Optional[str],
     snapshot_at: str,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     meeting_id = str(raw.get("meeting_id") or raw.get("id") or "").strip()
     meeting_trader_id = _extract_trader_id(raw)
@@ -981,16 +985,16 @@ def shape_meeting_detail(
         synthesis["cause"] = review_cause
 
     action_fields: Dict[str, Any] = {}
-    for key in ("actions", "prior_actions", "participant_action_capabilities", "action_read", "action_page_info"):
+    for key in ("actions", "prior_actions", "participant_capabilities", "prior_action_reviews", "series_subject_ref", "action_read", "action_page_info"):
         value = raw.get(key, raw_synthesis.get(key))
         if value is not None:
-            action_fields[key] = _visible_action_data(value, tenant_id=raw.get("tenant_id"),
-                is_operator=is_operator, caller_user_id=caller_user_id)
+            action_fields[key] = _visible_action_data(value, tenant_id=tenant_id or raw.get("tenant_id"),
+                is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)
             if key in synthesis:
                 synthesis[key] = action_fields[key]
     action_fields.setdefault("actions", [])
     action_fields.setdefault("prior_actions", [])
-    action_fields.setdefault("participant_action_capabilities", [])
+    action_fields.setdefault("participant_capabilities", [])
     action_fields.setdefault("action_read", {"status": "not_recorded", "source": "consultation",
                                           "reason": "meeting_actions_not_recorded"})
 
@@ -1899,7 +1903,20 @@ def project_human_inbox_meeting_items(
     return items
 
 
-def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str) -> List[Dict[str, Any]]:
+def _action_is_overdue(due_at: Any, snapshot_at: str) -> Optional[bool]:
+    if not due_at:
+        return None
+    try:
+        due = datetime.fromisoformat(str(due_at).replace("Z", "+00:00"))
+        now = datetime.fromisoformat(snapshot_at.replace("Z", "+00:00"))
+        if due.tzinfo is None or now.tzinfo is None:
+            return None
+        return due.astimezone(timezone.utc) < now.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapshot_at: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for ticket in page.get("data") or []:
@@ -1930,6 +1947,7 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str) -> Lis
             "status": ticket.get("action_state"), "action_state": "pending",
             "owner_status": ticket.get("status"), "revision": ticket.get("revision"),
             "due_at": action.get("due_at"), "next_review": action.get("next_review"),
+            "overdue": _action_is_overdue(action.get("due_at"), snapshot_at),
             "created_at": ticket.get("created_at"), "updated_at": ticket.get("updated_at"),
             "priority": ticket.get("priority") or "medium", "risk_level": "medium",
             "can_decide": False, "can_proceed": False,
@@ -1991,7 +2009,7 @@ def read_human_inbox_meeting_items(
     if resolve_orchestrator_base_url():
         try:
             page = ResearchServiceClient().list_research_ticket_page(action_state="waiting_for_input", page_size=100)
-            items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant))
+            items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at))
             surfaces["research"] = {"status": "ok", "page_info": page["page_info"],
                 "href": "/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&page_size=100"}
         except ResearchCommandError as exc:
