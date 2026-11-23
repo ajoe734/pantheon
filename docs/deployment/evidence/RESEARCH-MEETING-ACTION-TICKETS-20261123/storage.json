@@ -1,0 +1,46 @@
+{
+  "history_bytes": 1665,
+  "history_count": 3,
+  "note_jsonb_text_bytes": 539,
+  "notes": 1,
+  "source": "local Postgres 16 actual HTTP fixture; not hosted measurement",
+  "ticket_jsonb_text_bytes": 3203,
+  "tickets": 1,
+  "writes": {
+    "note_insert": 1,
+    "ticket_insert": 1,
+    "ticket_updates": 2
+  },
+  "hosted_scale": {
+    "enrolled_trading_personas": 3,
+    "scheduled_meetings_per_persona_week_max": 3,
+    "scheduled_meetings_week_max": 9,
+    "ticket_count_per_origin_max": 8,
+    "ticket_count_per_week_max": 72,
+    "notes_per_ticket_lifetime_max": 128,
+    "human_convened_meetings": "count separately; +8 tickets/origin maximum"
+  },
+  "bounds": {
+    "ticket_json_bytes_max": 262144,
+    "history_entries_max": 256,
+    "note_json_bytes_max": 16384,
+    "command_json_bytes_max": 16384,
+    "evidence_refs_max": 8,
+    "evidence_metadata_bytes_max": 4096,
+    "page_rows_max": 100,
+    "sql_rows_fetched_max": 101,
+    "full_table_retention": "unbounded legacy owner; RC3 WP3.1"
+  },
+  "cadence": "Explicit action commands and existing Persona daily cycle; no new job, queue or collection",
+  "cleanup": "No deletion of historical rows or unfinished obligations; count/byte limits reject new writes; producer snapshots reuse their existing retention",
+  "daily_payload_growth": {
+    "typical_1_ticket_and_1_note_per_meeting_bytes": 4811.14,
+    "max8_tickets_and_1_note_each_per_meeting_bytes": 38489.14,
+    "max_lifetime_row_payload_allocated_to_daily_scheduled_origins_bytes": 24267044.57
+  },
+  "measurement_limitations": [
+    "Local PostgreSQL JSONB text bytes, not hosted relation size/WAL/MVCC growth.",
+    "Maximum growth charges full lifetime capacity to each new origin; not a measured daily write rate.",
+    "Actual meeting/chair/cycle snapshot byte caps are verified by their producer tasks and final integrated acceptance."
+  ]
+}

@@ -333,6 +333,8 @@ class ResearchWriteOwner:
     # Meeting obligations remain rows in the existing RW-01 owner table.
     _ACTION_MAX_BYTES = 262144
     _ACTION_HISTORY_MAX = 256
+    _ACTION_PER_MEETING_MAX = 8
+    _ACTION_NOTES_PER_TICKET_MAX = 128
     _ACTION_INPUT_MAX_BYTES = 16384
     _ACTION_CONTROLLERS = frozenset({"consultation-svc", "persona-pool-cycle"})
     _ACTION_STATES = {
@@ -396,6 +398,21 @@ class ResearchWriteOwner:
         out["allowedActions"] = {"canEdit": False, "canClose": False, "canArchive": False}
         return out
 
+    def _bounded_action_insert(self, store: Any, record_id: str, payload: Dict[str, Any], *,
+                               group_sql: str, group_values: Sequence[str], cap: int) -> Any:
+        # One transaction-scoped group lock serializes new origins/results across
+        # processes. Exact retries remain readable even after the count cap.
+        with store.transaction() as conn:
+            lock = "meeting-action:" + store.table_name + ":" + self._action_digest(list(group_values))
+            store.advisory_xact_lock(lock, conn=conn)
+            row = conn.execute(f"SELECT payload FROM {store.table} WHERE record_id = %s", (record_id,)).fetchone()
+            if row:
+                return False, store._decode_payload(row[0])
+            count = conn.execute(f"SELECT count(*) FROM {store.table} WHERE {group_sql}", tuple(group_values)).fetchone()[0]
+            if count >= cap:
+                self._action_error("Meeting action/evidence count capacity reached; existing obligations preserved")
+            return store.compare_and_set(record_id, None, payload, conn=conn)
+
     def _create_meeting_ticket(self, *, title: str, description: str, priority: str,
                                owner: str, actor_id: str, meeting_action: Dict[str, Any],
                                context: Any, ticket_id: Optional[str]) -> Dict[str, Any]:
@@ -443,7 +460,9 @@ class ResearchWriteOwner:
                   "required_actor": assignment["owner"], "assignment_digest": self._action_digest(assignment),
                   "lifecycle_history": [{"from_status": None, "to_status": "open",
                       "transitioned_at": timestamp, "transitioned_by": actor_id}]}
-        inserted, canonical = self._tickets_store.compare_and_set(tid, None, record)
+        inserted, canonical = self._bounded_action_insert(self._tickets_store, tid, record,
+            group_sql="payload->>'tenant_id' = %s AND payload->'meeting_action'->>'meeting_id' = %s",
+            group_values=[ctx.tenant_id, action["meeting_id"]], cap=self._ACTION_PER_MEETING_MAX)
         if not inserted and (not canonical or canonical.get("assignment_digest") != record["assignment_digest"]):
             self._action_error("Conflicting replay of adopted action")
         return self._project_ticket_detail(canonical)
@@ -1143,7 +1162,11 @@ class ResearchWriteOwner:
                    "_meeting_binding": {"tenant_id": ctx.tenant_id, "ticket_id": ticket["ticket_id"], "actor_id": ctx.actor_id}}
         payload["_meeting_digest"] = self._action_digest(payload)
         payload["created_at"] = payload["updated_at"] = _utc_now_rfc3339()
-        ok, current = self._notes_store.compare_and_set(nid, None, payload)
+        if len(json.dumps(payload).encode()) > self._ACTION_INPUT_MAX_BYTES:
+            self._action_error("Meeting note record exceeds 16 KiB", 400)
+        ok, current = self._bounded_action_insert(self._notes_store, nid, payload,
+            group_sql="payload->'_meeting_binding'->>'tenant_id' = %s AND payload->'_meeting_binding'->>'ticket_id' = %s",
+            group_values=[ctx.tenant_id, ticket["ticket_id"]], cap=self._ACTION_NOTES_PER_TICKET_MAX)
         if not ok and (not current or current.get("_meeting_digest") != payload["_meeting_digest"]):
             self._action_error("Conflicting evidence note replay")
         return current

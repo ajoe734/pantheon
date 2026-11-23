@@ -322,3 +322,34 @@ def test_generic_experiment_link_never_mutates_meeting_obligation(world):
     advance(client.post(f"/api/research/experiments/{experiment['experiment_id']}/retry", json={"actor_id": "legacy", "idempotency_key": "retry-1"}))
     current = advance(client.get(f"{URL}/{ticket['ticket_id']}", headers=headers()))
     assert current == ticket
+
+
+def test_assignment_and_note_count_caps_preserve_existing_retries(world, monkeypatch):
+    monkeypatch.setattr(world[2], "_ACTION_PER_MEETING_MAX", 2)
+    one = create(world, assignment("one"))
+    create(world, assignment("two"))
+    assert world[1].post(URL, headers=headers(), json=assignment("three")).status_code == 409
+    assert create(world, assignment("one"))["ticket_id"] == one["ticket_id"]
+    monkeypatch.setattr(world[2], "_ACTION_NOTES_PER_TICKET_MAX", 1)
+    first = note(world, one)
+    assert note(world, one) == first
+    response = world[1].post("/api/research/notes", headers=headers("persona-1", ("persona",)), json={
+        "meeting_ticket_id": one["ticket_id"], "idempotency_key": "new", "title": "Extra", "body": "Extra"})
+    assert response.status_code == 409
+    submitted = advance(command(world, one, "submit", evidence_refs=[first]))
+    assert submitted["action_state"] == "submitted"
+
+
+def test_read_only_acceptance_probe_uses_real_owner_http(world):
+    ticket = create(world)
+    submitted = advance(command(world, ticket, "submit", evidence_refs=[note(world, ticket)]))
+    accepted = advance(command(world, submitted, "accept", actor="consultation-svc", roles=("service",),
+                                reason="Meets criterion", review_source="mtg-48"))
+    path = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/probe.py"
+    spec = importlib.util.spec_from_file_location("meeting_action_probe", path)
+    probe = importlib.util.module_from_spec(spec); spec.loader.exec_module(probe)
+    def fetch(path, query):
+        return advance(world[1].get(path, params=query, headers=headers()))
+    result = probe.inspect("http://testserver", "tenant-a", accepted["ticket_id"], "unused", "accepted", fetch)
+    assert result["read_only"] is True and result["series_ticket_count"] == 1
+    assert advance(world[1].get(f"{URL}/{ticket['ticket_id']}", headers=headers())) == accepted

@@ -59,3 +59,23 @@ actor and key. Submission refs use `{kind:"research_note",artifact_id:note_id}`.
 Ordinary note writes cannot forge or replace these bindings. Meeting notes are
 excluded from the legacy unscoped note list and detail requires ticket access.
 Every meaningful submitted claim still needs the reviewer's criterion check.
+
+Resource and interoperability details:
+
+- Omit ticket_id on POST and use the returned ID. If computing it, the exact hash
+  input is UTF-8 of `json.dumps([tenant_id, meeting_id, source_action_id],
+  sort_keys=True, separators=(",", ":"), ensure_ascii=True)`; prefix `rt-action-`
+  plus the first 32 hex SHA256 characters.
+- At most 8 actions per tenant/origin meeting, 128 immutable evidence notes per
+  ticket, 256 history entries and 256 KiB encoded ticket JSON. New assignments
+  or evidence beyond capacity return 409. Existing rows and exact retries remain
+  readable; no pending obligations are evicted. Note records and action commands
+  are at most 16 KiB. Acceptance refuses changed or no-longer-resolvable evidence.
+- submitted_after and updated_after boundaries are inclusive to avoid dropping
+  events recorded in the same timestamp unit. Use revision/idempotency for dedup.
+- Generic experiment create/retry continues for ordinary callers. It cannot
+  mutate a meeting obligation's links or history; submit the genuine saved
+  artifact through the explicit owner transition instead.
+- The independent meeting/Persona tasks own the actual bounded prompt/reference
+  envelopes. The chain manifest records their affected existing writers without
+  claiming hosted or cross-component acceptance from this component's tests.
