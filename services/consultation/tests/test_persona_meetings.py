@@ -3134,7 +3134,7 @@ def test_adoption_normalizes_before_freeze_and_real_owner_receipt(tmp_path, monk
     assert len(calls) == 2 and calls[0] == calls[1] and len(action_owner_contract.tickets) == 1
 
 
-def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(tmp_path, monkeypatch, action_owner_contract):
+def test_review_traversal_revisits_concurrent_earlier_keys_for_chair(tmp_path, monkeypatch, action_owner_contract):
     from services.consultation import meeting_outputs as outputs
     from datetime import datetime, timezone
     monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
@@ -3164,7 +3164,10 @@ def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(
             prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
         meetings_mod._close_persona_meeting(store=store, meeting=meeting, spec={'cadence': 'weekly'}, memory_url='unused')
         saved = store.get_meeting_schedule(TENANT, 'participant-0', 'MT-1')
-        assert all(store.get_meeting_schedule(TENANT, p['persona_id'], 'MT-1') == {**saved, 'persona_id': p['persona_id']} for p in participants)
+        for p in participants[1:]:
+            peer = store.get_meeting_schedule(TENANT, p['persona_id'], 'MT-1')
+            assert peer['last_run_at'] == saved['last_run_at'] and peer['next_due_at'] == saved['next_due_at']
+            assert not {'meeting_series', 'action_review_watermark', 'action_review_scan'} & peer.keys()
         return read, saved
     first, schedule = close_page(1, {'action_review_watermark': '2026-11-20T00:00:00Z'})
     assert len(first['items']) == 1 and first['pages']['reviewed']['has_more']
@@ -3306,3 +3309,79 @@ def test_evidence_and_lane_progress_across_distinct_meetings(
     assert not schedule['action_review_scan']
     assert schedule['action_review_watermark'] == (watermark if failure == 'persistent' else '2026-11-23T00:00:00Z')
     assert len(failed) == (0 if failure == 'none' else 1 if failure == 'transient' else 2)
+
+
+@pytest.mark.parametrize('restart', [False, True])
+def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, action_owner_contract, restart):
+    from datetime import datetime, timezone
+    from services.consultation import meeting_outputs as outputs
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kw: [])
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', lambda tenant, pid:
+        {'persona_id': pid, 'status': 'advisory_only', 'can_receive_persona_action': False})
+    chairs = ('persona-alpha', 'persona-beta')
+    owner = action_owner_contract
+    expected = {chair: set() for chair in chairs}
+    for lane, chair in enumerate(chairs):
+        for state in ('open', 'accepted'):
+            for i in range(3):
+                tid = 'rt-action-' + f'{lane * 100 + (10 if state == "accepted" else 0) + i:032x}'
+                owner.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT, 'owner': chair,
+                    'meeting_action': {'meeting_type': 'MT-1', 'subject_ref': f'pool:{chair}',
+                        'meeting_id': 'origin', 'assignee_kind': 'persona',
+                        'deliverable': 'Compare costs', 'acceptance_criterion': 'Measured costs'},
+                    'action_state': state, 'revision': 0, 'evidence_refs': [],
+                    'updated_at': '2026-11-20T12:00:00Z'}
+                expected[chair].add(tid)
+    store_dir = str(tmp_path / 'interleaved')
+    store = ConsultationStore(store_dir)
+    review_keys = ('meeting_series', 'action_review_watermark', 'action_review_scan')
+    for lane, chair in enumerate(chairs):
+        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': chair, 'meeting_type': 'MT-1',
+            'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': f'pool:{chair}'},
+            'action_review_watermark': f'2026-11-{19 + lane}T00:00:00Z', 'action_review_scan': {}})
+    seen = {chair: [] for chair in chairs}
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            assert ctx['prior_actions'] and all(a['action_id'] in expected[current_chair] for a in ctx['prior_actions'])
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            event = {'claims': [{'claim': 'Review original obligations', 'evidence_refs': [cid]}],
+                     'summary_evidence_refs': [cid]}
+            if ctx['round'] == 'synthesis':
+                event['synthesis'] = {'summary': 'Retain the original work', 'outcome': 'completed_no_proposal',
+                    'proposals': [], 'actions': [], 'no_action_reason': 'Original deliverables remain assigned'}
+            else:
+                event.update(stance='approve', confidence=.8, citations=[cid], accepted=[], disputed=[],
+                             changed=False, proposals=[])
+            return SimpleNamespace(event_content=event, summary='Review original obligations', evidence=[],
+                                   confidence=.8, recommendation='approve')
+    with outputs.output_routing_context(transport=owner.send, store_path=tmp_path / 'dispatch.json'):
+        for number, current_chair in enumerate(chairs * 3):
+            if restart:
+                store = ConsultationStore(store_dir)
+            peer = next(p for p in chairs if p != current_chair)
+            peer_before = store.get_meeting_schedule(TENANT, peer, 'MT-1')
+            monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, number, tzinfo=timezone.utc))
+            meeting, _ = meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+                payload={'meeting_type': 'MT-1', 'topic': 'Review pool alternatives',
+                         'iso_week': f'2026-W{47 + number // 2}',
+                         'convened_by': {'kind': 'persona', 'id': current_chair},
+                         'participants': [current_chair, peer], 'subject_ref': f'persona:{current_chair}'},
+                idempotency_key=f'interleaved-{number}')
+            closed = meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'],
+                                                          tenant_id=TENANT, provider=Provider())
+            assert closed['status'] == 'closed' and len(closed['rounds']) == 2
+            assert not closed['rejected_positions']
+            seen[current_chair].extend(a['action_id'] for a in closed['prior_actions'])
+            peer_after = store.get_meeting_schedule(TENANT, peer, 'MT-1')
+            assert {k: peer_after[k] for k in review_keys} == {k: peer_before[k] for k in review_keys}
+            assert peer_after['last_run_at'] == closed['closed_at']
+    store = ConsultationStore(store_dir)
+    for lane, chair in enumerate(chairs):
+        assert set(seen[chair]) == expected[chair] and len(seen[chair]) == 6
+        saved = store.get_meeting_schedule(TENANT, chair, 'MT-1')
+        assert saved['meeting_series']['subject_ref'] == f'pool:{chair}'
+        assert not saved['action_review_scan']
+        assert saved['action_review_watermark'] == f'2026-11-21T0{lane}:00:00Z'

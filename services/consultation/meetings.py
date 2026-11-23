@@ -3982,17 +3982,25 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
     # Sticky failure state prevents a later healthy page from hiding obligations.
     for p in participants:
         if p.get("trading") or p["persona_id"] == chair_persona_id:
+            persona_id = str(p["persona_id"])
+            # Attendance updates cadence, but only the chair owns this series'
+            # review state. A peer may be partway through reviewing its own pool.
+            schedule = store.get_meeting_schedule(tenant_id, persona_id, str(meeting["meeting_type"])) or {}
+            if persona_id == chair_persona_id:
+                schedule.update(
+                    meeting_series=meeting.get("meeting_series"),
+                    action_review_watermark=watermark,
+                    action_review_scan=continuation,
+                )
             store.put_meeting_schedule(
                 {
+                    **schedule,
                     "tenant_id": tenant_id,
-                    "persona_id": str(p["persona_id"]),
+                    "persona_id": persona_id,
                     "meeting_type": str(meeting["meeting_type"]),
                     "meeting_code": meeting_code,
                     "last_run_at": now_closed,
                     "next_due_at": next_due,
-                    "meeting_series": meeting.get("meeting_series"),
-                    "action_review_watermark": watermark,
-                    "action_review_scan": continuation,
                 }
             )
 
