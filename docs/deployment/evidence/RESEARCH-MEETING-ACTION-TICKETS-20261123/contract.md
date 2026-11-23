@@ -110,11 +110,11 @@ submission and human_input refs, with note_id, title, actual body, source_refs,
 actor_id, tenant_id, ticket_id and checksum. Bodies stay only in the existing
 notes table, outside repeated ticket history; list rows carry references only.
 The original Persona and assigned reviewer can read the supplied input from
-the original ticket. A required human's exact provide_input retry can recover
-the response while that transition is still current, even though required_actor
-has resumed the Persona. It does not grant later direct/list access; after a
-subsequent transition, that historical retry returns 404 if the human no longer
-has ticket access, preventing exposure of later owner results. It never writes
+the original ticket. A required human's exact provide_input retry recovers the historical response
+from that transition even after the Persona resumes and submits later work.
+When the provider no longer has normal ticket visibility, the owner reconstructs
+only that prior revision from existing immutable history. This does not expose
+later Persona results/reviews or grant direct/list access, and it never writes
 a second note or transition.
 
 For `human_actionable=true`, direct human-assigned meeting rows also project

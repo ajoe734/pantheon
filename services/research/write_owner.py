@@ -535,20 +535,31 @@ class ResearchWriteOwner:
                                                     context=context, conn=write_conn)
             return result
         ctx = self._action_auth(context, actor_id)
+        if len(json.dumps(patch).encode()) > self._ACTION_INPUT_MAX_BYTES:
+            self._action_error("Action command exceeds 16 KiB", 400)
         if not self._action_visible(ticket, ctx):
             # A provider stops being required_actor after successful input.
             # Recover its exact acknowledged command without broadening ticket
             # read/list permissions or permitting another write by that human.
-            input_retry = (ticket.get("tenant_id") == ctx.tenant_id and patch.get("action") == "provide_input"
-                and any(e.get("action") == "provide_input" and e.get("transitioned_by") == actor_id
+            if ticket.get("tenant_id") == ctx.tenant_id and patch.get("action") == "provide_input":
+                for index, e in enumerate(ticket["lifecycle_history"]):
+                    if (e.get("action") == "provide_input" and e.get("transitioned_by") == actor_id
                         and e.get("idempotency_key") == patch.get("idempotency_key")
-                        and e.get("revision") == ticket["revision"]
-                        and e.get("command_digest") == self._action_digest([actor_id, patch])
-                        for e in ticket["lifecycle_history"]))
-            if not input_retry:
-                self._action_error("Research ticket not found", 404)
-        if len(json.dumps(patch).encode()) > self._ACTION_INPUT_MAX_BYTES:
-            self._action_error("Action command exceeds 16 KiB", 400)
+                        and e.get("command_digest") == self._action_digest([actor_id, patch])):
+                        # Replay only the snapshot the provider was authorized
+                        # to see then, never later Persona deliverables/reviews.
+                        history = ticket["lifecycle_history"][:index + 1]
+                        snapshot = {**ticket, "lifecycle_history": history,
+                            "revision": e["revision"], "status": e["to_status"],
+                            "action_state": e["to_action_state"], "updated_at": e["transitioned_at"],
+                            "required_actor": ticket["owner"], "closed_at": None, "archived_at": None,
+                            "submitted_at": next((h["transitioned_at"] for h in reversed(history)
+                                                  if h.get("action") == "submit"), None),
+                            "reviewed_at": (e.get("review_decision") or {}).get("reviewed_at"),
+                            **{k: e.get(k) for k in ("evidence_refs", "human_input", "input_request", "review_decision")},
+                            "linked_artifacts": [r["artifact_id"] for r in e.get("evidence_refs", [])]}
+                        return self._meeting_ticket_detail(snapshot, conn=conn)
+            self._action_error("Research ticket not found", 404)
         action = patch.get("action")
         if not isinstance(action, str) or action not in self._ACTION_STATES:
             self._action_error("Meeting work requires an explicit owner action; status PATCH is forbidden", 400)

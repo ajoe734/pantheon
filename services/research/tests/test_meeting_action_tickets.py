@@ -262,10 +262,14 @@ def test_inline_human_input_resumes_persona_and_recovers_lost_response(world):
     assert client.get(f"{URL}/{blocked['ticket_id']}", headers=headers("human-1", ("human",))).status_code == 404
     assert command(world, resumed, "submit", actor="human-1", roles=("human",),
                    evidence_note=inline_report()).status_code == 404
-    refs = [{"kind": r["kind"], "artifact_id": r["artifact_id"]} for r in resumed["human_input"]["evidence_refs"]]
-    submitted = advance(command(world, resumed, "submit", evidence_refs=refs))
+    submitted = advance(command(world, resumed, "submit", evidence_note=inline_report("Private later Persona result")))
     assert submitted["ticket_id"] == blocked["ticket_id"] and submitted["action_state"] == "submitted"
-    assert provide().status_code == 404  # no access to later owner results through an old replay
+    assert advance(provide()) == resumed  # recover original response without later Persona content
+    assert note_count(world) == 2
+    accepted = advance(command(world, submitted, "accept", actor="consultation-svc", roles=("service",),
+                               reason="Verified later private result", review_source="mtg-week-48"))
+    assert advance(provide()) == resumed and note_count(world) == 2
+    assert client.get(f"{URL}/{accepted['ticket_id']}", headers=headers("human-1", ("human",))).status_code == 404
 
 
 def test_inline_note_denied_stale_invalid_and_conflicting_commands_do_not_write(world):

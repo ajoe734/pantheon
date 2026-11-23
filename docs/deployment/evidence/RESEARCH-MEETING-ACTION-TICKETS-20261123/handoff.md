@@ -134,9 +134,9 @@ Original-ticket authorized detail and PATCH responses resolve `evidence_notes`
 with the real saved body, sources, checksum and stamped human identity. Submission
 and supplied human input stay distinct reference envelopes. The original Persona
 and reviewer read the report on that same ticket. Human input returns the same
-owner/id to in_progress. Immediate exact response recovery is allowed for the
-original input provider; after further owner transitions the provider cannot use
-its old request to read new private results without normal ticket visibility.
+owner/id to in_progress. Exact response recovery is allowed for the original input provider even after
+further owner transitions: existing history reconstructs the input revision only,
+so retry cannot reveal new private results without normal ticket visibility.
 No additional general read/list permissions are introduced.
 
 The canonical next instruction also requested the existing direct human ticket
