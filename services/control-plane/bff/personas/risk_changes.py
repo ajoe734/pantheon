@@ -39,6 +39,10 @@ def project_risk_change(dto: dict[str, Any], raw: Mapping[str, Any], tenant_id: 
         change = _chain_paper_capital_coordinator(tenant_id).read_paper_risk_change(
             tenant_id=tenant_id, persona_id=str(raw.get("persona_id") or raw.get("id")), pool_id=pool_id,
         )
+        if change.get("requestedRisk") is None and dto.get("risk") in {"low", "medium", "high"}:
+            # Before the first ordered edit, the verified Persona request is
+            # still the request authority. It cannot establish an effective tier.
+            change["requestedRisk"] = dto["risk"]
         dto["riskPolicyChange"] = public_change(change)
         if change.get("requestedRisk"):
             dto["risk"] = change["requestedRisk"]

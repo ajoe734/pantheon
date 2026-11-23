@@ -18062,16 +18062,30 @@ class PersonaService:
         if "risk" in payload:
             if risk_pool_id:
                 try:
-                    _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
+                    risk_request_id = _stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
+                                                         "actor": identity.operator_id, "key": resolved_key})
+                    risk_change = _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
                         tenant_id=caller_tenant, persona_id=persona_id, pool_id=risk_pool_id,
                         profile=payload["risk"],
-                        request_id=_stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
-                                                     "actor": identity.operator_id, "key": resolved_key}),
+                        requested_by=identity.operator_id,
+                        request_id=risk_request_id,
                         request_hash=request_hash,
                     )
                 except Exception as exc:
-                    raise self._bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    conflict = getattr(exc, "reason_code", "") in {
+                        "paper_risk_change_idempotency_conflict", "paper_risk_change_revision_conflict",
+                    }
+                    raise self._bff_error(409 if conflict else 503,
+                                          ErrorCode.PRECONDITION_FAILED if conflict else ErrorCode.DEPENDENCY_UNAVAILABLE,
                                           "Paper risk change unavailable", str(exc)) from exc
+                if (not set(payload).intersection({"name", "archetype", "routedStrategies", "successRate"})
+                        or cached is not None or risk_change.get("requestId") != risk_request_id):
+                    # Risk-only requests need no second Persona write. Cached
+                    # or superseded retries must not replay older name/trait
+                    # edits while reconciling the latest Capital binding.
+                    data = _project_persona_dto(raw, routed_strategies=routed)
+                    project_risk_change(data, raw, caller_tenant)
+                    return {"data": data, "meta": {"snapshot_at": snapshot_at}}
                 # Capital owns the current request. Keep the legacy Persona
                 # scalar as creation provenance; stale Persona writes cannot
                 # change the latest intent. GET/PATCH project Capital below.

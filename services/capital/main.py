@@ -389,6 +389,8 @@ class CapitalBoundaryService:
         with self._CAPITAL_STATE_APPLY_LOCK:
             pool = self.get_pool(pool_id)
             has_policy_patch = body.risk_policy_ref is not None or body.metadata is not None
+            if (pool.metadata or {}).get("risk_profile_change") and has_policy_patch:
+                raise CapitalPoolError("Use the ordered paper risk profile change path")
             merged_meta = dict(pool.metadata or {})
             if isinstance(body.metadata, dict):
                 merged_meta.update(body.metadata)

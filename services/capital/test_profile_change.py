@@ -16,6 +16,7 @@ from services.governance.test_approval_authority import SnapshotApprovalReader, 
 def request(profile, key, revision=0):
     return ChangePaperRiskProfileRequest(
         actor_id="fixture-bff", actor_role="capital.admin", expected_persona_id="persona-test",
+        requested_by="fixture-operator",
         expected_revision=revision, request_id=hashlib.sha256(key.encode()).hexdigest(),
         request_hash=hashlib.sha256(profile.encode()).hexdigest(), requested_profile=profile,
     )
@@ -85,6 +86,9 @@ def test_missing_approval_keeps_verified_effective_then_same_key_reconciles(chan
     assert pending.metadata["risk_policy"] == policies["low"]
     assert receipt["resolution"]["allow_new_or_increased_risk"] is False
     assert receipt["resolution"]["allow_risk_reducing_actions"] is True
+    owner_request = receipt["resolution"]["owner_decision_request"]
+    assert owner_request["candidate_risk_policy_id"] == policies["medium"]["risk_policy_id"]
+    assert owner_request["candidate_risk_policy_digest"] == risk_policy_digest(policies["medium"])
     approvals.append(medium)
     effective = change(pending, reader, body)
     assert read(effective, reader)["status"] == "effective"
@@ -160,6 +164,28 @@ def test_legacy_missing_profile_reports_null_without_guessing_effective(change_f
     assert read(pending, reader)["requestedRisk"] == "high"
 
 
+def test_absent_definition_does_not_propose_installed_old_tier_or_invent_limits(change_fixture, tmp_path):
+    pool, reader, _, approvals = change_fixture
+    approvals[:] = approvals[:1]
+    (tmp_path / "fixture-medium.json").unlink()
+    (tmp_path / "fixture-high.json").unlink()
+    pending = change(pool, reader, request("medium", "no-definition"))
+    decision = read(pending, reader)["resolution"]["owner_decision_request"]
+    assert decision["requested_profile"] == "medium"
+    assert decision["absence_source"] == "policy_definition_and_approval_absent"
+    assert "candidate_pool_approval_digest" not in decision
+    assert "candidate_risk_policy_digest" not in decision
+
+
+def test_suspended_pool_records_request_without_activating_or_claiming_effective(change_fixture):
+    pool, reader, policies, _ = change_fixture
+    pending = change(replace(pool, status="suspended"), reader, request("medium", "suspended"))
+    result = read(pending, reader)
+    assert result["requestedRisk"] == "medium" and result["effectiveRisk"] is None
+    assert result["status"] == "unavailable"
+    assert pending.status == "suspended" and pending.metadata["risk_policy"] == policies["low"]
+
+
 def test_json_reload_and_lost_response_retry_are_noops(change_fixture, tmp_path):
     pool, reader, _, _ = change_fixture
     path = tmp_path / "pools.json"
@@ -171,3 +197,66 @@ def test_json_reload_and_lost_response_retry_are_noops(change_fixture, tmp_path)
     reloaded = PersistentCapitalPoolStore(path)
     second, actual = reloaded.mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, body))
     assert not actual and second == first
+    with pytest.raises(CapitalPoolError, match="ordered"):
+        reloaded.patch(pool.pool_id, patch={"metadata": pool.metadata}, updated_at="2026-11-23T01:00:00Z")
+
+
+def test_receipts_never_evict_old_idempotency_keys_at_bound(change_fixture):
+    from services.capital.profile_change import MAX_CHANGE_RECEIPTS
+
+    pool, reader, _, _ = change_fixture
+    pool.metadata["risk_profile_change_receipts"] = {str(i): {} for i in range(MAX_CHANGE_RECEIPTS)}
+    with pytest.raises(CapitalPoolError, match="receipt_limit"):
+        change(pool, reader, request("high", "over-limit"))
+    assert len(pool.metadata["risk_profile_change_receipts"]) == MAX_CHANGE_RECEIPTS
+
+
+def test_pg_independent_writers_order_retries_and_do_not_touch_other_rows(change_fixture):
+    import os
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor
+    from services.capital.pg_store import PostgresCapitalPoolStore
+
+    dsn = os.environ.get("CAPITAL_TEST_DSN")
+    if not dsn:
+        pytest.skip("CAPITAL_TEST_DSN must point to a disposable PostgreSQL instance")
+    pool, reader, _, _ = change_fixture
+    table = "capital.test_risk_change_" + uuid.uuid4().hex[:10]
+    store = PostgresCapitalPoolStore(dsn, table=table)
+    try:
+        object.__setattr__(pool, "tenant_id", pool.owner_id)
+        store.create(pool)
+        other = replace(pool, pool_id="unrelated")
+        object.__setattr__(other, "tenant_id", pool.owner_id)
+        store.create(other)
+        def rows():
+            with store._records._connect() as conn:
+                return conn.execute(f"SELECT record_id,payload,tenant_id,updated_at FROM {store._records.table} ORDER BY record_id").fetchall()
+        original = rows()
+        stores = [PostgresCapitalPoolStore(dsn, table=table) for _ in range(6)]
+        body = request("medium", "concurrent")
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            outcomes = list(executor.map(
+                lambda s: s.mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, body)), stores,
+            ))
+        assert sum(changed for _, changed in outcomes) == 1
+        assert rows()[1] == original[1]
+        high, _ = stores[1].mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, request("high", "new", 1)))
+        replay, actual = stores[0].mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, body))
+        assert not actual and replay == high
+        with pytest.raises(CapitalPoolError, match="revision_conflict"):
+            stores[2].mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, request("low", "stale", 1)))
+        # An old repair already in flight before the latest edit cannot write
+        # its stale full metadata snapshot after the ordered owner mutation.
+        with pytest.raises(CapitalPoolError, match="ordered"):
+            stores[3].patch(pool.pool_id, patch={"metadata": original[0][1]["metadata"]}, updated_at="2026-11-23T01:00:00Z")
+        # A status transition and unrelated pool creation cannot overwrite any
+        # request receipt from an independent owner facade's stale snapshot.
+        stores[4].update_status("unrelated", "archived")
+        third = replace(pool, pool_id="third")
+        object.__setattr__(third, "tenant_id", pool.owner_id)
+        stores[5].create(third)
+        assert PostgresCapitalPoolStore(dsn, table=table).require(pool.pool_id) == high
+    finally:
+        with store._records._connect() as conn:
+            conn.execute(f"DROP TABLE {store._records.table}")

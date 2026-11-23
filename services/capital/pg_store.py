@@ -49,8 +49,20 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             updated = mutate(copy.deepcopy(pool))
             if updated.to_dict() == pool.to_dict():
                 return pool, False
-            return self.patch(pool_id, patch={"metadata": updated.metadata,
-                              "risk_policy_ref": updated.risk_policy_ref}, updated_at=utc_now()), True
+            saved = CapitalPool.from_dict({**updated.to_dict(), "updated_at": utc_now()})
+            if hasattr(pool, "tenant_id"):
+                object.__setattr__(saved, "tenant_id", pool.tenant_id)
+            errors = validate_pool(saved)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool patch: {errors}")
+            snapshot = dict(self._pools)
+            self._pools[pool_id] = saved
+            try:
+                self._save()
+            except Exception:
+                self._pools = snapshot
+                raise
+            return saved, True
 
     @staticmethod
     def _requested_profile_update(pool: CapitalPool, persona_id: str, profile: str) -> dict[str, Any]:
@@ -93,6 +105,8 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             raise CapitalPoolError("At least one CapitalPool patch field is required")
         with self._lock:
             pool = self.require(pool_id)
+            if (pool.metadata or {}).get("risk_profile_change") and set(patch) & {"metadata", "risk_policy_ref"}:
+                raise CapitalPoolError("Use the ordered paper risk profile change path")
             target_status = str(patch.get("status") or pool.status)
             if target_status != pool.status:
                 _validate_status_transition(pool.status, target_status)

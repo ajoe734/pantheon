@@ -5311,7 +5311,7 @@ class PersonaProvisioningCoordinator:
 
     def change_paper_risk_profile(
         self, *, tenant_id: str, persona_id: str, pool_id: str,
-        profile: str, request_id: str, request_hash: str,
+        profile: str, request_id: str, request_hash: str, requested_by: str,
     ) -> dict[str, Any]:
         before = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
         path = f"/api/capital-pools/{_path_id(pool_id)}"
@@ -5319,6 +5319,7 @@ class PersonaProvisioningCoordinator:
         try:
             self.transport.post("capital", f"{path}/risk-profile-change", {
                 "actor_id": self.actor_id, "actor_role": "capital.admin",
+                "requested_by": requested_by,
                 "expected_persona_id": persona_id, "expected_revision": before["revision"],
                 "request_id": request_id, "request_hash": request_hash, "requested_profile": profile,
             })
@@ -5329,7 +5330,11 @@ class PersonaProvisioningCoordinator:
         meta = pool.get("metadata", {}) if pool else {}
         receipt = (meta.get("risk_profile_change_receipts") or {}).get(request_id)
         if not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile:
-            raise PersonaProvisioningCoordinationError("paper_risk_change_not_committed") from failure
+            reason = ("paper_risk_change_idempotency_conflict" if receipt else
+                      "paper_risk_change_revision_conflict" if
+                      int((meta.get("risk_profile_change") or {}).get("revision", 0)) != before["revision"]
+                      else "paper_risk_change_not_committed")
+            raise PersonaProvisioningCoordinationError(reason, reason_code=reason) from failure
         change = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
         resolution = change.get("resolution") or {}
         owner_request = resolution.get("owner_decision_request")
@@ -5423,6 +5428,7 @@ class PersonaProvisioningCoordinator:
                 change = self.change_paper_risk_profile(
                     tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id,
                     profile=latest_change["requested_profile"], request_id=rid, request_hash=receipt["request_hash"],
+                    requested_by=latest_change["requested_by"],
                 )
             return {"tenant_id": tenant_id, "persona_id": persona_id, "capital_pool_id": resolved_pool_id,
                     "dry_run": dry_run, "riskPolicyChange": change, "after_resolution": change.get("resolution")}
