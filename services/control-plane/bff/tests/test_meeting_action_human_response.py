@@ -136,6 +136,7 @@ def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meeti
     detail["tenant_id"] = "tenant-a"
     action = {**ticket(), "live_owner_status": {"status": "ok", "action_state": "submitted"},
               "recorded_disposition": {"decision": "returned", "reason": "Missing observation dates"},
+              "citations": ["cf-shared-1", "cf-private-leak-1"],
               "evidence_refs": [{"kind": "research_artifact", "artifact_id": "artifact-real"},
                                 {"scope": "persona_private", "artifact_id": "private-ref"},
                                 {"tenant_id": "tenant-b", "artifact_id": "foreign-ref"}]}
@@ -152,6 +153,8 @@ def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meeti
     assert body["prior_actions"][0]["recorded_disposition"]["decision"] == "returned"
     assert body["actions"][0]["revision"] == 3
     assert "private-ref" not in response.text and "foreign-ref" not in response.text and "never" not in response.text
+    assert "cf-private-leak-1" not in response.text
+    assert body["actions"][0]["citations"] == ["cf-shared-1"]
     assert body["synthesis"]["actions"] == body["actions"]
     legacy = client.get("/bff/management/meetings/mtg-002", headers=make_headers()).json()
     assert legacy["actions"] == [] and legacy["prior_actions"] == []
@@ -184,6 +187,7 @@ def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetin
         assert work[0]["source_id"] == row["ticket_id"]
         assert work[0]["resumes_with"] == "persona-alpha"
         assert work[0]["summary"] == "Need licensed observations"
+        assert work[0]["overdue"] is True
         assert "action=" in work[0]["href"]
         assert body["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["page_info"]["next_page_token"] == "more-human-work"
     assert len(calls) == 2  # Exactly one Research list per reload; no per-ticket reads.
@@ -199,3 +203,88 @@ def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetin
     body = client.get("/bff/management/human-inbox", headers=_auth_headers()).json()
     assert any(i["kind"] == "meeting_action" for i in body["data"]["items"])
     assert body["meta"]["partial"] is True
+
+
+def test_owner_rejection_does_not_retry_an_unfiltered_ticket_list(research_stack):
+    client, state, _ = research_stack
+    state["fail"] = 403
+    response = client.get("/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input", headers=_auth_headers())
+    assert response.status_code == 403
+    assert len(state["calls"]) == 1
+    assert "meeting_linked=true" in state["calls"][0][1]
+    state["calls"].clear()
+    assert client.get("/api/v1/research/tickets?action_state=waiting_for_input", headers=_auth_headers()).status_code == 400
+    assert state["calls"] == []
+
+
+def test_original_ticket_rejects_plain_close_and_conflicting_idempotency(research_stack):
+    client, state, _ = research_stack
+    path = "/api/v1/research/tickets/" + state["ticket"]["ticket_id"]
+    assert client.patch(path, headers=_auth_headers(), json={"status": "closed", "expected_revision": 3}).status_code == 400
+    assert state["ticket"]["action_state"] == "waiting_for_input"
+    state["calls"].clear()
+    assert client.patch(path, headers={**_auth_headers(), "Idempotency-Key": "header-key"},
+                        json={"action": "provide_input", "idempotency_key": "other-key"}).status_code == 400
+    assert state["calls"] == []
+
+
+def test_ticket_reply_page_bound_is_enforced(research_stack):
+    client, state, owner = research_stack
+    def oversized_page(method, url, payload=None, headers=None):
+        return 200, {"data": [ticket()] * 3, "page_info": {"next_page_token": None}}
+    owner.http_request = oversized_page
+    response = client.get("/api/v1/research/tickets?meeting_linked=true&page_size=2", headers=_auth_headers())
+    assert response.status_code == 503
+    assert "exceeded requested page size" in response.text
+
+
+def test_slow_consultation_retains_research_items_and_uses_contributor_budget(inbox_meetings_stack, monkeypatch):
+    import urllib.request
+    from urllib.error import URLError
+    client, _, _ = inbox_meetings_stack
+    client.app.add_middleware(OwnerReadContextMiddleware)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.test")
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "1.0")
+    timeouts = []
+    def slow_owner(request, timeout=0):
+        timeouts.append(timeout)
+        raise URLError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", slow_owner)
+    owner = ResearchServiceClient(base_url="http://research.test", http_request=lambda *args:
+        (200, {"data": [ticket()], "page_info": {"next_page_token": None}}))
+    monkeypatch.setattr("services.control_plane.bff.research.client.ResearchServiceClient", lambda: owner)
+    body = client.get("/bff/management/human-inbox", headers=_auth_headers()).json()
+    assert any(i["kind"] == "meeting_action" for i in body["data"]["items"])
+    assert timeouts and all(0 < value <= 0.4 for value in timeouts)
+    # Research remains a contributor even if consultation has no configured URL.
+    monkeypatch.delenv("PANTHEON_CONSULTATION_API_URL")
+    body = client.get("/bff/management/human-inbox", headers=_auth_headers()).json()
+    assert any(i["kind"] == "meeting_action" for i in body["data"]["items"])
+
+
+def test_ticket_http_reply_limit_fails_closed(research_stack, monkeypatch):
+    import io
+    import urllib.request
+    from services.control_plane.bff.research.client import default_http_request
+    client, _, owner = research_stack
+    def oversized_reply(*args, **kwargs):
+        result = io.BytesIO(b" " * (4 * 1024 * 1024 + 100))
+        result.status = 200
+        return result
+    owner.http_request = default_http_request
+    monkeypatch.setattr(urllib.request, "urlopen", oversized_reply)
+    response = client.get("/api/v1/research/tickets?meeting_linked=true&page_size=2", headers=_auth_headers())
+    assert response.status_code == 502
+    assert "exceeds 4 MiB" in response.text
+
+
+def test_meeting_owner_denied_is_distinct_from_unavailable_and_historical(meetings_stack):
+    client, _, state = meetings_stack
+    state["status_override"]["/api/consult/meetings/mtg-001"] = 403
+    response = client.get("/bff/management/meetings/mtg-001", headers=make_headers())
+    assert response.status_code == 403
+    assert "FORBIDDEN" in response.text
+    state["status_override"].clear()
+    state["offline"] = True
+    response = client.get("/bff/management/meetings/mtg-001", headers=make_headers())
+    assert response.status_code == 200 and response.json()["status"] == "unavailable"

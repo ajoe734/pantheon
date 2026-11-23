@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 import json
 import os
+import time
+from contextlib import contextmanager
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +21,7 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 from services.control_plane.bff.core.display_names import current_resolver
 from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
+    management_read_deadline,
     selected_tenant,
 )
 
@@ -995,8 +998,11 @@ def shape_meeting_detail(
     action_fields.setdefault("actions", [])
     action_fields.setdefault("prior_actions", [])
     action_fields.setdefault("participant_capabilities", [])
-    action_fields.setdefault("action_read", {"status": "not_recorded", "source": "consultation",
-                                          "reason": "meeting_actions_not_recorded"})
+    has_actions = bool(action_fields["actions"] or action_fields["prior_actions"])
+    action_fields.setdefault("action_read", {
+        "status": "unavailable" if has_actions else "not_recorded", "source": "consultation",
+        "reason": "live_action_owner_status_not_recorded" if has_actions else "meeting_actions_not_recorded",
+    })
 
     # 6. Writebacks: never expose private memory text, only ids/status
     raw_writebacks = raw.get("writebacks") if isinstance(raw.get("writebacks"), list) else []
@@ -1321,6 +1327,8 @@ class MeetingsOwnerClient:
         rem = remaining_management_read_budget()
         if rem is not None and rem <= 0.0:
             raise MeetingsOwnerUnavailableError("read_timeout", status_code=504)
+        if rem is not None:
+            self.client._timeout_seconds = min(self.client._timeout_seconds, max(0.01, rem))
         if not self.client.is_configured():
             raise MeetingsOwnerUnavailableError("consultation_owner_unconfigured")
         if not self.client._token and os.getenv("CONSULTATION_AUTH_REQUIRED", "").strip().lower() in {
@@ -1958,6 +1966,21 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
     return items
 
 
+@contextmanager
+def _inbox_owner_budget():
+    # Each independent owner gets part of the existing contributor deadline;
+    # one slow source cannot consume the other source's entire read allowance.
+    from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
+    allowance = human_inbox_surface_timeout_seconds() * 0.4
+    remaining = remaining_management_read_budget(allowance)
+    budget = min(allowance, remaining) if remaining is not None else allowance
+    token = management_read_deadline.set(time.monotonic() + max(0, budget))
+    try:
+        yield
+    finally:
+        management_read_deadline.reset(token)
+
+
 def read_human_inbox_meeting_items(
     snapshot_at: str,
     *,
@@ -1995,28 +2018,37 @@ def read_human_inbox_meeting_items(
     surfaces: Dict[str, Any] = {}
     items: List[Dict[str, Any]] = []
     # A partial owner failure must not hide work from a different owner.
-    try:
-        meetings_res = client.list_meetings(limit=100)
-        proposals_res = client.list_proposals()
-        catalogue_res = client.get_catalogue()
-        items.extend(project_human_inbox_meeting_items(
-            snapshot_at=snapshot_at, meetings=meetings_res.get("items") or [],
-            proposals=proposals_res.get("items") or [], catalogue=catalogue_res))
-        surfaces["consultation"] = {"status": "ok", "next_cursor": meetings_res.get("next_cursor")}
-    except (MeetingsOwnerUnavailableError, MeetingsOwnerValidationError, MeetingsOwnerNotFoundError) as exc:
-        surfaces["consultation"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
-                                    "reason": exc.reason}
-    if resolve_orchestrator_base_url():
+    with _inbox_owner_budget():
         try:
-            page = ResearchServiceClient().list_research_ticket_page(action_state="waiting_for_input", page_size=100)
-            items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at))
-            surfaces["research"] = {"status": "ok", "page_info": page["page_info"],
-                "href": "/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&page_size=100"}
-        except ResearchCommandError as exc:
-            surfaces["research"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
-                                    "reason": str(exc), "status_code": exc.status_code}
+            meetings_res = client.list_meetings(limit=100)
+            proposals_res = client.list_proposals()
+            catalogue_res = client.get_catalogue()
+            items.extend(project_human_inbox_meeting_items(
+                snapshot_at=snapshot_at, meetings=meetings_res.get("items") or [],
+                proposals=proposals_res.get("items") or [], catalogue=catalogue_res))
+            surfaces["consultation"] = {
+                "status": "degraded" if meetings_res.get("next_cursor") else "ok",
+                "reason": "owner_page_has_more" if meetings_res.get("next_cursor") else None,
+                "next_cursor": meetings_res.get("next_cursor"),
+            }
+        except (MeetingsOwnerUnavailableError, MeetingsOwnerValidationError, MeetingsOwnerNotFoundError) as exc:
+            surfaces["consultation"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
+                                        "reason": exc.reason}
+    if resolve_orchestrator_base_url():
+        with _inbox_owner_budget():
+            try:
+                page = ResearchServiceClient().list_research_ticket_page(action_state="waiting_for_input", page_size=100)
+                items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at))
+                surfaces["research"] = {
+                    "status": "degraded" if page["page_info"].get("next_page_token") else "ok",
+                    "reason": "owner_page_has_more" if page["page_info"].get("next_page_token") else None,
+                    "page_info": page["page_info"],
+                    "href": "/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&page_size=100"}
+            except ResearchCommandError as exc:
+                surfaces["research"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
+                                        "reason": str(exc), "status_code": exc.status_code}
     else:
         surfaces["research"] = {"status": "unavailable", "reason": "research_owner_unconfigured"}
     states = [s["status"] for s in surfaces.values()]
     return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if "ok" in states else "unavailable",
-                   "source": "consultation", "snapshot_at": snapshot_at, "surfaces": surfaces}
+                   "source": "bff_composed", "snapshot_at": snapshot_at, "surfaces": surfaces}

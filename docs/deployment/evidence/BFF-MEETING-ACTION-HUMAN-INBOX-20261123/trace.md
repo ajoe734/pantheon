@@ -20,8 +20,9 @@ Class: RC2 WP2.3, cross-reference RC6 meetings, existing
   action-specific inputs and returns only four fields. The owner must own
   revision checks, replay and transitions; BFF must preserve its receipt.
 * Existing ticket list materializes an owner list before local page slicing.
-  A paged owner operation will serve normal production HTTP requests; legacy
-  list remains for separately supported ordinary in-process/test callers.
+  A paged owner operation serves meeting-linked production HTTP requests; legacy
+  list remains for ordinary RW-01 callers, whose non-meeting history and local
+  pagination contract are unchanged. The unfiltered TypeError retry is removed.
 * Regression starting points: `tests/test_meetings_views.py`,
   `tests/test_meetings_human_inbox.py`, `test_rw01_research_ticket_contract.py`.
 

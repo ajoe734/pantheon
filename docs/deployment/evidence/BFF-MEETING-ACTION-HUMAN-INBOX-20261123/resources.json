@@ -1,0 +1,13 @@
+{
+  "fixture": "100 distinct waiting tickets, 2000-char deliverable, criterion and input reason; simulated owner summaries, not hosted data",
+  "ticket_count": 100,
+  "projected_count": 100,
+  "owner_reply_bytes": 683570,
+  "projected_inbox_rows_bytes": 1192200,
+  "research_http_reply_cap_bytes": 4194304,
+  "new_research_calls_per_inbox_read": 1,
+  "max_meeting_contributor_direct_http_calls_per_read": 4,
+  "persistent_writer_count": 0,
+  "cache_entries_added": 0,
+  "bff_storage_growth_bytes_per_day": 0
+}

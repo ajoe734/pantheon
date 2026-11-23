@@ -303,7 +303,13 @@ def create_meetings_router(
                 exc.reason,
             ) from exc
         except MeetingsOwnerUnavailableError as exc:
+            if exc.status_code in (401, 403):
+                raise err_fn(exc.status_code, ErrorCode.FORBIDDEN,
+                             "Meeting owner denied this read", exc.reason) from exc
             return unavailable_meetings_envelope("meeting_detail", exc.reason, snapshot_at=snap)
+        except MeetingsOwnerValidationError as exc:
+            raise err_fn(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else ErrorCode.VALIDATION_FAILED,
+                         "Meeting owner rejected this read", exc.reason) from exc
         return _annotate_meeting_envelope(shape_meeting_detail(
             raw_detail,
             is_operator=is_operator,

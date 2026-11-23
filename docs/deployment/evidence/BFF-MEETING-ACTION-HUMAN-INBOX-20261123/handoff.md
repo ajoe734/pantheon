@@ -1,0 +1,100 @@
+# BFF source review handoff
+
+Owner: Codex2. Reviewer: Antigravity2. Delivery target: `dev`.
+This packet proves component behavior against owner HTTP contracts. It does
+not prove merged, deployed, accepted, or integrated two-meeting execution.
+
+## Normal callers and owner contract
+
+* `GET /bff/management/meetings/{id}` keeps consultation-owned `actions`,
+  `prior_actions`, `participant_capabilities`, `prior_action_reviews`,
+  `series_subject_ref`, `action_read` and `action_page_info`. Frozen minutes
+  and separate live owner fields remain separate; BFF does not infer delivery.
+  Action subtrees apply tenant, trader and private-memory visibility, including
+  references to withheld case-file items. Owner denial returns 403; transport
+  failure remains an explicit unavailable envelope; legacy minutes get empty
+  lists and `meeting_actions_not_recorded`. No historical record is modified.
+  The meeting producer owns supplying live owner status and capabilities.
+* Existing `GET /bff/management/human-inbox` meetings contributor reads one
+  authorized `meeting_linked=true&action_state=waiting_for_input&page_size=100`
+  Research owner page. Each original ticket produces one `meeting_action`
+  entry, linked to the same meeting/action and original ticket facade. It
+  carries input reason, required material, original owner, actor required now,
+  resume owner, revision, due/review, overdue and original dates. A REVIEW
+  disposition remains its own item and cannot deliver or accept ticket work.
+* Existing `GET /api/v1/research/tickets?meeting_linked=true` forwards owner,
+  meeting_type, stable subject_ref, action_state, date filters, page size and
+  opaque page token. Owner `data` and `page_info` are preserved. The inbox
+  surface exposes the Research continuation and facade link; a nonempty owner
+  cursor marks the aggregate partial, so its local total is not an archive
+  census. Continue via the ticket facade; no archive walk or ticket fanout.
+* Existing ticket PATCH forwards the authenticated caller and verified tenant
+  to Research. `action=provide_input`, original `expected_revision`,
+  `idempotency_key`, `evidence_refs` (owner-issued kind/artifact_id) and any
+  allowed review command are validated by the owner. An Idempotency-Key header
+  supplies the body key; conflicting keys fail. PATCH requires an operator
+  route role, and the owner checks its own finer role/actor/tenant/state rules.
+  It returns the full durable owner receipt, human_input and history. Stale
+  revisions and denial retain 409/403; no BFF replay cache exists.
+
+Actual aggregation is in `management_read_models/service.py`, rather than the
+brief's `governance/human_inbox.py`. The five-line composition change there
+keeps Research work readable when consultation is unconfigured and marks
+partially available contributors as partial without discarding their rows.
+
+## Old callers, removals and history
+
+Retain REVIEW, refused/due meeting and pending formal-proposal projections:
+each has a distinct supported purpose, and none is a research action receipt.
+Ordinary non-meeting RW-01 list and PATCH validation remain available; their
+historical rows are not enrolled in the meeting queue. Remove the TypeError
+fallback that retried an unfiltered ticket list. Meeting-linked responses now
+bypass the ordinary four-field PATCH response and local ticket cache; ordinary
+ticket projections still serve their existing callers. No unused compatibility
+route, new work store, scheduler, inbox, backfill or data migration is added.
+
+## Resource acceptance
+
+See `resources.json` for reproducible simulated inputs and measured bytes:
+100 distinct waiting tickets with 2000-character deliverable, criterion and
+input reason: owner JSON 683570 bytes, inbox rows 1192200 bytes.
+Research HTTP success/error bodies have a 4 MiB cap; owner pages contain at
+most the requested page count (owner maximum 100). Exactly one new Research
+HTTP call per inbox read, zero per-ticket calls. The existing contributor has
+at most four direct calls: consultation list/proposals/catalogue + Research
+page. Other inbox contributors and existing display-name enrichment are not
+included in that count. PATCH performs one original GET and one PATCH.
+
+Reads run on user request only, at the existing three-trading-persona hosted
+scale (catalogue maximum nine scheduled meetings/week, plus separately
+human-convened meetings). Reload frequency is user-driven, not a new cadence.
+Each owner gets at most 40% of the existing inbox contributor timeout (0.4 s
+with its default 1 s), within the parent management deadline; consultation
+rechecks remaining allowance before each of its calls. Transient unavailability
+is displayed as source failure, never converted to human-only work.
+BFF adds zero persistent records/cache entries/jobs, zero bytes/day storage
+growth and no retention obligation. Request memory is released by normal
+request completion/GC. R owns storage-manifest edits; this lane adds no writer.
+
+## Residual findings and composition owners
+
+1. **Open, consultation owner / MEETING-ACTION-ADOPTION-AND-REVIEW-20261123:**
+   `list_meeting_proposals_view` currently enumerates all meeting rows and
+   hydrates proposal statuses before filters; `list_meetings_view` also scans
+   the archive before pagination. The BFF adds no new scan, but cannot certify
+   whole-chain bounded owner reads until this is repaired at consultation.
+   Preserve existing proposal semantics while adding filtered owner pages.
+   A cross-task governed note was rejected by the ORCH_TASK_ID worker lease;
+   the finding is retained here and in this task's canonical progress note for
+   coordinator attachment to RC2 WP2.3 / RC6 meetings.
+2. **Unproven composition / chain proof task:** Producer live status, safe
+   capabilities, actual Research transition/evidence/concurrency checks and
+   the fresh two-meeting loop require the other component deliveries and
+   `MEETING-ACTION-TWO-MEETING-PROOF-20261123`. These BFF HTTP doubles are not
+   evidence that those owners ran or that an action was completed on hosted.
+
+Read-only `acceptance_probe.py` can check an existing hosted record using
+BFF_BASE_URL, BFF_AUTH_TOKEN, BFF_TENANT_ID, MEETING_ID. It emits only counts,
+byte sizes and result codes, performs zero writes, and exits 77 for missing
+configuration or absent real actions. It supplements the chain-owned
+executable probe; a read projection alone does not prove execution/acceptance.

@@ -4103,12 +4103,6 @@ class ResearchRouterService:
                     item = port.get_research_experiment(clean_id)
                 else:
                     item = None
-        except ResearchCommandError as exc:
-            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
-                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
-                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
-                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
-                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -4301,12 +4295,6 @@ class ResearchRouterService:
                         launch_context=payload.get("launch_context") or {"actor_id": actor_id},
                         queued_at=self.utc_now(),
                     )
-        except ResearchCommandError as exc:
-            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
-                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
-                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
-                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
-                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,

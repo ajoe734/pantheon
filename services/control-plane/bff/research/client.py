@@ -64,7 +64,9 @@ def default_http_request(
                 return 502, {"detail": "Research ticket response exceeds 4 MiB"}
             return resp.status, json.loads(raw.decode("utf-8")) if raw else None
     except urllib.error.HTTPError as exc:
-        raw = exc.read()
+        raw = exc.read(4 * 1024 * 1024 + 1) if "/api/research/tickets" in url else exc.read()
+        if "/api/research/tickets" in url and len(raw) > 4 * 1024 * 1024:
+            return 502, {"detail": "Research ticket response exceeds 4 MiB"}
         try:
             body = json.loads(raw.decode("utf-8")) if raw else None
         except Exception:
