@@ -68,3 +68,15 @@ integrated acceptance. Source acceptance must not label fixture sizes as hosted.
 No new remediation task, global task edit, workflow gate, credential, deployment or
 second dispatcher was introduced. The transient status-outbox refusal at wake-up
 cleared through existing governed recovery; show/progress subsequently succeeded.
+
+## Review-rejection remediation (Antigravity2)
+
+* Fenced every unresolved durable ticket plan via `meeting_action_deferred`
+  (independent of the four-entry replay batch); regression: pending plans beyond batch.
+* Per-row source isolation: a ticket with an unresolvable approved source stays visible
+  with `source_unavailable` so `request_input` works; `submit` is denied with the exact
+  reason. Regression: missing-source original-ticket human request.
+* Validation: review regressions 2 passed; focused suite 612 passed/9 skipped/1 failed.
+  The failure (`test_submit_next_same_subject...`, probe `created_at` ordering) passed
+  4/4 alone and on baseline; suspected same-second `created_at` tie flake. Residual for
+  the Persona test owner. Plugin npm test and diff budget not rerun.

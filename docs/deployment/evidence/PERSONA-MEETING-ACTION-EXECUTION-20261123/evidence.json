@@ -6,7 +6,7 @@
   "hosted_accepted": false,
   "source_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
   "runtime_blobs": {
-    "services/persona/persona_cycle_controller.py": "0c37e30dbc743e13f4584d524a080b3798174c8b",
+    "services/persona/persona_cycle_controller.py": "0823204830f29163b1b2792e283bf51d50a18f97",
     "services/persona/write_owner.py": "2bd8fcefdcd6ab4fd5ceb437c9e2310d0f3dfdd6",
     "services/control-plane/persona/persona_policy_resolver.py": "3678828542466ce2cffe76a2adbbdfdb1fdf0d58",
     "integrations/openclaw/persona_ooda_runtime.py": "fe032094dbc093b96d703aa7aabff414e42d705c",
