@@ -111,6 +111,70 @@ def test_adopted_action_create_is_atomic_and_conflicting_replay_is_rejected(worl
     assert client.post(URL, json=ordinary).status_code in (400, 409)
 
 
+def test_required_data_round_trips_scoped_reads_and_binds_assignment_replay(world):
+    client, owner = world[1:]
+    payload = assignment()
+    datasets = ["tw_price_daily", "tw_broker_top"]
+    payload["meeting_action"]["required_data"] = datasets
+    ticket = create(world, payload)
+    progressed = advance(command(world, ticket, "start"))
+    assert create(world, payload) == progressed
+    stored = owner._tickets_store.get(ticket["ticket_id"])
+    assert stored["meeting_action"]["required_data"] == datasets
+    assert len(stored["lifecycle_history"]) == 2
+    for actor, roles in (("persona-1", ("persona",)), ("consultation-svc", ("service",))):
+        detail = advance(client.get(f"{URL}/{ticket['ticket_id']}", headers=headers(actor, roles)))
+        page = advance(client.get(URL, params={"meeting_linked": True, "owner": "persona-1"},
+                                  headers=headers(actor, roles)))
+        assert detail["meeting_action"]["required_data"] == datasets
+        assert page["data"][0]["meeting_action"]["required_data"] == datasets
+    for changed in (["tw_price_daily"], ["licensed_report"], []):
+        replay = copy.deepcopy(payload)
+        replay["meeting_action"]["required_data"] = changed
+        assert client.post(URL, json=replay, headers=headers()).status_code == 409
+    assert client.post(URL, json=assignment(), headers=headers()).status_code == 409
+    assert client.get(f"{URL}/{ticket['ticket_id']}", headers=headers(tenant="tenant-b")).status_code == 404
+    assert client.get(f"{URL}/{ticket['ticket_id']}", headers=headers("other-persona", ("persona",))).status_code == 404
+    foreign_page = advance(client.get(URL, params={"meeting_linked": True}, headers=headers(tenant="tenant-b")))
+    assert foreign_page["data"] == []
+    assert owner._tickets_store.get(ticket["ticket_id"]) == stored
+
+
+@pytest.mark.parametrize("datasets", [None, "tw_price_daily", {}, [1], [True], [[]], [""], [" "],
+    ["x" * 257], ["x"] * 9, ["tw_price_daily", " tw_price_daily "], ["文" * 255 + str(i) for i in range(3)]])
+def test_required_data_rejects_invalid_or_unbounded_identifiers_before_write(world, datasets):
+    payload = assignment()
+    payload["meeting_action"]["required_data"] = datasets
+    response = world[1].post(URL, json=payload, headers=headers())
+    assert response.status_code == 400, response.text
+    with world[2]._tickets_store._connect() as conn:
+        assert conn.execute(f"SELECT count(*) FROM {world[2]._tickets_store.table}").fetchone()[0] == 0
+
+
+def test_required_data_omission_and_legacy_and_ordinary_tickets_stay_unchanged(world):
+    legacy = create(world)
+    assert "required_data" not in legacy["meeting_action"]
+    assert create(world) == legacy
+    stored = world[2]._tickets_store.get(legacy["ticket_id"])
+    assert stored["assignment_digest"] == world[2]._action_digest({k: stored[k] for k in
+        ("meeting_action", "tenant_id", "title", "description", "priority", "owner")})
+    expanded = assignment()
+    expanded["meeting_action"]["required_data"] = []
+    assert world[1].post(URL, json=expanded, headers=headers()).status_code == 409
+    explicit_empty = assignment("2")
+    explicit_empty["meeting_action"]["required_data"] = []
+    assert create(world, explicit_empty)["meeting_action"]["required_data"] == []
+    boundary = assignment("3")
+    boundary["meeting_action"]["required_data"] = [str(i) + "x" * 255 for i in range(8)]
+    assert create(world, boundary)["meeting_action"]["required_data"] == boundary["meeting_action"]["required_data"]
+    page = advance(world[1].get(URL, params={"meeting_linked": True}, headers=headers()))
+    old_row = next(row for row in page["data"] if row["ticket_id"] == legacy["ticket_id"])
+    assert "required_data" not in old_row["meeting_action"]
+    ordinary = advance(world[1].post(URL, json={"title": "Ordinary evidence-only research"}))
+    assert "meeting_action" not in ordinary
+    assert world[2]._tickets_store.get(legacy["ticket_id"]) == stored
+
+
 def test_capable_persona_submits_returned_corrected_then_reviewer_accepts(world):
     client = world[1]
     ticket = create(world)

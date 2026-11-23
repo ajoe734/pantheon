@@ -455,7 +455,7 @@ class ResearchWriteOwner:
             self._action_error("meeting_action must be an object", 400)
         required = {"meeting_id", "source_action_id", "meeting_type", "subject_ref", "assignee_kind",
                     "deliverable", "acceptance_criterion", "reviewer_id"}
-        if set(meeting_action) - required - {"due_at", "next_review", "source_refs"}:
+        if set(meeting_action) - required - {"due_at", "next_review", "source_refs", "required_data"}:
             self._action_error("Unknown meeting_action fields", 400)
         action = {k: self._action_text(meeting_action.get(k), k, 2000 if k in
                   {"deliverable", "acceptance_criterion"} else 256) for k in required}
@@ -475,6 +475,16 @@ class ResearchWriteOwner:
         if not isinstance(refs, list) or len(refs) > 8 or len(json.dumps(refs).encode()) > 4096:
             self._action_error("source_refs exceeds bounded reference budget", 400)
         action["source_refs"] = refs
+        if "required_data" in meeting_action:
+            datasets = meeting_action["required_data"]
+            if not isinstance(datasets, list) or len(datasets) > 8:
+                self._action_error("required_data must be a list of at most 8 dataset identifiers", 400)
+            datasets = [self._action_text(value, "required_data identifier", 256) for value in datasets]
+            if len(set(datasets)) != len(datasets) or len(json.dumps(datasets).encode()) > 4096:
+                self._action_error("required_data must be unique and fit 4 KiB", 400)
+            # Assignment metadata, not an access grant. Preserve omission on old
+            # and evidence-only tickets; the assignment digest binds replays.
+            action["required_data"] = datasets
         assignment = {"meeting_action": action, "tenant_id": ctx.tenant_id,
                       "title": self._action_text(title, "title", 256),
                       "description": str(description or ""), "priority": priority,
