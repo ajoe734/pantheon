@@ -2834,6 +2834,7 @@ def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, 
     with output_routing_context(transport=owner, store_path=tmp_path / 'dispatch.json'):
         first = convene('2026-W47')
         owner.malformed_once = True
+        monkeypatch.setattr(meetings_mod, 'utc_now', lambda: '2026-11-23T00:00:00Z')
         from services.consultation.meeting_outputs import MeetingOutputRoutingError
         with pytest.raises(MeetingOutputRoutingError, match='frozen decision retained'):
             meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
@@ -2842,9 +2843,12 @@ def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, 
         assert frozen['action_decision_frozen'] and frozen['status'] != 'closed'
         assert store.get_request(first['meeting_id']).status.value != 'published'
         before_retry_calls = len(calls)
+        monkeypatch.setattr(meetings_mod, 'utc_now', lambda: '2026-11-23T00:00:05Z')
         m1 = meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
                                                tenant_id=TENANT, provider=Provider())
         assert len(calls) == before_retry_calls  # no second synthesis after a lost owner receipt
+        assert store.get_memo(m1['synthesis']['dissent_memo_id']).published_at == '2026-11-23T00:00:00Z'
+        assert m1['closed_at'] == '2026-11-23T00:00:05Z'
         assert m1['status'] == 'closed' and m1['synthesis']['proposals'] == []
         assert m1['outcome'] == 'actions_adopted' and len(m1['actions']) == 2
         t1, t2 = owner.tickets.values()
@@ -2994,7 +2998,9 @@ def test_new_review_dispositions_use_schedule_watermark_without_archival_scan(tm
     queries = [urllib.parse.parse_qs(r[1].query) for r in owner.requests]
     assert all(q.get('updated_after') is None for q in queries[:2])
     assert queries[2]['updated_after'] == ['2026-11-22T00:00:00Z']
-    assert queries[2]['page_token'] == ['same-scope-keyset']
+    # A legacy cursor without a scan start must restart safely.
+    assert 'page_token' not in queries[2]
+    assert result['scan']['started_at'] and not result['scan']['page_tokens']
 
 
 def test_oversize_shared_case_and_provider_envelope_are_refused_without_truncating_work():
@@ -3002,3 +3008,196 @@ def test_oversize_shared_case_and_provider_envelope_are_refused_without_truncati
         meetings_mod._attach_meeting_action_case({'groups': {}, 'unexpected_owner_payload': 'x' * 262145}, [])
     with pytest.raises(meetings_mod.MeetingRefusedError, match='2 MiB'):
         meetings_mod._check_meeting_prompt_budget({'meeting': {'prior_actions': [{'deliverable': 'x' * 2097153}]}})
+
+
+@pytest.fixture(params=['scripted', 'real_owner'])
+def action_owner_contract(request, monkeypatch):
+    """Run stable component cases and optionally the unmerged real owner contract.
+
+    Supply MEETING_ACTION_RESEARCH_OWNER_SOURCE to compose a frozen Research
+    work package before integration; after integration the normal import works.
+    Only persistence is isolated, not create/list normalization or cursor logic.
+    """
+    import importlib.util
+    import os
+    import sqlite3
+    owner = _ActionResearchBoundary()
+    if request.param == 'scripted':
+        original = owner.__call__
+        def send(method, url, headers, body):
+            if method != 'GET' or urllib.parse.urlsplit(url).path != '/api/research/tickets':
+                return original(method, url, headers, body)
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            rows = sorted((r for r in owner.tickets.values()
+                if r['tenant_id'] == headers['X-Tenant-Id']
+                and r['meeting_action']['meeting_type'] == q['meeting_type'][0]
+                and r['meeting_action']['subject_ref'] == q['subject_ref'][0]
+                and r['action_state'] in q['action_state'][0].split(',')
+                and r['updated_at'] >= q.get('updated_after', [''])[0]
+                and r['ticket_id'] > q.get('page_token', [''])[0]), key=lambda r: r['ticket_id'])
+            return 200, {'data': copy.deepcopy(rows[:8]), 'page_info': {
+                'next_page_token': rows[7]['ticket_id'] if len(rows) > 8 else None}}
+        owner.send = send
+        return owner
+    source = os.getenv('MEETING_ACTION_RESEARCH_OWNER_SOURCE')
+    if source:
+        spec = importlib.util.spec_from_file_location('meeting_contract_research_owner', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    else:
+        from services.research import write_owner as module
+    if not hasattr(module.ResearchWriteOwner, '_create_meeting_ticket'):
+        pytest.skip('Research owner work package not integrated; supply its frozen source explicitly')
+    real = module.ResearchWriteOwner.__new__(module.ResearchWriteOwner)
+    ctx = SimpleNamespace(tenant_id=TENANT, actor_id='consultation-svc', roles={'service', 'viewer'})
+    class SqlBoundary:
+        table = 'tickets'
+        _decode_payload = staticmethod(json.loads)
+        @contextmanager
+        def _connect(self):
+            with sqlite3.connect(':memory:') as conn:
+                conn.execute('CREATE TABLE tickets (record_id TEXT PRIMARY KEY, payload TEXT)')
+                conn.executemany('INSERT INTO tickets VALUES (?, ?)',
+                    [(tid, json.dumps(row)) for tid, row in owner.tickets.items()])
+                self.conn = conn
+                yield self
+        def execute(self, sql, params):
+            # Preserve the owner's actual SQL filtering/order/limit. Translate
+            # only PostgreSQL placeholders, array syntax and timestamp casts.
+            values = []
+            for value in params:
+                if isinstance(value, list):
+                    sql = sql.replace('= ANY(%s)', 'IN (' + ','.join('?' for _ in value) + ')', 1)
+                    values.extend(value)
+                else:
+                    values.append(value)
+            return self.conn.execute(sql.replace('::timestamptz', '').replace('%s', '?'), values)
+    real._tickets_store = SqlBoundary()
+    def insert(store, tid, row, **kwargs):
+        if tid in owner.tickets:
+            return False, owner.tickets[tid]
+        owner.tickets[tid] = copy.deepcopy(row)
+        return True, owner.tickets[tid]
+    real._bounded_action_insert = insert
+    def send(method, url, headers, body):
+        if method == 'POST':
+            return 201, real._create_meeting_ticket(**body, actor_id=ctx.actor_id, context=ctx, ticket_id=None)
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
+        return 200, real._list_meeting_tickets(context=ctx, statuses=None, owner=None,
+            meeting_type=q['meeting_type'], subject_ref=q['subject_ref'], action_states=q['action_state'].split(','),
+            due_before=None, submitted_after=None, updated_after=q.get('updated_after'),
+            page_size=int(q['page_size']), page_token=q.get('page_token'))
+    owner.send = send
+    return owner
+
+
+@pytest.mark.parametrize('use_due', [False, True])
+def test_adoption_normalizes_before_freeze_and_real_owner_receipt(tmp_path, monkeypatch, action_owner_contract, use_due):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    raw = {k: (' ' + v + ' ' if isinstance(v, str) else v) for k, v in _adopted_action().items()}
+    raw['source_refs'] = [' facts:source ']
+    if use_due:
+        raw['due_at'] = '2026-11-20T00:00:00+00:00'
+    else:
+        raw.pop('due_at')
+        raw['next_review'] = ' next weekly review '
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'normalization',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'allowed',
+            'can_receive_persona_action': True, 'allowed_deliverables': ['research_note']}]}
+    actions, _, rejected = meetings_mod._validate_adopted_actions({'actions': [raw]}, meeting, {'facts:source'})
+    assert not rejected and len(actions) == 1
+    assert all(v == v.strip() for v in actions[0].values() if isinstance(v, str))
+    assert actions[0]['source_refs'] == ['facts:source']
+    _, _, rejected = meetings_mod._validate_adopted_actions({'actions': [raw, {**raw, 'source_action_id': 'chair-1'}]}, meeting, {'facts:source'})
+    assert rejected == [{'index': 1, 'reason': 'duplicate_source_action_id'}]
+    meeting['synthesis'] = {'actions': actions}
+    calls = []
+    def transport(*args):
+        calls.append(copy.deepcopy(args[3]))
+        code, reply = action_owner_contract.send(*args)
+        return (code, {}) if len(calls) == 1 else (code, reply)  # durable write, lost receipt
+    ledger = tmp_path / 'dispatch.json'
+    assert dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]['state'] == 'dispatch_pending'
+    result = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert result['state'] == 'open' and result['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert len(calls) == 2 and calls[0] == calls[1] and len(action_owner_contract.tickets) == 1
+
+
+def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(tmp_path, monkeypatch, action_owner_contract):
+    from services.consultation import meeting_outputs as outputs
+    from datetime import datetime, timezone
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, tzinfo=timezone.utc))
+    series = {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}
+    for i in range(1, 10):
+        tid = 'rt-action-' + f'{i:032x}'
+        action_owner_contract.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT,
+            'owner': 'persona-alpha', 'meeting_action': {**series, 'meeting_id': 'origin',
+                'deliverable': 'Compare costs', 'acceptance_criterion': 'Measured costs', 'assignee_kind': 'persona'},
+            'action_state': 'accepted', 'revision': 1, 'updated_at': '2026-11-20T12:00:00Z', 'evidence_refs': []}
+    participants = [{'persona_id': f'participant-{i}', 'trading': True, 'role': 'chair' if i == 0 else 'participant'} for i in range(5)]
+    store = ConsultationStore(str(tmp_path / 'scan'))
+    def close_page(number, schedule):
+        meeting = {'tenant_id': TENANT, 'meeting_id': f'review-{number}', 'meeting_series': series,
+            'created_at': f'2026-11-{21 + number:02d}T00:00:00Z', 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
+            'topic': 'Review results', 'chair_persona_id': 'participant-0', 'trace_id': 'scan',
+            'participants': participants, 'rounds': [],
+            'previous_action_review_at': schedule.get('action_review_watermark'),
+            'action_review_scan': schedule.get('action_review_scan') or {},
+            'synthesis': {'summary': 'Read this page', 'outcome': 'completed_no_proposal', 'proposals': []}}
+        read = outputs.read_meeting_actions(meeting, transport=action_owner_contract.send)
+        assert read['status'] == 'ok' and len(read['items']) <= 24
+        assert all(p['returned'] <= 8 for p in read['pages'].values())
+        meeting.update(prior_actions=read['items'], prior_action_evidence=read['evidence'],
+            prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
+        meetings_mod._close_persona_meeting(store=store, meeting=meeting, spec={'cadence': 'weekly'}, memory_url='unused')
+        saved = store.get_meeting_schedule(TENANT, 'participant-0', 'MT-1')
+        assert all(store.get_meeting_schedule(TENANT, p['persona_id'], 'MT-1') == {**saved, 'persona_id': p['persona_id']} for p in participants)
+        return read, saved
+    first, schedule = close_page(1, {'action_review_watermark': '2026-11-20T00:00:00Z'})
+    assert len(first['items']) == 8 and first['pages']['reviewed']['has_more']
+    # Both a new accepted item and a new disposition on a previously seen item
+    # sort below the cursor, after page 1 and before the final meeting begins.
+    new = copy.deepcopy(next(iter(action_owner_contract.tickets.values())))
+    new.update(ticket_id='rt-action-' + '0' * 32, updated_at='2026-11-22T00:00:00Z')
+    action_owner_contract.tickets[new['ticket_id']] = new
+    changed = action_owner_contract.tickets['rt-action-' + f'{1:032x}']
+    changed.update(updated_at='2026-11-22T00:00:00Z', revision=2,
+                   review_decision={'decision': 'accept', 'reason': 'New disposition'})
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 23, tzinfo=timezone.utc))
+    # A failed page leaves its cursor and original scan boundary intact.
+    send = action_owner_contract.send
+    def failed_page(method, url, headers, body):
+        if urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get('action_state') == ['accepted']:
+            return 503, {}
+        return send(method, url, headers, body)
+    action_owner_contract.send = failed_page
+    failed = outputs.read_meeting_actions({'tenant_id': TENANT, 'meeting_id': 'retry', 'meeting_series': series,
+        'action_review_scan': schedule['action_review_scan'],
+        'previous_action_review_at': schedule['action_review_watermark']}, transport=failed_page)
+    assert failed['status'] == 'unavailable' and failed['scan'] == first['scan'] | {
+        'page_tokens': schedule['action_review_scan']['page_tokens']}
+    action_owner_contract.send = send
+    final, schedule = close_page(2, schedule)
+    assert len(final['items']) == 1 and not final['pages']['reviewed']['has_more']
+    assert schedule['action_review_watermark'] == '2026-11-21T00:00:00Z'
+    assert not schedule['action_review_scan']
+    next_scan, _ = close_page(3, schedule)
+    assert {a['action_id'] for a in next_scan['items']} == {new['ticket_id'], changed['ticket_id']}
+    assert next(a for a in next_scan['items'] if a['action_id'] == changed['ticket_id'])['revision'] == 2
+
+
+@pytest.mark.parametrize('token', ['x' * 129, 17, ''])
+def test_owner_continuation_is_bounded_before_schedule_persistence(monkeypatch, token):
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    owner = _ActionResearchBoundary()
+    owner.more = token
+    read = read_meeting_actions({'tenant_id': TENANT, 'meeting_id': 'invalid-page',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}, transport=owner)
+    assert read['status'] == 'unavailable' and not read['items']
+    assert all(p['reason'] == 'research_owner_invalid_continuation_token' for p in read['pages'].values())

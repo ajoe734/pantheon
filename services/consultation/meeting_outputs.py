@@ -1346,6 +1346,9 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             rows, info = reply.get("data"), reply.get("page_info")
             if not isinstance(rows, list) or len(rows) > ACTION_PAGE_SIZE or not isinstance(info, Mapping):
                 raise MeetingOutputRoutingError("research_owner_malformed_page", status_code=502)
+            next_token = info.get("next_page_token")
+            if next_token is not None and (not isinstance(next_token, str) or not next_token or len(next_token) > 128):
+                raise MeetingOutputRoutingError("research_owner_invalid_continuation_token", status_code=502)
             page_items = []
             for raw in rows:
                 ticket = _ticket_receipt(raw, tenant, origin=series)

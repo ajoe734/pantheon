@@ -3753,7 +3753,7 @@ def execute_persona_meeting(
     )
     # Recheck the assigned participants at adoption, after the model round.
     raw_actions = (raw_synthesis or {}).get("actions") or []
-    assigned = {a.get("assignee") for a in raw_actions if isinstance(a, Mapping) and isinstance(a.get("assignee"), str)} if isinstance(raw_actions, list) else set()
+    assigned = {a["assignee"].strip() for a in raw_actions if isinstance(a, Mapping) and isinstance(a.get("assignee"), str)} if isinstance(raw_actions, list) else set()
     meeting["participant_action_capabilities"] = [
         _participant_action_capability(tenant_id, c["persona_id"]) if c["persona_id"] in assigned else c
         for c in meeting["participant_action_capabilities"]
@@ -3795,6 +3795,10 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
 
     # Step 8: Record & publish Dissent Memo + Summary Memo in store
     now_closed = utc_now()
+    # The first published dissent anchors both immutable memo timestamps across
+    # partial-close retries, even when a retry runs in another second/process.
+    prior_dissent = store.get_memo(f"mem-dissent-{meeting_id}") if hasattr(store, "get_memo") else None
+    memo_timestamp = prior_dissent.created_at if prior_dissent and prior_dissent.status == MemoStatus.PUBLISHED else now_closed
     dissenting_persona = next(
         (
             p["persona_id"]
@@ -3836,8 +3840,8 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
         confidence=float((synthesis.get("tally") or {}).get("mean_confidence") or 0.7),
         status=MemoStatus.PUBLISHED,
         trace_id=trace_id,
-        created_at=now_closed,
-        published_at=now_closed,
+        created_at=memo_timestamp,
+        published_at=memo_timestamp,
     )
     saved_dissent = store.put_memo(dissent_memo)
     if isinstance(saved_dissent, Mapping) and saved_dissent.get("memo_id"):
@@ -3865,8 +3869,8 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
         confidence=float((synthesis.get("tally") or {}).get("mean_confidence") or 0.75),
         status=MemoStatus.PUBLISHED,
         trace_id=trace_id,
-        created_at=now_closed,
-        published_at=now_closed,
+        created_at=memo_timestamp,
+        published_at=memo_timestamp,
     )
     saved_summary = store.put_memo(summary_memo)
     if isinstance(saved_summary, Mapping) and saved_summary.get("memo_id"):
