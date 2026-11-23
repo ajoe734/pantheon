@@ -675,3 +675,39 @@ def test_normal_chair_human_action_schema_uses_existing_operator_inbox(tmp_path)
     del malformed['synthesis']['actions'][0]['human_requirement']
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(malformed, schema)
+
+
+def test_normal_chair_schema_preserves_bounded_deliverable_dataset_ids(tmp_path):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    action = {'source_action_id': 'data-analysis', 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+              'deliverable': 'Compare market feed observations', 'acceptance_criterion': 'Cite both feed records',
+              'next_review': 'next pool review', 'source_refs': ['facts:item:1'],
+              'required_data': ['tw_price_daily', 'tw_broker_top']}
+    event = {'claims': [{'claim': 'Use available data', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Adopt a data-aware action', 'outcome': 'actions_adopted',
+                           'proposals': [], 'actions': [action]}}
+    provider = _ProviderDouble(event_content_override=event)
+    meeting = {'meeting_id': 'mtg-data', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+               'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []}}
+    reply = _post_turn(provider, tmp_path, idem_key='data-adoption', meeting=meeting)
+    assert reply.status_code == 200, reply.text
+    assert reply.json()['contribution']['event_content']['synthesis']['actions'][0]['required_data'] == action['required_data']
+    prompt = provider.prompts[0]
+    assert 'Evidence-only analysis' in prompt and 'these exact requirements before assignment' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    assert schema == _meeting_event_content_schema(meeting)
+    for datasets in ([], ['x'] * 8):
+        sample = json.loads(json.dumps(event))
+        sample['synthesis']['actions'][0]['required_data'] = datasets
+        if datasets:
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(sample, schema)
+        else:
+            jsonschema.validate(sample, schema)
+    for datasets in (None, 'tw_price_daily', [''], ['x' * 257], [str(i) for i in range(9)]):
+        sample = json.loads(json.dumps(event))
+        sample['synthesis']['actions'][0]['required_data'] = datasets
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(sample, schema)

@@ -2171,9 +2171,10 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
             # Check each action separately: the same Persona may receive an evidence-only
             # note and be denied a licensed-feed analysis in this very synthesis.
             datasets = action.get("required_data") or []
-            cap = (_participant_action_capability(str(meeting["tenant_id"]), action["assignee"], datasets)
-                   if datasets else _participant_action_capability(str(meeting["tenant_id"]), action["assignee"])
-                   if recheck_capabilities else capabilities.get(action["assignee"], {}))
+            cap = capabilities.get(action["assignee"], {})
+            if cap and (recheck_capabilities or datasets):
+                cap = (_participant_action_capability(str(meeting["tenant_id"]), action["assignee"], datasets)
+                       if datasets else _participant_action_capability(str(meeting["tenant_id"]), action["assignee"]))
             if (cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed"
                     or "research_note" not in (cap.get("allowed_deliverables") or [])):
                 reason = "persona_owner_did_not_allow_assignment"

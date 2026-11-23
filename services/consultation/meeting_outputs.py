@@ -1463,7 +1463,7 @@ def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path 
                   "acceptance_criterion": action["acceptance_criterion"], "reviewer_id": "consultation-svc",
                   "source_refs": action["source_refs"]}
         for field in ("due_at", "next_review", "required_data"):
-            if field in action:
+            if action.get(field) or (field == "required_data" and field in action):
                 origin[field] = copy.deepcopy(action[field])
         # Keep the reason in the existing ticket description for the normal
         # owner list -> BFF Human Inbox path. Criterion/deliverable retain their

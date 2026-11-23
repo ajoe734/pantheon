@@ -3658,3 +3658,164 @@ def test_human_assignment_reaches_authenticated_tenant_operator_at_real_owner(
     assert returned['review_decision']['reason'] == 'Signed statement omits March fees'
     assert action_snapshot(returned)['review_decision'] == returned['review_decision']
     assert owner.get_research_ticket(row['ticket_id'], context=operator)['description'] == requirement
+
+
+@pytest.fixture
+def persona_action_policy():
+    """Compose the real Persona policy from its frozen source until it merges."""
+    import importlib.util
+    import os
+    source = os.getenv('MEETING_ACTION_PERSONA_POLICY_SOURCE')
+    if source:
+        spec = importlib.util.spec_from_file_location('meeting_contract_persona_policy', source)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    else:
+        from services.control_plane.persona import persona_policy_resolver as module
+    if not hasattr(module, 'evaluate_participant_action_capability'):
+        pytest.skip('Persona policy not integrated; supply its frozen source explicitly')
+    return module.evaluate_participant_action_capability
+
+
+@pytest.mark.parametrize('feed_access', [False, True])
+def test_data_aware_chair_three_personas_normal_engine(
+        tmp_path, monkeypatch, action_owner_contract, persona_action_policy, feed_access):
+    """Real policy/create/list, isolated owner persistence and HTTP transport; no hosted claim."""
+    from contextlib import closing
+    from io import BytesIO
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    from services.consultation.meeting_outputs import action_snapshot
+    from services.persona.harness import HarnessSurface, HarnessVersion, digest
+    pids = ('persona-2448c7053e33ea48da47', 'persona-6507750312870d03a241', 'persona-ee7112a829d38b9135ac')
+    surface = HarnessSurface.model_validate({
+        'identity_inputs': ['Cite supplied evidence'], 'guardrails': {'allowed_tools': ['read'],
+        'forbidden_solo_actions': ['admit', 'harness_patch']}, 'consult_policy': [],
+        'tool_guidance': {'read': 'Read governed evidence'}, 'skills': [],
+        'workflow': {'cadence_seconds': 86400, 'steps': ['observe', 'orient', 'decide', 'act', 'learn']},
+        'cycle_thresholds': {'minimum_evidence_count': 1, 'minimum_confidence': .8},
+        'memory_retrieval_policy': {'scopes': ['own_private', 'institutional'], 'max_items': 8, 'minimum_confidence': .8}})
+    personas = {}
+    for pid in pids:
+        version = HarnessVersion(persona_id=pid, version=1, parent_version=None, patch_id=None,
+            created_at='2026-11-23T00:00:00Z', created_by='operator', surface=surface,
+            content_digest=digest(surface.model_dump(mode='json')))
+        personas[pid] = {'persona_id': pid, 'tenant_id': TENANT, 'status': 'active', 'lifecycle_state': 'paper_owner',
+            'required_data_sources': [
+                {'dataset': 'tw_price_daily', 'market': 'TW', 'cadence': 'daily', 'source_class': 'live_pull',
+                 'connector_candidates': ['tw-twse-tpex-official-market'],
+                 'policy_gates': ['require_connector_approved', 'require_schedule_active', 'require_source_health_ok', 'no_live_capital']},
+                {'dataset': 'tw_broker_top', 'market': 'TW', 'cadence': 'daily', 'source_class': 'live_pull',
+                 'connector_candidates': ['tw-finmind-broker-daily-report'],
+                 'policy_gates': ['require_connector_approved', 'require_schedule_active', 'require_source_health_ok', 'no_live_capital']}],
+            'metadata': {'persona_harness': {'active_version': 1, 'versions': [version.model_dump(mode='json')]}}}
+    seen = []
+    original_urlopen = urllib.request.urlopen
+    def capability_http(req, timeout):
+        parsed = urllib.parse.urlsplit(req.full_url)
+        if parsed.netloc != 'persona-owner':
+            return original_urlopen(req, timeout=timeout)
+        assert req.get_header('X-tenant-id') == TENANT
+        if parsed.path.endswith('/strategy-pool'):
+            return closing(BytesIO(json.dumps({'pool_version': 1, 'members': []}).encode()))
+        if not parsed.path.endswith('/action-capability'):
+            raise urllib.error.HTTPError(req.full_url, 404, 'not supplied by this owner fixture', {}, None)
+        pid = parsed.path.split('/')[3]
+        q = urllib.parse.parse_qs(parsed.query)
+        seen.append((pid, q.get('required_data', [])))
+        snapshot = {'persona_id': pid, 'capabilities': ['persona_opinion'],
+            'allowed_capabilities': ['persona_opinion'], 'effective_tools': [], 'effective_workflows': [],
+            'metadata': {'canonical_write_authority': 'persona_service', 'scope': 'paper_advisory',
+                         'accessible_data': ['tw_price_daily', 'tw_broker_top'] if feed_access else []}}
+        receipt = persona_action_policy(personas[pid], snapshot, run_purpose=q['run_purpose'][0],
+                                       requirements={'required_data': q.get('required_data', [])})
+        return closing(BytesIO(json.dumps(receipt).encode()))
+    monkeypatch.setenv('PANTHEON_PERSONA_API_URL', 'http://persona-owner')
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(urllib.request, 'urlopen', capability_http)
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])
+    calls = []
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            calls.append(copy.deepcopy(request))
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            event = {'claims': [{'claim': 'Use supplied evidence', 'evidence_refs': [cid]}], 'summary_evidence_refs': [cid]}
+            if ctx['round'] == 'synthesis':
+                actions = []
+                for index, pid in enumerate(pids):
+                    note = {**_adopted_action(cid, f'note-{index}'), 'assignee': pid}
+                    if index == 1:
+                        note['required_data'] = []  # distinct from omission; retained in the owner origin
+                    actions.extend([note, {**_adopted_action(cid, f'feed-{index}'), 'assignee': pid,
+                        'required_data': [' tw_price_daily ', 'tw_broker_top'], 'deliverable': 'Compare licensed market feeds'}])
+                # Only an explicitly human-only external document goes to the existing operator inbox.
+                actions.append({**_adopted_action(cid, 'signed-statement'), 'assignee': 'operator',
+                    'assignee_kind': 'human', 'human_requirement': 'Only the operator can obtain the broker-signed statement',
+                    'required_data': ['broker_signed_statement']})
+                # Raw model whitespace is normalized by adoption; schema accepts valid bounded IDs.
+                event['synthesis'] = {'summary': 'Adopt specific feasible work', 'outcome': 'completed_no_proposal',
+                                      'proposals': [], 'actions': actions}
+            else:
+                event.update(stance='approve', confidence=.8, citations=[cid], accepted=[], disputed=[], changed=False, proposals=[])
+            jsonschema.validate(event, _meeting_event_content_schema(ctx))
+            return SimpleNamespace(event_content=event, summary='Use supplied evidence', evidence=[], confidence=.8, recommendation='approve')
+    store = ConsultationStore(str(tmp_path / 'data-meetings'))
+    meeting = meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+        persona_directory=personas, payload={'meeting_type': 'MT-1', 'topic': 'Evaluate actual deliverable data needs',
+            'convened_by': {'kind': 'persona', 'id': pids[0]}, 'participants': list(pids),
+            'subject_ref': 'persona:' + pids[0]}, idempotency_key='data-aware')[0]
+    owner = action_owner_contract
+    bodies = []
+    def lost_receipt_once(method, url, headers, body):
+        status, reply = owner.send(method, url, headers, body)
+        if method == 'POST':
+            bodies.append(copy.deepcopy(body))
+            if len(bodies) == 1:
+                return 503, {}  # owner committed before the response was lost
+        return status, reply
+    with output_routing_context(transport=lost_receipt_once, store_path=tmp_path / 'data-dispatch.json'):
+        from services.consultation.meeting_outputs import MeetingOutputRoutingError
+        with pytest.raises(MeetingOutputRoutingError, match='frozen decision retained'):
+            meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'], tenant_id=TENANT, provider=Provider())
+        requests_at_freeze = (len(calls), len(seen))
+        result = meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'], tenant_id=TENANT, provider=Provider())
+        assert (len(calls), len(seen)) == requests_at_freeze
+    assert result['status'] == 'closed' and len(result['rounds']) == 2
+    assert result['synthesis']['proposals'] == []
+    assert bodies[-1] == bodies[0]  # exact original request on ambiguous retry
+    assert len(owner.tickets) == (7 if feed_access else 4)
+    for row in owner.tickets.values():
+        origin = row['meeting_action']
+        if origin['source_action_id'].startswith('feed-'):
+            assert origin['required_data'] == ['tw_price_daily', 'tw_broker_top']
+        elif origin['source_action_id'] == 'note-1':
+            assert origin['required_data'] == []
+        elif origin['source_action_id'].startswith('note-'):
+            assert 'required_data' not in origin
+        else:
+            assert row['owner'] == 'operator' and row['description'].startswith('Only the operator')
+        projection = action_snapshot(row)
+        assert projection.get('required_data') == origin.get('required_data')
+    for pid in pids:
+        assert seen.count((pid, ['tw_price_daily', 'tw_broker_top'])) == 1
+        assert seen.count((pid, [])) == 2  # pre-read and independent evidence-only adoption
+    rejected = result['synthesis']['rejected_actions']
+    assert len(rejected) == (0 if feed_access else 3)
+    for row in rejected:
+        assert row['required_data'] == ['tw_price_daily', 'tw_broker_top']
+        assert row['capability_status'] == 'restricted_data'
+        assert row['capability_reason'] == 'deliverable_data_not_accessible'
+
+
+@pytest.mark.parametrize('datasets', ['tw_price_daily', None, [''], ['x'] * 9, ['x', ' x '], ['x' * 257], ['研' * 256, '究' * 256, '員' * 256]])
+def test_adoption_invalid_data_never_calls_capability_owner(monkeypatch, datasets):
+    def unexpected(*args):
+        pytest.fail('invalid requirement must not reach capability owner')
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', unexpected)
+    meeting = {'tenant_id': TENANT, 'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [{**_adopted_action(), 'required_data': datasets}]}, meeting, {'facts:source'})
+    assert not actions and rejected == [{'index': 0, 'reason': 'invalid_required_data'}]
