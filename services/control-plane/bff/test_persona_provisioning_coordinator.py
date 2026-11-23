@@ -31,6 +31,7 @@ except ImportError:
         PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
+from services.capital.risk_policy import risk_policy_digest
 from services.persona.risk_policy_draft import DraftInputs, DraftResult
 from services.registry.paper_strategy_spec import validate_strategy_spec
 from services.registry.strategy_artifact import (
@@ -5207,6 +5208,74 @@ def pending_profile_owner(tmp_path, monkeypatch):
             return capital._pool_body(result).model_dump()
 
     return RealCapitalTransport(), capital
+
+
+def test_legacy_hardcoded_inline_policy_gets_next_version_drafted_by_risk_officer_once(pending_profile_owner):
+    """The three dev `low` pools carry inline v1.0 (2x, no single-name cap, no cash reserve).
+
+    The next version (2.0) is drafted by the risk officer, proposed to Governance with the digest + draft
+    provenance, idempotently (one turn, one proposal), and nothing is approved or bound by the repair.
+    """
+    tx, capital = pending_profile_owner
+    store, record = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    ids = deterministic_provisioning_ids(record)
+    legacy = {"risk_policy_id": f"rp-{ids.capital_pool_id}", "version": "1.0", "status": "active",
+              "allowed_stages": ["paper"], "gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0,
+              "allowed_asset_classes": ["equity", "future"]}
+    tx.service.pool_store.create(capital.CapitalPool(
+        pool_id=ids.capital_pool_id, name="legacy low", owner_id=record.tenant_id, owner_type="org",
+        status="active", created_at=_owner_now(), budget=100000.0, currency="TWD",
+        metadata={"tenant_id": record.tenant_id, "persona_id": record.persona_id, "execution_context": "paper",
+                  "risk_policy": legacy,
+                  "recent_paper_evidence": ["2026-11-19 buy 452 x 2317 @ 221 vs 100,000 TWD"]},
+    ))
+    coord = PersonaProvisioningCoordinator(
+        store=store, transport=tx, schedule_registrar=_schedule_receipt, lease_owner="test-worker",
+        governance_proposer=tx, governance_proposer_actor_id=tx.governance_subject,
+        risk_policy_drafter=_fake_risk_officer_drafter,
+    )
+    tx.service.guard._approval_reader = coord._governance_approval_reader()
+    kwargs = dict(tenant_id=record.tenant_id, persona_id=record.persona_id)
+    first = coord.repair_paper_pool_risk_policy(**kwargs)
+    second = coord.repair_paper_pool_risk_policy(**kwargs)
+    assert len(DRAFTER_CALLS) == 1
+    assert DRAFTER_CALLS[0].version == "2.0" and DRAFTER_CALLS[0].profile == "low"
+    assert DRAFTER_CALLS[0].currency == "TWD" and DRAFTER_CALLS[0].budget == 100000.0
+    assert any("452" in e for e in DRAFTER_CALLS[0].evidence)
+    request = first["owner_decision_request"]
+    assert request["candidate_risk_policy_version"] == "2.0"
+    assert request["risk_officer_draft"]["provenance"]["source"] == "risk_officer_draft"
+    assert request["risk_officer_draft"]["policy"]["max_single_name_weight"] < 1.0
+    assert request["candidate_risk_policy_digest"] == risk_policy_digest(request["risk_officer_draft"]["policy"])
+    assert request["governance_proposal_id"] == second["owner_decision_request"]["governance_proposal_id"]
+    assert tx.mutations[("governance", "/api/governance/approvals")] == 1
+    assert first["repaired"] is False and second["repaired"] is False
+    stored = tx.service.pool_store.require(ids.capital_pool_id).metadata["risk_policy"]
+    assert stored["version"] == "1.0" and "max_single_name_weight" not in stored  # nothing bound without approval
+
+
+def test_no_drafter_or_failed_draft_leaves_pool_pending_without_invented_limits(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_URL", raising=False)
+    store, record = _record_and_store(seed_pool_approval=False)
+    transport = FakeOwnerTransport()
+    transport.seed_pool_policy_approval = False
+    unconfigured = PersonaProvisioningCoordinator(
+        store=store, transport=transport, schedule_registrar=_schedule_receipt, lease_owner="test-worker")
+    result = unconfigured.coordinate(record)
+    assert result.state == "failed" and result.error["reason_code"] == "risk_officer_draft_unavailable"
+    assert "not configured" in result.error["terminal_reason"]
+    assert not [c for c in transport.calls if c[0] != "GET" and "/api/capital-pools" in str(c[2])]
+
+    store2, record2 = _record_and_store(seed_pool_approval=False)
+    transport2 = FakeOwnerTransport()
+    transport2.seed_pool_policy_approval = False
+    bad = PersonaProvisioningCoordinator(
+        store=store2, transport=transport2, schedule_registrar=_schedule_receipt, lease_owner="test-worker",
+        risk_policy_drafter=lambda inputs: DraftResult(
+            False, reason="risk_policy_draft_outside_bounds:max_single_name_weight=0.5 exceeds low bound 0.2"))
+    result2 = bad.coordinate(record2)
+    assert result2.state == "failed" and "outside_bounds" in result2.error["terminal_reason"]
+    assert not [c for c in transport2.calls if c[0] != "GET" and "/api/capital-pools" in str(c[2])]
 
 
 @pytest.mark.parametrize("profile", ["low", "medium", "high"])

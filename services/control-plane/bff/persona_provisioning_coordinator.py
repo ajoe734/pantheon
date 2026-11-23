@@ -1956,6 +1956,16 @@ class PersonaProvisioningCoordinator:
         return self.risk_policy_drafter
 
     @staticmethod
+    def _is_legacy_default_policy(policy: Mapping[str, Any], pool_id: str, profile: str) -> bool:
+        """A generated per-pool inline policy that lacks single-name cap / cash reserve (the old 2x default).
+
+        Operator-authored catalog policies keep their own identity and are never replaced by a draft.
+        """
+        policy_id = str(policy.get("risk_policy_id") or "")
+        generated = policy_id.startswith(("rp-pool-", "paper-inline-policy:")) or policy_id == f"rp-{pool_id}"
+        return generated and validate_drafted_pool_risk_policy(policy, profile=profile)[0] is None
+
+    @staticmethod
     def _next_policy_version(existing: Any, explicit: str | None = None) -> str:
         if explicit:
             return explicit
@@ -2835,7 +2845,9 @@ class PersonaProvisioningCoordinator:
                     ).strip()
                     or None
                 )
-                if auto_res.candidate_policy is not None:
+                if auto_res.candidate_policy is not None and not self._is_legacy_default_policy(
+                    auto_res.candidate_policy.to_dict(), ids.capital_pool_id, eff_profile
+                ):
                     candidate_fallback = auto_res.candidate_policy.to_dict()
                 else:
                     draft_result = self._risk_officer_policy_candidate(
@@ -2848,7 +2860,8 @@ class PersonaProvisioningCoordinator:
                         request=req,
                         base_pool=base_pool,
                         version=self._next_policy_version(
-                            ((base_existing_meta.get("risk_policy") or {}).get("version")
+                            (auto_res.candidate_policy.version if auto_res.candidate_policy is not None
+                             else (base_existing_meta.get("risk_policy") or {}).get("version")
                              if isinstance(base_existing_meta.get("risk_policy"), Mapping) else None),
                             explicit_req_version,
                         ),
@@ -5757,9 +5770,11 @@ class PersonaProvisioningCoordinator:
             elif not pool_existing_ref or not before_resolution.resolved or before_resolution.profile_mapping_status != "explicit_policy":
                 repair_draft: DraftResult | None = None
                 inline_policy = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), Mapping) else None
-                if auto_res.candidate_policy is not None:
+                if auto_res.candidate_policy is not None and not self._is_legacy_default_policy(
+                    auto_res.candidate_policy.to_dict(), resolved_pool_id, str(effective_profile or "")
+                ):
                     candidate_baseline = auto_res.candidate_policy.to_dict()
-                elif inline_policy is not None and validate_drafted_pool_risk_policy(
+                elif auto_res.candidate_policy is None and inline_policy is not None and validate_drafted_pool_risk_policy(
                     inline_policy, profile=str(effective_profile or "")
                 )[0] is not None:
                     candidate_baseline = deepcopy(dict(inline_policy))
@@ -5776,7 +5791,8 @@ class PersonaProvisioningCoordinator:
                         request=ledger_record.request_payload if ledger_record is not None else None,
                         base_pool=pool,
                         version=self._next_policy_version(
-                            inline_policy.get("version") if inline_policy is not None else None,
+                            auto_res.candidate_policy.version if auto_res.candidate_policy is not None
+                            else inline_policy.get("version") if inline_policy is not None else None,
                             explicit_repair_version,
                         ),
                     )
