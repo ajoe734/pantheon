@@ -170,9 +170,19 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
         self._refresh_from_postgres()
 
     def create(self, pool: CapitalPool) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().create(pool)
+        errors = validate_pool(pool)
+        if errors:
+            raise CapitalPoolError(f"Invalid pool: {errors}")
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"INSERT INTO {self._records.table} (record_id,payload,updated_at,tenant_id) "
+                "VALUES (%s,%s::jsonb,now(),%s) ON CONFLICT (record_id) DO NOTHING RETURNING record_id",
+                (pool.pool_id, json.dumps(pool.to_dict()), getattr(pool, "tenant_id", None)),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Pool already exists: {pool.pool_id}")
+            self._pools[pool.pool_id] = pool
+            return pool
 
     def record_requested_profile(self, pool_id: str, *, persona_id: str, profile: str) -> tuple[CapitalPool, bool]:
         # Serialize with other Postgres writers and update just this row; _save
@@ -231,9 +241,7 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
             return super().list(owner_id=owner_id, status=status)
 
     def update_status(self, pool_id: str, new_status: str) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().update_status(pool_id, new_status)
+        return self.patch(pool_id, patch={"status": new_status}, updated_at=utc_now())
 
     def patch(
         self,
@@ -242,9 +250,35 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
         patch: dict[str, Any],
         updated_at: str,
     ) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().patch(pool_id, patch=patch, updated_at=updated_at)
+        unknown = set(patch) - self._PATCH_FIELDS
+        if unknown or not patch:
+            raise CapitalPoolError(f"Unsupported or empty CapitalPool patch: {sorted(unknown)}")
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Pool not found: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            # Ordered edits exclusively own policy and profile metadata after
+            # the first intent, including against an already in-flight repair.
+            if (pool.metadata or {}).get("risk_profile_change") and set(patch) & {"metadata", "risk_policy_ref"}:
+                raise CapitalPoolError("Use the ordered paper risk profile change path")
+            target_status = str(patch.get("status") or pool.status)
+            if target_status != pool.status:
+                _validate_status_transition(pool.status, target_status)
+            payload = {**pool.to_dict(), **patch, "updated_at": updated_at}
+            updated = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            errors = validate_pool(updated)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool patch: {errors}")
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            self._pools[pool_id] = updated
+            return updated
 
     def _save(self) -> None:
         for pool in self._pools.values():

@@ -6861,6 +6861,7 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
 
 # --- _PERSONA_PATCH_SERVER_MANAGED_FIELDS ---
 _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
+    "riskPolicyChange",
     "owner",
     "state",
     "status",
@@ -18024,6 +18025,16 @@ class PersonaService:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
+        from .risk_changes import paper_pool_id, project_risk_change
+
+        risk_pool_id = None
+        if "risk" in payload:
+            try:
+                risk_pool_id = paper_pool_id(raw)
+            except ValueError as exc:
+                raise self._bff_error(409, ErrorCode.PRECONDITION_FAILED, "Paper pool identity conflict", str(exc)) from exc
+            if risk_pool_id and payload["risk"] not in ("low", "medium", "high"):
+                raise self._bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid risk tier", "risk must be low, medium or high")
         cache_key = ":".join(
             ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
         )
@@ -18037,7 +18048,7 @@ class PersonaService:
             }
         )
         cached = _strategy_persona_idempotency_check(cache_key, request_hash)
-        if cached is not None:
+        if cached is not None and not risk_pool_id:
             return cached
         snapshot_at = self._utc_now()
         routed = _routed_strategies_for_persona(persona_id)
@@ -18049,7 +18060,24 @@ class PersonaService:
             if field in payload:
                 base[field] = payload[field]
         if "risk" in payload:
-            base["risk"] = _normalize_risk_level(payload["risk"])
+            if risk_pool_id:
+                try:
+                    _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
+                        tenant_id=caller_tenant, persona_id=persona_id, pool_id=risk_pool_id,
+                        profile=payload["risk"],
+                        request_id=_stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
+                                                     "actor": identity.operator_id, "key": resolved_key}),
+                        request_hash=request_hash,
+                    )
+                except Exception as exc:
+                    raise self._bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                          "Paper risk change unavailable", str(exc)) from exc
+                # Capital owns the current request. Keep the legacy Persona
+                # scalar as creation provenance; stale Persona writes cannot
+                # change the latest intent. GET/PATCH project Capital below.
+                base["risk"] = _project_persona_dto(raw, routed_strategies=routed).get("risk", "low")
+            else:
+                base["risk"] = _normalize_risk_level(payload["risk"])
         base["updatedAt"] = snapshot_at
         base["id"] = persona_id
         base["tenantId"] = caller_tenant
@@ -18119,6 +18147,7 @@ class PersonaService:
             routed_strategies=routed,
         )
         result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
+        project_risk_change(result["data"], persona_record, caller_tenant)
         _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
             "request_hash": request_hash,
             "result": deepcopy(result),

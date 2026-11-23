@@ -2027,6 +2027,7 @@ class PersonaProvisioningCoordinator:
         requested_profile: str,
         resolution: Any,
         dry_run: bool = False,
+        proposal_key: str = "",
     ) -> dict[str, Any]:
         base_req = (
             dict(resolution.owner_decision_request)
@@ -2061,7 +2062,8 @@ class PersonaProvisioningCoordinator:
         cand_pool_digest = str(base_req.get("candidate_pool_approval_digest") or "")
 
         prop_hash = hashlib.sha256(
-            f"{tenant_id}|{pool_id}|{requested_profile}|{cand_pol_id}|{cand_pol_ver}".encode("utf-8")
+            (f"{tenant_id}|{pool_id}|{requested_profile}|{cand_pol_id}|{cand_pol_ver}"
+             + (f"|{proposal_key}" if proposal_key else "")).encode("utf-8")
         ).hexdigest()[:20]
         deterministic_proposal_id = f"apv-risk-profile-{prop_hash}"
 
@@ -5293,6 +5295,54 @@ class PersonaProvisioningCoordinator:
             raise PoolDispatchUncertain(str(exc), _receipt(None)) from exc
         return _receipt(saga.get("status"))
 
+    def read_paper_risk_change(self, *, tenant_id: str, persona_id: str, pool_id: str) -> dict[str, Any]:
+        from services.capital.profile_change import validate_scope
+        from services.capital.pg_store import CapitalPool
+
+        path = f"/api/capital-pools/{_path_id(pool_id)}"
+        pool = self._owner_get("capital", path)
+        if pool is None or pool.get("pool_id") != pool_id or not self._formal_tenant_matches(pool, tenant_id):
+            raise PersonaProvisioningCoordinationError("paper_risk_change_pool_readback_failed")
+        validate_scope(CapitalPool.from_dict(pool), tenant_id, persona_id)
+        change = self._owner_get("capital", f"{path}/risk-profile-change?persona_id={_path_id(persona_id)}")
+        if not change or change.get("requestedRisk") not in {None, "low", "medium", "high"}:
+            raise PersonaProvisioningCoordinationError("paper_risk_change_readback_failed")
+        return change
+
+    def change_paper_risk_profile(
+        self, *, tenant_id: str, persona_id: str, pool_id: str,
+        profile: str, request_id: str, request_hash: str,
+    ) -> dict[str, Any]:
+        before = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
+        path = f"/api/capital-pools/{_path_id(pool_id)}"
+        failure = None
+        try:
+            self.transport.post("capital", f"{path}/risk-profile-change", {
+                "actor_id": self.actor_id, "actor_role": "capital.admin",
+                "expected_persona_id": persona_id, "expected_revision": before["revision"],
+                "request_id": request_id, "request_hash": request_hash, "requested_profile": profile,
+            })
+        except Exception as exc:
+            failure = exc
+        # Lost responses are recovered only from a durable, scoped receipt.
+        pool = self._owner_get("capital", path)
+        meta = pool.get("metadata", {}) if pool else {}
+        receipt = (meta.get("risk_profile_change_receipts") or {}).get(request_id)
+        if not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile:
+            raise PersonaProvisioningCoordinationError("paper_risk_change_not_committed") from failure
+        change = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
+        resolution = change.get("resolution") or {}
+        owner_request = resolution.get("owner_decision_request")
+        if change.get("requestId") == request_id and change.get("status") == "pending_approval" and owner_request:
+            from types import SimpleNamespace
+
+            change["ownerDecisionRequest"] = self._route_or_reuse_risk_policy_owner_decision_request(
+                tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id,
+                requested_profile=change["requestedRisk"], resolution=SimpleNamespace(**resolution),
+                proposal_key=str(owner_request.get("candidate_risk_policy_digest") or ""),
+            )
+        return change
+
     def repair_paper_pool_risk_policy(
         self,
         *,
@@ -5359,6 +5409,23 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 f"CapitalPool {resolved_pool_id!r} belongs to persona {pool_meta.get('persona_id')!r}, not {persona_id!r}"
             )
+
+        latest_change = pool_meta.get("risk_profile_change")
+        if isinstance(latest_change, Mapping):
+            if (requested_profile not in (None, latest_change.get("requested_profile"))
+                    or any(v is not None for v in (risk_policy_ref, risk_policy, risk_policy_version, approval_decision_id))):
+                raise PersonaProvisioningCoordinationError("paper_risk_change_superseded; use normal Persona PATCH")
+            if dry_run:
+                change = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id)
+            else:
+                rid = latest_change["request_id"]
+                receipt = pool_meta["risk_profile_change_receipts"][rid]
+                change = self.change_paper_risk_profile(
+                    tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id,
+                    profile=latest_change["requested_profile"], request_id=rid, request_hash=receipt["request_hash"],
+                )
+            return {"tenant_id": tenant_id, "persona_id": persona_id, "capital_pool_id": resolved_pool_id,
+                    "dry_run": dry_run, "riskPolicyChange": change, "after_resolution": change.get("resolution")}
 
         pcb = self._owner_get("capital", f"/api/bindings/{_path_id(resolved_binding_id)}")
         if pcb is not None:
