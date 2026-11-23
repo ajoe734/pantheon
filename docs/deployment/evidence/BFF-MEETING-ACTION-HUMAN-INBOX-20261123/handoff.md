@@ -163,3 +163,28 @@ exit 0). Checkout interpreter/import verification, diff budget and whitespace
 checks passed; commands and results are recorded in `evidence.json`.
 No writer, cache, cadence or resource bound changed; residual findings and
 chain-owned hosted proof above remain open.
+
+## Typed-reference and partial-page review correction
+
+Codex rejected head `99ca1187a642b80c8acf6b8e1614bcfd5039382b`: typed trader
+references bypassed action visibility, and an available paginated Research
+owner was reported unavailable when Consultation failed. Anchor `b58644f32`
+reuses `_shape_subject_ref` for typed trader/agora_user mappings at every
+action depth. It preserves operator/owning-trader access and redacts other
+viewers using the ordinary subject-reference contract, without mutating
+minutes. Other trader records retain their existing filtering behavior.
+Readable degraded owner pages now keep the contributor available as degraded;
+rows and continuation tokens are retained through the aggregate inbox surface.
+
+Authenticated tests cover both typed kinds, all seven action fields, nested
+subject/evidence/disposition refs, top-level/absent/null synthesis fallbacks,
+operator, owning trader and unrelated viewer. Inbox tests cover paginated and
+final pages with both available and missing read stores, absent Consultation,
+two reloads, one filtered Research call per request and retained cursor/rows.
+Before correction: 11 failed, 11 passed (exit 1). After: 22 passed in 4.17 s
+(exit 0). The reviewer's original reproducer passed all seven cases in 3.96 s
+(exit 0). Exact commands and the broader validation result are in evidence.json.
+The ten-file regression passed 269 tests, 100 warnings in 104.02 s (terminal
+exit 0). Checkout packaging/import, diff budget and whitespace checks passed.
+Resource bounds and residual owners above are unchanged. This requests fresh
+independent review of component validation; hosted acceptance remains unproven.

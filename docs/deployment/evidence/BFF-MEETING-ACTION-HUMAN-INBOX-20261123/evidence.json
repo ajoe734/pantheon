@@ -19,6 +19,32 @@
     {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
+      "result": "269 passed, 100 warnings in 104.02s; typed-reference/partial-page correction at b58644f32; bounded foreground batch terminal exit collected"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "result": "Passed at source anchor b58644f32 against dev 0c806ffed; production +306/-32 net +274; tests +475/-2 net +473; evidence caps passed"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'typed_action_subject or research_inbox_survives' --tb=short",
+      "phase": "before_typed_reference_partial_page_fix",
+      "exit_code": 1,
+      "result": "11 failed, 11 passed, 89 deselected, 3 warnings in 4.59s; authenticated regressions reproduced both review findings; terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'typed_action_subject or research_inbox_survives' --tb=short",
+      "exit_code": 0,
+      "result": "22 passed, 89 deselected, 3 warnings in 4.17s; typed references and paginated-source correction; terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings /tmp/test_bff_action_independent_review.py --tb=short",
+      "exit_code": 0,
+      "result": "Original independent-review reproducer: 7 passed, 1 warning in 3.96s; coverage retained in task-owned regressions; terminal exit collected"
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
       "result": "249 passed, 100 warnings in 102.26s; source-isolation correction on current dev base; foreground batch terminal exit collected"
     },
     {
@@ -45,7 +71,7 @@
     {
       "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
       "exit_code": 0,
-      "result": "Verified checkout-scoped interpreter and imports from a foreign cwd without PYTHONPATH"
+      "result": "Verified checkout-scoped interpreter and imports from a foreign cwd without PYTHONPATH; revalidated after b58644f32"
     },
     {
       "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'action_citations_withhold or synthesis_action_fields' --tb=short",
@@ -106,7 +132,9 @@
     "one filtered owner page per reload, opaque cursor, no unfiltered failure retry",
     "partial owner results, unavailable consultation and bounded per-owner timeout",
     "4 MiB ticket reply and requested page count fail-closed bounds",
-    "Research-only authenticated inbox survives missing read store and unconfigured Consultation; single linked ticket per reload with one filtered owner call and honest partial source status"
+    "Research-only authenticated inbox survives missing read store and unconfigured Consultation; single linked ticket per reload with one filtered owner call and honest partial source status",
+    "Typed trader/agora_user refs use ordinary subject redaction in all seven fields and nested subject/evidence/disposition mappings; operator, owning trader and unrelated viewer; present/absent/null fallback; immutable minutes",
+    "Readable paginated Research remains degraded through meetings and human_inbox with missing/available store and absent Consultation; rows and cursor survive two reloads with one owner call each"
   ],
   "residual_findings": [
     {
@@ -126,5 +154,7 @@
   "credentials_present": false,
   "hosted_evidence": [],
   "source_isolation_rejected_head": "21644e8b59fd4a0cc40219555d02ccee5bd7ddd7",
-  "source_isolation_correction_anchor": "7f0a70cf6"
+  "source_isolation_correction_anchor": "7f0a70cf6",
+  "typed_reference_partial_page_rejected_head": "99ca1187a642b80c8acf6b8e1614bcfd5039382b",
+  "typed_reference_partial_page_correction_anchor": "b58644f32d085c7582b70424c36a096ad5ab8886"
 }

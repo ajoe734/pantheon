@@ -48,3 +48,11 @@ Research configuration; only the earlier store/Consultation-specific guard
 prevented that reader from running. Replace that duplicate decision with an
 empty-reader check, preserving the existing no-source response. Research
 remains the ticket owner; no new adapter, route or storage is introduced.
+
+Typed-reference/partial-page resumption: inspected current dev `0c806ffed`,
+canonical rejection at `99ca1187a`, `_shape_subject_ref`, recursive action
+visibility and the existing inbox contributor aggregate before editing.
+Typed trader/agora_user mappings now reuse ordinary subject-reference
+redaction at every action depth. Other trader records retain their existing
+visibility rule. A readable paginated owner counts as partial availability.
+All callers above remain supported; this adds no owner call or stored state.
