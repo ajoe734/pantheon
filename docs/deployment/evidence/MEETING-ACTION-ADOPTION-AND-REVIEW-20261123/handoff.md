@@ -55,9 +55,29 @@ metadata-only reasons) appear in participant and chair input with criterion,
 evidence and disposition. Submitted work gets evidence-read priority. Acceptance
 requires an exact criterion/evidence match and a reason, and PATCHes the same
 owner revision with review_source=current meeting. Owner CAS/evidence validation
-remains authoritative. A failed owner/evidence/page read does not advance the
-existing schedule watermark. Minutes keep frozen snapshots; detail adds separate
+remains authoritative. A failed owner/evidence/page read retains the scan boundary and its input
+cursor. The existing schedule automatically continues each bounded lane. A
+finished scan advances the inclusive watermark only to its first page start,
+so concurrent insertions and disposition changes behind the cursor are read
+next scan; legacy bare cursors restart safely. Minutes keep frozen snapshots; detail adds separate
 live_owner_status and never writes on a read.
+
+## Review rejection remediation
+
+The d2c889826 review rejected cursor/watermark loss and whitespace receipt
+mismatch. Adoption now strips agreed text fields/source refs before capability,
+identity checks and freezing. Lost-receipt retries have identical request bodies.
+Regressions load actual ResearchWriteOwner create/list from cddd6188fc784ced558d6a800e95584aef17636a;
+only persistence is isolated (list SQL executes in SQLite with dialect translation).
+Set MEETING_ACTION_RESEARCH_OWNER_SOURCE to a git-exported write_owner.py to rerun
+before that owner package merges; afterward tests use its normal module import.
+Source SHA256: 056e0aa3a472e75de633e6a0553ae5578ab80a51911b54b5c64e11261a8c6290.
+Tests cover new accepted records plus updated dispositions below a live cursor,
+five schedule participants, bounded pages, duplicate canonical IDs and due/review.
+A broad rerun also exposed cross-second partial-close memo timestamps changing;
+the existing published dissent timestamp now anchors both immutable memos, while
+closed_at records actual completion. The two-meeting test forces a five-second
+retry. No extra writer or recurring job was added.
 
 ## Validation and resource budget
 
