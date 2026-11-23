@@ -993,7 +993,11 @@ def shape_meeting_detail(
 
     action_fields: Dict[str, Any] = {}
     for key in ("actions", "prior_actions", "participant_capabilities", "prior_action_reviews", "series_subject_ref", "action_read", "action_page_info"):
-        value = raw.get(key, raw_synthesis.get(key))
+        value = raw.get(key)
+        # Explicit null still uses the synthesis fallback; every returned
+        # action subtree must pass the same viewer visibility filter.
+        if value is None:
+            value = raw_synthesis.get(key)
         if value is not None:
             action_fields[key] = _visible_action_data(value, tenant_id=tenant_id or raw.get("tenant_id"),
                 is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)

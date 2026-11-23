@@ -166,9 +166,9 @@ def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meeti
     ("trader-alice", ["viewer"], True),
     ("trader-bob", ["viewer"], False),
 ])
-@pytest.mark.parametrize("synthesis_only", [False, True])
+@pytest.mark.parametrize("top_level", ["present", "absent", "null_actions", "null_prior_actions", "null_both"])
 def test_action_citations_withhold_whole_references_for_calling_viewer(
-    meetings_stack, viewer, roles, can_view_trader, synthesis_only,
+    meetings_stack, viewer, roles, can_view_trader, top_level,
 ):
     client, _, state = meetings_stack
     detail = state["details"]["mtg-001"]
@@ -188,8 +188,10 @@ def test_action_citations_withhold_whole_references_for_calling_viewer(
               "recorded_disposition": {"citations": copy.deepcopy(citations)}}
     for key in ("actions", "prior_actions"):
         detail["synthesis"][key] = [copy.deepcopy(action)]
-        if not synthesis_only:
+        if top_level == "present":
             detail[key] = [copy.deepcopy(action)]
+        elif top_level in ("null_both", "null_" + key):
+            detail[key] = None
     detail["rounds"][0]["positions"][0]["citations"] = copy.deepcopy(citations)
     original = copy.deepcopy(detail)
 
@@ -210,6 +212,50 @@ def test_action_citations_withhold_whole_references_for_calling_viewer(
         assert "TRADER_ACTION_CITATION" not in response.text
         assert "cf-agora-lock-1" not in response.text
     assert detail == original  # Visibility shaping must never mutate owner history.
+
+
+@pytest.mark.parametrize("viewer,roles,can_view_trader", [
+    ("op-alice", ["operator"], True),
+    ("trader-alice", ["viewer"], True),
+    ("trader-bob", ["viewer"], False),
+])
+@pytest.mark.parametrize("top_level", ["absent", "null", "empty"])
+@pytest.mark.parametrize("key,is_list", [
+    ("actions", True), ("prior_actions", True), ("participant_capabilities", True),
+    ("prior_action_reviews", True), ("series_subject_ref", False),
+    ("action_read", False), ("action_page_info", False),
+])
+def test_synthesis_action_fields_preserve_viewer_boundary(
+    meetings_stack, viewer, roles, can_view_trader, top_level, key, is_list,
+):
+    client, _, state = meetings_stack
+    detail = state["details"]["mtg-001"]
+    detail["tenant_id"] = "tenant-a"
+    public = {"tenant_id": "tenant-a", "excerpt": "PUBLIC_ACTION_RECORD"}
+    trader = {"trader_id": "trader-alice", "excerpt": "SCOPED_TRADER_RECORD"}
+    payload = {"records": [public, trader,
+        {"tenant_id": "tenant-b", "excerpt": "FOREIGN_ACTION_RECORD"},
+        {"memory_layer": "persona_private", "excerpt": "PRIVATE_ACTION_RECORD"}],
+        "citations": ["cf-shared-1", " cf-private-leak-1 ",
+            {"item_id": "cf-private-leak-1", "excerpt": "PRIVATE_CITATION_RECORD"}]}
+    detail["synthesis"][key] = [payload] if is_list else payload
+    empty = [] if is_list else {}
+    if top_level != "absent":
+        detail[key] = None if top_level == "null" else empty
+    original = copy.deepcopy(detail)
+    response = client.get("/bff/management/meetings/mtg-001",
+                          headers=make_headers(sub=viewer, roles=roles))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    expected = {"records": [public, trader] if can_view_trader else [public],
+                "citations": ["cf-shared-1"]}
+    expected = empty if top_level == "empty" else [expected] if is_list else expected
+    assert body[key] == body["synthesis"][key] == expected
+    for private in ("FOREIGN_ACTION_RECORD", "PRIVATE_ACTION_RECORD", "PRIVATE_CITATION_RECORD", "cf-private-leak-1"):
+        assert private not in response.text
+    if not can_view_trader:
+        assert "SCOPED_TRADER_RECORD" not in response.text
+    assert detail == original
 
 
 def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetings_stack, monkeypatch):
