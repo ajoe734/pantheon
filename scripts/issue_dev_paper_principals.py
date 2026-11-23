@@ -191,6 +191,14 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Consultation meeting owner -> research owner meeting-action tickets (create + chair review). The
+    # research owner admits actor consultation-svc with role "service" for both; no operator/admin role,
+    # no signing secret is distributed and no other service subject is substituted.
+    "CONSULTATION_RESEARCH_SERVICE_TOKEN": (
+        "consultation-svc",
+        "service",
+        "pantheon:dev-owner-write",
+    ),
     # Persona paper enrolment (operator-bff) -> governance owner: propose-only, no decide.
     "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN": (
         ENROLLMENT_PROPOSER_SUBJECT,
@@ -292,7 +300,8 @@ CONSUMER_FILES = {
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
                          "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
-                         "CONSULTATION_TELEMETRY_READ_TOKEN"),
+                         "CONSULTATION_TELEMETRY_READ_TOKEN",
+                         "CONSULTATION_RESEARCH_SERVICE_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),

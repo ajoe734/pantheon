@@ -272,6 +272,9 @@ services:
       CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN}
       PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      # Issued meeting-owner principal (consultation-svc, role service) for meeting-action tickets at the
+      # research owner, read per request from the rotating file; no signing secret is distributed.
+      CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE: ${CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
       # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
