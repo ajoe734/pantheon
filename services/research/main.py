@@ -5369,6 +5369,7 @@ def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...), cont
 @app.get("/api/research/tickets")
 def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None),
     meeting_linked: bool = Query(default=False), meeting_type: Optional[str] = Query(default=None),
+    human_actionable: bool = Query(default=False),
     subject_ref: Optional[str] = Query(default=None), action_state: Optional[str] = Query(default=None),
     due_before: Optional[str] = Query(default=None), submitted_after: Optional[str] = Query(default=None),
     updated_after: Optional[str] = Query(default=None), page_size: int = Query(default=50, ge=1, le=100),
@@ -5379,8 +5380,9 @@ def list_research_tickets(status: Optional[str] = Query(default=None), owner: Op
     if meeting_linked:
         kwargs.update(context=context, meeting_linked=True, meeting_type=meeting_type, subject_ref=subject_ref,
             action_states=action_state.split(",") if action_state else None, due_before=due_before,
-            submitted_after=submitted_after, updated_after=updated_after, page_size=page_size, page_token=page_token)
-    elif any((meeting_type, subject_ref, action_state, due_before, submitted_after, updated_after, page_token)):
+            submitted_after=submitted_after, updated_after=updated_after, human_actionable=human_actionable,
+            page_size=page_size, page_token=page_token)
+    elif any((meeting_type, subject_ref, action_state, due_before, submitted_after, updated_after, page_token, human_actionable)):
         raise HTTPException(status_code=400, detail="Meeting filters require meeting_linked=true")
     return _ticket_call(lambda: get_write_owner().list_research_tickets(**kwargs))
 

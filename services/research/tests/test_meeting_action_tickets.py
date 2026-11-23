@@ -143,10 +143,14 @@ def test_blocked_persona_human_evidence_resumes_original_owner_and_id(world):
     ticket = create(world)
     blocked = advance(command(world, ticket, "request_input", reason="Supply licensed report excerpt", human_actor_id="human-1"))
     assert blocked["required_actor"] == "human-1"
+    params = {"meeting_linked": "true", "human_actionable": "true"}
+    inbox = advance(world[1].get(URL, params=params, headers=headers("human-1", ("viewer",))))["data"]
+    assert inbox[0]["ticket_id"] == ticket["ticket_id"] and inbox[0]["action_state"] == "waiting_for_input"
     human = note(world, blocked, actor="human-1", roles=("human",), body="Permitted excerpt with usage authorization from licensed source.")
     assert command(world, blocked, "provide_input", actor="human-2", roles=("human",), evidence_refs=[human]).status_code in (403, 404)
     assert command(world, blocked, "provide_input", actor="human-1", roles=("human",), evidence_refs=[]).status_code == 400
     resumed = advance(command(world, blocked, "provide_input", actor="human-1", roles=("human",), evidence_refs=[human]))
+    assert advance(world[1].get(URL, params=params, headers=headers("human-1", ("viewer",))))["data"] == []
     assert resumed["owner"] == "persona-1" and resumed["required_actor"] == "persona-1"
     assert resumed["ticket_id"] == ticket["ticket_id"] and resumed["action_state"] == "in_progress"
     assert command(world, resumed, "submit", evidence_refs=[{"kind": "membership_ack", "artifact_id": "joined"}]).status_code == 403
@@ -157,6 +161,124 @@ def test_blocked_persona_human_evidence_resumes_original_owner_and_id(world):
     assert accepted["human_input"]["provided_by"] == "human-1"
     assert accepted["lifecycle_history"][-2]["transitioned_by"] == "persona-pool-cycle"
     assert accepted["lifecycle_history"][-2]["accountable_owner"] == "persona-1"
+
+
+def test_direct_human_assignment_submit_return_and_accept_uses_original_owner(world):
+    client = world[1]
+    payload = assignment("direct-human", owner="human-1")
+    payload["meeting_action"]["assignee_kind"] = "human"
+    ticket = create(world, payload)
+    params = {"meeting_linked": "true", "human_actionable": "true"}
+
+    def inbox():
+        return advance(client.get(URL, params=params, headers=headers("human-1", ("viewer",))))["data"]
+
+    assert ticket["action_state"] == "open" and ticket["required_actor"] == "human-1"
+    assert inbox()[0]["ticket_id"] == ticket["ticket_id"]
+    started = advance(command(world, ticket, "start", actor="human-1", roles=("viewer",)))
+    assert inbox()[0]["revision"] == started["revision"]
+    result = note(world, started, actor="human-1", roles=("viewer",))
+    submitted = advance(command(world, started, "submit", actor="human-1", roles=("viewer",), evidence_refs=[result]))
+    assert submitted["action_state"] == "submitted" and inbox() == []
+    assert submitted["status"] == "in_progress" and submitted["required_actor"] == "consultation-svc"
+    returned = advance(command(world, submitted, "return", actor="consultation-svc", roles=("service",),
+                               reason="Compare the other alternative", review_source="mtg-week-48"))
+    assert inbox()[0]["action_state"] == "returned" and inbox()[0]["revision"] == returned["revision"]
+    assert returned["required_actor"] == "human-1"
+    corrected = note(world, returned, actor="human-1", roles=("viewer",), key="corrected", body="Both alternatives compared.")
+    resubmitted = advance(command(world, returned, "submit", actor="human-1", roles=("viewer",), evidence_refs=[corrected]))
+    accepted = advance(command(world, resubmitted, "accept", actor="consultation-svc", roles=("service",),
+                                reason="Both alternatives meet criterion", review_source="mtg-week-49"))
+    assert inbox() == [] and accepted["action_state"] == "accepted"
+    assert accepted["owner"] == "human-1" and accepted["ticket_id"] == ticket["ticket_id"]
+    assert len(accepted["lifecycle_history"]) == 6
+
+
+def test_human_actionable_pages_push_down_filter_without_widening_visibility(world, monkeypatch):
+    client, owner = world[1:]
+    # These Persona rows are visible to the human reviewer but are not human
+    # work. Force all of them before the actionable rows in keyset order.
+    unrelated = []
+    for i in range(24):
+        payload = assignment(f"unrelated-{i}")
+        payload["meeting_action"].update(meeting_id=f"mtg-persona-{i // 8}", reviewer_id="human-1")
+        unrelated.append(create(world, payload))
+    last_unrelated = max(t["ticket_id"] for t in unrelated)
+
+    def late_assignment(kind, assignee, source):
+        for i in range(10000):
+            action_id = f"{source}-{i}"
+            tid = "rt-action-" + owner._action_digest(["tenant-a", "mtg-human", action_id])[:32]
+            if tid > last_unrelated:
+                payload = assignment(action_id, owner=assignee)
+                payload["meeting_action"].update(meeting_id="mtg-human", assignee_kind=kind)
+                return create(world, payload)
+        pytest.fail("could not place actionable fixture after unrelated rows")
+
+    direct = [late_assignment("human", "human-1", f"direct-{i}") for i in range(3)]
+    direct[1] = advance(command(world, direct[1], "start", actor="human-1", roles=("viewer",)))
+    submitted = advance(command(world, direct[2], "submit", actor="human-1", roles=("viewer",),
+                                evidence_refs=[note(world, direct[2], actor="human-1", roles=("viewer",))]))
+    direct[2] = advance(command(world, submitted, "return", actor="consultation-svc", roles=("service",),
+                                reason="Add missing source", review_source="mtg-next"))
+    waiting = advance(command(world, late_assignment("persona", "persona-1", "waiting"), "request_input",
+                              reason="Supply licensed excerpt", human_actor_id="human-1"))
+    foreign_human = late_assignment("human", "human-2", "other-human")
+    foreign_waiting = advance(command(world, late_assignment("persona", "persona-1", "other-waiting"), "request_input",
+                                      reason="Supply other authorization", human_actor_id="human-2"))
+    foreign_tenant = assignment("other-tenant", owner="human-1")
+    foreign_tenant["meeting_action"]["assignee_kind"] = "human"
+    create(world, foreign_tenant, tenant="tenant-b")
+    owner._tickets_store.put("legacy-human", {"ticket_id": "legacy-human", "owner": "human-1", "status": "open"})
+    monkeypatch.setattr(owner._tickets_store, "list_all", lambda: pytest.fail("meeting pages must use bounded SQL"))
+
+    params = {"meeting_linked": "true", "human_actionable": "true", "page_size": 2}
+    expected = {t["ticket_id"] for t in [*direct, waiting]}
+    seen = []
+    while True:
+        page = advance(client.get(URL, params=params, headers=headers("human-1", ("viewer",))))
+        assert len(page["data"]) == 2
+        seen.extend(t["ticket_id"] for t in page["data"])
+        for ticket in page["data"]:
+            assert ticket["revision"] == next(t["revision"] for t in [*direct, waiting] if t["ticket_id"] == ticket["ticket_id"])
+        token = page["page_info"]["next_page_token"]
+        if not token:
+            break
+        # The new filter, authenticated actor, and existing filters all bind
+        # the cursor. A cursor cannot continue a differently scoped queue.
+        for changes, auth in [({"human_actionable": "false"}, headers("human-1", ("viewer",))),
+                              ({"owner": "human-1"}, headers("human-1", ("viewer",))),
+                              ({}, headers("human-2", ("viewer",))),
+                              ({}, headers("human-1", ("viewer",), "tenant-b"))]:
+            assert client.get(URL, params={**params, "page_token": token, **changes}, headers=auth).status_code == 400
+        params["page_token"] = token
+    assert seen == sorted(expected) and len(seen) == len(expected)
+
+    params.pop("page_token", None)
+    params["page_size"] = 100
+    all_visible = expected | {foreign_human["ticket_id"], foreign_waiting["ticket_id"]}
+    for actor, roles in (("operator-1", ("operator",)), ("admin-1", ("admin",)), ("consultation-svc", ("service",))):
+        rows = advance(client.get(URL, params=params, headers=headers(actor, roles)))["data"]
+        assert {t["ticket_id"] for t in rows} == all_visible
+    assert advance(client.get(URL, params=params, headers=headers("stranger", ("viewer",))))["data"] == []
+    assert {t["ticket_id"] for t in advance(client.get(URL, params=params, headers=headers("human-2", ("viewer",))))["data"]} == {
+        foreign_human["ticket_id"], foreign_waiting["ticket_id"]}
+    filtered = advance(client.get(URL, params={**params, "owner": "human-1", "meeting_type": "MT-1",
+        "subject_ref": "pool-1", "due_before": "2026-12-01T00:00:00Z", "action_state": "open,returned"},
+        headers=headers("human-1", ("viewer",))))["data"]
+    assert {t["ticket_id"] for t in filtered} == {direct[0]["ticket_id"], direct[2]["ticket_id"]}
+
+
+def test_human_actionable_requires_meeting_query_auth_and_preserves_ordinary_lists(world):
+    client, owner = world[1:]
+    ordinary = advance(client.post(URL, json={"title": "Existing ordinary work", "owner": "human-1"}))
+    assert client.get(URL, params={"human_actionable": "true"}).status_code == 400
+    assert client.get(URL, params={"meeting_linked": "true", "human_actionable": "true"}).status_code == 401
+    for params in ({}, {"human_actionable": "false"}):
+        assert advance(client.get(URL, params=params))[0]["ticket_id"] == ordinary["ticket_id"]
+    from services.research.write_owner import MeetingActionError
+    with pytest.raises(MeetingActionError, match="meeting_linked=true"):
+        owner.list_research_tickets(human_actionable=True)
 
 
 def test_tenant_actor_role_and_legacy_boundaries(world):

@@ -309,6 +309,7 @@ class ResearchWriteOwner:
         due_before: Optional[str] = None,
         submitted_after: Optional[str] = None,
         updated_after: Optional[str] = None,
+        human_actionable: bool = False,
         page_size: int = 50,
         page_token: Optional[str] = None,
     ) -> Any:
@@ -316,7 +317,9 @@ class ResearchWriteOwner:
             return self._list_meeting_tickets(context=context, statuses=statuses, owner=owner,
                 meeting_type=meeting_type, subject_ref=subject_ref, action_states=action_states,
                 due_before=due_before, submitted_after=submitted_after, updated_after=updated_after,
-                page_size=page_size, page_token=page_token)
+                human_actionable=human_actionable, page_size=page_size, page_token=page_token)
+        if human_actionable:
+            self._action_error("Meeting filters require meeting_linked=true", 400)
         tickets = [t for t in self._tickets_store.list_all() if not t.get("meeting_action")]
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
@@ -586,7 +589,7 @@ class ResearchWriteOwner:
     def _list_meeting_tickets(self, *, context: Any, statuses: Any, owner: Any,
                              meeting_type: Any, subject_ref: Any, action_states: Any,
                              due_before: Any, submitted_after: Any, updated_after: Any,
-                             page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
+                             human_actionable: bool, page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
         ctx = self._action_auth(context)
         if not 1 <= page_size <= 100:
             self._action_error("page_size must be 1..100", 400)
@@ -599,6 +602,12 @@ class ResearchWriteOwner:
         if not (self._action_operator(ctx) or any(self._action_controller(ctx, a) for a in self._ACTION_CONTROLLERS)):
             clauses.append("(payload->>'owner' = %s OR payload->>'reviewer_id' = %s OR payload->>'required_actor' = %s)")
             params.extend([ctx.actor_id] * 3)
+        if human_actionable:
+            # Apply before keyset pagination/LIMIT so unrelated Persona work
+            # cannot starve the human page. This never broadens visibility.
+            clauses.append("(payload->>'action_state' = 'waiting_for_input' OR "
+                           "(payload->'meeting_action'->>'assignee_kind' = 'human' AND "
+                           "payload->>'action_state' IN ('open', 'in_progress', 'returned')))")
         for expr, val in (("payload->>'owner'", owner), ("payload->'meeting_action'->>'meeting_type'", meeting_type),
                           ("payload->'meeting_action'->>'subject_ref'", subject_ref)):
             if val:
@@ -614,8 +623,11 @@ class ResearchWriteOwner:
             if value:
                 clauses.append(f"({expr})::timestamptz {op} %s::timestamptz")
                 params.append(value)
-        fingerprint = self._action_digest([ctx.tenant_id, ctx.actor_id, sorted(ctx.roles), statuses, owner,
-                       meeting_type, subject_ref, action_states, due_before, submitted_after, updated_after])[:24]
+        scope = [ctx.tenant_id, ctx.actor_id, sorted(ctx.roles), statuses, owner,
+                 meeting_type, subject_ref, action_states, due_before, submitted_after, updated_after]
+        if human_actionable:
+            scope.append("human_actionable")
+        fingerprint = self._action_digest(scope)[:24]
         if page_token:
             if len(page_token) > 128:
                 self._action_error("Invalid page_token", 400)
