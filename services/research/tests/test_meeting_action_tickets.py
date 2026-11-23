@@ -701,3 +701,11 @@ def test_read_only_acceptance_probe_uses_real_owner_http(world):
     with pytest.raises(AssertionError):
         probe.inspect("http://testserver", "tenant-a", accepted["ticket_id"], "unused", "accepted", missing_body)
     assert advance(world[1].get(f"{URL}/{ticket['ticket_id']}", headers=headers())) == accepted
+
+
+def test_ordinary_unauthenticated_patch_preserves_nested_actor_id(world):
+    client = world[1]
+    ordinary = advance(client.post(URL, json={"title": "Ordinary ticket", "owner": "alice"}))
+    updated = advance(client.patch(f"{URL}/{ordinary['ticket_id']}",
+                                   json={"patch": {"status": "in_progress", "actor_id": "quant-1"}}))
+    assert updated["lifecycle_history"][-1]["transitioned_by"] == "quant-1"

@@ -5337,7 +5337,8 @@ def _ticket_body_actor(body: Dict[str, Any], context: Optional[AuthenticatedTena
                 raise HTTPException(status_code=403, detail="actor_id must match authenticated principal")
         if body.get("tenant_id") is not None and body["tenant_id"] != context.tenant_id:
             raise HTTPException(status_code=403, detail="tenant_id must match authenticated tenant")
-    return str(body.get("actor_id") or (context.actor_id if context else "operator"))
+    nested = (body.get("patch") or {}).get("actor_id") if isinstance(body.get("patch"), dict) else None
+    return str(body.get("actor_id") or nested or (context.actor_id if context else "operator"))
 
 
 @app.post("/api/research/tickets")
