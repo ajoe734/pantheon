@@ -428,3 +428,18 @@ The read-only hosted probe now requires recorded capabilities, series,
 reviews and source/page receipts when actions exist. Local invocation exited
 77 (`probe_configuration_missing`); this is skipped, not accepted. Actual
 owner execution and hosted proof remain with the existing chain proof task.
+
+## Residual finding: canonical handoff infrastructure hold
+
+Owner: development tooling coordinator / supervisor (RC8 task authority).
+On this dispatch, the governed progress process remained in
+`locks_lock_inode_wait` on central `.orchestrator/task-state.lock` and was
+stopped with SIGTERM (terminal exit 143). The subsequent exact-head
+`AI_NAME=Codex2 REVIEW_PR=7761 REVIEW_HEAD_SHA=2b405ff5386df753e636c548ea6dc30a59fd1330`
+handoff through the pinned command runtime also waited for that lock and
+reached the explicit 120-second limit (terminal exit 124, no output). Neither
+is a successful state transition. The local tests and normal branch push
+succeeded. The coordinator must resolve the central lock holder and admit
+the current published PR head for Antigravity review. No canonical JSON,
+lock file or command runtime was edited or replaced. This finding does not
+change product evidence or claim a reviewer decision.

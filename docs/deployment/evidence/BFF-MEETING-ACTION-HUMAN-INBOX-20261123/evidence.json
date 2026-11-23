@@ -275,6 +275,12 @@
   ],
   "residual_findings": [
     {
+      "owner": "development tooling coordinator / supervisor",
+      "class": "RC8 canonical task authority",
+      "status": "handoff_blocked",
+      "finding": "Governed progress blocked on central task-state.lock (stopped, exit 143); exact-head handoff waited on the same lock and timed out after 120 seconds (exit 124). Neither transition succeeded. Current published PR must be admitted for Antigravity review after central lock recovery; no canonical state/runtime or lock file changed."
+    },
+    {
       "owner_task": "FE-MEETING-ACTION-FOLLOWTHROUGH-20261123",
       "class": "RC2 WP2.3 / RC6 meetings",
       "status": "pending_contract_composition",
