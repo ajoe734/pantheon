@@ -996,6 +996,29 @@ def shape_meeting_detail(
         synthesis["unreadable_reason"] = review_cause
         synthesis["cause"] = review_cause
 
+    def visible_action_data(value: Any) -> Any:
+        return _visible_action_data(value, tenant_id=tenant_id or raw.get("tenant_id"),
+            is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)
+
+    # Consultation's recorded contract uses these names. Filter the entire
+    # source container before extracting a nested value, so parent visibility
+    # restrictions also apply to series subjects and owner page receipts.
+    owner_action_sources = {
+        key: visible_action_data(raw.get(key)) for key in (
+            "participant_action_capabilities", "prior_actions_source", "meeting_series")
+    }
+    for key in ("participant_action_capabilities", "prior_actions_source", "meeting_series", "action_reviews"):
+        if key in synthesis:
+            synthesis[key] = visible_action_data(raw_synthesis[key])
+    source_receipt = owner_action_sources["prior_actions_source"]
+    series = owner_action_sources["meeting_series"]
+    owner_aliases = {
+        "participant_capabilities": owner_action_sources["participant_action_capabilities"],
+        "prior_action_reviews": synthesis.get("action_reviews"),
+        "series_subject_ref": series.get("subject_ref") if isinstance(series, Mapping) else None,
+        "action_read": source_receipt,
+        "action_page_info": source_receipt.get("pages") if isinstance(source_receipt, Mapping) else None,
+    }
     action_fields: Dict[str, Any] = {}
     for key in ("actions", "prior_actions", "participant_capabilities", "prior_action_reviews", "series_subject_ref", "action_read", "action_page_info"):
         value = raw.get(key)
@@ -1003,9 +1026,10 @@ def shape_meeting_detail(
         # action subtree must pass the same viewer visibility filter.
         if value is None:
             value = raw_synthesis.get(key)
+        if value is None:
+            value = owner_aliases.get(key)
         if value is not None:
-            action_fields[key] = _visible_action_data(value, tenant_id=tenant_id or raw.get("tenant_id"),
-                is_operator=is_operator, caller_user_id=caller_user_id, withheld_ids=withheld_ids)
+            action_fields[key] = visible_action_data(value)
             if key in synthesis:
                 synthesis[key] = action_fields[key]
     action_fields.setdefault("actions", [])
