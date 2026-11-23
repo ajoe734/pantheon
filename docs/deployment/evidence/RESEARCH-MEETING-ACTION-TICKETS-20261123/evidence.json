@@ -36,6 +36,12 @@
     {
       "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
       "exit_code": 0,
+      "result": "22 passed, 221 warnings in 34.90s on final reply-recovery source",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
       "result": "22 passed, 221 warnings in 22.69s",
       "terminal_output": "inline-evidence-validation.txt"
     },
@@ -160,6 +166,8 @@
     "runtime_budget": "storage.json inline_evidence_budget; original table caps and lifetime growth remain. One successful inline note insert and ticket CAS committed together; exact retries/failed commands zero writes. <=16 note records/detail/probe; lists never resolve note bodies.",
     "validation": "inline-evidence-validation.txt",
     "review": "Fresh assigned Antigravity exact-head review required. Previous review does not cover changed source.",
-    "hosted": "Not deployed or accepted; original component and integrated hosted acceptance owners retain evidence obligations."
+    "hosted": "Not deployed or accepted; original component and integrated hosted acceptance owners retain evidence obligations.",
+    "reply_recovery_anchor": "53ef5c168",
+    "reply_recovery": "Exact prior provider command reconstructs the original input revision from immutable history after later Persona results and reviewer acceptance; no later private body or review exposed, no additional direct/list permission, zero repeated writes."
   }
 }

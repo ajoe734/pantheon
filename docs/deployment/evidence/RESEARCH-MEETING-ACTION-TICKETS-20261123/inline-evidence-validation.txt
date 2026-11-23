@@ -58,3 +58,13 @@ exit_code=0
 
 $ git diff --check
 No whitespace errors; exit_code=0
+
+Final reply-recovery source anchor 53ef5c168: after later Persona submit and
+review acceptance, exact original human input retry reconstructs only the
+original authorized input revision. Direct GET remains 404 for the provider;
+no later private body/review leaks and note count stays unchanged.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+......................                                                   [100%]
+22 passed, 221 warnings in 34.90s
+exit_code=0
