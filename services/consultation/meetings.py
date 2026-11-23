@@ -25,6 +25,7 @@ Implements SD-PERSONA-MEETINGS-20261115 and SD-PERSONA-MEETINGS-AMEND-20261115 (
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib
@@ -1392,8 +1393,7 @@ def build_participant_pre_read(
                         dict(e) for e in entries if isinstance(e, Mapping)
                     ]
 
-    pre_read_records: List[Dict[str, Any]] = []
-    for p in participants:
+    def _build_one(p: Mapping[str, Any]) -> Tuple[Dict[str, Any], str]:
         pid = str(p["persona_id"])
         raw_entries = list(supplied_by_persona.get(pid) or [])
         memory_read_refusal = ""
@@ -1460,6 +1460,7 @@ def build_participant_pre_read(
                 or entry.get("entry_id")
                 or (entry.get("entry") or {}).get("memory_id")
                 or (entry.get("entry") or {}).get("entry_id")
+                or entry.get("source_id")
                 or f"preread:{pid}:{idx + 1}"
             )
             content = (
@@ -1498,21 +1499,33 @@ def build_participant_pre_read(
                 }
             )
 
+        record = {
+            "persona_id": pid,
+            "role": p["role"],
+            "style": p["style"],
+            "origin": p["origin"],
+            "mode": "committee_visible_full",
+            "entries": filtered_entries,
+            "entry_ids": [e["item_id"] for e in filtered_entries],
+        }
+        return record, memory_read_refusal
+
+    # Pre-reads run concurrently so N participants spend one memory deadline,
+    # not N; order, refusals and private-memory filtering are unchanged.
+    participant_list = list(participants)
+    if len(participant_list) > 1 and memory_url:
+        with ThreadPoolExecutor(max_workers=min(len(participant_list), 5),
+                                thread_name_prefix="preread") as pool:
+            results = list(pool.map(_build_one, participant_list))
+    else:
+        results = [_build_one(p) for p in participant_list]
+    pre_read_records: List[Dict[str, Any]] = []
+    for record, memory_read_refusal in results:
         if memory_read_refusal and refusals is not None:
             # Kept out of the pre-read record: that record is part of the provider
             # request, so a retry must not change its content (idempotency key).
-            refusals[pid] = memory_read_refusal
-        pre_read_records.append(
-            {
-                "persona_id": pid,
-                "role": p["role"],
-                "style": p["style"],
-                "origin": p["origin"],
-                "mode": "committee_visible_full",
-                "entries": filtered_entries,
-                "entry_ids": [e["item_id"] for e in filtered_entries],
-            }
-        )
+            refusals[record["persona_id"]] = memory_read_refusal
+        pre_read_records.append(record)
     return pre_read_records
 
 
