@@ -47,6 +47,7 @@ try:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -96,6 +97,7 @@ except ImportError:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -349,6 +351,13 @@ class CapitalBoundaryService:
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
         self.get_pool(pool_id)
+        # Once edits have an ordering authority, the older repair/status path
+        # cannot overwrite their request or policy from a stale BFF snapshot.
+        current = self.get_pool(pool_id)
+        if (current.metadata or {}).get("risk_profile_change") and (
+            body.risk_policy_ref is not None or body.metadata is not None
+        ):
+            raise CapitalPoolError("Use the ordered paper risk profile change path")
         if body.status is None:
             # The existing PATCH route also accepts this narrowly bounded,
             # non-activating provenance write. Merge at the owner, never from a
@@ -428,6 +437,33 @@ class CapitalBoundaryService:
             detail=detail,
         )
         return updated
+
+    def change_paper_risk_profile(self, pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPool:
+        from .profile_change import change_profile
+
+        self._authorize("CapitalPool", "update_status", body.actor_role)
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        with self._CAPITAL_STATE_APPLY_LOCK:
+            updated, changed = self.pool_store.mutate_paper_risk_profile(
+                pool_id, lambda current: change_profile(
+                    current, body, tenant_id=tenant,
+                    reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader,
+                ),
+            )
+        if changed:
+            self._emit(event_type="capital_pool_status_updated", resource_type="CapitalPool",
+                       resource_id=pool_id, actor_id=body.actor_id, actor_role=body.actor_role,
+                       detail={"requested_risk_profile": body.requested_profile,
+                               "risk_change_revision": updated.metadata["risk_profile_change"]["revision"]})
+        return updated
+
+    def read_paper_risk_profile(self, pool_id: str, persona_id: str) -> Dict[str, Any]:
+        from .profile_change import read_change
+
+        pool = self.get_pool(pool_id)
+        return read_change(pool, tenant_id=_current_tenant() or _tenant_of(pool), persona_id=persona_id,
+                           reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader)
 
     def resolve_pool_risk_policy(self, pool_id: str, *, stage: Optional[str] = None) -> Dict[str, Any]:
         pool = self.get_pool(pool_id)
@@ -1538,6 +1574,23 @@ def get_capital_pool_risk_policy(
     service = get_capital_service()
     try:
         return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post("/api/capital-pools/{pool_id}/risk-profile-change", response_model=CapitalPoolBody)
+def change_paper_pool_risk_profile(pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPoolBody:
+    try:
+        body = bind_capital_mutation(body)
+        return _pool_body(get_capital_service().change_paper_risk_profile(pool_id, body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/risk-profile-change")
+def read_paper_pool_risk_profile(pool_id: str, persona_id: str) -> Dict[str, Any]:
+    try:
+        return get_capital_service().read_paper_risk_profile(pool_id, persona_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

@@ -7,7 +7,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
@@ -41,6 +41,16 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
     """Capital-owned store with an atomic canonical pool patch operation."""
 
     _PATCH_FIELDS = frozenset({"name", "status", "risk_policy_ref", "metadata"})
+
+    def mutate_paper_risk_profile(self, pool_id: str, mutate: Callable[[CapitalPool], CapitalPool]) -> tuple[CapitalPool, bool]:
+        """Apply the latest intent and its approved binding as one owner mutation."""
+        with self._lock:
+            pool = self.require(pool_id)
+            updated = mutate(copy.deepcopy(pool))
+            if updated.to_dict() == pool.to_dict():
+                return pool, False
+            return self.patch(pool_id, patch={"metadata": updated.metadata,
+                              "risk_policy_ref": updated.risk_policy_ref}, updated_at=utc_now()), True
 
     @staticmethod
     def _requested_profile_update(pool: CapitalPool, persona_id: str, profile: str) -> dict[str, Any]:
@@ -186,6 +196,29 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
             updated = _load_entity(CapitalPool, (pool_id, payload, row[2]))
             self._pools[pool_id] = updated
             return updated, True
+
+    def mutate_paper_risk_profile(self, pool_id: str, mutate: Callable[[CapitalPool], CapitalPool]) -> tuple[CapitalPool, bool]:
+        # Row lock spans read/compare/discovery/commit. Independent BFF/Capital
+        # workers cannot finalize an older intent over a newer one.
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Unknown pool: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            updated = mutate(copy.deepcopy(pool))
+            if updated.to_dict() == pool.to_dict():
+                return pool, False
+            payload = {**updated.to_dict(), "updated_at": utc_now()}
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            saved = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            self._pools[pool_id] = saved
+            return saved, True
 
     def get(self, pool_id: str) -> Optional[CapitalPool]:
         with self._lock:
