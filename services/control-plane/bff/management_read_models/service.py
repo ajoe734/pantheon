@@ -4863,7 +4863,7 @@ class ManagementService:
         for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness", "meetings"):
             if key in completed:
                 surfaces[key] = completed[key][1]
-                if surfaces[key].get("status") in {"degraded", "unavailable", "denied"}:
+                if key == "meetings" and surfaces[key].get("status") in {"degraded", "unavailable", "denied"}:
                     failure_surfaces[key] = surfaces[key]
             elif key in failure_surfaces:
                 surfaces[key] = failure_surfaces[key]
