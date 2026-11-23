@@ -180,6 +180,26 @@ def test_foreign_tenant_and_missing_idempotency_cannot_write(normal_edit, monkey
     assert "risk_profile_change" not in world.store.require(world.pool_id).metadata
 
 
+def test_display_default_cannot_invent_unknown_requested_risk(normal_edit, monkeypatch):
+    from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+    from services.control_plane.bff.personas.risk_changes import project_risk_change
+
+    world = normal_edit
+    meta = deepcopy(world.store.require(world.pool_id).metadata)
+    meta.pop("requested_risk_profile")
+    world.store.patch(world.pool_id, patch={"metadata": meta}, updated_at="2026-11-23T01:00:00Z")
+    raw = {"persona_id": "persona-test", "metadata": {
+        "tenant_id": "tenant-profile-test", "persona_class": "trading", "capital_mode": "paper",
+        "internal_paper_capital_pool_id": world.pool_id,
+    }}
+    dto = {"id": "persona-test", "risk": "medium"}
+    monkeypatch.setattr(persona_module, "_persona_provisioning_store", lambda: MemoryPersonaProvisioningStore())
+    project_risk_change(dto, raw, "tenant-profile-test")
+    assert dto["riskPolicyChange"]["requestedRisk"] is None
+    assert dto["riskPolicyChange"]["effectiveRisk"] is None
+    assert dto["riskPolicyChange"]["status"] == "unavailable"
+
+
 def test_durable_key_conflict_after_restart_and_unrelated_edits(normal_edit, monkeypatch):
     world = normal_edit
     assert patch(world, "medium").status_code == 200

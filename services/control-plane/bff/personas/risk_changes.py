@@ -30,19 +30,28 @@ def public_change(change: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def project_risk_change(dto: dict[str, Any], raw: Mapping[str, Any], tenant_id: str) -> None:
-    from .service import _chain_paper_capital_coordinator
+    from .service import _chain_paper_capital_coordinator, _persona_provisioning_store
 
     try:
         pool_id = paper_pool_id(raw)
         if pool_id is None:
             return
-        change = _chain_paper_capital_coordinator(tenant_id).read_paper_risk_change(
-            tenant_id=tenant_id, persona_id=str(raw.get("persona_id") or raw.get("id")), pool_id=pool_id,
+        coordinator = _chain_paper_capital_coordinator(tenant_id)
+        persona_id = str(raw.get("persona_id") or raw.get("id"))
+        change = coordinator.read_paper_risk_change(
+            tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id,
         )
-        if change.get("requestedRisk") is None and dto.get("risk") in {"low", "medium", "high"}:
-            # Before the first ordered edit, the verified Persona request is
-            # still the request authority. It cannot establish an effective tier.
-            change["requestedRisk"] = dto["risk"]
+        if change.get("requestedRisk") is None:
+            # Before the first ordered edit, use real request provenance, never
+            # the display DTO's normalized/default risk or policy metadata.
+            record = _persona_provisioning_store().get_by_persona(tenant_id, persona_id)
+            source = record.request_payload if record is not None else {
+                **raw, "risk_level": (raw.get("metadata") or {}).get("risk_level"),
+            }
+            requested = coordinator._extract_request_risk_profile_context(source)[0]
+            change["requestedRisk"] = requested
+            if requested is None:
+                change["status"] = "unavailable"
         dto["riskPolicyChange"] = public_change(change)
         if change.get("requestedRisk"):
             dto["risk"] = change["requestedRisk"]
