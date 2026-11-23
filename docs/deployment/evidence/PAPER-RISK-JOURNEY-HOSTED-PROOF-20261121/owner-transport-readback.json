@@ -1,0 +1,28 @@
+{
+  "observed_at": "2026-11-22T17:20:40.431266+00:00",
+  "exit_code": 0,
+  "transport": "existing scripts/dev_vm_ssh.sh with pinned known_hosts and installed container credentials",
+  "telemetry": {
+    "event_id": "91d55953-b575-4fe8-8d39-6e0cade58d59",
+    "event_type": "order_rejection",
+    "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+    "tenant_id": "tenant-dev",
+    "created_at": "2026-11-19T23:46:17Z",
+    "journey_id": "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd",
+    "source_mode": "live",
+    "deployment_stage": "paper"
+  },
+  "raw_metadata_read": true,
+  "capital": {
+    "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+    "tenant_id": "tenant-dev",
+    "resolved": false,
+    "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+    "risk_policy_version": "1.0",
+    "stage": "paper"
+  },
+  "approval_rows": 697,
+  "product_writes": 0,
+  "new_owner_urls_or_tokens": false,
+  "historical_event_is_not_fresh_acceptance": true
+}

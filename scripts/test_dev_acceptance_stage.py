@@ -153,13 +153,15 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "check:deployed-pair-identity",
         "probe:meeting-review-disposition",
         "probe:mgmt-strategy-meeting-research-readable",
+        "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
         "probe:persona-pool-member-rules",
         "probe:trade-journey-readable",
         "probe:trading-pulse-operator",
     ]
-    risk_probe = next(r for r in results if r["id"] == "probe:paper-risk-policy-binding")
-    assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
+    for probe_id in ("probe:paper-risk-journey", "probe:paper-risk-policy-binding"):
+        risk_probe = next(r for r in results if r["id"] == probe_id)
+        assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
     assert "probe:persona-day" not in {r["id"] for r in results}
     assert stage.verdict_status(results) == "passed"
 

@@ -76,7 +76,10 @@ class CreateCapitalPoolRequest(BaseModel):
 class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
-    status: str
+    # Omitted only for a bounded requested-profile provenance patch. This never
+    # changes status or grants activation authority.
+    status: Optional[str] = None
+    expected_persona_id: Optional[str] = None
     approval_decision_id: Optional[str] = None
     risk_policy_ref: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None

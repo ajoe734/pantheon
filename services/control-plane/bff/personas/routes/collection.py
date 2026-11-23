@@ -23,6 +23,7 @@ from ..service import (
     _normalize_risk_level,
     _persona_create_canonical_payload,
     _persona_create_declared_data_scope,
+    _persona_create_effective_profile_payload,
     _persona_create_identity,
     _persona_create_required_data_sources,
     _persona_create_response,
@@ -260,6 +261,17 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "payload": canonical_payload,
             }
         )
+        # Preserve the historical wire hash (including omitted risk) for replay.
+        # Only this new-request boundary supplies the existing Persona default.
+        try:
+            canonical_payload = _persona_create_effective_profile_payload(canonical_payload)
+        except PersonaProvisioningCoordinationError as exc:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED,
+                "Persona requested risk profile is inconsistent",
+                str(exc), precondition_failed="risk_level",
+                details_extra={"reasonCode": exc.reason_code},
+            ) from exc
         snapshot_at = utc_now()
         record = ProvisioningRecord(
             tenant_id=tenant_id,

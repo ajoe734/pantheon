@@ -349,6 +349,34 @@ class CapitalBoundaryService:
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
         self.get_pool(pool_id)
+        if body.status is None:
+            # The existing PATCH route also accepts this narrowly bounded,
+            # non-activating provenance write. Merge at the owner, never from a
+            # stale BFF snapshot; keep concurrent status and metadata changes.
+            meta = body.metadata or {}
+            if (
+                set(meta) != {"requested_risk_profile", "require_approved_profile_mapping"}
+                or meta.get("require_approved_profile_mapping") is not True
+                or body.risk_policy_ref is not None
+                or body.approval_decision_id is not None
+            ):
+                raise CapitalPoolError("Status omission requires a requested-profile provenance patch")
+            with self._CAPITAL_STATE_APPLY_LOCK:
+                updated, changed = self.pool_store.record_requested_profile(
+                    pool_id,
+                    persona_id=body.expected_persona_id or "",
+                    profile=meta.get("requested_risk_profile"),
+                )
+            if changed:
+                self._emit(
+                    event_type="capital_pool_status_updated",
+                    resource_type="CapitalPool",
+                    resource_id=pool_id,
+                    actor_id=body.actor_id,
+                    actor_role=body.actor_role,
+                    detail={"requested_risk_profile": meta["requested_risk_profile"]},
+                )
+            return updated
         with self._CAPITAL_STATE_APPLY_LOCK:
             pool = self.get_pool(pool_id)
             has_policy_patch = body.risk_policy_ref is not None or body.metadata is not None

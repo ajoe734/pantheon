@@ -1,0 +1,73 @@
+{
+  "observed_at": "2026-11-22T17:04:03.968881+00:00",
+  "scope": "Inventory snapshot only; not a new expected-service deployment acceptance.",
+  "raw_evidence": {
+    "git_commit": "6ea284ef3762b24bb926e551de742437f70d3fe2",
+    "path": "docs/deployment/evidence/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121/hosted-stack.json",
+    "blob_sha": "3814469767e4b27642d62cab6ea1de1174801aad",
+    "sha256": "90976d4d61699c21625247b99a7f7b7772b8a8e38e29d42ba3d3b0b14477acde",
+    "bytes": 47763
+  },
+  "containers_observed": 61,
+  "state_health_revision_counts": [
+    {
+      "state": "exited",
+      "health": "not_configured",
+      "image_revision": null,
+      "count": 3
+    },
+    {
+      "state": "running",
+      "health": "healthy",
+      "image_revision": "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4",
+      "count": 1
+    },
+    {
+      "state": "running",
+      "health": "healthy",
+      "image_revision": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "count": 13
+    },
+    {
+      "state": "running",
+      "health": "healthy",
+      "image_revision": null,
+      "count": 41
+    },
+    {
+      "state": "running",
+      "health": "not_configured",
+      "image_revision": null,
+      "count": 3
+    }
+  ],
+  "task_service_observations": [
+    {
+      "service": "operator-bff",
+      "container": "/pantheon-operator-bff-1",
+      "image_id": "sha256:4668a33e297d371fbf6dd52934266ff6f4bd2456c8ed38e4dd89a54b2c704674",
+      "image_revision": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "state": "running",
+      "health": "healthy",
+      "restart_policy": "unless-stopped"
+    },
+    {
+      "service": "paper-signal-producer",
+      "container": "/pantheon-paper-signal-producer-1",
+      "image_id": "sha256:49dbaaa756dd47f2813fda1cb6755eba1beba40015d7c82bb4f5578fe8782121",
+      "image_revision": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "state": "running",
+      "health": "healthy",
+      "restart_policy": "unless-stopped"
+    },
+    {
+      "service": "runtime-manager",
+      "container": "/pantheon-runtime-manager-1",
+      "image_id": "sha256:140512c249b10daafd6b2906336331fdc5ab8948c010089197a7f388d9980b63",
+      "image_revision": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "state": "running",
+      "health": "healthy",
+      "restart_policy": "unless-stopped"
+    }
+  ]
+}

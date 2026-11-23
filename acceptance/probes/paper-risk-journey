@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+# acceptance-owner: PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121
+"""Bounded, GET-only hosted paper proof after viewer token exchange.
+
+No replay, repair, order submission or fixture generation. Missing fresh evidence
+fails (1); absent release/auth configuration skips (77). See acceptance/README.md.
+"""
+import importlib.machinery
+import importlib.util
+import math
+import os
+import re
+import sys
+import urllib.parse
+from datetime import datetime, timezone
+from pathlib import Path
+
+loader = importlib.machinery.SourceFileLoader("paper_policy_probe", str(Path(__file__).with_name("paper-risk-policy-binding")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+binding = importlib.util.module_from_spec(spec)
+loader.exec_module(binding)
+binding.MAX_REQUESTS = 72
+binding.MAX_SECONDS = 240
+BASE = "/bff/management/trade-journeys"
+HISTORICAL = ("tj_79726064-4cc2-5510-8e11-7f5e59ff89bd", "tj_57418ba7-ef37-5015-9b5e-b6423872da89")
+CHECKS = {"broker_fill_qty", "broker_fill_price", "position_change", "cash_change",
+          "committed_snapshot_position", "committed_snapshot_cash"}
+
+
+def timestamp(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp_timezone_missing")
+    return parsed
+
+
+def number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def sized(event, policy, key):
+    meta = event.get("metadata") or {}
+    sizing = meta.get(key) or {}
+    return (meta.get("risk_policy_id") == policy.get("risk_policy_id")
+            and meta.get("risk_policy_version") == policy.get("version")
+            and meta.get("risk_policy_digest") in {binding.policy_digest(policy), binding.risk_policy_digest(policy)}
+            and bool(sizing.get("binding_limit"))
+            and all(number(sizing.get(k)) for k in ("permitted_units", "fee_inclusive_required_cash", "remaining_cash"))
+            and sizing["permitted_units"] >= 0 and sizing["fee_inclusive_required_cash"] >= 0
+            and sizing["remaining_cash"] >= 0)
+
+
+def reconciliation_ok(event):
+    detail = event.get("reason_detail") or (event.get("metadata") or {}).get("reason_detail")
+    if not isinstance(detail, list):
+        return False
+    checks = {item.get("check"): item for item in detail if isinstance(item, dict)}
+    return CHECKS <= checks.keys() and all(
+        item.get("status") == "passed" and number(item.get("expected")) and number(item.get("actual"))
+        and abs(item["actual"] - item["expected"]) <= 1e-6
+        and number(item.get("difference")) and abs(item["difference"]) <= 1e-6
+        for key, item in checks.items() if key in CHECKS)
+
+
+def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSONAS,
+          backend_sha, frontend_sha, pool_policy_reader=None, now=None):
+    now = now or datetime.now(timezone.utc)
+    manifest = manifest_fetch()
+    version = fetch("/bff/version")
+    failed = []
+    if (not re.fullmatch("[0-9a-f]{40}", backend_sha) or not re.fullmatch("[0-9a-f]{40}", frontend_sha)
+            or manifest.get("bffCommit") != backend_sha or manifest.get("frontendSha") != frontend_sha
+            or version.get("source_commit_sha") != backend_sha):
+        failed.append("served_pair_mismatch")
+    cutoff = timestamp(manifest.get("deployedAt", ""))
+    if cutoff > now:
+        failed.append("deployment_cutoff_in_future")
+    policies = binding.run(fetch, expected, now=now, pool_policy_reader=pool_policy_reader)
+    failed.extend(policies["failed"])
+    report = {"observed_at": now.isoformat(), "backend_sha": backend_sha, "frontend_sha": frontend_sha,
+              "deployment_cutoff": cutoff.isoformat(), "policy_readbacks": policies, "historical": {},
+              "personas": {}, "fresh_rejections": [], "fresh_reconciled_fills": [], "failed": failed}
+    # History proves cause recovery only; it can never supply a fresh sample.
+    for jid in HISTORICAL:
+        query = "?tenant_id=tenant-dev&environment=paper"
+        row = binding.data(fetch(BASE + "/" + jid + query))
+        report["historical"][jid] = {"url": "/management/trade-journeys/" + jid + query,
+                                    "status": row.get("status"), "outcome": row.get("outcome")}
+        outcome = row.get("outcome") or {}
+        if row.get("journey_id") != jid:
+            failed.append("historical_identity_mismatch:" + jid)
+        if jid == HISTORICAL[0]:
+            detail = outcome.get("reason_detail") or {}
+            if (outcome.get("reason_code") != "insufficient_cash" or outcome.get("submitted_to_broker") is not False
+                    or not all(number(detail.get(k)) for k in ("required", "available", "limit"))
+                    or detail["required"] <= detail["available"]):
+                failed.append("historical_rejection_evidence_missing")
+        elif (outcome.get("classification") != "unverified_evidence"
+              or outcome.get("accounting_variance") is not False
+              or outcome.get("comparison_completed") is not False
+              or not outcome.get("missing_evidence")):
+            failed.append("historical_unavailable_misclassified")
+    for pid in expected:
+        owner = policies["personas"].get(pid, {})
+        query = "?" + urllib.parse.urlencode({"tenant_id": owner.get("tenant_id", "tenant-dev"),
+            "environment": "paper", "persona_id": pid, "page_size": 50})
+        page = fetch(BASE + query)
+        items = binding.data(page).get("items")
+        if not isinstance(items, list) or len(items) > 50:
+            raise ValueError("journey_page_invalid")
+        samples = report["personas"][pid] = {"rows_read": len(items), "fresh_decisions": [],
+                                            "decision_evidence": [], "inspected": 0}
+        # Inspect at most four recent journeys/persona. Exhaustion fails, never implies absence globally.
+        for item in items:
+            if item.get("persona_id") != pid or item.get("persona_is_probe") is not False:
+                failed.append("unexpected_persona_or_probe_row:" + pid)
+                continue
+            if timestamp(item["created_at"]) <= cutoff or samples["inspected"] >= 4:
+                continue
+            samples["inspected"] += 1
+            row = binding.data(fetch(BASE + "/" + urllib.parse.quote(item["journey_id"], safe="")
+                                     + "?tenant_id=" + urllib.parse.quote(owner["tenant_id"], safe="") + "&environment=paper"))
+            binding_ids = (row.get("identifiers") or {}).get("binding_id")
+            if (row.get("journey_id") != item["journey_id"] or not isinstance(binding_ids, list)
+                    or owner.get("binding_id") not in binding_ids):
+                failed.append("journey_active_binding_mismatch:" + item["journey_id"])
+                continue
+            events = row.get("stage_events") or {}
+            originals = {}
+            for stage in ("trade_decision", "order_submission", "fill_management", "reconciliation"):
+                event = events.get(stage) or {}
+                if not event or timestamp(event.get("occurred_at", "")) <= cutoff:
+                    continue
+                if event.get("source_mode") != "live" or event.get("accepted_live") is not True:
+                    continue
+                if event.get("binding_id") != owner.get("binding_id"):
+                    failed.append("stage_active_binding_mismatch:" + item["journey_id"] + ":" + stage)
+                    continue
+                eid = event.get("source_event_id") or event.get("canonical_event_id") or event.get("event_id")
+                try:
+                    original = binding.data(source_read(eid, owner["tenant_id"]))
+                except (RuntimeError, ValueError) as exc:
+                    failed.append("source_read_failed:" + str(eid) + ":" + str(exc))
+                    continue
+                meta = original.get("metadata") or {}
+                if (original.get("event_id") != eid or original.get("binding_id") != owner["binding_id"]
+                        or (original.get("authority_refs") or {}).get("persona_id") != pid or meta.get("fixture_source")
+                        or original.get("source_mode") != "live"
+                        or original.get("tenant_id") != owner["tenant_id"]
+                        or original.get("deployment_stage") != "paper"
+                        or original.get("journey_id") != row["journey_id"]
+                        or timestamp(original.get("created_at", "")) <= cutoff):
+                    failed.append("source_identity_or_freshness_invalid:" + str(eid))
+                    continue
+                originals[stage] = original
+            policy = owner.get("effective_policy") or {}
+            decision = originals.get("trade_decision") or {}
+            governed_decision = decision.get("event_type") == "trade_decision" and sized(decision, policy, "pre_trade_sizing")
+            if governed_decision:
+                samples["fresh_decisions"].append(decision["event_id"])
+                samples["decision_evidence"].append({"event_id": decision["event_id"],
+                    "journey_id": row["journey_id"], "created_at": decision["created_at"],
+                    "risk_policy_id": policy["risk_policy_id"], "risk_policy_version": policy["version"],
+                    "pre_trade_sizing": decision["metadata"]["pre_trade_sizing"]})
+            rejection = originals.get("order_submission") or {}
+            meta = rejection.get("metadata") or {}
+            detail = meta.get("reason_detail") or meta
+            if (governed_decision and rejection.get("event_type") == "order_rejection" and meta.get("submitted_to_broker") is False
+                    and meta.get("reject_reason") not in {None, "", "long_cash", "long_lever", "close_leg"}
+                    and all(number(detail.get(k)) for k in ("required", "available", "limit"))):
+                report["fresh_rejections"].append({"event_id": rejection["event_id"], "reason": meta["reject_reason"],
+                    "journey_id": row["journey_id"], "persona_id": pid,
+                    "amounts": {k: detail[k] for k in ("required", "available", "limit")}})
+            fill = originals.get("fill_management") or {}
+            recon = originals.get("reconciliation") or {}
+            if (governed_decision and fill.get("event_type") == "paper_fill_simulated" and sized(fill, policy, "submission_sizing_evidence")
+                    and recon.get("event_type") == "reconciliation_completed" and reconciliation_ok(recon)
+                    and (recon.get("metadata") or {}).get("broker_order_id") == (fill.get("metadata") or {}).get("broker_order_id")
+                    and (fill.get("metadata") or {}).get("broker_order_id")):
+                report["fresh_reconciled_fills"].append({"fill_event_id": fill["event_id"],
+                    "reconciliation_event_id": recon["event_id"], "journey_id": row["journey_id"], "persona_id": pid,
+                    "broker_order_id": fill["metadata"]["broker_order_id"],
+                    "submission_sizing_evidence": fill["metadata"]["submission_sizing_evidence"],
+                    "booking_checks": recon.get("reason_detail") or recon["metadata"]["reason_detail"]})
+        if not samples["fresh_decisions"]:
+            failed.append("no_fresh_governed_decision:" + pid)
+    if not report["fresh_rejections"]:
+        failed.append("no_fresh_pre_broker_rejection_with_amounts")
+    if not report["fresh_reconciled_fills"]:
+        failed.append("no_fresh_broker_position_cash_reconciled_fill")
+    after, version_after = manifest_fetch(), fetch("/bff/version")
+    if after != manifest or version_after != version:
+        failed.append("served_identity_changed_during_probe")
+    report["passed"] = not failed
+    return report
+
+
+def main():
+    required = ("ACCEPTANCE_FE_URL", "ACCEPTANCE_BACKEND_SHA", "ACCEPTANCE_FRONTEND_SHA")
+    missing = [key for key in required if not os.environ.get(key)]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+
+    def runner(fetch, expected, pool_reader, public_read, owner_read):
+        def source_read(eid, tenant):
+            return owner_read("telemetry", eid, tenant)
+        return check(fetch, public_read, source_read, expected=expected, pool_policy_reader=pool_reader,
+                     backend_sha=os.environ[required[1]], frontend_sha=os.environ[required[2]])
+    return binding.main(runner)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
