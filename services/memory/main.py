@@ -779,30 +779,53 @@ async def retrieve_memory(
     client = hs.get_hindsight_client()
     ranked_hits = []
     retrieval_details = {}
-    if scope in {"institutional", "both"}:
+
+    def _institutional():
         diagnostics = {}
-        for hit in retrieve_institutional(
-            _store(), client=client, query=query, tenant_id=tenant_id, knowledge_type=knowledge_type,
-            scope_filter=scope_filter, tags=tag_values, subject_anchors=anchor_values, limit=limit,
-            diagnostics=diagnostics, review_required=review_required,
-        ):
-            ranked_hits.append(("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry))
-        retrieval_details["institutional"] = diagnostics
-    if scope in {"persona", "both"}:
+        hits = [
+            ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
+            for hit in retrieve_institutional(
+                _store(), client=client, query=query, tenant_id=tenant_id, knowledge_type=knowledge_type,
+                scope_filter=scope_filter, tags=tag_values, subject_anchors=anchor_values, limit=limit,
+                diagnostics=diagnostics, review_required=review_required,
+            )
+        ]
+        return hits, diagnostics
+
+    def _persona():
         diagnostics = {}
         try:
             if not persona_id:
                 raise PersonaMemoryError("persona_id is required for persona memory retrieval")
-            for hit in retrieve_persona(
-                _persona_store(), persona_id, client=client, query=query, tenant_id=tenant_id,
-                memory_type=memory_type, relevance_scope=persona_relevance_scope,
-                tags=tag_values, subject_anchors=anchor_values, limit=limit, diagnostics=diagnostics,
-                review_required=review_required,
-            ):
-                ranked_hits.append(("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry))
+            hits = [
+                ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                for hit in retrieve_persona(
+                    _persona_store(), persona_id, client=client, query=query, tenant_id=tenant_id,
+                    memory_type=memory_type, relevance_scope=persona_relevance_scope,
+                    tags=tag_values, subject_anchors=anchor_values, limit=limit, diagnostics=diagnostics,
+                    review_required=review_required,
+                )
+            ]
         except PersonaMemoryError as exc:
             raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve", "message": str(exc)}) from exc
-        retrieval_details["persona"] = diagnostics
+        return hits, diagnostics
+
+    if scope == "both":
+        # Both recalls run concurrently: one retrieve costs one recall deadline.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-retrieve") as pool:
+            inst_future, persona_future = pool.submit(_institutional), pool.submit(_persona)
+            inst_result, persona_result = inst_future.result(), persona_future.result()
+        ranked_hits.extend(inst_result[0])
+        retrieval_details["institutional"] = inst_result[1]
+        ranked_hits.extend(persona_result[0])
+        retrieval_details["persona"] = persona_result[1]
+    elif scope == "institutional":
+        hits, retrieval_details["institutional"] = _institutional()
+        ranked_hits.extend(hits)
+    else:
+        hits, retrieval_details["persona"] = _persona()
+        ranked_hits.extend(hits)
 
     ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
     selected_hits = ranked_hits[:limit]
