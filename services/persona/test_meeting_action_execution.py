@@ -184,7 +184,7 @@ def test_submit_next_same_subject_citation_and_restart_concurrency(action_system
         verify(research["tickets"][tid], note, {packets[0]["packet_id"]: packets[0]}, persona["persona_id"], "tenant-a")
 
 
-@pytest.mark.parametrize("lost_reply", [False, True])
+@pytest.mark.parametrize("lost_reply", [False, True, "accepted_after_reply_loss"])
 def test_uncertain_write_journal_replays_without_new_note_or_model_work(action_system, lost_reply):
     controller, gateway, owner, cap, research = action_system
     persona = owner.list_json()[0]
@@ -195,6 +195,8 @@ def test_uncertain_write_journal_replays_without_new_note_or_model_work(action_s
     assert first["persona_cycle"]["decisions"][0]["status"] == "unavailable"
     assert len(research["notes"]) == 1
     research["patch_outage"] = False
+    if lost_reply == "accepted_after_reply_loss":
+        research["tickets"][ticket()["ticket_id"]].update(action_state="accepted", revision=2)
     gateway["answer"] = {"proposals": [{"kind": "no_action", "reason": "Await the review",
         "evidence_refs": [], "none_applicable_reason": "No further proposal"}]}
     second = controller.consume_run(persona, "job-1", run(2))
@@ -244,7 +246,7 @@ def test_pagination_continues_without_hiding_unfinished_work(action_system):
     assert len(research["calls"]) == 6  # two bounded list requests per normal tick
 
 
-@pytest.mark.parametrize("fault", ["decline", "uncited", "foreign_ticket", "no_tool_record", "timeout", "no_analysis"])
+@pytest.mark.parametrize("fault", ["decline", "uncited", "foreign_ticket", "no_tool_record", "timeout", "no_analysis", "unicode_record"])
 def test_declined_rejected_or_unrecorded_output_never_delivers(action_system, fault):
     controller, gateway, owner, cap, research = action_system
     propose(gateway, ticket()["ticket_id"])
@@ -260,8 +262,10 @@ def test_declined_rejected_or_unrecorded_output_never_delivers(action_system, fa
         gateway["answer"] = None
     elif fault == "timeout":
         gateway["outage"] = True
-    else:
+    elif fault == "no_analysis":
         p["parameters"].pop("analysis")
+    else:
+        p["parameters"]["analysis"] = "研" * 2600  # 7,800 UTF-8 bytes, exceeds owner's ASCII JSON cap
     controller.consume_run(owner.list_json()[0], "job-1", run(1))
     assert not research["notes"] and not research["commands"]
 

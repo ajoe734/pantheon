@@ -1,0 +1,22 @@
+{
+  "fixture": "four assignments, one ordinary Persona turn, empty source refs",
+  "owner_requests": {
+    "GET": 10,
+    "POST": 4,
+    "PATCH": 4
+  },
+  "total_owner_requests": 18,
+  "turn_input_bytes": 17077,
+  "meeting_envelope_bytes": 2145,
+  "packet_bytes": 34415,
+  "hosted_format_store_bytes": 54315,
+  "retained_packet_count": 1,
+  "notes": 4,
+  "notes_total_bytes": 3692,
+  "three_persona_example_per_trading_day": {
+    "full_packet_bytes": 103245,
+    "hosted_format_store_bytes": 162945,
+    "notes": 12,
+    "notes_bytes": 11076
+  }
+}
