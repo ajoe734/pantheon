@@ -926,6 +926,7 @@ def compose_meeting_case_file(
     convened_by: Optional[Mapping[str, Any]] = None,
     owners: Optional[Any] = None,
     budgets: Optional[Any] = None,
+    prior_actions: Sequence[Mapping[str, Any]] = (),
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Compose and validate the shared case file for a deliberative meeting."""
     from dataclasses import replace
@@ -1330,7 +1331,33 @@ def compose_meeting_case_file(
         "digest": digest,
         **case_body,
     }
-    return case_file, all_items, resolved_attr
+    case_file, action_items = _attach_meeting_action_case(case_file, prior_actions)
+    return case_file, [*all_items, *action_items], resolved_attr
+
+
+def _attach_meeting_action_case(case_file: Mapping[str, Any], actions: Sequence[Mapping[str, Any]]) -> Tuple[Dict, List[Dict]]:
+    """Bounded shared citations; complete owner snapshots stay in meeting context."""
+    result = copy.deepcopy(dict(case_file))
+    items = [{"item_id": f"meeting_action:{a['action_id']}", "source_id": a["action_id"],
+              "source_owner": "research", "source_kind": "meeting_action", "memory_layer": "institutional",
+              "relevance_scope": "committee", "excerpt": json.dumps(
+                  {k: a.get(k) for k in ("state", "owner", "deliverable", "acceptance_criterion", "due_at", "next_review")},
+                  ensure_ascii=False)[:400], "subject_fields": {"ticket_id": a["action_id"]}}
+             for a in actions[:24]]
+    if items:
+        result.setdefault("groups", {})["meeting_actions"] = {"status": "ok", "items": items,
+                                                               "truncated": False, "unavailable": []}
+        body = {k: v for k, v in result.items() if k not in {"case_file_id", "digest"}}
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode()).hexdigest()
+        result.update(case_file_id=f"casefile-{digest[:24]}", digest=digest)
+    if len(json.dumps(result).encode()) > 262144:
+        raise MeetingRefusedError("case_file_byte_budget_exceeded", "Meeting case file exceeds 256 KiB")
+    return result, items
+
+
+def _check_meeting_prompt_budget(request: Mapping[str, Any]) -> None:
+    if len(json.dumps(request).encode()) > 2097152:
+        raise MeetingRefusedError("prompt_byte_budget_exceeded", "Meeting provider request exceeds 2 MiB")
 
 
 def build_participant_pre_read(
@@ -2028,6 +2055,195 @@ def _record_refusal_in_store(
     return refused_meeting
 
 
+def _meeting_series(meeting: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """Join only a verified stable subject, never a meeting-type global default."""
+    code = str(meeting.get("meeting_code") or "")
+    ref = str(meeting.get("subject_ref") or "").strip()
+    if len(ref) > 256:
+        return None
+    chair = str(meeting.get("chair_persona_id") or "")
+    convener = meeting.get("convened_by") or {}
+    if code == "MT-1":
+        # MT-1 is the owning Persona's pool; dates/weekly trigger IDs are not series identities.
+        if ref in {chair, f"persona:{chair}", f"pool:{chair}"} or (
+                convener.get("kind") == "persona" and convener.get("id") == chair
+                and (not ref or ref.startswith((f"{chair}:", f"{chair}|", "week:", "meeting:")))):
+            return {"meeting_type": code, "subject_ref": f"pool:{chair}"}
+    if ref and not ref.startswith(("meeting:", "mtg-", "week:", "trigger:")) and not re.search(r"\d{4}-W\d{2}", ref):
+        return {"meeting_type": code, "subject_ref": ref}
+    # Existing recurrence/committee identity may be propagated by the trusted trigger.
+    # Do not trust arbitrary metadata to join committees here.
+    return None
+
+
+def _participant_action_capability(tenant_id: str, persona_id: str,
+                                   required_data: List[str] | None = None) -> Dict[str, Any]:
+    """Read the Persona owner/broker decision; role labels grant no capability."""
+    base = (os.getenv("PANTHEON_PERSONA_API_URL") or os.getenv("PERSONA_API_URL") or "").rstrip("/")
+    result: Dict[str, Any] = {"persona_id": persona_id, "status": "owner_unavailable",
+                              "can_receive_persona_action": False, "can_mutate_trading_state": False,
+                              "consultation_can_mutate_trading_state": False}
+    if not base:
+        return {**result, "reason": "persona_owner_unconfigured"}
+    try:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        token = resolve_runtime_manager_auth(
+            token_env_key="CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
+            token_file_env_key=_DIRECTORY_FILE_ENV, default_token="").token
+        if not token:
+            token = os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN") or os.getenv("PERSONA_SERVICE_TOKEN") or ""
+        headers = {"X-Tenant-Id": tenant_id, "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        query = urllib.parse.urlencode({"run_purpose": "daily_cycle", "required_data": required_data or []}, doseq=True)
+        path = f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/action-capability?{query}"
+        req = urllib.request.Request(base + path, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = json.loads(resp.read(16385).decode())
+        if not isinstance(raw, Mapping) or raw.get("persona_id") != persona_id:
+            return {**result, "reason": "persona_owner_invalid_receipt"}
+        # Never pass access credentials, private data, or an unbounded owner object to the model.
+        for key in ("status", "reason", "can_receive_persona_action", "can_be_assigned", "executable",
+                    "allowed_deliverables", "allowed_execution_targets", "denial_reasons", "run_purpose"):
+            value = raw.get(key)
+            if isinstance(value, (bool, str, list)) and len(json.dumps(value).encode()) <= 1024:
+                result[key] = value
+        return result
+    except urllib.error.HTTPError as exc:
+        return {**result, "status": "denied" if exc.code in {401, 403} else "owner_unavailable",
+                "reason": f"persona_owner_http_{exc.code}"}
+    except Exception as exc:
+        return {**result, "reason": f"persona_owner_{type(exc).__name__}"}
+
+
+def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any],
+                             allowed_citations: set[str], *, recheck_capabilities: bool = False
+                             ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Only an explicit chair adoption produces work; rounds remain advisory."""
+    actions, reviews, rejected = [], [], []
+    if str(raw.get("outcome") or "").upper() == "REVIEW" or raw.get("unreadable"):
+        return actions, reviews, rejected
+    source_ids: set[str] = set()
+    capabilities = {c["persona_id"]: c for c in meeting.get("participant_action_capabilities") or []}
+    prior = {a["action_id"]: a for a in meeting.get("prior_actions") or []}
+    raw_actions = raw.get("actions") or []
+    if not isinstance(raw_actions, list) or len(raw_actions) > 8:
+        return [], [], [{"reason": "actions_must_be_bounded_list"}]
+    for idx, item in enumerate(raw_actions):
+        reason = None
+        if not isinstance(item, Mapping):
+            rejected.append({"index": idx, "reason": "action_not_object"})
+            continue
+        fields = ("source_action_id", "assignee", "assignee_kind", "deliverable", "acceptance_criterion")
+        action = {k: item.get(k) for k in fields}
+        if any(not isinstance(v, str) or not v.strip() or len(v) > (2000 if k in {"deliverable", "acceptance_criterion"} else 256)
+               for k, v in action.items()):
+            rejected.append({"index": idx, "reason": "missing_or_unbounded_assignment_fields"})
+            continue
+        # Research canonicalizes these owner fields before issuing a receipt.
+        # Normalize before identity/capability checks and decision freezing so
+        # every dispatch attempt carries exactly the same canonical origin.
+        action = {k: v.strip() for k, v in action.items()}
+        if "required_data" in item:
+            datasets = item["required_data"]
+            if (not isinstance(datasets, list) or len(datasets) > 8
+                    or any(not isinstance(d, str) or not d.strip() or len(d) > 256 for d in datasets)):
+                rejected.append({"index": idx, "reason": "invalid_required_data"})
+                continue
+            datasets = [d.strip() for d in datasets]
+            if len(set(datasets)) != len(datasets) or len(json.dumps(datasets).encode()) > 4096:
+                rejected.append({"index": idx, "reason": "invalid_required_data"})
+                continue
+            action["required_data"] = datasets
+        refs = item.get("source_refs")
+        if isinstance(refs, list):
+            refs = [r.strip() if isinstance(r, str) else r for r in refs]
+        if (not isinstance(refs, list) or not 1 <= len(refs) <= 8
+                or any(not isinstance(r, str) or len(r) > 256 or r not in allowed_citations for r in refs)
+                or len(json.dumps(refs).encode()) > 4096):
+            reason = "invalid_action_source_refs"
+        if not meeting.get("meeting_series"):
+            reason = "stable_series_unavailable"
+        if action.get("source_action_id") in source_ids:
+            reason = "duplicate_source_action_id"
+        if action.get("assignee_kind") == "persona":
+            # A generic note capability cannot authorize a data-dependent deliverable.
+            # Check each action separately: the same Persona may receive an evidence-only
+            # note and be denied a licensed-feed analysis in this very synthesis.
+            datasets = action.get("required_data") or []
+            cap = capabilities.get(action["assignee"], {})
+            if cap and (recheck_capabilities or datasets):
+                cap = (_participant_action_capability(str(meeting["tenant_id"]), action["assignee"], datasets)
+                       if datasets else _participant_action_capability(str(meeting["tenant_id"]), action["assignee"]))
+            if (cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed"
+                    or "research_note" not in (cap.get("allowed_deliverables") or [])):
+                reason = "persona_owner_did_not_allow_assignment"
+        elif action.get("assignee_kind") != "human":
+            reason = "invalid_assignee_kind"
+        if action.get("assignee_kind") == "human":
+            # RW-01 already permits the tenant's authenticated operators to act
+            # on this inbox. Neither model text nor caller-supplied convened_by
+            # proves that an arbitrary username is a reachable human principal.
+            if action["assignee"] != "operator":
+                reason = "human_assignee_unresolvable_use_operator_inbox"
+            requirement = item.get("human_requirement")
+            if not isinstance(requirement, str) or not requirement.strip() or len(requirement) > 2000:
+                reason = "human_requirement_required_or_unbounded"
+            else:
+                action["human_requirement"] = requirement.strip()
+        due, review = item.get("due_at"), item.get("next_review")
+        if due:
+            try:
+                parsed = datetime.fromisoformat(str(due).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError()
+                action["due_at"] = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            except (ValueError, TypeError):
+                reason = "invalid_due_at"
+        elif isinstance(review, str) and review.strip() and len(review) <= 256:
+            action["next_review"] = review.strip()
+        else:
+            reason = "due_or_explicit_next_review_required"
+        if reason:
+            failure = {"index": idx, "reason": reason}
+            if reason == "persona_owner_did_not_allow_assignment":
+                failure.update(required_data=action.get("required_data", []),
+                               capability_status=cap.get("status"), capability_reason=cap.get("reason"))
+            rejected.append(failure)
+            continue
+        source_ids.add(action["source_action_id"])
+        actions.append({**action, "source_refs": list(refs), "state": "dispatch_pending"})
+    seen_reviews = set()
+    raw_reviews = raw.get("action_reviews") or []
+    if not isinstance(raw_reviews, list) or len(raw_reviews) > 8:
+        rejected.append({"reason": "action_reviews_must_be_bounded_list"})
+        return actions, [], rejected
+    for item in raw_reviews:
+        if not isinstance(item, Mapping):
+            continue
+        tid = item.get("action_id")
+        if not isinstance(tid, str):
+            rejected.append({"reason": "invalid_review_action_id"})
+            continue
+        snapshot = prior.get(tid, {})
+        refs = item.get("evidence_refs")
+        # The model must compare the actual prior criterion and cite the submitted evidence it saw.
+        expected = snapshot.get("evidence_refs") or []
+        reason = item.get("reason")
+        if (tid in seen_reviews or snapshot.get("state") != "submitted" or snapshot.get("evidence_omitted")
+                or snapshot.get("evidence_available") is not True
+                or item.get("decision") not in {"accept", "return"}
+                or not isinstance(reason, str) or not reason.strip() or len(reason) > 2000
+                or item.get("acceptance_criterion") != snapshot.get("acceptance_criterion")
+                or not expected or refs != expected):
+            rejected.append({"action_id": tid, "reason": "invalid_review_criterion_or_evidence"})
+            continue
+        seen_reviews.add(tid)
+        reviews.append({"action_id": tid, "decision": item["decision"], "reason": reason,
+                        "acceptance_criterion": item["acceptance_criterion"], "evidence_refs": refs})
+    return actions, reviews, rejected
+
+
 def convene_persona_meeting(
     *,
     store: Any,
@@ -2225,6 +2441,7 @@ def convene_persona_meeting(
         "trace_id": trace_id,
         "metadata": meta,
     }
+    meeting_record["meeting_series"] = _meeting_series(meeting_record)
     store.put_meeting(meeting_record)
 
     # Also store the backing ConsultRequest so workflow_executor discovers it
@@ -3067,6 +3284,18 @@ def _extract_position_from_contribution(
     return position, raw_claims
 
 
+def _restore_action_review_state(store: Any, meeting: Dict[str, Any]) -> None:
+    """Read this chair/series checkpoint; HTTP execution receives it in detail."""
+    if not meeting.get("meeting_series") or not hasattr(store, "get_meeting_schedule"):
+        return
+    previous = store.get_meeting_schedule(
+        str(meeting["tenant_id"]), str(meeting["chair_persona_id"]), str(meeting["meeting_type"]),
+        meeting_series=meeting["meeting_series"])
+    if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
+        meeting["previous_action_review_at"] = previous.get("action_review_watermark")
+        meeting["action_review_scan"] = previous.get("action_review_scan") or {}
+
+
 def execute_persona_meeting(
     *,
     store: Any,
@@ -3081,7 +3310,15 @@ def execute_persona_meeting(
     meeting = store.get_meeting(meeting_id)
     if not meeting or meeting.get("tenant_id") != tenant_id:
         raise ValueError(f"Meeting {meeting_id} not found for tenant {tenant_id}")
-    if meeting.get("status") in {"closed", "refused"}:
+    if meeting.get("status") == "closed":
+        # Explicit execution retry resumes owner dispatch, never a new chair decision.
+        if (meeting.get("synthesis") or {}).get("actions") or (meeting.get("synthesis") or {}).get("action_reviews"):
+            from .meeting_outputs import dispatch_meeting_actions, review_meeting_actions
+            meeting["actions"] = dispatch_meeting_actions(meeting)
+            meeting["action_review_dispatches"] = review_meeting_actions(meeting)
+            store.put_meeting(meeting)
+        return meeting
+    if meeting.get("status") == "refused":
         return meeting
 
     cat = dict(catalogue or load_meeting_catalogue())
@@ -3091,6 +3328,9 @@ def execute_persona_meeting(
     chair_persona_id = str(meeting["chair_persona_id"])
     topic = str(meeting["topic"])
     trace_id = str(meeting.get("trace_id") or f"trace-{meeting_id}")
+
+    if meeting.get("action_decision_frozen"):
+        return _close_persona_meeting(store=store, meeting=meeting, spec=spec, memory_url=memory_url)
 
     # Step 1: Ensure every participant's consultation-only deny-all agent
     if renew_lease:
@@ -3139,6 +3379,24 @@ def execute_persona_meeting(
         if resolved_attr is not None:
             meeting["attribution_record"] = resolved_attr
 
+    from .meeting_outputs import read_meeting_actions
+    # Detail projections include an empty prior_actions list before execution.
+    # Only the persisted source receipt proves an owner read actually happened.
+    if "prior_actions_source" not in meeting:
+        _restore_action_review_state(store, meeting)
+        action_read = read_meeting_actions(meeting)
+        meeting["prior_actions"] = action_read["items"]
+        meeting["prior_action_evidence"] = action_read.get("evidence") or []
+        meeting["prior_actions_source"] = {k: v for k, v in action_read.items() if k not in {"items", "evidence"}}
+        if action_read["items"] or action_read["status"] != "ok":
+            meeting["agenda"] = ["Review previous work against its acceptance criterion (including pending owner pages)",
+                                  *(meeting.get("agenda") or [topic])]
+    meeting["participant_action_capabilities"] = [
+        _participant_action_capability(tenant_id, str(p["persona_id"])) for p in participants
+    ]
+    case_file, action_case_items = _attach_meeting_action_case(case_file, meeting.get("prior_actions") or [])
+    case_file_items = [i for i in case_file_items if i.get("source_kind") != "meeting_action"] + action_case_items
+    meeting.update(case_file=case_file, case_file_items=case_file_items)
     meta = dict(meeting.get("metadata") or {})
     memory_refusals: Dict[str, str] = {}
     pre_read = build_participant_pre_read(
@@ -3166,6 +3424,7 @@ def execute_persona_meeting(
     }
     if meeting.get("attribution_record_id"):
         allowed_case_ids.add(str(meeting["attribution_record_id"]))
+    allowed_case_ids.update(f"meeting_action:{a['action_id']}" for a in meeting.get("prior_actions") or [])
     preread_ids_by_persona: Dict[str, set[str]] = {
         str(pr["persona_id"]): set(str(eid) for eid in (pr.get("entry_ids") or []))
         for pr in pre_read
@@ -3260,6 +3519,11 @@ def execute_persona_meeting(
                 "topic": topic,
                 "agenda": meeting.get("agenda") or [topic],
                 "own_pre_read": preread_by_persona.get(pid),
+                "prior_actions": meeting.get("prior_actions") or [],
+                "prior_action_evidence": meeting.get("prior_action_evidence") or [],
+                "prior_actions_source": meeting.get("prior_actions_source"),
+                "own_action_capability": next((c for c in meeting["participant_action_capabilities"]
+                                                if c["persona_id"] == pid), None),
                 "assigned_case": assigned_case,
             }
             if round_no > 1:
@@ -3290,6 +3554,7 @@ def execute_persona_meeting(
                 "meeting": meeting_ctx,
                 "metadata": {"meeting": meeting_ctx},
             }
+            _check_meeting_prompt_budget(ask_request)
             contribution = provider.obtain(
                 tenant_id=tenant_id,
                 request=ask_request,
@@ -3437,6 +3702,11 @@ def execute_persona_meeting(
         "agenda": meeting.get("agenda") or [topic],
         "rounds": rounds_recorded,
         "attribution_record": meeting.get("attribution_record"),
+        "prior_actions": meeting.get("prior_actions") or [],
+        "prior_action_evidence": meeting.get("prior_action_evidence") or [],
+        "prior_actions_source": meeting.get("prior_actions_source"),
+        "participant_action_capabilities": meeting.get("participant_action_capabilities") or [],
+        "own_pre_read": preread_by_persona.get(chair_persona_id),
     }
     synth_ask: Dict[str, Any] = {
         "tenant_id": tenant_id,
@@ -3461,6 +3731,7 @@ def execute_persona_meeting(
     }
 
     raw_synthesis: Optional[Dict[str, Any]] = None
+    _check_meeting_prompt_budget(synth_ask)
     try:
         synth_contrib = provider.obtain(
             tenant_id=tenant_id,
@@ -3495,16 +3766,14 @@ def execute_persona_meeting(
                 **({"raw_length": raw_len} if raw_len is not None else {}),
             }
         else:
-            # Build synthesis from event_content proposals or round proposals
+            # Only the chair's explicit output adopts work. Round suggestions remain advisory.
             collected_proposals = list(ev_content.get("proposals") or [])
-            if not collected_proposals and "proposals" not in ev_content:
-                for pos in rounds_recorded[-1].get("positions") or []:
-                    for pr in pos.get("proposals") or []:
-                        if isinstance(pr, Mapping):
-                            collected_proposals.append(dict(pr))
             raw_synthesis = {
                 "summary": synth_contrib.summary,
                 "proposals": collected_proposals,
+                "actions": ev_content.get("actions") or [],
+                "action_reviews": ev_content.get("action_reviews") or [],
+                "no_action_reason": ev_content.get("no_action_reason"),
                 "outcome": ev_content.get("outcome"),
                 "unreadable": ev_content.get("unreadable", False),
             }
@@ -3525,13 +3794,48 @@ def execute_persona_meeting(
         allowed_case_ids=allowed_case_ids,
         chair_preread_ids=preread_ids_by_persona.get(chair_persona_id, set()),
     )
+    actions, reviews, rejected_actions = _validate_adopted_actions(
+        raw_synthesis or {}, meeting, allowed_case_ids | preread_ids_by_persona.get(chair_persona_id, set()),
+        recheck_capabilities=True)
+    # A malformed/REVIEW synthesis cannot become a new source of work.
+    if synthesis["outcome"] == "REVIEW":
+        actions, reviews = [], []
+    synthesis.update(actions=actions, action_reviews=reviews, rejected_actions=rejected_actions,
+                     no_action_reason=None if actions else str((raw_synthesis or {}).get("no_action_reason") or synthesis["summary"]))
+    if actions and not synthesis["proposals"]:
+        synthesis["outcome"] = "actions_adopted"
     if synthesis.get("unreadable_reason"):
         meeting["synthesis_unreadable_reason"] = synthesis["unreadable_reason"]
     else:
         meeting.pop("synthesis_unreadable_reason", None)
 
+    # Freeze the actual chair decision before any owner call or writeback can fail.
+    meeting.update(synthesis=synthesis, rejected_positions=rejected_positions,
+                   action_decision_frozen=True)
+    meeting["usage"]["calls"] = calls_made
+    store.put_meeting(meeting)
+    return _close_persona_meeting(store=store, meeting=meeting, spec=spec, memory_url=memory_url)
+
+
+def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping[str, Any],
+                           memory_url: str) -> Dict[str, Any]:
+    """Resume a frozen close without asking the model to adopt a different decision."""
+    meeting_id, tenant_id = str(meeting["meeting_id"]), str(meeting["tenant_id"])
+    meeting_code, topic = str(meeting["meeting_code"]), str(meeting["topic"])
+    chair_persona_id, trace_id = str(meeting["chair_persona_id"]), str(meeting["trace_id"])
+    participants, rounds_recorded = meeting["participants"], meeting["rounds"]
+    synthesis = meeting["synthesis"]
+    rejected_positions = meeting.get("rejected_positions") or []
+    calls_made = int((meeting.get("usage") or {}).get("calls") or 0)
+    default_case_id = next((str(i["item_id"]) for i in meeting.get("case_file_items") or [] if i.get("item_id")),
+                           f"facts:meeting_topic:{meeting_id}")
+
     # Step 8: Record & publish Dissent Memo + Summary Memo in store
     now_closed = utc_now()
+    # The first published dissent anchors both immutable memo timestamps across
+    # partial-close retries, even when a retry runs in another second/process.
+    prior_dissent = store.get_memo(f"mem-dissent-{meeting_id}") if hasattr(store, "get_memo") else None
+    memo_timestamp = prior_dissent.created_at if prior_dissent and prior_dissent.status == MemoStatus.PUBLISHED else now_closed
     dissenting_persona = next(
         (
             p["persona_id"]
@@ -3573,8 +3877,8 @@ def execute_persona_meeting(
         confidence=float((synthesis.get("tally") or {}).get("mean_confidence") or 0.7),
         status=MemoStatus.PUBLISHED,
         trace_id=trace_id,
-        created_at=now_closed,
-        published_at=now_closed,
+        created_at=memo_timestamp,
+        published_at=memo_timestamp,
     )
     saved_dissent = store.put_memo(dissent_memo)
     if isinstance(saved_dissent, Mapping) and saved_dissent.get("memo_id"):
@@ -3602,8 +3906,8 @@ def execute_persona_meeting(
         confidence=float((synthesis.get("tally") or {}).get("mean_confidence") or 0.75),
         status=MemoStatus.PUBLISHED,
         trace_id=trace_id,
-        created_at=now_closed,
-        published_at=now_closed,
+        created_at=memo_timestamp,
+        published_at=memo_timestamp,
     )
     saved_summary = store.put_memo(summary_memo)
     if isinstance(saved_summary, Mapping) and saved_summary.get("memo_id"):
@@ -3641,6 +3945,16 @@ def execute_persona_meeting(
         meeting["synthesis"] = synthesis
         store.put_meeting(meeting)
 
+    from .meeting_outputs import dispatch_meeting_actions, review_meeting_actions, MeetingOutputRoutingError
+    meeting["actions"] = dispatch_meeting_actions(meeting)
+    meeting["action_review_dispatches"] = review_meeting_actions(meeting)
+    store.put_meeting(meeting)
+    if (any(a.get("dispatch_error") for a in meeting["actions"])
+            or any(r.get("status") != "recorded" for r in meeting["action_review_dispatches"])):
+        # Use the existing workflow's bounded retry/lease machinery. Publishing a
+        # closed request here would suppress its next attempt permanently.
+        raise MeetingOutputRoutingError("meeting_action_owner_pending; frozen decision retained for retry", status_code=503)
+
     # Step 10: Memory Writeback (Minutes as 1 institutional fact + each participant's outcome to own memory)
     writebacks, inst_entry_id = _write_meeting_memory(
         tenant_id=tenant_id,
@@ -3677,12 +3991,50 @@ def execute_persona_meeting(
     # Update schedule for the chair and trading participants
     cadence = str(spec.get("cadence") or "weekly")
     next_due = compute_next_due_at(now_closed, cadence)
+    source = meeting.get("prior_actions_source") or {}
+    pages = source.get("pages") or {}
+    evidence_read = all(e.get("status") == "ok" for e in meeting.get("prior_action_evidence") or [])
+    scan = source.get("scan") or {}
+    finished = (source.get("status") == "ok" and set(pages) == {"outstanding", "submitted", "reviewed"}
+                and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values()))
+    evidence_failed = bool(scan.get("evidence_failed")) or not evidence_read
+    # Keyset traversal is not a snapshot: updates behind a cursor must be read
+    # again. Advance only to the first page's start, never the last meeting's
+    # creation time. Inclusive owner filters retain same-timestamp updates.
+    watermark = scan.get("started_at") if finished and not evidence_failed else None
+    watermark = watermark or meeting.get("previous_action_review_at")
+    continuation = {}
+    if scan.get("started_at") and not finished:
+        tokens = dict(scan.get("page_tokens") or {})
+        completed = set(scan.get("completed_lanes") or [])
+        for lane, page in pages.items():
+            if page.get("status") == "ok":
+                tokens[lane] = page.get("next_page_token")
+                if not page.get("has_more"):
+                    completed.add(lane)
+        continuation = {"started_at": scan["started_at"], "page_tokens": tokens,
+                        "completed_lanes": sorted(completed), "evidence_failed": evidence_failed}
+    # Unavailable evidence was shown explicitly and cannot be accepted. It must
+    # not pin a cursor: finish the traversal, then retry from the old watermark.
+    # Sticky failure state prevents a later healthy page from hiding obligations.
     for p in participants:
         if p.get("trading") or p["persona_id"] == chair_persona_id:
+            persona_id = str(p["persona_id"])
+            # Attendance updates cadence, but only the chair owns this series'
+            # review state. The store merges peer cadence at the write boundary,
+            # including for the HTTP proxy; never send a stale peer cursor back.
+            schedule: Dict[str, Any] = {}
+            if persona_id == chair_persona_id:
+                schedule.update(
+                    meeting_series=meeting.get("meeting_series"),
+                    action_review_watermark=watermark,
+                    action_review_scan=continuation,
+                )
             store.put_meeting_schedule(
                 {
+                    **schedule,
                     "tenant_id": tenant_id,
-                    "persona_id": str(p["persona_id"]),
+                    "persona_id": persona_id,
                     "meeting_type": str(meeting["meeting_type"]),
                     "meeting_code": meeting_code,
                     "last_run_at": now_closed,
@@ -3910,6 +4262,10 @@ def get_meeting_detail_view(
     if not m or str(m.get("tenant_id") or "default") != tenant_id:
         return None
     detail = copy.deepcopy(m)
+    if "prior_actions_source" not in m and m.get("status") not in {"closed", "refused"}:
+        # The normal HTTP executor reads this existing detail route, so supply
+        # authoritative continuation without another endpoint or archive scan.
+        _restore_action_review_state(store, detail)
     exec_state = None
     if workflow_state is not None:
         exec_state = _execution_state_from_row(
@@ -3945,6 +4301,15 @@ def get_meeting_detail_view(
                     ds["id"] = str(live["downstream_id"])
                 prop["downstream"] = ds
     synth["proposals"] = proposals
+    current_actions = list(synth.get("actions") or [])
+    prior_actions = list(detail.get("prior_actions") or [])
+    for action in current_actions + prior_actions:
+        if isinstance(action, dict) and action.get("ticket_id"):
+            from .meeting_outputs import read_action_status
+            action["live_owner_status"] = read_action_status(tenant_id, str(action["ticket_id"]))
+    # Frozen snapshots remain intact; live owner progress is explicitly separate.
+    detail["actions"] = current_actions
+    detail["prior_actions"] = prior_actions
     detail["synthesis"] = synth
     return detail
 

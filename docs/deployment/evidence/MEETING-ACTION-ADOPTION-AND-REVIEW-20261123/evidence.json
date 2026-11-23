@@ -1,0 +1,180 @@
+{
+  "task_id": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "source_base": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+  "delivery_base": "a4f2f0b4e2b657afbc68f0a76bf755023169e063",
+  "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
+  "verification": [
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-data-research-owner.py MEETING_ACTION_PERSONA_POLICY_SOURCE=/tmp/meeting-data-persona-policy.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/consultation/test_postgres_store.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "156 passed, 81 warnings in 87.90s. All existing cursor/interleaved-series/replay regressions plus real three-Persona data-aware policy and ticket composition. This ran before the final receipt-strengthening test changes; final focused verification below covers those changes.",
+      "terminal_output": "data-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-data-research-owner.py MEETING_ACTION_PERSONA_POLICY_SOURCE=/tmp/meeting-data-persona-policy.py timeout 75s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q -k \"data_aware or invalid_data or deliverable_dataset\" --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "14 passed, 126 deselected, 1 warning in 5.50s. Final normal data-aware engine matrix, lost data-dependent receipt retry, changed/missing owner origin rejection, invalid requirement bounds and real normal adapter prompt/schema. Current five-suite source contains 158 tests; full run above covered 156 before the final two receipt cases.",
+      "terminal_output": "data-focused-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/consultation/test_postgres_store.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "144 passed, 81 warnings in 83.21s: 140 tests across the four original suites, plus 4 existing PostgreSQL store tests. Includes same-chair/interleaved MT-2 normal direct/HTTP and restart cases plus JSONL/fake-PostgreSQL old-event replay. Frozen Research ad5dec939 source SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273; isolated persistence, no hosted claim.",
+      "terminal_output": "series-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k interleaved_series --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "16 passed, 88 deselected, 1 warning in 20.17s; two MT-1 chairs and one MT-2 chair/two subjects, normal direct/HTTP two-round close, restart/no-restart, scripted/frozen owner.",
+      "terminal_output": "series-focused-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k series_checkpoints --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "2 passed, 104 deselected, 1 warning in 3.03s; 24 unfinished series restored from unchanged schedule lifecycle events in JSONL/fake PostgreSQL, one cadence slot and no migration writes; foreign tenant/chair/type/subject cannot inherit state.",
+      "terminal_output": "series-focused-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest /tmp/test_meeting_series_review_50a7.py -q -s --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "Original reviewer regression: 4 passed, 1 warning in 3.46s; every one of three open tickets in each interleaved same-chair series visited, scripted/frozen owner and restart/no-restart. Committed normal-engine matrix adds accepted work, input, watermark and HTTP coverage."
+    },
+    {
+      "command": "git show ad5dec939c33d12089a05653b4f73de07d56e8bc:services/research/write_owner.py > /tmp/meeting-action-research-owner-current.py",
+      "exit_code": 0,
+      "result": "Frozen current Research source SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273; persistence isolated, public create/list/detail and owner role checks remain real."
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-research-owner-current.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "129 passed, 81 warnings in 103.20s. Complete component regression including existing pagination, interleaved chairs, partial close and 15 new human dispatch/schema cases. The additional real-owner authenticated-context role test below was added afterward; final source contains 130 tests across these four suites.",
+      "terminal_output": "human-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-research-owner-current.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'human_assignment_reaches' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "1 passed, 95 deselected, 1 warning in 5.90s. Real public owner list/detail allows the same-tenant operator context, denies unrelated viewer/human and foreign-tenant operator contexts; exact requirement and owner return reason remain available. Trusted contexts and isolated persistence, not JWT/BFF/hosted proof.",
+      "terminal_output": "human-operator-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner-independent.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "114 passed, 81 warnings in 103.77s; includes eight new direct/HTTP, restart and scripted/frozen-owner interleaved-chair cases",
+      "terminal_output": "interleaved-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner-independent.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'interleaved_pool_chairs or review_traversal' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "10 passed, 71 deselected, 1 warning in 20.51s",
+      "terminal_output": "interleaved-focused-validation.txt"
+    },
+    {
+      "command": "git show cddd6188fc784ced558d6a800e95584aef17636a:services/research/write_owner.py > /tmp/meeting-review-research-owner.py",
+      "exit_code": 0,
+      "result": "Frozen real owner create/list source SHA256 056e0aa3a472e75de633e6a0553ae5578ab80a51911b54b5c64e11261a8c6290; persistence isolated, SQL filtering/order/limit executed using SQLite dialect translation"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "106 passed, 81 warnings in 62.81s",
+      "terminal_output": "fair-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'evidence_and_lane or review_traversal' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "14 passed, 59 deselected, 1 warning in 6.79s; also included in full suite"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -s -k 'two_meetings_adoption' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "2 passed, 71 deselected, 1 warning in 3.58s; component measurement",
+      "terminal_output": "measurements.txt"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Checkout imports verified from foreign cwd without PYTHONPATH"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
+  ],
+  "acceptance_coverage": [
+    {
+      "criterion": 1,
+      "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass. Human work uses only the existing tenant operator inbox; fabricated human targets are explicitly rejected, with no task delivery claim. Operator- and Persona-convened normal HTTP provider/adapter two-round meetings are covered; a specific external document request requires no human approval/capital boundary. Data-aware normal-engine matrix tests all three enrolled identities against real frozen Persona policy: generic evidence notes allowed while specific inaccessible licensed feeds are rejected, available feeds allowed, explicit human-only signed document still uses operator. Each Persona action rechecks its own requirements, with no participant admission bypass."
+    },
+    {
+      "criterion": 2,
+      "proof": "Existing Registry/member-facts and privacy regressions pass; safe owner capability GET is exercised at HTTP boundary, role/inline/private fields cannot grant authority. Own pre-read, shared prior result and safe role data reach actual round/chair inputs; no escalation or placeholder reader added."
+    },
+    {
+      "criterion": 3,
+      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval. Exact normalized human_requirement is sent as the existing ticket.description, while deliverable/criterion/due/source remain structured. Missing/changed reason receipts stay pending. Actual public RW-01 list/detail roles are tested against frozen ad5dec939 with isolated persistence; list/detail JWT/BFF integration remains with R/B/V. Exact-series review lookup now derives independent tenant/chair/type/subject checkpoints from existing schedule lifecycle events, including older overwritten cadence slots; both direct execution and active HTTP detail/sync use it. No extra persistent writer or owner call. Optional required_data retained on same origin/readback including omission vs []; missing or changed owner requirements stay retryable. Lost data-dependent replies retry the exact body without another capability/model call or ticket."
+    },
+    {
+      "criterion": 4,
+      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting. Eight interleaved-chair cases alternate six normal convene/two-round/close meetings between two participating chairs, with and without replay before each meeting, on direct and actual HTTP proxy paths. Each pool presents all three outstanding and all three accepted-since-watermark tickets exactly once, preserves peer-owned review state on attendance, and completes its original scan-start watermark independently. Expanded 16-case normal-path matrix also alternates two MT-2 subjects for the same chair. Each series retains its own unfinished continuation and scan-start watermark across HTTP sync/replay. Two additional JSONL/fake-PostgreSQL replay tests preserve 24 distinct unfinished subjects with one cadence slot and no migration writes. Derived index count/heap and historical retention remain explicit RC3 debt in storage.json."
+    },
+    {
+      "criterion": 5,
+      "proof": "Pre-edit caller/storage trace, obsolete implicit-adoption removal, retained distinct formal/discovery paths, explicit residual owners and source recovery discontinuity are recorded in handoff.md."
+    }
+  ],
+  "runtime_budget": "storage.json",
+  "handoff": "handoff.md",
+  "read_only_probe": "probe.py",
+  "storage_manifest_owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123; consume this task's storage.json for the chain manifest, no shared manifest edits here",
+  "hosted_acceptance": {
+    "executed": false,
+    "status": "pending",
+    "owner": "MEETING-ACTION-TWO-MEETING-PROOF-20261123 and original MEETING-HOSTED-ACCEPTANCE-20261115",
+    "remaining": "real deployed owner/credential wiring, actual Persona execution/human input, exact hosted pair, natural second meeting and browser proof"
+  },
+  "residual_findings": [
+    {
+      "class": "RC6 meetings projections",
+      "owner": "existing consultation/BFF projection work package",
+      "finding": "Legacy list_meetings_view/list_meeting_proposals_view scan the archive",
+      "disposition": "retain existing-domain finding; new action path uses bounded owner pages and direct links"
+    },
+    {
+      "class": "RC3 WP3.1/3.3",
+      "owner": "storage retention/measurement work package",
+      "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive Derived series review index retains S distinct subject checkpoints; global count/Python heap are not capped or measured on hosted.",
+      "disposition": "preserve open/historical data; section caps are not whole-archive boundedness; future compaction must retain each series checkpoint, not only the latest cadence slot"
+    },
+    {
+      "class": "RC2 WP2.3 Research artifact reads",
+      "owner": "existing Research artifact owner",
+      "finding": "Artifact detail is metadata-only and scans artifact/run history",
+      "disposition": "explicit result-not-read; no acceptance from metadata, no duplicate reader; genuine meeting-bound research notes supported"
+    },
+    {
+      "class": "delivery authentication",
+      "owner": "delivery/authentication work package and final chain integrator",
+      "finding": "Consultation compose lacks dedicated Research assignment credential wiring",
+      "disposition": "configure issued consultation-svc/service credential through authorized deployment; source returns unavailable/pending, never fabricated success"
+    },
+    {
+      "class": "RC2 WP2.3 / RC6 human action projection",
+      "owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123 and BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
+      "finding": "Inspected R ad5dec939 detail preserves description, but its ticket summary still omits that existing human-only reason field. B must display it with deliverable/criterion and return reason.",
+      "disposition": "Already named in R/B current canonical follow-up scope. This producer sends and checks the exact description; downstream page/inbox projection and real authenticated response remain owned by R/B, without per-ticket fanout."
+    }
+  ],
+  "independent_review": "Prior head 83fb536a6 source checks passed but same-family review approval was withheld. Canonical reviewer was reassigned to Antigravity before this data-aware revision. Fresh exact-head independent review is pending; all earlier cursor/series fixes retained. No approval, merge, deployment or hosted acceptance claimed.",
+  "data_aware_composition": {
+    "persona_source": "git show 4c63fa4ad:services/control-plane/persona/persona_policy_resolver.py > /tmp/meeting-data-persona-policy.py",
+    "persona_sha256": "8eb91d71103487d682ffa4482821e874a1881f2cfac3e72141139c4de2a6e269",
+    "research_source": "git show 6147b4be9:services/research/write_owner.py > /tmp/meeting-data-research-owner.py",
+    "research_sha256": "7c0302131223bc39f7313f739a9152104fc953b67fc4c0157c2304f61099593d",
+    "boundary": "Real frozen policy evaluation, validated active harness and real create/list normalization/SQL; isolated owner persistence and HTTP transport. All three enrolled identity shapes tested. No live owner auth or hosted claim.",
+    "behavior": "Optional bounded required_data preserved through chair schema, action-specific capability query, normalized frozen origin, ticket dispatch receipt and readback. Evidence-only assignments proceed; restricted dataset actions stay explicit; actual accessible feeds allow the corresponding work. Verified operator inbox accepts only explicitly human-only work with a reason. No access grants."
+  },
+  "base_refresh": "Merged current dev a4f2f0b4e after review admission correctly rejected prior base. Only upstream provider_health.py and its test changed; meeting product source unchanged. Full 156 and final focused 14 component receipts remain applicable; diff_budget/whitespace/distribution validated."
+}
