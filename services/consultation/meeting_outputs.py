@@ -212,6 +212,7 @@ def _urllib_transport(
     url: str,
     headers: Mapping[str, str],
     body: dict[str, Any] | None,
+    *, max_reply_bytes: int | None = None,
 ) -> tuple[int, dict[str, Any]]:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req_headers = {"Accept": "application/json", **dict(headers)}
@@ -221,12 +222,14 @@ def _urllib_transport(
     try:
         with urllib.request.urlopen(request, timeout=10.0) as resp:
             status_code = int(getattr(resp, "status", None) or getattr(resp, "code", None) or 200)
-            raw_bytes = resp.read()
+            raw_bytes = resp.read(max_reply_bytes + 1) if max_reply_bytes is not None else resp.read()
+            if max_reply_bytes is not None and len(raw_bytes) > max_reply_bytes:
+                raise MeetingOutputRoutingError("owner_reply_exceeds_byte_budget", status_code=502)
             text = raw_bytes.decode("utf-8", "replace") if isinstance(raw_bytes, (bytes, bytearray)) else str(raw_bytes or "")
             parsed = json.loads(text) if text.strip() else {}
             return status_code, parsed if isinstance(parsed, dict) else {"items": parsed}
     except urllib.error.HTTPError as exc:
-        raw_bytes = exc.read() if hasattr(exc, "read") else b""
+        raw_bytes = (exc.read(max_reply_bytes + 1) if max_reply_bytes is not None else exc.read()) if hasattr(exc, "read") else b""
         text = raw_bytes.decode("utf-8", "replace") if isinstance(raw_bytes, (bytes, bytearray)) else str(raw_bytes or "")
         try:
             parsed = json.loads(text) if text.strip() else {"detail": str(exc)}
@@ -1255,12 +1258,13 @@ def _action_headers(tenant_id: str, key: str | None = None) -> dict[str, str]:
 
 def _action_request(method: str, path: str, tenant: str, body: dict | None = None,
                     *, transport: HttpTransport | None = None, key: str | None = None) -> dict:
-    code, reply = _active_transport(transport)(method, _service_base_url("research_demand") + path,
-                                              _action_headers(tenant, key), body)
+    send = _active_transport(transport)
+    args = (method, _service_base_url("research_demand") + path, _action_headers(tenant, key), body)
+    code, reply = send(*args, max_reply_bytes=262144) if send is _urllib_transport else send(*args)
     if code >= 400:
         # Do not copy owner response bodies (which can contain credentials/private data).
         raise MeetingOutputRoutingError(f"research_owner_http_{code}", status_code=code)
-    if not isinstance(reply, dict):
+    if not isinstance(reply, dict) or len(json.dumps(reply).encode()) > 262144:
         raise MeetingOutputRoutingError("research_owner_malformed_reply", status_code=502)
     return reply
 
@@ -1343,8 +1347,48 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             failures.append(reason)
             pages[lane] = {"status": "denied" if getattr(exc, "status_code", None) in {401, 403} else "unavailable",
                            "reason": reason, "owner_query": query}
+    # Resolve actual submitted deliverables through their existing authorized owner.
+    # Eight reads total, with full continuation refs retained when there are more.
+    evidence, reads = [], 0
+    for item in items:
+        refs = item.get("evidence_refs") or []
+        item["evidence_available"] = bool(refs)
+        if item["state"] not in {"submitted", "accepted", "returned"}:
+            continue
+        for ref in refs:
+            status = "unavailable"
+            record = {"action_id": item["action_id"], "artifact_id": ref.get("artifact_id"), "status": status}
+            try:
+                if reads >= 8:
+                    raise MeetingOutputRoutingError("evidence_read_budget_exhausted", status_code=503)
+                reads += 1
+                kind, aid = ref.get("kind"), str(ref.get("artifact_id") or "")
+                if kind not in {"research_note", "research_artifact"}:
+                    raise MeetingOutputRoutingError("unsupported_evidence_owner", status_code=502)
+                path = "/api/research/" + ("notes/" if kind == "research_note" else "artifacts/")
+                saved = _action_request("GET", path + urllib.parse.quote(aid, safe=""), tenant, transport=transport)
+                if kind == "research_note":
+                    binding = saved.get("_meeting_binding") or {}
+                    if binding.get("tenant_id") != tenant or binding.get("ticket_id") != item["action_id"]:
+                        raise MeetingOutputRoutingError("evidence_binding_mismatch", status_code=502)
+                    content = {"title": saved.get("title"), "body": saved.get("body"), "source_refs": saved.get("source_refs")}
+                    checksum = saved.get("_meeting_digest")
+                else:
+                    if saved.get("tenant_id") != tenant:
+                        raise MeetingOutputRoutingError("evidence_tenant_mismatch", status_code=502)
+                    content = {k: saved[k] for k in ("artifact_id", "title", "summary", "result", "metrics") if k in saved}
+                    checksum = saved.get("checksum")
+                if not content or checksum != ref.get("checksum") or not checksum:
+                    raise MeetingOutputRoutingError("evidence_changed_or_missing", status_code=502)
+                if len(json.dumps(content).encode()) > 16384:
+                    raise MeetingOutputRoutingError("evidence_content_exceeds_budget", status_code=502)
+                record.update(status="ok", content=content, checksum=checksum)
+            except Exception as exc:
+                item["evidence_available"] = False
+                record["reason"] = str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__
+            evidence.append(record)
     return {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
-            "items": items, "pages": pages}
+            "items": items, "pages": pages, "evidence": evidence}
 
 
 def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path | None = None,
@@ -1418,6 +1462,9 @@ def review_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path | 
             reply = _action_request("PATCH", "/api/research/tickets/" + urllib.parse.quote(tid, safe=""), tenant,
                                     {"patch": patch}, transport=transport, key=key)
             ticket = _ticket_receipt(reply, tenant, ticket_id=tid)
+            decision = ticket.get("review_decision") or {}
+            if decision.get("review_source") != mid or decision.get("decision") != review["decision"]:
+                raise MeetingOutputRoutingError("research_owner_missing_review_receipt", status_code=502)
             receipt = {**review, "status": "recorded", "owner_receipt": action_snapshot(ticket)}
             ledger.put(key, {"request": patch, "receipt": receipt})
         except Exception as exc:
@@ -1933,6 +1980,8 @@ def list_dispatched_proposals(
     ledger = _DispatchLedger(Path(store_path) if store_path is not None else _default_store_path())
     items: list[dict[str, Any]] = []
     for row in ledger.list_all():
+        if not row.get("proposal_id"):
+            continue  # Action receipts share the existing ledger, not the legacy proposal projection.
         if meeting_id and row.get("meeting_id") != meeting_id:
             continue
         if sponsor_persona_id and row.get("sponsor_persona_id") != sponsor_persona_id:

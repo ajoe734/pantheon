@@ -2668,3 +2668,240 @@ def test_preread_memory_timeout_default_and_override(monkeypatch, configured, ex
             "persona_id": "persona-a", "role": "chair", "style": "momentum", "origin": "institutional"}])
     assert len(calls) == 1 and calls[0]["timeout_seconds"] == expected
     assert calls[0]["scope"] == "both" and calls[0]["limit"] == 12
+
+# MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 component contract regressions.
+class _ActionResearchBoundary:
+    """Scripted HTTP owner boundary, not a substitute for the chain's real-owner proof."""
+    def __init__(self):
+        self.tickets = {}
+        self.requests = []
+        self.malformed_once = False
+        self.notes = {}
+        self.more = None
+
+    def __call__(self, method, url, headers, body):
+        parsed = urllib.parse.urlsplit(url)
+        self.requests.append((method, parsed, copy.deepcopy(body), dict(headers)))
+        tenant = headers['X-Tenant-Id']
+        if method == 'POST':
+            assert 'ticket_id' not in body
+            source = (tenant, body['meeting_action']['meeting_id'], body['meeting_action']['source_action_id'])
+            row = next((r for r in self.tickets.values() if r['_source'] == source), None)
+            if row is None:
+                tid = f'owner-issued-ticket-{len(self.tickets) + 1}'
+                row = {**copy.deepcopy(body), 'ticket_id': tid, 'tenant_id': tenant,
+                       'action_state': 'open', 'revision': 0, 'evidence_refs': [], '_source': source}
+                self.tickets[tid] = row
+            if self.malformed_once:
+                self.malformed_once = False
+                return 200, {}
+            return 201, copy.deepcopy(row)
+        if '/notes/' in parsed.path:
+            return 200, copy.deepcopy(self.notes[parsed.path.rsplit('/', 1)[-1]])
+        if parsed.path == '/api/research/tickets':
+            q = urllib.parse.parse_qs(parsed.query)
+            assert q['meeting_linked'] == ['true'] and q['page_size'] == ['8']
+            rows = [copy.deepcopy(r) for r in self.tickets.values()
+                    if r['tenant_id'] == tenant
+                    and r['meeting_action']['meeting_type'] == q['meeting_type'][0]
+                    and r['meeting_action']['subject_ref'] == q['subject_ref'][0]
+                    and r['action_state'] in q['action_state'][0].split(',')]
+            return 200, {'data': rows[:8], 'page_info': {'next_page_token': self.more}}
+        tid = parsed.path.rsplit('/', 1)[-1]
+        row = self.tickets.get(tid)
+        if row is None or row['tenant_id'] != tenant:
+            return 404, {}
+        if method == 'PATCH':
+            patch = body['patch']
+            assert patch['expected_revision'] == row['revision']
+            assert patch['action'] in {'accept', 'return'}
+            row.update(action_state='accepted' if patch['action'] == 'accept' else 'returned',
+                       revision=row['revision'] + 1,
+                       review_decision={'decision': patch['action'], 'review_source': patch['review_source'],
+                                        'reason': patch['reason']})
+        return 200, copy.deepcopy(row)
+
+
+def _adopted_action(cid='facts:source', source='chair-1'):
+    return {'source_action_id': source, 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+            'deliverable': 'Saved comparison of the current pool alternatives',
+            'acceptance_criterion': 'Compare measured drawdown and costs with cited source records',
+            'due_at': '2026-11-20T00:00:00Z', 'source_refs': [cid]}
+
+
+@pytest.mark.parametrize('bad_receipt', [{}, {'ticket_id': 'invented'},
+    {'ticket_id': 'invented', 'tenant_id': TENANT, 'action_state': 'open', 'revision': 0, 'meeting_action': {}},
+    {'ticket_id': 23, 'tenant_id': TENANT, 'action_state': 'open', 'revision': 0, 'meeting_action': {}}])
+def test_action_dispatch_malformed_success_does_not_suppress_owner_retry(tmp_path, monkeypatch, bad_receipt):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions, list_dispatched_proposals
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'receipt-test',
+               'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+               'synthesis': {'actions': [_adopted_action()]}}
+    owner = _ActionResearchBoundary()
+    attempts = []
+    def transport(method, url, headers, body):
+        attempts.append(copy.deepcopy(body))
+        _, valid = owner(method, url, headers, body)
+        return (200, bad_receipt) if len(attempts) == 1 else (200, valid)
+    ledger = tmp_path / 'dispatch.json'
+    first = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert first['state'] == 'dispatch_pending' and first.get('ticket_id') is None
+    assert first['dispatch_error']
+    second = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert second['ticket_id'] == 'owner-issued-ticket-1' and second['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert len(attempts) == 2 and attempts[0] == attempts[1] and len(owner.tickets) == 1
+    assert list_dispatched_proposals(store_path=ledger) == []
+
+
+def test_action_http_fault_then_genuine_receipt_and_tenant_isolation(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    owner = _ActionResearchBoundary()
+    calls = 0
+    def transport(*args):
+        nonlocal calls
+        calls += 1
+        return (503, {}) if calls == 1 else owner(*args)
+    m = {'tenant_id': TENANT, 'meeting_id': 'same-source',
+         'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+         'synthesis': {'actions': [_adopted_action()]}}
+    ledger = tmp_path / 'dispatch.json'
+    assert dispatch_meeting_actions(m, transport=transport, store_path=ledger)[0]['state'] == 'dispatch_pending'
+    assert dispatch_meeting_actions(m, transport=transport, store_path=ledger)[0]['ticket_id'] == 'owner-issued-ticket-1'
+    foreign = copy.deepcopy(m)
+    foreign['tenant_id'] = 'foreign-tenant'
+    assert dispatch_meeting_actions(foreign, transport=transport, store_path=ledger)[0]['ticket_id'] == 'owner-issued-ticket-2'
+    assert calls == 3
+
+
+@pytest.mark.parametrize('decision', ['accept', 'return'])
+def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, monkeypatch, decision):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', lambda tenant, pid:
+        {'persona_id': pid, 'status': 'allowed' if pid == 'persona-alpha' else 'advisory_only',
+         'can_receive_persona_action': pid == 'persona-alpha', 'allowed_deliverables': ['research_note'],
+         'consultation_can_mutate_trading_state': False})
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])  # zero semantic hits
+    store = ConsultationStore(str(tmp_path / 'meetings'))
+    owner = _ActionResearchBoundary()
+    calls = []
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            calls.append(copy.deepcopy(request))
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            if ctx['round'] == 'synthesis':
+                if not ctx['prior_actions']:
+                    synth = {'summary': 'Adopt two research deliverables', 'outcome': 'completed_no_proposal',
+                             'proposals': [], 'actions': [_adopted_action(cid), _adopted_action(cid, 'chair-2')]}
+                else:
+                    submitted = next(a for a in ctx['prior_actions'] if a['state'] == 'submitted')
+                    synth = {'summary': 'Review the delivered comparison and retain pending work',
+                             'outcome': 'completed_no_proposal', 'proposals': [], 'actions': [],
+                             'no_action_reason': 'Continue the original outstanding assignment',
+                             'action_reviews': [{'action_id': submitted['action_id'], 'decision': decision,
+                                 'reason': 'Compared the stated criterion to the measured result: ' + decision,
+                                 'acceptance_criterion': submitted['acceptance_criterion'],
+                                 'evidence_refs': submitted['evidence_refs']}]}
+                event = {'claims': [{'claim': 'Review the available evidence', 'evidence_refs': [cid]}], 'summary_evidence_refs': [cid], 'synthesis': synth}
+                jsonschema.validate(event, _meeting_event_content_schema(ctx))
+                return SimpleNamespace(event_content=event, summary=synth['summary'], evidence=[])
+            event = {'stance': 'approve', 'confidence': .8, 'citations': [cid], 'claims': [{'claim': 'Discuss the case', 'evidence_refs': [cid]}],
+                     'summary_evidence_refs': [cid], 'accepted': [], 'disputed': [], 'changed': False,
+                     'proposals': [{'kind': 'research_demand', 'sponsor_persona_id': 'persona-alpha',
+                                    'citations': [cid], 'payload': {'summary': 'Advisory only'}}]}
+            jsonschema.validate(event, _meeting_event_content_schema(ctx))
+            return SimpleNamespace(event_content=event, summary='Discuss alternatives', evidence=[], confidence=.8, recommendation='approve')
+    def convene(week):
+        return meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+            payload={'meeting_type': 'MT-1', 'topic': 'Review pool alternatives', 'iso_week': week,
+                     'convened_by': {'kind': 'persona', 'id': 'persona-alpha'},
+                     'participants': ['persona-alpha', 'persona-risk-officer'],
+                     'subject_ref': 'persona:persona-alpha'}, idempotency_key=week)[0]
+    with output_routing_context(transport=owner, store_path=tmp_path / 'dispatch.json'):
+        first = convene('2026-W47')
+        m1 = meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
+                                               tenant_id=TENANT, provider=Provider())
+        assert m1['status'] == 'closed' and m1['synthesis']['proposals'] == []
+        assert m1['outcome'] == 'actions_adopted' and len(m1['actions']) == 2
+        t1, t2 = owner.tickets.values()
+        t1.update(action_state='submitted', revision=2,
+                  evidence_refs=[{'kind': 'research_note', 'artifact_id': 'note-1', 'checksum': 'digest-1', 'tenant_id': TENANT}])
+        owner.notes['note-1'] = {'_meeting_binding': {'tenant_id': TENANT, 'ticket_id': t1['ticket_id']},
+                                '_meeting_digest': 'digest-1', 'body': 'Measured drawdown 4%; costs 12 bps.',
+                                'title': 'Actual result', 'source_refs': ['registered-input']}
+        owner.more = 'remaining-keyset-token'
+        second = convene('2026-W48')
+        m2 = meetings_mod.execute_persona_meeting(store=store, meeting_id=second['meeting_id'],
+                                               tenant_id=TENANT, provider=Provider())
+        assert m2['meeting_id'] != m1['meeting_id']
+        assert m2['agenda'][0].startswith('Review previous work')
+        assert len(m2['prior_actions']) == 2 and m2['actions'] == []
+        assert all(p['has_more'] for p in m2['prior_actions_source']['pages'].values())
+        for request in [c for c in calls if c['request_id'] == m2['meeting_id']]:
+            ctx = request['meeting']
+            assert len(ctx['prior_actions']) == 2
+            assert ctx['prior_action_evidence'][0]['content']['body'].startswith('Measured drawdown')
+            assert ctx['prior_actions_source']['pages']['submitted']['next_page_token']
+            assert request['case_file']['groups']['meeting_actions']['items']
+            if ctx['round'] != 'synthesis':
+                assert 'participant_action_capabilities' not in ctx
+        assert t1['action_state'] == ('accepted' if decision == 'accept' else 'returned')
+        assert t2['action_state'] == 'open'
+        assert m2['action_review_dispatches'][0]['status'] == 'recorded'
+        before = len(calls)
+        meetings_mod.execute_persona_meeting(store=store, meeting_id=m2['meeting_id'], tenant_id=TENANT, provider=Provider())
+        assert len(calls) == before and len([r for r in owner.requests if r[0] == 'PATCH']) == 1
+        detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=m1['meeting_id'])
+        assert detail['actions'][0]['state'] == 'open'  # frozen receipt
+        assert detail['actions'][0]['live_owner_status']['ticket']['state'] == t1['action_state']
+        assert store.get_meeting(m1['meeting_id'])['actions'][0]['state'] == 'open'
+        unrelated = copy.deepcopy(m2)
+        unrelated['meeting_series']['subject_ref'] = 'other-committee'
+        assert read_meeting_actions(unrelated)['items'] == []
+        unrelated['tenant_id'] = 'other-tenant'
+        unrelated['meeting_series']['subject_ref'] = 'pool:persona-alpha'
+        assert read_meeting_actions(unrelated)['items'] == []
+    # Measured component envelope, captured for the task runtime budget.
+    measurement = {'meetings': [len(json.dumps(m).encode()) for m in (m1, m2)],
+                   'max_provider_request_bytes': max(len(json.dumps(c).encode()) for c in calls),
+                   'ledger_bytes': (tmp_path / 'dispatch.json').stat().st_size,
+                   'owner_requests': len(owner.requests)}
+    print('ACTION_ENVELOPE_MEASUREMENT ' + json.dumps(measurement, sort_keys=True))
+
+
+@pytest.mark.parametrize('ref', [None, 'meeting:mtg-1', 'week:2026-W47', 'iso-week:2026-W47'])
+def test_unrelated_committees_do_not_join_by_type_default(ref):
+    a = {'meeting_code': 'MT-3', 'subject_ref': ref, 'chair_persona_id': 'persona-alpha',
+         'convened_by': {'kind': 'operator', 'id': 'op-1'}}
+    assert meetings_mod._meeting_series(a) is None
+    a.update(meeting_code='MT-1', convened_by={'kind': 'persona', 'id': 'persona-alpha'})
+    if ref is None or str(ref).startswith(('week:', 'meeting:')):
+        assert meetings_mod._meeting_series(a)['subject_ref'] == 'pool:persona-alpha'
+
+
+def test_adoption_declines_forged_capability_review_and_keeps_legacy_minutes(tmp_path):
+    action = _adopted_action()
+    meeting = {'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+               'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'advisory_only',
+                                                    'can_receive_persona_action': False}], 'prior_actions': []}
+    accepted, reviews, rejected = meetings_mod._validate_adopted_actions({'actions': [action]}, meeting, {'facts:source'})
+    assert accepted == [] and rejected[0]['reason'] == 'persona_owner_did_not_allow_assignment'
+    accepted, reviews, _ = meetings_mod._validate_adopted_actions({'outcome': 'REVIEW', 'actions': [action]}, meeting, {'facts:source'})
+    assert accepted == reviews == []
+    store = ConsultationStore(str(tmp_path / 'legacy'))
+    legacy = {'meeting_id': 'mtg-W47', 'tenant_id': TENANT, 'status': 'closed', 'outcome': 'REVIEW',
+              'participants': [], 'rounds': [{'round': 1}, {'round': 2}], 'source_refs': ['original-ref'],
+              'synthesis': {'outcome': 'REVIEW', 'proposals': [], 'summary': 'Original no-action minutes'}}
+    store.put_meeting(legacy)
+    before = copy.deepcopy(store.get_meeting('mtg-W47'))
+    detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id='mtg-W47')
+    assert detail['actions'] == [] and detail['prior_actions'] == []
+    assert store.get_meeting('mtg-W47') == before
+    assert detail['synthesis']['summary'] == 'Original no-action minutes'
