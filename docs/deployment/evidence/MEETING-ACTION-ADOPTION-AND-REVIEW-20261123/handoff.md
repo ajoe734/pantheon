@@ -59,7 +59,10 @@ remains authoritative. A failed owner/evidence/page read retains the scan bounda
 cursor. The existing schedule automatically continues each bounded lane. A
 finished scan advances the inclusive watermark only to its first page start,
 so concurrent insertions and disposition changes behind the cursor are read
-next scan; legacy bare cursors restart safely. Minutes keep frozen snapshots; detail adds separate
+next scan; legacy bare cursors restart safely. Bare metadata cursor authority
+was removed: only persisted schedule cursors continue a scan, including when a
+failed first page left an empty cursor map. No supported caller needs an
+unbound cursor to override the authoritative scan boundary. Minutes keep frozen snapshots; detail adds separate
 live_owner_status and never writes on a read.
 
 ## Review rejection remediation

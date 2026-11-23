@@ -1321,7 +1321,7 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
     tenant = str(meeting["tenant_id"])
     pages, items, failures = {}, [], []
     scan = meeting.get("action_review_scan") or {}
-    tokens = scan.get("page_tokens") or (meeting.get("metadata") or {}).get("prior_actions_page_tokens") or {}
+    tokens = scan.get("page_tokens") or {}
     started_at = scan.get("started_at")
     if not started_at:
         # A legacy/external cursor has no safe scan boundary. Restart it rather

@@ -3001,6 +3001,11 @@ def test_new_review_dispositions_use_schedule_watermark_without_archival_scan(tm
     # A legacy cursor without a scan start must restart safely.
     assert 'page_token' not in queries[2]
     assert result['scan']['started_at'] and not result['scan']['page_tokens']
+    # A first-page failure can persist an empty cursor map with a scan start.
+    # Legacy metadata must not override that authoritative restart position.
+    m['action_review_scan'] = result['scan']
+    read_meeting_actions(m, transport=owner)
+    assert 'page_token' not in urllib.parse.parse_qs(owner.requests[-1][1].query)
 
 
 def test_oversize_shared_case_and_provider_envelope_are_refused_without_truncating_work():
