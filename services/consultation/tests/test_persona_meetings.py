@@ -3320,9 +3320,55 @@ def test_evidence_and_lane_progress_across_distinct_meetings(
     assert len(failed) == (0 if failure == 'none' else 1 if failure == 'transient' else 2)
 
 
+@pytest.mark.parametrize('backend', ['jsonl', 'postgres'])
+def test_series_checkpoints_replay_existing_schedule_events_without_eviction(tmp_path, monkeypatch, backend):
+    """Legacy schedule events already contain every subject's last checkpoint."""
+    from services.consultation.store import PostgresConsultationStore
+    if backend == 'postgres':
+        import sys
+        from services.consultation.test_postgres_store import _make_fake_psycopg, _reset_fake_connection
+        _reset_fake_connection()
+        fake, connection = _make_fake_psycopg()
+        monkeypatch.setitem(sys.modules, 'psycopg', fake)
+        make_store = lambda: PostgresConsultationStore(dsn='postgresql://component/db', bootstrap=False)
+        events = lambda: copy.deepcopy(connection.lifecycle_rows)
+    else:
+        make_store = lambda: ConsultationStore(str(tmp_path / 'legacy-series'))
+        events = lambda: (tmp_path / 'legacy-series' / 'consult_lifecycle_events.jsonl').read_bytes()
+    store = make_store()
+    expected = []
+    for number in range(24):
+        checkpoint = {'meeting_series': {'meeting_type': 'MT-2', 'subject_ref': f'strategy:cost-{number}'},
+            'action_review_watermark': '2026-11-20T00:00:00Z',
+            'action_review_scan': {'started_at': '2026-11-21T00:00:00Z',
+                'page_tokens': {'outstanding': f'ticket-{number}'},
+                'completed_lanes': ['submitted'], 'evidence_failed': bool(number % 2)}}
+        expected.append(checkpoint)
+        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': 'persona-alpha',
+            'meeting_type': 'MT-2', **checkpoint})
+    # Attendance writes only cadence; neither it nor many newer subjects may
+    # erase an unfinished scan. There is still only one cadence slot.
+    store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': 'persona-alpha',
+        'meeting_type': 'MT-2', 'next_due_at': '2026-11-24T00:00:00Z'})
+    before = events()
+    store = make_store()
+    assert len(store.list_meeting_schedules()) == 1
+    for checkpoint in expected:
+        series = checkpoint['meeting_series']
+        assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-2', meeting_series=series) == checkpoint
+        for tenant, chair, code in [('foreign', 'persona-alpha', 'MT-2'),
+                                    (TENANT, 'persona-beta', 'MT-2'), (TENANT, 'persona-alpha', 'MT-1')]:
+            assert store.get_meeting_schedule(tenant, chair, code, meeting_series=series) is None
+    assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-2',
+        meeting_series={'meeting_type': 'MT-2', 'subject_ref': 'strategy:unknown'}) is None
+    assert events() == before  # Replay and exact-key reads perform no migration/write.
+
+
 @pytest.mark.parametrize('restart', [False, True])
 @pytest.mark.parametrize('http_execution', [False, True])
-def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, action_owner_contract, restart, http_execution):
+@pytest.mark.parametrize('same_chair', [False, True])
+def test_interleaved_series_keep_owned_review_state(
+        tmp_path, monkeypatch, action_owner_contract, restart, http_execution, same_chair):
     from datetime import datetime, timezone
     from services.consultation import meeting_outputs as outputs
     monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
@@ -3330,28 +3376,30 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
     monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kw: [])
     monkeypatch.setattr(meetings_mod, '_participant_action_capability', lambda tenant, pid:
         {'persona_id': pid, 'status': 'advisory_only', 'can_receive_persona_action': False})
-    chairs = ('persona-alpha', 'persona-beta')
+    chairs = ('persona-alpha', 'persona-alpha' if same_chair else 'persona-beta')
+    subjects = ('strategy:cost-a', 'strategy:cost-b') if same_chair else tuple(f'pool:{p}' for p in chairs)
+    code = 'MT-2' if same_chair else 'MT-1'
+    series = {ref: {'meeting_type': code, 'subject_ref': ref} for ref in subjects}
     owner = action_owner_contract
-    expected = {chair: set() for chair in chairs}
-    for lane, chair in enumerate(chairs):
+    expected = {ref: set() for ref in subjects}
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
         for state in ('open', 'accepted'):
             for i in range(3):
                 tid = 'rt-action-' + f'{lane * 100 + (10 if state == "accepted" else 0) + i:032x}'
                 owner.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT, 'owner': chair,
-                    'meeting_action': {'meeting_type': 'MT-1', 'subject_ref': f'pool:{chair}',
+                    'meeting_action': {**series[ref],
                         'meeting_id': 'origin', 'assignee_kind': 'persona',
                         'deliverable': 'Compare costs', 'acceptance_criterion': 'Measured costs'},
                     'action_state': state, 'revision': 0, 'evidence_refs': [],
                     'updated_at': '2026-11-20T12:00:00Z'}
-                expected[chair].add(tid)
+                expected[ref].add(tid)
     store_dir = str(tmp_path / 'interleaved')
     store = ConsultationStore(store_dir)
-    review_keys = ('meeting_series', 'action_review_watermark', 'action_review_scan')
-    for lane, chair in enumerate(chairs):
-        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': chair, 'meeting_type': 'MT-1',
-            'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': f'pool:{chair}'},
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
+        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': chair, 'meeting_type': code,
+            'meeting_series': series[ref],
             'action_review_watermark': f'2026-11-{19 + lane}T00:00:00Z', 'action_review_scan': {}})
-    seen = {chair: [] for chair in chairs}
+    seen = {ref: [] for ref in subjects}
     if http_execution:
         from fastapi.testclient import TestClient
         from services.consultation import workflow_executor as executor
@@ -3375,7 +3423,7 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
     class Provider:
         def obtain(self, *, tenant_id, request, participant_scope):
             ctx = request['meeting']
-            assert ctx['prior_actions'] and all(a['action_id'] in expected[current_chair] for a in ctx['prior_actions'])
+            assert ctx['prior_actions'] and all(a['action_id'] in expected[current_ref] for a in ctx['prior_actions'])
             cid = request['case_file']['groups']['facts']['items'][0]['item_id']
             event = {'claims': [{'claim': 'Review original obligations', 'evidence_refs': [cid]}],
                      'summary_evidence_refs': [cid]}
@@ -3388,17 +3436,19 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
             return SimpleNamespace(event_content=event, summary='Review original obligations', evidence=[],
                                    confidence=.8, recommendation='approve')
     with outputs.output_routing_context(transport=owner.send, store_path=tmp_path / 'dispatch.json'):
-        for number, current_chair in enumerate(chairs * 3):
+        for number, (current_chair, current_ref) in enumerate(tuple(zip(chairs, subjects)) * 3):
             if restart:
                 store = ConsultationStore(store_dir)
-            peer = next(p for p in chairs if p != current_chair)
-            peer_before = store.get_meeting_schedule(TENANT, peer, 'MT-1')
+            peer = 'persona-risk-officer' if same_chair else next(p for p in chairs if p != current_chair)
+            other_ref = next(ref for ref in subjects if ref != current_ref)
+            other_chair = chairs[subjects.index(other_ref)]
+            peer_before = store.get_meeting_schedule(TENANT, other_chair, code, meeting_series=series[other_ref])
             monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, number, tzinfo=timezone.utc))
             meeting, _ = meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
-                payload={'meeting_type': 'MT-1', 'topic': 'Review pool alternatives',
-                         'iso_week': f'2026-W{47 + number // 2}',
+                payload={'meeting_type': code, 'topic': 'Review pool alternatives',
+                         'iso_week': f'2026-W{47 + number}',
                          'convened_by': {'kind': 'persona', 'id': current_chair},
-                         'participants': [current_chair, peer], 'subject_ref': f'persona:{current_chair}'},
+                         'participants': [current_chair, peer], 'subject_ref': current_ref},
                 idempotency_key=f'interleaved-{number}')
             execution_store = store
             if http_execution:
@@ -3408,15 +3458,17 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
                                                           tenant_id=TENANT, provider=Provider())
             assert closed['status'] == 'closed' and len(closed['rounds']) == 2
             assert not closed['rejected_positions']
-            seen[current_chair].extend(a['action_id'] for a in closed['prior_actions'])
-            peer_after = store.get_meeting_schedule(TENANT, peer, 'MT-1')
-            assert {k: peer_after[k] for k in review_keys} == {k: peer_before[k] for k in review_keys}
-            assert peer_after['last_run_at'] == closed['closed_at']
+            seen[current_ref].extend(a['action_id'] for a in closed['prior_actions'])
+            peer_after = store.get_meeting_schedule(TENANT, other_chair, code, meeting_series=series[other_ref])
+            assert peer_after == peer_before
+            assert store.get_meeting_schedule(TENANT, current_chair, code)['last_run_at'] == closed['closed_at']
+            if not same_chair:
+                assert store.get_meeting_schedule(TENANT, peer, code)['last_run_at'] == closed['closed_at']
     store = ConsultationStore(store_dir)
-    for lane, chair in enumerate(chairs):
-        assert set(seen[chair]) == expected[chair] and len(seen[chair]) == 6
-        saved = store.get_meeting_schedule(TENANT, chair, 'MT-1')
-        assert saved['meeting_series']['subject_ref'] == f'pool:{chair}'
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
+        assert set(seen[ref]) == expected[ref] and len(seen[ref]) == 6
+        saved = store.get_meeting_schedule(TENANT, chair, code, meeting_series=series[ref])
+        assert saved['meeting_series'] == series[ref]
         assert not saved['action_review_scan']
         assert saved['action_review_watermark'] == f'2026-11-21T0{lane}:00:00Z'
 

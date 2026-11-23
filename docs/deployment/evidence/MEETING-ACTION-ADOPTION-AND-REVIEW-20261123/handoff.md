@@ -61,7 +61,7 @@ next traversal while allowing current ticket-page progress. The existing schedul
 finished scan advances the inclusive watermark only to its first page start,
 so concurrent insertions and disposition changes behind the cursor are read
 next scan; legacy bare cursors restart safely. Bare metadata cursor authority
-was removed: only persisted schedule cursors continue a scan, including when a
+was removed: only persisted same-series schedule cursors continue a scan, including when a
 failed first page left an empty cursor map. No supported caller needs an
 unbound cursor to override the authoritative scan boundary. Minutes keep frozen snapshots; detail adds separate
 live_owner_status and never writes on a read.
@@ -204,6 +204,37 @@ A simulated owner return is read through its actual projections with the
 original reason, criterion and deliverable intact. This does not claim a real
 JWT login, ticket PATCH integration, BFF projection or hosted human submission;
 those remain R/B/V responsibilities.
+
+## Same-chair interleaved-series repair (50a7addf6 rejection)
+
+The cadence slot remains tenant/persona/meeting_type, while action review now
+looks up tenant/chair/type/stable-series. ConsultationStore derives independent
+review projections from the existing schedule lifecycle events on append and
+replay, including old events whose cadence slot was later replaced. Both JSONL
+and PostgreSQL use that shared replay method. There is no new file, table,
+endpoint, event type, migration, timer or schedule write. The exact-series
+lookup replaces the obsolete last-slot-then-series-match reader; no supported
+caller needs that lossy fallback. Original cadence callers still read the
+latest slot and attendance still updates cadence. Active HTTP detail supplies
+the exact checkpoint to the existing proxy, and existing sync persists it.
+
+The interleaved normal engine matrix now also uses one chair alternating two
+MT-2 strategy subjects: three open and three accepted tickets per series,
+six distinct convene/two-round/close identities, scripted/frozen owner,
+direct/authenticated HTTP, and restart/no-restart. Every ticket reaches round
+and chair input exactly once; the other series' unfinished scan is unchanged,
+and each final watermark equals its own first page start. A separate replay
+case retains 24 unfinished subjects, one cadence slot, no migration writes,
+and tenant/chair/type/subject isolation in JSONL and fake PostgreSQL. This
+proves adapter/storage component behavior, not a live database or hosted proof.
+The reviewer's original four failing cases also pass after the repair.
+
+storage.json corrects the earlier single-slot/no-per-series-count assumption.
+Existing persistent payloads/cadence and earlier workload measurements are
+unchanged; the derived index has S bounded values for S distinct stable series.
+It never evicts unfinished scans. Global count/heap and archive retention remain
+RC3-owned debt; any future compaction must preserve every series checkpoint.
+R owns shared manifest figures and receives this budget through task progress.
 
 ## Validation and resource budget
 
