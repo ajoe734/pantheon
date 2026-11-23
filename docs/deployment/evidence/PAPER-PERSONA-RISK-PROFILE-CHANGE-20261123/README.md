@@ -71,13 +71,16 @@ unsupported edit paths keep their existing behavior.
 New intent and its exact approved policy/version/digest are committed in one
 Capital owner mutation. PostgreSQL `SELECT ... FOR UPDATE` serializes separate
 service facades. Stale expected revisions conflict. The last 128 keys are
-retained, with their immutable issued times and a durable eviction watermark;
-a known superseded key observes the latest intent without replaying its old tier.
-An evicted key or unseen key older than the latest admitted intent returns a
-stale conflict even if the BFF freshly reads the latest revision. Keys more
-than five minutes ahead of server time cannot advance the window. A new key
-at or below the eviction watermark requires a fresh operator edit after
-refetch, never an automatic re-key of the old command. The same current
+retained with immutable payload hashes. A known superseded key observes the
+latest intent without replaying its old tier. Timestamped keys also retain
+their original issued time and a durable eviction watermark; an evicted or
+older unseen timestamped key returns a stale conflict even after a fresh
+revision read. Keys more than five minutes ahead of server time cannot advance
+that window. A key at/below the watermark requires a fresh operator edit after
+refetch, never an automatic re-key of the old command. Opaque/UUID first-seen
+ordering uses the owner revision CAS; such keys carry no issuance chronology.
+Retired opaque duplicates use exact durable audit receipts and observe the
+latest intent; changing their payload returns a conflict. The same current
 key can reconcile after independent approval. Missing/ambiguous/unapproved
 mapping keeps the installed policy and prior approvals, persists the new
 request and holds increases. Financial limits come only from existing policy

@@ -89,7 +89,7 @@
     }
   ],
   "reviewer_family_exception": "Antigravity2 terminal quota recovery; Codex and Codex2 are distinct configured identities in the same model family; no reviewer approval is asserted by the owner",
-  "validated_source_commit": "pending_final_validation",
+  "validated_source_commit": "4b994301bb51a3e587c2cd98ef564a10a9e59f16",
   "historical_validation_at_rejected_head": [
     {
       "command": "timeout 240 bash /tmp/paper-risk-validation.sh (disposable postgres:16 with database pantheon; CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
@@ -170,7 +170,43 @@
       "result": "passed across complete base-to-result diff, including previously committed evidence logs; committed HEAD is rechecked before handoff"
     }
   ],
-  "validation": [],
+  "validation": [
+    {
+      "command": "timeout 140 bash /tmp/paper-risk-revision-focused.sh (disposable postgres:16, CAPITAL_TEST_DSN supplied; timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_profile_change.py services/control-plane/bff/tests/test_persona_risk_profile_change.py acceptance/test_persona_risk_profile_change.py)",
+      "exit_code": 0,
+      "result": "50 passed, 3 warnings in 33.55s; no skips; PostgreSQL opaque archive, independent writers, UUID/FE actual PATCH and recovery exercised",
+      "log": "opaque-focused-validation.log"
+    },
+    {
+      "command": "timeout 240 bash /tmp/opaque-capital-validation.sh (copy committed as opaque-postgres-validation.sh; disposable postgres:16 with CAPITAL_TEST_DSN; timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
+      "exit_code": 0,
+      "result": "552 passed, 1 warning in 105.04s; no skips; disposable container removed",
+      "log": "opaque-capital-validation.log"
+    },
+    {
+      "command": "timeout 160 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_bff_test_architecture.py acceptance/test_persona_risk_profile_change.py --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page",
+      "exit_code": 0,
+      "result": "203 passed, 2 deselected, 3 warnings in 118.60s; two unchanged baseline failures remain explicit residuals, not passing tests",
+      "log": "opaque-bff-validation.log"
+    },
+    {
+      "command": "PANTHEON_BFF_AUTH_MODE=permissive timeout 60 .venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex2_paper_risk_keys_20261123.py (unchanged reviewer reproduction from rejected head)",
+      "exit_code": 0,
+      "result": "2 passed, 1 warning in 6.21s; native uuid.uuid4 and existing FE keys actual PATCH/reload verify medium effective",
+      "log": "opaque-reviewer-reproduction.log"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output docs/deployment/evidence/PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123/storage-check.json",
+      "exit_code": 0,
+      "result": "passed, zero failures",
+      "log": "storage-check.json"
+    },
+    {
+      "command": "git diff --check origin/dev; python3 scripts/git/diff_budget.py --base 0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c --head HEAD",
+      "exit_code": 0,
+      "result": "whole committed base-to-head whitespace and per-file evidence budget checked before exact-head handoff; diff totals reported in handoff"
+    }
+  ],
   "review_remediation": {
     "P1": "258 real low/medium/high edits pass beyond the 128 receipt boundary; JSON reload plus latest expected revision cannot replay the evicted first key; BFF post-boundary edit and cleared-cache old retry covered; old unseen timestamps conflict; future timestamps cannot poison the window",
     "P2": "partial unrelated metadata merges at both JSON and PostgreSQL owner locks; active-status API annotation succeeds without fresh policy approval; tenant pinning retained; stale risk/scope/policy writes still refused",
