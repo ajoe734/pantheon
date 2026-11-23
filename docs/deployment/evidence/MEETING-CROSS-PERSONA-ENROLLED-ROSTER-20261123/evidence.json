@@ -1,0 +1,11 @@
+{
+  "task_id": "MEETING-CROSS-PERSONA-ENROLLED-ROSTER-20261123",
+  "owner": "Claude",
+  "root_cause": "MeetingTriggers._mt3 convened without participants; resolve_and_validate_roster builds only the persona convener, so MT-3 (min 2 trading personas) was refused insufficient_participants (hosted mtg-fd08f490b178e756, 2026-11-23 10:00Z).",
+  "change": "enrolled_roster() helper; MT-3 passes chair + enrolled peers (<=4) + persona-red-team; convene_quarterly_review(enrolled=) passes <=3 enrolled + risk officer + red team.",
+  "verification": {
+    "command": "pytest services/persona/test_meeting_triggers.py services/consultation/tests/test_persona_meeting_routes.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+    "result": "133 passed, 1 skipped"
+  },
+  "hosted_proof": "pending: next MT-3 after deploy must convene with all enrolled personas"
+}
