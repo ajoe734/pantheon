@@ -19,12 +19,28 @@
     {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
+      "result": "249 passed, 100 warnings in 102.26s; source-isolation correction on current dev base; foreground batch terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k research_inbox_survives --tb=short",
+      "phase": "before_source_isolation_fix",
+      "exit_code": 1,
+      "result": "1 failed, 1 passed, 89 deselected, 3 warnings in 1.31s; missing-store case reproduced the empty inbox; terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k research_inbox_survives --tb=short",
+      "exit_code": 0,
+      "result": "2 passed, 89 deselected, 3 warnings in 1.43s; available/missing read stores, Consultation unconfigured, two reloads each; terminal exit collected"
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
       "result": "247 passed, 100 warnings in 101.83s; current-base ten-file foreground batch terminal exit collected"
     },
     {
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
       "exit_code": 0,
-      "result": "Passed; production net +270, tests net +389; each evidence file remains below 400 added lines"
+      "result": "Passed; production net +269, tests net +427; each evidence file remains below 400 added lines"
     },
     {
       "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
@@ -89,7 +105,8 @@
     "explicit null current/prior fields separately and together; all seven action fields with absent/null/empty top-level values and private/tenant/trader filtering",
     "one filtered owner page per reload, opaque cursor, no unfiltered failure retry",
     "partial owner results, unavailable consultation and bounded per-owner timeout",
-    "4 MiB ticket reply and requested page count fail-closed bounds"
+    "4 MiB ticket reply and requested page count fail-closed bounds",
+    "Research-only authenticated inbox survives missing read store and unconfigured Consultation; single linked ticket per reload with one filtered owner call and honest partial source status"
   ],
   "residual_findings": [
     {
@@ -107,5 +124,7 @@
   "persistent_writers_added": 0,
   "storage_manifest_owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
   "credentials_present": false,
-  "hosted_evidence": []
+  "hosted_evidence": [],
+  "source_isolation_rejected_head": "21644e8b59fd4a0cc40219555d02ccee5bd7ddd7",
+  "source_isolation_correction_anchor": "7f0a70cf6"
 }

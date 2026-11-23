@@ -38,7 +38,7 @@ not prove merged, deployed, accepted, or integrated two-meeting execution.
   revisions and denial retain 409/403; no BFF replay cache exists.
 
 Actual aggregation is in `management_read_models/service.py`, rather than the
-brief's `governance/human_inbox.py`. The five-line composition change there
+brief's `governance/human_inbox.py`. The composition changes there
 keeps Research work readable when consultation is unconfigured and marks
 partially available contributors as partial without discarding their rows.
 
@@ -141,3 +141,25 @@ six cases also passed (3.77 s). The current-base ten-file regression passed
 Reviewer-family exception: the current explicit dispatch/canonical assignment
 selects Codex, in the same model family as owner Codex2, as already recorded in
 the rejecting review. This packet requests a fresh review; it claims no approval.
+
+## Source-isolation review correction
+
+Codex rejected head `21644e8b59fd4a0cc40219555d02ccee5bd7ddd7`: although
+registration admitted Research, an earlier guard returned an empty inbox when
+the read store and Consultation were absent. Anchor `7f0a70cf6` resolves the
+existing contributor readers first and uses the store-missing response only
+when no reader is available. This removes the obsolete duplicate admission
+check; contributor registration remains the single decision point. Existing
+store/Consultation callers and the no-source unavailable response remain.
+
+The authenticated regression covers both an available empty read store and a
+missing read store, with Consultation unconfigured and Research healthy. Each
+case reloads twice, checks exactly one original linked ticket and one filtered
+Research call per request, verifies caller bearer/tenant forwarding, and keeps
+the Consultation unavailable surface and aggregate partial flag visible.
+Before the fix: 1 failed, 1 passed (exit 1). After: 2 passed (exit 0).
+The ten-file regression passed 249 tests, 100 warnings in 102.26 s (terminal
+exit 0). Checkout interpreter/import verification, diff budget and whitespace
+checks passed; commands and results are recorded in `evidence.json`.
+No writer, cache, cadence or resource bound changed; residual findings and
+chain-owned hosted proof above remain open.

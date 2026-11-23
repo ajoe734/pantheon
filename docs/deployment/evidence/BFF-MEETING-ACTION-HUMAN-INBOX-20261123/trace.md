@@ -39,3 +39,12 @@ rewriting the published task history. The repair reuses the existing helper
 to drop whole withheld citation mappings and normalizes scalar ID whitespace.
 All historical callers listed above retain their distinct purposes; no new
 caller or obsolete route is introduced by this correction.
+
+Source-isolation resumption: inspected current dev `0c806ffed`, canonical PR
+#7761 rejection at `21644e8b5`, `ManagementService.get_human_inbox`, its
+contributor registration, `read_human_inbox_meeting_items` and the authenticated
+inbox fixture before editing. Registration already recognizes independent
+Research configuration; only the earlier store/Consultation-specific guard
+prevented that reader from running. Replace that duplicate decision with an
+empty-reader check, preserving the existing no-source response. Research
+remains the ticket owner; no new adapter, route or storage is introduced.
