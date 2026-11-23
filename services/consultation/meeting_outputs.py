@@ -1233,6 +1233,8 @@ def _format_http_error(status_code: int, body: Mapping[str, Any]) -> str:
 
 
 ACTION_PAGE_SIZE = 8
+ACTION_REVIEW_PAGE_SIZE = 1
+ACTION_EVIDENCE_REFS = 8
 ACTION_SNAPSHOT_MAX_BYTES = 8192
 ACTION_STATES = frozenset({"open", "in_progress", "waiting_for_input", "submitted", "returned", "accepted"})
 
@@ -1295,7 +1297,7 @@ def action_snapshot(ticket: Mapping[str, Any]) -> dict[str, Any]:
            "next_review": origin.get("next_review"), "state": ticket.get("action_state"),
            "revision": ticket.get("revision"), "required_actor": ticket.get("required_actor"),
            "updated_at": ticket.get("updated_at"), "submitted_at": ticket.get("submitted_at"),
-           "reviewed_at": ticket.get("reviewed_at"), "evidence_refs": list(ticket.get("evidence_refs") or [])[:8],
+           "reviewed_at": ticket.get("reviewed_at"), "evidence_refs": list(ticket.get("evidence_refs") or [])[:ACTION_EVIDENCE_REFS],
            "review_decision": ticket.get("review_decision"), "input_request": ticket.get("input_request"),
            "downstream": {"target": "research_tickets", "id": tid,
                           "href": "/api/v1/research/tickets/" + urllib.parse.quote(tid, safe="")}}
@@ -1312,8 +1314,10 @@ def action_snapshot(ticket: Mapping[str, Any]) -> dict[str, Any]:
 def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport | None = None) -> dict:
     """Three bounded owner queries; no meeting archive or semantic-memory scan.
 
-    Each lane retains its own continuation, including submitted and accepted work,
-    so a large open backlog cannot conceal new submissions or dispositions.
+    Each lane reads one whole ticket and up to eight evidence refs. This keeps
+    all of a ticket's evidence in the same meeting without a cache or an offset
+    that could combine different revisions. Independent lane cursors ensure a
+    large backlog or unavailable evidence cannot conceal another lane's work.
     """
     series = meeting.get("meeting_series")
     if not isinstance(series, Mapping):
@@ -1328,10 +1332,14 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
         # than advancing a watermark past updates behind that cursor.
         tokens = {}
         started_at = _iso(_utc_now())
+    completed = set(scan.get("completed_lanes") or []) if scan.get("started_at") else set()
     for lane, states in (("outstanding", "open,in_progress,waiting_for_input,returned"),
                          ("submitted", "submitted"), ("reviewed", "accepted")):
+        if lane in completed:
+            pages[lane] = {"status": "ok", "has_more": False, "returned": 0}
+            continue
         query = {"meeting_linked": "true", "meeting_type": series["meeting_type"],
-                 "subject_ref": series["subject_ref"], "action_state": states, "page_size": ACTION_PAGE_SIZE}
+                 "subject_ref": series["subject_ref"], "action_state": states, "page_size": ACTION_REVIEW_PAGE_SIZE}
         if lane == "reviewed" and meeting.get("previous_action_review_at"):
             query["updated_after"] = meeting["previous_action_review_at"]
         if isinstance(tokens, Mapping) and tokens.get(lane):
@@ -1344,7 +1352,7 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             reply = _action_request("GET", "/api/research/tickets?" + urllib.parse.urlencode(query), tenant,
                                     transport=transport)
             rows, info = reply.get("data"), reply.get("page_info")
-            if not isinstance(rows, list) or len(rows) > ACTION_PAGE_SIZE or not isinstance(info, Mapping):
+            if not isinstance(rows, list) or len(rows) > ACTION_REVIEW_PAGE_SIZE or not isinstance(info, Mapping):
                 raise MeetingOutputRoutingError("research_owner_malformed_page", status_code=502)
             next_token = info.get("next_page_token")
             if next_token is not None and (not isinstance(next_token, str) or not next_token or len(next_token) > 128):
@@ -1363,9 +1371,9 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             failures.append(reason)
             pages[lane] = {"status": "denied" if getattr(exc, "status_code", None) in {401, 403} else "unavailable",
                            "reason": reason, "owner_query": query}
-    # Resolve actual submitted deliverables through their existing authorized owner.
-    # Eight reads total, with full continuation refs retained when there are more.
-    evidence, reads = [], 0
+    # Each lane has an independent eight-read allocation. No ticket is deferred
+    # merely because another lane used its allocation; at most 24 owner reads.
+    evidence = []
     for item in sorted(items, key=lambda a: a["state"] != "submitted"):
         refs = item.get("evidence_refs") or []
         item["evidence_available"] = bool(refs)
@@ -1375,9 +1383,6 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             status = "unavailable"
             record = {"action_id": item["action_id"], "artifact_id": ref.get("artifact_id"), "status": status}
             try:
-                if reads >= 8:
-                    raise MeetingOutputRoutingError("evidence_read_budget_exhausted", status_code=503)
-                reads += 1
                 kind, aid = ref.get("kind"), str(ref.get("artifact_id") or "")
                 if kind not in {"research_note", "research_artifact"}:
                     raise MeetingOutputRoutingError("unsupported_evidence_owner", status_code=502)
@@ -1407,7 +1412,9 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
             evidence.append(record)
     result = {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
               "items": items, "pages": pages, "evidence": evidence,
-              "scan": {"started_at": started_at, "page_tokens": dict(tokens)}}
+              "scan": {"started_at": started_at, "page_tokens": dict(tokens),
+                       "completed_lanes": sorted(completed),
+                       "evidence_failed": bool(scan.get("evidence_failed")) if scan.get("started_at") else False}}
     if len(json.dumps(result).encode()) > 524288:
         for record in evidence:
             record.pop("content", None)

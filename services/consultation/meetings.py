@@ -3957,23 +3957,29 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
     source = meeting.get("prior_actions_source") or {}
     pages = source.get("pages") or {}
     evidence_read = all(e.get("status") == "ok" for e in meeting.get("prior_action_evidence") or [])
-    fully_read = (source.get("status") == "ok" and set(pages) == {"outstanding", "submitted", "reviewed"}
-                  and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values())
-                  and evidence_read)
     scan = source.get("scan") or {}
+    finished = (source.get("status") == "ok" and set(pages) == {"outstanding", "submitted", "reviewed"}
+                and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values()))
+    evidence_failed = bool(scan.get("evidence_failed")) or not evidence_read
     # Keyset traversal is not a snapshot: updates behind a cursor must be read
     # again. Advance only to the first page's start, never the last meeting's
     # creation time. Inclusive owner filters retain same-timestamp updates.
-    watermark = scan.get("started_at") if fully_read else None
+    watermark = scan.get("started_at") if finished and not evidence_failed else None
     watermark = watermark or meeting.get("previous_action_review_at")
     continuation = {}
-    if scan.get("started_at") and not fully_read:
+    if scan.get("started_at") and not finished:
         tokens = dict(scan.get("page_tokens") or {})
-        if evidence_read:
-            for lane, page in pages.items():
-                if page.get("status") == "ok":
-                    tokens[lane] = page.get("next_page_token")
-        continuation = {"started_at": scan["started_at"], "page_tokens": tokens}
+        completed = set(scan.get("completed_lanes") or [])
+        for lane, page in pages.items():
+            if page.get("status") == "ok":
+                tokens[lane] = page.get("next_page_token")
+                if not page.get("has_more"):
+                    completed.add(lane)
+        continuation = {"started_at": scan["started_at"], "page_tokens": tokens,
+                        "completed_lanes": sorted(completed), "evidence_failed": evidence_failed}
+    # Unavailable evidence was shown explicitly and cannot be accepted. It must
+    # not pin a cursor: finish the traversal, then retry from the old watermark.
+    # Sticky failure state prevents a later healthy page from hiding obligations.
     for p in participants:
         if p.get("trading") or p["persona_id"] == chair_persona_id:
             store.put_meeting_schedule(

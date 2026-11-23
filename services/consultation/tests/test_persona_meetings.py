@@ -2707,13 +2707,13 @@ class _ActionResearchBoundary:
             return 200, copy.deepcopy(self.notes[parsed.path.rsplit('/', 1)[-1]])
         if parsed.path == '/api/research/tickets':
             q = urllib.parse.parse_qs(parsed.query)
-            assert q['meeting_linked'] == ['true'] and q['page_size'] == ['8']
+            assert q['meeting_linked'] == ['true'] and q['page_size'] == ['1']
             rows = [copy.deepcopy(r) for r in self.tickets.values()
                     if r['tenant_id'] == tenant
                     and r['meeting_action']['meeting_type'] == q['meeting_type'][0]
                     and r['meeting_action']['subject_ref'] == q['subject_ref'][0]
                     and r['action_state'] in q['action_state'][0].split(',')]
-            return 200, {'data': rows[:8], 'page_info': {'next_page_token': self.more}}
+            return 200, {'data': rows[:1], 'page_info': {'next_page_token': self.more}}
         tid = parsed.path.rsplit('/', 1)[-1]
         row = self.tickets.get(tid)
         if row is None or row['tenant_id'] != tenant:
@@ -3040,8 +3040,9 @@ def action_owner_contract(request, monkeypatch):
                 and r['action_state'] in q['action_state'][0].split(',')
                 and r['updated_at'] >= q.get('updated_after', [''])[0]
                 and r['ticket_id'] > q.get('page_token', [''])[0]), key=lambda r: r['ticket_id'])
-            return 200, {'data': copy.deepcopy(rows[:8]), 'page_info': {
-                'next_page_token': rows[7]['ticket_id'] if len(rows) > 8 else None}}
+            size = int(q['page_size'][0])
+            return 200, {'data': copy.deepcopy(rows[:size]), 'page_info': {
+                'next_page_token': rows[size - 1]['ticket_id'] if len(rows) > size else None}}
         owner.send = send
         return owner
     source = os.getenv('MEETING_ACTION_RESEARCH_OWNER_SOURCE')
@@ -3085,6 +3086,8 @@ def action_owner_contract(request, monkeypatch):
         return True, owner.tickets[tid]
     real._bounded_action_insert = insert
     def send(method, url, headers, body):
+        if '/notes/' in urllib.parse.urlsplit(url).path:
+            return owner(method, url, headers, body)
         if method == 'POST':
             return 201, real._create_meeting_ticket(**body, actor_id=ctx.actor_id, context=ctx, ticket_id=None)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
@@ -3148,15 +3151,15 @@ def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(
     store = ConsultationStore(str(tmp_path / 'scan'))
     def close_page(number, schedule):
         meeting = {'tenant_id': TENANT, 'meeting_id': f'review-{number}', 'meeting_series': series,
-            'created_at': f'2026-11-{21 + number:02d}T00:00:00Z', 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
+            'created_at': '2026-11-23T00:00:00Z', 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
             'topic': 'Review results', 'chair_persona_id': 'participant-0', 'trace_id': 'scan',
             'participants': participants, 'rounds': [],
             'previous_action_review_at': schedule.get('action_review_watermark'),
             'action_review_scan': schedule.get('action_review_scan') or {},
             'synthesis': {'summary': 'Read this page', 'outcome': 'completed_no_proposal', 'proposals': []}}
         read = outputs.read_meeting_actions(meeting, transport=action_owner_contract.send)
-        assert read['status'] == 'ok' and len(read['items']) <= 24
-        assert all(p['returned'] <= 8 for p in read['pages'].values())
+        assert read['status'] == 'ok' and len(read['items']) <= 3
+        assert all(p['returned'] <= 1 for p in read['pages'].values())
         meeting.update(prior_actions=read['items'], prior_action_evidence=read['evidence'],
             prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
         meetings_mod._close_persona_meeting(store=store, meeting=meeting, spec={'cadence': 'weekly'}, memory_url='unused')
@@ -3164,7 +3167,7 @@ def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(
         assert all(store.get_meeting_schedule(TENANT, p['persona_id'], 'MT-1') == {**saved, 'persona_id': p['persona_id']} for p in participants)
         return read, saved
     first, schedule = close_page(1, {'action_review_watermark': '2026-11-20T00:00:00Z'})
-    assert len(first['items']) == 8 and first['pages']['reviewed']['has_more']
+    assert len(first['items']) == 1 and first['pages']['reviewed']['has_more']
     # Both a new accepted item and a new disposition on a previously seen item
     # sort below the cursor, after page 1 and before the final meeting begins.
     new = copy.deepcopy(next(iter(action_owner_contract.tickets.values())))
@@ -3184,16 +3187,20 @@ def test_review_traversal_revisits_concurrent_earlier_keys_for_all_participants(
     failed = outputs.read_meeting_actions({'tenant_id': TENANT, 'meeting_id': 'retry', 'meeting_series': series,
         'action_review_scan': schedule['action_review_scan'],
         'previous_action_review_at': schedule['action_review_watermark']}, transport=failed_page)
-    assert failed['status'] == 'unavailable' and failed['scan'] == first['scan'] | {
-        'page_tokens': schedule['action_review_scan']['page_tokens']}
+    assert failed['status'] == 'unavailable' and failed['scan'] == schedule['action_review_scan']
     action_owner_contract.send = send
-    final, schedule = close_page(2, schedule)
+    for number in range(2, 9):
+        _, schedule = close_page(number, schedule)
+        assert schedule['action_review_watermark'] == '2026-11-20T00:00:00Z'
+    final, schedule = close_page(9, schedule)
     assert len(final['items']) == 1 and not final['pages']['reviewed']['has_more']
     assert schedule['action_review_watermark'] == '2026-11-21T00:00:00Z'
     assert not schedule['action_review_scan']
-    next_scan, _ = close_page(3, schedule)
-    assert {a['action_id'] for a in next_scan['items']} == {new['ticket_id'], changed['ticket_id']}
-    assert next(a for a in next_scan['items'] if a['action_id'] == changed['ticket_id'])['revision'] == 2
+    next_scan, schedule = close_page(10, schedule)
+    assert [a['action_id'] for a in next_scan['items']] == [new['ticket_id']]
+    next_scan, _ = close_page(11, schedule)
+    assert [a['action_id'] for a in next_scan['items']] == [changed['ticket_id']]
+    assert next_scan['items'][0]['revision'] == 2
 
 
 @pytest.mark.parametrize('token', ['x' * 129, 17, ''])
@@ -3206,3 +3213,96 @@ def test_owner_continuation_is_bounded_before_schedule_persistence(monkeypatch, 
         'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}, transport=owner)
     assert read['status'] == 'unavailable' and not read['items']
     assert all(p['reason'] == 'research_owner_invalid_continuation_token' for p in read['pages'].values())
+
+
+@pytest.mark.parametrize('ref_count', [2, 8])
+@pytest.mark.parametrize('failure', ['none', 'transient', 'persistent'])
+def test_evidence_and_lane_progress_across_distinct_meetings(
+        tmp_path, monkeypatch, action_owner_contract, ref_count, failure):
+    from datetime import datetime, timezone
+    from services.consultation import meeting_outputs as outputs
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, tzinfo=timezone.utc))
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    owner = action_owner_contract
+    series = {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}
+    # Unequal lane lengths exercise completed-lane persistence as well as >8
+    # tickets with multiple refs. Neither acceptance nor removal drains a lane.
+    for lane, state in enumerate(('returned', 'submitted', 'accepted')):
+        for i in range(9 + lane):
+            tid = 'rt-action-' + f'{lane * 100 + i:032x}'
+            refs = []
+            for r in range(ref_count):
+                aid = f'note-{lane}-{i}-{r}'
+                refs.append({'kind': 'research_note', 'artifact_id': aid, 'checksum': aid})
+                owner.notes[aid] = {'title': 'Measured deliverable', 'body': 'Actual result',
+                    'source_refs': ['facts:source'], '_meeting_digest': aid,
+                    '_meeting_binding': {'tenant_id': TENANT, 'ticket_id': tid}}
+            owner.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT, 'owner': 'persona-alpha',
+                'meeting_action': {**series, 'meeting_id': 'origin', 'assignee_kind': 'persona',
+                    'deliverable': 'Measure costs', 'acceptance_criterion': 'Compare measured costs'},
+                'action_state': state, 'revision': 1, 'updated_at': '2026-11-20T12:00:00Z',
+                'evidence_refs': refs}
+    send = owner.send
+    requests, failed = [], []
+    def transport(method, url, headers, body):
+        requests.append(urllib.parse.urlsplit(url))
+        if url.endswith('/notes/note-1-0-0') and failure != 'none':
+            if failure == 'persistent' or not failed:
+                failed.append(url)
+                return 503, {}
+        return send(method, url, headers, body)
+    store = ConsultationStore(str(tmp_path / 'fair-scan'))
+    watermark = '2026-11-20T00:00:00Z'
+    schedule = {'action_review_watermark': watermark}
+    seen = [set(), set()]
+    for number in range(22):
+        meeting = {'tenant_id': TENANT, 'meeting_id': f'evidence-review-{number}',
+            'meeting_series': series, 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
+            'topic': 'Review deliverables',
+            'chair_persona_id': 'persona-alpha', 'trace_id': 'fair-review', 'rounds': [],
+            'participants': [{'persona_id': 'persona-alpha', 'trading': True, 'role': 'chair'}],
+            'previous_action_review_at': schedule.get('action_review_watermark'),
+            'action_review_scan': schedule.get('action_review_scan') or {},
+            'synthesis': {'summary': 'Read actual results; retain pending work',
+                          'outcome': 'completed_no_proposal', 'proposals': []}}
+        requests.clear()
+        read = outputs.read_meeting_actions(meeting, transport=transport)
+        assert read['status'] == 'ok' and len(read['items']) <= 3
+        assert len([p for p in requests if '/notes/' in p.path]) <= 24
+        assert len([p for p in requests if p.path == '/api/research/tickets']) <= 3
+        assert len(json.dumps(read).encode()) <= 524288
+        assert len(read['evidence']) == ref_count * len(read['items'])
+        assert all(e.get('reason') != 'evidence_read_budget_exhausted' for e in read['evidence'])
+        seen[number // 11].update(a['action_id'] for a in read['items'])
+        for item in read['items']:
+            records = [e for e in read['evidence'] if e['action_id'] == item['action_id']]
+            available = all(e['status'] == 'ok' for e in records)
+            assert item['evidence_available'] == available
+            assert all(e.get('content', {}).get('body') == 'Actual result' for e in records if e['status'] == 'ok')
+            if not available and item['state'] == 'submitted':
+                review = {'action_id': item['action_id'], 'decision': 'accept', 'reason': 'Meets costs',
+                    'acceptance_criterion': item['acceptance_criterion'], 'evidence_refs': item['evidence_refs']}
+                assert not meetings_mod._validate_adopted_actions(
+                    {'action_reviews': [review]}, {'prior_actions': read['items']}, set())[1]
+        meeting.update(prior_actions=read['items'], prior_action_evidence=read['evidence'],
+            prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
+        meetings_mod._close_persona_meeting(store=store, meeting=meeting,
+            spec={'cadence': 'weekly'}, memory_url='unused')
+        schedule = store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-1')
+        if number == 8:
+            assert schedule['action_review_scan']['completed_lanes'] == ['outstanding']
+        if number == 9:
+            assert schedule['action_review_scan']['completed_lanes'] == ['outstanding', 'submitted']
+        if number == 10:
+            assert not schedule['action_review_scan']
+            assert schedule['action_review_watermark'] == (watermark if failure != 'none' else '2026-11-21T00:00:00Z')
+            # Keep the second clean scan populated as new dispositions; failures
+            # instead retry all original obligations with the unchanged watermark.
+            for ticket in owner.tickets.values():
+                ticket['updated_at'] = '2026-11-22T00:00:00Z'
+            monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 23, tzinfo=timezone.utc))
+    assert seen == [set(owner.tickets), set(owner.tickets)]
+    assert not schedule['action_review_scan']
+    assert schedule['action_review_watermark'] == (watermark if failure == 'persistent' else '2026-11-23T00:00:00Z')
+    assert len(failed) == (0 if failure == 'none' else 1 if failure == 'transient' else 2)
