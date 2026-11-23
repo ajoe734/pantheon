@@ -53,7 +53,8 @@
     "unchanged_runtime_files": [
       "services/source_ingestion/distillation_worker.py"
     ],
-    "anchor_commit": "97b58b7fdea229f122ed5edc54faa5b576604780"
+    "anchor_commit": "97b58b7fdea229f122ed5edc54faa5b576604780",
+    "evidence_anchor_commit": "ce634b6b9"
   },
   "runtime_budget": {
     "cadence_seconds": 60,
@@ -79,11 +80,22 @@
       "exit_status": 0,
       "result": "3 passed, 66 deselected, 2 warnings in 4.18s"
     },
-    "test_development": "Initial new worker fixture runs failed because enqueue clock was later than the fixed claim clock, then because queue.get expects source_id/digest rather than job_id. Corrected fixture only; those runs are not counted as passing. Full suite rerun pending.",
+    "test_development": "Initial fixture runs failed on enqueue/claim clock mismatch and incorrect queue.get(job_id) usage; both fixture errors corrected. An early regression batch ran the old fixture and failed (3 failed, 42 passed, exit 1). Only the terminal rerun below counts as the regression result.",
     "regression": {
-      "status": "running",
-      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_queue_lifetime.py -q --disable-warnings --maxfail=3"
+      "status": "passed",
+      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_queue_lifetime.py -q --disable-warnings --maxfail=3",
+      "exit_status": 0,
+      "result": "163 passed, 2 warnings in 111.92s (0:01:51)"
     },
+    "other_checks": [
+      {
+        "command": "timeout 60s python3 scripts/check_storage_manifest.py --output /tmp/distillation-lineage-storage-check.json",
+        "exit_status": 0,
+        "result": "passed=true, failures=[]; 372 entries, 3 waivers; no new writers"
+      },
+      {"command": "git diff --check", "exit_status": 0},
+      {"command": "python3 -m py_compile services/source_ingestion/distillation_controller.py", "exit_status": 0}
+    ],
     "coverage": [
       "Three original timestamps with later projections; pre-existing and race readback paths",
       "Tenant, digest/event/job lineage, strategy identity, checksum, producer, evaluation, storage, inline content, missing/malformed/naive time, unversioned job and non-draft conflict rejection",
