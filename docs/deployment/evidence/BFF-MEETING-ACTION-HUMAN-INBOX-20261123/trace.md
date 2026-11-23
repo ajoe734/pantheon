@@ -1,5 +1,26 @@
 # BFF meeting action caller trace
 
+## Required smoke-gate repair (2026-11-23)
+
+Resumed published PR #7761 at `ba53473eb`; merged current dev
+`454420828361de17e689e6d9ad307e12b4064d3c` without rewriting published commits.
+Before editing, traced the existing ticket route, ResearchRouterService,
+ResearchPortWiring, ReadSurfacePorts, DefaultResearchKnowledgeSourcePort and
+ResearchServiceClient. The meeting contributor calls that same HTTP client
+directly with `human_actionable=True, page_size=100`. Research task head
+`f6b32132725a08aa8bf382a722334a2bea40436d` exposes the same existing owner list
+endpoint and bounded filters; it remains the storage and authorization owner.
+
+Removed generic `**filters` signatures from this one page query at all four
+adapter/wiring layers and the generic meeting-filter argument on its existing
+service caller. Explicit parameters cover status, owner, meeting type, subject,
+action state, due/submitted/updated cutoffs, human-actionable selection, cursor
+and page size. The existing route's enumerated filter extraction remains its
+supported HTTP input case. The ordinary unlinked RW-01 list remains separate
+because it serves historical non-meeting tickets. No route, query, alternate
+store or writer was added; historical records are untouched. Architecture
+guards and baselines are unchanged.
+
 Source inspected before edits: `bd47d73bc` (task branch from dev).
 Class: RC2 WP2.3, cross-reference RC6 meetings, existing
 `MEETING-HOSTED-ACCEPTANCE-20261115`; execution contract is the

@@ -11,7 +11,7 @@
   "review_status": "pending_independent_review",
   "branch": "task/BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "inspected_dev_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
-  "refreshed_dev_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+  "refreshed_dev_base": "454420828361de17e689e6d9ad307e12b4064d3c",
   "rejected_head": "4dfc6564cf32051127d5b21e7ff10cd1a36834f7",
   "privacy_correction_anchor": "5f862e759",
   "null_fallback_rejected_head": "23d5628e9101c9b86ab238849b33299066ad902c",
@@ -21,6 +21,26 @@
   "handoff": "handoff.md",
   "resource_measurements": "resources.json",
   "validation": [
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
+      "result": "384 passed, 100 warnings in 209.17s; entire architecture suite including test_five_domain_routers_have_no_direct_store_access, original inbox/RW-01/view regressions and all owner filter cases; terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -c 'import subprocess, sys, types, pytest; name = \"services.consultation.meetings\"; module = types.ModuleType(name); module.__file__ = \"services/consultation/meetings.py\"; sys.modules[name] = module; source = subprocess.check_output([\"git\", \"show\", \"83fb536a6:services/consultation/meetings.py\"]); exec(compile(source, module.__file__, \"exec\"), module.__dict__); raise SystemExit(pytest.main([\"-q\", \"--disable-warnings\", \"services/control-plane/bff/tests/test_meeting_action_human_response.py\", \"-k\", \"consultation_detail\", \"--tb=short\"]))'",
+      "exit_code": 0,
+      "result": "17 passed, 170 deselected, 3 warnings in 5.91s; actual committed Consultation producer with authenticated BFF route; terminal exit 0 collected"
+    },
+    {
+      "command": "timeout 30 .venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/measure_resources.py",
+      "exit_code": 0,
+      "result": "100 rows; owner 772715 bytes, projection 1304450 bytes; unchanged, synthetic data; terminal exit collected"
+    },
+    {
+      "command": "timeout 20 .venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/acceptance_probe.py",
+      "exit_code": 77,
+      "result": "skipped: probe_configuration_missing; no hosted acceptance claimed"
+    },
     {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
@@ -275,5 +295,21 @@
     "extra_owner_calls": 0,
     "persistent_writers": 0,
     "source_status": "review pending; no merge/deploy/acceptance claim"
+  },
+  "architecture_gate_repair": {
+    "reopened_head": "ba53473eb418e68d5dfd15b519ff1e2de506970d",
+    "failing_job": "https://github.com/ajoe734/pantheon/actions/runs/45126858827/job/137548383749",
+    "source_anchor": "3ad5bb5a9",
+    "tested_commit": "8981dc0ef8fa7dcae026cefeac2e70a2d65d7ad4",
+    "tested_blobs": {
+      "services/control-plane/bff/research/service.py": "a8fddc03ce33cefdf7c1b75da8d606bc3188fd4f",
+      "services/control-plane/bff/research/client.py": "eac14cd3fd584304ef9de4a1a5a59d3d1a00dc6c",
+      "services/control-plane/bff/ports/research_knowledge_source.py": "553b9b047b5a548be47a3226380b255dccee371d",
+      "services/control-plane/bff/ports/read_surface_ports.py": "f796092e6a45b25c77ec4b979b3e474a2a02a571",
+      "services/control-plane/bff/tests/test_meeting_action_human_response.py": "2f741c1e536776fb38bd5540338bf41984ac1e06"
+    },
+    "change": "Concrete keyword-only owner list filters in the existing page query, all four adapters and existing service caller. Guard/baseline unchanged; no second query, store, route or writer.",
+    "regression_log_sha256": "a139bf2e76f49bf30c2362ca5f6e47681dec91917f10ac7bbd27e1fe82ed26a1",
+    "scope": "Component validation only; existing independent reviewer and supervisor integration required."
   }
 }
