@@ -1,15 +1,34 @@
 {
   "task_id": "BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "owner": "Codex2",
-  "reviewer": "Antigravity2",
+  "reviewer": "Codex",
+  "reviewer_family_exception": "Current explicit dispatch/canonical reassignment assigns Codex; owner Codex2 and reviewer Codex share a model family, as recorded by the rejecting reviewer.",
   "review_status": "pending_independent_review",
   "branch": "task/BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "inspected_dev_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
+  "refreshed_dev_base": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+  "rejected_head": "4dfc6564cf32051127d5b21e7ff10cd1a36834f7",
+  "privacy_correction_anchor": "5f862e759",
   "delivery_claim": "component validation only; source PR awaits independent review and supervisor integration",
   "trace": "trace.md",
   "handoff": "handoff.md",
   "resource_measurements": "resources.json",
   "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-specific environment provisioned from PANTHEON_DEPENDENCY_PYTHON; imports verified from a foreign cwd with no PYTHONPATH"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k action_citations_withhold",
+      "exit_code": 0,
+      "result": "6 passed, 11 deselected, 3 warnings in 1.49s"
+    },
+    {
+      "command": "timeout 180 /tmp/bff-meeting-action-venv/bin/python -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
+      "result": "175 passed, 100 warnings in 88.11s; foreground batch terminal exit collected"
+    },
     {
       "command": "timeout 150 /tmp/bff-meeting-action-venv/bin/python -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py",
       "exit_code": 0,
@@ -32,6 +51,8 @@
     "original revision and idempotency forwarding, durable readback and duplicate response",
     "viewer rejection, wrong tenant, forged actor, owner 403/503 and stale 409",
     "private/foreign action refs and legacy no-action minutes",
+    "whole withheld reference mappings, embedded excerpts/metadata, padded scalar IDs and mixed visible/withheld identifiers",
+    "current/prior and synthesis-only actions for operator, owning trader and unrelated viewer; source history unchanged",
     "one filtered owner page per reload, opaque cursor, no unfiltered failure retry",
     "partial owner results, unavailable consultation and bounded per-owner timeout",
     "4 MiB ticket reply and requested page count fail-closed bounds"

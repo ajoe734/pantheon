@@ -1,6 +1,6 @@
 # BFF source review handoff
 
-Owner: Codex2. Reviewer: Antigravity2. Delivery target: `dev`.
+Owner: Codex2. Reviewer: Codex (current canonical reassignment). Delivery target: `dev`.
 This packet proves component behavior against owner HTTP contracts. It does
 not prove merged, deployed, accepted, or integrated two-meeting execution.
 
@@ -98,3 +98,28 @@ BFF_BASE_URL, BFF_AUTH_TOKEN, BFF_TENANT_ID, MEETING_ID. It emits only counts,
 byte sizes and result codes, performs zero writes, and exits 77 for missing
 configuration or absent real actions. It supplements the chain-owned
 executable probe; a read projection alone does not prove execution/acceptance.
+
+## Privacy review correction
+
+Codex rejected head `4dfc6564cf32051127d5b21e7ff10cd1a36834f7` on PR #7761:
+the action projection removed a withheld scalar ID but retained its citation
+mapping's excerpt, and a padded scalar ID bypassed the check. The correction
+rejects the whole mapping when any ID from the existing `_extract_item_ref_ids`
+helper is withheld and uses the rounds' existing whitespace normalization for
+scalar refs. No extra reader, compatibility path or storage change is needed.
+
+Authenticated regressions cover all six reference ID keys, exact and padded
+IDs, a mapping containing both public and withheld IDs, nested recorded
+dispositions, current/prior actions and their synthesis/fallback forms. Each
+case runs as operator, owning trader and unrelated viewer; public citations
+remain, trader citations follow viewer authorization, private payloads are
+absent and owner history is unchanged. The test reproduced the leak before
+the fix (exit 1), then all six parameter combinations passed (exit 0).
+The full ten-file BFF regression batch passed with 175 tests, 100 warnings
+in 88.11 s (terminal exit 0). The prescribed checkout Python environment was
+then provisioned and all six privacy cases passed there too (1.49 s, exit 0).
+Exact commands are recorded in `evidence.json`.
+
+Reviewer-family exception: the current explicit dispatch/canonical assignment
+selects Codex, in the same model family as owner Codex2, as already recorded in
+the rejecting review. This packet requests a fresh review; it claims no approval.

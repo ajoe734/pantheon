@@ -30,3 +30,12 @@ Physical storage-manifest edits belong solely to the Research lane per shared
 packet. BFF adds no persistent writer, cache, recurring job or dispatcher.
 Contract HTTP doubles prove component behavior only. Real-owner integrated
 and hosted proof remain with the chain acceptance owner.
+
+Privacy-review resumption: inspected the canonical rejection on PR #7761 and
+the authenticated meetings caller, existing round citation filter and
+`_extract_item_ref_ids` visibility helper before editing. Refreshed from
+current dev `ba7c32e07` by merging its unrelated distillation changes without
+rewriting the published task history. The repair reuses the existing helper
+to drop whole withheld citation mappings and normalizes scalar ID whitespace.
+All historical callers listed above retain their distinct purposes; no new
+caller or obsolete route is introduced by this correction.
