@@ -2557,14 +2557,15 @@ class CheckClassifierTests(unittest.TestCase):
         return rollup
 
     def test_optional_cancelled_publisher_with_canonical_success_waits(self) -> None:
-        summary = auto_integrator.summarize_status_rollup(self._fe985_rollup())
-        self.assertEqual(summary.state, "pending")
-        self.assertEqual(summary.failing, ())
-        self.assertEqual(summary.pending, ("Component merge gate",))
-        self.assertIn("Publish canonical review status", summary.ignored_diagnostic)
-        self.assertTrue(
-            auto_integrator.is_canonical_review_gate_green(self._fe985_rollup())
-        )
+        for workflow_name in ("Canonical Review Gate", "Pantheon canonical review gate"):
+            with self.subTest(workflow_name=workflow_name):
+                rollup = self._fe985_rollup({"workflowName": workflow_name})
+                summary = auto_integrator.summarize_status_rollup(rollup)
+                self.assertEqual(summary.state, "pending")
+                self.assertEqual(summary.failing, ())
+                self.assertEqual(summary.pending, ("Component merge gate",))
+                self.assertIn("Publish canonical review status", summary.ignored_diagnostic)
+                self.assertTrue(auto_integrator.is_canonical_review_gate_green(rollup))
 
     def test_optional_cancelled_publisher_does_not_block_green_merge(self) -> None:
         rollup = self._fe985_rollup()

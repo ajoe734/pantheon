@@ -2538,10 +2538,12 @@ class DistillationWorker:
         normalized = [
             s for s in source_records if s.status == SourceRecordStatus.NORMALIZED
             and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
-        ][:limit]
+        ]
 
         enqueued = 0
         for source in normalized:
+            if enqueued >= max(0, limit):
+                break
             digest = source_version_digest(source)
             existing = self._queue.get(source.source_id, digest)
             if existing is None:
@@ -2567,6 +2569,7 @@ class DistillationWorker:
             retried=run_result.retried,
             dead_lettered=run_result.dead_lettered,
             deferred=run_result.deferred,
+            lease_lost=run_result.lease_lost,
         )
 
     def redispatch(self, source_id: str, source: SourceRecord) -> DistillationJob:

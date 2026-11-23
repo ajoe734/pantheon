@@ -1,0 +1,159 @@
+{
+  "schema_version": "pantheon.task-review-evidence.v1",
+  "task_id": "DISTILLATION-REGISTRY-LINEAGE-RECONCILE-20261123",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "scope": "RC2 existing three current-tenant Registry conflicts; timestamp-preserving full-content replay only. No hosted writes, queue redrive, forced scheduler tick, new job, or Registry mutation.",
+  "prerequisite": {
+    "task": "DISTILLATION-BOUNDED-EVIDENCE-READ-20261123",
+    "pr": 7758,
+    "merge_commit": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+    "verified": "gh pr view 7758 --json state,mergeCommit returned MERGED; task branch starts at that merge."
+  },
+  "diagnosis": {
+    "evidence_origin": "Operator-provided task-scoped handoff, generated task context 2026-11-23; inherited read-only observations, not newly executed hosted reads by this worker.",
+    "linked_acceptance_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122 (generation 8); existing RC1 release owner retains deployment authority",
+    "backend_sha": "0ceb6ca2b793d8ec601a4294ebb0a4c7da8086ca",
+    "original_queue_snapshot_sequence": 62991,
+    "actual_data_reconstruction_sequence": 63040,
+    "proof_window_utc": "2026-11-23T03:21:59Z through 03:53Z",
+    "safe_cases": [
+      {
+        "job_sha256_prefix": "277f5f8c8cffc6",
+        "target_sha256_prefix": "773bd550932331",
+        "retained_provenance_created_at": "2026-11-13T15:17:11Z"
+      },
+      {
+        "job_sha256_prefix": "3abfd9a88d9882",
+        "target_sha256_prefix": "3262456ec48f14",
+        "retained_provenance_created_at": "2026-11-13T20:31:43Z"
+      },
+      {
+        "job_sha256_prefix": "454c5ab21f793b",
+        "target_sha256_prefix": "4a62f035897a62",
+        "retained_provenance_created_at": "2026-11-13T20:28:30Z"
+      }
+    ],
+    "authoritative_readback": "Same tenant, stable target identities, matching Registry/source-ingest container and image bookends. Ten stable identity/lineage fields matched. All inline checksums recomputed. Referenced seeds/bundles absent from the current journal, whose 10,000 unique seed IDs meet the existing 10,000 cap.",
+    "actual_data_reconstruction": "Handoff reports in-memory reconstruction from committed source snapshots and retained timestamps with deployed six-file-verified builder/converter: all 34 compared fields matched for each draft. Advancing only timestamp one day changed checksum and inline StrategySpec provenance/content. No extraction, seed writes, live ticks or Registry writes.",
+    "divergent_projection_fields": [
+      "checksum",
+      "metadata.strategy_spec.provenance.created_at",
+      "metadata.strategy_spec (contains provenance)"
+    ],
+    "epistemic_limit": "The original Nov 18 outbound payload bytes were not observed. Current exact equivalence with retained provenance is proved by inherited actual-data reconstruction; timestamp-only historical divergence is a sufficient reproduced mechanism, not a claim about unseen historical bytes. Retained private raw artifacts are not present in this worktree; no record contents or credentials are copied.",
+    "local_reproduction": "Synthetic fixtures use all three retained timestamps. Actual bounded-store eviction plus restarted queue/store objects reproduces lost acknowledgement and later seed recreation."
+  },
+  "implementation": {
+    "path": "services/source_ingestion/distillation_controller.py",
+    "behavior": "Keep the ordinary exact comparator first. On a mismatch only for a versioned job and existing draft, read a valid timezone-bearing creation timestamp from the retained inline StrategySpec. Re-run the existing converter on the admitted source and exact materialized seed/evidence, changing only the converter creation timestamp, then apply the unchanged full comparator. Apply to existing-entry replay and race readback.",
+    "verified_fields": "Registry/strategy/version/type, checksum, producer_run_id, evaluation_summary, rollback_target, null-normalized lineage/storage, every expected metadata value including tenant, exact inline StrategySpec and complete distillation source/digest/event/job lineage.",
+    "mutation_boundary": "No content copied from Registry except timestamp; no comparator exclusions, checksum patching, new Registry write endpoint, seed rewrite mechanism, source digest/identity change or queue policy change. Existing immutable Registry handling and terminal lineage remain intact.",
+    "durable_ack": "Successful replay returns the retained checksum and existing Registry/strategy/version identifiers to the original fenced mark_done transaction. Real conflicts remain retries/dead letters.",
+    "unchanged_runtime_files": [
+      "services/source_ingestion/distillation_worker.py"
+    ],
+    "anchor_commit": "97b58b7fdea229f122ed5edc54faa5b576604780",
+    "evidence_anchor_commit": "ce634b6b9"
+  },
+  "runtime_budget": {
+    "cadence_seconds": 60,
+    "ticks_per_day": 1440,
+    "existing_claim_limit_per_tick": 100,
+    "extra_work": "At most one extra in-memory conversion per mismatching versioned draft; no extra HTTP request or payload journal. Input residency stays within the already selected job and one Registry response.",
+    "writers": "No writer, emitter, recurring job, schema or persistent field added. Existing seed, queue receipts and controller records retain their current cadence and lifecycle.",
+    "growth_per_day": "No additional persistent storage or files; existing job/source/seed growth is unchanged. Receipts remain governed by the existing queue retention policy, with no new global byte cap claimed.",
+    "cap": "Existing seed cap: 10,000 total, 50 per source. Existing bounded batch: 100 jobs/tick. No new per-payload byte cap.",
+    "cleanup": "Existing terminal payload/inbox prune after 7 days, resolved dead letters after 30 days, at most 500 prune rows/tick; queue compaction after 64 MiB. Existing seed capacity eviction remains unchanged.",
+    "manifest": "Existing writers: docs/operations/storage-manifest.json; no registration added.",
+    "evidence": "One task-scoped static JSON artifact, ordinary daily growth 0; keep below 64 KiB. Local fixtures use pytest tmp_path and normal pytest retention."
+  },
+  "validation": {
+    "environment": "Checkout-scoped .venv-pantheon created via python3 scripts/dev/provision_python_distribution.py using supervisor-provided dependency interpreter; foreign-cwd import verification passed.",
+    "focused_replay": {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py -k registry_replay -q --disable-warnings --maxfail=2",
+      "exit_status": 0,
+      "result": "22 passed, 20 deselected, 2 warnings in 4.94s"
+    },
+    "eviction_restart": {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_worker.py -k capacity_eviction -q --disable-warnings --maxfail=2",
+      "exit_status": 0,
+      "result": "3 passed, 66 deselected, 2 warnings in 4.18s"
+    },
+    "test_development": "Initial fixture runs failed on enqueue/claim clock mismatch and incorrect queue.get(job_id) usage; both fixture errors corrected. An early regression batch ran the old fixture and failed (3 failed, 42 passed, exit 1). Only the terminal rerun below counts as the regression result.",
+    "regression": {
+      "status": "passed",
+      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_queue_lifetime.py -q --disable-warnings --maxfail=3",
+      "exit_status": 0,
+      "result": "163 passed, 2 warnings in 111.92s (0:01:51)"
+    },
+    "other_checks": [
+      {
+        "command": "timeout 60s python3 scripts/check_storage_manifest.py --output /tmp/distillation-lineage-storage-check.json",
+        "exit_status": 0,
+        "result": "passed=true, failures=[]; 372 entries, 3 waivers; no new writers"
+      },
+      {"command": "git diff --check", "exit_status": 0},
+      {"command": "python3 -m py_compile services/source_ingestion/distillation_controller.py", "exit_status": 0}
+    ],
+    "coverage": [
+      "Three original timestamps with later projections; pre-existing and race readback paths",
+      "Tenant, digest/event/job lineage, strategy identity, checksum, producer, evaluation, storage, inline content, missing/malformed/naive time, unversioned job and non-draft conflict rejection",
+      "Real seed capacity eviction and fresh queue/store restart; exactly one Registry write, retained checksum in reopened durable receipt; tenant/content conflicts remain retryable, unowned job untouched"
+    ]
+  },
+  "ci_return_investigation": {
+    "previous_head": "48f064ed2f85560179e9d8334efb7756d298cba4",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/45113915170/job/137496374430",
+    "observed_failure": "Image build failed at Dockerfile line 51, python /opt/hindsight/models.py package: urllib.request.urlopen followed a redirect and received HTTP 502 Bad Gateway. The image import check was not reached; this job supplies no evidence of a distillation import failure.",
+    "single_job_retry": "POST /repos/ajoe734/pantheon/actions/jobs/137496374430/rerun returned HTTP 403: the containing workflow is still running. No retry was started and no other run was cancelled.",
+    "source_disposition": "No distillation or Hindsight source correction is supported by this failure. Preserve the pinned model manifests, checksum verification and existing CI gates. Refresh against current dev and publish the new head for normal CI and a new independent exact-head review.",
+    "refreshed_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+    "regression_rerun": {
+      "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_queue_lifetime.py -q --disable-warnings --maxfail=3",
+      "exit_status": 0,
+      "result": "163 passed, 2 warnings in 93.28s (0:01:33)"
+    },
+    "other_reruns": "Storage manifest: exit 0, 372 entries, 3 waivers, failures=[]; py_compile, JSON parse, git diff --check and diff budget: exit 0. Production +41/-2, tests +196/-0; only evidence changed in this return.",
+    "review_binding": "Prior approval does not cover the refreshed head; canonical handoff must freeze the new head and this manifest before reviewer approval. New-head CI results remain pending until GitHub reports terminal checks."
+  },
+  "independent_review": {
+    "status": "pending",
+    "assigned_reviewer": "Codex",
+    "authority": "Existing canonical supervisor reviewer routing and exact-head approval; worker does not self-approve or merge."
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "owner_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+    "release_path": "Existing RC1 exact-pair deployment; this task does not dispatch a release.",
+    "requirements": [
+      "Exact hosted manifest FE/BFF pair includes this source merge and #7758; all expected steady services healthy at expected images.",
+      "Existing naturally scheduled tick completes on the exact worker image with unchanged 640 MiB budget and no OOM/restart increase; reuse the prior task read-only 90-second liveness probe.",
+      "Use same-tenant read-only Registry and queue paths to verify the three hashed identities and original Registry checksums; verify original immutable artifacts and unowned legacy rows remain unchanged.",
+      "Record any still-dead-lettered jobs as unresolved, with no manual replay, Registry mutation, forced scheduling or successful-recovery inference from unit tests."
+    ],
+    "executable_liveness_probe": "docs/deployment/evidence/DISTILLATION-BOUNDED-EVIDENCE-READ-20261123/evidence.json#hosted_acceptance.read_only_probe_python (already committed, not run by this worker)"
+  },
+  "residual_findings": [
+    {
+      "finding": "The previous-head Hindsight import-smoke job failed while downloading pinned model assets with HTTP 502, before imports; GitHub refused a single-job retry while the workflow was running.",
+      "disposition": "Record under the existing RC1 release/CI owning chain if the normal new-head build also fails. No Hindsight, shared workflow, download-policy or gate change is part of this Registry source task; do not infer a passing build from this diagnosis."
+    },
+    {
+      "finding": "The three historic jobs are already dead-lettered. Existing automatic redrive covers auth/transient failure classes and does not admit content conflicts. This source correction alone does not establish that those jobs will execute again.",
+      "disposition": "Existing RC2 owning chain and Trading Pulse acceptance owner must report this gap and establish any separately authorized normal recovery; this task expressly excludes queue replay and does not change DLQ policy."
+    },
+    {
+      "finding": "The 1268 unclaimed legacy jobs lack tenant ownership.",
+      "disposition": "Excluded by task contract; preserve existing tenant claim filtering; no reparenting or replay."
+    },
+    {
+      "finding": "Re-extraction/compiler or dataset binding changes can produce substantive drift beyond timestamp.",
+      "disposition": "Existing full comparator continues to reject it. Recovery needs original authoritative inputs under the owning source/research chain, not acceptance of a different draft."
+    },
+    {
+      "finding": "Historical outbound payload bytes are absent; current exact reconstruction does not identify every original Nov 18 outbound difference.",
+      "disposition": "Keep explicit evidence limit in this RC2 record; no cloud-backup or archival claims."
+    }
+  ]
+}
