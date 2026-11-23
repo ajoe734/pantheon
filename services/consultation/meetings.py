@@ -2076,7 +2076,8 @@ def _meeting_series(meeting: Mapping[str, Any]) -> Optional[Dict[str, str]]:
     return None
 
 
-def _participant_action_capability(tenant_id: str, persona_id: str) -> Dict[str, Any]:
+def _participant_action_capability(tenant_id: str, persona_id: str,
+                                   required_data: List[str] | None = None) -> Dict[str, Any]:
     """Read the Persona owner/broker decision; role labels grant no capability."""
     base = (os.getenv("PANTHEON_PERSONA_API_URL") or os.getenv("PERSONA_API_URL") or "").rstrip("/")
     result: Dict[str, Any] = {"persona_id": persona_id, "status": "owner_unavailable",
@@ -2094,7 +2095,8 @@ def _participant_action_capability(tenant_id: str, persona_id: str) -> Dict[str,
         headers = {"X-Tenant-Id": tenant_id, "Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        path = f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/action-capability?run_purpose=daily_cycle"
+        query = urllib.parse.urlencode({"run_purpose": "daily_cycle", "required_data": required_data or []}, doseq=True)
+        path = f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/action-capability?{query}"
         req = urllib.request.Request(base + path, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             raw = json.loads(resp.read(16385).decode())
@@ -2115,7 +2117,8 @@ def _participant_action_capability(tenant_id: str, persona_id: str) -> Dict[str,
 
 
 def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any],
-                             allowed_citations: set[str]) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+                             allowed_citations: set[str], *, recheck_capabilities: bool = False
+                             ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
     """Only an explicit chair adoption produces work; rounds remain advisory."""
     actions, reviews, rejected = [], [], []
     if str(raw.get("outcome") or "").upper() == "REVIEW" or raw.get("unreadable"):
@@ -2141,6 +2144,17 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
         # Normalize before identity/capability checks and decision freezing so
         # every dispatch attempt carries exactly the same canonical origin.
         action = {k: v.strip() for k, v in action.items()}
+        if "required_data" in item:
+            datasets = item["required_data"]
+            if (not isinstance(datasets, list) or len(datasets) > 8
+                    or any(not isinstance(d, str) or not d.strip() or len(d) > 256 for d in datasets)):
+                rejected.append({"index": idx, "reason": "invalid_required_data"})
+                continue
+            datasets = [d.strip() for d in datasets]
+            if len(set(datasets)) != len(datasets) or len(json.dumps(datasets).encode()) > 4096:
+                rejected.append({"index": idx, "reason": "invalid_required_data"})
+                continue
+            action["required_data"] = datasets
         refs = item.get("source_refs")
         if isinstance(refs, list):
             refs = [r.strip() if isinstance(r, str) else r for r in refs]
@@ -2153,7 +2167,13 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
         if action.get("source_action_id") in source_ids:
             reason = "duplicate_source_action_id"
         if action.get("assignee_kind") == "persona":
-            cap = capabilities.get(action.get("assignee"), {})
+            # A generic note capability cannot authorize a data-dependent deliverable.
+            # Check each action separately: the same Persona may receive an evidence-only
+            # note and be denied a licensed-feed analysis in this very synthesis.
+            datasets = action.get("required_data") or []
+            cap = (_participant_action_capability(str(meeting["tenant_id"]), action["assignee"], datasets)
+                   if datasets else _participant_action_capability(str(meeting["tenant_id"]), action["assignee"])
+                   if recheck_capabilities else capabilities.get(action["assignee"], {}))
             if (cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed"
                     or "research_note" not in (cap.get("allowed_deliverables") or [])):
                 reason = "persona_owner_did_not_allow_assignment"
@@ -2184,7 +2204,11 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
         else:
             reason = "due_or_explicit_next_review_required"
         if reason:
-            rejected.append({"index": idx, "reason": reason})
+            failure = {"index": idx, "reason": reason}
+            if reason == "persona_owner_did_not_allow_assignment":
+                failure.update(required_data=action.get("required_data", []),
+                               capability_status=cap.get("status"), capability_reason=cap.get("reason"))
+            rejected.append(failure)
             continue
         source_ids.add(action["source_action_id"])
         actions.append({**action, "source_refs": list(refs), "state": "dispatch_pending"})
@@ -3769,15 +3793,9 @@ def execute_persona_meeting(
         allowed_case_ids=allowed_case_ids,
         chair_preread_ids=preread_ids_by_persona.get(chair_persona_id, set()),
     )
-    # Recheck the assigned participants at adoption, after the model round.
-    raw_actions = (raw_synthesis or {}).get("actions") or []
-    assigned = {a["assignee"].strip() for a in raw_actions if isinstance(a, Mapping) and isinstance(a.get("assignee"), str)} if isinstance(raw_actions, list) else set()
-    meeting["participant_action_capabilities"] = [
-        _participant_action_capability(tenant_id, c["persona_id"]) if c["persona_id"] in assigned else c
-        for c in meeting["participant_action_capabilities"]
-    ]
     actions, reviews, rejected_actions = _validate_adopted_actions(
-        raw_synthesis or {}, meeting, allowed_case_ids | preread_ids_by_persona.get(chair_persona_id, set()))
+        raw_synthesis or {}, meeting, allowed_case_ids | preread_ids_by_persona.get(chair_persona_id, set()),
+        recheck_capabilities=True)
     # A malformed/REVIEW synthesis cannot become a new source of work.
     if synthesis["outcome"] == "REVIEW":
         actions, reviews = [], []

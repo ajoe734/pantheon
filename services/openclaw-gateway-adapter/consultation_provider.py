@@ -837,6 +837,8 @@ MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
                             "due_at": {"type": "string", "maxLength": 64},
                             "next_review": {"type": "string", "maxLength": 256},
                             "human_requirement": {"type": "string", "maxLength": 2000},
+                            "required_data": {"type": "array", "maxItems": 8, "uniqueItems": True,
+                                              "items": {"type": "string", "minLength": 1, "maxLength": 256}},
                         },
                         "anyOf": [{"required": ["due_at"]}, {"required": ["next_review"]}],
                         "allOf": [{
@@ -940,6 +942,10 @@ def _meeting_persona_prompt(
             "research follow-up in actions, independently of formal proposals (zero proposals is valid). "
             "Each action needs a stable source_action_id, accountable assignee and assignee_kind, testable "
             "deliverable, acceptance_criterion, source_refs and due_at or explicitly identified next_review. "
+            "Declare optional required_data as at most 8 dataset IDs only when this deliverable actually "
+            "needs them, including restricted/licensed feeds. Evidence-only analysis of supplied case "
+            "contents may omit required_data; do not infer a feed requirement from Persona defaults. "
+            "The owner capability is rechecked for each action with these exact requirements before assignment. "
             "Assign a Persona only when its owner-issued action capability permits the specific work. "
             "Public risk opinions and role labels grant neither sponsorship nor execution permission. "
             "Human work requires a specific human_requirement, never a transient owner outage. "

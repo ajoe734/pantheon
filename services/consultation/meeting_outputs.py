@@ -1301,6 +1301,8 @@ def action_snapshot(ticket: Mapping[str, Any]) -> dict[str, Any]:
            "review_decision": ticket.get("review_decision"), "input_request": ticket.get("input_request"),
            "downstream": {"target": "research_tickets", "id": tid,
                           "href": "/api/v1/research/tickets/" + urllib.parse.quote(tid, safe="")}}
+    if "required_data" in origin:
+        row["required_data"] = copy.deepcopy(origin["required_data"])
     due = origin.get("due_at")
     row["overdue"] = bool(due and str(due) < _iso(_utc_now()) and row["state"] != "accepted")
     if len(json.dumps(row, ensure_ascii=True).encode()) > ACTION_SNAPSHOT_MAX_BYTES:
@@ -1460,9 +1462,9 @@ def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path 
                   "assignee_kind": action["assignee_kind"], "deliverable": action["deliverable"],
                   "acceptance_criterion": action["acceptance_criterion"], "reviewer_id": "consultation-svc",
                   "source_refs": action["source_refs"]}
-        for field in ("due_at", "next_review"):
-            if action.get(field):
-                origin[field] = action[field]
+        for field in ("due_at", "next_review", "required_data"):
+            if field in action:
+                origin[field] = copy.deepcopy(action[field])
         # Keep the reason in the existing ticket description for the normal
         # owner list -> BFF Human Inbox path. Criterion/deliverable retain their
         # structured origin fields; no separate human-task store is involved.
