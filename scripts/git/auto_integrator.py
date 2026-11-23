@@ -101,7 +101,9 @@ FAILURE_VALUES = {
 }
 IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
 CANONICAL_REVIEW_PUBLISHER_CHECK = "Publish canonical review status"
-CANONICAL_REVIEW_PUBLISHER_WORKFLOW = "Canonical Review Gate"
+CANONICAL_REVIEW_PUBLISHER_WORKFLOWS = frozenset(
+    {"Canonical Review Gate", "Pantheon canonical review gate"}
+)
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
 BEHIND_MERGE_STATE = "BEHIND"
@@ -784,10 +786,10 @@ def is_ignorable_diagnostic(
         return True
     # The canonical-review metadata publisher is optional and only mirrors the
     # authoritative canonical context; its cancellation (superseded run) is not
-    # substantive CI. Only the cancelled state of this exact issuer is ignored.
+    # substantive CI. Ignore only cancellation of this job in a recognized publisher workflow.
     if (
         name == CANONICAL_REVIEW_PUBLISHER_CHECK
-        and workflow_name == CANONICAL_REVIEW_PUBLISHER_WORKFLOW
+        and workflow_name in CANONICAL_REVIEW_PUBLISHER_WORKFLOWS
     ):
         values = {
             normalize_state(item.get("conclusion")),

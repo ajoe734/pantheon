@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+import copy
+from dataclasses import replace
 import pytest
 
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
@@ -39,6 +41,119 @@ class DummyLoopWriter:
 
     async def record_failure(self, **kwargs: Any) -> None:
         self.failures.append(kwargs)
+
+
+def _replay_fixture(tmp_path):
+    from services.source_ingestion.distillation_worker import (
+        DistillationJob, RegistrySyncRequest, _synthesize_evidence_item,
+        _synthesize_evidence_bundle,
+    )
+    from services.source_ingestion.strategy_seed_builder import StrategySpecSeedBuilder
+
+    source = _normalized_source(tenant_id="test")
+    digest = source_version_digest(source)
+    job = DistillationJob(
+        job_id="distill-fixture", source_id=source.source_id, idempotency_key=digest,
+        status=DistillationJobStatus.LEASED, source_digest=digest,
+        enqueued_at="2026-11-13T00:00:00Z",
+    )
+    item = _synthesize_evidence_item(source, digest)
+    bundle = _synthesize_evidence_bundle(source, item, digest)
+    seed = StrategySpecSeedBuilder().build_seed(
+        bundle, source_records=[source], evidence_items=[item],
+        created_at="2026-11-18T00:00:00Z",
+    )
+    request = RegistrySyncRequest(source, seed, job, item, bundle, digest)
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state", alive_path=None,
+        job_queue_path=tmp_path / "queue", seed_store_path=tmp_path / "seeds",
+        evidence_store_path=tmp_path / "evidence", source_dirs=[],
+    )
+    return request, config
+
+
+def _stored_draft(payload):
+    entry = copy.deepcopy(payload)
+    entry["artifact_type"] = "strategy_spec"
+    entry["metadata"]["strategy_spec"] = entry.pop("strategy_spec")
+    return {"entry": entry}
+
+
+@pytest.mark.parametrize("timestamp", [
+    "2026-11-13T15:17:11Z", "2026-11-13T20:31:43Z", "2026-11-13T20:28:30Z",
+])
+@pytest.mark.parametrize("write_race", [False, True])
+def test_registry_replay_recovers_only_retained_creation_time(tmp_path, monkeypatch, timestamp, write_race):
+    from services.source_ingestion.distillation_controller import (
+        _build_registry_payload, _make_registry_sync, _registry_entry_matches_expected,
+        _versioned_registry_id,
+    )
+    request, config = _replay_fixture(tmp_path)
+    registry_id = _versioned_registry_id(request.source, request.job)
+    original = _build_registry_payload(
+        request=replace(request, seed=replace(request.seed, created_at=timestamp)),
+        registry_id=registry_id,
+    )
+    stored = _stored_draft(original)
+    before = copy.deepcopy(stored)
+    later = _build_registry_payload(request=request, registry_id=registry_id)
+    assert not _registry_entry_matches_expected(stored, later)
+    reads = iter([None, stored] if write_race else [stored])
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", lambda *a: next(reads))
+    posts = []
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", lambda *a: posts.append(a))
+    result = _make_registry_sync(config)(request)
+    assert result.status == ("synced" if write_race else "already_terminal")
+    assert result.checksum == original["checksum"] != later["checksum"]
+    assert len(posts) == int(write_race)
+    assert stored == before
+    assert request.seed.created_at == "2026-11-18T00:00:00Z"
+
+
+@pytest.mark.parametrize("field", [
+    "tenant_id", "source_digest", "source_event_version", "distillation_job_id",
+    "checksum", "strategy_id", "producer_run_id", "lineage", "storage_ref",
+    "evaluation_summary", "spec_content", "missing_timestamp", "invalid_timestamp",
+    "naive_timestamp", "unversioned", "non_draft",
+])
+def test_registry_replay_rejects_real_conflict(tmp_path, monkeypatch, field):
+    from services.source_ingestion.distillation_controller import (
+        _build_registry_payload, _make_registry_sync, _versioned_registry_id,
+    )
+    request, config = _replay_fixture(tmp_path)
+    registry_id = _versioned_registry_id(request.source, request.job)
+    original = _build_registry_payload(
+        request=request, registry_id=registry_id, created_at="2026-11-13T15:17:11Z",
+    )
+    stored = _stored_draft(original)
+    entry = stored["entry"]
+    meta = entry["metadata"]
+    if field == "tenant_id":
+        meta[field] = "other-tenant"
+    elif field in {"source_digest", "source_event_version", "distillation_job_id"}:
+        meta["distillation"][field] = "different"
+    elif field == "spec_content":
+        meta["strategy_spec"]["title"] = "different"
+    elif field.endswith("timestamp"):
+        meta["strategy_spec"]["provenance"]["created_at"] = {
+            "missing_timestamp": None, "invalid_timestamp": "invalid",
+            "naive_timestamp": "2026-11-13T15:17:11",
+        }[field]
+    elif field == "unversioned":
+        request = replace(request, job=replace(request.job, source_digest=""), version_key=None)
+        # Keep the lookup identity consistent with this legacy job.
+        entry["registry_id"] = _versioned_registry_id(request.source, request.job)
+    elif field == "non_draft":
+        entry["artifact_state"] = "candidate"
+    else:
+        entry[field] = "different"
+    before = copy.deepcopy(stored)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", lambda *a: stored)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", lambda *a: pytest.fail("must not overwrite conflict"))
+    with pytest.raises(RuntimeError, match="conflicting"):
+        _make_registry_sync(config)(request)
+    assert stored == before
 
 
 def _normalized_source(
@@ -1498,3 +1613,43 @@ def test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected(tmp_
     with pytest.raises(Exception, match="degraded"):
         run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
     assert queue.dead_letter_count() == 260
+
+
+def test_controller_bounded_admission_and_truthful_total_across_ticks(tmp_path, monkeypatch):
+    from services.source_ingestion.distillation_worker import RegistrySyncResult
+
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    sources = [_normalized_source(f"source-{i}", tenant_id="test") for i in range(205)]
+    sources.extend([
+        _normalized_source("foreign", tenant_id="other"),
+        _normalized_source("market", tenant_id="test", source_type="market", collector_market_bundle=True),
+    ])
+    evidence_path.write_text("".join(json.dumps({"record_type": "source_record", "payload": s.to_dict()}) + "\n"
+                                     for s in sources))
+    config = DistillationControllerConfig(
+        database_url="postgresql://unused/test", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state.json", alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "queue.sqlite3", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path, source_dirs=[],
+    )
+    state = ControllerState(controller_id="test-controller", controller_name="distillation",
+                            environment="test", tenant_id="test", deployment={"git_sha": "test-sha"})
+    writer = DummyLoopWriter()
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._make_registry_sync",
+                        lambda _: lambda request: RegistrySyncResult(registry_id=f"reg-{request.source.source_id}",
+                                                                    status="synced"))
+    queue = DistillationJobQueue(config.job_queue_path)
+    for size in (100, 100, 5, 0):
+        result = run_controller_tick(config=config, state=state, store=ControllerStateStore(config.state_path),
+                                     writer=writer, queue=queue)
+        assert result["status"] == "success"
+        assert result["reconcile"]["enqueued"] == size
+        assert result["reconcile"]["processed"] == size
+        assert len(result["desired"]["eligible_source_ids"]) == size
+        assert result["desired"]["eligible_source_count"] == 205
+        assert result["desired"]["eligible_source_ids_scope"] == "admission_batch"
+        assert writer.successes[-1]["desired_state"]["present"] is True
+        assert "205 eligible" in writer.successes[-1]["desired_state"]["summary"]
+    assert len(queue.list_all()) == 205
+    assert config.alive_path.exists()
