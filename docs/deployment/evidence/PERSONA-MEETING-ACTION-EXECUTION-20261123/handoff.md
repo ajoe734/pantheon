@@ -1,6 +1,6 @@
 # Persona consumer handoff
 
-RC2 WP2.3 / RC6 meeting follow-through. Source delivery awaits independent review;
+RC2 WP2.3 / RC6 meeting follow-through. PR #7765 is published; canonical handoff is blocked;
 no hosted deployment or acceptance is asserted. Owner Codex, assigned reviewer Codex2.
 
 The implemented interfaces and existing caller/owner trace are in contract.md.
@@ -32,6 +32,18 @@ not concurrently edited the manifest. Supply these figures to that owner before
 integrated acceptance. Source acceptance must not label fixture sizes as hosted.
 
 ## Residual findings and owners
+
+* Canonical provenance / coordinator delivery owner: handoff of ff454c28a was
+  rejected (exit 1). Inherited contract commit 364a1f1bd retains its genuine
+  LLM-Agent: Antigravity2 and author time 2026-11-23T04:12:53Z. Rebase set its
+  committer time to 2026-11-23T04:56:18Z, after Codex inherited this task. The
+  command runtime's reject_owner_trailer_mismatch_at_handoff reads %cI and found
+  no subsequent audited reassignment, then requested amending the inherited
+  trailer to Codex. The branch is already published; a normal non-force push
+  cannot replace that ancestor. No history rewrite, forged reassignment or guard
+  edit was attempted. The coordinator must disposition historical provenance or
+  authorize the narrow published-history repair before a fresh exact-head handoff.
+  The worktree is preserved in ordinary commits; approval/merge is not claimed.
 
 * RC2 WP2.3, Persona enrollment / two-meeting proof owner: hosted access provisioning
   remains unverified here. The three trading Personas need genuine owner-issued

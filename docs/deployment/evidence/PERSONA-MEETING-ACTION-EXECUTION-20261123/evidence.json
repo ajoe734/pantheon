@@ -2,7 +2,7 @@
   "task_id": "PERSONA-MEETING-ACTION-EXECUTION-20261123",
   "owner": "Codex",
   "assigned_reviewer": "Codex2",
-  "delivery_state": "source_review_pending",
+  "delivery_state": "source_handoff_blocked",
   "hosted_accepted": false,
   "source_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
   "runtime_blobs": {
@@ -58,5 +58,14 @@
     "RC3 WP3.1/WP3.3 storage",
     "coordinator review independence"
   ],
-  "review_status": "pending independent reviewer decision; no reviewer evidence manufactured"
+  "review_status": "handoff rejected: inherited owner trailer and rebased committer time have no subsequent audited reassignment; coordinator provenance/history disposition required",
+  "handoff_failure": {
+    "pr": 7765,
+    "head": "ff454c28aee693e8ef583f17e527e1fe0ba33eef",
+    "exit_code": 1,
+    "commit": "364a1f1bd7c53e90ba1d5762e3c11f6e7d695e1a",
+    "author_time": "2026-11-23T04:12:53Z",
+    "committer_time": "2026-11-23T04:56:18Z",
+    "required_action": "Coordinator provenance disposition or explicitly authorized narrow history repair; no force push/guard change performed"
+  }
 }
