@@ -102,6 +102,15 @@
       "Real seed capacity eviction and fresh queue/store restart; exactly one Registry write, retained checksum in reopened durable receipt; tenant/content conflicts remain retryable, unowned job untouched"
     ]
   },
+  "ci_return_investigation": {
+    "previous_head": "48f064ed2f85560179e9d8334efb7756d298cba4",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/45113915170/job/137496374430",
+    "observed_failure": "Image build failed at Dockerfile line 51, python /opt/hindsight/models.py package: urllib.request.urlopen followed a redirect and received HTTP 502 Bad Gateway. The image import check was not reached; this job supplies no evidence of a distillation import failure.",
+    "single_job_retry": "POST /repos/ajoe734/pantheon/actions/jobs/137496374430/rerun returned HTTP 403: the containing workflow is still running. No retry was started and no other run was cancelled.",
+    "source_disposition": "No distillation or Hindsight source correction is supported by this failure. Preserve the pinned model manifests, checksum verification and existing CI gates. Refresh against current dev and publish the new head for normal CI and a new independent exact-head review.",
+    "refreshed_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+    "review_binding": "Prior approval does not cover the refreshed head; canonical handoff must freeze the new head and this manifest before reviewer approval. New-head CI results remain pending until GitHub reports terminal checks."
+  },
   "independent_review": {
     "status": "pending",
     "assigned_reviewer": "Codex",
@@ -120,6 +129,10 @@
     "executable_liveness_probe": "docs/deployment/evidence/DISTILLATION-BOUNDED-EVIDENCE-READ-20261123/evidence.json#hosted_acceptance.read_only_probe_python (already committed, not run by this worker)"
   },
   "residual_findings": [
+    {
+      "finding": "The previous-head Hindsight import-smoke job failed while downloading pinned model assets with HTTP 502, before imports; GitHub refused a single-job retry while the workflow was running.",
+      "disposition": "Record under the existing RC1 release/CI owning chain if the normal new-head build also fails. No Hindsight, shared workflow, download-policy or gate change is part of this Registry source task; do not infer a passing build from this diagnosis."
+    },
     {
       "finding": "The three historic jobs are already dead-lettered. Existing automatic redrive covers auth/transient failure classes and does not admit content conflicts. This source correction alone does not establish that those jobs will execute again.",
       "disposition": "Existing RC2 owning chain and Trading Pulse acceptance owner must report this gap and establish any separately authorized normal recovery; this task expressly excludes queue replay and does not change DLQ policy."
