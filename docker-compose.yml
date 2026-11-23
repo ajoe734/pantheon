@@ -1551,6 +1551,12 @@ services:
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID:-}
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN:-}
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE:-}
+      # Paper pool risk policy content is drafted by the persona-risk-officer (one persona turn per pool/profile/
+      # input digest) and approved through Governance; the gateway is the same one the persona cycle uses.
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      # Operator outer bounds per profile, enforced as validation (empty = built-in low: single name <= 20%, reserve >= 10%).
+      PANTHEON_PAPER_RISK_PROFILE_BOUNDS: ${PANTHEON_PAPER_RISK_PROFILE_BOUNDS:-}
       BFF_DATA_DIR: /data/bff
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
