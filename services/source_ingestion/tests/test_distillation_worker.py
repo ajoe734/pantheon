@@ -90,6 +90,87 @@ def _versioned_bundle_id(source: SourceRecord) -> str:
     return _stable_bundle_id(source.source_id, source_version_digest(source))
 
 
+@pytest.mark.parametrize("conflict", [None, "tenant", "content"])
+def test_registry_ack_replay_after_capacity_eviction_and_restart(tmp_path, monkeypatch, conflict):
+    import copy
+    from datetime import datetime, timezone
+    from services.source_ingestion.distillation_controller import (
+        DistillationControllerConfig, _make_registry_sync,
+    )
+
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state", alive_path=None,
+        job_queue_path=tmp_path / "queue.sqlite", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=tmp_path / "evidence", source_dirs=[],
+    )
+    registry = {}
+    writes = []
+
+    def post(url, payload):
+        writes.append(payload["registry_id"])
+        entry = copy.deepcopy(payload)
+        entry["artifact_type"] = "strategy_spec"
+        entry["metadata"]["strategy_spec"] = entry.pop("strategy_spec")
+        registry[payload["registry_id"]] = {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", lambda url, key: registry.get(key))
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", post)
+    clock = {"value": datetime(2026, 11, 13, 15, 17, 11, tzinfo=timezone.utc)}
+    monkeypatch.setattr("services.source_ingestion.strategy_seed_builder._utc_now", lambda: clock["value"])
+    queue = DistillationJobQueue(config.job_queue_path, now=lambda: clock["value"].timestamp())
+    store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    sync = _make_registry_sync(config)
+
+    def lost_ack(request):
+        sync(request)
+        raise RuntimeError("timed out after Registry commit before queue acknowledgement")
+
+    worker = DistillationWorker(queue, store, registry_sync=lost_ack, retry_base_seconds=0)
+    source = _normalized_source(tenant_id="test")
+    job = worker.enqueue_from_source_record(source)
+    unowned = worker.enqueue_from_source_record(_normalized_source("legacy-unowned"))
+    first = worker.run_pending(now="2026-11-13T15:17:11Z", tenant_id="test")
+    assert first.failed == first.retried == 1
+    assert len(writes) == 1
+    original_checksum = registry[writes[0]]["entry"]["checksum"]
+
+    # Exercise the real capacity eviction, then recreate both queue/store objects.
+    clock["value"] = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    eviction_worker = DistillationWorker(
+        DistillationJobQueue(tmp_path / "eviction.sqlite"), store,
+    )
+    other = _normalized_source("other-source", tenant_id="test")
+    eviction_worker.enqueue_from_source_record(other)
+    assert eviction_worker.run_pending(tenant_id="test").created == 1
+    assert store.list_by_bundle(_versioned_bundle_id(source)) == []
+    if conflict == "tenant":
+        registry[writes[0]]["entry"]["metadata"]["tenant_id"] = "foreign"
+    elif conflict == "content":
+        registry[writes[0]]["entry"]["metadata"]["strategy_spec"]["title"] = "different"
+    before = copy.deepcopy(registry)
+
+    restarted_queue = DistillationJobQueue(config.job_queue_path)
+    restarted_store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    restarted = DistillationWorker(restarted_queue, restarted_store, registry_sync=sync, retry_base_seconds=0)
+    result = restarted.run_pending(now="2026-11-18T00:00:00Z", tenant_id="test")
+    receipt = DistillationJobQueue(config.job_queue_path).get(job.source_id, job.source_digest)
+    assert receipt is not None
+    if conflict:
+        assert result.failed == result.retried == 1
+        assert receipt.status == DistillationJobStatus.RETRY_WAIT
+        assert receipt.checksum is None
+    else:
+        assert result.registry_synced == 1
+        assert receipt.status == DistillationJobStatus.DONE
+        assert receipt.checksum == original_checksum
+        assert restarted.run_pending(tenant_id="test").processed == 0
+    assert registry == before
+    assert len(writes) == 1
+    assert restarted_queue.get(unowned.source_id, unowned.source_digest).status == DistillationJobStatus.PENDING
+
+
 # ---------------------------------------------------------------------------
 # AC-1: New normalized sources enqueue distillation jobs
 # ---------------------------------------------------------------------------
