@@ -1,6 +1,6 @@
 # BFF source review handoff
 
-Owner: Codex2. Reviewer: Codex (current canonical reassignment). Delivery target: `dev`.
+Owner: Codex2. Reviewer: Antigravity (current canonical reassignment). Delivery target: `dev`.
 This packet proves component behavior against owner HTTP contracts. It does
 not prove merged, deployed, accepted, or integrated two-meeting execution.
 
@@ -142,9 +142,13 @@ six cases also passed (3.77 s). The current-base ten-file regression passed
 247 tests, 100 warnings in 101.83 s (terminal exit 0). Exact commands are in
 `evidence.json`.
 
-Reviewer-family exception: the current explicit dispatch/canonical assignment
-selects Codex, in the same model family as owner Codex2, as already recorded in
-the rejecting review. This packet requests a fresh review; it claims no approval.
+Historical reviewer-family exception: earlier dispatch selected Codex, in the
+same model family as owner Codex2, as recorded in the rejecting review. Current
+canonical reassignment selects independent reviewer Antigravity. Re-handoff of
+unchanged head `96f12e1ed` exited 1 because its Reviewer trailer still named
+Codex. The additive review-metadata correction carries the current reviewer
+without rewriting published history or changing product source. This packet
+requests a fresh review; it claims no approval.
 
 ## Source-isolation review correction
 

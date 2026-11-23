@@ -1,8 +1,13 @@
 {
   "task_id": "BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "owner": "Codex2",
-  "reviewer": "Codex",
-  "reviewer_family_exception": "Current explicit dispatch/canonical reassignment assigns Codex; owner Codex2 and reviewer Codex share a model family, as recorded by the rejecting reviewer.",
+  "reviewer": "Antigravity",
+  "prior_reviewer_family_exception": "Earlier dispatch assigned Codex; owner Codex2 and reviewer Codex shared a model family, as recorded by the rejecting reviewer. The current canonical assignment replaces Codex with independent reviewer Antigravity.",
+  "review_admission_retry": {
+    "previous_head": "96f12e1edc1b0e0625a3e2492ddabddb61eee33d",
+    "rejection": "The previous head's Reviewer: Codex trailer names a reviewer replaced by audited reassignment; handoff exited 1 without entering review.",
+    "correction": "Update only task review metadata and publish an additive commit with Reviewer: Antigravity; preserve product source, existing validation, history and normal non-force publication."
+  },
   "review_status": "pending_independent_review",
   "branch": "task/BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "inspected_dev_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
