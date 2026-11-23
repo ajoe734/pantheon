@@ -19,6 +19,26 @@
     {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
+      "result": "302 passed, 100 warnings in 140.36s; human requirement and evidence_note continuation plus existing ten-file regression; bounded foreground terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'direct_human_reason or evidence_note_command' --tb=short",
+      "exit_code": 0,
+      "result": "20 passed, 124 deselected, 3 warnings in 14.33s; authenticated requirements/reload and both raw evidence_note commands against HTTP owner double; terminal exit collected"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/measure_resources.py",
+      "exit_code": 0,
+      "result": "100 owner rows, 100 projected; owner 772715 bytes, projection 1302250 bytes; synthetic ASCII data with bounded direct-human requirement; no writes"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Checkout-scoped interpreter/import checks passed after b3596a8eb"
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
       "result": "282 passed, 100 warnings in 120.84s; direct-human union/submit/return/rework + Persona input, original privacy/source regressions; bounded foreground terminal exit collected"
     },
     {
@@ -158,7 +178,9 @@
     "Readable paginated Research remains degraded through meetings and human_inbox with missing/available store and absent Consultation; rows and cursor survive two reloads with one owner call each",
     "Human-actionable owner union, lowercase true query and continuation href/cursor; direct human open/in_progress/returned use submit, Persona waiting_for_input uses provide_input; required actor and reviewer resumption explicit",
     "Authenticated real BFF inbox/ticket routes sharing one owner HTTP double: direct submit/return/rework, criterion and old evidence preserved, wrong approver and viewer denied, replay/stale/evidence validation, durable readback and disappearance after response",
-    "200 unrelated Persona rows before 105 direct human rows: one 100-row owner-filtered page, opaque continuation through original route, no duplicate IDs or per-ticket fanout, unrelated approver excluded and operator visibility retained"
+    "200 unrelated Persona rows before 105 direct human rows: one 100-row owner-filtered page, opaque continuation through original route, no duplicate IDs or per-ticket fanout, unrelated approver excluded and operator visibility retained",
+    "Direct-human reason/summary uses owner human_actionable description; preserves original human_requirement, return reason, requested deliverable and criterion; absent/null/blank legacy requirement explicitly unrecorded; two authenticated reloads, old meeting_review retained, one owner page/read, original record unchanged",
+    "Existing authenticated PATCH transparently forwards evidence_note title/body/optional source_refs for submit and provide_input, with/without evidence_refs; exact owner HTTP payload, signed actor, revision/idempotency/mismatch, readonly/tenant denial, owner full note receipt/readback, replay/stale and same-ticket resumption; HTTP doubles only, no claim of real note storage or atomicity"
   ],
   "residual_findings": [
     {
@@ -184,5 +206,11 @@
   "direct_human_reopened_head": "323ac0cf336aaae796f23d44ce25295666d253b6",
   "direct_human_source_anchor": "b1e162bf0",
   "direct_human_test_anchor": "e13c76d0e",
-  "research_human_filter_contract_head_inspected": "ad5dec939"
+  "research_human_filter_contract_head_inspected": "ad5dec939",
+  "human_requirement_note_anchor": "b3596a8eb599951e67614399f45827f121877758",
+  "human_requirement_owner_contract_heads_inspected": {
+    "research": "b99655d779b05e6c96fc3ebcce4b657d4d773511",
+    "consultation": "50c566653033bc6e944391d2f3c37c9885a54836",
+    "proof": "read-only source inspection, not integrated owner execution"
+  }
 }

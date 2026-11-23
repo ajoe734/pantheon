@@ -16,10 +16,10 @@ not prove merged, deployed, accepted, or integrated two-meeting execution.
   lists and `meeting_actions_not_recorded`. No historical record is modified.
   The meeting producer owns supplying live owner status and capabilities.
 * Existing `GET /bff/management/human-inbox` meetings contributor reads one
-  authorized `meeting_linked=true&action_state=waiting_for_input&page_size=100`
+  authorized `meeting_linked=true&human_actionable=true&page_size=100`
   Research owner page. Each original ticket produces one `meeting_action`
   entry, linked to the same meeting/action and original ticket facade. It
-  carries input reason, required material, original owner, actor required now,
+  carries the direct-human requirement or Persona input reason, required material, original owner, actor required now,
   resume owner, revision, due/review, overdue and original dates. A REVIEW
   disposition remains its own item and cannot deliver or accept ticket work.
 * Existing `GET /api/v1/research/tickets?meeting_linked=true` forwards owner,
@@ -29,9 +29,10 @@ not prove merged, deployed, accepted, or integrated two-meeting execution.
   cursor marks the aggregate partial, so its local total is not an archive
   census. Continue via the ticket facade; no archive walk or ticket fanout.
 * Existing ticket PATCH forwards the authenticated caller and verified tenant
-  to Research. `action=provide_input`, original `expected_revision`,
+  to Research. `action=submit` or `provide_input`, original `expected_revision`,
   `idempotency_key`, `evidence_refs` (owner-issued kind/artifact_id) and any
-  allowed review command are validated by the owner. An Idempotency-Key header
+  optional `evidence_note={title,body,source_refs?}` and allowed review command
+  are validated by the owner. An Idempotency-Key header
   supplies the body key; conflicting keys fail. PATCH requires an operator
   route role, and the owner checks its own finer role/actor/tenant/state rules.
   It returns the full durable owner receipt, human_input and history. Stale
@@ -56,8 +57,11 @@ route, new work store, scheduler, inbox, backfill or data migration is added.
 ## Resource acceptance
 
 See `resources.json` for reproducible simulated inputs and measured bytes:
-100 distinct waiting tickets with 2000-character deliverable, criterion and
-input reason: owner JSON 683570 bytes, inbox rows 1192200 bytes.
+100 distinct tickets (50 Persona input requests and 50 returned human
+assignments) with 2000-character deliverable, criterion, input/return reason
+and direct-human requirement: owner JSON 772715 bytes, inbox rows 1302250
+bytes. `measure_resources.py` prints these counts/bytes without writing files;
+this is synthetic ASCII input, not a maximum UTF-8 envelope or hosted data.
 Research HTTP success/error bodies have a 4 MiB cap; owner pages contain at
 most the requested page count (owner maximum 100). Exactly one new Research
 HTTP call per inbox read, zero per-ticket calls. The existing contributor has
@@ -239,3 +243,36 @@ the ten-file regression passed 282 tests, 100 warnings in 120.84 s. Both bounded
 foreground batches reached terminal exit 0. Diff budget and whitespace checks
 passed. This is a fresh exact-head review request, with no approval/merge,
 deployment or hosted acceptance claim.
+
+## Human requirement and inline evidence note continuation
+
+Source anchor `b3596a8eb` consumes the existing `description` included by R
+only in its authorized direct-human `human_actionable` page. M preserves the
+chair's bounded `human_requirement` there. Direct work now shows that actual
+requirement in `reason`/`summary`, rather than repeating the deliverable, and
+also retains it as `human_requirement`. Returned work shows its return reason
+while preserving the original requirement, prior evidence, deliverable and
+criterion. Absent/null/blank legacy requirements explicitly say they were not
+recorded; reads never backfill them. Persona assistance retains input_request
+reason and does not consume ticket description. No new owner query is added.
+Read-only source checks covered R `b99655d779b0` and M `50c566653033`; these
+are contract inspections of separate task worktrees, not integrated execution.
+
+The existing authenticated PATCH forwards `evidence_note={title,body,source_refs?}`
+without any new implementation or writer. Eight HTTP-contract cases cover
+direct `submit` and Persona `provide_input`, optional source refs and optional
+existing evidence refs. They verify the exact raw payload at the owner HTTP
+boundary, signed-in actor, original revision/header idempotency, mismatch
+rejection, read-only/tenant denial, duplicate/stale commands, full owner note
+receipt/detail readback, and disappearance from the original inbox on reload.
+Persona input retains existing submission refs. The boundary double emulates
+owner note receipts; it does not prove durable note insertion or atomicity.
+R's real-owner integration and the existing two-meeting/hosted proof owners
+retain those obligations. Twelve authenticated reason/reload cases also retain
+the legacy meeting_review item and one Research page call per reload.
+
+The focused continuation batch passed 20 tests in 14.33 s, terminal exit 0.
+The ten-file regression passed 302 tests, 100 warnings in 140.36 s, terminal
+exit 0. Checkout import validation and whitespace checks also passed.
+Resource bounds and residual owners above remain unchanged; the reproducible
+synthetic measurement now includes a 2000-character direct-human requirement.
