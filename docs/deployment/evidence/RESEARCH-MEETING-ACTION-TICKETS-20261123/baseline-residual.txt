@@ -1,0 +1,44 @@
+COMMAND: pytest tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing -q --disable-warnings
+EXIT: 1
+BASELINE: bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4, isolated git archive + checkout-scoped interpreter
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_bff_routes_distinguish_data_empty_unavailable_and_missing ________
+
+    def test_bff_routes_distinguish_data_empty_unavailable_and_missing():
+        ok = _bff(_StubOwner([_ROW]))
+        body = ok.get("/bff/artifacts?page_size=100", headers=_AUTH).json()
+>       assert body["page_info"]["total"] == 1 and body["meta"]["surfaces"]["artifact_list"] == {"status": "ok", "source": "service_client"}
+E       AssertionError: assert (1 == 1 and {'status': 'o...'typed_store'} == {'status': 'o...rvice_client'}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Differing items:
+E         {'source': 'typed_store'} != {'source': 'service_client'}
+E         Use -v to get more diff)
+
+tests/research_write_owner/test_artifact_read_owner.py:234: AssertionError
+=========================== short test summary info ============================
+FAILED tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing
+1 failed, 11 warnings in 4.39s
+
+TASK BRANCH broad-suite first failure (same assertion):
+.........F
+=================================== FAILURES ===================================
+________ test_bff_routes_distinguish_data_empty_unavailable_and_missing ________
+
+    def test_bff_routes_distinguish_data_empty_unavailable_and_missing():
+        ok = _bff(_StubOwner([_ROW]))
+        body = ok.get("/bff/artifacts?page_size=100", headers=_AUTH).json()
+>       assert body["page_info"]["total"] == 1 and body["meta"]["surfaces"]["artifact_list"] == {"status": "ok", "source": "service_client"}
+E       AssertionError: assert (1 == 1 and {'status': 'o...'typed_store'} == {'status': 'o...rvice_client'}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Differing items:
+E         {'source': 'typed_store'} != {'source': 'service_client'}
+E         Use -v to get more diff)
+
+tests/research_write_owner/test_artifact_read_owner.py:234: AssertionError
+=========================== short test summary info ============================
+FAILED tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 9 passed, 11 warnings in 6.51s

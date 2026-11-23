@@ -6017,6 +6017,27 @@
    "task": "MEETING-E2E-EXECUTION-AND-AUTH-20261121",
    "volume": "dev-paper-consultation-tokens (/issued/consultation-svc -> /run/pantheon-principals:ro)",
    "writer": "scripts/issue_dev_paper_principals.py refresh_files (_atomic_private writes /issued/consultation-svc/CONSULTATION_TELEMETRY_READ_TOKEN; not discovered by check_storage_manifest.py static inventory because token files under /run/pantheon-principals have no .json/.jsonl/.sqlite/.db suffix)"
+  },
+  {
+   "name": "meeting_output_dispatches.json (existing consultation dispatch ledger)",
+   "owner": "consultation-svc",
+   "writer": "services/consultation/meeting_outputs.py _DispatchLedger.put / _write_unlocked",
+   "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+   "register_class": "RC3",
+   "cadence": "Existing meeting close/owner dispatch only; <=9 scheduled meetings/week across 3 enrolled trading personas plus separately counted human-convened meetings; retries reuse source identity.",
+   "count_at_hosted_scale": "At most 8 adopted RW-01 assignments/origin (72/week) accepted by Research, plus existing formal proposal dispatches with their original semantics. No new collection or recurring writer.",
+   "size_per_day": "Owner-side measured ticket/note bytes in task storage.json. Consultation-specific frozen reference envelope bytes must be measured by MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 before integrated acceptance; no fabricated hosted value.",
+   "growth_per_day": "Reference allocation: 9/7 meetings/day x8 action refs/meeting x4096 evidence-metadata bytes = ~42.1 KB/day plus bounded immutable origin/decision fields; actual producer envelope and full-file rewrite amplification remain producer/RC3 measurement obligations.",
+   "cap": "Whole existing JSON ledger has no verified historical row/byte retention cap. The owner bounds each adopted assignment to16 KiB and8 refs/4096 bytes, but producer snapshot bounds are independently verified; this entry is not a bounded-writer claim.",
+   "cleanup": "Existing _write_unlocked atomically replaces one JSON file and removes failed temporary files; it does not prune historical dispatch entries. Whole-ledger retention belongs to RC3 WP3.1. Open obligations live only in Research tickets and cannot be aged out with minutes.",
+   "measurement_status": "producer-envelope pending; existing unbounded writer explicitly recorded",
+   "readers": [
+    "services/consultation/meeting_outputs.py"
+   ],
+   "bound_proof": {
+    "file": "services/consultation/meeting_outputs.py",
+    "contains": "os.replace(tmp_name, self.path)"
+   }
   }
  ]
 }

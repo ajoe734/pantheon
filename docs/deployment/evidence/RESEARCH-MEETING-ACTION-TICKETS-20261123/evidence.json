@@ -1,0 +1,101 @@
+{
+  "task_id": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "source_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
+  "summary": "Meeting-linked obligations use the existing RW-01 owner with scoped identity, atomic source reservation, CAS transitions, reviewable evidence and bounded pagination.",
+  "scope": [
+    "services/research/write_owner.py",
+    "services/research/main.py",
+    "services/research/tests/test_meeting_action_tickets.py",
+    "docs/operations/storage-manifest.json",
+    "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/"
+  ],
+  "verification": [
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres> timeout 180s .venv-pantheon/bin/python3 -m pytest tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "134 passed, 493 warnings in 66.71s",
+      "terminal_output": "validation.txt"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest",
+      "exit_code": 0,
+      "result": "10 tests OK",
+      "terminal_output": "storage-validation.txt"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed=true, failures=[]",
+      "terminal_output": "storage-check.json"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "no whitespace errors"
+    },
+    {
+      "command": "real Research HTTP + PostgreSQL13-case subset; read-only probe through same HTTP TestClient",
+      "exit_code": 0,
+      "result": "13 meeting action HTTP tests +12 legacy write-owner tests passed",
+      "terminal_output": "owner-validation.txt"
+    }
+  ],
+  "acceptance_coverage": [
+    {
+      "criterion": 1,
+      "proof": "8 simultaneous POSTs reserve one durable ID; later replay preserves revised history; divergent assignment returns409; source/series/owner/due and criterion round-trip through detail/list."
+    },
+    {
+      "criterion": 2,
+      "proof": "Strict signed JWT tenant/actor validation; foreign direct/list/note reads hidden; changed/deleted/unbound/foreign artifacts rejected; submitted evidence re-read on authorized acceptance; arbitrary status close and forged actor rejected."
+    },
+    {
+      "criterion": 3,
+      "proof": "Real owner HTTP paths cover Persona note->submit->return->corrected submit->accept, human request->permitted evidence->original Persona resume, same-ID and history preservation; generic membership ack rejected."
+    },
+    {
+      "criterion": 4,
+      "proof": "Existing listing executes filtered SQL LIMIT+keyset cursors; actual JSONB count/byte measurements and scheduled/human-invoked growth accounting in storage.json; existing chain writers registered; producer envelope/hosted figures explicitly pending producer tasks."
+    },
+    {
+      "criterion": 5,
+      "proof": "Pre-edit trace and retained historical callers documented in handoff.md; old generic experiment writer excluded only from meeting rows; residuals have named owner/class dispositions."
+    }
+  ],
+  "hosted_acceptance": {
+    "executed": false,
+    "probe": "probe.py",
+    "boundary": "Source component validation only; integrated normal Persona/meeting/BFF path and producer envelopes are verified by the original chain tasks on the deployed exact pair."
+  },
+  "runtime_budget": "storage.json",
+  "residual_findings": [
+    {
+      "id": "baseline-bff-artifact-source-metadata",
+      "class": "RC6",
+      "owner": "existing BFF research/read-source work package coordinator",
+      "test": "tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing",
+      "finding": "source metadata typed_store differs from expected service_client; same failure reproduced on unchanged baseline bd47d73bc",
+      "disposition": "Attach to existing RC6 owner; no one-off fix task and no BFF code edits in this task",
+      "evidence": "baseline-residual.txt"
+    },
+    {
+      "id": "whole-writer-retention",
+      "class": "RC3 WP3.1/3.3",
+      "owner": "storage retention/measurement work package",
+      "finding": "Existing tables/consultation ledger have no whole-history retention cap; per-origin/record caps enforced without deleting open obligations.",
+      "disposition": "Retain existing RC3 debt entry; hosted physical storage/WAL measurement required; no bounded-whole-table claim"
+    },
+    {
+      "id": "producer-integrated-proof",
+      "class": "RC2 WP2.3",
+      "owner": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 + PERSONA-MEETING-ACTION-EXECUTION-20261123 + BFF-MEETING-ACTION-HUMAN-INBOX-20261123 + integrated acceptance owner",
+      "finding": "Independent producer prompt/cycle reference budgets and genuine cross-meeting owner execution remain their scoped acceptance obligations.",
+      "disposition": "Contract and affected writers recorded; owner component fixtures must not be reported as integrated or hosted success."
+    }
+  ],
+  "handoff": "handoff.md",
+  "contract": "contract.md",
+  "independent_review": "Required from assigned Antigravity on exact PR/head; not manufactured by the owner."
+}
