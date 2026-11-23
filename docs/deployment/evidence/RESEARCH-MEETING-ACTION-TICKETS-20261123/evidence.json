@@ -3,6 +3,17 @@
   "owner": "Codex",
   "reviewer": "Antigravity",
   "source_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
+  "human_actionable_scope_correction": {
+    "request": "2026-11-23 operator reopen: one bounded page of both direct human assignments and Persona requests for human input",
+    "anchor": "16e204b04",
+    "filter": "Existing verified visibility AND (waiting_for_input OR assignee_kind=human AND state IN open,in_progress,returned), before SQL keyset/LIMIT",
+    "compatibility": "Optional false default preserves old query/cursor scope, original stores/indexes, owner/series filters, and ordinary RW-01 list shape",
+    "proof": "24 visible unrelated Persona rows sort before all four actionable rows; full two-row pages retain state/revision, reject foreign cursors, hide unrelated humans/tenants, preserve operator/admin/controller visibility; direct authenticated human submits, is returned, resubmits and is accepted; requested input resumes original Persona",
+    "validation": "human-actionable-validation.txt",
+    "runtime_budget_delta": "Read-only optional SQL predicate, on demand, at most page_size+1 (101) rows and 100 projected summaries; zero new persistent bytes, writes, daily growth, jobs, collections or cleanup; original storage.json and manifest caps/retention remain in force",
+    "consumer_owner": "BFF-MEETING-ACTION-HUMAN-INBOX-20261123; FE-MEETING-ACTION-FOLLOWTHROUGH-20261123 owns actual next transition display",
+    "review": "Fresh exact-head Antigravity review required; source component proof is not deployed/hosted acceptance"
+  },
   "ci_repair": {
     "record": "ci-repair.md",
     "returned_check": "Test sweep (shard 3)",
@@ -22,6 +33,18 @@
     "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/"
   ],
   "verification": [
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
+      "result": "16 passed, 161 warnings in 16.53s",
+      "terminal_output": "human-actionable-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py --disable-warnings",
+      "exit_code": 0,
+      "result": "151 passed, 523 warnings in 76.48s",
+      "terminal_output": "human-actionable-validation.txt"
+    },
     {
       "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres> timeout 180s .venv-pantheon/bin/python3 -m pytest tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py -q --disable-warnings",
       "exit_code": 0,

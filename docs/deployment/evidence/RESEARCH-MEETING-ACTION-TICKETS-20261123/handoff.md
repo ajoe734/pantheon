@@ -80,6 +80,39 @@ explicitly marked unbounded. Producer-specific prompt/cycle counts and measured
 bytes belong to the meeting and Persona tasks and remain unverified until their
 normal-entrypoint evidence; owner component tests do not substitute for that proof.
 
+## Human inbox scope correction (2026-11-23)
+
+The reopened owner scope adds `human_actionable=true` to the existing
+`meeting_linked=true` GET and RW-01 SQL query. See [contract.md](contract.md)
+for its exact predicate and authenticated visibility. BFF-MEETING-ACTION-HUMAN-INBOX-20261123
+should use this one bounded page instead of selecting only waiting_for_input or
+scanning ordinary Persona work. FE-MEETING-ACTION-FOLLOWTHROUGH-20261123 owns
+displaying `submit` for direct human assignments and `provide_input` for the
+Persona input path. Each PATCH still targets the original owner endpoint with
+the original verified principal, expected_revision and idempotency_key.
+
+The local real-PostgreSQL/Research-HTTP regression puts 24 visible but unrelated
+Persona records before every actionable row. Two-row pages still cover all four
+human obligations, including open, in-progress, returned and requested input,
+without exposing other humans' or tenants' rows to an unrelated viewer. Tenant
+operator/admin and existing controller reads retain their original visibility.
+The direct human path is exercised through saved note, submit, review return,
+corrected submission and acceptance; the separate Persona-input path still
+resumes the same Persona and ticket ID. Responses retain the current revision.
+
+No caller, table, index or writer is replaced by this optional read filter. The
+old owner/series/time/state queries and ordinary list shape serve their existing
+distinct callers. Cursor scope gains the true-filter flag; false/default cursors
+retain their old fingerprint. Storage cadence, count/size, growth/day, per-record
+caps and cleanup remain as recorded in storage.json and the chain manifest:
+this change adds zero persisted bytes, writes, recurring jobs or daily growth.
+Reads are on demand, one SQL page of at most page_size+1 rows (maximum 101),
+returning at most 100 summaries. Existing 256 KiB encoded ticket caps apply.
+
+Source validation and exact commands are recorded in human-actionable-validation.txt
+and evidence.json. Existing RC2 integration/hosted, RC3 retention and RC6 metadata
+residuals below retain their owners; this correction adds no new residual class.
+
 ## Residual findings and owning disposition
 
 1. **BFF saved-artifact surface metadata regression, RC6 existing research/read-source
