@@ -1,68 +1,22 @@
 # BFF source review handoff
 
-## Legacy REVIEW fixture authentication repair
+## Earlier repairs (condensed; exact commands and hashes in evidence.json)
 
-The operator transferred the isolated legacy fixture into this original task.
-Source/test anchor `978a51aa0` repairs only
-`acceptance/test_meeting_review_disposition.py`; the existing production
-contributor, executable probe, authorization and honest partial-source behavior
-remain unchanged. Current dev `2df217b50` (including Consultation owner #7766)
-was merged through `6346def72` before reproducing the failure.
-
-The fixture now installs the existing `OwnerReadContextMiddleware` and serves
-one locally configured Research HTTP endpoint through its existing urllib
-bridge. The real Research client must forward the viewer Bearer and selected
-tenant and request exactly `meeting_linked=true`, `human_actionable=true`,
-`page_size=100`. The transport returns an authorized empty `data`/`page_info`
-page. Two unchanged probe runs plus the final reload assert three owner GETs.
-Original pre/post-review assertions, restart persistence, viewer write denial
-and untouched legacy user meeting checks are retained. Acknowledging REVIEW
-still records a disposition independently from delivery of action work.
-
-The focused case failed before this correction, then passed (1 test, terminal
-exit 0); the entire acceptance file passed (4 tests, terminal exit 0). The eleven-file
-original regression, including the full architecture suite and genuine source
-outage/denial coverage, passed 384 tests in 170.56 s (terminal exit 0). Exact
-commands/results are recorded in evidence.json. No hosted run was
-performed by this fixture repair; hosted two-meeting proof remains with the
-existing chain owner. Existing residual findings below retain their owners;
-Consultation archive list scans remain visible at merged dev `2df217b50`.
-
-Runtime budget is unchanged: user-request cadence, one Research page of at
-most 100 rows/inbox read, 4 MiB owner reply cap, no persistent BFF writer or
-cache, no recurring job, zero daily storage growth. Request memory is released
-after response; local fixture files live in pytest tmp_path and follow pytest
-cleanup. No storage-manifest entry or product retention change is introduced.
-
-## Required architecture-gate repair
-
-PR #7761 was reopened after Smoke acceptance rejected
-`ResearchPortWiring.list_research_ticket_page` at head `ba53473eb` for its
-generic `**filters` signature. Source anchor `3ad5bb5a9` replaces that signature
-and the existing query's other adapter signatures with the actual bounded
-owner list parameters. The existing service caller now names those parameters
-too. Filter test anchor `8981dc0ef` verifies every supported query parameter
-through the normal authenticated route and the owner HTTP boundary, including
-owner/status/date cutoffs and omitted/true/false human-actionable selection.
-One owner request and the original opaque continuation receipt are preserved.
-
-The current dev base `454420828361de17e689e6d9ad307e12b4064d3c` was merged
-without rewriting the published PR history. No architecture guard, baseline,
-owner transition, storage record or permission rule changed. Runtime budget
-remains on-demand, one Research page of at most 100 rows per inbox read,
-4 MiB owner reply cap, no added cache, writer, recurring job or daily storage
-growth; request data is released after response. Existing resources.json
-measurements and owner responsibilities remain applicable. The residual
-findings below and in evidence.json retain their existing chain owners.
-
-Fresh bounded validation at `8981dc0ef`: eleven-file regression including the
-entire architecture suite and `test_five_domain_routers_have_no_direct_store_access`
-passed 384 tests, 100 warnings in 209.17 s (terminal exit 0). The actual committed
-Consultation producer `83fb536a6` composed with authenticated BFF detail passed
-17 tests in 5.91 s (terminal exit 0). Resource measurement exited 0 with the
-unchanged 772,715-byte owner page and 1,304,450-byte inbox projection. Hosted
-probe exited 77 (configuration missing), so no hosted acceptance is claimed.
-The manifest records exact commands, source/test blobs and regression log hash.
+- Legacy REVIEW fixture repair (`978a51aa0`): only
+  `acceptance/test_meeting_review_disposition.py` changed; it installs
+  `OwnerReadContextMiddleware` and a local Research HTTP endpoint, asserts
+  Bearer/tenant forwarding and `meeting_linked=true`, `human_actionable=true`,
+  `page_size=100`, three owner GETs. Acceptance file passed (4 tests, exit 0);
+  eleven-file regression passed 384 tests (exit 0).
+- Architecture-gate repair (`3ad5bb5a9`, `8981dc0ef`): the generic `**filters`
+  signature in `ResearchPortWiring.list_research_ticket_page` was replaced by
+  the bounded owner list parameters; filters verified through the authenticated
+  route and owner HTTP boundary. Regression passed 384 tests (exit 0);
+  Consultation producer composition passed 17 tests (exit 0). Hosted probe
+  exited 77 (configuration missing): no hosted acceptance is claimed.
+- Runtime budget unchanged: on-demand, one Research page of at most 100 rows
+  per inbox read, 4 MiB owner reply cap, no BFF writer/cache/recurring job,
+  zero daily storage growth, request memory released after response.
 
 Owner: Codex2. Reviewer: Antigravity (current canonical reassignment). Delivery target: `dev`.
 This packet proves component behavior against owner HTTP contracts. It does
