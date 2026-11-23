@@ -64,3 +64,27 @@ $ AI_NAME=Codex timeout 20s "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" blocke
 No terminal stdout/stderr. Terminal exit: 124 (timeout), not a successful blocker transition.
 
 Disposition: existing supervisor/TaskStore maintenance owner must reconcile the central lock; no lock/runtime/canonical JSON edits performed. Published code and evidence remain review-ready, but formal handoff/review/merge is pending. New head requires a fresh exact-head handoff after recovery. CI on bead97921 was queued/pending, not passed (Branch CI Gate 45127035729, Stage 0 45127035401, Canonical Review Gate 45127035412).
+
+2026-11-23 resumed worker, refresh commit 488097d5b
+Governed AI_NAME=Codex show returned terminal exit 0: canonical in_progress.
+Merged current dev a4f2f0b4e2b657afbc68f0a76bf755023169e063 without conflicts.
+No product code changes; upstream provider quota changes preserved exactly.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-loopback-postgres16> timeout 120s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+....................................                                     [100%]
+36 passed, 361 warnings in 27.69s
+Terminal exit status: 0 (including process teardown).
+
+$ timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest
+Ran 10 tests in 3.453s; OK. Terminal exit status: 0.
+$ timeout 30s .venv-pantheon/bin/python3 scripts/check_storage_manifest.py
+374 entries; failures=[]; passed=true. Terminal exit status: 0.
+$ python3 scripts/git/diff_budget.py --base origin/dev --head HEAD
+production +621/-31 net +590; test +703/-0 net +703;
+docs/evidence +1320/-6 net +1314 (before this recovery record).
+Terminal exit status: 0.
+$ git diff --check
+No whitespace errors. Terminal exit status: 0.
+
+Fresh canonical exact-head handoff/review remains required after publication.
+No merged/deployed/accepted claim; previous admission failures remain historical.

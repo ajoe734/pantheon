@@ -199,6 +199,27 @@ Prior independent approval is superseded by this reopened scope; a fresh
 Antigravity review of the exact PR/head is required. No merged, deployed or
 hosted-accepted claim is made. Existing residuals below retain their owners.
 
+## Resumed admission preparation (2026-11-23)
+
+Recovery source already contained the complete required_data implementation and
+193-pass regression evidence; no product code was changed in this continuation.
+Governed `AI_NAME=Codex .../ai-status.sh show` now returned successfully with
+canonical status in_progress. The earlier lock wait remains historical evidence,
+not evidence of a current lock holder or a passed handoff.
+
+Merged current dev a4f2f0b4e2b657afbc68f0a76bf755023169e063 in 488097d5b;
+the two upstream provider-health files are preserved from dev. The first merge
+commit attempt was rejected for missing trailers; the scoped worker_commit
+completed the same conflict-free merge with all required trailers. Actual
+HTTP/PostgreSQL tests rerun after refresh: 36 passed (27.69s), terminal exit 0.
+Storage validation: 10 tests OK; manifest passed=true; diff budget and whitespace
+checks exit 0. Exact commands/results are in required-data-validation.txt.
+
+This published head needs a new canonical handoff and independent Antigravity
+review; the previous approval is not reused. Canonical state records the actual
+admission result after publication. No merge, deployment or hosted acceptance is
+claimed. Existing RC2/RC3/RC6 residuals keep their owners and budgets unchanged.
+
 ## Residual findings and owning disposition
 
 0. **Canonical delivery admission contention, existing development tooling /

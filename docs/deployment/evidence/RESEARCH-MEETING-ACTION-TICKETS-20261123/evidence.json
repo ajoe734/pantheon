@@ -208,6 +208,14 @@
     "review": "Fresh assigned Antigravity exact-head review required after this reopened scope; previous approval is not reused.",
     "delivery": "Not merged, deployed or hosted accepted; original RC2/RC3/RC6 residual owners remain unchanged."
   },
+  "resumed_admission_preparation": {
+    "dev_base": "a4f2f0b4e2b657afbc68f0a76bf755023169e063",
+    "refresh_commit": "488097d5bfadf2a320ccd27dc9f21344ea0d499f",
+    "product_code_delta": "None; recovery source already contains required_data, inline note atomicity and historical reply recovery.",
+    "canonical_read": "Governed AI_NAME=Codex show returned exit 0, status in_progress. Prior admission lock wait is historical; fresh handoff still required.",
+    "validation": "required-data-validation.txt: refreshed HTTP/PostgreSQL suite 36 passed in 27.69s exit 0; storage unittest 10 OK exit 0; manifest passed=true exit 0; diff budget and whitespace checks exit 0.",
+    "delivery": "Fresh independent Antigravity exact-head review required; no merge, deployment or hosted acceptance claimed. Existing RC2/RC3/RC6 residual owners unchanged."
+  },
   "delivery_admission_hold": {
     "attempted_pr_head": "bead9792126c68844970b86778cfab15aedaa693",
     "handoff": "Blocked 306s acquiring shared canonical task-state.lock during preflight read_task_snapshot; owner interrupted only own process; terminal exit130, no canonical mutation reached.",
