@@ -7,17 +7,15 @@ import re
 from .fleet_classification import classify_persona_purpose
 
 
-def key_issued_at_ms(key: str) -> int:
-    """Use execute-plans' existing stable idk_<base36 ms>_<nonce> keys.
+def key_issued_at_ms(key: str) -> int | None:
+    """Optional ordering hint from FE keys; public keys remain opaque.
 
-    Opaque keys cannot support both bounded history and indefinite replay
-    protection. Reject them before mutation rather than timestamping a retry.
+    UUIDs and other existing caller keys use durable owner receipts instead.
+    Never assign arrival time: a retry must retain its original identity.
     """
     match = re.fullmatch(r"idk_([a-z0-9]{1,10})_[a-z0-9]{1,64}", key)
     stamp = int(match[1], 36) if match else 0
-    if not 0 < stamp <= 9999999999999:
-        raise ValueError("Paper risk Idempotency-Key must use idk_<base36 issued milliseconds>_<nonce>")
-    return stamp
+    return stamp if 0 < stamp <= 9999999999999 else None
 
 
 def paper_pool_id(raw: Mapping[str, Any]) -> str | None:

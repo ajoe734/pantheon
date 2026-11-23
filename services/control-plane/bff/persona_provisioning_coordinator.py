@@ -5311,7 +5311,7 @@ class PersonaProvisioningCoordinator:
 
     def change_paper_risk_profile(
         self, *, tenant_id: str, persona_id: str, pool_id: str,
-        profile: str, request_id: str, request_hash: str, requested_by: str, issued_at_ms: int,
+        profile: str, request_id: str, request_hash: str, requested_by: str, issued_at_ms: int | None,
     ) -> dict[str, Any]:
         before = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
         path = f"/api/capital-pools/{_path_id(pool_id)}"
@@ -5334,9 +5334,10 @@ class PersonaProvisioningCoordinator:
                 or receipt.get("issued_at_ms") != issued_at_ms):
             reason = ("paper_risk_change_idempotency_conflict" if receipt else
                       "paper_risk_change_key_stale" if
-                      (issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)) or
-                       issued_at_ms < int(((meta.get("risk_profile_change_receipts") or {}).get(
-                           (meta.get("risk_profile_change") or {}).get("request_id")) or {}).get("issued_at_ms", 0))) else
+                      (issued_at_ms is None or
+                       issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)) or
+                       issued_at_ms < max((r.get("issued_at_ms") or 0 for r in
+                                          (meta.get("risk_profile_change_receipts") or {}).values()), default=0)) else
                       "paper_risk_change_revision_conflict" if
                       int((meta.get("risk_profile_change") or {}).get("revision", 0)) != before["revision"]
                       else "paper_risk_change_not_committed")

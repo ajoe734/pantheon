@@ -1,13 +1,15 @@
 """Latest paper risk intent, separate from immutable Persona creation evidence.
 
 The pool row is the ordering authority. A bounded receipt window and durable
-issued-time watermark reject evicted keys without exhausting lifetime edits.
+issued-time watermark reject timestamped replays. Opaque receipts retire to
+the existing durable audit store before eviction; retries never get a new time.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
 import time
+import hashlib
 from typing import Any
 
 from .pg_store import CapitalPool, CapitalPoolError, utc_now
@@ -132,7 +134,7 @@ def read_change(pool: CapitalPool, *, tenant_id: str, persona_id: str,
 
 
 def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
-                   reader: Any, loader: Any) -> CapitalPool:
+                   reader: Any, loader: Any, receipt_reader: Any = None, receipt_archiver: Any = None) -> CapitalPool:
     validate_scope(pool, tenant_id, body.expected_persona_id)
     meta = deepcopy(pool.metadata or {})
     intent = meta.get("risk_profile_change") or {}
@@ -148,16 +150,23 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
     else:
         if body.expected_revision != revision:
             raise CapitalPoolError("paper_risk_change_revision_conflict")
-        # This timestamp comes from the stable client key, never from retry
-        # arrival time. A fresh BFF read cannot turn an evicted key into a new
-        # edit. The watermark survives reload and only advances under row lock.
-        if body.issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)):
-            raise CapitalPoolError("paper_risk_change_key_stale")
-        latest = receipts.get(intent.get("request_id"), {})
-        if body.issued_at_ms < int(latest.get("issued_at_ms", 0)):
-            raise CapitalPoolError("paper_risk_change_key_stale")
-        if body.issued_at_ms > int(time.time() * 1000) + 300_000:
-            raise CapitalPoolError("paper_risk_change_key_future")
+        # Read opaque tombstones under the pool lock, before admitting a new
+        # intent. Archive failure/read failure must fail closed, never forget.
+        if body.issued_at_ms is None:
+            if receipt_reader is None or receipt_archiver is None:
+                raise CapitalPoolError("paper_risk_change_receipt_store_unavailable")
+            retired = receipt_reader(body.request_id)
+            if retired:
+                if retired["request_hash"] != body.request_hash or retired["profile"] != body.requested_profile:
+                    raise CapitalPoolError("paper_risk_change_idempotency_conflict")
+                raise CapitalPoolError("paper_risk_change_key_stale")
+        else:
+            if body.issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)):
+                raise CapitalPoolError("paper_risk_change_key_stale")
+            if body.issued_at_ms < max((r.get("issued_at_ms") or 0 for r in receipts.values()), default=0):
+                raise CapitalPoolError("paper_risk_change_key_stale")
+            if body.issued_at_ms > int(time.time() * 1000) + 300_000:
+                raise CapitalPoolError("paper_risk_change_key_future")
         before = read_change(pool, tenant_id=tenant_id, persona_id=body.expected_persona_id,
                              reader=reader, loader=loader)
         revision += 1
@@ -172,11 +181,19 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
             # The current receipt remains the authority for same-key approval
             # reconciliation, independent of how many edits preceded it.
             oldest = min((key for key in receipts if key != body.request_id),
-                         key=lambda key: receipts[key]["issued_at_ms"])
+                         key=lambda key: receipts[key]["revision"])
             retired = receipts.pop(oldest)
-            meta["risk_profile_change_watermark_ms"] = max(
-                int(meta.get("risk_profile_change_watermark_ms", 0)), retired["issued_at_ms"],
-            )
+            if retired.get("issued_at_ms") is None:
+                if receipt_archiver is None:
+                    raise CapitalPoolError("paper_risk_change_receipt_store_unavailable")
+                # Archive before dropping from the row. If the pool commit then
+                # fails, its still-present receipt wins on retry. No accepted
+                # opaque key can fall through the gap between these stores.
+                receipt_archiver(oldest, retired)
+            else:
+                meta["risk_profile_change_watermark_ms"] = max(
+                    int(meta.get("risk_profile_change_watermark_ms", 0)), retired["issued_at_ms"],
+                )
         # Legacy aliases must agree before a genuine edit translates them.
         prior_profiles = [meta[key] for key in PROFILE_ALIASES if meta.get(key) not in (None, "")]
         if any(not isinstance(p, str) or p not in PROFILES for p in prior_profiles) or len(set(prior_profiles)) > 1:
@@ -208,3 +225,44 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
         if not _bound(candidate, verified):
             raise CapitalPoolError("paper_risk_change_binding_readback_failed")
     return candidate
+
+
+class RiskChangeReceipts:
+    """Exact opaque tombstones in the existing Capital audit owner store.
+
+    Keep these events for the pool lifetime. Any audit retention implementation
+    must preserve them or move them to an equally durable exact-key archive.
+    Pool locking serializes archive admission. An archive precedes eviction,
+    so a failed pool commit only leaves a harmless duplicate durable receipt.
+    """
+
+    def __init__(self, store: Any, tenant: str, pool_id: str, actor_id: str, actor_role: str):
+        self.store, self.tenant, self.pool_id = store, tenant, pool_id
+        self.actor_id, self.actor_role = actor_id, actor_role
+
+    def _id(self, request_id: str) -> str:
+        return "paper-risk-receipt-" + hashlib.sha256(
+            f"{self.tenant}\0{self.pool_id}\0{request_id}".encode()
+        ).hexdigest()
+
+    def read(self, request_id: str) -> dict[str, Any] | None:
+        event = self.store.get_event(self._id(request_id), self.tenant)
+        if event is None:
+            return None
+        if (event.get("resource_id") != self.pool_id or event.get("event_type") != "paper_risk_receipt_retired"
+                or event.get("detail", {}).get("request_id") != request_id):
+            raise CapitalPoolError("paper_risk_change_receipt_store_invalid")
+        return event["detail"]["receipt"]
+
+    def archive(self, request_id: str, receipt: dict[str, Any]) -> None:
+        existing = self.read(request_id)
+        if existing is not None:
+            if existing != receipt:
+                raise CapitalPoolError("paper_risk_change_idempotency_conflict")
+            return
+        self.store.append_event(
+            event_id=self._id(request_id), tenant_id=self.tenant,
+            event_type="paper_risk_receipt_retired", resource_type="CapitalPool", resource_id=self.pool_id,
+            actor_id=self.actor_id, actor_role=self.actor_role,
+            detail={"request_id": request_id, "receipt": receipt},
+        )

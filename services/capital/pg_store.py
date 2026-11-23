@@ -411,6 +411,7 @@ class JsonlCapitalAuditStore:
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         try:
             from .audit_log import append_audit_event
@@ -426,7 +427,19 @@ class JsonlCapitalAuditStore:
             detail=detail,
             audit_log_path=str(self.audit_log_path),
             tenant_id=tenant_id,
+            event_id=event_id,
         )
+
+    def get_event(self, event_id: str, tenant_id: str) -> dict[str, Any] | None:
+        if not self.audit_log_path.exists():
+            return None
+        # Stream the existing fallback journal; do not load history into RAM.
+        with self.audit_log_path.open(encoding="utf-8") as source:
+            for line in source:
+                event = json.loads(line) if line.strip() else {}
+                if event.get("event_id") == event_id and event.get("tenant_id") == tenant_id:
+                    return event
+        return None
 
     def list_events(
         self,
@@ -479,8 +492,9 @@ class PostgresCapitalAuditStore:
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
-        event_id = str(uuid.uuid4())
+        event_id = event_id or str(uuid.uuid4())
         event = {
             "event_id": event_id,
             "tenant_id": tenant_id,
@@ -494,6 +508,14 @@ class PostgresCapitalAuditStore:
         }
         _put_record(self._records, event_id, event, tenant_id)
         return event_id
+
+    def get_event(self, event_id: str, tenant_id: str) -> dict[str, Any] | None:
+        with self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT payload FROM {self._records.table} WHERE record_id=%s AND tenant_id=%s",
+                (event_id, tenant_id),
+            ).fetchone()
+        return (row[0] if isinstance(row[0], dict) else json.loads(row[0])) if row else None
 
     def list_events(
         self,

@@ -438,16 +438,18 @@ class CapitalBoundaryService:
         return updated
 
     def change_paper_risk_profile(self, pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPool:
-        from .profile_change import change_profile
+        from .profile_change import change_profile, RiskChangeReceipts
 
         self._authorize("CapitalPool", "update_status", body.actor_role)
         pool = self.get_pool(pool_id)
         tenant = _current_tenant() or _tenant_of(pool)
+        receipts = RiskChangeReceipts(self.audit_store, tenant, pool_id, body.actor_id, body.actor_role)
         with self._CAPITAL_STATE_APPLY_LOCK:
             updated, changed = self.pool_store.mutate_paper_risk_profile(
                 pool_id, lambda current: change_profile(
                     current, body, tenant_id=tenant,
                     reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader,
+                    receipt_reader=receipts.read, receipt_archiver=receipts.archive,
                 ),
             )
         if changed:

@@ -18061,10 +18061,7 @@ class PersonaService:
                 base[field] = payload[field]
         if "risk" in payload:
             if risk_pool_id:
-                try:
-                    issued_at_ms = key_issued_at_ms(resolved_key)
-                except ValueError as exc:
-                    raise self._bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid risk edit key", str(exc)) from exc
+                issued_at_ms = key_issued_at_ms(resolved_key)
                 try:
                     risk_request_id = _stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
                                                          "actor": identity.operator_id, "key": resolved_key})
