@@ -347,12 +347,20 @@ def evaluate_participant_action_capability(
     if not version:
         return deny("no_workflow", reason)
     surface = version["surface"]
-    tools = set(snapshot.get("effective_tools") or []) & set(PERSONA_AGENT_TOOL_PROFILE["allow"])
+    # A paper_advisory receipt is the advisory purpose's ceiling only. For the
+    # registered daily actor it carries no daily grant either way, so the daily
+    # ceiling derives from the broker profile, the active harness and owner
+    # policy below. Explicit restrictions/expiry above and below still apply.
+    advisory_receipt = meta.get("scope") == "paper_advisory" and run_purpose == "daily_cycle"
+    granted_tools = PERSONA_AGENT_TOOL_PROFILE["allow"] if advisory_receipt else snapshot.get("effective_tools")
+    tools = set(granted_tools or []) & set(PERSONA_AGENT_TOOL_PROFILE["allow"])
     # 'read' is the established harness permission for brokered decision reads.
     harness_tools = set(surface["guardrails"]["allowed_tools"])
     if "read" not in harness_tools:
         tools &= harness_tools
     workflows = set(snapshot.get("effective_workflows") or [])
+    if advisory_receipt:
+        workflows.add("persona_daily_cycle")  # only valid with the five-step active harness checked below
     if persona.get("tool_profile_id") or persona.get("route_policy_id"):
         resolved = (resolver or PersonaPolicyResolver()).resolve(SimpleNamespace(**persona))
         if persona.get("tool_profile_id"):
@@ -376,7 +384,8 @@ def evaluate_participant_action_capability(
     if required - accessible or required & restrictions:
         return deny("restricted_data", "deliverable_data_not_accessible")
     deliverable = (requirements or {}).get("deliverable_kind", "research_note")
-    if deliverable != "research_note" or "research_note" not in snapshot.get("allowed_capabilities", []):
+    granted = advisory_receipt or "research_note" in snapshot.get("allowed_capabilities", [])
+    if deliverable != "research_note" or not granted:
         return deny("downgraded_access", "deliverable_not_granted")
     out.update(status="allowed", reason="owner_access_and_daily_workflow_verified",
                blocked_reason=None, effective_tools=sorted(tools), effective_workflows=sorted(workflows),

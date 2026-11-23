@@ -1119,12 +1119,17 @@ class PersistentCapabilitySnapshotOwner:
             )
         return CapabilitySnapshotBody.model_validate(record)
 
-    def get_for_persona(self, persona_id: str) -> CapabilitySnapshotBody:
+    def get_for_persona(self, persona_id: str, run_purpose: str | None = None) -> CapabilitySnapshotBody:
         matches = [
             CapabilitySnapshotBody.model_validate(record)
             for record in self._records.list_all()
             if str(record.get("persona_id") or "") == persona_id
         ]
+        if run_purpose == "daily_cycle":
+            # A later paper_advisory receipt must not shadow an explicit daily
+            # grant, denial or expiry; it is only the fallback when none exists.
+            explicit = [m for m in matches if (m.metadata or {}).get("scope") != "paper_advisory"]
+            matches = explicit or matches
         if not matches:
             raise CapabilitySnapshotNotFound(
                 f"Capability snapshot for Persona {persona_id!r} not found"
@@ -1870,7 +1875,7 @@ def create_app(
             if persona.get("tenant_id") != admitted:
                 raise HTTPException(status_code=404, detail="Persona not found")
             try:
-                snapshot = persistent_capability_owner.get_for_persona(persona_id).model_dump(mode="json")
+                snapshot = persistent_capability_owner.get_for_persona(persona_id, run_purpose).model_dump(mode="json")
             except CapabilitySnapshotNotFound:
                 snapshot = None
             except Exception:

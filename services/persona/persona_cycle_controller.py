@@ -1073,7 +1073,7 @@ class CycleOwners:
             if not hasattr(self, "_action_capability_owner"):
                 self._action_capability_owner = build_capability_snapshot_owner()
             snapshots = self._action_capability_owner
-            snapshot = snapshots.get_for_persona(persona["persona_id"]).model_dump(mode="json")
+            snapshot = snapshots.get_for_persona(persona["persona_id"], "daily_cycle").model_dump(mode="json")
             return evaluate_participant_action_capability(fresh, snapshot)
         except Exception:
             return evaluate_participant_action_capability(persona, None, owner_available=False)
@@ -1124,7 +1124,11 @@ class CycleOwners:
         if not digest or (ref.get("checksum") and ref["checksum"] != digest):
             raise ValueError("evidence_checksum_mismatch")
         # Limit text, preserve the owner identity/checksum; never fetch arbitrary URLs/private memory.
-        excerpt = str(saved.get("body") or saved.get("summary") or saved.get("title") or "")
+        # A title/id/checksum projection is not content: reject it so the ticket keeps
+        # asking for the genuinely missing input instead of citing a label.
+        excerpt = str(saved.get("body") or saved.get("summary") or "").strip()
+        if not excerpt or excerpt in {aid, str(saved.get("title") or "").strip()}:
+            raise ValueError("evidence_content_missing")
         return {"kind": kind, "artifact_id": aid, "checksum": digest,
                 "excerpt": excerpt.encode()[:800].decode(errors="ignore")}
 

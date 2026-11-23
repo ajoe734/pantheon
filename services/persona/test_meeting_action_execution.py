@@ -402,3 +402,43 @@ def test_meeting_action_budget_measurement(action_system):
     target = os.getenv("PERSONA_ACTION_MEASUREMENT_PATH")
     if target:
         Path(target).write_text(json.dumps(report, indent=2) + "\n")
+
+
+def test_paper_advisory_receipt_does_not_cap_daily_cycle_and_explicit_limits_win(action_system):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    explicit = cap.get_for_persona(persona["persona_id"]).model_dump()
+    # Actual hosted shape: owner-verified advisory receipt, persona_opinion only, no tools/workflows.
+    advisory = {**explicit, "snapshot_id": "cap-advisory-" + persona["persona_id"], "capabilities": ["persona_opinion"],
+                "allowed_capabilities": ["persona_opinion"], "effective_tools": [], "effective_workflows": [],
+                "generated_at": "2026-11-24T00:00:00Z",
+                "metadata": {"canonical_write_authority": "persona_service", "scope": "paper_advisory"}}
+    evaluate = lambda p=persona, s=advisory, **kw: evaluate_participant_action_capability(p, s, **kw)
+    assert evaluate()["executable"] and evaluate()["allowed_deliverables"] == ["research_note"]
+    assert not evaluate(run_purpose="consultation")["executable"]  # advisory receipt grants nothing outside daily purpose
+    assert not evaluate(run_purpose="consultation")["can_mutate_trading_state"]
+    assert evaluate({**persona, "status": "suspended"})["status"] == "suspended"
+    assert evaluate({**persona, "metadata": {**persona["metadata"], "persona_harness": {}}})["status"] == "no_workflow"
+    assert evaluate(s={**advisory, "restrictions": ["advisory_only"]})["status"] == "advisory_only"
+    assert evaluate(requirements={"required_data": ["foreign-private-bank"]})["status"] == "restricted_data"
+    assert evaluate(s={**advisory, "metadata": {**advisory["metadata"], "access_status": "expired"}})["status"] == "expired_access"
+    assert evaluate(s={**advisory, "metadata": {**advisory["metadata"], "canonical_write_authority": "bff"}})["status"] == "downgraded_access"
+    # A later advisory receipt never shadows an explicit daily denial.
+    cap.upsert(UpsertCapabilitySnapshotRequest(actor_id="operator", snapshot_id="cap-denied",
+        persona_id=persona["persona_id"], capabilities=["research_note"], restrictions=["no_execution"],
+        effective_tools=PERSONA_AGENT_TOOL_PROFILE["allow"], effective_workflows=["persona_daily_cycle"],
+        generated_at="2026-11-23T01:00:00Z"))
+    cap.upsert(UpsertCapabilitySnapshotRequest(actor_id="operator", snapshot_id=advisory["snapshot_id"],
+        persona_id=persona["persona_id"], capabilities=["persona_opinion"], generated_at="2026-11-24T00:00:00Z",
+        metadata={"canonical_write_authority": "persona_service", "scope": "paper_advisory"}))
+    assert cap.get_for_persona(persona["persona_id"], "daily_cycle").snapshot_id == "cap-denied"
+    assert not controller.owners.action_capability(persona)["executable"]
+
+
+def test_title_only_research_artifact_is_not_evidence(action_system):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    controller.owners._action_http = lambda *a, **k: {"data": {"artifact_id": "art-1", "title": "Document title only",
+        "checksum": "abc", "tenant_id": "tenant-a"}}
+    with pytest.raises(ValueError, match="evidence_content_missing"):
+        controller.owners._action_evidence(persona, {"kind": "research_artifact", "artifact_id": "art-1"}, "t")
