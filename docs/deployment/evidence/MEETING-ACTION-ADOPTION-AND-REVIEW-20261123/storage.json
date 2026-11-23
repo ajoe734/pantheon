@@ -40,7 +40,7 @@
     "evidence_contents_bytes_each": 16384,
     "shared_action_context_bytes": 524288,
     "owner_reply_bytes": 262144,
-    "capability_reads_per_execution_attempt": "one per participant before rounds (at most 5), plus one recheck per distinct assigned participant at adoption (at most 5)",
+    "capability_reads_per_execution_attempt": "one per participant before rounds (at most 5), plus one per explicitly adopted Persona action (at most 8), with that action's own required_data, not a union per participant; frozen-close retries do not re-query",
     "case_file_bytes": 262144,
     "case_file_items": "existing four groups at 8 each plus at most 24 action citation items; original excerpt/subject-field total 12000 characters plus at most 9600 action excerpt characters",
     "provider_request_bytes": 2097152,
@@ -91,5 +91,12 @@
     "persistent_writer_delta": "0 new rows, events or bytes relative to the unchanged schedule event payload; 0 added network calls or timers. Original two-meeting component measurements above remain historical workload measurements, not new hosted observations.",
     "replay_proof": "24 interleaved stable subjects retain their independent unfinished scans through existing JSONL and fake-PostgreSQL lifecycle replay. Exactly one cadence slot, no migration writes, tenant/chair/type/subject misses do not return another series. Normal direct/HTTP two-round close matrix covers one chair alternating two MT-2 subjects as well as two MT-1 chairs.",
     "manifest_owner": "R consumes this correction to the earlier single-review-slot assumption; RC3 retains whole-archive/series-count retention ownership."
+  },
+  "data_requirement_revision": {
+    "field_cap": "Optional required_data retains omission vs []. At most 8 unique, normalized nonempty dataset IDs, each <=256 characters, combined JSON default ASCII serialization <=4096 bytes; serialized object field adds 19 bytes around the list (<=4115 bytes including braces, <=4116 conservative extra bytes with comma). Owner command/assignment remains capped at 16 KiB. No access grant.",
+    "cadence_and_count": "Existing convene/two-round/close cadence only; <=8 adopted actions/meeting, <=72/week across the three Personas plus 8*H/day human-convened work. At most 5 pre-read +8 adoption capability GETs/meeting (<=117/week or 16.72/day plus 13*H/day), each uses run_purpose=daily_cycle and repeated required_data. Frozen-close retries make 0 capability GETs. Each owner reply <=16 KiB read, existing total prompt cap 2 MiB.",
+    "growth_per_day": "For required_data alone, <=4116 extra serialized bytes per optional occurrence. Each original ticket origin and each existing dispatch request can add <=296352/week (42336/day rounded up) plus 32928*H/day at maximal 8 actions/meeting. <=32928 bytes per occurrence of an eight-action meeting list; <=12348 per occurrence of the three prior-action snapshots. Existing lifecycle events may repeat synthesis/actions/context, so multiply by actual emitted occurrences rather than treating logical ticket growth as physical lifecycle growth. Existing 256 KiB case, 512 KiB shared context, 8 KiB snapshot, 2 MiB prompt and owner 16 KiB command caps still apply and may reject a maximal combined envelope. Prior measurements remain historical small-workload figures, not new hosted measurements.",
+    "cap_and_cleanup": "0 new collections, rows, timers, files or dispatch writes. Existing ledger upserts and lifecycle cadence persist. Dataset metadata lives and is cleaned with its original ticket/meeting/dispatch owner; existing whole-archive cleanup/cap debt remains RC3 WP3.1/3.3. No history deletion or unfinished scan eviction.",
+    "manifest_owner": "R / RESEARCH-MEETING-ACTION-TICKETS-20261123 consumes these revised bounds; shared manifest remains owned there."
   }
 }

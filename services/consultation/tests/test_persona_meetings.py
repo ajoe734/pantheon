@@ -3768,13 +3768,14 @@ def test_data_aware_chair_three_personas_normal_engine(
             'convened_by': {'kind': 'persona', 'id': pids[0]}, 'participants': list(pids),
             'subject_ref': 'persona:' + pids[0]}, idempotency_key='data-aware')[0]
     owner = action_owner_contract
-    bodies = []
+    bodies, lost_bodies = [], []
     def lost_receipt_once(method, url, headers, body):
         status, reply = owner.send(method, url, headers, body)
         if method == 'POST':
             bodies.append(copy.deepcopy(body))
-            if len(bodies) == 1:
-                return 503, {}  # owner committed before the response was lost
+            if body['meeting_action'].get('required_data') and not lost_bodies:
+                lost_bodies.append(copy.deepcopy(body))
+                return 503, {}  # data-aware owner origin committed before the reply was lost
         return status, reply
     with output_routing_context(transport=lost_receipt_once, store_path=tmp_path / 'data-dispatch.json'):
         from services.consultation.meeting_outputs import MeetingOutputRoutingError
@@ -3785,7 +3786,7 @@ def test_data_aware_chair_three_personas_normal_engine(
         assert (len(calls), len(seen)) == requests_at_freeze
     assert result['status'] == 'closed' and len(result['rounds']) == 2
     assert result['synthesis']['proposals'] == []
-    assert bodies[-1] == bodies[0]  # exact original request on ambiguous retry
+    assert lost_bodies and bodies[-1] == lost_bodies[0]  # exact data-aware request on ambiguous retry
     assert len(owner.tickets) == (7 if feed_access else 4)
     for row in owner.tickets.values():
         origin = row['meeting_action']
@@ -3819,3 +3820,31 @@ def test_adoption_invalid_data_never_calls_capability_owner(monkeypatch, dataset
     actions, _, rejected = meetings_mod._validate_adopted_actions(
         {'actions': [{**_adopted_action(), 'required_data': datasets}]}, meeting, {'facts:source'})
     assert not actions and rejected == [{'index': 0, 'reason': 'invalid_required_data'}]
+
+
+@pytest.mark.parametrize('bad_requirement', [None, ['other-feed']])
+def test_data_aware_dispatch_does_not_freeze_changed_or_missing_requirement(tmp_path, monkeypatch, bad_requirement):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'data-receipt',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'required_data': ['tw_price_daily']}]}}
+    owner = _ActionResearchBoundary()
+    requests = []
+    def transport(method, url, headers, body):
+        requests.append(copy.deepcopy(body))
+        status, reply = owner(method, url, headers, body)
+        if len(requests) == 1:
+            if bad_requirement is None:
+                reply['meeting_action'].pop('required_data')
+            else:
+                reply['meeting_action']['required_data'] = bad_requirement
+        return status, reply
+    ledger = tmp_path / 'data-receipt.json'
+    first = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert first['state'] == 'dispatch_pending' and not first.get('ticket_id')
+    assert first['dispatch_error'] == 'research_owner_missing_or_invalid_ticket_receipt'
+    second = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert second['ticket_id'] == 'owner-issued-ticket-1' and second['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert requests[0] == requests[1] and len(requests) == 2 and len(owner.tickets) == 1

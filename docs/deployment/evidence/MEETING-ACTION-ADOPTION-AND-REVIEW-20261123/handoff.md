@@ -1,6 +1,6 @@
 # Meeting action adoption and review
 
-Owner Codex2; assigned reviewer Codex. Source review pending. No hosted or natural
+Owner Codex2; assigned reviewer Antigravity. Source review pending. No hosted or natural
 execution acceptance has been performed. RC2 WP2.3, cross-reference RC6 meetings
 and MEETING-HOSTED-ACCEPTANCE-20261115.
 
@@ -277,9 +277,9 @@ retention debt is explicit. New model requests cap at 2 MiB, case files at
   baked-in secret or operator impersonation; missing credentials are retryable
   owner-unavailable. Hosted activation is pending that deployment wiring and the
   Research/Persona owner changes; no infrastructure files changed here.
-- Coordinator/reviewer: canonical assignment is Codex2 -> Codex (same family).
-  Apply the repository's independent-family capacity rule, recording an actual
-  exception if needed; this owner has not manufactured capacity or approval.
+- Coordinator/reviewer: the earlier same-family review hold was repaired by
+  canonical reassignment to Antigravity before this data-aware revision.
+  Fresh independent exact-head review is still required; no approval is inherited.
 - R/B existing meeting followthrough tasks: the inspected Research ad5dec939
   human-actionable summary does not yet include ticket.description, even though
   detail stores/returns it. R's list projection and B's inbox reason projection
@@ -289,3 +289,50 @@ retention debt is explicit. New model requests cap at 2 MiB, case files at
 - Original MEETING-HOSTED-ACCEPTANCE-20261115 / final two-meeting proof owner:
   natural second meeting, real authorized human input, actual Persona execution,
   exact hosted pair and browser evidence remain pending.
+
+
+## Specific deliverable data requirements
+
+The current dev baseline remains 0c806ffed; current callers are the same normal
+chair schema -> _validate_adopted_actions -> existing dispatch -> RW-01 origin
+and action_snapshot readback. Persona's existing capability endpoint accepts
+repeated required_data query parameters with run_purpose=daily_cycle. Each
+adopted Persona action is now rechecked with its own normalized requirements;
+the obsolete per-Persona generic recheck could authorize a note but fail to
+assess the licensed-feed analysis assigned beside it. No supported caller
+needs that generic recheck as assignment authority. The pre-read still uses
+the generic capability for discussing supplied evidence. Nonparticipants
+cannot gain admission through a successful capability response.
+
+Chair prompt/schema allow optional required_data: <=8 unique nonempty dataset
+IDs, each <=256 characters, <=4096 serialized bytes at validation. Omission
+and explicit [] are retained. Requirements are copied unchanged into the
+existing meeting_action origin and minutes/prior-action snapshot. Genuine
+owner receipts must echo them; missing or changed requirements stay pending.
+No dataset IDs, licensing grants or human recipients are inferred. A specific
+denial records capability status/reason and requirements in rejected_actions;
+it never silently redirects a transient outage or data denial to a human.
+Explicit human-only document work still targets the verified operator inbox.
+
+Normal convene/two-round/close tests use all three enrolled identity shapes,
+active validated harnesses, paper_advisory snapshots with no accessible feeds,
+and real frozen Persona policy (4c63fa4ad) plus scripted/frozen RW-01 create/list
+(6147b4be9). Evidence-only notes proceed despite default gated market sources;
+licensed-feed actions are denied per action and preserve the exact reason.
+The same data-dependent actions proceed when the owner actually reports both
+feeds accessible. Explicit human-only signed statements retain their existing
+reason and data metadata. Lost data-aware receipts retry the identical body
+without another model/capability call or duplicate ticket. Further tests reject
+malformed/oversized/duplicate requirements and refuse changed/missing receipt
+metadata. Tests isolate persistence/HTTP transport; no live login, hosted access,
+Persona execution or browser acceptance is claimed.
+
+Five-suite data-validation.txt: 156 passed, 81 warnings, exit 0; this includes
+all existing cursor/interleaved-series/replay tests and the first data-aware
+matrix. The final focused batch strengthens lost-receipt coverage to an actual
+data-dependent origin and adds two changed/missing-requirement receipt cases.
+See data-focused-validation.txt and evidence.json for the terminal result.
+Source digests are recorded in evidence.json. storage.json quantifies the
+optional field growth and updated <=13 capability GETs per meeting; R owns
+the shared storage manifest. Existing residual hosted/auth/retention/inbox
+obligations above remain with their original owners.
