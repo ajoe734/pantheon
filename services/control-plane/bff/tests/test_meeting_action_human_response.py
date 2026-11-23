@@ -188,6 +188,116 @@ def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meeti
     assert legacy["action_read"]["reason"] == "meeting_actions_not_recorded"
 
 
+@pytest.mark.parametrize("source_status,reason,has_more", [
+    ("ok", None, False), ("partial", "owner_pages_pending", True),
+    ("degraded", "owner_lane_unavailable", True),
+    ("denied", "research_owner_http_403", False),
+    ("unavailable", "research_owner_unavailable", False),
+])
+def test_consultation_detail_contract_reaches_authenticated_bff(
+    meetings_stack, tmp_path, source_status, reason, has_more,
+):
+    from services.consultation.meetings import get_meeting_detail_view
+    from services.consultation.store import ConsultationStore
+
+    client, calls, state = meetings_stack
+    stored = copy.deepcopy(state["details"]["mtg-001"])
+    stored["tenant_id"] = "tenant-a"
+    # Exact producer names inspected at Consultation 83fb536a6. Capability
+    # decisions and source receipts are owner data, never inferred by the BFF.
+    capabilities = [
+        {"persona_id": "persona-alpha", "status": "ok", "reason": "allowed",
+         "can_receive_persona_action": True, "allowed_deliverables": ["research"]},
+        {"persona_id": "persona-advisor", "status": "denied", "reason": "advisor_read_only",
+         "can_receive_persona_action": False, "allowed_deliverables": []},
+    ]
+    pages = {"outstanding": {"status": source_status, "has_more": has_more,
+                            "next_page_token": "owner-next" if has_more else None}}
+    if source_status == "unavailable":
+        pages = {}
+    source = {"status": source_status, "reason": reason, "pages": pages}
+    action = {"action_id": "action-frozen", "action_state": "submitted",
+              "live_owner_status": {"status": "ok", "action_state": "accepted"}}
+    review = {"action_id": "previous-action", "decision": "returned", "reason": "Add dates"}
+    stored.update(participant_action_capabilities=capabilities,
+                  prior_actions_source=source,
+                  meeting_series={"meeting_type": "MT-1", "subject_ref": "pool:persona-alpha"},
+                  prior_actions=[copy.deepcopy(action)])
+    stored["synthesis"].update(actions=[action], action_reviews=[review])
+    store = ConsultationStore(str(tmp_path / "consultation-contract"))
+    store.put_meeting(stored)
+    owner_view = get_meeting_detail_view(store, tenant_id="tenant-a", meeting_id="mtg-001")
+    assert owner_view is not None
+    assert get_meeting_detail_view(store, tenant_id="tenant-b", meeting_id="mtg-001") is None
+    original = copy.deepcopy(owner_view)
+    state["details"]["mtg-001"] = owner_view
+    before = len(calls)
+    for _ in range(2):
+        response = client.get("/bff/management/meetings/mtg-001", headers=make_headers())
+        assert response.status_code == 200, response.text
+        for body in (response.json(), response.json()["data"]):
+            assert body["participant_capabilities"] == capabilities
+            assert body["action_read"] == source
+            assert body["action_page_info"] == pages
+            assert body["series_subject_ref"] == "pool:persona-alpha"
+            assert body["prior_action_reviews"] == body["synthesis"]["action_reviews"] == [review]
+            for key in ("actions", "prior_actions"):
+                assert body[key] == [action]
+                assert body[key][0]["action_state"] == "submitted"
+                assert body[key][0]["live_owner_status"]["action_state"] == "accepted"
+    assert len(calls) - before == 2  # One original Consultation detail GET/reload.
+    assert owner_view == original and store.get_meeting("mtg-001") == stored
+
+
+@pytest.mark.parametrize("viewer,roles,allowed", [
+    ("op-alice", ["operator"], True), ("trader-alice", ["viewer"], True),
+    ("trader-bob", ["viewer"], False),
+])
+@pytest.mark.parametrize("parent_restriction", [None, "foreign", "private", "withheld"])
+def test_consultation_detail_aliases_keep_viewer_visibility(
+    meetings_stack, viewer, roles, allowed, parent_restriction,
+):
+    client, _, state = meetings_stack
+    detail = state["details"]["mtg-001"]
+    detail["tenant_id"] = "tenant-a"
+    restriction = {
+        None: {}, "foreign": {"tenant_id": "tenant-b"},
+        "private": {"memory_layer": "persona_private"},
+        "withheld": {"item_id": "cf-private-leak-1"},
+    }[parent_restriction]
+    subject = {"kind": "trader", "id": "trader-alice"}
+    record = {**restriction, "subject_ref": subject, "evidence_refs": [
+        {"item_id": "cf-shared-1", "excerpt": "VISIBLE"},
+        {"item_id": "cf-private-leak-1", "excerpt": "SECRET_PRIVATE"},
+        {"tenant_id": "tenant-b", "excerpt": "SECRET_FOREIGN"},
+        {"trader_id": "trader-alice", "excerpt": "TRADER_ONLY"}],
+    }
+    detail["participant_action_capabilities"] = [copy.deepcopy(record)]
+    detail["prior_actions_source"] = {**copy.deepcopy(record), "pages": {"outstanding": record}}
+    detail["meeting_series"] = {**restriction, "subject_ref": subject}
+    detail["synthesis"]["action_reviews"] = [copy.deepcopy(record)]
+    original = copy.deepcopy(detail)
+    response = client.get("/bff/management/meetings/mtg-001",
+                          headers=make_headers(sub=viewer, roles=roles))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "SECRET_" not in response.text
+    if parent_restriction:
+        assert body["participant_capabilities"] == body["prior_action_reviews"] == []
+        assert body["synthesis"]["action_reviews"] == []
+        assert "series_subject_ref" not in body and "action_page_info" not in body
+        assert body["action_read"]["status"] == "not_recorded"
+    else:
+        expected = {"subject_ref": subject if allowed else {"kind": "trader", "redacted": True},
+                    "evidence_refs": record["evidence_refs"][:1] + (record["evidence_refs"][3:] if allowed else [])}
+        assert body["participant_capabilities"] == body["prior_action_reviews"] == [expected]
+        assert body["synthesis"]["action_reviews"] == [expected]
+        assert body["action_page_info"] == {"outstanding": expected}
+        assert body["action_read"] == {**expected, "pages": {"outstanding": expected}}
+        assert body["series_subject_ref"] == expected["subject_ref"]
+    assert detail == original
+
+
 @pytest.mark.parametrize("viewer,roles,can_view_trader", [
     ("op-alice", ["operator"], True),
     ("trader-alice", ["viewer"], True),
