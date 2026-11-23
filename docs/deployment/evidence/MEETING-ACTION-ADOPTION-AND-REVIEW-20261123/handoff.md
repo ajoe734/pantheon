@@ -293,7 +293,8 @@ retention debt is explicit. New model requests cap at 2 MiB, case files at
 
 ## Specific deliverable data requirements
 
-The current dev baseline remains 0c806ffed; current callers are the same normal
+The traced product baseline is 0c806ffed; delivery includes dev a4f2f0b4e
+(provider quota duration tooling only). Current callers are the same normal
 chair schema -> _validate_adopted_actions -> existing dispatch -> RW-01 origin
 and action_snapshot readback. Persona's existing capability endpoint accepts
 repeated required_data query parameters with run_purpose=daily_cycle. Each

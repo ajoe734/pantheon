@@ -3,7 +3,7 @@
   "owner": "Codex2",
   "reviewer": "Antigravity",
   "source_base": "ba7c32e071a5d357067afc08addd78736aa25fd8",
-  "delivery_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+  "delivery_base": "a4f2f0b4e2b657afbc68f0a76bf755023169e063",
   "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
   "verification": [
     {
@@ -175,5 +175,6 @@
     "research_sha256": "7c0302131223bc39f7313f739a9152104fc953b67fc4c0157c2304f61099593d",
     "boundary": "Real frozen policy evaluation, validated active harness and real create/list normalization/SQL; isolated owner persistence and HTTP transport. All three enrolled identity shapes tested. No live owner auth or hosted claim.",
     "behavior": "Optional bounded required_data preserved through chair schema, action-specific capability query, normalized frozen origin, ticket dispatch receipt and readback. Evidence-only assignments proceed; restricted dataset actions stay explicit; actual accessible feeds allow the corresponding work. Verified operator inbox accepts only explicitly human-only work with a reason. No access grants."
-  }
+  },
+  "base_refresh": "Merged current dev a4f2f0b4e after review admission correctly rejected prior base. Only upstream provider_health.py and its test changed; meeting product source unchanged. Full 156 and final focused 14 component receipts remain applicable; diff_budget/whitespace/distribution validated."
 }
