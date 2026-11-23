@@ -807,71 +807,67 @@ def test_ac6_postgres_incident_store_owner_table_reads_per_get_before_and_after(
         _build_real_incident_dict(2592, now_dt=now_dt),
     ]
     pm_rows = [_build_real_postmortem_dict(1, inc_rows[0])]
-    read_counts = {"incident.incident_cases": 0, "incident.postmortems": 0}
+    from services.incidents.pg_owner_fake import FakeOwnerTable
 
-    class _CountingOwnerTable:
-        def __init__(self, *, dsn: str, table: str, owner_service: str, bootstrap: bool = True) -> None:
-            self.dsn = dsn
-            self.table = table
-            self.owner_service = owner_service
+    FakeOwnerTable.reset(
+        {"incident.incident_cases": inc_rows, "incident.postmortems": pm_rows},
+        {"incident.incident_cases": "incident_id", "incident.postmortems": "postmortem_id"},
+    )
+    stats = FakeOwnerTable.stats
 
-        def list_all(self) -> List[Dict[str, Any]]:
-            read_counts[self.table] += 1
-            if self.table == "incident.incident_cases":
-                return [dict(r) for r in inc_rows]
-            return [dict(r) for r in pm_rows]
-
-    monkeypatch.setattr(pg_store_mod, "PostgresJsonOwnerStore", _CountingOwnerTable)
+    monkeypatch.setattr(pg_store_mod, "PostgresJsonOwnerStore", FakeOwnerTable)
     pg_store = PostgresIncidentStore(dsn="postgresql://postgres:t@127.0.0.1:55432/postgres")
     monkeypatch.setattr(incidents_main, "store", pg_store)
     client = TestClient(app)
 
-    # Reset after initial bootstrap refresh (1 read of each owner table)
-    assert read_counts == {"incident.incident_cases": 1, "incident.postmortems": 1}
-    read_counts["incident.incident_cases"] = 0
-    read_counts["incident.postmortems"] = 0
+    # Startup loads only open incidents (1 of 2) and never touches postmortems.
+    assert stats["list_all_calls"] == 0
+    assert stats["rows_returned"] == 1
+    assert list(pg_store._incidents) == ["agent-open00002592-0000"]
+    assert pg_store._postmortems == {}
 
-    # After path (read-only predicate has_stale_monitor_agent_findings + route read):
-    # GET /api/incidents?open_only=true -> 2 refreshes = 4 owner table reads (2 incidents + 2 postmortems), 0 deepcopies
+    def _reset() -> None:
+        for k in stats:
+            stats[k] = 0
+
+    # Read-only open_only listing: refresh (open rows only) + one filtered query.
+    # Postmortems are never read and no whole-table list_all happens.
+    _reset()
     with _count_store_ops(pg_store, monkeypatch) as after_list_ops:
         r_list = client.get("/api/incidents?open_only=true")
         assert r_list.status_code == 200
         assert [i["incident_id"] for i in r_list.json()] == ["agent-open00002592-0000"]
-    assert read_counts == {"incident.incident_cases": 2, "incident.postmortems": 2}
-    assert sum(read_counts.values()) == 4
+    assert stats["list_all_calls"] == 0
+    assert stats["max_rows_in_call"] <= 1
     assert after_list_ops["deepcopy"] == 0
 
-    # GET /api/incidents/{incident_id} -> 2 refreshes = 4 owner table reads, 0 deepcopies
-    read_counts["incident.incident_cases"] = 0
-    read_counts["incident.postmortems"] = 0
+    # Point read by id: open refresh + one primary-key read of the target row.
+    _reset()
     with _count_store_ops(pg_store, monkeypatch) as after_get_ops:
         r_get = client.get("/api/incidents/inc-20261104-0001")
         assert r_get.status_code == 200
-    assert read_counts == {"incident.incident_cases": 2, "incident.postmortems": 2}
-    assert sum(read_counts.values()) == 4
+    assert stats["list_all_calls"] == 0
+    assert stats["max_rows_in_call"] <= 1
     assert after_get_ops["deepcopy"] == 0
 
-    # GET /api/incidents/{incident_id}/operator-payload -> 3 refreshes = 6 owner table reads, 0 deepcopies
-    read_counts["incident.incident_cases"] = 0
-    read_counts["incident.postmortems"] = 0
+    # Operator payload: postmortem is fetched by incident id, not by scanning.
+    _reset()
     with _count_store_ops(pg_store, monkeypatch) as after_op_ops:
         r_op = client.get("/api/incidents/inc-20261104-0001/operator-payload")
         assert r_op.status_code == 200
         assert r_op.json()["postmortem_id"] == "pm-20261104-0001"
-    assert read_counts == {"incident.incident_cases": 3, "incident.postmortems": 3}
-    assert sum(read_counts.values()) == 6
+    assert stats["list_all_calls"] == 0
+    assert stats["max_rows_in_call"] <= 1
     assert after_op_ops["deepcopy"] == 0
 
-    # Compare against legacy before-path (unconditional resolve_stale_monitor_agent_findings write-guard call):
-    # Same 4 owner table reads on GET /api/incidents?open_only=true, but 2 whole-store deepcopy calls.
+    # Legacy before-path (unconditional write-guard resolve call) still costs
+    # 2 whole-store deepcopies, but no longer a whole-table read.
     monkeypatch.delattr(IncidentStore, "has_stale_monitor_agent_findings")
-    read_counts["incident.incident_cases"] = 0
-    read_counts["incident.postmortems"] = 0
+    _reset()
     with _count_store_ops(pg_store, monkeypatch) as before_list_ops:
         r_before = client.get("/api/incidents?open_only=true")
         assert r_before.status_code == 200
-    assert read_counts == {"incident.incident_cases": 2, "incident.postmortems": 2}
-    assert sum(read_counts.values()) == 4
+    assert stats["list_all_calls"] == 0
     assert before_list_ops["deepcopy"] == 2
 
 
