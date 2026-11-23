@@ -90,6 +90,7 @@ class _AdapterModelDouble:
         self.synthesis_mode: str = "normal"  # "normal" | "unreadable" | "mt4_no_hypothesis"
         self.custom_citations_by_persona: dict[str, list[str]] = {}
         self.custom_proposals: list[dict[str, Any]] | None = None
+        self.custom_actions: list[dict[str, Any]] | None = None
 
     def _gateway_call(self, method: str, **kwargs: Any) -> Any:
         if method == "config.get":
@@ -234,6 +235,10 @@ class _AdapterModelDouble:
                     "proposals": proposals,
                 },
             }
+            if self.custom_actions is not None:
+                event_content["synthesis"].update(
+                    outcome="actions_adopted", actions=[
+                        {**a, "source_refs": [first_case_id]} for a in self.custom_actions])
         else:
             is_panel_turn = isinstance((req.get("metadata") or {}).get("panel"), dict)
             prior = meeting.get("prior_round_positions") or []
@@ -939,8 +944,15 @@ def test_both_consultation_classes_gate_panel_and_deliberative_with_c2_module(
 
     client: ConsultationServiceClient = stack["client"]
     dispatched_calls: list[dict[str, Any]] = []
+    from services.consultation import meeting_outputs as actual_c2
 
     fake_c2 = SimpleNamespace(
+        # Only the proposal seam is doubled here. Retain the actual action
+        # contract so this older cross-class test exercises the same module API.
+        read_meeting_actions=actual_c2.read_meeting_actions,
+        dispatch_meeting_actions=actual_c2.dispatch_meeting_actions,
+        review_meeting_actions=actual_c2.review_meeting_actions,
+        MeetingOutputRoutingError=actual_c2.MeetingOutputRoutingError,
         dispatch_proposals=lambda meeting: [
             dispatched_calls.append(meeting)
             or {
@@ -2668,3 +2680,1171 @@ def test_preread_memory_timeout_default_and_override(monkeypatch, configured, ex
             "persona_id": "persona-a", "role": "chair", "style": "momentum", "origin": "institutional"}])
     assert len(calls) == 1 and calls[0]["timeout_seconds"] == expected
     assert calls[0]["scope"] == "both" and calls[0]["limit"] == 12
+
+# MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 component contract regressions.
+class _ActionResearchBoundary:
+    """Scripted HTTP owner boundary, not a substitute for the chain's real-owner proof."""
+    def __init__(self):
+        self.tickets = {}
+        self.requests = []
+        self.malformed_once = False
+        self.notes = {}
+        self.more = None
+
+    def __call__(self, method, url, headers, body):
+        parsed = urllib.parse.urlsplit(url)
+        self.requests.append((method, parsed, copy.deepcopy(body), dict(headers)))
+        tenant = headers['X-Tenant-Id']
+        if method == 'POST':
+            assert 'ticket_id' not in body
+            source = (tenant, body['meeting_action']['meeting_id'], body['meeting_action']['source_action_id'])
+            row = next((r for r in self.tickets.values() if r['_source'] == source), None)
+            if row is None:
+                tid = f'owner-issued-ticket-{len(self.tickets) + 1}'
+                row = {**copy.deepcopy(body), 'ticket_id': tid, 'tenant_id': tenant,
+                       'action_state': 'open', 'revision': 0, 'evidence_refs': [], '_source': source}
+                self.tickets[tid] = row
+            if self.malformed_once:
+                self.malformed_once = False
+                return 200, {}
+            return 201, copy.deepcopy(row)
+        if '/notes/' in parsed.path:
+            return 200, copy.deepcopy(self.notes[parsed.path.rsplit('/', 1)[-1]])
+        if parsed.path == '/api/research/tickets':
+            q = urllib.parse.parse_qs(parsed.query)
+            assert q['meeting_linked'] == ['true'] and q['page_size'] == ['1']
+            rows = [copy.deepcopy(r) for r in self.tickets.values()
+                    if r['tenant_id'] == tenant
+                    and r['meeting_action']['meeting_type'] == q['meeting_type'][0]
+                    and r['meeting_action']['subject_ref'] == q['subject_ref'][0]
+                    and r['action_state'] in q['action_state'][0].split(',')]
+            return 200, {'data': rows[:1], 'page_info': {'next_page_token': self.more}}
+        tid = parsed.path.rsplit('/', 1)[-1]
+        row = self.tickets.get(tid)
+        if row is None or row['tenant_id'] != tenant:
+            return 404, {}
+        if method == 'PATCH':
+            patch = body['patch']
+            assert patch['expected_revision'] == row['revision']
+            assert patch['action'] in {'accept', 'return'}
+            row.update(action_state='accepted' if patch['action'] == 'accept' else 'returned',
+                       revision=row['revision'] + 1,
+                       review_decision={'decision': patch['action'], 'review_source': patch['review_source'],
+                                        'reason': patch['reason']})
+        return 200, copy.deepcopy(row)
+
+
+def _adopted_action(cid='facts:source', source='chair-1'):
+    return {'source_action_id': source, 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+            'deliverable': 'Saved comparison of the current pool alternatives',
+            'acceptance_criterion': 'Compare measured drawdown and costs with cited source records',
+            'due_at': '2026-11-20T00:00:00Z', 'source_refs': [cid]}
+
+
+@pytest.mark.parametrize('bad_receipt', [{}, {'ticket_id': 'invented'},
+    {'ticket_id': 'invented', 'tenant_id': TENANT, 'action_state': 'open', 'revision': 0, 'meeting_action': {}},
+    {'ticket_id': 23, 'tenant_id': TENANT, 'action_state': 'open', 'revision': 0, 'meeting_action': {}}])
+def test_action_dispatch_malformed_success_does_not_suppress_owner_retry(tmp_path, monkeypatch, bad_receipt):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions, list_dispatched_proposals
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'receipt-test',
+               'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+               'synthesis': {'actions': [_adopted_action()]}}
+    owner = _ActionResearchBoundary()
+    attempts = []
+    def transport(method, url, headers, body):
+        attempts.append(copy.deepcopy(body))
+        _, valid = owner(method, url, headers, body)
+        return (200, bad_receipt) if len(attempts) == 1 else (200, valid)
+    ledger = tmp_path / 'dispatch.json'
+    first = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert first['state'] == 'dispatch_pending' and first.get('ticket_id') is None
+    assert first['dispatch_error']
+    second = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert second['ticket_id'] == 'owner-issued-ticket-1' and second['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert len(attempts) == 2 and attempts[0] == attempts[1] and len(owner.tickets) == 1
+    assert list_dispatched_proposals(store_path=ledger) == []
+
+
+def test_action_http_fault_then_genuine_receipt_and_tenant_isolation(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    owner = _ActionResearchBoundary()
+    calls = 0
+    def transport(*args):
+        nonlocal calls
+        calls += 1
+        return (503, {}) if calls == 1 else owner(*args)
+    m = {'tenant_id': TENANT, 'meeting_id': 'same-source',
+         'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+         'synthesis': {'actions': [_adopted_action()]}}
+    ledger = tmp_path / 'dispatch.json'
+    assert dispatch_meeting_actions(m, transport=transport, store_path=ledger)[0]['state'] == 'dispatch_pending'
+    assert dispatch_meeting_actions(m, transport=transport, store_path=ledger)[0]['ticket_id'] == 'owner-issued-ticket-1'
+    foreign = copy.deepcopy(m)
+    foreign['tenant_id'] = 'foreign-tenant'
+    assert dispatch_meeting_actions(foreign, transport=transport, store_path=ledger)[0]['ticket_id'] == 'owner-issued-ticket-2'
+    assert calls == 3
+
+
+@pytest.mark.parametrize('decision', ['accept', 'return'])
+def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, monkeypatch, decision):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', lambda tenant, pid:
+        {'persona_id': pid, 'status': 'allowed' if pid == 'persona-alpha' else 'advisory_only',
+         'can_receive_persona_action': pid == 'persona-alpha', 'allowed_deliverables': ['research_note'],
+         'consultation_can_mutate_trading_state': False})
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])  # zero semantic hits
+    store = ConsultationStore(str(tmp_path / 'meetings'))
+    owner = _ActionResearchBoundary()
+    calls = []
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            calls.append(copy.deepcopy(request))
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            if ctx['round'] == 'synthesis':
+                if not ctx['prior_actions']:
+                    synth = {'summary': 'Adopt two research deliverables', 'outcome': 'completed_no_proposal',
+                             'proposals': [], 'actions': [_adopted_action(cid), _adopted_action(cid, 'chair-2')]}
+                else:
+                    submitted = next(a for a in ctx['prior_actions'] if a['state'] == 'submitted')
+                    synth = {'summary': 'Review the delivered comparison and retain pending work',
+                             'outcome': 'completed_no_proposal', 'proposals': [], 'actions': [],
+                             'no_action_reason': 'Continue the original outstanding assignment',
+                             'action_reviews': [{'action_id': submitted['action_id'], 'decision': decision,
+                                 'reason': 'Compared the stated criterion to the measured result: ' + decision,
+                                 'acceptance_criterion': submitted['acceptance_criterion'],
+                                 'evidence_refs': submitted['evidence_refs']}]}
+                event = {'claims': [{'claim': 'Review the available evidence', 'evidence_refs': [cid]}], 'summary_evidence_refs': [cid], 'synthesis': synth}
+                jsonschema.validate(event, _meeting_event_content_schema(ctx))
+                return SimpleNamespace(event_content=event, summary=synth['summary'], evidence=[])
+            event = {'stance': 'approve', 'confidence': .8, 'citations': [cid], 'claims': [{'claim': 'Discuss the case', 'evidence_refs': [cid]}],
+                     'summary_evidence_refs': [cid], 'accepted': [], 'disputed': [], 'changed': False,
+                     'proposals': [{'kind': 'research_demand', 'sponsor_persona_id': 'persona-alpha',
+                                    'citations': [cid], 'payload': {'summary': 'Advisory only'}}]}
+            jsonschema.validate(event, _meeting_event_content_schema(ctx))
+            return SimpleNamespace(event_content=event, summary='Discuss alternatives', evidence=[], confidence=.8, recommendation='approve')
+    def convene(week):
+        return meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+            payload={'meeting_type': 'MT-1', 'topic': 'Review pool alternatives', 'iso_week': week,
+                     'convened_by': {'kind': 'persona', 'id': 'persona-alpha'},
+                     'participants': ['persona-alpha', 'persona-risk-officer'],
+                     'subject_ref': 'persona:persona-alpha'}, idempotency_key=week)[0]
+    with output_routing_context(transport=owner, store_path=tmp_path / 'dispatch.json'):
+        first = convene('2026-W47')
+        owner.malformed_once = True
+        monkeypatch.setattr(meetings_mod, 'utc_now', lambda: '2026-11-23T00:00:00Z')
+        from services.consultation.meeting_outputs import MeetingOutputRoutingError
+        with pytest.raises(MeetingOutputRoutingError, match='frozen decision retained'):
+            meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
+                                                tenant_id=TENANT, provider=Provider())
+        frozen = store.get_meeting(first['meeting_id'])
+        assert frozen['action_decision_frozen'] and frozen['status'] != 'closed'
+        assert store.get_request(first['meeting_id']).status.value != 'published'
+        before_retry_calls = len(calls)
+        monkeypatch.setattr(meetings_mod, 'utc_now', lambda: '2026-11-23T00:00:05Z')
+        m1 = meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
+                                               tenant_id=TENANT, provider=Provider())
+        assert len(calls) == before_retry_calls  # no second synthesis after a lost owner receipt
+        assert store.get_memo(m1['synthesis']['dissent_memo_id']).published_at == '2026-11-23T00:00:00Z'
+        assert m1['closed_at'] == '2026-11-23T00:00:05Z'
+        assert m1['status'] == 'closed' and m1['synthesis']['proposals'] == []
+        assert m1['outcome'] == 'actions_adopted' and len(m1['actions']) == 2
+        t1, t2 = owner.tickets.values()
+        t1.update(action_state='submitted', revision=2,
+                  evidence_refs=[{'kind': 'research_note', 'artifact_id': 'note-1', 'checksum': 'digest-1', 'tenant_id': TENANT}])
+        owner.notes['note-1'] = {'_meeting_binding': {'tenant_id': TENANT, 'ticket_id': t1['ticket_id']},
+                                '_meeting_digest': 'digest-1', 'body': 'Measured drawdown 4%; costs 12 bps.',
+                                'title': 'Actual result', 'source_refs': ['registered-input']}
+        owner.more = 'remaining-keyset-token'
+        second = convene('2026-W48')
+        m2 = meetings_mod.execute_persona_meeting(store=store, meeting_id=second['meeting_id'],
+                                               tenant_id=TENANT, provider=Provider())
+        assert m2['meeting_id'] != m1['meeting_id']
+        assert m2['agenda'][0].startswith('Review previous work')
+        assert len(m2['prior_actions']) == 2 and m2['actions'] == []
+        assert all(p['has_more'] for p in m2['prior_actions_source']['pages'].values())
+        for request in [c for c in calls if c['request_id'] == m2['meeting_id']]:
+            ctx = request['meeting']
+            assert len(ctx['prior_actions']) == 2
+            assert ctx['prior_action_evidence'][0]['content']['body'].startswith('Measured drawdown')
+            assert ctx['prior_actions_source']['pages']['submitted']['next_page_token']
+            assert request['case_file']['groups']['meeting_actions']['items']
+            if ctx['round'] != 'synthesis':
+                assert 'participant_action_capabilities' not in ctx
+        assert t1['action_state'] == ('accepted' if decision == 'accept' else 'returned')
+        assert t2['action_state'] == 'open'
+        assert m2['action_review_dispatches'][0]['status'] == 'recorded'
+        before = len(calls)
+        meetings_mod.execute_persona_meeting(store=store, meeting_id=m2['meeting_id'], tenant_id=TENANT, provider=Provider())
+        assert len(calls) == before and len([r for r in owner.requests if r[0] == 'PATCH']) == 1
+        detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id=m1['meeting_id'])
+        assert detail['actions'][0]['state'] == 'open'  # frozen receipt
+        assert detail['actions'][0]['live_owner_status']['ticket']['state'] == t1['action_state']
+        assert store.get_meeting(m1['meeting_id'])['actions'][0]['state'] == 'open'
+        import runpy
+        probe = runpy.run_path(str(Path(__file__).resolve().parents[3] /
+            'docs/deployment/evidence/MEETING-ACTION-ADOPTION-AND-REVIEW-20261123/probe.py'))['inspect_records']
+        assert probe(detail, m2)['passed']
+        assert not probe(detail, {**m2, 'meeting_id': m1['meeting_id']})['passed']
+        assert not probe(detail, {**m2, 'tenant_id': 'foreign-tenant'})['passed']
+        assert not probe(detail, {**m2, 'action_review_dispatches': []})['passed']
+        unrelated = copy.deepcopy(m2)
+        unrelated['meeting_series']['subject_ref'] = 'other-committee'
+        assert read_meeting_actions(unrelated)['items'] == []
+        unrelated['tenant_id'] = 'other-tenant'
+        unrelated['meeting_series']['subject_ref'] = 'pool:persona-alpha'
+        assert read_meeting_actions(unrelated)['items'] == []
+    # Measured component envelope, captured for the task runtime budget.
+    measurement = {'meetings': [len(json.dumps(m).encode()) for m in (m1, m2)],
+                   'max_provider_request_bytes': max(len(json.dumps(c).encode()) for c in calls),
+                   'ledger_bytes': (tmp_path / 'dispatch.json').stat().st_size,
+                   'lifecycle_bytes': store.lifecycle_log_path.stat().st_size,
+                   'lifecycle_events': len(store.lifecycle_log_path.read_text().splitlines()),
+                   'owner_requests': len(owner.requests)}
+    print('ACTION_ENVELOPE_MEASUREMENT ' + json.dumps(measurement, sort_keys=True))
+
+
+@pytest.mark.parametrize('ref', [None, 'meeting:mtg-1', 'week:2026-W47', 'iso-week:2026-W47'])
+def test_unrelated_committees_do_not_join_by_type_default(ref):
+    a = {'meeting_code': 'MT-3', 'subject_ref': ref, 'chair_persona_id': 'persona-alpha',
+         'convened_by': {'kind': 'operator', 'id': 'op-1'}}
+    assert meetings_mod._meeting_series(a) is None
+    a.update(meeting_code='MT-1', convened_by={'kind': 'persona', 'id': 'persona-alpha'})
+    if ref is None or str(ref).startswith(('week:', 'meeting:')):
+        assert meetings_mod._meeting_series(a)['subject_ref'] == 'pool:persona-alpha'
+
+
+def test_adoption_declines_forged_capability_review_and_keeps_legacy_minutes(tmp_path):
+    action = _adopted_action()
+    meeting = {'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+               'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'advisory_only',
+                                                    'can_receive_persona_action': False}], 'prior_actions': []}
+    accepted, reviews, rejected = meetings_mod._validate_adopted_actions({'actions': [action]}, meeting, {'facts:source'})
+    assert accepted == [] and rejected[0]['reason'] == 'persona_owner_did_not_allow_assignment'
+    accepted, reviews, _ = meetings_mod._validate_adopted_actions({'outcome': 'REVIEW', 'actions': [action]}, meeting, {'facts:source'})
+    assert accepted == reviews == []
+    store = ConsultationStore(str(tmp_path / 'legacy'))
+    legacy = {'meeting_id': 'mtg-W47', 'tenant_id': TENANT, 'status': 'closed', 'outcome': 'REVIEW',
+              'participants': [], 'rounds': [{'round': 1}, {'round': 2}], 'source_refs': ['original-ref'],
+              'synthesis': {'outcome': 'REVIEW', 'proposals': [], 'summary': 'Original no-action minutes'}}
+    store.put_meeting(legacy)
+    before = copy.deepcopy(store.get_meeting('mtg-W47'))
+    detail = meetings_mod.get_meeting_detail_view(store, tenant_id=TENANT, meeting_id='mtg-W47')
+    assert detail['actions'] == [] and detail['prior_actions'] == []
+    assert store.get_meeting('mtg-W47') == before
+    assert detail['synthesis']['summary'] == 'Original no-action minutes'
+
+
+def test_capability_http_owner_result_is_safe_and_does_not_trust_role_or_inline_fields(monkeypatch):
+    from io import BytesIO
+    from contextlib import closing
+    seen = []
+    monkeypatch.setenv('PANTHEON_PERSONA_API_URL', 'http://persona-owner')
+    monkeypatch.delenv('CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE', raising=False)
+    monkeypatch.setenv('CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN', 'issued-read-token')
+    def urlopen(req, timeout):
+        seen.append(req)
+        return closing(BytesIO(json.dumps({'persona_id': 'persona-alpha', 'status': 'advisory_only',
+            'can_receive_persona_action': False, 'role': 'chair', 'private_memory': 'do-not-share',
+            'token': 'do-not-share', 'reason': 'no authorized workflow'}).encode()))
+    monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
+    result = meetings_mod._participant_action_capability(TENANT, 'persona-alpha')
+    assert result['status'] == 'advisory_only' and result['can_receive_persona_action'] is False
+    assert 'do-not-share' not in json.dumps(result) and 'role' not in result
+    assert seen[0].get_header('Authorization') == 'Bearer issued-read-token'
+    assert seen[0].get_header('X-tenant-id') == TENANT
+    assert 'run_purpose=daily_cycle' in seen[0].full_url
+    def denied(*args, **kwargs):
+        raise urllib.error.HTTPError('http://persona-owner', 403, 'private owner details', {}, None)
+    monkeypatch.setattr(urllib.request, 'urlopen', denied)
+    result = meetings_mod._participant_action_capability(TENANT, 'persona-alpha')
+    assert result['status'] == 'denied' and not result['can_receive_persona_action']
+    assert 'private owner details' not in json.dumps(result)
+
+
+def test_action_review_cannot_accept_criterion_mismatch_or_unread_evidence():
+    submitted = {'action_id': 'owner-id', 'state': 'submitted', 'revision': 2,
+                 'acceptance_criterion': 'Compare drawdown', 'evidence_available': True,
+                 'evidence_refs': [{'kind': 'research_note', 'artifact_id': 'result', 'checksum': 'digest'}]}
+    review = {'action_id': 'owner-id', 'decision': 'accept', 'reason': 'Measured result meets criterion',
+              'acceptance_criterion': 'Compare drawdown', 'evidence_refs': submitted['evidence_refs']}
+    meeting = {'prior_actions': [submitted]}
+    assert len(meetings_mod._validate_adopted_actions({'action_reviews': [review]}, meeting, set())[1]) == 1
+    for change in ({'acceptance_criterion': 'Unrelated test'}, {'evidence_refs': []}, {'action_id': ['owner-id']}):
+        _, reviews, rejected = meetings_mod._validate_adopted_actions({'action_reviews': [{**review, **change}]}, meeting, set())
+        assert not reviews and rejected
+    submitted['evidence_available'] = False
+    assert not meetings_mod._validate_adopted_actions({'action_reviews': [review]}, meeting, set())[1]
+
+
+def test_new_review_dispositions_use_schedule_watermark_without_archival_scan(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    store = ConsultationStore(str(tmp_path / 'schedule'))
+    schedule = {'tenant_id': TENANT, 'persona_id': 'persona-alpha', 'meeting_type': 'MT-1',
+                'action_review_watermark': '2026-11-22T00:00:00Z',
+                'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    store.put_meeting_schedule(schedule)
+    assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-1') == schedule
+    assert store.get_meeting_schedule('foreign', 'persona-alpha', 'MT-1') is None
+    owner = _ActionResearchBoundary()
+    m = {'tenant_id': TENANT, 'meeting_id': 'm2', 'meeting_series': schedule['meeting_series'],
+         'previous_action_review_at': schedule['action_review_watermark'],
+         'metadata': {'prior_actions_page_tokens': {'reviewed': 'same-scope-keyset'}}}
+    result = read_meeting_actions(m, transport=owner)
+    assert result['status'] == 'ok'
+    queries = [urllib.parse.parse_qs(r[1].query) for r in owner.requests]
+    assert all(q.get('updated_after') is None for q in queries[:2])
+    assert queries[2]['updated_after'] == ['2026-11-22T00:00:00Z']
+    # A legacy cursor without a scan start must restart safely.
+    assert 'page_token' not in queries[2]
+    assert result['scan']['started_at'] and not result['scan']['page_tokens']
+    # A first-page failure can persist an empty cursor map with a scan start.
+    # Legacy metadata must not override that authoritative restart position.
+    m['action_review_scan'] = result['scan']
+    read_meeting_actions(m, transport=owner)
+    assert 'page_token' not in urllib.parse.parse_qs(owner.requests[-1][1].query)
+
+
+def test_oversize_shared_case_and_provider_envelope_are_refused_without_truncating_work():
+    with pytest.raises(meetings_mod.MeetingRefusedError, match='256 KiB'):
+        meetings_mod._attach_meeting_action_case({'groups': {}, 'unexpected_owner_payload': 'x' * 262145}, [])
+    with pytest.raises(meetings_mod.MeetingRefusedError, match='2 MiB'):
+        meetings_mod._check_meeting_prompt_budget({'meeting': {'prior_actions': [{'deliverable': 'x' * 2097153}]}})
+
+
+@pytest.fixture(params=['scripted', 'real_owner'])
+def action_owner_contract(request, monkeypatch):
+    """Run stable component cases and optionally the unmerged real owner contract.
+
+    Supply MEETING_ACTION_RESEARCH_OWNER_SOURCE to compose a frozen Research
+    work package before integration; after integration the normal import works.
+    Only persistence is isolated, not create/list normalization or cursor logic.
+    """
+    import importlib.util
+    import os
+    import sqlite3
+    owner = _ActionResearchBoundary()
+    if request.param == 'scripted':
+        original = owner.__call__
+        def send(method, url, headers, body):
+            if method != 'GET' or urllib.parse.urlsplit(url).path != '/api/research/tickets':
+                return original(method, url, headers, body)
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            rows = sorted((r for r in owner.tickets.values()
+                if r['tenant_id'] == headers['X-Tenant-Id']
+                and r['meeting_action']['meeting_type'] == q['meeting_type'][0]
+                and r['meeting_action']['subject_ref'] == q['subject_ref'][0]
+                and r['action_state'] in q['action_state'][0].split(',')
+                and r['updated_at'] >= q.get('updated_after', [''])[0]
+                and r['ticket_id'] > q.get('page_token', [''])[0]), key=lambda r: r['ticket_id'])
+            size = int(q['page_size'][0])
+            return 200, {'data': copy.deepcopy(rows[:size]), 'page_info': {
+                'next_page_token': rows[size - 1]['ticket_id'] if len(rows) > size else None}}
+        owner.send = send
+        return owner
+    source = os.getenv('MEETING_ACTION_RESEARCH_OWNER_SOURCE')
+    if source:
+        spec = importlib.util.spec_from_file_location('meeting_contract_research_owner', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    else:
+        from services.research import write_owner as module
+    if not hasattr(module.ResearchWriteOwner, '_create_meeting_ticket'):
+        pytest.skip('Research owner work package not integrated; supply its frozen source explicitly')
+    real = module.ResearchWriteOwner.__new__(module.ResearchWriteOwner)
+    ctx = SimpleNamespace(tenant_id=TENANT, actor_id='consultation-svc', roles={'service', 'viewer'})
+    class SqlBoundary:
+        table = 'tickets'
+        _decode_payload = staticmethod(json.loads)
+        def get(self, tid):
+            return copy.deepcopy(owner.tickets.get(tid))
+        @contextmanager
+        def _connect(self):
+            with sqlite3.connect(':memory:') as conn:
+                conn.execute('CREATE TABLE tickets (record_id TEXT PRIMARY KEY, payload TEXT)')
+                conn.executemany('INSERT INTO tickets VALUES (?, ?)',
+                    [(tid, json.dumps(row)) for tid, row in owner.tickets.items()])
+                self.conn = conn
+                yield self
+        def execute(self, sql, params):
+            # Preserve the owner's actual SQL filtering/order/limit. Translate
+            # only PostgreSQL placeholders, array syntax and timestamp casts.
+            values = []
+            for value in params:
+                if isinstance(value, list):
+                    sql = sql.replace('= ANY(%s)', 'IN (' + ','.join('?' for _ in value) + ')', 1)
+                    values.extend(value)
+                else:
+                    values.append(value)
+            return self.conn.execute(sql.replace('::timestamptz', '').replace('%s', '?'), values)
+    real._tickets_store = SqlBoundary()
+    owner.list_research_tickets = real.list_research_tickets
+    owner.get_research_ticket = real.get_research_ticket
+    def insert(store, tid, row, **kwargs):
+        if tid in owner.tickets:
+            return False, owner.tickets[tid]
+        owner.tickets[tid] = copy.deepcopy(row)
+        return True, owner.tickets[tid]
+    real._bounded_action_insert = insert
+    def send(method, url, headers, body):
+        if '/notes/' in urllib.parse.urlsplit(url).path:
+            return owner(method, url, headers, body)
+        if method == 'POST':
+            return 201, real._create_meeting_ticket(**body, actor_id=ctx.actor_id, context=ctx, ticket_id=None)
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
+        return 200, real.list_research_tickets(context=ctx, meeting_linked=True, statuses=None, owner=None,
+            meeting_type=q['meeting_type'], subject_ref=q['subject_ref'], action_states=q['action_state'].split(','),
+            due_before=None, submitted_after=None, updated_after=q.get('updated_after'),
+            page_size=int(q['page_size']), page_token=q.get('page_token'))
+    owner.send = send
+    return owner
+
+
+@pytest.mark.parametrize('use_due', [False, True])
+def test_adoption_normalizes_before_freeze_and_real_owner_receipt(tmp_path, monkeypatch, action_owner_contract, use_due):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    raw = {k: (' ' + v + ' ' if isinstance(v, str) else v) for k, v in _adopted_action().items()}
+    raw['source_refs'] = [' facts:source ']
+    if use_due:
+        raw['due_at'] = '2026-11-20T00:00:00+00:00'
+    else:
+        raw.pop('due_at')
+        raw['next_review'] = ' next weekly review '
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'normalization',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'allowed',
+            'can_receive_persona_action': True, 'allowed_deliverables': ['research_note']}]}
+    actions, _, rejected = meetings_mod._validate_adopted_actions({'actions': [raw]}, meeting, {'facts:source'})
+    assert not rejected and len(actions) == 1
+    assert all(v == v.strip() for v in actions[0].values() if isinstance(v, str))
+    assert actions[0]['source_refs'] == ['facts:source']
+    _, _, rejected = meetings_mod._validate_adopted_actions({'actions': [raw, {**raw, 'source_action_id': 'chair-1'}]}, meeting, {'facts:source'})
+    assert rejected == [{'index': 1, 'reason': 'duplicate_source_action_id'}]
+    meeting['synthesis'] = {'actions': actions}
+    calls = []
+    def transport(*args):
+        calls.append(copy.deepcopy(args[3]))
+        code, reply = action_owner_contract.send(*args)
+        return (code, {}) if len(calls) == 1 else (code, reply)  # durable write, lost receipt
+    ledger = tmp_path / 'dispatch.json'
+    assert dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]['state'] == 'dispatch_pending'
+    result = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert result['state'] == 'open' and result['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert len(calls) == 2 and calls[0] == calls[1] and len(action_owner_contract.tickets) == 1
+
+
+def test_review_traversal_revisits_concurrent_earlier_keys_for_chair(tmp_path, monkeypatch, action_owner_contract):
+    from services.consultation import meeting_outputs as outputs
+    from datetime import datetime, timezone
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, tzinfo=timezone.utc))
+    series = {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}
+    for i in range(1, 10):
+        tid = 'rt-action-' + f'{i:032x}'
+        action_owner_contract.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT,
+            'owner': 'persona-alpha', 'meeting_action': {**series, 'meeting_id': 'origin',
+                'deliverable': 'Compare costs', 'acceptance_criterion': 'Measured costs', 'assignee_kind': 'persona'},
+            'action_state': 'accepted', 'revision': 1, 'updated_at': '2026-11-20T12:00:00Z', 'evidence_refs': []}
+    participants = [{'persona_id': f'participant-{i}', 'trading': True, 'role': 'chair' if i == 0 else 'participant'} for i in range(5)]
+    store = ConsultationStore(str(tmp_path / 'scan'))
+    def close_page(number, schedule):
+        meeting = {'tenant_id': TENANT, 'meeting_id': f'review-{number}', 'meeting_series': series,
+            'created_at': '2026-11-23T00:00:00Z', 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
+            'topic': 'Review results', 'chair_persona_id': 'participant-0', 'trace_id': 'scan',
+            'participants': participants, 'rounds': [],
+            'previous_action_review_at': schedule.get('action_review_watermark'),
+            'action_review_scan': schedule.get('action_review_scan') or {},
+            'synthesis': {'summary': 'Read this page', 'outcome': 'completed_no_proposal', 'proposals': []}}
+        read = outputs.read_meeting_actions(meeting, transport=action_owner_contract.send)
+        assert read['status'] == 'ok' and len(read['items']) <= 3
+        assert all(p['returned'] <= 1 for p in read['pages'].values())
+        meeting.update(prior_actions=read['items'], prior_action_evidence=read['evidence'],
+            prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
+        meetings_mod._close_persona_meeting(store=store, meeting=meeting, spec={'cadence': 'weekly'}, memory_url='unused')
+        saved = store.get_meeting_schedule(TENANT, 'participant-0', 'MT-1')
+        for p in participants[1:]:
+            peer = store.get_meeting_schedule(TENANT, p['persona_id'], 'MT-1')
+            assert peer['last_run_at'] == saved['last_run_at'] and peer['next_due_at'] == saved['next_due_at']
+            assert not {'meeting_series', 'action_review_watermark', 'action_review_scan'} & peer.keys()
+        return read, saved
+    first, schedule = close_page(1, {'action_review_watermark': '2026-11-20T00:00:00Z'})
+    assert len(first['items']) == 1 and first['pages']['reviewed']['has_more']
+    # Both a new accepted item and a new disposition on a previously seen item
+    # sort below the cursor, after page 1 and before the final meeting begins.
+    new = copy.deepcopy(next(iter(action_owner_contract.tickets.values())))
+    new.update(ticket_id='rt-action-' + '0' * 32, updated_at='2026-11-22T00:00:00Z')
+    action_owner_contract.tickets[new['ticket_id']] = new
+    changed = action_owner_contract.tickets['rt-action-' + f'{1:032x}']
+    changed.update(updated_at='2026-11-22T00:00:00Z', revision=2,
+                   review_decision={'decision': 'accept', 'reason': 'New disposition'})
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 23, tzinfo=timezone.utc))
+    # A failed page leaves its cursor and original scan boundary intact.
+    send = action_owner_contract.send
+    def failed_page(method, url, headers, body):
+        if urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get('action_state') == ['accepted']:
+            return 503, {}
+        return send(method, url, headers, body)
+    action_owner_contract.send = failed_page
+    failed = outputs.read_meeting_actions({'tenant_id': TENANT, 'meeting_id': 'retry', 'meeting_series': series,
+        'action_review_scan': schedule['action_review_scan'],
+        'previous_action_review_at': schedule['action_review_watermark']}, transport=failed_page)
+    assert failed['status'] == 'unavailable' and failed['scan'] == schedule['action_review_scan']
+    action_owner_contract.send = send
+    for number in range(2, 9):
+        _, schedule = close_page(number, schedule)
+        assert schedule['action_review_watermark'] == '2026-11-20T00:00:00Z'
+    final, schedule = close_page(9, schedule)
+    assert len(final['items']) == 1 and not final['pages']['reviewed']['has_more']
+    assert schedule['action_review_watermark'] == '2026-11-21T00:00:00Z'
+    assert not schedule['action_review_scan']
+    next_scan, schedule = close_page(10, schedule)
+    assert [a['action_id'] for a in next_scan['items']] == [new['ticket_id']]
+    next_scan, _ = close_page(11, schedule)
+    assert [a['action_id'] for a in next_scan['items']] == [changed['ticket_id']]
+    assert next_scan['items'][0]['revision'] == 2
+
+
+@pytest.mark.parametrize('token', ['x' * 129, 17, ''])
+def test_owner_continuation_is_bounded_before_schedule_persistence(monkeypatch, token):
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    owner = _ActionResearchBoundary()
+    owner.more = token
+    read = read_meeting_actions({'tenant_id': TENANT, 'meeting_id': 'invalid-page',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}, transport=owner)
+    assert read['status'] == 'unavailable' and not read['items']
+    assert all(p['reason'] == 'research_owner_invalid_continuation_token' for p in read['pages'].values())
+
+
+@pytest.mark.parametrize('ref_count', [2, 8])
+@pytest.mark.parametrize('failure', ['none', 'transient', 'persistent'])
+def test_evidence_and_lane_progress_across_distinct_meetings(
+        tmp_path, monkeypatch, action_owner_contract, ref_count, failure):
+    from datetime import datetime, timezone
+    from services.consultation import meeting_outputs as outputs
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, tzinfo=timezone.utc))
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    owner = action_owner_contract
+    series = {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}
+    # Unequal lane lengths exercise completed-lane persistence as well as >8
+    # tickets with multiple refs. Neither acceptance nor removal drains a lane.
+    for lane, state in enumerate(('returned', 'submitted', 'accepted')):
+        for i in range(9 + lane):
+            tid = 'rt-action-' + f'{lane * 100 + i:032x}'
+            refs = []
+            for r in range(ref_count):
+                aid = f'note-{lane}-{i}-{r}'
+                refs.append({'kind': 'research_note', 'artifact_id': aid, 'checksum': aid})
+                owner.notes[aid] = {'title': 'Measured deliverable', 'body': 'Actual result',
+                    'source_refs': ['facts:source'], '_meeting_digest': aid,
+                    '_meeting_binding': {'tenant_id': TENANT, 'ticket_id': tid}}
+            owner.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT, 'owner': 'persona-alpha',
+                'meeting_action': {**series, 'meeting_id': 'origin', 'assignee_kind': 'persona',
+                    'deliverable': 'Measure costs', 'acceptance_criterion': 'Compare measured costs'},
+                'action_state': state, 'revision': 1, 'updated_at': '2026-11-20T12:00:00Z',
+                'evidence_refs': refs}
+    send = owner.send
+    requests, failed = [], []
+    def transport(method, url, headers, body):
+        requests.append(urllib.parse.urlsplit(url))
+        if url.endswith('/notes/note-1-0-0') and failure != 'none':
+            if failure == 'persistent' or not failed:
+                failed.append(url)
+                return 503, {}
+        return send(method, url, headers, body)
+    store = ConsultationStore(str(tmp_path / 'fair-scan'))
+    watermark = '2026-11-20T00:00:00Z'
+    schedule = {'action_review_watermark': watermark}
+    seen = [set(), set()]
+    for number in range(22):
+        meeting = {'tenant_id': TENANT, 'meeting_id': f'evidence-review-{number}',
+            'meeting_series': series, 'meeting_code': 'MT-1', 'meeting_type': 'MT-1',
+            'topic': 'Review deliverables',
+            'chair_persona_id': 'persona-alpha', 'trace_id': 'fair-review', 'rounds': [],
+            'participants': [{'persona_id': 'persona-alpha', 'trading': True, 'role': 'chair'}],
+            'previous_action_review_at': schedule.get('action_review_watermark'),
+            'action_review_scan': schedule.get('action_review_scan') or {},
+            'synthesis': {'summary': 'Read actual results; retain pending work',
+                          'outcome': 'completed_no_proposal', 'proposals': []}}
+        requests.clear()
+        read = outputs.read_meeting_actions(meeting, transport=transport)
+        assert read['status'] == 'ok' and len(read['items']) <= 3
+        assert len([p for p in requests if '/notes/' in p.path]) <= 24
+        assert len([p for p in requests if p.path == '/api/research/tickets']) <= 3
+        assert len(json.dumps(read).encode()) <= 524288
+        assert len(read['evidence']) == ref_count * len(read['items'])
+        assert all(e.get('reason') != 'evidence_read_budget_exhausted' for e in read['evidence'])
+        seen[number // 11].update(a['action_id'] for a in read['items'])
+        for item in read['items']:
+            records = [e for e in read['evidence'] if e['action_id'] == item['action_id']]
+            available = all(e['status'] == 'ok' for e in records)
+            assert item['evidence_available'] == available
+            assert all(e.get('content', {}).get('body') == 'Actual result' for e in records if e['status'] == 'ok')
+            if not available and item['state'] == 'submitted':
+                review = {'action_id': item['action_id'], 'decision': 'accept', 'reason': 'Meets costs',
+                    'acceptance_criterion': item['acceptance_criterion'], 'evidence_refs': item['evidence_refs']}
+                assert not meetings_mod._validate_adopted_actions(
+                    {'action_reviews': [review]}, {'prior_actions': read['items']}, set())[1]
+        meeting.update(prior_actions=read['items'], prior_action_evidence=read['evidence'],
+            prior_actions_source={k: v for k, v in read.items() if k not in {'items', 'evidence'}})
+        meetings_mod._close_persona_meeting(store=store, meeting=meeting,
+            spec={'cadence': 'weekly'}, memory_url='unused')
+        schedule = store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-1')
+        if number == 8:
+            assert schedule['action_review_scan']['completed_lanes'] == ['outstanding']
+        if number == 9:
+            assert schedule['action_review_scan']['completed_lanes'] == ['outstanding', 'submitted']
+        if number == 10:
+            assert not schedule['action_review_scan']
+            assert schedule['action_review_watermark'] == (watermark if failure != 'none' else '2026-11-21T00:00:00Z')
+            # Keep the second clean scan populated as new dispositions; failures
+            # instead retry all original obligations with the unchanged watermark.
+            for ticket in owner.tickets.values():
+                ticket['updated_at'] = '2026-11-22T00:00:00Z'
+            monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 23, tzinfo=timezone.utc))
+    assert seen == [set(owner.tickets), set(owner.tickets)]
+    assert not schedule['action_review_scan']
+    assert schedule['action_review_watermark'] == (watermark if failure == 'persistent' else '2026-11-23T00:00:00Z')
+    assert len(failed) == (0 if failure == 'none' else 1 if failure == 'transient' else 2)
+
+
+@pytest.mark.parametrize('backend', ['jsonl', 'postgres'])
+def test_series_checkpoints_replay_existing_schedule_events_without_eviction(tmp_path, monkeypatch, backend):
+    """Legacy schedule events already contain every subject's last checkpoint."""
+    from services.consultation.store import PostgresConsultationStore
+    if backend == 'postgres':
+        import sys
+        from services.consultation.test_postgres_store import _make_fake_psycopg, _reset_fake_connection
+        _reset_fake_connection()
+        fake, connection = _make_fake_psycopg()
+        monkeypatch.setitem(sys.modules, 'psycopg', fake)
+        make_store = lambda: PostgresConsultationStore(dsn='postgresql://component/db', bootstrap=False)
+        events = lambda: copy.deepcopy(connection.lifecycle_rows)
+    else:
+        make_store = lambda: ConsultationStore(str(tmp_path / 'legacy-series'))
+        events = lambda: (tmp_path / 'legacy-series' / 'consult_lifecycle_events.jsonl').read_bytes()
+    store = make_store()
+    expected = []
+    for number in range(24):
+        checkpoint = {'meeting_series': {'meeting_type': 'MT-2', 'subject_ref': f'strategy:cost-{number}'},
+            'action_review_watermark': '2026-11-20T00:00:00Z',
+            'action_review_scan': {'started_at': '2026-11-21T00:00:00Z',
+                'page_tokens': {'outstanding': f'ticket-{number}'},
+                'completed_lanes': ['submitted'], 'evidence_failed': bool(number % 2)}}
+        expected.append(checkpoint)
+        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': 'persona-alpha',
+            'meeting_type': 'MT-2', **checkpoint})
+    # Attendance writes only cadence; neither it nor many newer subjects may
+    # erase an unfinished scan. There is still only one cadence slot.
+    store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': 'persona-alpha',
+        'meeting_type': 'MT-2', 'next_due_at': '2026-11-24T00:00:00Z'})
+    before = events()
+    store = make_store()
+    assert len(store.list_meeting_schedules()) == 1
+    for checkpoint in expected:
+        series = checkpoint['meeting_series']
+        assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-2', meeting_series=series) == checkpoint
+        for tenant, chair, code in [('foreign', 'persona-alpha', 'MT-2'),
+                                    (TENANT, 'persona-beta', 'MT-2'), (TENANT, 'persona-alpha', 'MT-1')]:
+            assert store.get_meeting_schedule(tenant, chair, code, meeting_series=series) is None
+    assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-2',
+        meeting_series={'meeting_type': 'MT-2', 'subject_ref': 'strategy:unknown'}) is None
+    assert events() == before  # Replay and exact-key reads perform no migration/write.
+
+
+@pytest.mark.parametrize('restart', [False, True])
+@pytest.mark.parametrize('http_execution', [False, True])
+@pytest.mark.parametrize('same_chair', [False, True])
+def test_interleaved_series_keep_owned_review_state(
+        tmp_path, monkeypatch, action_owner_contract, restart, http_execution, same_chair):
+    from datetime import datetime, timezone
+    from services.consultation import meeting_outputs as outputs
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kw: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kw: [])
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', lambda tenant, pid:
+        {'persona_id': pid, 'status': 'advisory_only', 'can_receive_persona_action': False})
+    chairs = ('persona-alpha', 'persona-alpha' if same_chair else 'persona-beta')
+    subjects = ('strategy:cost-a', 'strategy:cost-b') if same_chair else tuple(f'pool:{p}' for p in chairs)
+    code = 'MT-2' if same_chair else 'MT-1'
+    series = {ref: {'meeting_type': code, 'subject_ref': ref} for ref in subjects}
+    owner = action_owner_contract
+    expected = {ref: set() for ref in subjects}
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
+        for state in ('open', 'accepted'):
+            for i in range(3):
+                tid = 'rt-action-' + f'{lane * 100 + (10 if state == "accepted" else 0) + i:032x}'
+                owner.tickets[tid] = {'ticket_id': tid, 'tenant_id': TENANT, 'owner': chair,
+                    'meeting_action': {**series[ref],
+                        'meeting_id': 'origin', 'assignee_kind': 'persona',
+                        'deliverable': 'Compare costs', 'acceptance_criterion': 'Measured costs'},
+                    'action_state': state, 'revision': 0, 'evidence_refs': [],
+                    'updated_at': '2026-11-20T12:00:00Z'}
+                expected[ref].add(tid)
+    store_dir = str(tmp_path / 'interleaved')
+    store = ConsultationStore(store_dir)
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
+        store.put_meeting_schedule({'tenant_id': TENANT, 'persona_id': chair, 'meeting_type': code,
+            'meeting_series': series[ref],
+            'action_review_watermark': f'2026-11-{19 + lane}T00:00:00Z', 'action_review_scan': {}})
+    seen = {ref: [] for ref in subjects}
+    if http_execution:
+        from fastapi.testclient import TestClient
+        from services.consultation import workflow_executor as executor
+        monkeypatch.setenv('CONSULTATION_AUTH_REQUIRED', 'true')
+        monkeypatch.setenv('CONSULTATION_SERVICE_TOKEN', SERVICE_TOKEN)
+        monkeypatch.setenv('PANTHEON_TENANT_ID', TENANT)
+        monkeypatch.setattr(consultation_main, 'workflow_state', None)
+        client = TestClient(consultation_main.app)
+        headers = {'Authorization': f'Bearer {SERVICE_TOKEN}', 'X-Pantheon-Tenant-Id': TENANT,
+                   'X-Pantheon-Service-Actor': ACTOR}
+        def api_get(config, path):
+            reply = client.get(path, headers=headers)
+            assert reply.status_code == 200, reply.text
+            return reply.json()
+        def api_post(config, path, payload):
+            reply = client.post(path, headers=headers, json=payload)
+            assert reply.status_code in {200, 201, 202}, reply.text
+            return reply.json()
+        monkeypatch.setattr(executor, '_api_get', api_get)
+        monkeypatch.setattr(executor, '_api_post', api_post)
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            assert ctx['prior_actions'] and all(a['action_id'] in expected[current_ref] for a in ctx['prior_actions'])
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            event = {'claims': [{'claim': 'Review original obligations', 'evidence_refs': [cid]}],
+                     'summary_evidence_refs': [cid]}
+            if ctx['round'] == 'synthesis':
+                event['synthesis'] = {'summary': 'Retain the original work', 'outcome': 'completed_no_proposal',
+                    'proposals': [], 'actions': [], 'no_action_reason': 'Original deliverables remain assigned'}
+            else:
+                event.update(stance='approve', confidence=.8, citations=[cid], accepted=[], disputed=[],
+                             changed=False, proposals=[])
+            return SimpleNamespace(event_content=event, summary='Review original obligations', evidence=[],
+                                   confidence=.8, recommendation='approve')
+    with outputs.output_routing_context(transport=owner.send, store_path=tmp_path / 'dispatch.json'):
+        for number, (current_chair, current_ref) in enumerate(tuple(zip(chairs, subjects)) * 3):
+            if restart:
+                store = ConsultationStore(store_dir)
+            peer = 'persona-risk-officer' if same_chair else next(p for p in chairs if p != current_chair)
+            other_ref = next(ref for ref in subjects if ref != current_ref)
+            other_chair = chairs[subjects.index(other_ref)]
+            peer_before = store.get_meeting_schedule(TENANT, other_chair, code, meeting_series=series[other_ref])
+            monkeypatch.setattr(outputs, '_utc_now', lambda: datetime(2026, 11, 21, number, tzinfo=timezone.utc))
+            meeting, _ = meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+                payload={'meeting_type': code, 'topic': 'Review pool alternatives',
+                         'iso_week': f'2026-W{47 + number}',
+                         'convened_by': {'kind': 'persona', 'id': current_chair},
+                         'participants': [current_chair, peer], 'subject_ref': current_ref},
+                idempotency_key=f'interleaved-{number}')
+            execution_store = store
+            if http_execution:
+                monkeypatch.setattr(consultation_main, 'store', store)
+                execution_store = executor._HttpMeetingStoreProxy(ExecutorConfig.from_env(), meeting['meeting_id'], 'review')
+            closed = meetings_mod.execute_persona_meeting(store=execution_store, meeting_id=meeting['meeting_id'],
+                                                          tenant_id=TENANT, provider=Provider())
+            assert closed['status'] == 'closed' and len(closed['rounds']) == 2
+            assert not closed['rejected_positions']
+            seen[current_ref].extend(a['action_id'] for a in closed['prior_actions'])
+            peer_after = store.get_meeting_schedule(TENANT, other_chair, code, meeting_series=series[other_ref])
+            assert peer_after == peer_before
+            assert store.get_meeting_schedule(TENANT, current_chair, code)['last_run_at'] == closed['closed_at']
+            if not same_chair:
+                assert store.get_meeting_schedule(TENANT, peer, code)['last_run_at'] == closed['closed_at']
+    store = ConsultationStore(store_dir)
+    for lane, (chair, ref) in enumerate(zip(chairs, subjects)):
+        assert set(seen[ref]) == expected[ref] and len(seen[ref]) == 6
+        saved = store.get_meeting_schedule(TENANT, chair, code, meeting_series=series[ref])
+        assert saved['meeting_series'] == series[ref]
+        assert not saved['action_review_scan']
+        assert saved['action_review_watermark'] == f'2026-11-21T0{lane}:00:00Z'
+
+
+@pytest.mark.parametrize('convener', [
+    {'kind': 'persona', 'id': 'persona-alpha'},
+    {'kind': 'operator', 'id': 'op-1'},
+])
+@pytest.mark.parametrize('assignee', ['operator', 'invented-human-user'])
+def test_human_action_normal_adapter_two_round_close_targets_existing_inbox(
+        stack, tmp_path, monkeypatch, convener, assignee):
+    """No approval/capital prerequisite: a human must obtain a real document."""
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': assignee,
+           'deliverable': 'Provide the broker-signed historical fee statement',
+           'acceptance_criterion': 'Statement covers the full prior quarter and lists every fee',
+           'human_requirement': requirement}
+    stack['double'].custom_proposals = []
+    stack['double'].custom_actions = [raw]
+    created = open_persona_meeting(
+        base_url=stack['api_url'], token=SERVICE_TOKEN, tenant_id=TENANT,
+        meeting_type='MT-1', topic='Resolve missing historical fee evidence',
+        convened_by=convener, subject_ref='persona:persona-alpha',
+        participants=['persona-alpha', 'persona-risk-officer'],
+        idempotency_key='human-work', iso_week='2026-W47')
+    cfg = stack['cfg']
+    provider = HttpContributionProvider(endpoint=cfg.provider_url, bearer_token=cfg.provider_token,
+        service_actor=cfg.provider_service_actor, timeout_seconds=cfg.timeout_seconds)
+    owner = _ActionResearchBoundary()
+    with output_routing_context(transport=owner, store_path=tmp_path / 'human-dispatch.json'):
+        meeting = meetings_mod.execute_persona_meeting(store=consultation_main.store,
+            meeting_id=created['meeting_id'], tenant_id=TENANT, provider=provider)
+        calls_before_retry = len(stack['double'].calls)
+        meetings_mod.execute_persona_meeting(store=consultation_main.store,
+            meeting_id=created['meeting_id'], tenant_id=TENANT, provider=provider)
+    assert meeting['status'] == 'closed' and len(meeting['rounds']) == 2
+    assert meeting['synthesis']['proposals'] == []
+    assert len(stack['double'].calls) == calls_before_retry == 5
+    prompt = stack['double'].calls[-1]['prompt']
+    assert 'existing tenant operator inbox' in prompt and 'Do not invent usernames' in prompt
+    if assignee != 'operator':
+        assert not owner.tickets and meeting['actions'] == []
+        assert meeting['synthesis']['rejected_actions'] == [
+            {'index': 0, 'reason': 'human_assignee_unresolvable_use_operator_inbox'}]
+        return
+    ticket, = owner.tickets.values()
+    action, = meeting['actions']
+    assert action['assignee'] == ticket['owner'] == 'operator'
+    assert action['human_requirement'] == ticket['description'] == requirement
+    assert ticket['meeting_action']['deliverable'] == raw['deliverable']
+    assert ticket['meeting_action']['acceptance_criterion'] == raw['acceptance_criterion']
+    assert ticket['meeting_action']['due_at'] == raw['due_at']
+    assert ticket['meeting_action']['assignee_kind'] == 'human'
+    assert len([r for r in owner.requests if r[0] == 'POST']) == 1
+
+
+@pytest.mark.parametrize('requirement', [None, '', '   ', ['invented text'], 23, 'x' * 2001])
+def test_human_action_requires_bounded_specific_reason_and_never_dispatches(
+        tmp_path, requirement):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': 'operator',
+           'human_requirement': requirement}
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'invalid-human',
+               'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [raw]}, meeting, {'facts:source'})
+    assert actions == [] and rejected == [
+        {'index': 0, 'reason': 'human_requirement_required_or_unbounded'}]
+    # Older frozen producers also fail visibly without issuing an owner request.
+    meeting['synthesis'] = {'actions': [raw]}
+    def no_owner_call(*args):
+        pytest.fail('Invalid human assignment must not reach the owner')
+    pending, = dispatch_meeting_actions(meeting, transport=no_owner_call,
+                                       store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'human_requirement_required_or_unbounded'
+
+
+def test_frozen_invented_human_target_is_unresolved_without_dispatch(tmp_path):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'old-producer',
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee_kind': 'human',
+            'assignee': 'fabricated-user', 'human_requirement': 'Obtain a signed source document'}]}}
+    def no_owner_call(*args):
+        pytest.fail('Invented human target must not receive a ticket')
+    pending, = dispatch_meeting_actions(meeting, transport=no_owner_call,
+                                       store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'human_assignee_unresolvable_use_operator_inbox'
+
+
+def test_human_reason_frozen_across_lost_receipt_real_owner_create(
+        tmp_path, monkeypatch, action_owner_contract):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': ' operator ',
+           'human_requirement': ' ' + requirement + ' '}
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'human-receipt-retry',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [raw]}, meeting, {'facts:source'})
+    assert not rejected
+    meeting['synthesis'] = {'actions': actions}
+    calls = []
+    def transport(*args):
+        calls.append(copy.deepcopy(args[3]))
+        code, reply = action_owner_contract.send(*args)
+        return (200, {}) if len(calls) == 1 else (code, reply)
+    path = tmp_path / 'ledger.json'
+    pending, = dispatch_meeting_actions(meeting, transport=transport, store_path=path)
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    # A process restart reloads both frozen meeting state and its ledger.
+    restored = json.loads(json.dumps(meeting))
+    delivered, = dispatch_meeting_actions(restored, transport=transport, store_path=path)
+    assert delivered['ticket_id'] and delivered['state'] == 'open'
+    dispatch_meeting_actions(restored, transport=transport, store_path=path)
+    assert len(calls) == 2 and calls[0] == calls[1]
+    ticket, = action_owner_contract.tickets.values()
+    assert ticket['owner'] == 'operator' and ticket['description'] == requirement
+    assert ticket['meeting_action']['deliverable'] == raw['deliverable']
+    assert ticket['meeting_action']['acceptance_criterion'] == raw['acceptance_criterion']
+    assert 'human_requirement' not in ticket['meeting_action']  # existing RW-01 schema
+
+
+def test_human_action_owner_receipt_must_preserve_human_requirement(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'missing-human-reason',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee': 'operator',
+            'assignee_kind': 'human', 'human_requirement': requirement}]}}
+    owner = _ActionResearchBoundary()
+    def transport(*args):
+        status, receipt = owner(*args)
+        receipt['description'] = 'Generic task acknowledgement'
+        return status, receipt
+    pending, = dispatch_meeting_actions(meeting, transport=transport, store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'research_owner_human_requirement_mismatch'
+    delivered, = dispatch_meeting_actions(meeting, transport=owner, store_path=tmp_path / 'ledger.json')
+    assert delivered['ticket_id'] and delivered['dispatch_error'] is None
+    assert len(owner.tickets) == 1
+
+
+@pytest.mark.parametrize('action_owner_contract', ['real_owner'], indirect=True)
+def test_human_assignment_reaches_authenticated_tenant_operator_at_real_owner(
+        tmp_path, monkeypatch, action_owner_contract):
+    """The inbox target resolves through existing RW-01 roles, not a directory."""
+    from services.consultation.meeting_outputs import dispatch_meeting_actions, action_snapshot
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the signed external statement for the prior quarter.'
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'human-role-delivery',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee': 'operator',
+            'assignee_kind': 'human', 'human_requirement': requirement}]}}
+    delivered, = dispatch_meeting_actions(meeting, transport=action_owner_contract.send,
+                                         store_path=tmp_path / 'dispatch.json')
+    assert delivered['state'] == 'open'
+    owner = action_owner_contract
+    # This actual person differs from both the model target and the convener.
+    operator = SimpleNamespace(tenant_id=TENANT, actor_id='signed-in-alice', roles={'operator'})
+    page = owner.list_research_tickets(context=operator, meeting_linked=True, action_states=['open'])
+    row, = page['data']
+    assert row['ticket_id'] == delivered['ticket_id'] and row['required_actor'] == 'operator'
+    ticket = owner.get_research_ticket(row['ticket_id'], context=operator)
+    assert ticket['description'] == requirement
+    assert row['meeting_action']['deliverable'] == ticket['meeting_action']['deliverable']
+    assert row['meeting_action']['acceptance_criterion'] == ticket['meeting_action']['acceptance_criterion']
+    for ctx in (
+        SimpleNamespace(tenant_id=TENANT, actor_id='unrelated-viewer', roles={'viewer'}),
+        SimpleNamespace(tenant_id=TENANT, actor_id='invented-human-user', roles={'human'}),
+        SimpleNamespace(tenant_id='foreign-tenant', actor_id='signed-in-alice', roles={'operator'}),
+    ):
+        assert owner.list_research_tickets(context=ctx, meeting_linked=True)['data'] == []
+        assert owner.get_research_ticket(row['ticket_id'], context=ctx) is None
+    # Simulate the owner's later disposition; exercise its real projection.
+    stored = owner.tickets[row['ticket_id']]
+    stored.update(action_state='returned', revision=2, review_decision={
+        'decision': 'return', 'reason': 'Signed statement omits March fees', 'review_source': 'next-meeting'})
+    returned, = owner.list_research_tickets(context=operator, meeting_linked=True,
+                                          action_states=['returned'])['data']
+    assert returned['review_decision']['reason'] == 'Signed statement omits March fees'
+    assert action_snapshot(returned)['review_decision'] == returned['review_decision']
+    assert owner.get_research_ticket(row['ticket_id'], context=operator)['description'] == requirement
+
+
+@pytest.fixture
+def persona_action_policy():
+    """Compose the real Persona policy from its frozen source until it merges."""
+    import importlib.util
+    import os
+    source = os.getenv('MEETING_ACTION_PERSONA_POLICY_SOURCE')
+    if source:
+        spec = importlib.util.spec_from_file_location('meeting_contract_persona_policy', source)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    else:
+        from services.control_plane.persona import persona_policy_resolver as module
+    if not hasattr(module, 'evaluate_participant_action_capability'):
+        pytest.skip('Persona policy not integrated; supply its frozen source explicitly')
+    return module.evaluate_participant_action_capability
+
+
+@pytest.mark.parametrize('feed_access', [False, True])
+def test_data_aware_chair_three_personas_normal_engine(
+        tmp_path, monkeypatch, action_owner_contract, persona_action_policy, feed_access):
+    """Real policy/create/list, isolated owner persistence and HTTP transport; no hosted claim."""
+    from contextlib import closing
+    from io import BytesIO
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    from services.consultation.meeting_outputs import action_snapshot
+    from services.persona.harness import HarnessSurface, HarnessVersion, digest
+    pids = ('persona-2448c7053e33ea48da47', 'persona-6507750312870d03a241', 'persona-ee7112a829d38b9135ac')
+    surface = HarnessSurface.model_validate({
+        'identity_inputs': ['Cite supplied evidence'], 'guardrails': {'allowed_tools': ['read'],
+        'forbidden_solo_actions': ['admit', 'harness_patch']}, 'consult_policy': [],
+        'tool_guidance': {'read': 'Read governed evidence'}, 'skills': [],
+        'workflow': {'cadence_seconds': 86400, 'steps': ['observe', 'orient', 'decide', 'act', 'learn']},
+        'cycle_thresholds': {'minimum_evidence_count': 1, 'minimum_confidence': .8},
+        'memory_retrieval_policy': {'scopes': ['own_private', 'institutional'], 'max_items': 8, 'minimum_confidence': .8}})
+    personas = {}
+    for pid in pids:
+        version = HarnessVersion(persona_id=pid, version=1, parent_version=None, patch_id=None,
+            created_at='2026-11-23T00:00:00Z', created_by='operator', surface=surface,
+            content_digest=digest(surface.model_dump(mode='json')))
+        personas[pid] = {'persona_id': pid, 'tenant_id': TENANT, 'status': 'active', 'lifecycle_state': 'paper_owner',
+            'required_data_sources': [
+                {'dataset': 'tw_price_daily', 'market': 'TW', 'cadence': 'daily', 'source_class': 'live_pull',
+                 'connector_candidates': ['tw-twse-tpex-official-market'],
+                 'policy_gates': ['require_connector_approved', 'require_schedule_active', 'require_source_health_ok', 'no_live_capital']},
+                {'dataset': 'tw_broker_top', 'market': 'TW', 'cadence': 'daily', 'source_class': 'live_pull',
+                 'connector_candidates': ['tw-finmind-broker-daily-report'],
+                 'policy_gates': ['require_connector_approved', 'require_schedule_active', 'require_source_health_ok', 'no_live_capital']}],
+            'metadata': {'persona_harness': {'active_version': 1, 'versions': [version.model_dump(mode='json')]}}}
+    seen = []
+    original_urlopen = urllib.request.urlopen
+    def capability_http(req, timeout):
+        parsed = urllib.parse.urlsplit(req.full_url)
+        if parsed.netloc != 'persona-owner':
+            return original_urlopen(req, timeout=timeout)
+        assert req.get_header('X-tenant-id') == TENANT
+        if parsed.path.endswith('/strategy-pool'):
+            return closing(BytesIO(json.dumps({'pool_version': 1, 'members': []}).encode()))
+        if not parsed.path.endswith('/action-capability'):
+            raise urllib.error.HTTPError(req.full_url, 404, 'not supplied by this owner fixture', {}, None)
+        pid = parsed.path.split('/')[3]
+        q = urllib.parse.parse_qs(parsed.query)
+        seen.append((pid, q.get('required_data', [])))
+        snapshot = {'persona_id': pid, 'capabilities': ['persona_opinion'],
+            'allowed_capabilities': ['persona_opinion'], 'effective_tools': [], 'effective_workflows': [],
+            'metadata': {'canonical_write_authority': 'persona_service', 'scope': 'paper_advisory',
+                         'accessible_data': ['tw_price_daily', 'tw_broker_top'] if feed_access else []}}
+        receipt = persona_action_policy(personas[pid], snapshot, run_purpose=q['run_purpose'][0],
+                                       requirements={'required_data': q.get('required_data', [])})
+        return closing(BytesIO(json.dumps(receipt).encode()))
+    monkeypatch.setenv('PANTHEON_PERSONA_API_URL', 'http://persona-owner')
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(urllib.request, 'urlopen', capability_http)
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])
+    calls = []
+    class Provider:
+        def obtain(self, *, tenant_id, request, participant_scope):
+            ctx = request['meeting']
+            calls.append(copy.deepcopy(request))
+            cid = request['case_file']['groups']['facts']['items'][0]['item_id']
+            event = {'claims': [{'claim': 'Use supplied evidence', 'evidence_refs': [cid]}], 'summary_evidence_refs': [cid]}
+            if ctx['round'] == 'synthesis':
+                actions = []
+                for index, pid in enumerate(pids):
+                    note = {**_adopted_action(cid, f'note-{index}'), 'assignee': pid}
+                    if index == 1:
+                        note['required_data'] = []  # distinct from omission; retained in the owner origin
+                    actions.extend([note, {**_adopted_action(cid, f'feed-{index}'), 'assignee': pid,
+                        'required_data': [' tw_price_daily ', 'tw_broker_top'], 'deliverable': 'Compare licensed market feeds'}])
+                # Only an explicitly human-only external document goes to the existing operator inbox.
+                actions.append({**_adopted_action(cid, 'signed-statement'), 'assignee': 'operator',
+                    'assignee_kind': 'human', 'human_requirement': 'Only the operator can obtain the broker-signed statement',
+                    'required_data': ['broker_signed_statement']})
+                # Raw model whitespace is normalized by adoption; schema accepts valid bounded IDs.
+                event['synthesis'] = {'summary': 'Adopt specific feasible work', 'outcome': 'completed_no_proposal',
+                                      'proposals': [], 'actions': actions}
+            else:
+                event.update(stance='approve', confidence=.8, citations=[cid], accepted=[], disputed=[], changed=False, proposals=[])
+            jsonschema.validate(event, _meeting_event_content_schema(ctx))
+            return SimpleNamespace(event_content=event, summary='Use supplied evidence', evidence=[], confidence=.8, recommendation='approve')
+    store = ConsultationStore(str(tmp_path / 'data-meetings'))
+    meeting = meetings_mod.convene_persona_meeting(store=store, workflow_state=None, tenant_id=TENANT,
+        persona_directory=personas, payload={'meeting_type': 'MT-1', 'topic': 'Evaluate actual deliverable data needs',
+            'convened_by': {'kind': 'persona', 'id': pids[0]}, 'participants': list(pids),
+            'subject_ref': 'persona:' + pids[0]}, idempotency_key='data-aware')[0]
+    owner = action_owner_contract
+    bodies, lost_bodies = [], []
+    def lost_receipt_once(method, url, headers, body):
+        status, reply = owner.send(method, url, headers, body)
+        if method == 'POST':
+            bodies.append(copy.deepcopy(body))
+            if body['meeting_action'].get('required_data') and not lost_bodies:
+                lost_bodies.append(copy.deepcopy(body))
+                return 503, {}  # data-aware owner origin committed before the reply was lost
+        return status, reply
+    with output_routing_context(transport=lost_receipt_once, store_path=tmp_path / 'data-dispatch.json'):
+        from services.consultation.meeting_outputs import MeetingOutputRoutingError
+        with pytest.raises(MeetingOutputRoutingError, match='frozen decision retained'):
+            meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'], tenant_id=TENANT, provider=Provider())
+        requests_at_freeze = (len(calls), len(seen))
+        result = meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'], tenant_id=TENANT, provider=Provider())
+        assert (len(calls), len(seen)) == requests_at_freeze
+    assert result['status'] == 'closed' and len(result['rounds']) == 2
+    assert result['synthesis']['proposals'] == []
+    assert lost_bodies and bodies[-1] == lost_bodies[0]  # exact data-aware request on ambiguous retry
+    assert len(owner.tickets) == (7 if feed_access else 4)
+    for row in owner.tickets.values():
+        origin = row['meeting_action']
+        if origin['source_action_id'].startswith('feed-'):
+            assert origin['required_data'] == ['tw_price_daily', 'tw_broker_top']
+        elif origin['source_action_id'] == 'note-1':
+            assert origin['required_data'] == []
+        elif origin['source_action_id'].startswith('note-'):
+            assert 'required_data' not in origin
+        else:
+            assert row['owner'] == 'operator' and row['description'].startswith('Only the operator')
+        projection = action_snapshot(row)
+        assert projection.get('required_data') == origin.get('required_data')
+    for pid in pids:
+        assert seen.count((pid, ['tw_price_daily', 'tw_broker_top'])) == 1
+        assert seen.count((pid, [])) == 2  # pre-read and independent evidence-only adoption
+    rejected = result['synthesis']['rejected_actions']
+    assert len(rejected) == (0 if feed_access else 3)
+    for row in rejected:
+        assert row['required_data'] == ['tw_price_daily', 'tw_broker_top']
+        assert row['capability_status'] == 'restricted_data'
+        assert row['capability_reason'] == 'deliverable_data_not_accessible'
+
+
+@pytest.mark.parametrize('datasets', ['tw_price_daily', None, [''], ['x'] * 9, ['x', ' x '], ['x' * 257], ['研' * 256, '究' * 256, '員' * 256]])
+def test_adoption_invalid_data_never_calls_capability_owner(monkeypatch, datasets):
+    def unexpected(*args):
+        pytest.fail('invalid requirement must not reach capability owner')
+    monkeypatch.setattr(meetings_mod, '_participant_action_capability', unexpected)
+    meeting = {'tenant_id': TENANT, 'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [{**_adopted_action(), 'required_data': datasets}]}, meeting, {'facts:source'})
+    assert not actions and rejected == [{'index': 0, 'reason': 'invalid_required_data'}]
+
+
+@pytest.mark.parametrize('bad_requirement', [None, ['other-feed']])
+def test_data_aware_dispatch_does_not_freeze_changed_or_missing_requirement(tmp_path, monkeypatch, bad_requirement):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'data-receipt',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'required_data': ['tw_price_daily']}]}}
+    owner = _ActionResearchBoundary()
+    requests = []
+    def transport(method, url, headers, body):
+        requests.append(copy.deepcopy(body))
+        status, reply = owner(method, url, headers, body)
+        if len(requests) == 1:
+            if bad_requirement is None:
+                reply['meeting_action'].pop('required_data')
+            else:
+                reply['meeting_action']['required_data'] = bad_requirement
+        return status, reply
+    ledger = tmp_path / 'data-receipt.json'
+    first = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert first['state'] == 'dispatch_pending' and not first.get('ticket_id')
+    assert first['dispatch_error'] == 'research_owner_missing_or_invalid_ticket_receipt'
+    second = dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)[0]
+    assert second['ticket_id'] == 'owner-issued-ticket-1' and second['dispatch_error'] is None
+    dispatch_meeting_actions(meeting, transport=transport, store_path=ledger)
+    assert requests[0] == requests[1] and len(requests) == 2 and len(owner.tickets) == 1
