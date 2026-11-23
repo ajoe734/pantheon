@@ -63,6 +63,34 @@
       "Repository provisioning verified services/scripts/integrations imports from a foreign cwd without PYTHONPATH; commit trailer range check passed"
     ]
   },
+  "ci_repair_validation": {
+    "previous_head": "8f0266be8402d2724f3effdcc5c59705379d2185",
+    "failed_check": "PR #7758 Smoke acceptance, run 45103201341, job 137460285439: undeclared writer jsonl:source-ingest.jsonl",
+    "change": "Rename only the JSONL source_summary_origin evidence label to source-ingest.tenant_eligible_records_jsonl so the static writer discovery does not interpret the label as a file. No exact assertions referenced the old label. File discovery, storage inventory, read behavior and existing writers are unchanged.",
+    "checks": [
+      {
+        "command": "timeout 60s python3 -m unittest scripts.test_check_storage_manifest",
+        "exit_status": 0,
+        "result": "10 tests passed in 3.125s"
+      },
+      {
+        "command": "timeout 60s python3 scripts/check_storage_manifest.py --output /tmp/distillation-bounded-storage-manifest-report.json",
+        "exit_status": 0,
+        "result": "passed=true; failures=[]; 372 entries, 3 waivers; 90 JSONL discoveries"
+      },
+      {
+        "command": "timeout 180s .venv-pantheon/bin/python3 -m pytest services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py -q --disable-warnings --maxfail=3",
+        "exit_status": 0,
+        "result": "100 passed, 4 skipped, 2 warnings in 24.64s",
+        "limit": "No PostgreSQL test DSN configured for this label-only repair; the four real-PostgreSQL tests skipped. Prior PostgreSQL measurements remain recorded above."
+      },
+      {
+        "command": "git diff --check",
+        "exit_status": 0
+      }
+    ],
+    "delivery": "Fresh exact-head independent review and required CI remain required before supervisor integration; hosted RC1 acceptance remains pending."
+  },
   "independent_review": {
     "status": "pending",
     "assigned_reviewer": "Antigravity2",

@@ -884,7 +884,7 @@ def read_source_records_for_tenant(
                     break
         if summary is not None:
             summary.update(eligible_source_count=len(candidates), source_read_limit=limit,
-                           source_summary_origin="source-ingest.jsonl.tenant_eligible_records")
+                           source_summary_origin="source-ingest.tenant_eligible_records_jsonl")
         return selected
     if backend != "postgres":
         raise ValueError("SOURCE_INGEST_EVIDENCE_BACKEND must be jsonl or postgres")
