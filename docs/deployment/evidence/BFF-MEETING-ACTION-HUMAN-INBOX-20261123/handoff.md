@@ -323,3 +323,40 @@ The final ten-file regression passed 326 tests, 100 warnings in 139.48 s,
 terminal exit 0. Checkout import validation, diff budget and whitespace checks
 passed. All required local batches have terminal outputs; CI, independent
 review, merge and hosted acceptance are not claimed by these local results.
+
+## Consultation detail contract correction
+
+Resumed from `9e6bd23e1` on clean task branch; current dev `0c806ffed` is
+already contained. Before editing, inspected the original BFF detail caller
+and Consultation task source `83fb536a6` (`get_meeting_detail_view`, capability
+receipt and `read_meeting_actions`). The producer uses
+`participant_action_capabilities`, `prior_actions_source` (including `pages`),
+`meeting_series.subject_ref`, and `synthesis.action_reviews`. The BFF previously
+looked only for its public names and therefore lost these recorded values.
+
+Anchor `631cd7d5a` maps those sources to `participant_capabilities`,
+`action_read` / `action_page_info`, `series_subject_ref`, and
+`prior_action_reviews`. Existing public fields still take precedence, including
+explicit empty lists/maps; null retains the owner fallback. Source status,
+reason, capability denial/allowed deliverables and cursor remain unchanged.
+Frozen action state and live_owner_status stay separate. No extra owner call,
+writer, cache, backfill, endpoint or status vocabulary is introduced.
+
+Every aliased source uses the existing visibility filter, including its parent
+container before nested extraction. The returned `synthesis.action_reviews`
+copy is filtered too. Tests use real ConsultationStore/get_meeting_detail_view
+with the exact producer keys, then the authenticated normal BFF route twice;
+they cover allowed and restricted capabilities, ok/degraded/partial/denied/
+unavailable receipts, pagination, frozen/live state and unchanged stored data.
+Operator, owning trader and unrelated viewer cases cover private, foreign and
+withheld records plus typed subject redaction. Legacy no-action behavior and
+the original caller-specific `can_respond` tests remain in the regression.
+The full ten-file batch passed 343 tests in 121.66 s (exit 0). Loading the
+actual committed Consultation implementation from `83fb536a6` and rerunning
+the detail cases passed 17 tests in 3.46 s (exit 0); this verifies the producer
+view without substituting BFF public names. Exact commands are in evidence.json.
+
+The read-only hosted probe now requires recorded capabilities, series,
+reviews and source/page receipts when actions exist. Local invocation exited
+77 (`probe_configuration_missing`); this is skipped, not accepted. Actual
+owner execution and hosted proof remain with the existing chain proof task.

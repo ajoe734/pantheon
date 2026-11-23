@@ -17,6 +17,21 @@
   "resource_measurements": "resources.json",
   "validation": [
     {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
+      "result": "343 passed, 100 warnings in 121.66s; terminal exit collected; all original can_respond cases retained"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -c 'import subprocess, sys, types, pytest; name = \"services.consultation.meetings\"; module = types.ModuleType(name); module.__file__ = \"services/consultation/meetings.py\"; sys.modules[name] = module; source = subprocess.check_output([\"git\", \"show\", \"83fb536a6:services/consultation/meetings.py\"]); exec(compile(source, module.__file__, \"exec\"), module.__dict__); raise SystemExit(pytest.main([\"-q\", \"--disable-warnings\", \"services/control-plane/bff/tests/test_meeting_action_human_response.py\", \"-k\", \"consultation_detail\", \"--tb=short\"]))'",
+      "exit_code": 0,
+      "result": "17 passed, 168 deselected, 3 warnings in 3.46s; actual committed Consultation implementation producing views, authenticated BFF route; terminal exit collected"
+    },
+    {
+      "command": "timeout 20 .venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/acceptance_probe.py",
+      "exit_code": 77,
+      "result": "skipped: probe_configuration_missing; no hosted evidence or acceptance claimed"
+    },
+    {
       "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
       "result": "326 passed, 100 warnings in 139.48s; caller permission plus existing ten-file regression; bounded foreground terminal exit collected"
@@ -197,7 +212,8 @@
     "Authenticated real BFF inbox/ticket routes sharing one owner HTTP double: direct submit/return/rework, criterion and old evidence preserved, wrong approver and viewer denied, replay/stale/evidence validation, durable readback and disappearance after response",
     "200 unrelated Persona rows before 105 direct human rows: one 100-row owner-filtered page, opaque continuation through original route, no duplicate IDs or per-ticket fanout, unrelated approver excluded and operator visibility retained",
     "Direct-human reason/summary uses owner human_actionable description; preserves original human_requirement, return reason, requested deliverable and criterion; absent/null/blank legacy requirement explicitly unrecorded; two authenticated reloads, old meeting_review retained, one owner page/read, original record unchanged",
-    "Existing authenticated PATCH transparently forwards evidence_note title/body/optional source_refs for submit and provide_input, with/without evidence_refs; exact owner HTTP payload, signed actor, revision/idempotency/mismatch, readonly/tenant denial, owner full note receipt/readback, replay/stale and same-ticket resumption; HTTP doubles only, no claim of real note storage or atomicity"
+    "Existing authenticated PATCH transparently forwards evidence_note title/body/optional source_refs for submit and provide_input, with/without evidence_refs; exact owner HTTP payload, signed actor, revision/idempotency/mismatch, readonly/tenant denial, owner full note receipt/readback, replay/stale and same-ticket resumption; HTTP doubles only, no claim of real note storage or atomicity",
+    "Actual Consultation detail producer 83fb536a6 composed with normal authenticated BFF route: exact capability/source/pages/series/reviews fields, allowed/restricted capability, ok/degraded/partial/denied/unavailable status, two reloads/one GET each, unchanged stored data, separate frozen/live action state; aliased parent and nested foreign/private/withheld/trader filtering"
   ],
   "residual_findings": [
     {
@@ -238,5 +254,21 @@
     "research": "b99655d779b05e6c96fc3ebcce4b657d4d773511",
     "consultation": "50c566653033bc6e944391d2f3c37c9885a54836",
     "proof": "read-only source inspection, not integrated owner execution"
+  },
+  "detail_owner_alias_correction": {
+    "resumed_head": "9e6bd23e13a654a21b82cf9033f9bdee7ac61731",
+    "source_anchor": "631cd7d5a",
+    "tests_anchor": "2f31f6ffd",
+    "consultation_source_ref_tested": "83fb536a6",
+    "mapping": {
+      "participant_action_capabilities": "participant_capabilities",
+      "prior_actions_source": "action_read",
+      "prior_actions_source.pages": "action_page_info",
+      "meeting_series.subject_ref": "series_subject_ref",
+      "synthesis.action_reviews": "prior_action_reviews"
+    },
+    "extra_owner_calls": 0,
+    "persistent_writers": 0,
+    "source_status": "review pending; no merge/deploy/acceptance claim"
   }
 }

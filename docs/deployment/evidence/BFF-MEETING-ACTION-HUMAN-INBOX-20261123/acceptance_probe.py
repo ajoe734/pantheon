@@ -49,6 +49,12 @@ def main():
         if not meeting["actions"] and not meeting["prior_actions"]:
             print(json.dumps({"status": "skipped", "reason": "no_real_meeting_actions", "reply_bytes": sizes}))
             return 77
+        assert meeting["participant_capabilities"], "recorded_capabilities_absent"
+        assert meeting.get("series_subject_ref"), "series_subject_absent"
+        assert isinstance(meeting.get("prior_action_reviews"), list), "action_reviews_absent"
+        assert isinstance(meeting.get("action_page_info"), dict), "action_owner_pages_absent"
+        assert isinstance(meeting.get("action_read"), dict), "action_owner_receipt_absent"
+        assert meeting["action_read"].get("status") not in {None, "not_recorded"}, "action_source_receipt_lost"
         print(json.dumps({"status": "passed_read_projection", "reply_bytes": sizes,
                           "action_count": len(meeting["actions"]), "prior_count": len(meeting["prior_actions"]),
                           "human_input_count": len(work), "writes": 0}))
