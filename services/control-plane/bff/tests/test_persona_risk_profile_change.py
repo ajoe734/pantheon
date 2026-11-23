@@ -5,6 +5,7 @@ Policy limits and approval receipts are explicitly synthetic local fixtures.
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -85,8 +86,17 @@ def normal_edit(route_harness, change_fixture, tmp_path, monkeypatch):
                            coordinator=coordinator, transport=transport)
 
 
+def edit_key(key):
+    # Existing execute-plans key shape; retain the same timestamp on retry.
+    stamp, digits = 1700000000000 + (int(key) if key.isdecimal() else 0), ""
+    while stamp:
+        stamp, digit = divmod(stamp, 36)
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + digits
+    return f"idk_{digits}_{hashlib.sha256(key.encode()).hexdigest()}"
+
+
 def patch(world, profile, key="edit"):
-    return world.bff.patch("/bff/personas/persona-test", json={"risk": profile}, headers=_headers("operator-a", key))
+    return world.bff.patch("/bff/personas/persona-test", json={"risk": profile}, headers=_headers("operator-a", edit_key(key)))
 
 
 def refetch(world):
@@ -152,7 +162,7 @@ def test_persona_failure_after_capital_commit_retries_without_duplicate_intent(n
     monkeypatch.setattr(world.personas, "update_persona", lambda *a, **k: None)
     def combined_patch():
         return world.bff.patch("/bff/personas/persona-test", json={"risk": "medium", "name": "Renamed"},
-                               headers=_headers("operator-a", "combined-edit"))
+                               headers=_headers("operator-a", edit_key("combined-edit")))
     assert combined_patch().status_code == 503
     assert refetch(world)["riskPolicyChange"]["effectiveRisk"] == "medium"
     monkeypatch.setattr(world.personas, "update_persona", updater)
@@ -214,6 +224,54 @@ def test_durable_key_conflict_after_restart_and_unrelated_edits(normal_edit, mon
     assert world.store.require(world.pool_id) == before
 
 
+def test_normal_edit_after_receipt_eviction_rejects_delayed_old_key(normal_edit, monkeypatch):
+    from services.capital.profile_change import change_profile, MAX_CHANGE_RECEIPTS
+    from services.capital.test_profile_change import request
+
+    world = normal_edit
+    assert patch(world, "medium", "0").status_code == 200
+    for index in range(1, MAX_CHANGE_RECEIPTS + 2):
+        body = request(("low", "medium", "high")[index % 3], f"seed-{index}", index,
+                       issued_at_ms=1700000000000 + index)
+        world.store.mutate_paper_risk_profile(world.pool_id, lambda p: change_profile(
+            p, body, tenant_id="tenant-profile-test", reader=world.reader, loader=None,
+        ))
+    assert patch(world, "high", str(MAX_CHANGE_RECEIPTS + 2)).status_code == 200
+    before = deepcopy(world.store.require(world.pool_id))
+    monkeypatch.setattr(persona_module, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
+    assert patch(world, "medium", "0").status_code == 409
+    assert world.store.require(world.pool_id) == before
+    assert refetch(world)["riskPolicyChange"]["requestedRisk"] == "high"
+
+
+def test_opaque_key_rejects_before_any_supported_risk_mutation(normal_edit):
+    response = normal_edit.bff.patch("/bff/personas/persona-test", json={"risk": "high"},
+                                    headers=_headers("operator-a", "opaque-key"))
+    assert response.status_code == 422
+    assert "risk_profile_change" not in normal_edit.store.require(normal_edit.pool_id).metadata
+
+
+def test_authorized_status_annotation_after_risk_edit_preserves_policy_and_tenant(normal_edit):
+    world = normal_edit
+    assert patch(world, "medium").status_code == 200
+    before = deepcopy(world.store.require(world.pool_id))
+    response = world.api.patch(f"/api/capital-pools/{world.pool_id}/status", json={
+        "actor_id": "fixture-bff", "actor_role": "capital.admin", "status": "active",
+        "metadata": {"review_note": "unrelated", "tenant_id": "foreign"},
+    }, headers={"X-Tenant-Id": "tenant-profile-test"})
+    assert response.status_code == 200, response.text
+    annotated = world.store.require(world.pool_id)
+    assert annotated.metadata == {**before.metadata, "review_note": "unrelated"}
+    assert annotated.risk_policy_ref == before.risk_policy_ref
+    # A stale repair must still be refused at both API and row boundaries.
+    response = world.api.patch(f"/api/capital-pools/{world.pool_id}/status", json={
+        "actor_id": "fixture-bff", "actor_role": "capital.admin", "status": "active",
+        "metadata": {"requested_risk_profile": "low"},
+    }, headers={"X-Tenant-Id": "tenant-profile-test"})
+    assert response.status_code == 400, response.text
+    assert world.store.require(world.pool_id) == annotated
+
+
 def test_pending_gate_preserves_genuine_reductions(normal_edit, monkeypatch):
     from services.capital import risk_policy
     from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
@@ -237,7 +295,8 @@ def test_pending_gate_preserves_genuine_reductions(normal_edit, monkeypatch):
         assert gate["accepted"] is accepted, gate
 
 
-def test_approved_edit_changes_sizing_and_order_gate_in_one_running_runtime(normal_edit, monkeypatch):
+@pytest.mark.parametrize("trigger", ["patch", "governed_reconcile"])
+def test_approved_edit_changes_sizing_and_order_gate_in_one_running_runtime(normal_edit, monkeypatch, trigger):
     from services.capital import risk_policy
     from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
 
@@ -264,7 +323,26 @@ def test_approved_edit_changes_sizing_and_order_gate_in_one_running_runtime(norm
 
     low_size, low_gate = size_and_gate()
     assert not low_gate["accepted"]
-    response = patch(world, "medium")
+    if trigger == "governed_reconcile":
+        approval = world.approvals.pop(1)
+        response = patch(world, "medium")
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["riskPolicyChange"]["status"] == "pending_approval"
+        pending_gate = algo.EvaluateOrderRiskGate(symbol="TEST", side="buy", quantity=500.0, price=100.0,
+                                                  instrument_id="eq:TEST", persona_binding_id="pcb-test")
+        assert not pending_gate["accepted"]
+        world.approvals.append(approval)
+        # Genuine existing governed trigger: no second Persona risk PATCH,
+        # no new intent, no policy terms or approval supplied by the caller.
+        response = world.bff.post("/bff/personas/persona-test/provisioning/paper-capital/risk-policy",
+                                  json={}, headers=_headers("operator-a", "reconcile"))
+        assert world.store.require(world.pool_id).metadata["risk_profile_change"]["revision"] == 1
+        assert refetch(world)["riskPolicyChange"]["status"] == "effective"
+        denied = world.bff.post("/bff/personas/persona-test/provisioning/paper-capital/risk-policy",
+                                json={}, headers={"Authorization": "Bearer viewer:viewer"})
+        assert denied.status_code == 403
+    else:
+        response = patch(world, "medium")
     assert response.status_code == 200, response.text
     medium_size, medium_gate = size_and_gate()
     assert medium_gate["accepted"], medium_gate

@@ -92,6 +92,7 @@ class ChangePaperRiskProfileRequest(BaseModel):
     requested_by: str = Field(min_length=1, max_length=128)
     expected_persona_id: str = Field(min_length=1, max_length=128)
     expected_revision: int = Field(ge=0)
+    issued_at_ms: int = Field(gt=0, le=9999999999999)
     request_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     requested_profile: str = Field(pattern=r"^(low|medium|high)$")

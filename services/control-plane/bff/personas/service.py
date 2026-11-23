@@ -18025,7 +18025,7 @@ class PersonaService:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        from .risk_changes import paper_pool_id, project_risk_change
+        from .risk_changes import paper_pool_id, project_risk_change, key_issued_at_ms
 
         risk_pool_id = None
         if "risk" in payload:
@@ -18062,6 +18062,10 @@ class PersonaService:
         if "risk" in payload:
             if risk_pool_id:
                 try:
+                    issued_at_ms = key_issued_at_ms(resolved_key)
+                except ValueError as exc:
+                    raise self._bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid risk edit key", str(exc)) from exc
+                try:
                     risk_request_id = _stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
                                                          "actor": identity.operator_id, "key": resolved_key})
                     risk_change = _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
@@ -18070,10 +18074,12 @@ class PersonaService:
                         requested_by=identity.operator_id,
                         request_id=risk_request_id,
                         request_hash=request_hash,
+                        issued_at_ms=issued_at_ms,
                     )
                 except Exception as exc:
                     conflict = getattr(exc, "reason_code", "") in {
                         "paper_risk_change_idempotency_conflict", "paper_risk_change_revision_conflict",
+                        "paper_risk_change_key_stale",
                     }
                     raise self._bff_error(409 if conflict else 503,
                                           ErrorCode.PRECONDITION_FAILED if conflict else ErrorCode.DEPENDENCY_UNAVAILABLE,

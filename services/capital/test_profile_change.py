@@ -13,11 +13,12 @@ from services.capital.risk_policy import risk_policy_digest
 from services.governance.test_approval_authority import SnapshotApprovalReader, approval_snapshot
 
 
-def request(profile, key, revision=0):
+def request(profile, key, revision=0, issued_at_ms=1700000000000):
     return ChangePaperRiskProfileRequest(
         actor_id="fixture-bff", actor_role="capital.admin", expected_persona_id="persona-test",
         requested_by="fixture-operator",
         expected_revision=revision, request_id=hashlib.sha256(key.encode()).hexdigest(),
+        issued_at_ms=issued_at_ms,
         request_hash=hashlib.sha256(profile.encode()).hexdigest(), requested_profile=profile,
     )
 
@@ -201,14 +202,56 @@ def test_json_reload_and_lost_response_retry_are_noops(change_fixture, tmp_path)
         reloaded.patch(pool.pool_id, patch={"metadata": pool.metadata}, updated_at="2026-11-23T01:00:00Z")
 
 
-def test_receipts_never_evict_old_idempotency_keys_at_bound(change_fixture):
+def test_edits_continue_beyond_receipt_window_and_evicted_keys_never_replay(change_fixture, tmp_path):
     from services.capital.profile_change import MAX_CHANGE_RECEIPTS
 
     pool, reader, _, _ = change_fixture
-    pool.metadata["risk_profile_change_receipts"] = {str(i): {} for i in range(MAX_CHANGE_RECEIPTS)}
-    with pytest.raises(CapitalPoolError, match="receipt_limit"):
-        change(pool, reader, request("high", "over-limit"))
+    store = PersistentCapitalPoolStore(tmp_path / "window.json")
+    store.create(pool)
+    first = request("medium", "first")
+    store.mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, first))
+    for index in range(1, MAX_CHANGE_RECEIPTS * 2 + 2):
+        body = request(("medium", "high", "low")[index % 3], str(index), index, first.issued_at_ms + index)
+        pool, actual = store.mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, body))
+        assert actual
+    assert read(pool, reader)["revision"] == MAX_CHANGE_RECEIPTS * 2 + 2
     assert len(pool.metadata["risk_profile_change_receipts"]) == MAX_CHANGE_RECEIPTS
+    assert len(json.dumps(pool.metadata).encode()) < 65536
+    reloaded = PersistentCapitalPoolStore(tmp_path / "window.json")
+    # Even a fresh BFF read of the current revision cannot revive the first key.
+    replay = first.model_copy(update={"expected_revision": read(pool, reader)["revision"]})
+    with pytest.raises(CapitalPoolError, match="key_stale"):
+        reloaded.mutate_paper_risk_profile(pool.pool_id, lambda p: change(p, reader, replay))
+    assert reloaded.require(pool.pool_id) == pool
+    assert change(pool, reader, body) == pool
+
+
+def test_future_key_cannot_poison_eviction_watermark(change_fixture):
+    import time
+
+    pool, reader, _, _ = change_fixture
+    with pytest.raises(CapitalPoolError, match="key_future"):
+        change(pool, reader, request("medium", "future", issued_at_ms=int(time.time() * 1000) + 600_000))
+
+
+def test_delayed_unseen_key_cannot_override_newer_issued_intent(change_fixture):
+    pool, reader, _, _ = change_fixture
+    high = change(pool, reader, request("high", "newer", issued_at_ms=1700000000100))
+    with pytest.raises(CapitalPoolError, match="key_stale"):
+        change(high, reader, request("low", "delayed", 1, issued_at_ms=1700000000000))
+
+
+def test_unrelated_partial_metadata_merges_but_risk_and_scope_changes_reject(change_fixture, tmp_path):
+    pool, reader, _, _ = change_fixture
+    store = PersistentCapitalPoolStore(tmp_path / "annotations.json")
+    pool = change(pool, reader, request("medium", "first"))
+    store.create(pool)
+    annotated = store.patch(pool.pool_id, patch={"metadata": {"review_note": "unrelated"}}, updated_at=pool.created_at)
+    assert annotated.metadata == {**pool.metadata, "review_note": "unrelated"}
+    for key, value in (("risk_profile_change", None), ("risk_policy", {}), ("tenant_id", "foreign"),
+                       ("requested_risk_profile", "high"), ("risk_profile_change_watermark_ms", 9999999999999)):
+        with pytest.raises(CapitalPoolError, match="ordered"):
+            store.patch(pool.pool_id, patch={"metadata": {key: value}}, updated_at=pool.created_at)
 
 
 def test_pg_independent_writers_order_retries_and_do_not_touch_other_rows(change_fixture):
@@ -257,6 +300,13 @@ def test_pg_independent_writers_order_retries_and_do_not_touch_other_rows(change
         object.__setattr__(third, "tenant_id", pool.owner_id)
         stores[5].create(third)
         assert PostgresCapitalPoolStore(dsn, table=table).require(pool.pool_id) == high
+        annotated = stores[3].patch(pool.pool_id, patch={"metadata": {"review_note": "unrelated"}},
+                                    updated_at="2026-11-23T01:00:00Z")
+        assert annotated.metadata == {**high.metadata, "review_note": "unrelated"}
+        assert annotated.tenant_id == pool.owner_id
+        with pytest.raises(CapitalPoolError, match="ordered"):
+            stores[4].patch(pool.pool_id, patch={"metadata": {"risk_profile_change": None}},
+                            updated_at="2026-11-23T01:00:00Z")
     finally:
         with store._records._connect() as conn:
             conn.execute(f"DROP TABLE {store._records.table}")

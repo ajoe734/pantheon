@@ -5311,7 +5311,7 @@ class PersonaProvisioningCoordinator:
 
     def change_paper_risk_profile(
         self, *, tenant_id: str, persona_id: str, pool_id: str,
-        profile: str, request_id: str, request_hash: str, requested_by: str,
+        profile: str, request_id: str, request_hash: str, requested_by: str, issued_at_ms: int,
     ) -> dict[str, Any]:
         before = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
         path = f"/api/capital-pools/{_path_id(pool_id)}"
@@ -5321,6 +5321,7 @@ class PersonaProvisioningCoordinator:
                 "actor_id": self.actor_id, "actor_role": "capital.admin",
                 "requested_by": requested_by,
                 "expected_persona_id": persona_id, "expected_revision": before["revision"],
+                "issued_at_ms": issued_at_ms,
                 "request_id": request_id, "request_hash": request_hash, "requested_profile": profile,
             })
         except Exception as exc:
@@ -5329,8 +5330,13 @@ class PersonaProvisioningCoordinator:
         pool = self._owner_get("capital", path)
         meta = pool.get("metadata", {}) if pool else {}
         receipt = (meta.get("risk_profile_change_receipts") or {}).get(request_id)
-        if not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile:
+        if (not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile
+                or receipt.get("issued_at_ms") != issued_at_ms):
             reason = ("paper_risk_change_idempotency_conflict" if receipt else
+                      "paper_risk_change_key_stale" if
+                      (issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)) or
+                       issued_at_ms < int(((meta.get("risk_profile_change_receipts") or {}).get(
+                           (meta.get("risk_profile_change") or {}).get("request_id")) or {}).get("issued_at_ms", 0))) else
                       "paper_risk_change_revision_conflict" if
                       int((meta.get("risk_profile_change") or {}).get("revision", 0)) != before["revision"]
                       else "paper_risk_change_not_committed")
@@ -5429,6 +5435,7 @@ class PersonaProvisioningCoordinator:
                     tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id,
                     profile=latest_change["requested_profile"], request_id=rid, request_hash=receipt["request_hash"],
                     requested_by=latest_change["requested_by"],
+                    issued_at_ms=receipt["issued_at_ms"],
                 )
             return {"tenant_id": tenant_id, "persona_id": persona_id, "capital_pool_id": resolved_pool_id,
                     "dry_run": dry_run, "riskPolicyChange": change, "after_resolution": change.get("resolution")}

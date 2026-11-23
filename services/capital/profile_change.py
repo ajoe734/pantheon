@@ -1,12 +1,13 @@
 """Latest paper risk intent, separate from immutable Persona creation evidence.
 
-The pool row is the ordering authority. Receipts never evict: at the bounded
-limit a new key fails closed rather than replaying an old edit as a new one.
+The pool row is the ordering authority. A bounded receipt window and durable
+issued-time watermark reject evicted keys without exhausting lifetime edits.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+import time
 from typing import Any
 
 from .pg_store import CapitalPool, CapitalPoolError, utc_now
@@ -139,15 +140,24 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
     receipts = dict(meta.get("risk_profile_change_receipts") or {})
     receipt = receipts.get(body.request_id)
     if receipt:
-        if receipt["request_hash"] != body.request_hash or receipt["profile"] != body.requested_profile:
+        if (receipt["request_hash"] != body.request_hash or receipt["profile"] != body.requested_profile
+                or receipt["issued_at_ms"] != body.issued_at_ms):
             raise CapitalPoolError("paper_risk_change_idempotency_conflict")
         if receipt["revision"] != revision:
             return pool  # Superseded retry observes the latest intent; never replays it.
     else:
         if body.expected_revision != revision:
             raise CapitalPoolError("paper_risk_change_revision_conflict")
-        if len(receipts) >= MAX_CHANGE_RECEIPTS:
-            raise CapitalPoolError("paper_risk_change_receipt_limit")
+        # This timestamp comes from the stable client key, never from retry
+        # arrival time. A fresh BFF read cannot turn an evicted key into a new
+        # edit. The watermark survives reload and only advances under row lock.
+        if body.issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)):
+            raise CapitalPoolError("paper_risk_change_key_stale")
+        latest = receipts.get(intent.get("request_id"), {})
+        if body.issued_at_ms < int(latest.get("issued_at_ms", 0)):
+            raise CapitalPoolError("paper_risk_change_key_stale")
+        if body.issued_at_ms > int(time.time() * 1000) + 300_000:
+            raise CapitalPoolError("paper_risk_change_key_future")
         before = read_change(pool, tenant_id=tenant_id, persona_id=body.expected_persona_id,
                              reader=reader, loader=loader)
         revision += 1
@@ -156,7 +166,17 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
                   "requested_by": body.requested_by, "requested_at": utc_now(),
                   "previous_effective_profile": before["effectiveRisk"]}
         receipts[body.request_id] = {"request_hash": body.request_hash,
-                                     "profile": body.requested_profile, "revision": revision}
+                                     "profile": body.requested_profile, "revision": revision,
+                                     "issued_at_ms": body.issued_at_ms}
+        if len(receipts) > MAX_CHANGE_RECEIPTS:
+            # The current receipt remains the authority for same-key approval
+            # reconciliation, independent of how many edits preceded it.
+            oldest = min((key for key in receipts if key != body.request_id),
+                         key=lambda key: receipts[key]["issued_at_ms"])
+            retired = receipts.pop(oldest)
+            meta["risk_profile_change_watermark_ms"] = max(
+                int(meta.get("risk_profile_change_watermark_ms", 0)), retired["issued_at_ms"],
+            )
         # Legacy aliases must agree before a genuine edit translates them.
         prior_profiles = [meta[key] for key in PROFILE_ALIASES if meta.get(key) not in (None, "")]
         if any(not isinstance(p, str) or p not in PROFILES for p in prior_profiles) or len(set(prior_profiles)) > 1:

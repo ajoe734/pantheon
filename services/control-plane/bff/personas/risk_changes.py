@@ -2,8 +2,22 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+import re
 
 from .fleet_classification import classify_persona_purpose
+
+
+def key_issued_at_ms(key: str) -> int:
+    """Use execute-plans' existing stable idk_<base36 ms>_<nonce> keys.
+
+    Opaque keys cannot support both bounded history and indefinite replay
+    protection. Reject them before mutation rather than timestamping a retry.
+    """
+    match = re.fullmatch(r"idk_([a-z0-9]{1,10})_[a-z0-9]{1,64}", key)
+    stamp = int(match[1], 36) if match else 0
+    if not 0 < stamp <= 9999999999999:
+        raise ValueError("Paper risk Idempotency-Key must use idk_<base36 issued milliseconds>_<nonce>")
+    return stamp
 
 
 def paper_pool_id(raw: Mapping[str, Any]) -> str | None:

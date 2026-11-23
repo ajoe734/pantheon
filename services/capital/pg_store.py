@@ -37,6 +37,32 @@ except ImportError:
 _UTC = datetime.timezone.utc
 
 
+def ordered_pool_patch(pool: CapitalPool, patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge ordinary metadata under the owner lock without altering risk intent.
+
+    Replacing a whole stale snapshot would erase the ordering authority. Partial
+    unrelated metadata remains an ordinary supported operation after a risk edit.
+    """
+    meta = pool.metadata or {}
+    if not meta.get("risk_profile_change"):
+        return patch
+    incoming = patch.get("metadata")
+    protected = {"tenant_id", "persona_id", "execution_context", "risk", "requested_risk",
+                 "requested_risk_profile", "require_approved_profile_mapping", "profile_mapping_approval_id",
+                 "provisional_unresolved_risk_policy", "requested_profile", "effective_from", "effective_to",
+                 "expires_at", "environment", "target_stage", "deployment_stage", "profile_auto_resolved",
+                 "default_paper_baseline", "capital_scale_pct"}
+    if ("risk_policy_ref" in patch and patch["risk_policy_ref"] != pool.risk_policy_ref
+            or "metadata" in patch and not isinstance(incoming, dict)):
+        raise CapitalPoolError("Use the ordered paper risk profile change path")
+    if isinstance(incoming, dict):
+        for key, value in incoming.items():
+            if (key in protected or key.startswith(("risk_", "expected_risk_policy_"))) and value != meta.get(key):
+                raise CapitalPoolError("Use the ordered paper risk profile change path")
+        return {**patch, "metadata": {**meta, **incoming}}
+    return patch
+
+
 class PersistentCapitalPoolStore(CapitalPoolStore):
     """Capital-owned store with an atomic canonical pool patch operation."""
 
@@ -105,8 +131,7 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             raise CapitalPoolError("At least one CapitalPool patch field is required")
         with self._lock:
             pool = self.require(pool_id)
-            if (pool.metadata or {}).get("risk_profile_change") and set(patch) & {"metadata", "risk_policy_ref"}:
-                raise CapitalPoolError("Use the ordered paper risk profile change path")
+            patch = ordered_pool_patch(pool, patch)
             target_status = str(patch.get("status") or pool.status)
             if target_status != pool.status:
                 _validate_status_transition(pool.status, target_status)
@@ -277,8 +302,7 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
             pool = _load_entity(CapitalPool, row)
             # Ordered edits exclusively own policy and profile metadata after
             # the first intent, including against an already in-flight repair.
-            if (pool.metadata or {}).get("risk_profile_change") and set(patch) & {"metadata", "risk_policy_ref"}:
-                raise CapitalPoolError("Use the ordered paper risk profile change path")
+            patch = ordered_pool_patch(pool, patch)
             target_status = str(patch.get("status") or pool.status)
             if target_status != pool.status:
                 _validate_status_transition(pool.status, target_status)

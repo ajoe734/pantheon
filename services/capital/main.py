@@ -351,13 +351,6 @@ class CapitalBoundaryService:
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
         self.get_pool(pool_id)
-        # Once edits have an ordering authority, the older repair/status path
-        # cannot overwrite their request or policy from a stale BFF snapshot.
-        current = self.get_pool(pool_id)
-        if (current.metadata or {}).get("risk_profile_change") and (
-            body.risk_policy_ref is not None or body.metadata is not None
-        ):
-            raise CapitalPoolError("Use the ordered paper risk profile change path")
         if body.status is None:
             # The existing PATCH route also accepts this narrowly bounded,
             # non-activating provenance write. Merge at the owner, never from a
@@ -389,8 +382,6 @@ class CapitalBoundaryService:
         with self._CAPITAL_STATE_APPLY_LOCK:
             pool = self.get_pool(pool_id)
             has_policy_patch = body.risk_policy_ref is not None or body.metadata is not None
-            if (pool.metadata or {}).get("risk_profile_change") and has_policy_patch:
-                raise CapitalPoolError("Use the ordered paper risk profile change path")
             merged_meta = dict(pool.metadata or {})
             if isinstance(body.metadata, dict):
                 merged_meta.update(body.metadata)
@@ -402,6 +393,9 @@ class CapitalBoundaryService:
                 if body.risk_policy_ref is not None
                 else pool.risk_policy_ref
             )
+            from services.capital.pg_store import ordered_pool_patch
+
+            ordered_pool_patch(pool, {"risk_policy_ref": next_ref, "metadata": merged_meta})
             candidate_pool = replace(
                 pool,
                 status=body.status,
@@ -410,7 +404,10 @@ class CapitalBoundaryService:
             )
             if pool_tenant:
                 object.__setattr__(candidate_pool, "tenant_id", pool_tenant)
-            if body.status == "active" and (pool.status != "active" or has_policy_patch):
+            # Unrelated annotations do not change the approved policy digest.
+            # Keep legacy activation behavior before the first ordered intent.
+            activation_patch = has_policy_patch and not (pool.metadata or {}).get("risk_profile_change")
+            if body.status == "active" and (pool.status != "active" or activation_patch):
                 self._authorize_pool_activation(candidate_pool, body.approval_decision_id)
             if has_policy_patch:
                 patch_fields: Dict[str, Any] = {
