@@ -1,0 +1,101 @@
+{
+  "task": "TELEMETRY-HEARTBEAT-HOSTED-ACCEPTANCE-20261117",
+  "verdict": "pass_with_recorded_residuals",
+  "environment": "hosted dev (35.194.154.62)",
+  "method": "Coordinator read-only SQL through docker exec psql on pantheon-postgres-1 (SQL on stdin), read-only docker ps, plus the operator-approved one-time reclaim apply on Saturday 2026-11-21 inside the 09:05Z-10:45Z deploy quiet window (operator decision 2026-11-17: keep raw heartbeats 3 days plus a permanent per-runtime hourly summary). No credential, token or DSN is recorded here. Full raw reports are kept on the development host under ~/claude-evidence/telemetry-reclaim-20261118/ with the SHA-256 listed in raw_reports.",
+  "release_identity": {
+    "reclaim_release": {
+      "bff": "b66d17afc05e72a7010369264ecf1ca8d7f9b9e6",
+      "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/44861265420"
+    },
+    "ac5_release": {
+      "bff": "d585efa53fc6242c31972ad69b2f627473a33f3d",
+      "frontend": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+      "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/44975037755"
+    },
+    "recheck_release_2026_11_23": "release under deploy at 09:16Z on 2026-11-23 (Nonprod Deploy run 45135463208, BFF ba7c32e071a5d357067afc08addd78736aa25fd8); consumers read after container restart"
+  },
+  "acceptance": {
+    "ac1_heartbeats_at_most_240_per_runtime_hour": {
+      "result": "pass",
+      "window": "2026-11-20T02:00Z-03:00Z (trading hour)",
+      "counts": {"rt-3252fa75": 238, "rt-3b65a843": 238, "rt-49c1c3d1": 238, "rt-ad81501b": 238},
+      "redundant_runtime_state_snapshots": 0
+    },
+    "ac2_pre_reclaim_baselines_recorded": {
+      "result": "pass",
+      "captured_at": "2026-11-21T10:02:56Z",
+      "recorded": ["table sizes", "AC1 hour counts", "hourly summary totals by runtime", "latest runtime state snapshots", "projector checkpoints", "rankings (200 rows) with drift counts and reports"],
+      "raw_reports": ["before_apply_20261121.json", "before_rankings_20261121.json"]
+    },
+    "ac3_dry_run_then_apply_with_3_day_window": {
+      "result": "pass",
+      "dry_run": {"at": "2026-11-18T07:09Z-07:31Z", "report": "dryrun_20261118T0709Z.json"},
+      "apply_telemetry_events": {
+        "cutoff_at": "2026-11-18T10:32:00.124864Z",
+        "retention_days": 3.0,
+        "rows_deleted": 183279,
+        "heartbeat_rows_deleted": 146771,
+        "infrastructure_health_rows_deleted": 36508,
+        "hours_summarized": 96,
+        "summary_rows_after": 5609,
+        "table_bytes_before": 31670665216,
+        "table_bytes_after": 5546098688,
+        "bytes_reclaimed": 26124566528,
+        "ingest_lock_window_seconds": 613.61,
+        "dlq_replayed_count": 0
+      },
+      "apply_event_receipts": {
+        "table_bytes_before": 4287242240,
+        "table_bytes_after": 462127104,
+        "lock_window_seconds": 24.59,
+        "note": "the table is owned by role postgres on hosted dev; the scripted VACUUM FULL as pantheon_app was skipped with a warning and the same VACUUM FULL was run as postgres (residual 1)"
+      },
+      "filesystem_root": {"free_bytes_before": 20350181376, "free_bytes_after": 60019642368, "used_percent_before": 91, "used_percent_after": 71},
+      "also_pruned": "17.06 GB unused docker build cache"
+    },
+    "ac4_consumers_advance_and_summaries_rankings_unchanged": {
+      "result": "pass",
+      "rankings": {"rows_before": 200, "rows_after": 200, "sha256_before": "a40690764af915c5 (prefix)", "sha256_after": "a40690764af915c5 (prefix)", "equal": true},
+      "projector_after_apply": {"checkpoint_seq": 13962890, "telemetry_max_seq": 13962890, "at": "2026-11-21T10:54:21Z"},
+      "projector_2026_11_23": {"checkpoint_seq": 14012735, "telemetry_max_seq": 14012735, "at": "2026-11-23T09:16:17Z"},
+      "reconciliation_drift_evaluations": {"2026-11-21T10:54Z": 82474, "2026-11-23T09:16Z": 84530, "latest_update": "2026-11-23T09:15:20Z"},
+      "consumer_containers": "loop-run-projector-scheduler, reconciliation-drift consumer/incident-listener/scheduler/svc and incidents healthy after apply and again on 2026-11-23"
+    },
+    "ac5_one_day_after_raw_within_3_days_and_summary_complete": {
+      "result": "pass",
+      "captured_at": "2026-11-22T11:24:28Z",
+      "filesystem_free_bytes": 49264087040,
+      "telemetry_events_bytes": 5617860608,
+      "oldest_raw_heartbeat": "2026-11-19T11:23:59Z",
+      "raw_heartbeats_older_than_72h15m": 0,
+      "summary_continuity_2026_11_18T10Z_to_2026_11_19T10Z": {
+        "rt-3252fa75": {"present": 25, "expected": 25, "missing": 0},
+        "rt-3b65a843": {"present": 25, "expected": 25, "missing": 0},
+        "rt-49c1c3d1": {"present": 25, "expected": 25, "missing": 0},
+        "rt-ad81501b": {"present": 25, "expected": 25, "missing": 0}
+      },
+      "max_hourly_heartbeats": 239,
+      "recheck_2026_11_23T09_16Z": {"oldest_raw_heartbeat": "2026-11-20T09:14:52Z", "raw_heartbeats_older_than_73h": 0, "telemetry_events_bytes": 5675638784}
+    }
+  },
+  "residual_findings": [
+    "scripts/telemetry_heartbeat_reclaim.py: trade_journey_projection.event_receipts is owned by postgres on hosted dev, so the pantheon_app VACUUM FULL is skipped with a warning (recorded in docs/operations/problem-register.md WP3.1 row).",
+    "scripts/telemetry_heartbeat_reclaim.py: when autovacuum already cleared n_dead_tup, retained_table_bytes overestimates the physical disk floor and the default 30 s statement timeout expires on the first batch scan (same register row).",
+    "Hourly summary rows for 2026-11-08 to 2026-11-19 have gaps for hours in which a runtime wrote no heartbeat before the retention release; the AC5 window after the reclaim is complete."
+  ],
+  "raw_reports": {
+    "dryrun_20261118T0709Z.json": "47e22807abb304138fb0a1157a75fc4d95ef84d0a9c76cfe6be6a28d7be12502",
+    "before_apply_20261121.json": "592d214952d1b0ea2f78bd8ed99d696fafa37d0ac148de9fa20afe0119843f94",
+    "before_rankings_20261121.json": "3db6597e741216dfcc0b739a1850fbcef3b487a864705d19557c83d193b51561",
+    "apply_receipts_20261121.json": "ee9fcac402985aa1d81ff508eae784f3fb7bd630418db8af8dfb8a7750dd9b45",
+    "apply_telemetry_20261121.json": "34cc5910684c202849e84004e10f2b13aacbfdd1f77feb6af9d350a62bf032bd",
+    "after_apply_20261121.json": "5fbeefe478354f737494088161fbb95681e4502931ad681a8bccbc4baa0293cc",
+    "ac5_24h_20261122.json": "8796b0f8a813c35cbbec92faa016995d1d5f4197ae0d8908436e029a20c0e0fc"
+  },
+  "read_only_commands": [
+    "docker exec -i pantheon-postgres-1 sh -c 'psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -At' < query.sql",
+    "docker ps --format '{{.Names}}\\t{{.Status}}'",
+    "df -B1 /"
+  ]
+}

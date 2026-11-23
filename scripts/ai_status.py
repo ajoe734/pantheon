@@ -6167,6 +6167,8 @@ def reject_owner_trailer_mismatch_at_handoff(
         ]
     except OSError:
         return
+    # The handoff holds the task lock. Reuse this task's audit for each commit.
+    audit_cache: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
     for sha, body, commit_ts in commit_messages:
         trailers = checker.parse_trailers(body)
         if str(trailers.get("Task-ID") or "").strip() != task_id:
@@ -6180,6 +6182,7 @@ def reject_owner_trailer_mismatch_at_handoff(
                 commit_owner=found,
                 current_owner=owner,
                 commit_timestamp=commit_ts,
+                audit_cache=audit_cache,
             )
         except SystemExit:
             raise SystemExit(
@@ -6714,6 +6717,7 @@ def _verified_done_owner_reassignment(
     commit_owner: str,
     current_owner: str,
     commit_timestamp: str,
+    audit_cache: dict[str, list[tuple[datetime, dict[str, Any]]]] | None = None,
 ) -> dict[str, Any]:
     """Prove that canonical audited reassignments explain owner drift at done.
 
@@ -6735,14 +6739,18 @@ def _verified_done_owner_reassignment(
             "Cannot finalize task: delivered commit timestamp is unavailable for "
             "owner reassignment ordering."
         )
-    audited = _audited_reassignment_events(
-        task_id,
-        source="canonical done owner reassignment evidence",
-        unavailable_message=(
-            "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "canonical audited task_reassigned event, but the activity audit is unavailable."
-        ),
-    )
+    audited = audit_cache.get(task_id) if audit_cache is not None else None
+    if audited is None:
+        audited = _audited_reassignment_events(
+            task_id,
+            source="canonical done owner reassignment evidence",
+            unavailable_message=(
+                "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
+                "canonical audited task_reassigned event, but the activity audit is unavailable."
+            ),
+        )
+        if audit_cache is not None:
+            audit_cache[task_id] = audited
     owner_changes = [
         (event_timestamp, event)
         for event_timestamp, event in audited

@@ -221,7 +221,9 @@ def test_human_inbox_includes_review_meetings_refused_due_meetings_and_operator_
     assert proposal_item["href"] == "/management/meetings/mtg-normal-02"
 
     assert payload["data"]["summary"]["meeting_count"] == 3
-    assert payload["meta"]["surfaces"]["meetings"]["status"] == "ok"
+    assert payload["meta"]["surfaces"]["meetings"]["status"] == "degraded"
+    assert payload["meta"]["surfaces"]["meetings"]["surfaces"]["consultation"]["status"] == "ok"
+    assert payload["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["reason"] == "research_owner_unconfigured"
 
     # Filtering by source_type=meeting or specific kind works
     only_review = client.get(
@@ -243,7 +245,7 @@ def test_human_inbox_degrades_only_meetings_surface_when_consultation_owner_fail
     payload = resp.json()
     assert payload["meta"]["partial"] is True
     assert "meetings" in payload["meta"]["degradation"]["contributors"]
-    assert payload["meta"]["surfaces"]["meetings"]["status"] == "degraded"
+    assert payload["meta"]["surfaces"]["meetings"]["status"] == "unavailable"
     assert payload["meta"]["surfaces"]["approval_queue"]["status"] == "ok"
 
 
