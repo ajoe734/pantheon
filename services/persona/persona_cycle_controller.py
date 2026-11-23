@@ -507,6 +507,8 @@ class PersonaCycleController:
             try:
                 if run["status"] == "ok" and is_daily_cycle_persona(persona) and hasattr(self.owners, "meeting_action_recover"):
                     cycle["meeting_action_recovery"] = self.owners.meeting_action_recover(persona, snapshots)
+                    cycle["meeting_action_deferred"] = self.owners.meeting_action_deferred(
+                        persona, snapshots, cycle["meeting_action_recovery"])
                 prior = [p.get("persona_cycle", {}).get("observe_bundle", {}).get("human_feedback", {}).get("cursor")
                          for p in snapshots.values()
                          if p.get("tenant_id") == persona["tenant_id"]
@@ -738,7 +740,8 @@ class PersonaCycleController:
         if not ticket or f"facts:meeting_action_ticket:{tid}" not in proposal.case_file_item_ids:
             return {"status": "rejected", "reason": "assigned_ticket_and_citation_required"}
         if any(r.get("ticket_id") == tid and r.get("status") == "unavailable"
-               for r in packet["persona_cycle"].get("meeting_action_recovery", [])):
+               for r in packet["persona_cycle"].get("meeting_action_recovery", [])) or any(
+                r.get("ticket_id") == tid for r in packet["persona_cycle"].get("meeting_action_deferred", [])):
             return {"status": "unavailable", "reason": "previous_execution_pending", "ticket_id": tid}
         if params.get("action") == "decline":
             return {"status": "declined", "reason": proposal.reason, "ticket_id": tid}
@@ -1157,15 +1160,29 @@ class CycleOwners:
                         action.get("source_refs", []) + (raw.get("human_input") or {}).get("evidence_refs", []))
                     if len(refs) > 8:
                         raise ValueError("evidence_reference_budget_exceeded")
-                    evidence = [self._action_evidence(persona, ref, tid, action["meeting_id"], source_cases) for ref in refs]
-                    if lane == "verified_results" and not evidence:
-                        raise ValueError("submitted_result_without_evidence")
+                    source_unavailable = None
+                    try:
+                        evidence = [self._action_evidence(persona, ref, tid, action["meeting_id"], source_cases) for ref in refs]
+                        if lane == "verified_results" and not evidence:
+                            raise ValueError("submitted_result_without_evidence")
+                    except Exception as exc:
+                        # Row-level isolation: the tenant/owner-verified ticket stays visible (so the
+                        # Persona can request exactly the missing source) but can never be submitted.
+                        reason = str(exc) if isinstance(exc, ValueError) else (
+                            f"owner_http_{exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__)
+                        out["unavailable"].append({"lane": lane, "ticket_id": tid, "reason": reason[:120]})
+                        out["status"] = "partial"
+                        if lane != "runnable":
+                            continue
+                        evidence, source_unavailable = [], reason[:120]
                     row = {"ticket_id": tid, "action_id": tid, "revision": raw["revision"],
                            "state": raw["action_state"], "meeting_id": action["meeting_id"],
                            "subject_ref": action["subject_ref"], "deliverable": action["deliverable"],
                            "acceptance_criterion": action["acceptance_criterion"],
                            "due_at": action.get("due_at"), "next_review": action.get("next_review"),
                            "evidence_refs": evidence, "human_input": bool(raw.get("human_input"))}
+                    if source_unavailable:
+                        row["source_unavailable"] = source_unavailable
                     if len(json.dumps({**out, lane: out[lane] + [row]}, ensure_ascii=False).encode()) > MEETING_ACTION_ENVELOPE_BYTES:
                         raise ValueError("action_envelope_budget_exceeded")
                     out[lane].append(row)
@@ -1206,6 +1223,8 @@ class CycleOwners:
                 raise ValueError("concrete_bounded_analysis_required")
             if not isinstance(title, str) or not title.strip() or len(title) > 256:
                 raise ValueError("analysis_title_required")
+            if ticket.get("source_unavailable"):
+                raise ValueError("approved_source_unavailable:" + ticket["source_unavailable"])
             approved = {(r["kind"], r["artifact_id"]): r for r in ticket["evidence_refs"]}
             refs = params.get("evidence_refs") or []
             if not isinstance(refs, list) or len(refs) > 6 or any(not isinstance(r, dict) or
@@ -1274,11 +1293,9 @@ class CycleOwners:
         except Exception as exc:
             return {**result, "status": "unavailable", "reason": type(exc).__name__}
 
-    def meeting_action_recover(self, persona, snapshots):
-        # At most four old writes per ordinary tick. Pending plans remain in the
-        # existing packet retention, never a second queue/store or another cadence.
-        completed, results = set(), []
-        plans = {}
+    @staticmethod
+    def _unresolved_action_plans(persona, snapshots):
+        completed, plans = set(), {}
         for packet in snapshots.values():
             if packet.get("tenant_id") != persona["tenant_id"] or packet.get("persona_ids") != [persona["persona_id"]]:
                 continue
@@ -1292,10 +1309,21 @@ class CycleOwners:
                     completed.add(identity)
                 else:
                     plans[identity] = plan
-        for identity, plan in plans.items():
-            if identity not in completed and len(results) < MEETING_ACTION_PAGE_SIZE:
-                results.append(self.meeting_action_execute(persona, plan))
+        return {i: p for i, p in plans.items() if i not in completed}
+
+    def meeting_action_recover(self, persona, snapshots):
+        # At most four old writes per ordinary tick. Pending plans remain in the
+        # existing packet retention, never a second queue/store or another cadence.
+        results = []
+        for plan in list(self._unresolved_action_plans(persona, snapshots).values())[:MEETING_ACTION_PAGE_SIZE]:
+            results.append(self.meeting_action_execute(persona, plan))
         return results
+
+    def meeting_action_deferred(self, persona, snapshots, recovered):
+        """Unresolved durable plans outside this tick's replay batch; they still fence new plans."""
+        done = {(r["ticket_id"], r["packet_id"]) for r in recovered}
+        return [{"ticket_id": t, "packet_id": k} for (t, k) in
+                self._unresolved_action_plans(persona, snapshots) if (t, k) not in done]
 
     def observe(self, persona, *, since=None):
         pid, tenant = persona["persona_id"], persona["tenant_id"]

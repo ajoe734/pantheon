@@ -338,7 +338,9 @@ def test_chair_string_citations_resolve_real_content_and_private_memory_is_refus
     item["memory_layer"] = "persona_private"
     research["tickets"][tid].update(action_state="returned", revision=2, required_actor=persona["persona_id"])
     observed = controller.owners.observe_meeting_actions(persona, {})
-    assert observed["runnable"] == []
+    # The verified ticket stays visible (request_input only); the private source is never exposed.
+    assert [r["source_unavailable"] for r in observed["runnable"]] == ["private_source_forbidden"]
+    assert observed["runnable"][0]["evidence_refs"] == []
     assert observed["unavailable"][0]["reason"] == "private_source_forbidden"
 
 
