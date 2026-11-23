@@ -275,6 +275,9 @@ def test_capability_joins_authorities_and_denies_labels_or_expired_access(action
     assert evaluate(run_purpose="panel_interpretation")["status"] == "advisory_only"
     assert not evaluate(run_purpose="consultation")["can_mutate_trading_state"]
     assert evaluate({**persona, "lifecycle_state": "consultable", "role": "chair"})["status"] == "advisory_only"
+    for origin in ("private_servant", "agora_advisor"):
+        assert evaluate({**persona, "metadata": {**persona["metadata"], "origin": origin}})["status"] == "advisory_only"
+    assert evaluate({**persona, "consult_policy_id": "consult-panel.non-trading"})["status"] == "advisory_only"
     assert evaluate({**persona, "status": "suspended"})["status"] == "suspended"
     assert evaluate(s={**snapshot, "effective_workflows": []})["status"] == "no_workflow"
     assert evaluate(requirements={"required_data": ["foreign-private-bank"]})["status"] == "restricted_data"

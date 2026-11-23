@@ -321,7 +321,12 @@ def evaluate_participant_action_capability(
         return deny("owner_unavailable", "capability_owner_unavailable")
     if persona.get("status") != "active" or persona.get("lifecycle_state") in {"frozen", "retired"}:
         return deny("suspended", "persona_not_active")
-    if persona.get("lifecycle_state") not in {"paper_owner", "paper_running"}:
+    identity = persona.get("metadata") or {}
+    if persona.get("lifecycle_state") not in {"paper_owner", "paper_running"} or (
+            identity.get("persona_class") in {"consult_panel", "agora_servant", "agora_advisor"}
+            or identity.get("origin") in {"private_servant", "agora_advisor"}
+            or identity.get("owner_scope") == "user_private"
+            or persona.get("consult_policy_id") == "consult-panel.non-trading"):
         return deny("advisory_only", "persona_not_enrolled_for_daily_execution")
     if not snapshot or snapshot.get("persona_id") != pid:
         return deny("owner_unavailable", "capability_snapshot_missing")

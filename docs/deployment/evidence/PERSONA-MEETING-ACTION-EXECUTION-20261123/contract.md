@@ -1,100 +1,127 @@
-# Persona Meeting Action Capability & Daily-Cycle Execution Contract
+# Persona meeting action consumer
 
-Task: `PERSONA-MEETING-ACTION-EXECUTION-20261123`
-Source baseline inspected before editing: `bd47d73bc` (`origin/dev`).
-Class: RC2 WP2.3, cross-reference RC6 meetings and `MEETING-HOSTED-ACCEPTANCE-20261115`.
+Task: PERSONA-MEETING-ACTION-EXECUTION-20261123. RC2 WP2.3 / RC6 meetings.
+This replaces the design-only anchor with the implemented contract. Local
+component validation does not claim hosted acceptance.
 
-## 1. Current Callers, Storage Owners & Test Surface Trace
+## Owner and caller trace
 
-- **Persona & Capability Snapshot Owners (`services/persona/write_owner.py`)**:
-  - `PersistentPersonaOwner` owns durable Persona registry records (`GET/POST/PATCH /api/personas`, `/api/personas/{persona_id}`).
-  - `PersistentCapabilitySnapshotOwner` owns immutable capability snapshot receipts (`PUT /api/personas/{persona_id}/capability-snapshots/{snapshot_id}`, `GET /api/personas/{persona_id}/capability-snapshot`, `GET /api/capability-snapshots/{snapshot_id}`).
-  - Existing callers: `services/control-plane/persona/main.py` (`_capability_snapshot` for discovery), `services/consultation/meetings.py` (`_fetch_persona_directory`), `services/persona/test_persona_owner_read_roles.py`.
-- **Effective Policy Resolver (`services/control-plane/persona/persona_policy_resolver.py`)**:
-  - `PersonaPolicyResolver.resolve` / `resolve_to_snapshot` resolves `tool_profile_id`, `route_policy_id`, `consult_policy_id`, and capital binding eligibility into `PolicyResolutionResult` (`effective_tools`, `effective_skills`, `effective_workflows`, `denial_reasons`, `consultable`).
-  - Existing callers: `services/control-plane/persona/main.py`, `services/control-plane/persona/test_persona_policy_resolver.py`.
-- **Broker & Governed Agent Tool Profile (`services/openclaw-gateway-adapter/persona_tool_broker.py`, `integrations/openclaw/persona_agent_sync.py`, `integrations/openclaw/plugins/pantheon-persona-tools/`)**:
-  - `PERSONA_AGENT_TOOL_PROFILE` grants only `read`, `persona_memory_recall`, `persona_mental_model_read`, and `persona_proposal_submit`.
-  - `PersonaToolBroker` binds each run to a `purpose` (`daily_cycle` or `panel_interpretation`). `panel_interpretation` permits only `persona_memory_recall` on committee scope + facts and refuses `persona_proposal_submit`.
-- **Daily Cycle Controller & OODA Turn Runtime (`services/persona/persona_cycle_controller.py`, `integrations/openclaw/persona_ooda_runtime.py`, `services/persona/case_file_outcomes.py`, `services/persona/meeting_triggers.py`)**:
-  - `PersonaCycleController.consume_run` claims each terminal OpenClaw cron run in the OODA packet store (`ooda_loop_packets.jsonl`), runs `CycleOwners.observe`, composes the decision `CaseFile`, executes one brokered turn (`run_persona_ooda_turn`), reads proposals exclusively from the broker's per-run tool record, verifies citations, runs deterministic pool/lesson/meeting steps, and persists the closed packet.
-  - `CaseFileOutcomes.reconcile` tracks cited `CaseFile` items across persisted packets on `persona.metadata["case_file_outcomes"]`.
-  - `MeetingTriggers.run` evaluates deliberative meeting triggers (`MT-1..MT-6`) inside the daily cycle.
+The initial owner traced bd47d73bc. This continuation read the anchor, rebased
+on dev ba7c32e07 and read the committed Research contract at approved head
+cddd6188f (PR #7760). The old Research worktree was gone; git preserved its contract.
 
-## 2. Per-Participant Capability Lookup Contract
+* PersistentPersonaOwner owns registry/tenant/lifecycle and the active harness;
+  PersistentCapabilitySnapshotOwner owns immutable access receipts.
+  PersonaPolicyResolver resolves referenced catalogs and denies unknown IDs.
+* PersonaCycleController.consume_run remains the cron consumer with its existing
+  cross-process lock/claim. CycleOwners remains the owner port. Citation and
+  broker-record gates precede action execution. The plugin still exposes three
+  brokered tools. panel_interpretation remains recall-only.
+* Research owns original tickets, revisions, actor checks, notes and review states.
+  Consultation owns adoption, public frozen cases and acceptance/return.
+* CaseFileOutcomes still measures cited lessons; MeetingTriggers still convenes;
+  ordinary demand/admission/risk readers retain distinct supported callers.
+  Nothing replaced their final caller, so no obsolete branch was removed.
+  Historical records and JSONL legacy/test transport remain readable. No data,
+  position, capital or private-bank migration occurs.
 
-`evaluate_participant_action_capability` (in `services/control-plane/persona/persona_policy_resolver.py`, re-exported by `services/persona/write_owner.py` and exposed at `GET /api/personas/{persona_id}/action-capability` and `POST /api/personas/action-capabilities`) joins:
-1. Authoritative Persona record from `PersistentPersonaOwner` (`status`, `lifecycle_state`, `required_data_sources`, `tool_profile_id`, `route_policy_id`, `consult_policy_id`, `metadata`, `tenant_id`),
-2. Authoritative capability snapshot from `PersistentCapabilitySnapshotOwner` + `PersonaPolicyResolver.resolve`,
-3. Broker tool profile (`PERSONA_AGENT_TOOL_PROFILE` / `PersonaToolBroker._profile_allows`) and `run_purpose` (`daily_cycle` vs `panel_interpretation` / `consultation`),
-4. Enrolled trading role (`lifecycle_state in {"paper_owner", "paper_running"}`, active, not panel/advisor/servant),
-5. Accessible vs restricted data (`required_data_sources`, `policy_gates`, `blocked_source_scopes`, snapshot `restrictions`) against the specific deliverable requirements, and
-6. Owner availability (`persona_owner`, `capability_owner`, `research_owner`, `registry_owner`).
+## Capability
 
-Returned capability summary shape (safe for consultation pre-read, chair synthesis, BFF projection, and daily-cycle execution recheck):
+GET /api/personas/{persona_id}/action-capability requires authenticated tenant
+scope. Optional run_purpose defaults to daily_cycle; required_data may repeat.
+The meeting producer's GET caller matches. The design anchor's speculative batch
+POST was not implemented because no caller needs it.
 
-```json
-{
-  "persona_id": "persona-alpha",
-  "role": "chair",
-  "meeting_role": "chair",
-  "lifecycle_state": "paper_owner",
-  "admin_status": "active",
-  "status": "allowed",
-  "executable": true,
-  "can_be_assigned": true,
-  "can_receive_persona_action": true,
-  "can_execute_in_current_run": true,
-  "can_sponsor_formal_proposal": true,
-  "can_mutate_trading_state": false,
-  "consultation_can_mutate_trading_state": false,
-  "advisory_only": false,
-  "blocked_reason": null,
-  "reason": "Active persona with workflow and research capability",
-  "denial_reasons": [],
-  "run_purpose": "daily_cycle",
-  "effective_tools": ["read", "persona_memory_recall", "persona_mental_model_read", "persona_proposal_submit"],
-  "effective_workflows": ["persona_daily_cycle"],
-  "effective_skills": [],
-  "accessible_data": ["tw_equities_daily"],
-  "restricted_data": [],
-  "data_access_scope": "standard",
-  "allowed_deliverables": ["research_note", "research_artifact"],
-  "allowed_proposal_types": ["RESEARCH_TICKET", "EXPERIMENT_SPEC", "PARAMETER_CHANGE", "GOVERNANCE_SUGGESTION", "INCIDENT_ANNOTATION"],
-  "allowed_execution_targets": ["research_ticket", "research_note", "research_artifact"],
-  "limits": ["proposal_only_no_direct_trading", "paper_scope_only"],
-  "snapshot_id": "snap-persona-alpha-1",
-  "source_refs": ["persona_owner:persona-alpha"]
-}
-```
+The evaluator joins fresh owner Persona/snapshot, the verified active harness,
+broker tool ceiling and any referenced policy resolver. Unknown policy IDs fail
+closed. Inline BFF snapshots and chair/trading labels grant nothing. The receipt
+must grant research_note, persona_proposal_submit and a daily-cycle workflow;
+the harness must retain all five steps. Its established read permission permits
+the already brokered tools; read alone cannot replace a missing snapshot grant.
+Gated required datasets must be in snapshot metadata.accessible_data. Expiry,
+revocation, suspension, restrictions, missing workflows and owner faults return
+named denials. Consultation runs cannot execute; trading mutation is always false.
+Execution repeats this same evaluator against both fresh owners. No missing
+policy catalog, access receipt or enrollment is fabricated.
 
-Covered statuses:
-- `allowed`: active enrolled daily-cycle persona with valid workflow, decision tool, unexpired/undowngraded capability snapshot, and accessible data for the deliverable.
-- `advisory_only`: panel personas (`persona-risk-officer`, `persona-red-team`, `consult_panel`), `agora_advisor`, `private_servant`, non-daily-cycle lifecycle (`consultable`, `research_only`, `draft`), or `run_purpose` restricted to consultation/panel interpretation.
-- `suspended`: `status == "suspended"` / `"archived"` or `lifecycle_state in {"frozen", "retired"}`.
-- `no_workflow`: missing/denied route policy or empty effective workflows / disabled workflow.
-- `restricted_data`: deliverable requires a dataset/scope in `restricted_data` / `blocked_source_scopes`, ungranted `policy_gates`, or foreign/private scope.
-- `expired_access` / `downgraded_access`: capability snapshot `expires_at` elapsed, `access_status` expired/downgraded, or `persona_proposal_submit` / execution capability revoked.
-- `owner_unavailable`: Persona, CapabilitySnapshot, Research, or Registry owner temporarily unreachable/erroring.
+## Existing-cycle execution
 
-Security invariants:
-- Role labels (`chair`, `trading_peer`) and unverified inline BFF `capability_snapshot` fields never grant capability.
-- `anonymize_participant_capability` strips `persona_id`, `snapshot_id`, and `source_refs` for anonymized meeting rounds.
+Each normal eligible cycle reads two Research pages of four tickets:
+open/in_progress/returned and submitted/accepted, filtered by accountable owner.
+next_page_token persists in existing packets and continues next cycle, resetting
+after exhaustion. pending_pages is explicit; owner/evidence failure retains the
+cursor. This avoids permanent first-page truncation. Every row is checked for
+tenant, owner, action_id and persona assignee kind. Results inform the current
+subject only when subject_ref=persona:{own_persona_id}.
 
-## 3. Daily-Cycle Ticket Observation, Execution, Human-Input Request/Resumption & Same-Subject Citation
+Chair source_refs are actual citation strings. They resolve from the original
+tenant-scoped public meeting case with origin/digest/content/sharing checks.
+Private memory is refused. Human/result reference objects resolve through scoped
+Research note/artifact owners and binding/checksum checks. No caller URL is fetched.
+Observe carries full deliverable/criterion plus bounded approved excerpts. The case
+gains facts:meeting_action_ticket:<ticket_id> and facts:meeting_action_result:<ticket_id>
+anchors, independent of semantic memory. A later no_action may cite the result
+and explicitly explain keeping course.
 
-1. **Deterministic Observation (`CycleOwners.observe_meeting_actions`)**:
-   - Reads `GET /api/research/tickets?meeting_linked=true&owner=<persona_id>&page_size=50` (up to 2 pages, filtered to `tenant_id == persona["tenant_id"]` and `owner == persona_id`).
-   - Resolves approved evidence (`meeting_action.source_refs`, `human_input.evidence_refs`, `evidence_refs`) from `/api/research/artifacts/{id}`, `/api/research/notes/{id}`, and `/api/registry/entries/{id}` within the same tenant.
-   - Populates `observe["meeting_actions"]` (`runnable` capped at 4 tickets/tick, `verified_results` capped at 4 tickets/tick) and injects deterministic `CaseFile` items into `facts`:
-     - `facts:meeting_action_ticket:<ticket_id>`
-     - `facts:meeting_action_result:<ticket_id>`
-     - `facts:meeting_action_evidence:<ticket_id>:<artifact_id>`
-2. **Execution via Existing Normal Decision Tool (`persona_proposal_submit`)**:
-   - No 4th tool and no extra cycle. `CycleProposal.kind` accepts `"meeting_action"` with `parameters`:
-     - `ticket_id` (or `action_id`), `action` (`"submit"` | `"request_input"` | `"decline"`), `title`, `analysis` / `body`, `artifact_refs` / `evidence_refs`, `missing_requirement`, `human_actor_id`.
-   - For `action="submit"`, the controller rechecks `evaluate_participant_action_capability`, checks/creates a deterministic meeting-bound research note (`GET /api/research/notes/{note_id}` then `POST /api/research/notes` with `meeting_ticket_id` and `idempotency_key`), and submits via `PATCH /api/research/tickets/{ticket_id}` (`action="submit"`, `expected_revision`, `idempotency_key`, `evidence_refs`).
-   - For `action="request_input"` (or deterministic missing external requirement), the controller patches the original ticket with `action="request_input"`, `reason`, and `human_actor_id`. Once an authorized human supplies input (`provide_input`), the ticket returns to `action_state="in_progress"` with `required_actor=persona_id` and `human_input`, and the same Persona resumes and submits on its existing daily cycle.
-   - Timeouts, missing tool records, declined proposals, or rejected outputs never fabricate a submission.
-3. **Same-Subject Next Decision & Citation**:
-   - Same-subject verified results (`submitted` / `accepted`) and their resolved evidence appear in `CaseFile` (`facts:meeting_action_result:<ticket_id>`, `facts:meeting_action_evidence:<ticket_id>:<artifact_id>`), allowing the next decision (including `kind="no_action"` to maintain course with an explicit reason) to cite them even when generic memory search returns zero hits.
+The existing persona_proposal_submit accepts kind=meeting_action. Parameters:
+
+* ticket_id, action=submit, title, analysis, evidence_refs (approved objects only);
+* ticket_id, action=request_input, missing_requirement, human_actor_id;
+* ticket_id, action=decline; the reason is recorded and the ticket stays open.
+
+A ticket citation is required. At most four distinct tickets execute per tick.
+The exact validated commands are journaled in the existing packet before writes.
+Research notes retain actual Persona, packet and broker-run provenance. Note IDs
+use Research's published tenant/ticket/controller/key hash; GET before POST reuses
+existing evidence. PATCH sends patch.action, expected_revision and idempotency_key.
+Note identity/actor/content and ticket receipts must match. Timeout is unavailable,
+never submitted. Submission stays reviewable; Persona never confers acceptance.
+
+The next successful ordinary tick replays up to four uncertain saved plans before
+new observations. Completed recovery is remembered in existing packets. An uncertain
+ticket cannot get a new generated execution. The existing lock fences concurrent
+ticks, and a claimed-run restart never buys that original model turn again.
+Research's authorized provide_input resumes the original accountable Persona and
+ticket; the same normal cycle then observes and submits it.
+
+## Resources supplied to the Research/storage owner
+
+No new cadence, collection, queue or inbox. Existing packet, note and ticket writers
+are affected. Three enrolled Personas normally produce three packets/trading weekday,
+15/week; separately human-convened meetings remain counted by their chain. Three
+meetings/persona/week with eight actions each implies a theoretical 72 assignments/week.
+Four actions per Persona tick permit 60/week at weekday cadence: sustained maximum
+arrivals can outpace consumption. Open obligations remain preserved and paged.
+
+* Two list GETs plus <=64 evidence GETs/tick, caching meeting reads by origin.
+  Four recoveries + four new executions need <=4 owner calls each (ticket GET,
+  note GET, optional note POST, PATCH): <=98 HTTP calls/tick, <=294 across three
+  Personas. Each times out after 10 seconds, with <=1 MiB response reads. No
+  recursive fetch or in-tick retry. Capability uses <=8 pairs of local owner reads.
+* Observe extension <=192 KiB; case anchors <=64 KiB/case; actual whole turn input
+  <=512 KiB UTF-8, checked before broker registration. Analysis <=8,000 UTF-8 bytes;
+  note command <=14,000 JSON bytes leaves space under Research's 16-KiB record cap.
+  At most four journal plans/tick and twenty proposal cases plus the cycle case.
+* Hosted JSON retains one snapshot/packet, with <=10 writes/tick (claim, two per new
+  action, terminal). Existing write-time cleanup: 30 days / 1,000 shared records and
+  run watermarks. Legacy JSONL is unchanged; JSON retention is not claimed for it.
+  Added fields have a conservative <=1.6 MiB/packet envelope (21*64-KiB anchors,
+  192-KiB Observe, four <=16-KiB plans), plus pre-existing packet content. At three
+  new packets/day, additional growth <=4.8 MiB/day at that ceiling; normally <=90
+  daily Persona packets/30 days, fewer under weekday cadence, within the shared cap.
+* measurement.json records the reproducible four-action component fixture: real
+  turn bytes, hosted-format packet/store bytes, request count and note count/bytes.
+  These are local test measurements. Daily example growth is three times the
+  measured full packet/store and note bytes, not a hosted measurement.
+* Research retains 128 notes/ticket, 256 history entries/ticket, 256-KiB tickets and
+  eight actions/origin. Its existing RC3 retention residual is not changed here.
+
+## Acceptance boundary
+
+probe.py is executable read-only acceptance: real original ticket/note, actual
+broker run, owner acknowledgement and a later same-Persona decision citation from
+a copied hosted packet store. --help lists origins, Persona, tenant, ticket and
+packet-file arguments. Credentials use existing token environment/file variables.
+No ticket, note, cron or task mutation occurs. The two-meeting proof task and
+MEETING-HOSTED-ACCEPTANCE-20261115 must run against the exact deployed pair and
+retain real human-input and later-meeting proof. Fixtures do not satisfy that gate.
