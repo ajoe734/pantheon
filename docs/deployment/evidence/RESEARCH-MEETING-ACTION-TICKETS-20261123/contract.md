@@ -50,3 +50,12 @@ action_id alongside ordinary RW-01 fields. Historical lists retain their list sh
 This contract does not grant new tools or bypass capability, sponsor or trading
 gates. Consultation owns verified origin/adoption; Persona owns safe execution;
 BFF owns user identity propagation. Research owns ticket transitions and evidence.
+
+For a durable analysis deliverable without a framework run, POST the existing
+`/api/research/notes` with authenticated headers and
+`{meeting_ticket_id, idempotency_key, title, body, source_refs?}`. Research stamps
+an immutable tenant/ticket/actor binding; note_id is deterministic for ticket,
+actor and key. Submission refs use `{kind:"research_note",artifact_id:note_id}`.
+Ordinary note writes cannot forge or replace these bindings. Meeting notes are
+excluded from the legacy unscoped note list and detail requires ticket access.
+Every meaningful submitted claim still needs the reviewer's criterion check.

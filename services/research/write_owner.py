@@ -46,6 +46,14 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     return dt
 
 
+class MeetingActionError(ValueError):
+    """Owner refusal with an HTTP-safe reason; never a fallback to legacy writes."""
+
+    def __init__(self, message: str, status_code: int = 409) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class ResearchWriteOwner:
     """Authoritative durable write owner for the Research domain."""
 
@@ -66,7 +74,9 @@ class ResearchWriteOwner:
         tickets_store: Optional[Any] = None,
         experiments_store: Optional[Any] = None,
         notes_store: Optional[Any] = None,
+        action_evidence_reader: Optional[Any] = None,
     ) -> None:
+        self._action_evidence_reader = action_evidence_reader
         if tickets_store is not None and experiments_store is not None and notes_store is not None:
             self.dsn = dsn or ""
             self.schema = schema
@@ -123,6 +133,7 @@ class ResearchWriteOwner:
             "created_at": ticket.get("created_at"),
             "updated_at": ticket.get("updated_at"),
             "allowedActions": cls._ticket_allowed_actions(ticket.get("status")),
+            **cls._action_projection(ticket),
         }
 
     @classmethod
@@ -142,6 +153,7 @@ class ResearchWriteOwner:
             "linked_experiments": list(ticket.get("linked_experiments") or []),
             "linked_artifacts": list(ticket.get("linked_artifacts") or []),
             "allowedActions": cls._ticket_allowed_actions(ticket.get("status")),
+            **cls._action_projection(ticket),
         }
 
     def create_research_ticket(
@@ -154,7 +166,13 @@ class ResearchWriteOwner:
         actor_id: str,
         created_at: Optional[str] = None,
         ticket_id: Optional[str] = None,
+        meeting_action: Optional[Dict[str, Any]] = None,
+        context: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        if meeting_action is not None:
+            return self._create_meeting_ticket(title=title, description=description, priority=priority,
+                       owner=owner, actor_id=actor_id, meeting_action=meeting_action,
+                       context=context, ticket_id=ticket_id)
         clean_title = str(title or "").strip()
         if not clean_title:
             raise ValueError("title is required")
@@ -197,7 +215,12 @@ class ResearchWriteOwner:
             "linked_experiments": [],
             "linked_artifacts": [],
         }
-        self._tickets_store.put(tid, record)
+        existing = self._tickets_store.get(tid)
+        if existing and existing.get("meeting_action"):
+            self._action_error("Meeting work cannot be replaced by an ordinary ticket")
+        ok, _ = self._tickets_store.compare_and_set(tid, existing, record)
+        if not ok:
+            self._action_error("Concurrent ticket creation; retry")
         return self._project_ticket_detail(record)
 
     def patch_research_ticket(
@@ -207,11 +230,14 @@ class ResearchWriteOwner:
         patch: Dict[str, Any],
         actor_id: str,
         updated_at: Optional[str] = None,
+        context: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
         ticket = self._tickets_store.get(str(ticket_id))
         if ticket is None or not isinstance(ticket, dict):
             return None
 
+        if ticket.get("meeting_action"):
+            return self._patch_meeting_ticket(ticket, patch=patch, actor_id=actor_id, context=context)
         timestamp = updated_at or _utc_now_rfc3339()
         clean_actor = str(actor_id or "").strip() or str(ticket.get("owner") or "system")
 
@@ -259,10 +285,13 @@ class ResearchWriteOwner:
         self._tickets_store.put(ticket_id, ticket)
         return self._project_ticket_detail(ticket)
 
-    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(self, ticket_id: Optional[str], *, context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
         ticket = self._tickets_store.get(str(ticket_id))
+        if isinstance(ticket, dict) and ticket.get("meeting_action") and not self._action_visible(ticket, context):
+            self._action_auth(context)
+            return None
         return self._project_ticket_detail(ticket) if isinstance(ticket, dict) else None
 
     def list_research_tickets(
@@ -270,8 +299,23 @@ class ResearchWriteOwner:
         *,
         statuses: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        tickets = self._tickets_store.list_all()
+        context: Optional[Any] = None,
+        meeting_linked: bool = False,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_states: Optional[Sequence[str]] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> Any:
+        if meeting_linked:
+            return self._list_meeting_tickets(context=context, statuses=statuses, owner=owner,
+                meeting_type=meeting_type, subject_ref=subject_ref, action_states=action_states,
+                due_before=due_before, submitted_after=submitted_after, updated_after=updated_after,
+                page_size=page_size, page_token=page_token)
+        tickets = [t for t in self._tickets_store.list_all() if not t.get("meeting_action")]
         if statuses:
             req_statuses = {str(s).strip().lower() for s in statuses if str(s).strip()}
             tickets = [t for t in tickets if str(t.get("status") or "").strip().lower() in req_statuses]
@@ -283,6 +327,289 @@ class ResearchWriteOwner:
             reverse=True,
         )
         return [self._project_ticket_summary(t) for t in tickets if isinstance(t, dict)]
+
+    # Meeting obligations remain rows in the existing RW-01 owner table.
+    _ACTION_MAX_BYTES = 262144
+    _ACTION_HISTORY_MAX = 256
+    _ACTION_INPUT_MAX_BYTES = 16384
+    _ACTION_CONTROLLERS = frozenset({"consultation-svc", "persona-pool-cycle"})
+    _ACTION_STATES = {
+        "start": ({"open", "returned"}, "in_progress"),
+        "request_input": ({"open", "in_progress", "returned"}, "waiting_for_input"),
+        "provide_input": ({"waiting_for_input"}, "in_progress"),
+        "submit": ({"open", "in_progress", "returned"}, "submitted"),
+        "return": ({"submitted"}, "returned"),
+        "accept": ({"submitted"}, "accepted"),
+    }
+
+    @staticmethod
+    def _action_error(message: str, status_code: int = 409) -> None:
+        raise MeetingActionError(message, status_code)
+
+    @classmethod
+    def _action_text(cls, value: Any, field: str, limit: int = 2000) -> str:
+        if not isinstance(value, str) or not value.strip() or len(value) > limit:
+            cls._action_error(f"{field} must be nonempty text (max {limit} chars)", 400)
+        return value.strip()
+
+    @staticmethod
+    def _action_digest(value: Any) -> str:
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+    @classmethod
+    def _action_auth(cls, context: Any, actor_id: Optional[str] = None) -> Any:
+        if context is None or not context.tenant_id or not context.actor_id:
+            cls._action_error("Authenticated tenant and actor required", 401)
+        if actor_id is not None and actor_id != context.actor_id:
+            cls._action_error("actor_id must match authenticated principal", 403)
+        return context
+
+    @staticmethod
+    def _action_operator(context: Any) -> bool:
+        return bool(context.roles & {"operator", "admin"})
+
+    @classmethod
+    def _action_controller(cls, context: Any, actor: str) -> bool:
+        return context.actor_id == actor and bool(context.roles & {"service", "viewer"})
+
+    @classmethod
+    def _action_visible(cls, ticket: Dict[str, Any], context: Any) -> bool:
+        if context is None or ticket.get("tenant_id") != context.tenant_id:
+            return False
+        return (cls._action_operator(context)
+                or any(cls._action_controller(context, actor) for actor in cls._ACTION_CONTROLLERS)
+                or context.actor_id in {ticket.get("owner"), ticket.get("reviewer_id"), ticket.get("required_actor")})
+
+    @classmethod
+    def _action_projection(cls, ticket: Dict[str, Any]) -> Dict[str, Any]:
+        # Return only owner-written action fields; preserve old RW-01 projections.
+        if not ticket.get("meeting_action"):
+            return {}
+        keys = ("tenant_id", "meeting_action", "action_state", "revision", "evidence_refs",
+                "submitted_at", "reviewed_at", "reviewer_id", "required_actor", "input_request",
+                "human_input", "review_decision")
+        out = {k: json.loads(json.dumps(ticket.get(k))) for k in keys}
+        out.update(action_id=ticket["ticket_id"], assignee=ticket["owner"],
+                   assignee_kind=ticket["meeting_action"]["assignee_kind"])
+        out["allowedActions"] = {"canEdit": False, "canClose": False, "canArchive": False}
+        return out
+
+    def _create_meeting_ticket(self, *, title: str, description: str, priority: str,
+                               owner: str, actor_id: str, meeting_action: Dict[str, Any],
+                               context: Any, ticket_id: Optional[str]) -> Dict[str, Any]:
+        ctx = self._action_auth(context, actor_id)
+        if not (self._action_operator(ctx) or self._action_controller(ctx, "consultation-svc")):
+            self._action_error("Only meeting owner or operator can assign meeting work", 403)
+        if not isinstance(meeting_action, dict):
+            self._action_error("meeting_action must be an object", 400)
+        required = {"meeting_id", "source_action_id", "meeting_type", "subject_ref", "assignee_kind",
+                    "deliverable", "acceptance_criterion", "reviewer_id"}
+        if set(meeting_action) - required - {"due_at", "next_review", "source_refs"}:
+            self._action_error("Unknown meeting_action fields", 400)
+        action = {k: self._action_text(meeting_action.get(k), k, 2000 if k in
+                  {"deliverable", "acceptance_criterion"} else 256) for k in required}
+        if action["assignee_kind"] not in {"persona", "human"}:
+            self._action_error("assignee_kind must be persona or human", 400)
+        due = meeting_action.get("due_at")
+        if due is not None:
+            parsed = _parse_rfc3339(due)
+            if parsed is None or parsed.tzinfo is None:
+                self._action_error("due_at requires an RFC3339 timestamp with timezone", 400)
+            action["due_at"] = parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if meeting_action.get("next_review") is not None:
+            action["next_review"] = self._action_text(meeting_action["next_review"], "next_review", 256)
+        if not action.get("due_at") and not action.get("next_review"):
+            self._action_error("due_at or explicitly identified next_review required", 400)
+        refs = meeting_action.get("source_refs", [])
+        if not isinstance(refs, list) or len(refs) > 8 or len(json.dumps(refs).encode()) > 4096:
+            self._action_error("source_refs exceeds bounded reference budget", 400)
+        action["source_refs"] = refs
+        assignment = {"meeting_action": action, "tenant_id": ctx.tenant_id,
+                      "title": self._action_text(title, "title", 256),
+                      "description": str(description or ""), "priority": priority,
+                      "owner": self._action_text(owner, "owner", 256)}
+        if len(json.dumps(assignment).encode()) > self._ACTION_INPUT_MAX_BYTES:
+            self._action_error("Assignment exceeds 16 KiB", 400)
+        tid = "rt-action-" + self._action_digest([ctx.tenant_id, action["meeting_id"], action["source_action_id"]])[:32]
+        if ticket_id is not None and ticket_id != tid:
+            self._action_error("ticket_id must equal deterministic action identity", 400)
+        timestamp = _utc_now_rfc3339()
+        record = {**assignment, "ticket_id": tid, "status": "open", "action_state": "open",
+                  "created_at": timestamp, "updated_at": timestamp, "closed_at": None,
+                  "archived_at": None, "linked_experiments": [], "linked_artifacts": [],
+                  "evidence_refs": [], "revision": 0, "reviewer_id": action["reviewer_id"],
+                  "required_actor": owner, "assignment_digest": self._action_digest(assignment),
+                  "lifecycle_history": [{"from_status": None, "to_status": "open",
+                      "transitioned_at": timestamp, "transitioned_by": actor_id}]}
+        inserted, canonical = self._tickets_store.compare_and_set(tid, None, record)
+        if not inserted and (not canonical or canonical.get("assignment_digest") != record["assignment_digest"]):
+            self._action_error("Conflicting replay of adopted action")
+        return self._project_ticket_detail(canonical)
+
+    def _resolve_action_evidence(self, refs: Any, ticket: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(refs, list) or not 1 <= len(refs) <= 8:
+            self._action_error("1..8 evidence_refs required", 400)
+        out = []
+        for ref in refs:
+            if not isinstance(ref, dict) or set(ref) != {"kind", "artifact_id"}:
+                self._action_error("Evidence requires only kind and artifact_id", 400)
+            if not isinstance(ref["artifact_id"], str) or len(ref["artifact_id"]) > 256:
+                self._action_error("Invalid artifact_id", 400)
+            # Readers are injected by the service, never by HTTP payloads.
+            if self._action_evidence_reader is None:
+                self._action_error("Evidence owner unavailable", 503)
+            saved = self._action_evidence_reader(ref, ticket["tenant_id"], ticket["ticket_id"])
+            if not isinstance(saved, dict) or saved.get("tenant_id") != ticket["tenant_id"] or not saved.get("checksum"):
+                self._action_error("Evidence not found in authorized tenant scope", 403)
+            out.append({**ref, "checksum": saved["checksum"], "tenant_id": ticket["tenant_id"]})
+        if len(json.dumps(out).encode()) > 4096:
+            self._action_error("Evidence metadata exceeds 4 KiB", 400)
+        return out
+
+    def _patch_meeting_ticket(self, ticket: Dict[str, Any], *, patch: Dict[str, Any],
+                              actor_id: str, context: Any) -> Dict[str, Any]:
+        ctx = self._action_auth(context, actor_id)
+        if not self._action_visible(ticket, ctx):
+            self._action_error("Research ticket not found", 404)
+        if len(json.dumps(patch).encode()) > self._ACTION_INPUT_MAX_BYTES:
+            self._action_error("Action command exceeds 16 KiB", 400)
+        action = patch.get("action")
+        if action not in self._ACTION_STATES:
+            self._action_error("Meeting work requires an explicit owner action; status PATCH is forbidden", 400)
+        fields = {"action", "expected_revision", "idempotency_key"}
+        fields |= {"request_input": {"reason", "human_actor_id"}, "provide_input": {"evidence_refs", "reason"},
+                   "submit": {"evidence_refs"}, "return": {"reason", "review_source"},
+                   "accept": {"reason", "review_source"}}.get(action, set())
+        if set(patch) - fields:
+            self._action_error("Unsupported meeting command fields", 400)
+        key = self._action_text(patch.get("idempotency_key"), "idempotency_key", 256)
+        digest = self._action_digest([actor_id, patch])
+        # Retry is checked before revision/state and never creates a second history event.
+        for event in ticket["lifecycle_history"]:
+            if event.get("idempotency_key") == key and event.get("transitioned_by") == actor_id:
+                if event.get("command_digest") != digest:
+                    self._action_error("Conflicting command replay")
+                return self._project_ticket_detail(ticket)
+        if type(patch.get("expected_revision")) is not int or patch["expected_revision"] != ticket["revision"]:
+            self._action_error("Stale expected_revision")
+        prev = ticket["action_state"]
+        allowed, target = self._ACTION_STATES[action]
+        if prev not in allowed:
+            self._action_error(f"Cannot {action} from {prev}")
+        if action in {"return", "accept"}:
+            authorized = self._action_operator(ctx) or (ctx.actor_id == ticket["reviewer_id"] and
+                         bool(ctx.roles & {"reviewer", "governance_reviewer", "service"}))
+        elif action == "provide_input":
+            authorized = self._action_operator(ctx) or (ctx.actor_id == ticket["required_actor"] and
+                         bool(ctx.roles & {"operator", "approver", "human"}))
+        else:
+            authorized = (ctx.actor_id == ticket["owner"] or self._action_operator(ctx)
+                          or (ticket["meeting_action"]["assignee_kind"] == "persona"
+                              and self._action_controller(ctx, "persona-pool-cycle")))
+        if not authorized:
+            self._action_error("Actor cannot perform this ticket action", 403)
+        updated = json.loads(json.dumps(ticket))
+        now = _utc_now_rfc3339()
+        if action == "request_input":
+            human = self._action_text(patch.get("human_actor_id"), "human_actor_id", 256)
+            updated["input_request"] = {"reason": self._action_text(patch.get("reason"), "reason"),
+                                        "human_actor_id": human, "requested_at": now}
+            updated["required_actor"] = human
+        elif action in {"submit", "provide_input"}:
+            evidence = self._resolve_action_evidence(patch.get("evidence_refs"), ticket)
+            if action == "submit":
+                updated["evidence_refs"] = evidence
+                updated["linked_artifacts"] = [r["artifact_id"] for r in evidence]
+                updated["submitted_at"] = now
+                updated["required_actor"] = ticket["reviewer_id"]
+            else:
+                updated["human_input"] = {"evidence_refs": evidence, "provided_by": actor_id, "provided_at": now}
+                updated["required_actor"] = ticket["owner"]
+        elif action in {"return", "accept"}:
+            reason = self._action_text(patch.get("reason"), "reason")
+            source = self._action_text(patch.get("review_source"), "review_source", 256)
+            # Re-read the real scoped owner on acceptance; caller assertions do not suffice.
+            if action == "accept":
+                refs = [{"kind": r["kind"], "artifact_id": r["artifact_id"]} for r in ticket["evidence_refs"]]
+                if self._resolve_action_evidence(refs, ticket) != ticket["evidence_refs"]:
+                    self._action_error("Submitted evidence changed; corrected submission required")
+                updated["closed_at"] = now
+            updated["review_decision"] = {"decision": action, "reason": reason, "review_source": source,
+                                           "reviewed_by": actor_id, "reviewed_at": now,
+                                           "submission_revision": ticket["revision"]}
+            updated["reviewed_at"] = now
+            updated["required_actor"] = None if action == "accept" else ticket["owner"]
+        else:
+            updated["required_actor"] = ticket["owner"]
+        updated.update(action_state=target, status="closed" if target == "accepted" else "in_progress",
+                       updated_at=now, revision=ticket["revision"] + 1)
+        event = {"from_status": ticket["status"], "to_status": updated["status"],
+                 "from_action_state": prev, "to_action_state": target, "action": action,
+                 "transitioned_at": now, "transitioned_by": actor_id, "accountable_owner": ticket["owner"],
+                 "idempotency_key": key, "command_digest": digest, "revision": updated["revision"],
+                 "evidence_refs": updated.get("evidence_refs"), "human_input": updated.get("human_input"),
+                 "input_request": updated.get("input_request"), "review_decision": updated.get("review_decision")}
+        updated["lifecycle_history"].append(event)
+        if len(updated["lifecycle_history"]) > self._ACTION_HISTORY_MAX or len(json.dumps(updated).encode()) > self._ACTION_MAX_BYTES:
+            self._action_error("Ticket history capacity reached; preserve obligation for owner intervention")
+        ok, _ = self._tickets_store.compare_and_set(ticket["ticket_id"], ticket, updated)
+        if not ok:
+            # A simultaneous exact retry may have won. Re-read once; no stale overwrite.
+            current = self._tickets_store.get(ticket["ticket_id"])
+            for e in (current or {}).get("lifecycle_history", []):
+                if e.get("transitioned_by") == actor_id and e.get("idempotency_key") == key and e.get("command_digest") == digest:
+                    return self._project_ticket_detail(current)
+            self._action_error("Concurrent ticket update; read current revision before retry")
+        return self._project_ticket_detail(updated)
+
+    def _list_meeting_tickets(self, *, context: Any, statuses: Any, owner: Any,
+                             meeting_type: Any, subject_ref: Any, action_states: Any,
+                             due_before: Any, submitted_after: Any, updated_after: Any,
+                             page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
+        ctx = self._action_auth(context)
+        if not 1 <= page_size <= 100:
+            self._action_error("page_size must be 1..100", 400)
+        for name, value in (("due_before", due_before), ("submitted_after", submitted_after), ("updated_after", updated_after)):
+            if value and (_parse_rfc3339(value) is None or _parse_rfc3339(value).tzinfo is None):
+                self._action_error(f"Invalid {name}", 400)
+        # Bound SQL result rows and bytes before crossing the database boundary.
+        clauses = ["payload->>'tenant_id' = %s", "payload->'meeting_action' IS NOT NULL"]
+        params: List[Any] = [ctx.tenant_id]
+        if not (self._action_operator(ctx) or any(self._action_controller(ctx, a) for a in self._ACTION_CONTROLLERS)):
+            clauses.append("(payload->>'owner' = %s OR payload->>'reviewer_id' = %s OR payload->>'required_actor' = %s)")
+            params.extend([ctx.actor_id] * 3)
+        for expr, val in (("payload->>'owner'", owner), ("payload->'meeting_action'->>'meeting_type'", meeting_type),
+                          ("payload->'meeting_action'->>'subject_ref'", subject_ref)):
+            if val:
+                clauses.append(f"{expr} = %s")
+                params.append(val)
+        for field, values in (("status", statuses), ("action_state", action_states)):
+            if values:
+                clauses.append(f"payload->>'{field}' = ANY(%s)")
+                params.append(list(values))
+        for expr, op, value in (("payload->'meeting_action'->>'due_at'", "<=", due_before),
+                                 ("payload->>'submitted_at'", ">", submitted_after),
+                                 ("payload->>'updated_at'", ">", updated_after)):
+            if value:
+                clauses.append(f"({expr})::timestamptz {op} %s::timestamptz")
+                params.append(value)
+        fingerprint = self._action_digest([ctx.tenant_id, ctx.actor_id, sorted(ctx.roles), statuses, owner,
+                       meeting_type, subject_ref, action_states, due_before, submitted_after, updated_after])[:24]
+        if page_token:
+            try:
+                token_scope, anchor = page_token.split(":", 1)
+                if token_scope != fingerprint or not anchor.startswith("rt-action-") or len(anchor) != 42:
+                    raise ValueError()
+            except ValueError:
+                self._action_error("Invalid or differently scoped page_token", 400)
+            clauses.append("record_id > %s")
+            params.append(anchor)
+        params.append(page_size + 1)
+        with self._tickets_store._connect() as conn:
+            rows = conn.execute(f"SELECT payload FROM {self._tickets_store.table} WHERE {' AND '.join(clauses)} ORDER BY record_id ASC LIMIT %s", tuple(params)).fetchall()
+        tickets = [self._tickets_store._decode_payload(r[0] if isinstance(r, tuple) else r["payload"]) for r in rows]
+        items = [self._project_ticket_summary(t) for t in tickets[:page_size]]
+        return {"data": items, "page_info": {"next_page_token": f"{fingerprint}:{tickets[page_size - 1]['ticket_id']}" if len(tickets) > page_size else None}}
 
     # -------------------------------------------------------------------------
     # Experiments (RW-04) Projections & Mutations
@@ -781,9 +1108,47 @@ class ResearchWriteOwner:
     # -------------------------------------------------------------------------
     # Notes (KW-02) Projections & Mutations
     # -------------------------------------------------------------------------
-    def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _create_meeting_note(self, note: Dict[str, Any], context: Any) -> Dict[str, Any]:
+        ctx = self._action_auth(context)
+        if any(str(k).startswith("_meeting_") for k in note):
+            self._action_error("Reserved evidence binding fields", 400)
+        if note.get("tenant_id", ctx.tenant_id) != ctx.tenant_id or note.get("actor_id", ctx.actor_id) != ctx.actor_id:
+            self._action_error("Evidence actor/tenant mismatch", 403)
+        if set(note) - {"meeting_ticket_id", "idempotency_key", "title", "body", "source_refs", "tenant_id", "actor_id"}:
+            self._action_error("Unsupported meeting note fields", 400)
+        ticket = self._tickets_store.get(str(note["meeting_ticket_id"]))
+        if not ticket or not ticket.get("meeting_action") or not self._action_visible(ticket, ctx):
+            self._action_error("Research ticket not found", 404)
+        if ticket["action_state"] == "accepted":
+            self._action_error("Accepted assignment is immutable")
+        if not (ctx.actor_id in {ticket["owner"], ticket["required_actor"]} or self._action_operator(ctx)
+                or (ticket["meeting_action"]["assignee_kind"] == "persona" and self._action_controller(ctx, "persona-pool-cycle"))):
+            self._action_error("Actor cannot supply this assignment's evidence", 403)
+        key = self._action_text(note.get("idempotency_key"), "idempotency_key", 256)
+        title = self._action_text(note.get("title"), "title", 256)
+        body = self._action_text(note.get("body"), "body", 12000)
+        source_refs = note.get("source_refs", [])
+        if not isinstance(source_refs, list) or len(source_refs) > 8:
+            self._action_error("source_refs must contain at most 8 references", 400)
+        if len(json.dumps(note).encode()) > self._ACTION_INPUT_MAX_BYTES:
+            self._action_error("Meeting note exceeds 16 KiB", 400)
+        nid = "note-action-" + self._action_digest([ctx.tenant_id, ticket["ticket_id"], ctx.actor_id, key])[:32]
+        payload = {"note_id": nid, "id": nid, "title": title, "body": body, "source_refs": source_refs,
+                   "_meeting_binding": {"tenant_id": ctx.tenant_id, "ticket_id": ticket["ticket_id"], "actor_id": ctx.actor_id}}
+        payload["_meeting_digest"] = self._action_digest(payload)
+        payload["created_at"] = payload["updated_at"] = _utc_now_rfc3339()
+        ok, current = self._notes_store.compare_and_set(nid, None, payload)
+        if not ok and (not current or current.get("_meeting_digest") != payload["_meeting_digest"]):
+            self._action_error("Conflicting evidence note replay")
+        return current
+
+    def create_research_note(self, note: Dict[str, Any], *, context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         if not isinstance(note, dict):
             return None
+        if "meeting_ticket_id" in note:
+            return self._create_meeting_note(note, context)
+        if any(str(k).startswith("_meeting_") for k in note):
+            self._action_error("Reserved evidence binding fields", 400)
         payload = json.loads(json.dumps(note))
         note_id = str(payload.get("note_id") or payload.get("id") or "").strip()
         if not note_id:
@@ -800,17 +1165,27 @@ class ResearchWriteOwner:
         if not payload.get("updated_at"):
             payload["updated_at"] = payload.get("created_at")
 
-        self._notes_store.put(note_id, payload)
+        existing = self._notes_store.get(note_id)
+        if existing and existing.get("_meeting_binding"):
+            self._action_error("Meeting evidence is immutable")
+        ok, _ = self._notes_store.compare_and_set(note_id, existing, payload)
+        if not ok:
+            self._action_error("Concurrent note write")
         return json.loads(json.dumps(payload))
 
-    def get_research_note(self, note_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_research_note(self, note_id: Optional[str], *, context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         if not note_id:
             return None
         note = self._notes_store.get(str(note_id))
+        if isinstance(note, dict) and note.get("_meeting_binding"):
+            self._action_auth(context)
+            ticket = self._tickets_store.get(note["_meeting_binding"]["ticket_id"])
+            if not ticket or not self._action_visible(ticket, context):
+                return None
         return json.loads(json.dumps(note)) if isinstance(note, dict) else None
 
     def list_research_notes(self) -> List[Dict[str, Any]]:
-        notes = self._notes_store.list_all()
+        notes = [n for n in self._notes_store.list_all() if not n.get("_meeting_binding")]
         notes.sort(
             key=lambda n: _naive_utc(_parse_rfc3339(n.get("updated_at")) or _parse_rfc3339(n.get("created_at"))),
             reverse=True,
