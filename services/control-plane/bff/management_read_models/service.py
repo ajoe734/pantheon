@@ -4624,8 +4624,8 @@ class ManagementService:
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        from services.consultation.client import ConsultationServiceClient
-        if store is None and not ConsultationServiceClient.configured():
+        readers = self._human_inbox_contributor_readers(store, snap)
+        if not readers:
             return self.compose_human_inbox(
                 snap,
                 completed={},
@@ -4638,7 +4638,6 @@ class ManagementService:
                 page_size=page_size,
             )
 
-        readers = self._human_inbox_contributor_readers(store, snap)
         timeout_budget = human_inbox_surface_timeout_seconds()
         outer_remaining = remaining_management_read_budget()
         if outer_remaining is not None:

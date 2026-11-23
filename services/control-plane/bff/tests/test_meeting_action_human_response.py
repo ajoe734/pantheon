@@ -302,6 +302,44 @@ def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetin
     assert body["meta"]["partial"] is True
 
 
+@pytest.mark.parametrize("store_missing", [False, True])
+def test_research_inbox_survives_missing_consultation_and_read_store(
+    inbox_meetings_stack, monkeypatch, store_missing,
+):
+    client, service, _ = inbox_meetings_stack
+    client.app.add_middleware(OwnerReadContextMiddleware)
+    for name in ("PANTHEON_CONSULTATION_API_URL", "PANTHEON_CONSULTATION_SERVICE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.test")
+    if store_missing:
+        monkeypatch.setattr(service, "_get_read_store", lambda: None)
+    calls = []
+
+    def transport(method, url, payload=None, headers=None):
+        calls.append((method, url))
+        assert headers["Authorization"] == _auth_headers()["Authorization"]
+        assert headers["X-Tenant-Id"] == "tenant-a"
+        assert method == "GET" and urlsplit(url).path == "/api/research/tickets"
+        assert parse_qs(urlsplit(url).query)["action_state"] == ["waiting_for_input"]
+        assert parse_qs(urlsplit(url).query)["meeting_linked"] == ["true"]
+        return 200, {"data": [ticket()], "page_info": {"next_page_token": None}}
+
+    owner = ResearchServiceClient(base_url="http://research.test", http_request=transport)
+    monkeypatch.setattr("services.control_plane.bff.research.client.ResearchServiceClient", lambda: owner)
+    for reload_count in (1, 2):
+        response = client.get("/bff/management/human-inbox", headers=_auth_headers())
+        assert response.status_code == 200, response.text
+        body = response.json()
+        work = [item for item in body["data"]["items"] if item.get("kind") == "meeting_action"]
+        assert len(work) == 1
+        assert work[0]["source_id"] == ticket()["ticket_id"]
+        assert len(calls) == reload_count
+        assert body["meta"]["partial"] is True
+        sources = body["meta"]["surfaces"]["meetings"]["surfaces"]
+        assert sources["research"]["status"] == "ok"
+        assert sources["consultation"]["status"] == "unavailable"
+
+
 def test_owner_rejection_does_not_retry_an_unfiltered_ticket_list(research_stack):
     client, state, _ = research_stack
     state["fail"] = 403
