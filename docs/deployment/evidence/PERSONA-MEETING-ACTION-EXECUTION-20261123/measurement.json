@@ -6,16 +6,16 @@
     "PATCH": 4
   },
   "total_owner_requests": 19,
-  "turn_input_bytes": 18647,
+  "turn_input_bytes": 18735,
   "meeting_envelope_bytes": 2969,
-  "packet_bytes": 36016,
-  "hosted_format_store_bytes": 56900,
+  "packet_bytes": 36104,
+  "hosted_format_store_bytes": 57076,
   "retained_packet_count": 1,
   "notes": 4,
   "notes_total_bytes": 3692,
   "three_persona_example_per_trading_day": {
-    "full_packet_bytes": 108048,
-    "hosted_format_store_bytes": 170700,
+    "full_packet_bytes": 108312,
+    "hosted_format_store_bytes": 171228,
     "notes": 12,
     "notes_bytes": 11076
   }

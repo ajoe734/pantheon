@@ -4,9 +4,9 @@
   "assigned_reviewer": "Codex",
   "delivery_state": "ready_for_review",
   "hosted_accepted": false,
-  "source_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+  "source_base": "454420828361de17e689e6d9ad307e12b4064d3c",
   "runtime_blobs": {
-    "services/persona/persona_cycle_controller.py": "39c8d102a18ad3652ff58a6c3cc26a6cba42e9a7",
+    "services/persona/persona_cycle_controller.py": "82adc9860df78f5795a8ff250f4f45bf302d2ba3",
     "services/persona/write_owner.py": "ba152417c10c2fbd8beaaf6306c53c60030a15e4",
     "services/control-plane/persona/persona_policy_resolver.py": "68191fd9b6c9f27de2430e81c33b1c103433d95c",
     "integrations/openclaw/persona_ooda_runtime.py": "fe032094dbc093b96d703aa7aabff414e42d705c",
@@ -16,7 +16,7 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_meeting_triggers.py services/persona/test_case_file_outcomes.py services/persona/test_persona_owner_read_roles.py services/control-plane/persona/test_persona_policy_resolver.py services/openclaw-gateway-adapter/test_persona_tool_broker.py integrations/openclaw/test_persona_agent_sync.py integrations/openclaw/test_persona_ooda_runtime.py --tb=short",
       "exit_code": 0,
-      "passed": 264,
+      "passed": 265,
       "skipped": 4,
       "output": "validation.txt"
     },
@@ -49,7 +49,7 @@
   "acceptance_evidence": {
     "capability_join": "test_capability_joins_authorities_and_denies_labels_or_expired_access; test_capability_read_endpoint_is_tenant_scoped_and_rechecks_at_execution; test_real_three_persona_gated_data_shape_executes_note_and_restricts_unavailable_feed",
     "ordinary_cycle": "test_submit_next_same_subject_citation_and_restart_concurrency; test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semantic_hits",
-    "human_resume": "test_request_exact_human_input_and_resume_original_ticket",
+    "human_resume": "test_request_exact_human_input_and_resume_original_ticket; test_human_replacement_prioritizes_bounds_requires_citation_and_never_bypasses_denied_dataset",
     "unknown_outcomes": "test_uncertain_write_journal_replays_without_new_note_or_model_work; test_claimed_packet_restart_replays_saved_plan_without_buying_original_turn",
     "refusal_and_privacy": "test_declined_rejected_or_unrecorded_output_never_delivers; test_chair_string_citations_resolve_real_content_and_private_memory_is_refused",
     "pagination_and_budget": "test_pagination_continues_without_hiding_unfinished_work; test_meeting_action_budget_measurement"
@@ -63,5 +63,5 @@
     "RC2 WP2.3 Persona enrollment/two-meeting proof",
     "RC3 WP3.1/WP3.3 storage"
   ],
-  "review_status": "reopened by Codex on df9e0209c597; deliverable capability semantics and M MT-1 pool:<chair> / shared human-Persona result lookup remediated and verified"
+  "review_status": "reopened by Codex on 4c63fa4ad; independent same-ticket human replacement resolution with preserved missing origin reference/reason remediated and verified alongside deliverable capability and M MT-1 pool:<chair> lookup"
 }

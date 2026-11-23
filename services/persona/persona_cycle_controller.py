@@ -56,6 +56,13 @@ MEETING_ACTION_ENVELOPE_BYTES = 196608
 MEETING_ACTION_ANALYSIS_BYTES = 8000
 MEETING_ACTION_CASE_BYTES = 65536
 MEETING_ACTION_TURN_BYTES = 524288
+_REPLACEABLE_ORIGIN_REASONS = frozenset({
+    "meeting_source_not_resolved",
+    "meeting_source_content_missing",
+    "evidence_not_resolved",
+    "evidence_content_missing",
+    "owner_http_404",
+})
 
 
 def _action_case_file(case, observe):
@@ -67,13 +74,13 @@ def _action_case_file(case, observe):
             review_status = row.get("review_status") or row["state"]
             assignee_kind = row.get("assignee_kind") or "persona"
             assignee = row.get("assignee") or row.get("owner") or ""
+            ev_text = "; ".join(r["excerpt"] for r in row.get("evidence_refs", []) if r.get("excerpt"))
             if key == "verified_results":
-                ev_text = "; ".join(r["excerpt"] for r in row.get("evidence_refs", []) if r.get("excerpt"))
                 excerpt = f"[{review_status}; {assignee_kind}:{assignee}] {row['deliverable']}"
                 if ev_text:
                     excerpt += f" — {ev_text}"
             else:
-                excerpt = row["deliverable"]
+                excerpt = row["deliverable"] + (f" — {ev_text}" if ev_text else "")
             items.append({"item_id": f"facts:{kind}:{row['ticket_id']}", "group": "facts",
                 "kind": kind, "source_owner": "research-svc", "source_id": row["ticket_id"],
                 "excerpt": excerpt[:400], "retrieval_score": None,
@@ -81,7 +88,8 @@ def _action_case_file(case, observe):
                     k: row[k] for k in (
                         "ticket_id", "revision", "state", "review_status", "accepted",
                         "owner", "assignee", "assignee_kind", "accountable_persona_id",
-                        "meeting_id", "subject_ref",
+                        "meeting_id", "subject_ref", "human_input", "source_unavailable",
+                        "original_source_unavailable", "missing_sources",
                     ) if k in row},
                 "evidence_refs": [{k: r[k] for k in ("kind", "artifact_id", "checksum")}
                                   for r in row["evidence_refs"]]})
@@ -1106,8 +1114,10 @@ class CycleOwners:
             return mtype in {"MT-1", "MT-2", "MT-4"} and owner_id in {None, persona_id}
         return False
 
-    def _action_evidence(self, persona, ref, tid, meeting_id=None, cache=None):
+    def _action_evidence(self, persona, ref, tid, meeting_id=None, cache=None, *, allow_chair_string=True):
         if isinstance(ref, str):
+            if not allow_chair_string:
+                raise ValueError("unsupported_evidence_reference")
             # Chair source_refs are actual case item IDs, not Research result refs.
             # The shared meeting case forbids private memory at its producer.
             # Resolve the frozen public item, never a URL or another private bank.
@@ -1115,6 +1125,8 @@ class CycleOwners:
             if meeting_id not in cache:
                 meeting = self._action_http(persona, "/api/consult/meetings/" + quote(meeting_id or "", safe=""),
                                             owner="consultation")
+                if not isinstance(meeting, Mapping) or not meeting:
+                    raise ValueError("meeting_source_not_resolved")
                 if meeting.get("tenant_id") != persona["tenant_id"] or meeting.get("meeting_id") != meeting_id:
                     raise ValueError("meeting_source_scope_mismatch")
                 cache[meeting_id] = meeting.get("case_file") or {}
@@ -1135,20 +1147,29 @@ class CycleOwners:
                     "excerpt": excerpt.encode()[:800].decode(errors="ignore")}
         if not isinstance(ref, dict):
             raise ValueError("unresolved_source_reference")
+        if ref.get("tenant_id") and ref["tenant_id"] != persona["tenant_id"]:
+            raise ValueError("evidence_tenant_mismatch")
         kind, aid = ref.get("kind"), ref.get("artifact_id")
         if kind not in {"research_note", "research_artifact"} or not isinstance(aid, str):
             raise ValueError("unsupported_evidence_reference")
         path = "/api/research/" + ("notes/" if kind == "research_note" else "artifacts/") + quote(aid, safe="")
         saved = self._action_payload(self._action_http(persona, path))
-        if not isinstance(saved, dict):
+        if not isinstance(saved, dict) or not saved:
             raise ValueError("evidence_not_resolved")
-        if saved.get("memory_layer") == "persona_private" or saved.get("relevance_scope") == "persona_private":
+        if (saved.get("memory_layer") == "persona_private" or saved.get("relevance_scope") == "persona_private"
+                or saved.get("visibility") == "private" or saved.get("private") is True):
             raise ValueError("private_source_forbidden")
+        if (saved.get("source_owner") == "memory" and saved.get("memory_layer") != "institutional"
+                and saved.get("relevance_scope") != "persona_and_committee"):
+            raise ValueError("unproven_memory_sharing_scope")
         binding = saved.get("_meeting_binding") or {}
         if kind == "research_note":
-            if binding.get("tenant_id") != persona["tenant_id"] or binding.get("ticket_id") != tid:
+            if (binding.get("tenant_id") != persona["tenant_id"] or binding.get("ticket_id") != tid
+                    or (saved.get("tenant_id") and saved.get("tenant_id") != persona["tenant_id"])):
                 raise ValueError("evidence_ticket_scope_mismatch")
-        elif saved.get("tenant_id", saved.get("owner_tenant")) != persona["tenant_id"]:
+        elif (saved.get("tenant_id", saved.get("owner_tenant")) != persona["tenant_id"]
+              or (binding.get("tenant_id") and binding.get("tenant_id") != persona["tenant_id"])
+              or (binding.get("ticket_id") and binding.get("ticket_id") != tid)):
             raise ValueError("evidence_tenant_mismatch")
         digest = saved.get("_meeting_digest") if kind == "research_note" else saved.get("checksum")
         if not digest or (ref.get("checksum") and ref["checksum"] != digest):
@@ -1161,6 +1182,12 @@ class CycleOwners:
             raise ValueError("evidence_content_missing")
         return {"kind": kind, "artifact_id": aid, "checksum": digest,
                 "excerpt": excerpt.encode()[:800].decode(errors="ignore")}
+
+    @staticmethod
+    def _evidence_failure_reason(exc):
+        reason = str(exc) if isinstance(exc, ValueError) else (
+            f"owner_http_{exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__)
+        return reason[:120]
 
     def observe_meeting_actions(self, persona, cursors):
         out = {"status": "observed", "runnable": [], "verified_results": [], "cursors": dict(cursors or {}),
@@ -1212,27 +1239,82 @@ class CycleOwners:
                         if (tid in seen_results or raw.get("action_state") not in allowed_states
                                 or not self._genuine_decision_series(pid, action, owner_id)):
                             continue
-                    refs = list(raw.get("evidence_refs") or []) if lane == "verified_results" else (
-                        list(action.get("source_refs") or []) + list((raw.get("human_input") or {}).get("evidence_refs") or []))
-                    if lane == "verified_results" and not refs and kind == "human":
-                        refs = list((raw.get("human_input") or {}).get("evidence_refs") or [])
-                    if len(refs) > 8:
-                        raise ValueError("evidence_reference_budget_exceeded")
                     source_unavailable = None
-                    try:
-                        evidence = [self._action_evidence(persona, ref, tid, action["meeting_id"], source_cases) for ref in refs]
-                        if lane == "verified_results" and not evidence:
-                            raise ValueError("submitted_result_without_evidence")
-                    except Exception as exc:
-                        # Row-level isolation: the tenant/owner-verified ticket stays visible (so the
-                        # Persona can request exactly the missing source) but can never be submitted.
-                        reason = str(exc) if isinstance(exc, ValueError) else (
-                            f"owner_http_{exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__)
-                        out["unavailable"].append({"lane": lane, "ticket_id": tid, "reason": reason[:120]})
-                        out["status"] = "partial"
-                        if lane != "runnable":
+                    origin_missing_reason = None
+                    missing_sources = []
+                    human_evidence = []
+                    if lane == "verified_results":
+                        refs = list(raw.get("evidence_refs") or [])
+                        if not refs and kind == "human":
+                            refs = list((raw.get("human_input") or {}).get("evidence_refs") or [])
+                        if len(refs) > 8:
+                            raise ValueError("evidence_reference_budget_exceeded")
+                        try:
+                            evidence = [self._action_evidence(
+                                persona, ref, tid, action["meeting_id"], source_cases, allow_chair_string=False
+                            ) for ref in refs]
+                            if not evidence:
+                                raise ValueError("submitted_result_without_evidence")
+                        except Exception as exc:
+                            reason = self._evidence_failure_reason(exc)
+                            out["unavailable"].append({"lane": lane, "ticket_id": tid, "reason": reason})
+                            out["status"] = "partial"
                             continue
-                        evidence, source_unavailable = [], reason[:120]
+                    else:
+                        origin_refs = list(action.get("source_refs") or [])
+                        raw_human = raw.get("human_input")
+                        if raw_human is not None and (
+                                not isinstance(raw_human, Mapping)
+                                or not isinstance(raw_human.get("evidence_refs"), list)):
+                            human_refs, human_malformed = [], True
+                        else:
+                            human_refs = list((raw_human or {}).get("evidence_refs") or [])
+                            human_malformed = bool(raw_human) and not human_refs
+                        if len(origin_refs) > 8 or len(human_refs) > 8:
+                            raise ValueError("evidence_reference_budget_exceeded")
+                        blocking_reason = None
+                        if human_malformed:
+                            blocking_reason = "human_input_evidence_missing"
+                            out["unavailable"].append({"lane": lane, "ticket_id": tid, "reason": blocking_reason})
+                            out["status"] = "partial"
+                            missing_sources.append({"source_ref": None, "origin": "human_input", "reason": blocking_reason})
+                        # Prioritize and independently resolve same-ticket human evidence within the 8-reference budget.
+                        for ref in human_refs:
+                            try:
+                                human_evidence.append(self._action_evidence(
+                                    persona, ref, tid, action["meeting_id"], source_cases, allow_chair_string=False
+                                ))
+                            except Exception as exc:
+                                reason = self._evidence_failure_reason(exc)
+                                out["unavailable"].append({"lane": lane, "ticket_id": tid, "source_ref": ref, "reason": reason})
+                                out["status"] = "partial"
+                                missing_sources.append({"source_ref": ref, "origin": "human_input", "reason": reason})
+                                if blocking_reason is None:
+                                    blocking_reason = reason
+                        origin_evidence = []
+                        for ref in origin_refs[:max(0, 8 - len(human_refs))]:
+                            try:
+                                origin_evidence.append(self._action_evidence(
+                                    persona, ref, tid, action["meeting_id"], source_cases, allow_chair_string=True
+                                ))
+                            except Exception as exc:
+                                reason = self._evidence_failure_reason(exc)
+                                out["unavailable"].append({"lane": lane, "ticket_id": tid, "source_ref": ref, "reason": reason})
+                                out["status"] = "partial"
+                                missing_sources.append({"source_ref": ref, "origin": "meeting_action", "reason": reason})
+                                if reason not in _REPLACEABLE_ORIGIN_REASONS:
+                                    if blocking_reason is None:
+                                        blocking_reason = reason
+                                elif origin_missing_reason is None:
+                                    origin_missing_reason = reason
+                        if blocking_reason is not None:
+                            source_unavailable = blocking_reason
+                            evidence = []
+                        elif origin_missing_reason is not None and not human_evidence:
+                            source_unavailable = origin_missing_reason
+                            evidence = []
+                        else:
+                            evidence = human_evidence + origin_evidence
                     state = raw["action_state"]
                     accountable = pid if (owner_id == pid and kind == "persona") else None
                     row = {"ticket_id": tid, "action_id": tid, "revision": raw["revision"],
@@ -1248,6 +1330,15 @@ class CycleOwners:
                         row["review_decision"] = dict(raw["review_decision"])
                     if action.get("required_data"):
                         row["required_data"] = list(action["required_data"])
+                    if missing_sources:
+                        row["missing_sources"] = missing_sources
+                    if origin_missing_reason is not None:
+                        row["original_source_unavailable"] = origin_missing_reason
+                    if human_evidence and not source_unavailable:
+                        row["human_evidence_refs"] = [
+                            {"kind": r["kind"], "artifact_id": r["artifact_id"], "checksum": r["checksum"]}
+                            for r in human_evidence
+                        ]
                     if source_unavailable:
                         row["source_unavailable"] = source_unavailable
                     if len(json.dumps({**out, lane: out[lane] + [row]}, ensure_ascii=False).encode()) > MEETING_ACTION_ENVELOPE_BYTES:
@@ -1265,9 +1356,8 @@ class CycleOwners:
             except Exception as exc:
                 out["status"] = "partial"
                 # Keep the page cursor; never silently skip an unresolved obligation.
-                reason = str(exc) if isinstance(exc, ValueError) else (
-                    f"owner_http_{exc.code}" if isinstance(exc, HTTPError) else type(exc).__name__)
-                out["unavailable"].append({"lane": lane, "reason": reason[:120]})
+                reason = self._evidence_failure_reason(exc)
+                out["unavailable"].append({"lane": lane, "reason": reason})
                 if isinstance(exc, HTTPError) and exc.code in {400, 409}:
                     out["cursors"][cursor_key] = None  # expired/invalid keyset: restart, never discard owner work
         return out
@@ -1294,20 +1384,39 @@ class CycleOwners:
         else:
             if ticket.get("required_data"):
                 plan["required_data"] = list(ticket["required_data"])
+            if ticket.get("missing_sources"):
+                plan["missing_sources"] = copy.deepcopy(ticket["missing_sources"])
+            if ticket.get("original_source_unavailable"):
+                plan["original_source_unavailable"] = ticket["original_source_unavailable"]
             text, title = params.get("analysis"), params.get("title")
             if not isinstance(text, str) or not text.strip() or len(text.encode()) > MEETING_ACTION_ANALYSIS_BYTES:
                 raise ValueError("concrete_bounded_analysis_required")
             if not isinstance(title, str) or not title.strip() or len(title) > 256:
                 raise ValueError("analysis_title_required")
-            if ticket.get("source_unavailable"):
-                raise ValueError("approved_source_unavailable:" + ticket["source_unavailable"])
             approved = {(r["kind"], r["artifact_id"]): r for r in ticket["evidence_refs"]}
+            human_approved = {(r["kind"], r["artifact_id"]) for r in (
+                ticket.get("human_evidence_refs")
+                or [r for r in ticket["evidence_refs"] if r.get("kind") in {"research_note", "research_artifact"}]
+            )} if ticket.get("human_input") else set()
+            source_unavail = ticket.get("source_unavailable")
+            if source_unavail and (
+                    source_unavail not in _REPLACEABLE_ORIGIN_REASONS
+                    or not human_approved):
+                raise ValueError("approved_source_unavailable:" + source_unavail)
             refs = params.get("evidence_refs") or []
-            if not isinstance(refs, list) or len(refs) > 6 or any(not isinstance(r, dict) or
-                    (r.get("kind"), r.get("artifact_id")) not in approved for r in refs):
+            if not isinstance(refs, list) or len(refs) > 6 or any(
+                    not isinstance(r, dict)
+                    or (r.get("kind"), r.get("artifact_id")) not in approved
+                    or (r.get("checksum") and r["checksum"] != approved[(r.get("kind"), r.get("artifact_id"))]["checksum"])
+                    for r in refs):
                 raise ValueError("unapproved_analysis_reference")
             if approved and not refs:
                 raise ValueError("analysis_must_link_supplied_evidence")
+            missing_origin = ticket.get("original_source_unavailable") or source_unavail
+            if missing_origin and (
+                    not human_approved
+                    or not any((r.get("kind"), r.get("artifact_id")) in human_approved for r in refs)):
+                raise ValueError("approved_source_unavailable:" + missing_origin)
             provenance = f"persona:{persona['persona_id']};packet:{packet['packet_id']};run:{run['run_id']}"
             plan["note"] = {"meeting_ticket_id": tid, "idempotency_key": key, "title": title,
                 "body": text + "\n\nExecution: " + provenance,

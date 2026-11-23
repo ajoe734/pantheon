@@ -49,8 +49,9 @@ def action_system(system, tmp_path, monkeypatch):
         effective_tools=PERSONA_AGENT_TOOL_PROFILE["allow"], effective_workflows=["persona_daily_cycle"],
         generated_at="2026-11-23T00:00:00Z"))
     controller.owners._action_capability_owner = cap
-    state = {"tickets": {ticket()["ticket_id"]: ticket()}, "notes": {}, "commands": {}, "calls": [], "meetings": {},
-             "patch_outage": False, "lose_submit_reply": False}
+    state = {"tickets": {ticket()["ticket_id"]: ticket()}, "notes": {}, "artifacts": {}, "commands": {}, "calls": [],
+             "meetings": {}, "patch_outage": False, "lose_submit_reply": False, "consult_outage": False,
+             "notes_outage": False}
 
     class Research(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -87,11 +88,20 @@ def action_system(system, tmp_path, monkeypatch):
                 self.reply(200, {"data": rows[:size], "page_info": {
                     "next_page_token": rows[size-1]["ticket_id"] if len(rows) > size else None}})
             elif url.path.startswith("/api/research/notes/"):
+                if state["notes_outage"]:
+                    self.reply(503, {})
+                    return
                 note = state["notes"].get(url.path.rsplit("/", 1)[1])
                 self.reply(200 if note else 404, note or {})
+            elif url.path.startswith("/api/research/artifacts/"):
+                art = state["artifacts"].get(url.path.rsplit("/", 1)[1])
+                self.reply(200 if art else 404, art or {})
             elif url.path.startswith("/api/research/tickets/"):
                 self.reply(200, state["tickets"][url.path.rsplit("/", 1)[1]])
             elif url.path.startswith("/api/consult/meetings/"):
+                if state["consult_outage"]:
+                    self.reply(503, {})
+                    return
                 self.reply(200, state["meetings"].get(url.path.rsplit("/", 1)[1], {}))
             else:
                 self.reply(404, {})
@@ -100,9 +110,11 @@ def action_system(system, tmp_path, monkeypatch):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             state["calls"].append(("POST", self.path))
             assert self.path == "/api/research/notes"
-            nid = "note-action-" + digest(["tenant-a", body["meeting_ticket_id"], "persona-pool-cycle", body["idempotency_key"]])[:32]
-            note = {"note_id": nid, **body, "_meeting_binding": {"tenant_id": "tenant-a",
-                "ticket_id": body["meeting_ticket_id"], "actor_id": "persona-pool-cycle"}, "_meeting_digest": digest(body)}
+            actor = body.get("actor_id") or "persona-pool-cycle"
+            clean = {k: v for k, v in body.items() if k not in {"actor_id", "tenant_id"}}
+            nid = "note-action-" + digest(["tenant-a", clean["meeting_ticket_id"], actor, clean["idempotency_key"]])[:32]
+            note = {"note_id": nid, **clean, "_meeting_binding": {"tenant_id": "tenant-a",
+                "ticket_id": clean["meeting_ticket_id"], "actor_id": actor}, "_meeting_digest": digest(clean)}
             if nid in state["notes"] and state["notes"][nid] != note:
                 self.reply(409, {})
                 return
@@ -125,10 +137,25 @@ def action_system(system, tmp_path, monkeypatch):
             else:
                 state["commands"][key] = cmd
                 row["revision"] += 1
-                row["action_state"] = "submitted" if cmd["action"] == "submit" else "waiting_for_input"
-                row["evidence_refs"] = [{**r, "checksum": state["notes"][r["artifact_id"]]["_meeting_digest"]}
-                                         for r in cmd.get("evidence_refs", [])]
-                row["required_actor"] = "consultation-svc" if cmd["action"] == "submit" else cmd["human_actor_id"]
+                if cmd["action"] == "submit":
+                    row["action_state"] = "submitted"
+                    row["evidence_refs"] = [{**r, "checksum": state["notes"][r["artifact_id"]]["_meeting_digest"]}
+                                             for r in cmd.get("evidence_refs", [])]
+                    row["required_actor"] = "consultation-svc"
+                elif cmd["action"] == "provide_input":
+                    assert row["action_state"] == "waiting_for_input"
+                    resolved = []
+                    for r in cmd.get("evidence_refs", []):
+                        item = state["notes"].get(r["artifact_id"]) if r["kind"] == "research_note" else state["artifacts"].get(r["artifact_id"])
+                        checksum = item["_meeting_digest"] if r["kind"] == "research_note" else item["checksum"]
+                        resolved.append({"kind": r["kind"], "artifact_id": r["artifact_id"], "checksum": checksum, "tenant_id": "tenant-a"})
+                    row["human_input"] = {"evidence_refs": resolved, "provided_by": row["required_actor"]}
+                    row["action_state"] = "in_progress"
+                    row["required_actor"] = row["owner"]
+                else:
+                    row["action_state"] = "waiting_for_input"
+                    row["input_request"] = {"reason": cmd["reason"], "human_actor_id": cmd["human_actor_id"]}
+                    row["required_actor"] = cmd["human_actor_id"]
             if state["lose_submit_reply"]:
                 state["lose_submit_reply"] = False
                 self.reply(503, {})  # committed write, response lost: never count it as submitted yet
@@ -218,26 +245,156 @@ def test_request_exact_human_input_and_resume_original_ticket(action_system):
     controller, gateway, owner, cap, research = action_system
     persona = owner.list_json()[0]
     tid = ticket()["ticket_id"]
+    missing_ref = "facts:external_doc:missing-custodian-report"
+    # Original ticket carries an immutable previously missing chair source_ref.
+    research["tickets"][tid]["meeting_action"]["source_refs"] = [missing_ref]
+    research["meetings"]["meeting-origin"] = {
+        "meeting_id": "meeting-origin",
+        "tenant_id": "tenant-a",
+        "case_file": {"digest": "frozen-public-case", "groups": {"facts": {"items": []}}},
+    }
+
+    # Before human input, the missing chair reference blocks any submit while staying visible for request_input.
+    pre_obs = controller.owners.observe_meeting_actions(persona, {})
+    assert pre_obs["runnable"][0]["source_unavailable"] == "meeting_source_not_resolved"
+    assert pre_obs["runnable"][0]["original_source_unavailable"] == "meeting_source_not_resolved"
+    assert pre_obs["runnable"][0]["missing_sources"] == [
+        {"source_ref": missing_ref, "origin": "meeting_action", "reason": "meeting_source_not_resolved"}
+    ]
+    assert pre_obs["runnable"][0]["evidence_refs"] == []
+    assert pre_obs["unavailable"] == [
+        {"lane": "runnable", "ticket_id": tid, "source_ref": missing_ref, "reason": "meeting_source_not_resolved"}
+    ]
+
+    # Step 1: Persona requests the exact missing report on the original ticket.
     propose(gateway, tid, "request_input", missing_requirement="Supply the approved dataset snapshot", human_actor_id="human-analyst")
     first = controller.consume_run(persona, "job-1", run(1))
     assert first["persona_cycle"]["decisions"][0]["status"] == "waiting_for_input"
     assert list(research["commands"].values())[0]["reason"] == "Supply the approved dataset snapshot"
     assert not research["notes"]
     assert controller.owners.observe_meeting_actions(persona, {})["runnable"] == []
-    # A permitted human response is Research's responsibility. Stub its owner-issued result.
-    row = research["tickets"][tid]
-    note = {"note_id": "human-note", "body": "Authorized dataset snapshot findings",
-            "_meeting_binding": {"ticket_id": tid, "tenant_id": "tenant-a", "actor_id": "human-analyst"},
-            "_meeting_digest": "human-checksum"}
-    research["notes"]["human-note"] = note
-    refs = [{"kind": "research_note", "artifact_id": "human-note", "checksum": "human-checksum"}]
-    row.update(action_state="in_progress", required_actor=persona["persona_id"], revision=2,
-               human_input={"evidence_refs": refs, "provided_by": "human-analyst"})
-    propose(gateway, tid, evidence_refs=[{"kind": "research_note", "artifact_id": "human-note"}])
+
+    # Step 2: If no new usable input exists (empty human refs, title-only, foreign tenant/ticket, private note, or owner outage),
+    # the original ticket remains pending and cannot be submitted.
+    for bad_case in ("empty", "title_only", "foreign_tenant", "private_note", "owner_outage"):
+        row = research["tickets"][tid]
+        snapshot = copy.deepcopy(row)
+        notes_backup = copy.deepcopy(research["notes"])
+        artifacts_backup = copy.deepcopy(research["artifacts"])
+        try:
+            if bad_case == "empty":
+                row.update(action_state="in_progress", required_actor=persona["persona_id"],
+                           human_input={"evidence_refs": [], "provided_by": "human-analyst"})
+                expected_unavail = "human_input_evidence_missing"
+            elif bad_case == "title_only":
+                research["artifacts"]["art-title-only"] = {
+                    "artifact_id": "art-title-only", "title": "Custodian report title only",
+                    "checksum": "c-title", "tenant_id": "tenant-a"}
+                row.update(action_state="in_progress", required_actor=persona["persona_id"],
+                           human_input={"evidence_refs": [{"kind": "research_artifact", "artifact_id": "art-title-only", "checksum": "c-title"}],
+                                        "provided_by": "human-analyst"})
+                expected_unavail = "evidence_content_missing"
+            elif bad_case == "foreign_tenant":
+                research["notes"]["foreign-note"] = {
+                    "note_id": "foreign-note", "body": "Other tenant secret",
+                    "_meeting_binding": {"ticket_id": tid, "tenant_id": "tenant-b", "actor_id": "human-analyst"},
+                    "_meeting_digest": "c-foreign"}
+                row.update(action_state="in_progress", required_actor=persona["persona_id"],
+                           human_input={"evidence_refs": [{"kind": "research_note", "artifact_id": "foreign-note", "checksum": "c-foreign"}],
+                                        "provided_by": "human-analyst"})
+                expected_unavail = "evidence_ticket_scope_mismatch"
+            elif bad_case == "private_note":
+                research["notes"]["priv-note"] = {
+                    "note_id": "priv-note", "body": "Private persona memory leak",
+                    "memory_layer": "persona_private",
+                    "_meeting_binding": {"ticket_id": tid, "tenant_id": "tenant-a", "actor_id": "human-analyst"},
+                    "_meeting_digest": "c-priv"}
+                row.update(action_state="in_progress", required_actor=persona["persona_id"],
+                           human_input={"evidence_refs": [{"kind": "research_note", "artifact_id": "priv-note", "checksum": "c-priv"}],
+                                        "provided_by": "human-analyst"})
+                expected_unavail = "private_source_forbidden"
+            else:
+                research["notes"]["ok-note"] = {
+                    "note_id": "ok-note", "body": "Valid human content during consult outage",
+                    "_meeting_binding": {"ticket_id": tid, "tenant_id": "tenant-a", "actor_id": "human-analyst"},
+                    "_meeting_digest": "c-ok"}
+                row.update(action_state="in_progress", required_actor=persona["persona_id"],
+                           human_input={"evidence_refs": [{"kind": "research_note", "artifact_id": "ok-note", "checksum": "c-ok"}],
+                                        "provided_by": "human-analyst"})
+                research["consult_outage"] = True
+                expected_unavail = "owner_http_503"
+            bad_obs = controller.owners.observe_meeting_actions(persona, {})
+            assert bad_obs["runnable"][0]["source_unavailable"] == expected_unavail
+            assert bad_obs["runnable"][0]["evidence_refs"] == []
+            with pytest.raises(ValueError, match="approved_source_unavailable:" + expected_unavail):
+                controller.owners.meeting_action_plan(
+                    persona, bad_obs["runnable"][0],
+                    type("P", (), {"parameters": {
+                        "ticket_id": tid, "action": "submit", "title": "T", "analysis": "A",
+                        "evidence_refs": [{"kind": "research_note", "artifact_id": "ok-note"}]}})(),
+                    {"packet_id": "p", "persona_cycle": {"tool_use": {"run_ref": "r", "run_id": "g"}}},
+                )
+        finally:
+            research["consult_outage"] = False
+            research["notes"] = notes_backup
+            research["artifacts"] = artifacts_backup
+            research["tickets"][tid] = snapshot
+
+    # Step 3: Human supplies an authorized owner-bound research note via the normal Research owner routes
+    # while the original chair source_ref remains immutable and missing from the meeting case file.
+    human_note = controller.owners._action_http(
+        persona, "/api/research/notes", method="POST",
+        body={"meeting_ticket_id": tid, "idempotency_key": "human-input-1", "actor_id": "human-analyst",
+              "title": "Approved dataset snapshot", "body": "Authorized dataset snapshot findings"})
+    human_nid = human_note["note_id"]
+    patched = controller.owners._action_http(
+        persona, f"/api/research/tickets/{tid}", method="PATCH",
+        body={"patch": {"action": "provide_input", "expected_revision": 1, "idempotency_key": "provide-1",
+                        "evidence_refs": [{"kind": "research_note", "artifact_id": human_nid}]}})
+    assert patched["action_state"] == "in_progress" and patched["required_actor"] == persona["persona_id"]
+    assert research["tickets"][tid]["meeting_action"]["source_refs"] == [missing_ref]
+
+    # Direct observation verifies independent resolution of the human note while preserving the missing origin ref and reason.
+    research["calls"].clear()
+    obs_after = controller.owners.observe_meeting_actions(persona, {})
+    human_note_gets = [p for m, p in research["calls"] if m == "GET" and p == f"/api/research/notes/{human_nid}"]
+    assert obs_after["runnable"][0]["human_input"] is True
+    assert len(human_note_gets) == 1
+    assert len(obs_after["runnable"][0]["evidence_refs"]) == 1
+    assert obs_after["runnable"][0]["evidence_refs"][0]["artifact_id"] == human_nid
+    assert "source_unavailable" not in obs_after["runnable"][0]
+    assert obs_after["runnable"][0]["original_source_unavailable"] == "meeting_source_not_resolved"
+    assert obs_after["runnable"][0]["missing_sources"] == [
+        {"source_ref": missing_ref, "origin": "meeting_action", "reason": "meeting_source_not_resolved"}
+    ]
+    assert obs_after["unavailable"] == [
+        {"lane": "runnable", "ticket_id": tid, "source_ref": missing_ref, "reason": "meeting_source_not_resolved"}
+    ]
+
+    # Step 4: Same Persona resumes on its existing cycle, cites the ticket and the human replacement evidence, and submits.
+    propose(gateway, tid, evidence_refs=[{"kind": "research_note", "artifact_id": human_nid}])
     resumed = controller.consume_run(persona, "job-1", run(2))
+    assert resumed["persona_cycle"]["failure_reason"] is None
     assert resumed["persona_cycle"]["decisions"][0]["status"] == "submitted"
     assert research["tickets"][tid]["owner"] == persona["persona_id"]
+    assert research["tickets"][tid]["action_state"] == "submitted"
     assert "Authorized dataset snapshot findings" in gateway["prompts"][persona["persona_id"]]
+    case = next(iter(resumed["persona_cycle"]["case_files"].values()))
+    ticket_fact = next(i for i in case["groups"]["facts"]["items"] if i["item_id"] == f"facts:meeting_action_ticket:{tid}")
+    assert len(ticket_fact["evidence_refs"]) == 1 and ticket_fact["evidence_refs"][0]["artifact_id"] == human_nid
+    assert ticket_fact["subject_fields"]["original_source_unavailable"] == "meeting_source_not_resolved"
+    assert ticket_fact["subject_fields"]["missing_sources"] == [
+        {"source_ref": missing_ref, "origin": "meeting_action", "reason": "meeting_source_not_resolved"}
+    ]
+    submitted_note_id = research["tickets"][tid]["evidence_refs"][0]["artifact_id"]
+    assert {"kind": "research_note", "artifact_id": human_nid} in research["notes"][submitted_note_id]["source_refs"]
+
+    # Step 5: Next decision cycle observes the submitted result on the original ticket and cites it.
+    gateway["answer"] = {"proposals": [{"kind": "no_action", "reason": "Verified human-unblocked analysis supports keeping course",
+        "evidence_refs": [], "case_file_item_ids": [f"facts:meeting_action_result:{tid}"]}]}
+    later = controller.consume_run(persona, "job-1", run(3))
+    assert later["persona_cycle"]["failure_reason"] is None
+    assert later["persona_cycle"]["decisions"][0]["cited_case_file_item_ids"] == [f"facts:meeting_action_result:{tid}"]
 
 
 def test_pagination_continues_without_hiding_unfinished_work(action_system):
@@ -690,3 +847,68 @@ def test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semant
     assert len(peer_obs["verified_results"]) == 1
     assert peer_obs["verified_results"][0]["owner"] == "persona-2448c7053e33ea48da47"
     assert peer_obs["verified_results"][0]["accountable_persona_id"] is None
+
+
+def test_human_replacement_prioritizes_bounds_requires_citation_and_never_bypasses_denied_dataset(action_system):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    tid = ticket()["ticket_id"]
+    avail_ref = "facts:registry_entry:avail-item"
+    missing_ref = "facts:external_doc:missing-item"
+    extra_origin_refs = [f"facts:registry_entry:extra-{i}" for i in range(6)]
+    items = [
+        {"item_id": avail_ref, "source_id": "avail-item", "kind": "registry_entry",
+         "source_owner": "registry", "excerpt": "Available origin benchmark return 0.02"}
+    ] + [
+        {"item_id": r, "source_id": f"extra-{i}", "kind": "registry_entry",
+         "source_owner": "registry", "excerpt": f"Extra origin fact {i}"}
+        for i, r in enumerate(extra_origin_refs)
+    ]
+    research["meetings"]["meeting-origin"] = {
+        "meeting_id": "meeting-origin", "tenant_id": "tenant-a",
+        "case_file": {"digest": "frozen-public-case", "groups": {"facts": {"items": items}}},
+    }
+    row = research["tickets"][tid]
+    row["meeting_action"]["source_refs"] = [missing_ref, avail_ref] + extra_origin_refs  # 8 origin refs total
+    human_refs = []
+    for i in range(3):
+        nid = f"human-note-{i}"
+        research["notes"][nid] = {
+            "note_id": nid, "body": f"Authorized human replacement part {i}",
+            "_meeting_binding": {"ticket_id": tid, "tenant_id": "tenant-a", "actor_id": "human-analyst"},
+            "_meeting_digest": f"digest-human-{i}",
+        }
+        human_refs.append({"kind": "research_note", "artifact_id": nid, "checksum": f"digest-human-{i}"})
+    row.update(action_state="in_progress", required_actor=persona["persona_id"], revision=2,
+               human_input={"evidence_refs": human_refs, "provided_by": "human-analyst"})
+
+    obs = controller.owners.observe_meeting_actions(persona, {})
+    t_obs = obs["runnable"][0]
+    # 3 human refs + 8 origin refs are bounded to 8 total resolved/checked items, with human refs prioritized first.
+    assert [r["artifact_id"] for r in t_obs["evidence_refs"][:3]] == ["human-note-0", "human-note-1", "human-note-2"]
+    assert len(t_obs["evidence_refs"]) == 7  # 3 human + 4 available origin (1 of the 5 checked origin slots was missing_ref)
+    assert t_obs["original_source_unavailable"] == "meeting_source_not_resolved"
+    assert t_obs["missing_sources"] == [
+        {"source_ref": missing_ref, "origin": "meeting_action", "reason": "meeting_source_not_resolved"}
+    ]
+
+    # Citing only the available origin ref without citing the human replacement for the missing origin ref is refused.
+    propose(gateway, tid, evidence_refs=[{"kind": "meeting_case_item", "artifact_id": avail_ref}])
+    refused = controller.consume_run(persona, "job-1", run(1))
+    assert refused["persona_cycle"]["decisions"][0]["status"] == "rejected"
+    assert refused["persona_cycle"]["decisions"][0]["reason"] == "approved_source_unavailable:meeting_source_not_resolved"
+
+    # Citing the human replacement still cannot bypass a real denied dataset gate at execution.
+    raw_record = owner._records.get("persona-cycle-test")
+    owner._records.compare_and_set("persona-cycle-test", raw_record, {
+        **raw_record, "required_data_sources": copy.deepcopy(REAL_GATED_DATA_SOURCES)})
+    cap.upsert(UpsertCapabilitySnapshotRequest(
+        actor_id="operator", snapshot_id="cap-advisory-persona-cycle-test",
+        persona_id="persona-cycle-test", capabilities=["persona_opinion"],
+        generated_at="2026-11-24T00:00:00Z",
+        metadata={"canonical_write_authority": "persona_service", "scope": "paper_advisory", "accessible_data": []}))
+    row["meeting_action"]["required_data"] = ["tw_price_daily"]
+    propose(gateway, tid, evidence_refs=[{"kind": "research_note", "artifact_id": "human-note-0"}])
+    denied = controller.consume_run(owner.list_json()[0], "job-1", run(2))
+    assert denied["persona_cycle"]["decisions"][0]["status"] == "unavailable"
+    assert denied["persona_cycle"]["decisions"][0]["reason"] == "deliverable_data_not_accessible"

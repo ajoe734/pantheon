@@ -109,3 +109,18 @@ cleared through existing governed recovery; show/progress subsequently succeeded
   and CaseFile `facts:meeting_action_result:<ticket_id>` items even with zero semantic hits.
 - Clock-tie guard in `probe.py`: uses `(created_at, cron_run_at_ms)` ordering across distinct
   packet IDs so same-second test executions cannot flake.
+
+## Correction round 5 (Antigravity)
+
+- Independent human replacement resolution: `observe_meeting_actions` prioritizes and
+  independently resolves same-ticket `human_input.evidence_refs` before `meeting_action.source_refs`
+  within the 8-reference per-ticket budget so an immutable previously missing chair `source_ref`
+  never short-circuits a readable authorized human replacement note.
+- Preserved missing origin provenance: the original missing reference and its recorded reason
+  (`meeting_source_not_resolved`, etc.) are preserved in `unavailable`, `missing_sources`,
+  `original_source_unavailable`, CaseFile `facts:meeting_action_ticket:<ticket_id>`
+  `subject_fields`, and the journaled execution plan, while `meeting_action_plan` allows
+  `submit` only when the resolved human replacement is explicitly cited in `evidence_refs`.
+- Fail-closed boundaries: no bypass for real denied datasets (`tw_price_daily`/`tw_broker_top`
+  with `accessible_data=[]`), foreign tenants/tickets, private notes, persistent owner 5xx
+  outages, empty `human_input`, or title-only references.

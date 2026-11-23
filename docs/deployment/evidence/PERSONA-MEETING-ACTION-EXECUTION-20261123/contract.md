@@ -70,6 +70,13 @@ Chair source_refs are actual citation strings. They resolve from the original
 tenant-scoped public meeting case with origin/digest/content/sharing checks.
 Private memory is refused. Human/result reference objects resolve through scoped
 Research note/artifact owners and binding/checksum checks. No caller URL is fetched.
+Same-ticket human_input.evidence_refs and origin source_refs resolve independently
+within the 8-reference per-ticket budget, prioritizing human_input.evidence_refs first.
+When an original chair source_ref is missing, its reference and recorded reason are
+preserved in unavailable, missing_sources and original_source_unavailable, while a
+newly supplied readable authorized human replacement unblocks decision and submission
+when explicitly cited. Real denied datasets, foreign tenants/private notes, persistent
+owner outages and title-only references never bypass the gate.
 Observe carries full deliverable/criterion plus bounded approved excerpts. The case
 gains facts:meeting_action_ticket:<ticket_id> and facts:meeting_action_result:<ticket_id>
 anchors, independent of semantic memory. A later no_action may cite the result
