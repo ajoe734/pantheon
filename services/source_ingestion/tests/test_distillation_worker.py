@@ -1466,3 +1466,19 @@ def test_catch_up_reports_lost_leases(tmp_path, monkeypatch):
     worker, _, _ = _make_worker(tmp_path)
     monkeypatch.setattr(worker, "run_pending", lambda *a, **kw: DistillationRunResult(processed=0, created=0, refreshed=0, skipped=0, failed=0, lease_lost=("lost-job",)))
     assert worker.catch_up([]).lease_lost == ("lost-job",)
+
+
+def test_outbox_exact_source_version_lookup_uses_index(tmp_path):
+    import sqlite3
+
+    from services.source_ingestion.distillation_worker import DistillationJobQueue as DistillationQueue
+
+    queue = DistillationQueue(tmp_path / "queue.sqlite3")
+    with sqlite3.connect(queue.path) as connection:
+        plan = " ".join(
+            str(row[-1]) for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM distillation_outbox "
+                "WHERE source_id = ? AND source_digest = ?", ("s", "d"))
+        )
+    assert "SCAN" not in plan.replace("SEARCH", "")
+    assert "distillation_outbox_source_version_idx" in plan

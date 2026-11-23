@@ -677,6 +677,35 @@ class ProducerComposeEnvironmentTest(unittest.TestCase):
         self.assertEqual(len(budget["order_reservations"]), 1)
         self.assertEqual(set(inputs["persona_book"].keys()), {"positions", "gross_notional"})
 
+    def test_low_profile_bounds_reduce_the_2317_452_share_request_and_name_the_limit(self) -> None:
+        """Risk-officer drafted `low` policy (single name 20% / cash reserve 10% of NAV) governs sizing.
+
+        100,000 TWD, 2317 @ 221 with Taiwan fees: the old inline v1.0 sized 451-452 shares (~100% of NAV);
+        the drafted limits reach sizing through build_expression_inputs -> evaluate_pre_trade_sizing.
+        """
+        from services.execution.lean_runtime import expression_policy as ep
+        from services.execution.lean_runtime.test_expression_policy import (
+            PARAMS as EP_PARAMS, TJ_2317_CANDIDATES, TJ_2317_VIEW,
+        )
+
+        policy = RiskPolicy.from_mapping({
+            **POLICY, "risk_policy_id": "rp-pool-low", "version": "2.0",
+            "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10,
+        })
+        inputs = build_expression_inputs(pool=_pool(budget=100000.0), policy=policy, summary=_summary())
+        budget = inputs["risk_budget"]
+        self.assertEqual(budget["max_single_name_notional"], 20000.0)
+        self.assertEqual(budget["cash_reserve_required"], 10000.0)
+        sizing = ep.evaluate_pre_trade_sizing(
+            TJ_2317_VIEW, TJ_2317_CANDIDATES, {"positions": [], "gross_notional": 0.0}, budget, EP_PARAMS
+        )
+        self.assertEqual(sizing["permitted_units"], 90)
+        self.assertLess(sizing["permitted_units"], 452)
+        self.assertEqual(sizing["binding_limit"], "max_single_name_weight")
+        self.assertLessEqual(sizing["order_notional"], 0.20 * 100000.0)
+        self.assertGreaterEqual(sizing["remaining_cash"], 0.10 * 100000.0)
+        self.assertLessEqual(sizing["after_trade_concentration_of_initial_capital"], 0.20)
+
 
 if __name__ == "__main__":
     unittest.main()

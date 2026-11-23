@@ -739,3 +739,23 @@ def test_default_reader_uses_one_dead_letter_listing_and_the_recovery_rule(monke
     assert read("m-spent")["execution_state"]["recovery_exhausted"] is True
     assert read("m-other")["execution_state"]["recovery_exhausted"] is True  # non-recoverable is terminal
     assert read("m-live")["execution_state"] is None and len(calls) == 1
+
+
+def test_mt3_and_mt6_carry_enrolled_trading_roster_with_panel_roles_within_budget():
+    op = Opener()
+    enrolled = ("persona-a", "persona-b", "persona-c", "persona-d", "persona-e")
+    run(triggers(op, day=at_weekday(1)), persona=OTHER, enrolled=enrolled)
+    mt3 = next(c for c in op.calls if c["meeting_type"] == "MT-3")
+    roster = mt3["participants"]
+    assert roster[0] == {"persona_id": "persona-a", "role": "chair"}
+    assert [p["persona_id"] for p in roster if p["role"] == "trading_peer"] == ["persona-b", "persona-c", "persona-d"]
+    assert roster[-1] == {"persona_id": "persona-red-team", "role": "red_team"}
+    assert len(roster) <= 5
+
+    op6 = Opener()
+    convene_quarterly_review(opener=op6, reader=lambda m: {"status": "convened"}, tenant="t1", quarter="2026-Q3",
+                             chair_persona_id="persona-evaluator-agent", enrolled=["persona-c", "persona-a", "persona-b"])
+    r6 = op6.calls[0]["participants"]
+    trading = [p for p in r6 if p["role"] in {"chair", "trading_peer"}]
+    assert len(trading) >= 2 and r6[0]["persona_id"] == "persona-a"
+    assert {p["role"] for p in r6} >= {"risk_reviewer", "red_team"} and len(r6) <= 5

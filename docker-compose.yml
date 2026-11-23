@@ -272,6 +272,9 @@ services:
       CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN}
       PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      # Issued meeting-owner principal (consultation-svc, role service) for meeting-action tickets at the
+      # research owner, read per request from the rotating file; no signing secret is distributed.
+      CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE: ${CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
       # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
@@ -1548,6 +1551,12 @@ services:
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID:-}
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN:-}
       PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE:-}
+      # Paper pool risk policy content is drafted by the persona-risk-officer (one persona turn per pool/profile/
+      # input digest) and approved through Governance; the gateway is the same one the persona cycle uses.
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      # Operator outer bounds per profile, enforced as validation (empty = built-in low: single name <= 20%, reserve >= 10%).
+      PANTHEON_PAPER_RISK_PROFILE_BOUNDS: ${PANTHEON_PAPER_RISK_PROFILE_BOUNDS:-}
       BFF_DATA_DIR: /data/bff
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -2357,6 +2366,7 @@ services:
       PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
       PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS: ${PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS:-8}
       # LLM layers (verbatim retain, consolidation, standing questions) follow the OpenClaw memory-index bridge switch.
       PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
       # memory.retrieve policy is evaluated by the canonical governance

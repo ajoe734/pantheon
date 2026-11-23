@@ -1,0 +1,227 @@
+{
+  "task_id": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "source_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
+  "human_actionable_scope_correction": {
+    "request": "2026-11-23 operator reopen: one bounded page of both direct human assignments and Persona requests for human input",
+    "anchor": "16e204b04",
+    "filter": "Existing verified visibility AND (waiting_for_input OR assignee_kind=human AND state IN open,in_progress,returned), before SQL keyset/LIMIT",
+    "compatibility": "Optional false default preserves old query/cursor scope, original stores/indexes, owner/series filters, and ordinary RW-01 list shape",
+    "proof": "24 visible unrelated Persona rows sort before all four actionable rows; full two-row pages retain state/revision, reject foreign cursors, hide unrelated humans/tenants, preserve operator/admin/controller visibility; direct authenticated human submits, is returned, resubmits and is accepted; requested input resumes original Persona",
+    "validation": "human-actionable-validation.txt",
+    "runtime_budget_delta": "Read-only optional SQL predicate, on demand, at most page_size+1 (101) rows and 100 projected summaries; zero new persistent bytes, writes, daily growth, jobs, collections or cleanup; original storage.json and manifest caps/retention remain in force",
+    "consumer_owner": "BFF-MEETING-ACTION-HUMAN-INBOX-20261123; FE-MEETING-ACTION-FOLLOWTHROUGH-20261123 owns actual next transition display",
+    "review": "Fresh exact-head Antigravity review required; source component proof is not deployed/hosted acceptance"
+  },
+  "ci_repair": {
+    "record": "ci-repair.md",
+    "returned_check": "Test sweep (shard 3)",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/45110756737/job/137488110249",
+    "refreshed_dev_base": "0c806ffed",
+    "repair_anchor": "7954a34411b6870330c6af59f90360798eca3249",
+    "change": "Restore ordinary RW-01/KW-02 get/put store compatibility; retain separate atomic meeting assignment/evidence paths and reserved namespace guards.",
+    "validation": "ci-repair-validation.txt",
+    "review": "New exact-head Antigravity review required; earlier approval is not reused."
+  },
+  "summary": "Meeting-linked obligations use the existing RW-01 owner with scoped identity, atomic source reservation, CAS transitions, reviewable evidence and bounded pagination.",
+  "scope": [
+    "services/research/write_owner.py",
+    "services/research/main.py",
+    "services/research/tests/test_meeting_action_tickets.py",
+    "docs/operations/storage-manifest.json",
+    "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/"
+  ],
+  "verification": [
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/tests/test_recommended_measure_consumers.py --disable-warnings",
+      "exit_code": 0,
+      "result": "193 passed, 4 optional candidate-consumer TEST_DATABASE_URL cases skipped, 723 warnings in 99.05s",
+      "terminal_output": "required-data-validation.txt"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest; python3 scripts/check_storage_manifest.py; git diff --check",
+      "exit_code": 0,
+      "result": "10 tests OK; manifest passed=true failures=[]; no whitespace errors",
+      "terminal_output": "required-data-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
+      "result": "36 passed, 361 warnings in 24.04s",
+      "terminal_output": "required-data-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
+      "result": "22 passed, 221 warnings in 34.90s on final reply-recovery source",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
+      "result": "22 passed, 221 warnings in 22.69s",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/tests/test_recommended_measure_consumers.py --disable-warnings",
+      "exit_code": 0,
+      "result": "179 passed, 4 optional TEST_DATABASE_URL cases skipped, 583 warnings in 94.88s",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest; python3 scripts/check_storage_manifest.py; git diff --check",
+      "exit_code": 0,
+      "result": "10 tests OK; manifest passed=true failures=[]; no whitespace errors",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
+      "result": "16 passed, 161 warnings in 16.53s",
+      "terminal_output": "human-actionable-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py --disable-warnings",
+      "exit_code": 0,
+      "result": "151 passed, 523 warnings in 76.48s",
+      "terminal_output": "human-actionable-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres> timeout 180s .venv-pantheon/bin/python3 -m pytest tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "134 passed, 493 warnings in 66.71s",
+      "terminal_output": "validation.txt"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest",
+      "exit_code": 0,
+      "result": "10 tests OK",
+      "terminal_output": "storage-validation.txt"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed=true, failures=[]",
+      "terminal_output": "storage-check.json"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "no whitespace errors"
+    },
+    {
+      "command": "real Research HTTP + PostgreSQL13-case subset; read-only probe through same HTTP TestClient",
+      "exit_code": 0,
+      "result": "13 meeting action HTTP tests +12 legacy write-owner tests passed",
+      "terminal_output": "owner-validation.txt"
+    }
+  ],
+  "acceptance_coverage": [
+    {
+      "criterion": 1,
+      "proof": "8 simultaneous POSTs reserve one durable ID; later replay preserves revised history; divergent assignment returns409; source/series/owner/due and criterion round-trip through detail/list."
+    },
+    {
+      "criterion": 2,
+      "proof": "Strict signed JWT tenant/actor validation; foreign direct/list/note reads hidden; changed/deleted/unbound/foreign artifacts rejected; submitted evidence re-read on authorized acceptance; arbitrary status close and forged actor rejected."
+    },
+    {
+      "criterion": 3,
+      "proof": "Real owner HTTP paths cover Persona note->submit->return->corrected submit->accept, human request->permitted evidence->original Persona resume, same-ID and history preservation; generic membership ack rejected."
+    },
+    {
+      "criterion": 4,
+      "proof": "Existing listing executes filtered SQL LIMIT+keyset cursors; actual JSONB count/byte measurements and scheduled/human-invoked growth accounting in storage.json; existing chain writers registered; producer envelope/hosted figures explicitly pending producer tasks."
+    },
+    {
+      "criterion": 5,
+      "proof": "Pre-edit trace and retained historical callers documented in handoff.md; old generic experiment writer excluded only from meeting rows; residuals have named owner/class dispositions."
+    }
+  ],
+  "hosted_acceptance": {
+    "executed": false,
+    "probe": "probe.py",
+    "boundary": "Source component validation only; integrated normal Persona/meeting/BFF path and producer envelopes are verified by the original chain tasks on the deployed exact pair."
+  },
+  "runtime_budget": "storage.json",
+  "residual_findings": [
+    {
+      "id": "baseline-bff-artifact-source-metadata",
+      "class": "RC6",
+      "owner": "existing BFF research/read-source work package coordinator",
+      "test": "tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing",
+      "finding": "source metadata typed_store differs from expected service_client; same failure reproduced on unchanged baseline bd47d73bc",
+      "disposition": "Attach to existing RC6 owner; no one-off fix task and no BFF code edits in this task",
+      "evidence": "baseline-residual.txt"
+    },
+    {
+      "id": "whole-writer-retention",
+      "class": "RC3 WP3.1/3.3",
+      "owner": "storage retention/measurement work package",
+      "finding": "Existing tables/consultation ledger have no whole-history retention cap; per-origin/record caps enforced without deleting open obligations.",
+      "disposition": "Retain existing RC3 debt entry; hosted physical storage/WAL measurement required; no bounded-whole-table claim"
+    },
+    {
+      "id": "producer-integrated-proof",
+      "class": "RC2 WP2.3",
+      "owner": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 + PERSONA-MEETING-ACTION-EXECUTION-20261123 + BFF-MEETING-ACTION-HUMAN-INBOX-20261123 + integrated acceptance owner",
+      "finding": "Independent producer prompt/cycle reference budgets and genuine cross-meeting owner execution remain their scoped acceptance obligations.",
+      "disposition": "Contract and affected writers recorded; owner component fixtures must not be reported as integrated or hosted success."
+    },
+    {
+      "id": "canonical-delivery-admission-lock-wait",
+      "class": "Existing development-tooling canonical-state maintenance domain; coordinator to attach to owning work package",
+      "owner": "Supervisor/TaskStore maintenance owner (Gemini/fleet coordinator)",
+      "finding": "Governed handoff blocked before mutation for306s on shared task-state.lock; separate governed blocker attempt timed out after20s.",
+      "disposition": "Operational hold, no inferred lock-holder defect or new symptom task. Source-ready delivery needs fresh exact-head admission/review after central maintenance recovery.",
+      "evidence": "required-data-validation.txt"
+    }
+  ],
+  "handoff": "handoff.md",
+  "contract": "contract.md",
+  "independent_review": "Required from assigned Antigravity on exact PR/head; not manufactured by the owner.",
+  "inline_human_evidence_correction": {
+    "request": "Reopened existing task/PR to supply actual human report content through the original ticket, and project specific human requirement without per-row HTTP reads.",
+    "source_head_before_correction": "ad5dec939c33d12089a05653b4f73de07d56e8bc",
+    "refreshed_dev_base": "0c806ffed",
+    "code_anchor": "7d706886122f303ff8f22dad841c4a17d2d2e339",
+    "contract": "contract.md: optional evidence_note on submit/provide_input; existing KW-02 immutable body in same transaction as RW-01 CAS. Detail evidence_notes resolves original body and authenticated actor. Human-actionable direct-human rows carry existing description.",
+    "proof": "22 actual HTTP/PostgreSQL cases include six new inline cases: direct human submission with return/correction/accept; human input then original Persona resumption and exact reply recovery; denied/stale/foreign/forged/invalid/conflicting commands; role refusal before notes; rollback after real note insert and subsequent recovery; six simultaneous exact retries. Existing reference-only and ordinary ticket/note workflows pass. Probe checks actual body against note owner and rejects missing body.",
+    "compatibility": "Existing human_actionable SQL scope/cursors preserved. Ordinary/default summaries unchanged. Original note POST and reference-only submit/provide_input preserved. No historical deletion, new collection, route or alternate writer.",
+    "runtime_budget": "storage.json inline_evidence_budget; original table caps and lifetime growth remain. One successful inline note insert and ticket CAS committed together; exact retries/failed commands zero writes. <=16 note records/detail/probe; lists never resolve note bodies.",
+    "validation": "inline-evidence-validation.txt",
+    "review": "Fresh assigned Antigravity exact-head review required. Previous review does not cover changed source.",
+    "hosted": "Not deployed or accepted; original component and integrated hosted acceptance owners retain evidence obligations.",
+    "reply_recovery_anchor": "53ef5c168",
+    "reply_recovery": "Exact prior provider command reconstructs the original input revision from immutable history after later Persona results and reviewer acceptance; no later private body or review exposed, no additional direct/list permission, zero repeated writes."
+  },
+  "required_data_integration_correction": {
+    "request": "Reopened existing task/PR to compose with P specific-data capability check using optional meeting_action.required_data.",
+    "source_head_before_correction": "9b251e1a14303ac2e49248432c2fc0409b435144",
+    "refreshed_dev_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+    "anchor": "6147b4be9",
+    "contract": "contract.md: optional 0..8 unique nonempty dataset identifiers <=256 characters and <=4096 encoded array bytes; original assignment digest and authorized meeting_action projections preserve metadata. Omission and explicit [] differ; legacy omission is unchanged.",
+    "boundary": "R stores requirements only; M validates/emits them; P verifies actual per-deliverable data capability. No role, registry, data grant, writer, table or cron change. Inline human note atomicity/reply recovery unchanged.",
+    "validation": "required-data-validation.txt",
+    "runtime_budget": "storage.json required_data_budget and existing research.research_tickets manifest entry; zero extra write events, <=4115 bytes metadata per ticket within original assignment/record caps.",
+    "review": "Fresh assigned Antigravity exact-head review required after this reopened scope; previous approval is not reused.",
+    "delivery": "Not merged, deployed or hosted accepted; original RC2/RC3/RC6 residual owners remain unchanged."
+  },
+  "resumed_admission_preparation": {
+    "dev_base": "a4f2f0b4e2b657afbc68f0a76bf755023169e063",
+    "refresh_commit": "488097d5bfadf2a320ccd27dc9f21344ea0d499f",
+    "product_code_delta": "None; recovery source already contains required_data, inline note atomicity and historical reply recovery.",
+    "canonical_read": "Governed AI_NAME=Codex show returned exit 0, status in_progress. Prior admission lock wait is historical; fresh handoff still required.",
+    "validation": "required-data-validation.txt: refreshed HTTP/PostgreSQL suite 36 passed in 27.69s exit 0; storage unittest 10 OK exit 0; manifest passed=true exit 0; diff budget and whitespace checks exit 0.",
+    "delivery": "Fresh independent Antigravity exact-head review required; no merge, deployment or hosted acceptance claimed. Existing RC2/RC3/RC6 residual owners unchanged."
+  },
+  "delivery_admission_hold": {
+    "attempted_pr_head": "bead9792126c68844970b86778cfab15aedaa693",
+    "handoff": "Blocked 306s acquiring shared canonical task-state.lock during preflight read_task_snapshot; owner interrupted only own process; terminal exit130, no canonical mutation reached.",
+    "blocker": "Bounded governed blocker attempt to Gemini timed out after20s, terminal exit124, no output. Successful blocker transition not claimed.",
+    "owner": "Existing development tooling / supervisor TaskStore maintenance owner; fleet coordinator Gemini",
+    "disposition": "Do not remove lock, patch command runtime or hand-edit canonical state. Source/evidence committed/pushed; resume fresh exact-head handoff to Antigravity once admission recovers. Review/merge/deployment/acceptance pending.",
+    "terminal_record": "required-data-validation.txt"
+  }
+}

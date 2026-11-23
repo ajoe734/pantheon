@@ -1,0 +1,4 @@
+ACTION_ENVELOPE_MEASUREMENT {"ledger_bytes": 5009, "lifecycle_bytes": 208552, "lifecycle_events": 39, "max_provider_request_bytes": 15864, "meetings": [10968, 14973], "owner_requests": 19}
+.ACTION_ENVELOPE_MEASUREMENT {"ledger_bytes": 5008, "lifecycle_bytes": 208550, "lifecycle_events": 39, "max_provider_request_bytes": 15864, "meetings": [10968, 14972], "owner_requests": 19}
+.
+2 passed, 71 deselected, 1 warning in 3.58s
