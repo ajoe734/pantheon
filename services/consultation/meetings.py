@@ -3260,11 +3260,12 @@ def _extract_position_from_contribution(
 
 
 def _restore_action_review_state(store: Any, meeting: Dict[str, Any]) -> None:
-    """Read the chair's bounded schedule; HTTP execution receives it in detail."""
-    if not hasattr(store, "get_meeting_schedule"):
+    """Read this chair/series checkpoint; HTTP execution receives it in detail."""
+    if not meeting.get("meeting_series") or not hasattr(store, "get_meeting_schedule"):
         return
     previous = store.get_meeting_schedule(
-        str(meeting["tenant_id"]), str(meeting["chair_persona_id"]), str(meeting["meeting_type"]))
+        str(meeting["tenant_id"]), str(meeting["chair_persona_id"]), str(meeting["meeting_type"]),
+        meeting_series=meeting["meeting_series"])
     if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
         meeting["previous_action_review_at"] = previous.get("action_review_watermark")
         meeting["action_review_scan"] = previous.get("action_review_scan") or {}
