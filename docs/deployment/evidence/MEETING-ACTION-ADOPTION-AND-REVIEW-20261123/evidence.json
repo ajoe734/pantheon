@@ -7,6 +7,29 @@
   "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
   "verification": [
     {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py services/consultation/test_postgres_store.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "144 passed, 81 warnings in 83.21s: 140 tests across the four original suites, plus 4 existing PostgreSQL store tests. Includes same-chair/interleaved MT-2 normal direct/HTTP and restart cases plus JSONL/fake-PostgreSQL old-event replay. Frozen Research ad5dec939 source SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273; isolated persistence, no hosted claim.",
+      "terminal_output": "series-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k interleaved_series --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "16 passed, 88 deselected, 1 warning in 20.17s; two MT-1 chairs and one MT-2 chair/two subjects, normal direct/HTTP two-round close, restart/no-restart, scripted/frozen owner.",
+      "terminal_output": "series-focused-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k series_checkpoints --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "2 passed, 104 deselected, 1 warning in 3.03s; 24 unfinished series restored from unchanged schedule lifecycle events in JSONL/fake PostgreSQL, one cadence slot and no migration writes; foreign tenant/chair/type/subject cannot inherit state.",
+      "terminal_output": "series-focused-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-review-owner-50a7.py timeout 60s .venv-pantheon/bin/python3 -m pytest /tmp/test_meeting_series_review_50a7.py -q -s --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "Original reviewer regression: 4 passed, 1 warning in 3.46s; every one of three open tickets in each interleaved same-chair series visited, scripted/frozen owner and restart/no-restart. Committed normal-engine matrix adds accepted work, input, watermark and HTTP coverage."
+    },
+    {
       "command": "git show ad5dec939c33d12089a05653b4f73de07d56e8bc:services/research/write_owner.py > /tmp/meeting-action-research-owner-current.py",
       "exit_code": 0,
       "result": "Frozen current Research source SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273; persistence isolated, public create/list/detail and owner role checks remain real."
@@ -79,11 +102,11 @@
     },
     {
       "criterion": 3,
-      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval. Exact normalized human_requirement is sent as the existing ticket.description, while deliverable/criterion/due/source remain structured. Missing/changed reason receipts stay pending. Actual public RW-01 list/detail roles are tested against frozen ad5dec939 with isolated persistence; list/detail JWT/BFF integration remains with R/B/V."
+      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval. Exact normalized human_requirement is sent as the existing ticket.description, while deliverable/criterion/due/source remain structured. Missing/changed reason receipts stay pending. Actual public RW-01 list/detail roles are tested against frozen ad5dec939 with isolated persistence; list/detail JWT/BFF integration remains with R/B/V. Exact-series review lookup now derives independent tenant/chair/type/subject checkpoints from existing schedule lifecycle events, including older overwritten cadence slots; both direct execution and active HTTP detail/sync use it. No extra persistent writer or owner call."
     },
     {
       "criterion": 4,
-      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting. Eight interleaved-chair cases alternate six normal convene/two-round/close meetings between two participating chairs, with and without replay before each meeting, on direct and actual HTTP proxy paths. Each pool presents all three outstanding and all three accepted-since-watermark tickets exactly once, preserves peer-owned review state on attendance, and completes its original scan-start watermark independently."
+      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting. Eight interleaved-chair cases alternate six normal convene/two-round/close meetings between two participating chairs, with and without replay before each meeting, on direct and actual HTTP proxy paths. Each pool presents all three outstanding and all three accepted-since-watermark tickets exactly once, preserves peer-owned review state on attendance, and completes its original scan-start watermark independently. Expanded 16-case normal-path matrix also alternates two MT-2 subjects for the same chair. Each series retains its own unfinished continuation and scan-start watermark across HTTP sync/replay. Two additional JSONL/fake-PostgreSQL replay tests preserve 24 distinct unfinished subjects with one cadence slot and no migration writes. Derived index count/heap and historical retention remain explicit RC3 debt in storage.json."
     },
     {
       "criterion": 5,
@@ -110,8 +133,8 @@
     {
       "class": "RC3 WP3.1/3.3",
       "owner": "storage retention/measurement work package",
-      "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive",
-      "disposition": "preserve open/historical data; section caps are not whole-archive boundedness"
+      "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive Derived series review index retains S distinct subject checkpoints; global count/Python heap are not capped or measured on hosted.",
+      "disposition": "preserve open/historical data; section caps are not whole-archive boundedness; future compaction must retain each series checkpoint, not only the latest cadence slot"
     },
     {
       "class": "RC2 WP2.3 Research artifact reads",
@@ -138,5 +161,5 @@
       "disposition": "Already named in R/B current canonical follow-up scope. This producer sends and checks the exact description; downstream page/inbox projection and real authenticated response remain owned by R/B, without per-ticket fanout."
     }
   ],
-  "independent_review": "713563eba source review rejected arbitrary human targets and dropped human_requirement. Current revision binds human work to existing tenant operator inbox, records unresolved model names, preserves/checks ticket.description, and adds normal adapter/two-round/close and real public owner-role regressions. Awaiting fresh exact-head review. Earlier paging/independent-chair fixes remain tested. Same-family assignment still requires coordinator capacity reconciliation or actual evidenced exception. No independent approval, merge, deployment or hosted acceptance claimed."
+  "independent_review": "Independent review rejected 50a7addf6 for same-chair interleaved MT-2 series resetting bounded scans. Current revision derives exact-series checkpoints from existing schedule lifecycle events and restores them through direct/HTTP execution and replay. Original reproducer 4/4, expanded normal-path matrix 16/16, old-event replay 2/2 and full five-suite 144/144 passed. Awaiting fresh exact-head review; canonical Codex2-to-Codex assignment still requires live independent-family capacity reconciliation or an actually evidenced exception. No approval, merge, deployment or hosted acceptance claimed."
 }

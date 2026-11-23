@@ -228,6 +228,9 @@ case retains 24 unfinished subjects, one cadence slot, no migration writes,
 and tenant/chair/type/subject isolation in JSONL and fake PostgreSQL. This
 proves adapter/storage component behavior, not a live database or hosted proof.
 The reviewer's original four failing cases also pass after the repair.
+Full terminal batch: 144 passed, 81 warnings in 83.21s, exit 0 (four
+original suites plus existing PostgreSQL store tests); series-validation.txt.
+Focused matrix/replay terminal output: series-focused-validation.txt.
 
 storage.json corrects the earlier single-slot/no-per-series-count assumption.
 Existing persistent payloads/cadence and earlier workload measurements are
