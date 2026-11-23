@@ -3312,7 +3312,8 @@ def test_evidence_and_lane_progress_across_distinct_meetings(
 
 
 @pytest.mark.parametrize('restart', [False, True])
-def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, action_owner_contract, restart):
+@pytest.mark.parametrize('http_execution', [False, True])
+def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, action_owner_contract, restart, http_execution):
     from datetime import datetime, timezone
     from services.consultation import meeting_outputs as outputs
     monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
@@ -3342,6 +3343,26 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
             'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': f'pool:{chair}'},
             'action_review_watermark': f'2026-11-{19 + lane}T00:00:00Z', 'action_review_scan': {}})
     seen = {chair: [] for chair in chairs}
+    if http_execution:
+        from fastapi.testclient import TestClient
+        from services.consultation import workflow_executor as executor
+        monkeypatch.setenv('CONSULTATION_AUTH_REQUIRED', 'true')
+        monkeypatch.setenv('CONSULTATION_SERVICE_TOKEN', SERVICE_TOKEN)
+        monkeypatch.setenv('PANTHEON_TENANT_ID', TENANT)
+        monkeypatch.setattr(consultation_main, 'workflow_state', None)
+        client = TestClient(consultation_main.app)
+        headers = {'Authorization': f'Bearer {SERVICE_TOKEN}', 'X-Pantheon-Tenant-Id': TENANT,
+                   'X-Pantheon-Service-Actor': ACTOR}
+        def api_get(config, path):
+            reply = client.get(path, headers=headers)
+            assert reply.status_code == 200, reply.text
+            return reply.json()
+        def api_post(config, path, payload):
+            reply = client.post(path, headers=headers, json=payload)
+            assert reply.status_code in {200, 201, 202}, reply.text
+            return reply.json()
+        monkeypatch.setattr(executor, '_api_get', api_get)
+        monkeypatch.setattr(executor, '_api_post', api_post)
     class Provider:
         def obtain(self, *, tenant_id, request, participant_scope):
             ctx = request['meeting']
@@ -3370,7 +3391,11 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
                          'convened_by': {'kind': 'persona', 'id': current_chair},
                          'participants': [current_chair, peer], 'subject_ref': f'persona:{current_chair}'},
                 idempotency_key=f'interleaved-{number}')
-            closed = meetings_mod.execute_persona_meeting(store=store, meeting_id=meeting['meeting_id'],
+            execution_store = store
+            if http_execution:
+                monkeypatch.setattr(consultation_main, 'store', store)
+                execution_store = executor._HttpMeetingStoreProxy(ExecutorConfig.from_env(), meeting['meeting_id'], 'review')
+            closed = meetings_mod.execute_persona_meeting(store=execution_store, meeting_id=meeting['meeting_id'],
                                                           tenant_id=TENANT, provider=Provider())
             assert closed['status'] == 'closed' and len(closed['rounds']) == 2
             assert not closed['rejected_positions']

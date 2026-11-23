@@ -539,14 +539,17 @@ class ConsultationStore:
         persona_id = str(schedule_entry["persona_id"])
         meeting_type = str(schedule_entry["meeting_type"])
         record_id = f"{tenant_id}:{persona_id}:{meeting_type}"
-        saved = _model_copy(dict(schedule_entry))
-        self._append_lifecycle_event(
-            record_type="meeting_schedule",
-            record_id=record_id,
-            trace_id=record_id,
-            payload=saved,
-        )
-        self._meeting_schedules[record_id] = saved
+        with self._lock:
+            # Peer attendance sends only cadence. Preserve the independently
+            # owned chair scan in the same serialized write and replay record.
+            saved = _model_copy({**self._meeting_schedules.get(record_id, {}), **schedule_entry})
+            self._append_lifecycle_event(
+                record_type="meeting_schedule",
+                record_id=record_id,
+                trace_id=record_id,
+                payload=saved,
+            )
+            self._meeting_schedules[record_id] = saved
 
     def list_meeting_schedules(self) -> List[Dict[str, Any]]:
         return [_model_copy(item) for item in self._meeting_schedules.values()]

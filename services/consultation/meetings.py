@@ -3252,6 +3252,17 @@ def _extract_position_from_contribution(
     return position, raw_claims
 
 
+def _restore_action_review_state(store: Any, meeting: Dict[str, Any]) -> None:
+    """Read the chair's bounded schedule; HTTP execution receives it in detail."""
+    if not hasattr(store, "get_meeting_schedule"):
+        return
+    previous = store.get_meeting_schedule(
+        str(meeting["tenant_id"]), str(meeting["chair_persona_id"]), str(meeting["meeting_type"]))
+    if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
+        meeting["previous_action_review_at"] = previous.get("action_review_watermark")
+        meeting["action_review_scan"] = previous.get("action_review_scan") or {}
+
+
 def execute_persona_meeting(
     *,
     store: Any,
@@ -3336,11 +3347,10 @@ def execute_persona_meeting(
             meeting["attribution_record"] = resolved_attr
 
     from .meeting_outputs import read_meeting_actions
-    if "prior_actions" not in meeting:
-        previous = store.get_meeting_schedule(tenant_id, chair_persona_id, str(meeting["meeting_type"])) if hasattr(store, "get_meeting_schedule") else None
-        if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
-            meeting["previous_action_review_at"] = previous.get("action_review_watermark")
-            meeting["action_review_scan"] = previous.get("action_review_scan") or {}
+    # Detail projections include an empty prior_actions list before execution.
+    # Only the persisted source receipt proves an owner read actually happened.
+    if "prior_actions_source" not in meeting:
+        _restore_action_review_state(store, meeting)
         action_read = read_meeting_actions(meeting)
         meeting["prior_actions"] = action_read["items"]
         meeting["prior_action_evidence"] = action_read.get("evidence") or []
@@ -3984,8 +3994,9 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
         if p.get("trading") or p["persona_id"] == chair_persona_id:
             persona_id = str(p["persona_id"])
             # Attendance updates cadence, but only the chair owns this series'
-            # review state. A peer may be partway through reviewing its own pool.
-            schedule = store.get_meeting_schedule(tenant_id, persona_id, str(meeting["meeting_type"])) or {}
+            # review state. The store merges peer cadence at the write boundary,
+            # including for the HTTP proxy; never send a stale peer cursor back.
+            schedule: Dict[str, Any] = {}
             if persona_id == chair_persona_id:
                 schedule.update(
                     meeting_series=meeting.get("meeting_series"),
@@ -4224,6 +4235,10 @@ def get_meeting_detail_view(
     if not m or str(m.get("tenant_id") or "default") != tenant_id:
         return None
     detail = copy.deepcopy(m)
+    if "prior_actions_source" not in m and m.get("status") not in {"closed", "refused"}:
+        # The normal HTTP executor reads this existing detail route, so supply
+        # authoritative continuation without another endpoint or archive scan.
+        _restore_action_review_state(store, detail)
     exec_state = None
     if workflow_state is not None:
         exec_state = _execution_state_from_row(
