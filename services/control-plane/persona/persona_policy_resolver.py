@@ -357,7 +357,8 @@ def evaluate_participant_action_capability(
         if resolved.denied:
             return deny("no_workflow", "; ".join(resolved.denial_reasons))
     workflow = surface["workflow"]
-    if not workflows or not {"observe", "orient", "decide", "act", "learn"} <= set(workflow["steps"]):
+    if not workflows.intersection({"persona_daily_cycle", "pantheon.persona.daily-cycle"}) or not {
+            "observe", "orient", "decide", "act", "learn"} <= set(workflow["steps"]):
         return deny("no_workflow", "effective_daily_workflow_missing")
     if "persona_proposal_submit" not in tools:
         return deny("downgraded_access", "decision_tool_unavailable")
@@ -366,6 +367,7 @@ def evaluate_participant_action_capability(
         return deny("advisory_only", "snapshot_advisory_only")
     accessible = set(meta.get("accessible_data") or [])
     required = set((requirements or {}).get("required_data") or [])
+    required |= {r["dataset"] for r in persona.get("required_data_sources", []) if r.get("policy_gates")}
     if required - accessible or required & restrictions:
         return deny("restricted_data", "deliverable_data_not_accessible")
     deliverable = (requirements or {}).get("deliverable_kind", "research_note")
