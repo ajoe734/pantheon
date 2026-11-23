@@ -1,4 +1,56 @@
-# Persona consumer handoff
+# Persona consumer handoff — 2026-11-23 Codex2 continuation
+
+Current owner: Codex2. Assigned independent reviewer: Antigravity. Original PR:
+#7765. Source is ready for governed exact-head handoff; no approval, merge,
+hosted deployment or acceptance is claimed.
+
+The canonical task read through the supplied command runtime at this dispatch
+(last_update 2026-11-23T09:05:13Z) explicitly directs preservation of tested
+source 9ed177a45947d5cd13c580767038912685fb7fe4 and all genuine historical author
+trailers. It records the auditor's authenticated historical assignment finding
+and directs a normal appended commit with the current true Reviewer trailer.
+This continuation preserves that history. Historical admission failures below
+remain records of those attempts, rather than the current assignment or verdict.
+Fresh governed admission still decides whether this delivery may enter review.
+
+Current dev 2df217b50c9e960c474a37f8b57b46fca56f6798 was merged without rewriting
+history in e7c3567be75a54906526da130ccb271c5cbebbfa. Persona runtime/plugin and
+meeting-action regression blobs are unchanged from 9ed177a45. Caller trace was
+rechecked: consume_run -> observe_meeting_actions -> existing scoped Research
+reads; execution -> meeting_action_plan -> fresh capability owner/policy;
+_action_case_file projects verified same-subject results. Research still owns
+tickets/notes/reviews; Consultation #7766 owns adopted actions/series. The removed
+owner prefilter described in correction round 6 remains the only obsolete reader
+restriction. Other supported readers and historical data are preserved.
+
+On the merged source, the bounded 240-second ordinary-cycle/broker/receipt suite
+exited 0: 282 passed, 4 skipped in 165.31 seconds. It includes normal MT-2 human
+acceptance, all sixteen fail-closed MT-2 cases, same-ticket human replacement,
+zero semantic hits, proposal refusal and citation/restart/concurrency regressions.
+Exact command, source head and output: evidence.json and
+codex2-validation-20261123.txt. git diff --check, diff budget and probe --help
+also passed. No product-source edits or extra tests were introduced here.
+
+Current residual findings and owners remain:
+
+* RC2 WP2.3 / enrollment and two-meeting proof owners: genuine hosted access
+  receipts, real owner integration, authorized human input, later meeting and
+  exact deployed-pair read-only acceptance are still required. Component stubs
+  do not supply this proof.
+* RC2 WP2.3 / RC3 WP3.3 loop/storage owners: 30-day/1,000-record replay retention
+  and theoretical 72 arrivals versus 60 executions/week need chain disposition.
+  Obligations remain visible at Research; lost plans are never invented.
+* RC3 WP3.1/3.3 Research storage owner: whole-database retention remains its
+  existing upstream residual. contract.md and measurement.json retain cadence,
+  counts, bytes, growth/caps and cleanup figures. This continuation adds no
+  runtime writer, cadence or changed resource figure for the manifest owner.
+
+Current review uses different families (Codex2 / Antigravity); the earlier
+review-capacity.json and same-family exception below are historical only.
+No substitute reviewer, review attestation, task JSON edit, history rewrite,
+force push, deployment or command-runtime patch was introduced.
+
+## Historical handoff through 08:10Z (retained record)
 
 RC2 WP2.3 / RC6 meeting follow-through. Source rework is published on PR #7765;
 governed review admission is blocked by inherited commit provenance (details below).
