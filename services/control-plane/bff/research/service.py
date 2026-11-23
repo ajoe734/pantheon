@@ -17,7 +17,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
 
 from fastapi import HTTPException
 
@@ -539,10 +539,31 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     # Research Tickets (RW-01)
     # -------------------------------------------------------------------------
-    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
-        for owner in (self._read_surface, self._ks):
-            if owner is not None and hasattr(owner, "list_research_ticket_page"):
-                return owner.list_research_ticket_page(**filters)
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        for source in (self._read_surface, self._ks):
+            if source is not None and hasattr(source, "list_research_ticket_page"):
+                return source.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
         raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
 
     def list_research_tickets(
@@ -3799,14 +3820,26 @@ class ResearchRouterService:
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
         meeting_linked: bool = False,
-        **meeting_filters: Any,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
         if meeting_linked:
             with self._map_port_errors("list_research_ticket_page"):
-                page = port.list_research_ticket_page(statuses=statuses, owner=owner,
-                    page_token=page_token, page_size=page_size, **meeting_filters)
+                page = port.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
             return {**page, "meta": {**self.snapshot_meta(snap),
                     "surfaces": {"ticket_list": {"status": "ok", "source": "research"}}}}
         with self._map_port_errors("list_research_tickets"):

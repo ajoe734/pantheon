@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from services.control_plane.bff.core.owner_reads import authorization, verified_caller_tenant, remaining_management_read_budget
 from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 import urllib.error
@@ -117,7 +117,28 @@ class ResearchServiceClient:
             raise ResearchCommandError("Research ticket tenant mismatch", 403) from exc
         return {"Authorization": auth, "X-Tenant-Id": tenant}
 
-    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        filters = {
+            "statuses": statuses, "owner": owner, "meeting_type": meeting_type,
+            "subject_ref": subject_ref, "action_state": action_state,
+            "due_before": due_before, "submitted_after": submitted_after,
+            "updated_after": updated_after, "human_actionable": human_actionable,
+            "page_token": page_token, "page_size": page_size,
+        }
         params = {k: v for k, v in filters.items() if v is not None}
         params["meeting_linked"] = "true"
         if "human_actionable" in params:

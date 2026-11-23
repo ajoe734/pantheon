@@ -717,8 +717,29 @@ class ReadSurfacePorts:
     def get_institutional_memory(self, entry_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_institutional_memory(entry_id)
 
-    def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
-        return self.research_knowledge_source.list_research_ticket_page(**filters)
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        return self.research_knowledge_source.list_research_ticket_page(
+            statuses=statuses, owner=owner,
+            meeting_type=meeting_type, subject_ref=subject_ref,
+            action_state=action_state, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after,
+            human_actionable=human_actionable, page_token=page_token,
+            page_size=page_size
+        )
 
     def list_research_tickets(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_tickets(**kwargs)
