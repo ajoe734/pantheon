@@ -88,6 +88,7 @@ def _action_case_file(case, observe):
                     k: row[k] for k in (
                         "ticket_id", "revision", "state", "review_status", "accepted",
                         "owner", "assignee", "assignee_kind", "accountable_persona_id",
+                        "reviewer_id", "review_decision",
                         "meeting_id", "subject_ref", "human_input", "source_unavailable",
                         "original_source_unavailable", "missing_sources",
                     ) if k in row},
@@ -1101,7 +1102,7 @@ class CycleOwners:
             return evaluate_participant_action_capability(persona, None, owner_available=False, requirements=requirements)
 
     @staticmethod
-    def _genuine_decision_series(persona_id, action, owner_id=None):
+    def _genuine_decision_series(persona_id, action, owner_id=None, assignee_kind=None):
         if not isinstance(action, Mapping):
             return False
         if any(not isinstance(action.get(k), str) or not action[k].strip()
@@ -1111,7 +1112,8 @@ class CycleOwners:
         if sref == "pool:" + persona_id:
             return mtype in {None, "MT-1"}
         if sref == "persona:" + persona_id:
-            return mtype in {"MT-1", "MT-2", "MT-4"} and owner_id in {None, persona_id}
+            return (mtype in {"MT-1", "MT-2", "MT-4"} and owner_id in {None, persona_id}
+                    or mtype == "MT-2" and assignee_kind == "human")
         return False
 
     def _action_evidence(self, persona, ref, tid, meeting_id=None, cache=None, *, allow_chair_string=True):
@@ -1202,7 +1204,7 @@ class CycleOwners:
             ("runnable", "runnable", "open,in_progress,returned", {"owner": pid}),
             ("verified_results", "verified_results", "submitted,accepted", {"subject_ref": "pool:" + pid}),
             ("verified_results", "verified_results_persona", "submitted,accepted",
-             {"subject_ref": "persona:" + pid, "owner": pid}),
+             {"subject_ref": "persona:" + pid}),
         )
         for lane, cursor_key, states, scope_filter in specs:
             remaining = MEETING_ACTION_PAGE_SIZE - len(out[lane])
@@ -1237,8 +1239,19 @@ class CycleOwners:
                         if kind not in {"persona", "human"} or not isinstance(owner_id, str) or not owner_id.strip():
                             raise ValueError("ticket_identity_mismatch")
                         if (tid in seen_results or raw.get("action_state") not in allowed_states
-                                or not self._genuine_decision_series(pid, action, owner_id)):
+                                or not self._genuine_decision_series(pid, action, owner_id, kind)):
                             continue
+                        if kind == "human" and action.get("subject_ref") == "persona:" + pid:
+                            # MT-2 human results belong to the subject, not to its deciding
+                            # Persona. Admit only owner-accepted, independently reviewed work;
+                            # the bounded evidence read below still verifies ticket/tenant/digest.
+                            review = raw.get("review_decision")
+                            if (raw.get("action_state") != "accepted" or not isinstance(review, Mapping)
+                                    or review.get("decision") != "accept"
+                                    or any(not isinstance(review.get(k), str) or not review[k].strip()
+                                           for k in ("reviewed_by", "reason", "review_source"))
+                                    or review["reviewed_by"] == owner_id):
+                                raise ValueError("human_result_independent_acceptance_missing")
                     source_unavailable = None
                     origin_missing_reason = None
                     missing_sources = []
@@ -1328,6 +1341,8 @@ class CycleOwners:
                            "evidence_refs": evidence, "human_input": bool(raw.get("human_input"))}
                     if state == "accepted" and isinstance(raw.get("review_decision"), Mapping):
                         row["review_decision"] = dict(raw["review_decision"])
+                    if raw.get("reviewer_id") or action.get("reviewer_id"):
+                        row["reviewer_id"] = raw.get("reviewer_id") or action["reviewer_id"]
                     if action.get("required_data"):
                         row["required_data"] = list(action["required_data"])
                     if missing_sources:

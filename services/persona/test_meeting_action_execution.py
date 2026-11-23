@@ -849,6 +849,121 @@ def test_mt1_pool_series_human_and_persona_results_reach_decide_with_zero_semant
     assert peer_obs["verified_results"][0]["accountable_persona_id"] is None
 
 
+def mt2_human_result(persona_id):
+    row = ticket(owner="operator", assignee_kind="human", subject_ref=f"persona:{persona_id}",
+                 meeting_type="MT-2", action_state="accepted")
+    row.update(revision=2, required_actor=None, reviewer_id="consultation-svc",
+               review_decision={"decision": "accept", "reason": "Signed report checked against the criterion",
+                                "review_source": "mtg-next-mt2", "reviewed_by": "consultation-svc",
+                                "submission_revision": 1})
+    note = {"note_id": "human-mt2-note", "title": "Verified lesson report",
+            "body": "Human MT-2 report: execution slippage stayed within 4 bps; keep the current limit.",
+            "_meeting_binding": {"tenant_id": "tenant-a", "ticket_id": row["ticket_id"],
+                                 "actor_id": "operator"}, "_meeting_digest": "human-mt2-digest"}
+    row["evidence_refs"] = [{"kind": "research_note", "artifact_id": note["note_id"],
+                             "checksum": note["_meeting_digest"]}]
+    return row, note
+
+
+def test_mt2_accepted_human_result_reaches_normal_decision_without_semantic_hits(action_system, monkeypatch):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    pid = persona["persona_id"]
+    row, note = mt2_human_result(pid)
+    tid = row["ticket_id"]
+    research["tickets"] = {tid: row}  # No Persona-owned ticket to mask the human result.
+    research["notes"] = {note["note_id"]: note}
+    original = controller.owners.case_file
+    def zero_semantic(*args, **kwargs):
+        case = original(*args, **kwargs)
+        for name in ("similar_history", "lessons", "evidence"):
+            case["groups"][name]["items"] = []
+        return case
+    monkeypatch.setattr(controller.owners, "case_file", zero_semantic)
+    item_id = f"facts:meeting_action_result:{tid}"
+    gateway["answer"] = {"proposals": [{"kind": "no_action", "reason": "Verified slippage supports keeping course",
+        "evidence_refs": [], "case_file_item_ids": [item_id]}]}
+    packet = controller.consume_run(persona, "job-1", run(1))
+    observed = packet["persona_cycle"]["observe_bundle"]["meeting_actions"]
+    assert observed["unavailable"] == [] and observed["runnable"] == []
+    assert len(observed["verified_results"]) == 1
+    result = observed["verified_results"][0]
+    assert result["owner"] == result["assignee"] == "operator"
+    assert result["assignee_kind"] == "human" and result["accountable_persona_id"] is None
+    assert result["reviewer_id"] == result["review_decision"]["reviewed_by"] == "consultation-svc"
+    assert result["accepted"] and result["evidence_refs"][0]["excerpt"] == note["body"]
+    prompt = gateway["prompts"][pid]
+    assert note["body"] in prompt and item_id in prompt
+    case = next(iter(packet["persona_cycle"]["case_files"].values()))
+    fact = next(i for i in case["groups"]["facts"]["items"] if i["item_id"] == item_id)
+    assert note["body"] in fact["excerpt"] and "[accepted; human:operator]" in fact["excerpt"]
+    assert fact["subject_fields"]["reviewer_id"] == "consultation-svc"
+    assert fact["subject_fields"]["review_decision"] == row["review_decision"]
+    assert fact["evidence_refs"] == row["evidence_refs"]
+    assert packet["persona_cycle"]["failure_reason"] is None
+    assert packet["persona_cycle"]["decisions"][0]["cited_case_file_item_ids"] == [item_id]
+    assert not research["commands"] and not any(m != "GET" for m, _ in research["calls"])
+    queries = [parse_qs(urlsplit(p).query) for m, p in research["calls"] if p.startswith("/api/research/tickets?")]
+    assert len(queries) == 3
+    assert all("owner" not in q for q in queries if "subject_ref" in q)
+
+
+@pytest.mark.parametrize("fault", [
+    "other_persona", "unsupported_meeting", "peer_persona", "human_runnable", "submitted",
+    "missing_review", "self_review", "returned_review", "missing_reviewer", "missing_review_source",
+    "ticket_tenant", "note_tenant", "note_ticket", "private_note", "checksum", "title_only",
+])
+def test_mt2_human_result_scope_and_evidence_fail_closed(action_system, fault):
+    controller, gateway, owner, cap, research = action_system
+    persona = owner.list_json()[0]
+    row, note = mt2_human_result(persona["persona_id"])
+    if fault == "other_persona":
+        row["meeting_action"]["subject_ref"] = "persona:someone-else"
+        row["_unfiltered"] = True  # Consumer must reject even an overbroad owner response.
+    elif fault == "unsupported_meeting":
+        row["meeting_action"]["meeting_type"] = "MT-3"
+    elif fault == "peer_persona":
+        row["owner"], row["meeting_action"]["assignee_kind"] = "persona-peer", "persona"
+    elif fault == "human_runnable":
+        row.update(owner=persona["persona_id"], required_actor=persona["persona_id"], action_state="open")
+    elif fault == "submitted":
+        row["action_state"] = "submitted"
+    elif fault == "missing_review":
+        row.pop("review_decision")
+    elif fault == "self_review":
+        row["review_decision"]["reviewed_by"] = "operator"
+    elif fault == "returned_review":
+        row["review_decision"]["decision"] = "return"
+    elif fault == "missing_reviewer":
+        row["review_decision"].pop("reviewed_by")
+    elif fault == "missing_review_source":
+        row["review_decision"].pop("review_source")
+    elif fault == "ticket_tenant":
+        row["tenant_id"] = "tenant-b"
+    elif fault == "note_tenant":
+        note["_meeting_binding"]["tenant_id"] = "tenant-b"
+    elif fault == "note_ticket":
+        note["_meeting_binding"]["ticket_id"] = "another-ticket"
+    elif fault == "private_note":
+        note["visibility"] = "private"
+    elif fault == "checksum":
+        note["_meeting_digest"] = "changed-after-review"
+    elif fault == "title_only":
+        note["body"] = note["title"]
+    research["tickets"] = {row["ticket_id"]: row}
+    research["notes"] = {note["note_id"]: note}
+    gateway["answer"] = {"proposals": [{"kind": "no_action", "reason": "No usable result",
+        "evidence_refs": [], "none_applicable_reason": "No verified same-subject evidence"}]}
+    packet = controller.consume_run(persona, "job-1", run(1))
+    observed = packet["persona_cycle"]["observe_bundle"]["meeting_actions"]
+    assert observed["verified_results"] == [] and observed["runnable"] == []
+    assert note["body"] not in gateway["prompts"][persona["persona_id"]]
+    assert f"facts:meeting_action_result:{row['ticket_id']}" not in gateway["prompts"][persona["persona_id"]]
+    if fault in {"other_persona", "unsupported_meeting", "peer_persona"}:
+        assert not any(p.endswith("/" + note["note_id"]) for m, p in research["calls"])
+    assert not research["commands"]
+
+
 def test_human_replacement_prioritizes_bounds_requires_citation_and_never_bypasses_denied_dataset(action_system):
     controller, gateway, owner, cap, research = action_system
     persona = owner.list_json()[0]
