@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from integrations.openclaw.persona_agent_sync import active_harness_version
@@ -51,6 +51,33 @@ CONTROLLER_NAME = "persona_cycle_controller"
 # source (ast, no import: the probe runs under ``python3 -I`` without the repo on sys.path); keep it a literal.
 ELIGIBLE_STATES = {"paper_running", "paper_owner", "consultable"}
 DAILY_CYCLE_STATES = ELIGIBLE_STATES - {"consultable"}  # daily-cycle registrar and meeting step enrol these
+MEETING_ACTION_PAGE_SIZE = 4
+MEETING_ACTION_ENVELOPE_BYTES = 32768
+MEETING_ACTION_ANALYSIS_BYTES = 8000
+
+
+def _action_case_file(case, observe):
+    """Add bounded owner facts to every relevant decision, even with zero memory hits."""
+    rows = (observe.get("meeting_actions") or {})
+    items = []
+    for key, kind in (("runnable", "meeting_action_ticket"), ("verified_results", "meeting_action_result")):
+        for row in rows.get(key, []):
+            items.append({"item_id": f"facts:{kind}:{row['ticket_id']}", "group": "facts",
+                "kind": kind, "source_owner": "research-svc", "source_id": row["ticket_id"],
+                "excerpt": row["deliverable"][:400], "retrieval_score": None,
+                "retrieval_mode": "owner_link", "subject_fields": row})
+    if not items:
+        return case
+    case = copy.deepcopy(case)
+    group = case["groups"]["facts"]
+    group["items"].extend(items)
+    group["status"] = "partial" if group.get("unavailable") else "ok"
+    # The extension has its own 32 KiB budget, additional to the base composer.
+    case["budgets"]["meeting_action_bytes"] = MEETING_ACTION_ENVELOPE_BYTES
+    body = {k: v for k, v in case.items() if k not in {"digest", "case_file_id"}}
+    case["digest"] = case_files._digest(body)
+    case["case_file_id"] = "casefile-" + case["digest"][:24]
+    return case
 
 
 def is_daily_cycle_persona(persona: Mapping[str, Any]) -> bool:
@@ -471,6 +498,8 @@ class PersonaCycleController:
                     ensure_failure = "agent_ensure_unavailable:" + reason
                     cycle["agent_ensure"] = {"status": "unavailable", "reason": reason}
             try:
+                if hasattr(self.owners, "meeting_action_recover"):
+                    cycle["meeting_action_recovery"] = self.owners.meeting_action_recover(persona, snapshots)
                 prior = [p.get("persona_cycle", {}).get("observe_bundle", {}).get("human_feedback", {}).get("cursor")
                          for p in snapshots.values()
                          if p.get("tenant_id") == persona["tenant_id"]
@@ -479,6 +508,12 @@ class PersonaCycleController:
                 cursors = [c for c in prior if c]
                 since = max(cursors, key=lambda c: (c["at"], c["id"])) if cursors else None
                 observe = self.owners.observe(persona, since=since)
+                if hasattr(self.owners, "observe_meeting_actions"):
+                    previous = [p for p in snapshots.values() if p.get("tenant_id") == persona["tenant_id"]
+                                and p.get("persona_ids") == [persona["persona_id"]]]
+                    last = max(previous, key=lambda p: p.get("created_at", ""), default={})
+                    cursor = last.get("persona_cycle", {}).get("observe_bundle", {}).get("meeting_actions", {}).get("cursors", {})
+                    observe["meeting_actions"] = self.owners.observe_meeting_actions(persona, cursor)
                 self._observe_regime(persona, observe, cycle, packet, snapshots, run)
                 self._harness_loop().observation(persona, observe, snapshots, packet_id)
                 cycle["observe_bundle"] = observe
@@ -569,6 +604,8 @@ class PersonaCycleController:
                             result.update(status="no_action", reason=proposal.reason)
                         elif proposal.kind in {"reweight", "remove"}:
                             result.update(status="deterministic_risk_only", result=cycle["risk_result"])
+                        elif proposal.kind == "meeting_action":
+                            result.update(self._execute_meeting_action(persona, observe, packet, proposal))
                         cycle["decisions"].append(result)
                     # Candidates the agent proposed become governed lesson candidates (never canonical memory);
                     # a proposal that cites endorsed lessons goes to the existing rule-proposal owner route.
@@ -663,6 +700,7 @@ class PersonaCycleController:
             raise ValueError("agent_turn_unavailable")
         record = broker.run_record(run["run_ref"])
         if tool_use is not None and isinstance(record, Mapping):
+            tool_use.update(run_ref=run["run_ref"], run_id=record.get("run_id"))
             calls = [c for c in (record.get("calls") or []) if isinstance(c, Mapping)]
             tool_use["memory_recall_ok"] = tool_use.get("memory_recall_ok", 0) + sum(
                 1 for c in calls if c.get("tool") == "persona_memory_recall" and c.get("outcome") == "ok")
@@ -681,6 +719,32 @@ class PersonaCycleController:
                     f"{blocked}:model={used}:provider={getattr(turn, 'provider', '') or 'unknown'}"[:200]) from exc
             raise
         return turn, output, returned
+
+    def _execute_meeting_action(self, persona, observe, packet, proposal):
+        params = proposal.parameters
+        tid = params.get("ticket_id")
+        rows = (observe.get("meeting_actions") or {}).get("runnable", [])
+        ticket = next((t for t in rows if t["ticket_id"] == tid), None)
+        if not ticket or f"facts:meeting_action_ticket:{tid}" not in proposal.case_file_item_ids:
+            return {"status": "rejected", "reason": "assigned_ticket_and_citation_required"}
+        if params.get("action") == "decline":
+            return {"status": "declined", "reason": proposal.reason, "ticket_id": tid}
+        attempts = packet["persona_cycle"].setdefault("meeting_action_attempts", [])
+        if len(attempts) >= MEETING_ACTION_PAGE_SIZE or any(a.get("ticket_id") == tid for a in attempts):
+            return {"status": "rejected", "reason": "duplicate_or_excess_action"}
+        try:
+            plan = self.owners.meeting_action_plan(persona, ticket, proposal, packet)
+        except ValueError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        except Exception:
+            return {"status": "unavailable", "reason": "action_owner_unavailable"}
+        attempts.append(plan)
+        # Persist the exact approved proposal/commands before the first owner write.
+        append_ooda_packet(self.path, packet)
+        result = self.owners.meeting_action_execute(persona, plan)
+        plan["result"] = result
+        append_ooda_packet(self.path, packet)
+        return result
 
     def _observe_regime(self, persona, observe, cycle, packet, snapshots, run) -> None:
         """R13: evaluate, read the pool's active records, set orient.regime_state_ref; never fail the cycle."""
@@ -956,6 +1020,212 @@ class CycleOwners:
         with urlopen(request, timeout=10) as response:
             return json.load(response)
 
+    def _action_http(self, persona, path, *, method="GET", body=None):
+        from services.service_token_file import configured_service_token
+        base = self.env.get("PANTHEON_RESEARCH_API_URL", "").rstrip("/")
+        token = configured_service_token("PANTHEON_RESEARCH_SERVICE_TOKEN", self.env)
+        if not base or not token:
+            raise RuntimeError("research_owner_unconfigured")
+        data = None if body is None else json.dumps(body).encode()
+        if data is not None and len(data) > 16384:
+            raise ValueError("owner_command_budget_exceeded")
+        request = Request(base + path, method=method, data=data, headers={
+            "Authorization": "Bearer " + token, "X-Tenant-Id": persona["tenant_id"],
+            "Content-Type": "application/json"})
+        with urlopen(request, timeout=10) as response:
+            # Owner records are bounded too; refuse an unexpectedly large response.
+            raw = response.read(1048577)
+            if len(raw) > 1048576:
+                raise ValueError("owner_response_budget_exceeded")
+            payload = json.loads(raw)
+        return payload
+
+    @staticmethod
+    def _action_payload(payload):
+        return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    def action_capability(self, persona):
+        """Re-read both owners, rather than trust the scheduler's earlier record."""
+        from services.persona.write_owner import build_capability_snapshot_owner
+        from services.control_plane.persona.persona_policy_resolver import evaluate_participant_action_capability
+        try:
+            fresh = self.persona_owner.get(persona["persona_id"]).model_dump(mode="json")
+            if fresh.get("tenant_id") != persona["tenant_id"]:
+                raise ValueError("persona_tenant_changed")
+            snapshots = build_capability_snapshot_owner()
+            snapshot = snapshots.get_for_persona(persona["persona_id"]).model_dump(mode="json")
+            return evaluate_participant_action_capability(fresh, snapshot)
+        except Exception:
+            return evaluate_participant_action_capability(persona, None, owner_available=False)
+
+    def _action_evidence(self, persona, ref, tid):
+        if not isinstance(ref, dict):
+            raise ValueError("unresolved_source_reference")
+        kind, aid = ref.get("kind"), ref.get("artifact_id")
+        if kind not in {"research_note", "research_artifact"} or not isinstance(aid, str):
+            raise ValueError("unsupported_evidence_reference")
+        path = "/api/research/" + ("notes/" if kind == "research_note" else "artifacts/") + quote(aid, safe="")
+        saved = self._action_payload(self._action_http(persona, path))
+        if not isinstance(saved, dict):
+            raise ValueError("evidence_not_resolved")
+        binding = saved.get("_meeting_binding") or {}
+        if kind == "research_note":
+            if binding.get("tenant_id") != persona["tenant_id"] or binding.get("ticket_id") != tid:
+                raise ValueError("evidence_ticket_scope_mismatch")
+        elif saved.get("tenant_id", saved.get("owner_tenant")) != persona["tenant_id"]:
+            raise ValueError("evidence_tenant_mismatch")
+        digest = saved.get("_meeting_digest") if kind == "research_note" else saved.get("checksum")
+        if not digest or (ref.get("checksum") and ref["checksum"] != digest):
+            raise ValueError("evidence_checksum_mismatch")
+        # Limit text, preserve the owner identity/checksum; never fetch arbitrary URLs/private memory.
+        excerpt = str(saved.get("body") or saved.get("summary") or saved.get("title") or "")
+        return {"kind": kind, "artifact_id": aid, "checksum": digest,
+                "excerpt": excerpt.encode()[:800].decode(errors="ignore")}
+
+    def observe_meeting_actions(self, persona, cursors):
+        out = {"status": "observed", "runnable": [], "verified_results": [], "cursors": dict(cursors or {}),
+               "page_size": MEETING_ACTION_PAGE_SIZE, "pending_pages": {}, "unavailable": []}
+        if not is_daily_cycle_persona(persona):
+            out["status"] = "advisory_only"
+            return out
+        for lane, states in (("runnable", "open,in_progress,returned"), ("verified_results", "submitted,accepted")):
+            query = {"meeting_linked": "true", "owner": persona["persona_id"], "action_state": states,
+                     "page_size": MEETING_ACTION_PAGE_SIZE}
+            if out["cursors"].get(lane):
+                query["page_token"] = out["cursors"][lane]
+            try:
+                payload = self._action_http(persona, "/api/research/tickets?" + urlencode(query))
+                rows, page = payload["data"], payload["page_info"]
+                if not isinstance(rows, list) or len(rows) > MEETING_ACTION_PAGE_SIZE:
+                    raise ValueError("owner_page_invalid")
+                for raw in rows:
+                    action, tid = raw.get("meeting_action") or {}, raw.get("ticket_id")
+                    if raw.get("tenant_id") != persona["tenant_id"] or raw.get("owner") != persona["persona_id"]:
+                        raise ValueError("ticket_scope_mismatch")
+                    if action.get("assignee_kind") != "persona" or raw.get("action_id") != tid:
+                        raise ValueError("ticket_identity_mismatch")
+                    if lane == "runnable" and raw.get("required_actor") != persona["persona_id"]:
+                        continue
+                    # Same-Persona MT-1/MT-2 results inform this cycle. Unrelated subject results do not.
+                    if lane == "verified_results" and action.get("subject_ref") != "persona:" + persona["persona_id"]:
+                        continue
+                    refs = (raw.get("evidence_refs") or []) if lane == "verified_results" else (
+                        action.get("source_refs", []) + (raw.get("human_input") or {}).get("evidence_refs", []))
+                    if len(refs) > 8:
+                        raise ValueError("evidence_reference_budget_exceeded")
+                    evidence = [self._action_evidence(persona, ref, tid) for ref in refs]
+                    if lane == "verified_results" and not evidence:
+                        raise ValueError("submitted_result_without_evidence")
+                    row = {"ticket_id": tid, "action_id": tid, "revision": raw["revision"],
+                           "state": raw["action_state"], "meeting_id": action["meeting_id"],
+                           "subject_ref": action["subject_ref"], "deliverable": action["deliverable"],
+                           "acceptance_criterion": action["acceptance_criterion"],
+                           "due_at": action.get("due_at"), "next_review": action.get("next_review"),
+                           "evidence_refs": evidence, "human_input": bool(raw.get("human_input"))}
+                    if len(json.dumps({**out, lane: out[lane] + [row]}).encode()) > MEETING_ACTION_ENVELOPE_BYTES:
+                        raise ValueError("action_envelope_budget_exceeded")
+                    out[lane].append(row)
+                out["cursors"][lane] = page.get("next_page_token")
+                out["pending_pages"][lane] = bool(page.get("has_more") or page.get("next_page_token"))
+            except Exception as exc:
+                out["status"] = "partial"
+                # Keep the page cursor; never silently skip an unresolved obligation.
+                out["unavailable"].append({"lane": lane, "reason": type(exc).__name__})
+                if isinstance(exc, HTTPError) and exc.code in {400, 409}:
+                    out["cursors"][lane] = None  # expired/invalid keyset: restart, never discard owner work
+        return out
+
+    def meeting_action_plan(self, persona, ticket, proposal, packet):
+        params = proposal.parameters
+        action = params.get("action")
+        if action not in {"submit", "request_input"}:
+            raise ValueError("unsupported_action")
+        tid = ticket["ticket_id"]
+        key = f"persona-action:{tid}:{ticket['revision']}"
+        run = packet["persona_cycle"]["tool_use"]
+        plan = {"ticket_id": tid, "persona_id": persona["persona_id"], "tenant_id": persona["tenant_id"],
+                "packet_id": packet["packet_id"], "run_ref": run["run_ref"], "run_id": run["run_id"],
+                "requirements": {}, "command": {"action": action, "expected_revision": ticket["revision"],
+                                                       "idempotency_key": key}, "result": None}
+        if action == "request_input":
+            missing, human = params.get("missing_requirement"), params.get("human_actor_id")
+            if not isinstance(missing, str) or not missing.strip() or len(missing) > 2000:
+                raise ValueError("specific_missing_requirement_required")
+            if not isinstance(human, str) or not human.strip() or len(human) > 256:
+                raise ValueError("required_human_identity_missing")
+            plan["command"].update(reason=missing, human_actor_id=human)
+        else:
+            text, title = params.get("analysis"), params.get("title")
+            if not isinstance(text, str) or not text.strip() or len(text.encode()) > MEETING_ACTION_ANALYSIS_BYTES:
+                raise ValueError("concrete_bounded_analysis_required")
+            if not isinstance(title, str) or not title.strip() or len(title) > 256:
+                raise ValueError("analysis_title_required")
+            approved = {(r["kind"], r["artifact_id"]): r for r in ticket["evidence_refs"]}
+            refs = params.get("evidence_refs") or []
+            if not isinstance(refs, list) or len(refs) > 6 or any(not isinstance(r, dict) or
+                    (r.get("kind"), r.get("artifact_id")) not in approved for r in refs):
+                raise ValueError("unapproved_analysis_reference")
+            if approved and not refs:
+                raise ValueError("analysis_must_link_supplied_evidence")
+            provenance = f"persona:{persona['persona_id']};packet:{packet['packet_id']};run:{run['run_id']}"
+            plan["note"] = {"meeting_ticket_id": tid, "idempotency_key": key, "title": title,
+                "body": text + "\n\nExecution: " + provenance,
+                "source_refs": [{"kind": r["kind"], "artifact_id": r["artifact_id"]} for r in refs] + [provenance]}
+        return plan
+
+    def meeting_action_execute(self, persona, plan):
+        """Replay only the exact journaled command. Submission is never acceptance."""
+        result = {"ticket_id": plan["ticket_id"], "delivered_by": persona["persona_id"],
+                  "run_id": plan["run_id"], "run_ref": plan["run_ref"], "packet_id": plan["packet_id"]}
+        if plan["persona_id"] != persona["persona_id"] or plan["tenant_id"] != persona["tenant_id"]:
+            return {**result, "status": "rejected", "reason": "execution_identity_mismatch"}
+        capability = self.action_capability(persona)
+        if not capability.get("executable"):
+            return {**result, "status": "unavailable", "reason": capability.get("blocked_reason", "capability_denied")}
+        try:
+            command = dict(plan["command"])
+            if plan.get("note"):
+                note = self._action_payload(self._action_http(persona, "/api/research/notes", method="POST", body=plan["note"]))
+                binding = note.get("_meeting_binding") or {}
+                if binding.get("tenant_id") != persona["tenant_id"] or binding.get("ticket_id") != plan["ticket_id"]:
+                    raise ValueError("note_receipt_scope_mismatch")
+                command["evidence_refs"] = [{"kind": "research_note", "artifact_id": note["note_id"]}]
+            ticket = self._action_payload(self._action_http(persona, "/api/research/tickets/" + quote(plan["ticket_id"], safe=""),
+                                               method="PATCH", body={"patch": command}))
+            target = "submitted" if command["action"] == "submit" else "waiting_for_input"
+            if ticket.get("ticket_id") != plan["ticket_id"] or ticket.get("tenant_id") != persona["tenant_id"] \
+                    or ticket.get("owner") != persona["persona_id"] or ticket.get("action_state") != target:
+                raise ValueError("ticket_receipt_mismatch")
+            return {**result, "status": target, "revision": ticket["revision"],
+                    "evidence_refs": ticket.get("evidence_refs") or [], "required_actor": ticket.get("required_actor")}
+        except HTTPError as exc:
+            return {**result, "status": "unavailable" if exc.code >= 500 else "rejected", "reason": f"owner_http_{exc.code}"}
+        except Exception as exc:
+            return {**result, "status": "unavailable", "reason": type(exc).__name__}
+
+    def meeting_action_recover(self, persona, snapshots):
+        # At most four old writes per ordinary tick. Pending plans remain in the
+        # existing packet retention, never a second queue/store or another cadence.
+        completed, results = set(), []
+        plans = {}
+        for packet in snapshots.values():
+            if packet.get("tenant_id") != persona["tenant_id"] or packet.get("persona_ids") != [persona["persona_id"]]:
+                continue
+            cycle = packet.get("persona_cycle", {})
+            for result in cycle.get("meeting_action_recovery", []):
+                if result.get("status") != "unavailable":
+                    completed.add((result["ticket_id"], result["packet_id"]))
+            for plan in cycle.get("meeting_action_attempts", []):
+                identity = (plan["ticket_id"], plan["packet_id"])
+                if plan.get("result") and plan["result"].get("status") != "unavailable":
+                    completed.add(identity)
+                else:
+                    plans[identity] = plan
+        for identity, plan in plans.items():
+            if identity not in completed and len(results) < MEETING_ACTION_PAGE_SIZE:
+                results.append(self.meeting_action_execute(persona, plan))
+        return results
+
     def observe(self, persona, *, since=None):
         pid, tenant = persona["persona_id"], persona["tenant_id"]
         version, reason = active_harness_version(persona)
@@ -1132,7 +1402,8 @@ class CycleOwners:
             regime_tag=(observe.get("regime") or {}).get("regime_tag") or "")
         caller = case_files.Caller(actor_id=self.env.get("PANTHEON_CYCLE_ACTOR_ID", CONTROLLER_NAME),
                                    actor_roles=roles, session_id=packet_id, persona_id=persona["persona_id"])
-        return case_files.compose_case_file(case_subject, caller, case_files.Owners.from_env(self.env))
+        return _action_case_file(
+            case_files.compose_case_file(case_subject, caller, case_files.Owners.from_env(self.env)), observe)
 
     def regime(self, persona, observe, run):
         subject = observe.get("cycle_subject") or {}
