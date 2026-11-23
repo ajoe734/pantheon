@@ -809,7 +809,12 @@ def _visible_action_data(
             return None
         if value.get("tenant_id") and tenant_id and value["tenant_id"] != tenant_id:
             return None
-        if _is_agora_or_trader_record(value) and not _can_view_trader(
+        kind = str(value.get("kind") or value.get("subject_kind") or "").strip().lower()
+        if kind in {"trader", "agora_user"}:
+            # Typed refs use the ordinary subject-ref redaction semantics,
+            # including when nested in action evidence or synthesis fallback.
+            value = _shape_subject_ref(value, is_operator=is_operator, caller_user_id=caller_user_id)
+        elif _is_agora_or_trader_record(value) and not _can_view_trader(
             _extract_trader_id(value), is_operator=is_operator, caller_user_id=caller_user_id
         ):
             return None
@@ -2058,5 +2063,5 @@ def read_human_inbox_meeting_items(
     else:
         surfaces["research"] = {"status": "unavailable", "reason": "research_owner_unconfigured"}
     states = [s["status"] for s in surfaces.values()]
-    return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if "ok" in states else "unavailable",
+    return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if any(s in {"ok", "degraded"} for s in states) else "unavailable",
                    "source": "bff_composed", "snapshot_at": snapshot_at, "surfaces": surfaces}

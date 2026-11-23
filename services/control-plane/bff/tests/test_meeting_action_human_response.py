@@ -302,9 +302,52 @@ def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetin
     assert body["meta"]["partial"] is True
 
 
+@pytest.mark.parametrize("kind", ["trader", "agora_user"])
+@pytest.mark.parametrize("viewer,roles,allowed", [
+    ("op-alice", ["operator"], True),
+    ("trader-alice", ["viewer"], True),
+    ("trader-bob", ["viewer"], False),
+])
+@pytest.mark.parametrize("top_level", ["present", "absent", "null"])
+def test_typed_action_subject_refs_follow_existing_visibility(
+    meetings_stack, kind, viewer, roles, allowed, top_level,
+):
+    client, _, state = meetings_stack
+    detail = state["details"]["mtg-001"]
+    ref = {"kind": kind, "id": "trader-alice"}
+    detail["subject_ref"] = copy.deepcopy(ref)
+
+    def action_fields(subject):
+        record = {"subject_ref": subject, "evidence_refs": [subject],
+                  "recorded_disposition": {"subject_ref": subject}}
+        return {"series_subject_ref": subject, "actions": [record],
+                "prior_actions": [record], "participant_capabilities": [record],
+                "prior_action_reviews": [record], "action_read": record,
+                "action_page_info": record}
+
+    for key, value in action_fields(ref).items():
+        detail["synthesis"][key] = copy.deepcopy(value)
+        if top_level == "present":
+            detail[key] = copy.deepcopy(value)
+        elif top_level == "null":
+            detail[key] = None
+    original = copy.deepcopy(detail)
+    response = client.get("/bff/management/meetings/mtg-001",
+                          headers=make_headers(sub=viewer, roles=roles))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    expected_ref = ref if allowed else {"kind": kind, "redacted": True}
+    assert body["subject_ref"] == expected_ref
+    for container in (body, body["synthesis"]):
+        for key, expected in action_fields(expected_ref).items():
+            assert container[key] == expected
+    assert detail == original
+
+
+@pytest.mark.parametrize("next_page_token", [None, "more-human-work"])
 @pytest.mark.parametrize("store_missing", [False, True])
 def test_research_inbox_survives_missing_consultation_and_read_store(
-    inbox_meetings_stack, monkeypatch, store_missing,
+    inbox_meetings_stack, monkeypatch, store_missing, next_page_token,
 ):
     client, service, _ = inbox_meetings_stack
     client.app.add_middleware(OwnerReadContextMiddleware)
@@ -322,7 +365,7 @@ def test_research_inbox_survives_missing_consultation_and_read_store(
         assert method == "GET" and urlsplit(url).path == "/api/research/tickets"
         assert parse_qs(urlsplit(url).query)["action_state"] == ["waiting_for_input"]
         assert parse_qs(urlsplit(url).query)["meeting_linked"] == ["true"]
-        return 200, {"data": [ticket()], "page_info": {"next_page_token": None}}
+        return 200, {"data": [ticket()], "page_info": {"next_page_token": next_page_token}}
 
     owner = ResearchServiceClient(base_url="http://research.test", http_request=transport)
     monkeypatch.setattr("services.control_plane.bff.research.client.ResearchServiceClient", lambda: owner)
@@ -335,8 +378,11 @@ def test_research_inbox_survives_missing_consultation_and_read_store(
         assert work[0]["source_id"] == ticket()["ticket_id"]
         assert len(calls) == reload_count
         assert body["meta"]["partial"] is True
+        assert body["meta"]["surfaces"]["meetings"]["status"] == "degraded"
+        assert body["meta"]["surfaces"]["human_inbox"]["status"] == "degraded"
         sources = body["meta"]["surfaces"]["meetings"]["surfaces"]
-        assert sources["research"]["status"] == "ok"
+        assert sources["research"]["status"] == ("degraded" if next_page_token else "ok")
+        assert sources["research"]["page_info"]["next_page_token"] == next_page_token
         assert sources["consultation"]["status"] == "unavailable"
 
 
