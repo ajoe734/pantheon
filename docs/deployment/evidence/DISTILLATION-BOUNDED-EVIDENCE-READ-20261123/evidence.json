@@ -37,15 +37,16 @@
     "writers": "No new writer, emitter, service, job, schema or schedule. Existing controller snapshots/loop records are overwritten or published on the existing tick; scalar summary is constant-sized and retained source ids are <=100.",
     "growth_per_day": "No additional storage substrate. Admission stays at the existing 100-source ceiling, now able to progress beyond old receipts. Existing permanent outbox receipt overhead continues to grow with genuinely new versions; no new global receipt cap is claimed.",
     "cleanup": "Existing queue prune: <=500 terminal payload/inbox rows per tick after 7 days; resolved dead letters after 30 days; compaction after 64 MiB pruned. Existing seed store behavior is unchanged. Read pages are released before the next fetch and the read-only connection closes at function exit.",
-    "manifest": "Existing writers are already enumerated in docs/operations/storage-manifest.json (source_ingestion controller/queue/seed entries); no writer registration added. Several entries still describe pre-remediation bounds, recorded as a residual for the RC3 manifest owner."
+    "manifest": "Existing writers are already enumerated in docs/operations/storage-manifest.json (source_ingestion controller/queue/seed entries); no writer registration added. Several entries still describe pre-remediation bounds, recorded as a residual for the RC3 manifest owner.",
+    "test_cleanup": "Task-owned local PostgreSQL tmpfs container removed after validation; temporary initial test venv removed. Standard checkout-scoped .venv-pantheon remains available for independent review."
   },
   "validation": {
-    "environment": "Temporary local Python 3.11 venv with source_ingestion requirements, pytest and psycopg; local PostgreSQL 16-alpine in a task-owned tmpfs container. No hosted writes or manual controller tick.",
-    "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=<local-test-dsn> timeout 180s /usr/bin/time -v <venv>/bin/python -m pytest services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_queue_lifetime.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_demand_priority.py -q --disable-warnings --maxfail=3",
+    "environment": "Repository-provisioned .venv-pantheon via python3 scripts/dev/provision_python_distribution.py, inheriting the supervisor-provided PANTHEON_DEPENDENCY_PYTHON. Local PostgreSQL 16-alpine in a task-owned tmpfs container. No hosted writes or manual controller tick.",
+    "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=<local-test-dsn> timeout 180s /usr/bin/time -v .venv-pantheon/bin/python3 -m pytest services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_queue_lifetime.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_demand_priority.py -q --disable-warnings --maxfail=3",
     "exit_status": 0,
-    "result": "176 passed, 13 warnings in 72.09s",
-    "wall_seconds": 73.44,
-    "process_peak_rss_kib": 141144,
+    "result": "176 passed, 13 warnings in 68.59s",
+    "wall_seconds": 69.68,
+    "process_peak_rss_kib": 138480,
     "measurement_limit": "RSS covers the local test process, not the PostgreSQL server and not the hosted controller. The 27,803-row incident-sized dataset is synthetic (27,598 collector market rows with 2 KiB metadata bodies + 205 eligible papers), not an export of hosted payload sizes.",
     "coverage": [
       "SQL payload page limits for tuple and dict result rows; old receipts ahead of new work",
@@ -58,7 +59,8 @@
     "other_checks": [
       "python3 -m py_compile on three runtime modules: exit 0",
       "git diff --check: exit 0",
-      "Embedded hosted probe compiled as Python: syntax valid; not executed on hosted"
+      "Embedded hosted probe compiled as Python: syntax valid; not executed on hosted",
+      "Repository provisioning verified services/scripts/integrations imports from a foreign cwd without PYTHONPATH; commit trailer range check passed"
     ]
   },
   "independent_review": {
