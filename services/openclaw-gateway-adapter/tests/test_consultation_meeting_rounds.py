@@ -515,6 +515,8 @@ def test_round_1_round_2_and_chair_synthesis_prompt_schemas_validate_meeting_fie
         "proposals_issued",
         "completed_no_proposal",
         "no_testable_hypothesis",
+        "actions_adopted",
+        "REVIEW",
     }
     synth_contrib = dict(synth_resp.json()["contribution"])
     assert synth_contrib["event_content"]["synthesis"]["outcome"] == "proposals_issued"
@@ -604,3 +606,108 @@ def test_configured_missing_shared_token_file_does_not_downgrade_to_adapter(tmp_
     monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
     with pytest.raises(FileNotFoundError):
         cp._memory_auth_token()
+
+
+def test_normal_chair_provider_schema_carries_explicit_adoption_and_prior_results(tmp_path):
+    import jsonschema
+    action = {'source_action_id': 'chair-research-1', 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+              'deliverable': 'Saved analysis', 'acceptance_criterion': 'Compare costs to the stated baseline',
+              'next_review': 'MT-1 pool:persona-alpha 2026-W48', 'source_refs': ['facts:item:1']}
+    event = {'claims': [{'claim': 'Adopt comparison', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Explicitly adopt one research action, zero formal proposals',
+                           'outcome': 'actions_adopted', 'proposals': [], 'actions': [action],
+                           'action_reviews': []}}
+    provider = _ProviderDouble(event_content_override=event)
+    reply = _post_turn(provider, tmp_path, idem_key='explicit-adoption', meeting={
+        'meeting_id': 'mtg-1', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+        'prior_actions': [{'action_id': 'original-owner-ticket', 'state': 'submitted'}],
+        'prior_action_evidence': [{'action_id': 'original-owner-ticket', 'status': 'ok',
+                                   'content': {'body': 'Real saved comparison costs 12 bps'}}],
+        'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'allowed',
+                                             'can_receive_persona_action': True}],
+        'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []},
+    })
+    assert reply.status_code == 200, reply.text
+    prompt = provider.prompts[0]
+    assert 'Real saved comparison costs 12 bps' in prompt
+    assert 'Round suggestions are advisory' in prompt and 'criterion' in prompt
+    assert 'zero proposals is valid' in prompt and 'can_receive_persona_action' in prompt
+    assert 'execution_authority=none' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    jsonschema.validate(event, schema)
+    returned = reply.json()['contribution']['event_content']['synthesis']
+    assert returned['actions'] == [action] and returned['proposals'] == []
+    malformed = json.loads(json.dumps(event))
+    del malformed['synthesis']['actions'][0]['next_review']
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(malformed, schema)
+
+
+def test_normal_chair_human_action_schema_uses_existing_operator_inbox(tmp_path):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    requirement = 'Only a human can obtain the broker-signed source statement.'
+    action = {'source_action_id': 'human-document', 'assignee': 'operator', 'assignee_kind': 'human',
+              'deliverable': 'Provide broker-signed statement', 'acceptance_criterion': 'Complete quarter of fees',
+              'next_review': 'MT-1 pool:persona-alpha 2026-W48', 'source_refs': ['facts:item:1'],
+              'human_requirement': requirement}
+    event = {'claims': [{'claim': 'Obtain the unavailable external document', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Adopt a specific human deliverable', 'outcome': 'actions_adopted',
+                           'proposals': [], 'actions': [action]}}
+    provider = _ProviderDouble(event_content_override=event)
+    meeting = {'meeting_id': 'mtg-1', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+               'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []}}
+    reply = _post_turn(provider, tmp_path, idem_key='human-adoption', meeting=meeting)
+    assert reply.status_code == 200, reply.text
+    prompt = provider.prompts[0]
+    assert 'existing tenant operator inbox' in prompt and 'Do not invent usernames' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    jsonschema.validate(event, schema)
+    assert schema == _meeting_event_content_schema(meeting)
+    for override in ({'assignee': 'fabricated-human'}, {'human_requirement': ''}, {'human_requirement': 'x' * 2001}):
+        malformed = json.loads(json.dumps(event))
+        malformed['synthesis']['actions'][0].update(override)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(malformed, schema)
+    malformed = json.loads(json.dumps(event))
+    del malformed['synthesis']['actions'][0]['human_requirement']
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(malformed, schema)
+
+
+def test_normal_chair_schema_preserves_bounded_deliverable_dataset_ids(tmp_path):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    action = {'source_action_id': 'data-analysis', 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+              'deliverable': 'Compare market feed observations', 'acceptance_criterion': 'Cite both feed records',
+              'next_review': 'next pool review', 'source_refs': ['facts:item:1'],
+              'required_data': ['tw_price_daily', 'tw_broker_top']}
+    event = {'claims': [{'claim': 'Use available data', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Adopt a data-aware action', 'outcome': 'actions_adopted',
+                           'proposals': [], 'actions': [action]}}
+    provider = _ProviderDouble(event_content_override=event)
+    meeting = {'meeting_id': 'mtg-data', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+               'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []}}
+    reply = _post_turn(provider, tmp_path, idem_key='data-adoption', meeting=meeting)
+    assert reply.status_code == 200, reply.text
+    assert reply.json()['contribution']['event_content']['synthesis']['actions'][0]['required_data'] == action['required_data']
+    prompt = provider.prompts[0]
+    assert 'Evidence-only analysis' in prompt and 'these exact requirements before assignment' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    assert schema == _meeting_event_content_schema(meeting)
+    for datasets in ([], ['x'] * 8):
+        sample = json.loads(json.dumps(event))
+        sample['synthesis']['actions'][0]['required_data'] = datasets
+        if datasets:
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(sample, schema)
+        else:
+            jsonschema.validate(sample, schema)
+    for datasets in (None, 'tw_price_daily', [''], ['x' * 257], [str(i) for i in range(9)]):
+        sample = json.loads(json.dumps(event))
+        sample['synthesis']['actions'][0]['required_data'] = datasets
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(sample, schema)
