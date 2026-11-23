@@ -36,6 +36,24 @@
     {
       "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
       "exit_code": 0,
+      "result": "22 passed, 221 warnings in 22.69s",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/tests/test_recommended_measure_consumers.py --disable-warnings",
+      "exit_code": 0,
+      "result": "179 passed, 4 optional TEST_DATABASE_URL cases skipped, 583 warnings in 94.88s",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest; python3 scripts/check_storage_manifest.py; git diff --check",
+      "exit_code": 0,
+      "result": "10 tests OK; manifest passed=true failures=[]; no whitespace errors",
+      "terminal_output": "inline-evidence-validation.txt"
+    },
+    {
+      "command": "RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings",
+      "exit_code": 0,
       "result": "16 passed, 161 warnings in 16.53s",
       "terminal_output": "human-actionable-validation.txt"
     },
@@ -130,5 +148,18 @@
   ],
   "handoff": "handoff.md",
   "contract": "contract.md",
-  "independent_review": "Required from assigned Antigravity on exact PR/head; not manufactured by the owner."
+  "independent_review": "Required from assigned Antigravity on exact PR/head; not manufactured by the owner.",
+  "inline_human_evidence_correction": {
+    "request": "Reopened existing task/PR to supply actual human report content through the original ticket, and project specific human requirement without per-row HTTP reads.",
+    "source_head_before_correction": "ad5dec939c33d12089a05653b4f73de07d56e8bc",
+    "refreshed_dev_base": "0c806ffed",
+    "code_anchor": "7d706886122f303ff8f22dad841c4a17d2d2e339",
+    "contract": "contract.md: optional evidence_note on submit/provide_input; existing KW-02 immutable body in same transaction as RW-01 CAS. Detail evidence_notes resolves original body and authenticated actor. Human-actionable direct-human rows carry existing description.",
+    "proof": "22 actual HTTP/PostgreSQL cases include six new inline cases: direct human submission with return/correction/accept; human input then original Persona resumption and exact reply recovery; denied/stale/foreign/forged/invalid/conflicting commands; role refusal before notes; rollback after real note insert and subsequent recovery; six simultaneous exact retries. Existing reference-only and ordinary ticket/note workflows pass. Probe checks actual body against note owner and rejects missing body.",
+    "compatibility": "Existing human_actionable SQL scope/cursors preserved. Ordinary/default summaries unchanged. Original note POST and reference-only submit/provide_input preserved. No historical deletion, new collection, route or alternate writer.",
+    "runtime_budget": "storage.json inline_evidence_budget; original table caps and lifetime growth remain. One successful inline note insert and ticket CAS committed together; exact retries/failed commands zero writes. <=16 note records/detail/probe; lists never resolve note bodies.",
+    "validation": "inline-evidence-validation.txt",
+    "review": "Fresh assigned Antigravity exact-head review required. Previous review does not cover changed source.",
+    "hosted": "Not deployed or accepted; original component and integrated hosted acceptance owners retain evidence obligations."
+  }
 }

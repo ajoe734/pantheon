@@ -624,4 +624,12 @@ def test_read_only_acceptance_probe_uses_real_owner_http(world):
         return advance(world[1].get(path, params=query, headers=headers()))
     result = probe.inspect("http://testserver", "tenant-a", accepted["ticket_id"], "unused", "accepted", fetch)
     assert result["read_only"] is True and result["series_ticket_count"] == 1
+    assert result["verified_note_count"] == 1
+    def missing_body(path, query):
+        result = fetch(path, query)
+        if path.startswith(URL + "/"):
+            result["evidence_notes"][0]["body"] = ""
+        return result
+    with pytest.raises(AssertionError):
+        probe.inspect("http://testserver", "tenant-a", accepted["ticket_id"], "unused", "accepted", missing_body)
     assert advance(world[1].get(f"{URL}/{ticket['ticket_id']}", headers=headers())) == accepted

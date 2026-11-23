@@ -113,6 +113,59 @@ Source validation and exact commands are recorded in human-actionable-validation
 and evidence.json. Existing RC2 integration/hosted, RC3 retention and RC6 metadata
 residuals below retain their owners; this correction adds no new residual class.
 
+## Inline human deliverable correction (2026-11-23)
+
+The next reopened scope starts from `ad5dec939`, with `origin/dev` at
+`0c806ffed` already contained. Before editing, traced the existing ticket PATCH
+allowlist, KW-02 `_create_meeting_note`, scoped saved artifact/note reader in
+`main.py`, transaction/CAS implementation and actual HTTP/PostgreSQL tests.
+`human_actionable` is preserved. Code anchor: `7d7068861`.
+
+PATCH submit/provide_input now accepts bounded `evidence_note={title,body,
+source_refs?}` alongside optional reference-only evidence. It calls the original
+KW-02 writer with the authenticated actor and original ticket, inside the same
+transaction as the original ticket CAS. Row locking serializes concurrent commands;
+revision/permission checks run before note creation. A failed insert, capacity
+check or ticket write rolls back both. Exact retries write zero rows/events;
+conflicting content cannot replace the report. The corrected-report path uses a
+new command key and preserves prior bodies/history. No second ticket is created.
+
+Original-ticket authorized detail and PATCH responses resolve `evidence_notes`
+with the real saved body, sources, checksum and stamped human identity. Submission
+and supplied human input stay distinct reference envelopes. The original Persona
+and reviewer read the report on that same ticket. Human input returns the same
+owner/id to in_progress. Immediate exact response recovery is allowed for the
+original input provider; after further owner transitions the provider cannot use
+its old request to read new private results without normal ticket visibility.
+No additional general read/list permissions are introduced.
+
+The canonical next instruction also requested the existing direct human ticket
+description on `human_actionable=true` pages. It is projected only for human
+assignments, from the same bounded SQL page. Ordinary/default list shapes and
+Persona input_request.reason are unchanged. BFF and FE can use this field for
+the chair's specific requirement, and evidence_note for the actual report.
+
+All former callers still serve distinct supported cases: separate note POST
+for Persona/manual prepared evidence, reference-only submit/provide_input for
+saved results, legacy ordinary RW-01/KW-02 CRUD, and list summaries for bounded
+queues. No endpoint or historical record was deleted. The old reference-only
+command allowlist branch was extended rather than creating an alternate writer.
+`main.py` already forwards the original patch and authenticated context; no new
+route or identity adapter is needed. BFF/FE forwarding and rendering remain with
+BFF-MEETING-ACTION-HUMAN-INBOX-20261123 and FE-MEETING-ACTION-FOLLOWTHROUGH-20261123.
+
+The real HTTP/PostgreSQL cases exercise direct human submit/return/correct/accept,
+requested input and original Persona resumption, actual stored bodies and their
+readback, denied/forged/foreign/stale/malformed requests with zero note writes,
+six simultaneous exact retries, conflict without overwrite, and injected failure
+after the real note insert followed by recovery. The read-only probe now verifies
+body/source/identity equality against the original note owner and falsifies a
+missing body. `inline-evidence-validation.txt` records terminal results. Existing
+runtime caps and daily growth allocation remain in `storage.json`; the existing
+notes writer manifest now names both POST and inline entrypoints. Lists never
+load note bodies; details/probe resolve at most 16 distinct note records on demand.
+The existing RC2/RC3/RC6 residuals below retain their original owners.
+
 ## Residual findings and owning disposition
 
 1. **BFF saved-artifact surface metadata regression, RC6 existing research/read-source

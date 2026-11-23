@@ -32,7 +32,7 @@ PATCH uses `{"patch":{"action":"submit","expected_revision":1,
 "idempotency_key":"run-result-1","evidence_refs":[{"kind":"research_artifact",
 "artifact_id":"saved-output-id"}]}}`. Actions are start, request_input,
 provide_input, submit, return, accept. request_input requires reason and
-human_actor_id; provide_input requires evidence_refs and resumes the same owner.
+human_actor_id; provide_input requires evidence_refs or evidence_note and resumes the same owner.
 return/accept require reason and review_source (the reviewing meeting ID).
 Evidence is resolved again by Research through its existing tenant-scoped saved
 artifact owner; references are metadata, never caller-asserted verified booleans.
@@ -81,6 +81,47 @@ actor and key. Submission refs use `{kind:"research_note",artifact_id:note_id}`.
 Ordinary note writes cannot forge or replace these bindings. Meeting notes are
 excluded from the legacy unscoped note list and detail requires ticket access.
 Every meaningful submitted claim still needs the reviewer's criterion check.
+
+The original ticket PATCH also accepts an inline deliverable on `submit` or
+`provide_input`, using the same authenticated principal and note owner:
+
+```json
+{"patch":{"action":"provide_input","expected_revision":1,
+ "idempotency_key":"licensed-report-1",
+ "evidence_note":{"title":"Report excerpt","body":"The actual supplied report content",
+                  "source_refs":["licensed-report:page-3"]}}}
+```
+
+`evidence_note` accepts only title (nonempty, <=256 characters), body (nonempty,
+<=12000 characters) and optional source_refs (array, <=8). The entire command
+and the resulting immutable note must each fit 16 KiB encoded JSON. An inline
+note may be combined with at most 7 ordinary evidence_refs; reference-only
+clients retain the existing contract. Null or malformed notes are refused.
+Actor, tenant, ticket, note identity and checksum are stamped by the owner,
+never accepted from the inline object. Owner/role/state/revision and evidence
+checks run before note creation. Note insertion and ticket CAS share one
+PostgreSQL transaction on the locked original ticket. Failures roll back both;
+simultaneous exact retries commit one note and one history event. A changed
+payload with the same actor/key is refused and cannot overwrite the old body.
+Review return uses a fresh key for a corrected report; both notes stay immutable.
+
+PATCH and authorized GET detail resolve `evidence_notes` from the current
+submission and human_input refs, with note_id, title, actual body, source_refs,
+actor_id, tenant_id, ticket_id and checksum. Bodies stay only in the existing
+notes table, outside repeated ticket history; list rows carry references only.
+The original Persona and assigned reviewer can read the supplied input from
+the original ticket. A required human's exact provide_input retry can recover
+the response while that transition is still current, even though required_actor
+has resumed the Persona. It does not grant later direct/list access; after a
+subsequent transition, that historical retry returns 404 if the human no longer
+has ticket access, preventing exposure of later owner results. It never writes
+a second note or transition.
+
+For `human_actionable=true`, direct human-assigned meeting rows also project
+their existing bounded description, which carries the chair's specific human
+requirement. Persona-input rows use input_request.reason. Default/false meeting
+lists and ordinary ticket summaries retain their previous shapes. The filter
+uses the same single bounded SQL page, without per-ticket HTTP reads.
 
 Resource and interoperability details:
 

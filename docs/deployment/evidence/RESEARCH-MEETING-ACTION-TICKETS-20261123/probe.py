@@ -48,6 +48,20 @@ def inspect(base_url, tenant, ticket_id, token, require_state=None, fetch=None):
         assert detail["status"] == "closed" and detail["evidence_refs"]
         assert history[-1]["action"] == "accept"
         assert detail["review_decision"]["reason"] and detail["review_decision"]["review_source"]
+    refs = [*detail.get("evidence_refs", []),
+            *(detail.get("human_input") or {}).get("evidence_refs", [])]
+    note_refs = {r["artifact_id"]: r for r in refs if r["kind"] == "research_note"}
+    notes = {n["note_id"]: n for n in detail.get("evidence_notes", [])}
+    assert len(note_refs) <= 16 and set(notes) == set(note_refs)
+    for note_id, ref in note_refs.items():
+        note = notes[note_id]
+        saved = get("/api/research/notes/" + urllib.parse.quote(note_id, safe=""))
+        assert note["body"].strip() and note["title"].strip()
+        assert note["tenant_id"] == tenant and note["ticket_id"] == ticket_id
+        assert saved["_meeting_binding"] == {"tenant_id": tenant, "ticket_id": ticket_id,
+                                              "actor_id": note["actor_id"]}
+        assert saved["_meeting_digest"] == note["checksum"] == ref["checksum"]
+        assert all(saved[k] == note[k] for k in ("title", "body", "source_refs"))
     query = {"meeting_linked": "true", "meeting_type": action["meeting_type"],
              "subject_ref": action["subject_ref"], "owner": detail["owner"], "page_size": 100}
     ids, tokens = set(), set()
@@ -69,7 +83,8 @@ def inspect(base_url, tenant, ticket_id, token, require_state=None, fetch=None):
         raise ValueError("Series exceeds probe's 100-page budget; no partial-success claim")
     assert ticket_id in ids
     return {"read_only": True, "ticket_id": ticket_id, "state": detail["action_state"],
-            "revision": detail["revision"], "series_ticket_count": len(ids), "pages": len(tokens) + 1}
+            "revision": detail["revision"], "series_ticket_count": len(ids), "pages": len(tokens) + 1,
+            "verified_note_count": len(note_refs)}
 
 
 def main():

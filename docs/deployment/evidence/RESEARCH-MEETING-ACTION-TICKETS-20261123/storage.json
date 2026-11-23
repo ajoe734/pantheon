@@ -42,5 +42,13 @@
     "Local PostgreSQL JSONB text bytes, not hosted relation size/WAL/MVCC growth.",
     "Maximum growth charges full lifetime capacity to each new origin; not a measured daily write rate.",
     "Actual meeting/chair/cycle snapshot byte caps are verified by their producer tasks and final integrated acceptance."
-  ]
+  ],
+  "inline_evidence_budget": {
+    "cadence": "On-demand authorized submit/provide_input; existing Persona cadence only. No new job, table, queue or collection.",
+    "successful_write_count": "One existing-ticket CAS and at most one existing-KW-02 note insert, committed together. Failed/denied/stale commands and exact retries: zero writes/events.",
+    "size_count": "Existing command/note <=16384 encoded bytes; <=128 notes per ticket; <=256 history entries and <=262144 encoded ticket bytes. Inline note plus <=7 ordinary refs.",
+    "hosted_growth_per_day": "Same <=72 scheduled-origin tickets/week; one inline note each <=10.29 notes/day (<=168521.15 encoded note bytes/day at max16KiB). No growth beyond already-budgeted lifetime <=128 notes/ticket (~20.58MiB/day maximum lifetime note payload allocated to new scheduled origins). Unscheduled human-convened meetings counted separately.",
+    "reads": "Lists do not resolve bodies. Authorized detail resolves <=16 distinct note primary keys (current submission plus human_input), <=256KiB note records in addition to original <=256KiB ticket. Direct human-actionable descriptions come from the same SQL page, <=100 rows and no extra per-ticket requests. Probe adds <=16 note GETs on demand.",
+    "cleanup": "No temporary/orphan note after partial inline failure: transaction rollback removes both writes. Successful immutable notes retain original preservation policy; full-table retention remains unbounded RC3 WP3.1. No deleting historical or open obligations."
+  }
 }

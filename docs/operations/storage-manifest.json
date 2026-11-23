@@ -5928,7 +5928,7 @@
     "services/research/write_owner.py",
     "services/research/main.py"
    ],
-   "growth_driver": "Existing KW-02 table. Explicit authenticated immutable meeting-bound analysis/evidence note; deterministic ticket/actor/key insertion. No extra scheduler; <=128 notes/ticket, exact retries write 0 rows.",
+   "growth_driver": "Existing KW-02 table. Explicit authenticated immutable meeting-bound analysis/evidence note, via note POST or inline ticket submit/provide_input evidence_note. Inline note insertion and original-ticket CAS share one transaction; rejected/failed commands and exact retries write 0 rows/events. Deterministic ticket/actor/key insertion. No extra scheduler; <=128 notes/ticket.",
    "growth_per_day": "Same <=72 scheduled-origin tickets/week; each note local fixture 539 JSONB-text bytes (1 per completed ticket). Typical 1 action/meeting x1 note = ~693 B/day; 8 actions x1 note = ~5.54 KB/day. Lifetime maximum 128 notes x16 KiB per ticket -> <=20.58 MiB/day across scheduled origins; each human-convened meeting adds <=8 tickets x128 notes (<=16 MiB lifetime payload). Existing ordinary notes have no measured hosted rate.",
    "cap": "Each meeting note command <=16384 bytes, body <=12000 characters, <=8 source refs; <=128 notes/tenant/ticket via advisory transaction lock and count. Whole table remains unbounded: preserve ordinary notes and open-obligation evidence; no speculative TTL or history deletion.",
    "cleanup": "No new cleanup job. Immutable evidence retained with existing notes; no dangling accepted references introduced by automatic pruning. Whole-table archival/cleanup belongs to RC3 WP3.1.",
