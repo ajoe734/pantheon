@@ -1435,6 +1435,20 @@ def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path 
         raise ValueError("at most 8 adopted actions per meeting")
     results = []
     for action in actions:
+        # Also guard frozen decisions from older producers/retries. A model's
+        # username is not delivery evidence; leave it visibly unresolved and
+        # do not create an unreachable ticket or reuse a misleading receipt.
+        if action.get("assignee_kind") == "human":
+            requirement = action.get("human_requirement")
+            error = None
+            if action.get("assignee") != "operator":
+                error = "human_assignee_unresolvable_use_operator_inbox"
+            elif not isinstance(requirement, str) or not requirement.strip() or len(requirement) > 2000:
+                error = "human_requirement_required_or_unbounded"
+            if error:
+                action.update(state="dispatch_pending", dispatch_error=error)
+                results.append(action)
+                continue
         source = str(action["source_action_id"])
         key = f"meeting-action:{tenant}:{mid}:{source}"
         saved = ledger.get(key) or {}
@@ -1449,7 +1463,12 @@ def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path 
         for field in ("due_at", "next_review"):
             if action.get(field):
                 origin[field] = action[field]
-        body = {"title": action["deliverable"][:256], "description": action["acceptance_criterion"],
+        # Keep the reason in the existing ticket description for the normal
+        # owner list -> BFF Human Inbox path. Criterion/deliverable retain their
+        # structured origin fields; no separate human-task store is involved.
+        description = (action["human_requirement"] if action["assignee_kind"] == "human"
+                       else action["acceptance_criterion"])
+        body = {"title": action["deliverable"][:256], "description": description,
                 "priority": "normal", "owner": action["assignee"], "meeting_action": origin}
         # Keep the original request even after a process restart; divergent replay must fail at the owner.
         if saved.get("request") is not None and saved["request"] != body:

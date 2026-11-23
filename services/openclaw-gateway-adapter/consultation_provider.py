@@ -839,6 +839,13 @@ MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
                             "human_requirement": {"type": "string", "maxLength": 2000},
                         },
                         "anyOf": [{"required": ["due_at"]}, {"required": ["next_review"]}],
+                        "allOf": [{
+                            "if": {"properties": {"assignee_kind": {"const": "human"}}},
+                            "then": {"required": ["human_requirement"], "properties": {
+                                "assignee": {"const": "operator"},
+                                "human_requirement": {"type": "string", "minLength": 1, "maxLength": 2000},
+                            }},
+                        }],
                         "additionalProperties": False,
                     },
                 },
@@ -936,6 +943,9 @@ def _meeting_persona_prompt(
             "Assign a Persona only when its owner-issued action capability permits the specific work. "
             "Public risk opinions and role labels grant neither sponsorship nor execution permission. "
             "Human work requires a specific human_requirement, never a transient owner outage. "
+            "Use assignee=operator for human work: this is the existing tenant operator inbox, "
+            "where an authenticated operator can supply the material. Do not invent usernames or "
+            "infer a human recipient from convened_by, role labels or the chair's identity. "
             "Review prior_actions first: compare submitted evidence contents to the exact acceptance_criterion; "
             "emit action_reviews with the original action_id, accept/return, reason, exact criterion and "
             "evidence_refs seen. Do not accept evidence that is unavailable, truncated or not read. "

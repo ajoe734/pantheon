@@ -2159,9 +2159,17 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
                 reason = "persona_owner_did_not_allow_assignment"
         elif action.get("assignee_kind") != "human":
             reason = "invalid_assignee_kind"
-        # A human assignment must be deliberate, with a stated human-only requirement.
-        if action.get("assignee_kind") == "human" and not str(item.get("human_requirement") or "").strip():
-            reason = "human_requirement_required"
+        if action.get("assignee_kind") == "human":
+            # RW-01 already permits the tenant's authenticated operators to act
+            # on this inbox. Neither model text nor caller-supplied convened_by
+            # proves that an arbitrary username is a reachable human principal.
+            if action["assignee"] != "operator":
+                reason = "human_assignee_unresolvable_use_operator_inbox"
+            requirement = item.get("human_requirement")
+            if not isinstance(requirement, str) or not requirement.strip() or len(requirement) > 2000:
+                reason = "human_requirement_required_or_unbounded"
+            else:
+                action["human_requirement"] = requirement.strip()
         due, review = item.get("due_at"), item.get("next_review")
         if due:
             try:
@@ -2179,8 +2187,7 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
             rejected.append({"index": idx, "reason": reason})
             continue
         source_ids.add(action["source_action_id"])
-        actions.append({**action, "source_refs": list(refs), "state": "dispatch_pending",
-                        **({"human_requirement": str(item["human_requirement"])[:2000]} if item.get("human_requirement") else {})})
+        actions.append({**action, "source_refs": list(refs), "state": "dispatch_pending"})
     seen_reviews = set()
     raw_reviews = raw.get("action_reviews") or []
     if not isinstance(raw_reviews, list) or len(raw_reviews) > 8:
