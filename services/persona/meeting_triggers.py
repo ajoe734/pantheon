@@ -312,7 +312,7 @@ class MeetingTriggers:
             self._mt1(ctx, observe, pid)
             self._mt2(ctx, observe, cycle, persona)
             first = sorted(enrolled)[0] if enrolled else None
-            self._mt3(ctx, pid, first)
+            self._mt3(ctx, pid, first, enrolled)
             self._mt4(ctx, pid, first, enrolled)
             self._mt5(ctx, observe, pid, enrolled)
         except Exception as exc:  # the cycle runs without meetings rather than failing
@@ -358,14 +358,15 @@ class MeetingTriggers:
                       _key("MT-2", persona["tenant_id"], pid, sorted(reasons), ctx["week"] if not window_id else window_id),
                       subject_ref=f"persona:{pid}", evidence_refs=[f"harness-patch:{p}" for p in open_patches[:5]])
 
-    def _mt3(self, ctx, pid, first):
+    def _mt3(self, ctx, pid, first, enrolled=()):
         week = ctx["week"]
         if pid != first:
             ctx["record"]["not_fired"].append({"meeting_type": "MT-3", "reason": "not_first_enrolled_persona"})
             return
         tenant = ctx["persona"]["tenant_id"]
         self._convene(ctx, "MT-3", "weekly_first_enrolled_persona", f"Strategy ideation ({week})",
-                      _key("MT-3", tenant, week), subject_ref=f"iso-week:{week}")
+                      _key("MT-3", tenant, week), subject_ref=f"iso-week:{week}",
+                      participants=enrolled_roster(pid, enrolled, trading_cap=4, extras=(RED_TEAM_ENTRY,)))
         if not self.config.request_weekly_outlier_run:
             return
         if self._weekly_run_done(ctx):
@@ -933,6 +934,24 @@ def _build_mt5_case_file(
 
 
 # ------------------------------------------------------------------- MT-6 ---
+RISK_OFFICER_ENTRY = {"persona_id": "persona-risk-officer", "role": "risk_reviewer"}
+RED_TEAM_ENTRY = {"persona_id": "persona-red-team", "role": "red_team"}
+MAX_MEETING_PARTICIPANTS = 5
+
+
+def enrolled_roster(chair_id: str, enrolled: Sequence[str], *, trading_cap: int,
+                    extras: Sequence[Mapping[str, str]] = ()) -> list[dict[str, str]]:
+    """Explicit roster: the convening persona chairs, other enrolled trading personas are peers, then panel roles.
+
+    Without it the consultation owner builds a one-persona default roster for a persona convener and refuses
+    cross-persona meetings (``insufficient_participants``). Total size stays within max_participants.
+    """
+    ids = [chair_id, *[p for p in sorted(dict.fromkeys(enrolled or ())) if p != chair_id]]
+    cap = max(1, min(trading_cap, MAX_MEETING_PARTICIPANTS - len(extras)))
+    return [{"persona_id": p, "role": "chair" if i == 0 else "trading_peer"} for i, p in enumerate(ids[:cap])] \
+        + [dict(e) for e in extras]
+
+
 def quarter_review_due(today: date, cfg: MeetingTriggerConfig) -> bool:
     """Quarter end: the last N days of a quarter or the first N days of the next (allocation runs after close)."""
     nxt = (today + timedelta(days=cfg.quarter_end_days))
@@ -942,16 +961,21 @@ def quarter_review_due(today: date, cfg: MeetingTriggerConfig) -> bool:
 
 def convene_quarterly_review(*, tenant: str, quarter: str, opener: Callable[..., dict[str, Any]],
                              reader: Callable[[str], "dict | None"], chair_persona_id: str,
-                             config: MeetingTriggerConfig | None = None) -> dict[str, Any]:
+                             config: MeetingTriggerConfig | None = None,
+                             enrolled: Sequence[str] = ()) -> dict[str, Any]:
     """Open MT-6 for the closed quarter and read its state; returns what the allocation run needs.
 
     status: ``ready`` (closed minutes: evidence_ref set), ``pending`` (convened, still running),
     ``refused`` / ``unavailable`` (reason recorded; the allocation keeps its own gates and may proceed).
     """
+    extra: dict[str, Any] = {}
+    if enrolled:  # the first enrolled persona chairs; the evaluator convener is not a trading persona
+        extra["participants"] = enrolled_roster(sorted(enrolled)[0], enrolled, trading_cap=3,
+                                                extras=(RISK_OFFICER_ENTRY, RED_TEAM_ENTRY))
     try:
         opened = opener(meeting_type="MT-6", topic=f"Quarterly review {quarter}",
                         convened_by={"kind": "persona", "id": chair_persona_id},
-                        subject_ref=f"quarter:{quarter}", idempotency_key=_key("MT-6", tenant, quarter))
+                        subject_ref=f"quarter:{quarter}", idempotency_key=_key("MT-6", tenant, quarter), **extra)
     except Exception as exc:
         return {"status": "refused", "quarter": quarter, "reason": _reason(exc)}
     meeting_id = opened.get("meeting_id")

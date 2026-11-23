@@ -687,13 +687,14 @@ def quarterly_review_from_env(env: Callable[..., str]) -> Callable[[str], dict[s
     tenant = env("PANTHEON_TENANT_ID", "default")
     chair = env("PERSONA_EVALUATOR_MEETING_CHAIR", "persona-evaluator-agent")
 
-    def review(quarter: str) -> dict[str, Any]:
+    def review(quarter: str, enrolled: list[str] = ()) -> dict[str, Any]:
         from services.consultation.client import ConsultationServiceClient
         from services.persona.meeting_triggers import convene_quarterly_review
         client = ConsultationServiceClient(tenant_id=tenant, service_actor=f"persona:{chair}")
         return convene_quarterly_review(
-            tenant=tenant, quarter=quarter, chair_persona_id=chair, reader=client.get_meeting,
+            tenant=tenant, quarter=quarter, chair_persona_id=chair, reader=client.get_meeting, enrolled=enrolled,
             opener=lambda **kw: client.open_persona_meeting(tenant_id=tenant, **kw))
+    review.accepts_enrolled = True  # type: ignore[attr-defined]
     return review
 
 
@@ -734,7 +735,10 @@ def paper_cycle_once(
         # MT-6 is convened before the allocation run; its minutes ride along as evidence on every persona's
         # factors. The allocation keeps its own gates: a refused or unavailable review is recorded, not fatal.
         try:
-            review = quarterly_review(quarter)
+            if getattr(quarterly_review, "accepts_enrolled", False):
+                review = quarterly_review(quarter, enrolled=list(saved.get("paper_persona_ids") or []))
+            else:
+                review = quarterly_review(quarter)
         except Exception as exc:
             review = {"status": "unavailable", "quarter": quarter, "reason": type(exc).__name__}
         if review.get("status") == "pending":
