@@ -168,6 +168,14 @@
       "owner": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 + PERSONA-MEETING-ACTION-EXECUTION-20261123 + BFF-MEETING-ACTION-HUMAN-INBOX-20261123 + integrated acceptance owner",
       "finding": "Independent producer prompt/cycle reference budgets and genuine cross-meeting owner execution remain their scoped acceptance obligations.",
       "disposition": "Contract and affected writers recorded; owner component fixtures must not be reported as integrated or hosted success."
+    },
+    {
+      "id": "canonical-delivery-admission-lock-wait",
+      "class": "Existing development-tooling canonical-state maintenance domain; coordinator to attach to owning work package",
+      "owner": "Supervisor/TaskStore maintenance owner (Gemini/fleet coordinator)",
+      "finding": "Governed handoff blocked before mutation for306s on shared task-state.lock; separate governed blocker attempt timed out after20s.",
+      "disposition": "Operational hold, no inferred lock-holder defect or new symptom task. Source-ready delivery needs fresh exact-head admission/review after central maintenance recovery.",
+      "evidence": "required-data-validation.txt"
     }
   ],
   "handoff": "handoff.md",
@@ -199,5 +207,13 @@
     "runtime_budget": "storage.json required_data_budget and existing research.research_tickets manifest entry; zero extra write events, <=4115 bytes metadata per ticket within original assignment/record caps.",
     "review": "Fresh assigned Antigravity exact-head review required after this reopened scope; previous approval is not reused.",
     "delivery": "Not merged, deployed or hosted accepted; original RC2/RC3/RC6 residual owners remain unchanged."
+  },
+  "delivery_admission_hold": {
+    "attempted_pr_head": "bead9792126c68844970b86778cfab15aedaa693",
+    "handoff": "Blocked 306s acquiring shared canonical task-state.lock during preflight read_task_snapshot; owner interrupted only own process; terminal exit130, no canonical mutation reached.",
+    "blocker": "Bounded governed blocker attempt to Gemini timed out after20s, terminal exit124, no output. Successful blocker transition not claimed.",
+    "owner": "Existing development tooling / supervisor TaskStore maintenance owner; fleet coordinator Gemini",
+    "disposition": "Do not remove lock, patch command runtime or hand-edit canonical state. Source/evidence committed/pushed; resume fresh exact-head handoff to Antigravity once admission recovers. Review/merge/deployment/acceptance pending.",
+    "terminal_record": "required-data-validation.txt"
   }
 }

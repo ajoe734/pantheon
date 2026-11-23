@@ -201,6 +201,20 @@ hosted-accepted claim is made. Existing residuals below retain their owners.
 
 ## Residual findings and owning disposition
 
+0. **Canonical delivery admission contention, existing development tooling /
+   supervisor TaskStore maintenance owner (Gemini/fleet coordinator).** The
+   governed handoff of PR #7760 at bead9792126c68844970b86778cfab15aedaa693
+   remained in canonical preflight read_task_snapshot for 306 seconds, blocked
+   acquiring the shared coordination-root/.orchestrator/task-state.lock. The
+   worker interrupted only its own waiting process; terminal exit 130 and the
+   traceback at common.py stable_sidecar_lock -> fcntl.flock confirm it had
+   not reached mutation/admission. This is an observed infrastructure wait,
+   not a diagnosis of the holder or authority to remove its lock. Keep the
+   existing tooling owner responsible for lock reconciliation; no lock,
+   command runtime or canonical JSON was edited. Source is committed/pushed;
+   exact-head independent review is still required after admission recovers.
+   See required-data-validation.txt for the separately collected blocker result.
+
 1. **BFF saved-artifact surface metadata regression, RC6 existing research/read-source
    owner.** `tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing`
    expects source=service_client but receives typed_store. It fails identically

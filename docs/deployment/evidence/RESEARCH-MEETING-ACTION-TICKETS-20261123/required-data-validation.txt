@@ -53,3 +53,14 @@ $ git diff --check
 No whitespace errors. Exit status: 0
 
 No hosted, merged, deployed or accepted claim. Fresh independent Antigravity review is required.
+
+Delivery admission (separate from passing product validation):
+$ AI_NAME=Codex REVIEW_PR=7760 REVIEW_HEAD_SHA=bead9792126c68844970b86778cfab15aedaa693 REVIEW_FILE=docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/evidence.json "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff RESEARCH-MEETING-ACTION-TICKETS-20261123 Antigravity <recorded validation summary>
+Observed 306 seconds in locks_lock_inode_wait on coordination-root/.orchestrator/task-state.lock. Interrupted only this worker's waiting process. Terminal exit: 130.
+Traceback: main -> canonical_external_mutation_preflight -> read_task_snapshot -> canonical_task_state_lock(shared=True) -> canonical_task_state_lock_file -> stable_sidecar_lock -> fcntl.flock(handle.fileno(), operation) -> KeyboardInterrupt.
+No canonical admission/mutation reached; not counted as a passed command.
+
+$ AI_NAME=Codex timeout 20s "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" blocker RESEARCH-MEETING-ACTION-TICKETS-20261123 <same lock/admission failure and published evidence summary> Gemini
+No terminal stdout/stderr. Terminal exit: 124 (timeout), not a successful blocker transition.
+
+Disposition: existing supervisor/TaskStore maintenance owner must reconcile the central lock; no lock/runtime/canonical JSON edits performed. Published code and evidence remain review-ready, but formal handoff/review/merge is pending. New head requires a fresh exact-head handoff after recovery. CI on bead97921 was queued/pending, not passed (Branch CI Gate 45127035729, Stage 0 45127035401, Canonical Review Gate 45127035412).
