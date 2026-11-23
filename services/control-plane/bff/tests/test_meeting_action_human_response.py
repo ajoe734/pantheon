@@ -54,6 +54,7 @@ def test_human_work_projects_the_original_owner_transition(state, kind, expected
     assert len(rows) == (1 if expected else 0)
     if expected:
         item = rows[0]
+        assert item["can_respond"] is False  # No authenticated caller in this projection.
         assert item["response_action"] == expected
         assert item["required_actor"] == "op-inbox"
         assert item["resumes_with"] == ("chair-reviewer" if expected == "submit" else "persona-alpha")
@@ -526,7 +527,8 @@ def human_delivery_stack(inbox_meetings_stack, research_stack, monkeypatch):
             assert "action_state" not in query  # Filtering precedes the owner page boundary.
             rows = [row, *state["extra_tickets"]]
             rows = [r for r in rows if r["tenant_id"] == headers["X-Tenant-Id"]
-                    and (privileged or identity.operator_id == r["required_actor"])
+                    and (privileged or identity.operator_id in
+                         {r["owner"], r["required_actor"], r.get("reviewer_id")})
                     and (r["action_state"] == "waiting_for_input" or
                          r["meeting_action"]["assignee_kind"] == "human" and
                          r["action_state"] in {"open", "in_progress", "returned"})]
@@ -617,6 +619,46 @@ def test_authenticated_can_respond_matches_original_patch(human_delivery_stack, 
         assert not any(r["kind"] == "meeting_action" for r in reloaded["data"]["items"])
     else:
         assert row == original
+
+
+@pytest.mark.parametrize("kind,action", [("human", "submit"), ("persona", "provide_input")])
+@pytest.mark.parametrize("role,allowed", [("approver", False), ("operator", True), ("admin", True)])
+def test_can_respond_distinguishes_visibility_from_owner_permission(human_delivery_stack, kind, action, role, allowed):
+    client, state = human_delivery_stack
+    row = state["ticket"]
+    row.update(owner="other-human" if kind == "human" else "persona-alpha",
+               required_actor="other-human", reviewer_id="op-inbox",
+               action_state="returned" if kind == "human" else "waiting_for_input")
+    row["meeting_action"]["assignee_kind"] = kind
+    headers = _human_headers(role=role)
+    response = client.get("/bff/management/human-inbox", headers=headers)
+    assert response.status_code == 200, response.text
+    item = next(r for r in response.json()["data"]["items"] if r["kind"] == "meeting_action")
+    assert item["can_respond"] is allowed  # A visible reviewer's task need not be writable.
+    assert len(state["calls"]) == 1
+    command = {"action": action, "expected_revision": item["revision"],
+               "evidence_refs": [{"kind": "research_artifact", "artifact_id": "verified-result"}]}
+    result = client.patch(item["links"]["ticket"],
+                          headers={**headers, "Idempotency-Key": "other-actor-permission"}, json=command)
+    assert result.status_code == (200 if allowed else 403), result.text
+
+
+@pytest.mark.parametrize("state_name", ["open", "in_progress", "returned", "waiting_for_input", "submitted", "accepted", "unknown", None])
+def test_can_respond_needs_known_state_and_authenticated_caller(research_stack, state_name):
+    from types import SimpleNamespace
+    from services.control_plane.bff.auth.policy import extract_identity
+    from services.control_plane.bff.meetings.client import _can_respond_to_human_ticket
+    row = ticket()
+    row.update(owner="op-inbox", action_state=state_name)
+    row["meeting_action"]["assignee_kind"] = "human"
+    for unknown in (None, SimpleNamespace(operator_id="", roles=["operator"]),
+                    SimpleNamespace(operator_id="op-inbox", roles=[]),
+                    SimpleNamespace(operator_id="op-inbox", roles=["unknown"])):
+        assert _can_respond_to_human_ticket(row, unknown) is False
+    identity = extract_identity(_human_headers(role="operator")["Authorization"])
+    assert _can_respond_to_human_ticket(row, identity) is (state_name in {"open", "in_progress", "returned", "waiting_for_input"})
+    row["meeting_action"]["assignee_kind"] = "unknown"
+    assert _can_respond_to_human_ticket(row, identity) is False
 
 
 @pytest.mark.parametrize("kind,state_name,command", [

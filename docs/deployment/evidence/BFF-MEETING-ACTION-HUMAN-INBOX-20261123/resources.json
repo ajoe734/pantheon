@@ -4,7 +4,7 @@
   "ticket_count": 100,
   "projected_count": 100,
   "owner_reply_bytes": 772715,
-  "projected_inbox_rows_bytes": 1302250,
+  "projected_inbox_rows_bytes": 1304450,
   "research_http_reply_cap_bytes": 4194304,
   "new_research_calls_per_inbox_read": 1,
   "max_meeting_contributor_direct_http_calls_per_read": 4,

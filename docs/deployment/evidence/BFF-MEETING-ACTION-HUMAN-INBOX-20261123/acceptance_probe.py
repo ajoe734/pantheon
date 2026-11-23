@@ -45,6 +45,7 @@ def main():
             assert item.get("ticket_id") and item.get("meeting_id") and item.get("required_actor"), "unlinked_input"
             assert item.get("resumes_with") and item.get("reason"), "input_context_absent"
             assert item.get("response_action") in {"submit", "provide_input"}, "human_transition_absent"
+            assert type(item.get("can_respond")) is bool, "caller_response_permission_absent"
         if not meeting["actions"] and not meeting["prior_actions"]:
             print(json.dumps({"status": "skipped", "reason": "no_real_meeting_actions", "reply_bytes": sizes}))
             return 77
