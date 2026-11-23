@@ -44,12 +44,11 @@ when capability or authority cannot be verified. Do not consume snake-case or
 other undeclared aliases or replace an explicit null with legacy hints.
 
 Normal mutation remains operator-authenticated `PATCH {"risk":"medium"}` with
-a stable `Idempotency-Key` in the existing execute-plans `idempotencyKey()`
-format: `idk_<base36 issued milliseconds>_<lowercase alphanumeric nonce>`.
-Keep the exact key, including timestamp, across retries. Opaque keys return
-422 before mutation on this supported risk path; other Persona edits retain
-their existing key semantics. No body or public response field changes are
-required in the frontend counterpart, which already uses that generator.
+a stable opaque `Idempotency-Key`, including native UUIDs and existing
+execute-plans `idk_<base36 issued milliseconds>_<lowercase alphanumeric nonce>`
+keys. Keep the exact key across retries. UUID/opaque keys are not parsed as a
+time or assigned a new arrival timestamp. No body or public response field
+changes are required in the frontend counterpart.
 GET/refetch is authoritative. Pending means the
 requested tier cannot authorize new/increased exposure; existing governed
 position reductions/closures remain evaluated. A previous effective tier is
@@ -156,13 +155,31 @@ receipts add <=64 KiB per pool: at most 128 receipts of <=384 B plus <=2 KiB
 fixed latest intent. At three trading pools plus one acceptance pool the
 increment is <=256 KiB total, 0 B/day steady, <=384 B per new receipt until
 the 128-entry window fills, then 0 net receipt growth per new edit. The scalar
-eviction watermark replaces lifetime key accumulation and retires older keys
-without admitting their replay. Cleanup is inline during owner mutation; no
-new cleanup job. Intent and watermark follow pool retention/archival. Tests
-perform 258 actual edits, reload the store, reject the evicted first key even
-with a fresh revision, and retain a bounded serialized metadata size. The
-normal BFF route also accepts a post-boundary edit and rejects delayed replay
-after clearing process cache.
+eviction watermark retires timestamped keys without admitting their replay.
+Opaque receipts retire to the existing Capital audit owner store before their
+pool-row receipt is dropped, under the same pool lock. An archive failure
+prevents eviction. If the archive commits but the pool write fails, the
+still-present row receipt wins on retry; deterministic archive IDs prevent
+duplicate tombstones. A scoped exact-key audit read recovers retired opaque
+retries and hash conflicts, including lost responses and process/store reload.
+PostgreSQL uses the existing event primary key and formal tenant predicate;
+the JSON fallback scans its existing journal with constant working memory.
+No recurring cleanup job is added. The pool row remains bounded beyond 128
+edits; exact opaque tombstones have pool-lifetime retention in the existing
+audit store and must be preserved by future RC3 cleanup (or migrated before
+removal). This does not claim bounded lifetime audit history.
+
+Each opaque retirement adds <=2 KiB and one event to that existing audit
+writer, at most one per actual new edit after the 128-entry row window fills.
+At four hosted pools and E edits per pool per day, retirement adds <=8E KiB/day
+(0 B/day without edits), in addition to <=8E KiB/day for ordinary mutation
+events. No new audit table/file is created; tombstones are scoped to a pool
+and follow its lifecycle. Existing audit cleanup/cap remains unimplemented
+under RC3 WP3.1; no automatic tombstone deletion is authorized here. Tests
+perform 258 opaque edits, verify bounded row metadata, reload both stores,
+and reject payload changes for an evicted UUID without a new revision. They
+also cover archive failure, pool failure after archival, independent PostgreSQL
+writers, same-key approval reconciliation and actual UUID/FE PATCH/refetch.
 Each actual mutation also appends <=2 KiB to the existing audit writer. Its
 whole-journal cap/cleanup remains the existing RC3 WP3.1 residual, not a new
 boundedness claim. Writers and budget are in storage-manifest.json.
@@ -182,6 +199,8 @@ boundedness claim. Writers and budget are in storage-manifest.json.
   The frontend task is limited to this detail touchpoint. RC6/RC2 coordinator
   should retain this read-model boundary in follow-through.
 - Existing historical Capital audit retention is unbounded/unreviewed under
-  RC3 WP3.1. This packet quantifies only the incremental event rate and size.
+  RC3 WP3.1. This packet quantifies the incremental ordinary and retirement
+  event rate and size. Exact opaque tombstones must survive for the pool
+  lifetime; future cleanup must preserve or migrate them before deletion.
 - Hosted operator edit/reload and exact-pair release acceptance remain pending;
   no local pass closes those obligations.

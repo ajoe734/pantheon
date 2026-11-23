@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
 import hashlib
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,7 +84,7 @@ def normal_edit(route_harness, change_fixture, tmp_path, monkeypatch):
                            provisioning=route_harness.store, personas=route_harness.read_store,
                            reader=reader, policies=policies, approvals=approvals,
                            pool_id=pool.pool_id,
-                           coordinator=coordinator, transport=transport)
+                           coordinator=coordinator, transport=transport, capital_service=capital_service)
 
 
 def edit_key(key):
@@ -105,11 +106,14 @@ def refetch(world):
     return response.json()["data"]
 
 
-def test_normal_operator_patch_and_reload_preserve_original_request(normal_edit):
+@pytest.mark.parametrize("key_format", ["frontend", "uuid", "opaque"])
+def test_normal_operator_patch_and_reload_preserve_original_request(normal_edit, key_format):
     world = normal_edit
     before = deepcopy(world.record.request_payload), world.record.request_hash
     for index, tier in enumerate(("medium", "high", "low")):
-        response = patch(world, tier, str(index))
+        key = edit_key(str(index)) if key_format == "frontend" else str(uuid.uuid4()) if key_format == "uuid" else f"existing-client-{index}"
+        response = world.bff.patch("/bff/personas/persona-test", json={"risk": tier},
+                                   headers=_headers("operator-a", key))
         assert response.status_code == 200, response.text
         change = response.json()["data"]["riskPolicyChange"]
         assert change == {"requestedRisk": tier, "effectiveRisk": tier, "status": "effective",
@@ -244,11 +248,65 @@ def test_normal_edit_after_receipt_eviction_rejects_delayed_old_key(normal_edit,
     assert refetch(world)["riskPolicyChange"]["requestedRisk"] == "high"
 
 
-def test_opaque_key_rejects_before_any_supported_risk_mutation(normal_edit):
-    response = normal_edit.bff.patch("/bff/personas/persona-test", json={"risk": "high"},
-                                    headers=_headers("operator-a", "opaque-key"))
-    assert response.status_code == 422
-    assert "risk_profile_change" not in normal_edit.store.require(normal_edit.pool_id).metadata
+def test_uuid_retry_after_restart_supersession_eviction_and_lost_response(normal_edit, monkeypatch):
+    from services.capital.profile_change import change_profile, MAX_CHANGE_RECEIPTS, RiskChangeReceipts
+    from services.capital.test_profile_change import request
+
+    world = normal_edit
+    key = str(uuid.uuid4())
+    def edit(tier):
+        return world.bff.patch("/bff/personas/persona-test", json={"risk": tier},
+                               headers=_headers("operator-a", key))
+    world.transport.lost_response = True
+    assert edit("medium").status_code == 200
+    first = deepcopy(world.store.require(world.pool_id))
+    first_id = first.metadata["risk_profile_change"]["request_id"]
+    assert first.metadata["risk_profile_change_receipts"][first_id]["issued_at_ms"] is None
+    # A superseded duplicate observes the latest request even before eviction.
+    assert patch(world, "high", "new").status_code == 200
+    monkeypatch.setattr(persona_module, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
+    assert edit("medium").json()["data"]["riskPolicyChange"]["requestedRisk"] == "high"
+    archive = RiskChangeReceipts(world.capital_service.audit_store, "tenant-profile-test", world.pool_id,
+                                 "fixture-bff", "capital.admin")
+    for index in range(2, MAX_CHANGE_RECEIPTS + 3):
+        body = request(("low", "medium", "high")[index % 3], f"seed-{index}", index,
+                       issued_at_ms=1700000000000 + index)
+        world.store.mutate_paper_risk_profile(world.pool_id, lambda p: change_profile(
+            p, body, tenant_id="tenant-profile-test", reader=world.reader, loader=None,
+            receipt_reader=archive.read, receipt_archiver=archive.archive,
+        ))
+    assert first_id not in world.store.require(world.pool_id).metadata["risk_profile_change_receipts"]
+    # Replace both owner facades and process cache to exercise durable readback.
+    world.capital_service.pool_store = PersistentCapitalPoolStore(world.store._path)
+    world.capital_service.audit_store = JsonlCapitalAuditStore(world.capital_service.audit_store.audit_log_path)
+    monkeypatch.setattr(persona_module, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
+    before = deepcopy(world.capital_service.pool_store.require(world.pool_id))
+    response = edit("medium")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["riskPolicyChange"] == refetch(world)["riskPolicyChange"]
+    assert world.capital_service.pool_store.require(world.pool_id) == before
+    # Different payload with the retired UUID must never become a new intent.
+    assert edit("low").status_code == 409
+    assert world.capital_service.pool_store.require(world.pool_id) == before
+    # A new UUID still works after retirement; no lifetime edit cap.
+    response = world.bff.patch("/bff/personas/persona-test", json={"risk": "high"},
+                               headers=_headers("operator-a", str(uuid.uuid4())))
+    assert response.status_code == 200, response.text
+    assert refetch(world)["riskPolicyChange"]["effectiveRisk"] == "high"
+    events = world.capital_service.audit_store.list_events(tenant_id="tenant-profile-test")
+    assert sum(e["event_type"] == "paper_risk_receipt_retired" for e in events) == 1
+
+
+def test_opaque_archive_read_failure_does_not_succeed_from_persona_only(normal_edit, monkeypatch):
+    world = normal_edit
+    before = deepcopy(world.store.require(world.pool_id))
+    def unavailable(*a, **k):
+        raise OSError("synthetic audit unavailable")
+    monkeypatch.setattr(world.capital_service.audit_store, "get_event", unavailable)
+    response = world.bff.patch("/bff/personas/persona-test", json={"risk": "high"},
+                               headers=_headers("operator-a", str(uuid.uuid4())))
+    assert response.status_code == 503, response.text
+    assert world.store.require(world.pool_id) == before
 
 
 def test_authorized_status_annotation_after_risk_edit_preserves_policy_and_tenant(normal_edit):

@@ -4,7 +4,7 @@
   "assigned_independent_reviewer": "Codex2",
   "problem_register_class": "RC2 WP2.1",
   "evidence_kind": "source_validation_not_hosted_acceptance",
-  "source_review": "pending_independent_re_review_after_rejection_of_c7aafbe575cce3b216fcbd94f8c7a16a28598678",
+  "source_review": "pending_independent_re_review_after_UUID_rejection_at_ad7e7edd770e9a80eda860d27d7fc32b22dafb2c",
   "delivery_state": null,
   "frontend_task": "FE-PERSONA-RISK-PROFILE-CHANGE-20261123",
   "contract": {
@@ -24,8 +24,8 @@
     "null_semantics": "effectiveRisk/version/approval remain null without verified installed tier; unavailable read has requestedRisk null; no aliases",
     "get_authoritative": true,
     "operator_and_idempotency_header_required": true,
-    "idempotency_key_format": "idk_<base36 issued milliseconds>_<lowercase alphanumeric nonce>; keep timestamp and nonce unchanged across retries; opaque keys fail 422 before supported risk mutation",
-    "frontend_compatibility": "existing execute-plans src/lib/bff-v1/headers.ts idempotencyKey() already emits this shape; PersonaDetail.tsx risk saves use it; no public response/body changes"
+    "idempotency_key_format": "existing opaque public header contract, including UUIDs and frontend idk_<base36 issued milliseconds>_<nonce>; keep exact key across retries; opaque keys use durable owner receipts without retry arrival timestamps",
+    "frontend_compatibility": "existing UUID/opaque callers and execute-plans idempotencyKey() supported without response/body changes"
   },
   "reproduction": {
     "base_commit": "bd47d73bc",
@@ -45,14 +45,15 @@
     "bounded explicit read-only probe: persisted latest request, scoped pool/grant, pending guard, authoritative reload",
     "rolling issued-time receipt window; durable eviction watermark; delayed unseen keys and post-eviction restart-safe rejection",
     "unrelated metadata/status annotation through real Capital API and independent PostgreSQL row writer",
-    "existing governed reconcile route after independent mapping approval converges same running evaluator without another risk PATCH"
+    "existing governed reconcile route after independent mapping approval converges same running evaluator without another risk PATCH",
+    "native UUID and opaque real PATCH/refetch; retired opaque replay and payload mismatch after restart; archive outage and pool failure after durable archive; PostgreSQL exact-key tenant-filtered audit lookup"
   ],
   "runtime_budget": {
     "cadence": "event-driven normal risk PATCH or approved reconciliation; no recurring job",
-    "state": "existing pool row only; <=64 KiB additional metadata per pool; <=128 rolling receipts plus latest intent and durable eviction watermark; no lifetime edit limit",
+    "state": "existing pool row <=64 KiB including <=128 receipts and latest intent/watermark; retired opaque receipts use existing Capital audit writer, no new table/file",
     "hosted_count": "3 trading pools plus 1 isolated acceptance pool; <=256 KiB total increment; real trading pools untouched",
-    "growth": "0 B/day steady; <=384 B per new receipt until 128 entries, then zero net receipt growth; <=2 KiB fixed intent/watermark per pool; <=2 KiB existing audit event per actual mutation",
-    "cleanup": "inline oldest-receipt retirement under owner lock advances durable watermark and preserves current receipt for reconciliation; latest state follows pool retention/archive; no new sweeper; existing audit retention remains RC3 WP3.1",
+    "growth": "0 B/day steady; <=384 B per new row receipt until 128 then zero net row growth; <=2 KiB ordinary audit event plus <=2 KiB opaque retirement per new edit after window fills; four pools x E edits/pool/day gives <=16E KiB/day total incremental audit growth",
+    "cleanup": "inline owner-locked receipt retirement: timestamp watermark or durable exact opaque audit tombstone before row eviction; pool row follows lifecycle; opaque tombstones require pool-lifetime retention/preservation by future RC3 cleanup; audit total cap/cleanup remains RC3 WP3.1, not claimed bounded",
     "manifest": "docs/operations/storage-manifest.json"
   },
   "hosted_acceptance": {
@@ -78,8 +79,8 @@
     },
     {
       "class": "RC3 WP3.1",
-      "finding": "existing whole Capital audit journal retention remains unbounded/unreviewed",
-      "disposition": "existing retention owner; this task registers only incremental event size/cadence"
+      "finding": "existing whole Capital audit retention remains unbounded/unreviewed; exact opaque retirement tombstones now require pool-lifetime preservation",
+      "disposition": "RC3 WP3.1 existing retention owner; incremental size/cadence registered; future cleanup must preserve/migrate exact tombstones before deleting events"
     },
     {
       "class": "RC2 WP2.1",
@@ -88,7 +89,7 @@
     }
   ],
   "reviewer_family_exception": "Antigravity2 terminal quota recovery; Codex and Codex2 are distinct configured identities in the same model family; no reviewer approval is asserted by the owner",
-  "validated_source_commit": "6f87f424ed2c47b2c2339bdf102d14f253e7c2a9",
+  "validated_source_commit": "pending_final_validation",
   "historical_validation_at_rejected_head": [
     {
       "command": "timeout 240 bash /tmp/paper-risk-validation.sh (disposable postgres:16 with database pantheon; CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
@@ -138,9 +139,7 @@
       "command": "git diff --check",
       "exit_code": 0,
       "result": "passed"
-    }
-  ],
-  "validation": [
+    },
     {
       "command": "timeout 240 bash /tmp/paper-risk-validation.sh: disposable postgres:16, database pantheon, CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py",
       "exit_code": 0,
@@ -171,10 +170,12 @@
       "result": "passed across complete base-to-result diff, including previously committed evidence logs; committed HEAD is rechecked before handoff"
     }
   ],
+  "validation": [],
   "review_remediation": {
     "P1": "258 real low/medium/high edits pass beyond the 128 receipt boundary; JSON reload plus latest expected revision cannot replay the evicted first key; BFF post-boundary edit and cleared-cache old retry covered; old unseen timestamps conflict; future timestamps cannot poison the window",
     "P2": "partial unrelated metadata merges at both JSON and PostgreSQL owner locks; active-status API annotation succeeds without fresh policy approval; tenant pinning retained; stale risk/scope/policy writes still refused",
     "governed_reconcile": "pending normal PATCH -> separately issued fixture approval made available -> existing POST /bff/personas/{id}/provisioning/paper-capital/risk-policy with {} -> same running evaluator sizing/order gate converge; no second risk PATCH or new revision; viewer forbidden; actual trigger described in README",
-    "whitespace": "trimmed trailing whitespace in baseline-list-failures.log and bff-validation.log; validate whole base-to-HEAD diff, not only clean worktree"
+    "whitespace": "trimmed trailing whitespace in baseline-list-failures.log and bff-validation.log; validate whole base-to-HEAD diff, not only clean worktree",
+    "UUID_P1": "restored opaque public key contract including native UUIDs, no arrival timestamp on retry; <=128 row receipts; opaque retirement persisted in existing audit store before row eviction, exact scoped readback after restart; archive failure and pool commit failure close the eviction gap; actual FE and UUID PATCH/refetch regressions replace rejection test"
   }
 }

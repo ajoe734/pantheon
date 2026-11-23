@@ -159,7 +159,7 @@ def change_profile(pool: CapitalPool, body: Any, *, tenant_id: str,
             if retired:
                 if retired["request_hash"] != body.request_hash or retired["profile"] != body.requested_profile:
                     raise CapitalPoolError("paper_risk_change_idempotency_conflict")
-                raise CapitalPoolError("paper_risk_change_key_stale")
+                return pool  # A durable retired retry observes the latest intent.
         else:
             if body.issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)):
                 raise CapitalPoolError("paper_risk_change_key_stale")

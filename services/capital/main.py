@@ -459,12 +459,18 @@ class CapitalBoundaryService:
                                "risk_change_revision": updated.metadata["risk_profile_change"]["revision"]})
         return updated
 
-    def read_paper_risk_profile(self, pool_id: str, persona_id: str) -> Dict[str, Any]:
-        from .profile_change import read_change
+    def read_paper_risk_profile(self, pool_id: str, persona_id: str, request_id: str | None = None) -> Dict[str, Any]:
+        from .profile_change import read_change, RiskChangeReceipts
 
         pool = self.get_pool(pool_id)
-        return read_change(pool, tenant_id=_current_tenant() or _tenant_of(pool), persona_id=persona_id,
-                           reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader)
+        tenant = _current_tenant() or _tenant_of(pool)
+        result = read_change(pool, tenant_id=tenant, persona_id=persona_id,
+                             reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader)
+        if request_id:
+            result["requestReceipt"] = (pool.metadata.get("risk_profile_change_receipts") or {}).get(request_id)
+            if result["requestReceipt"] is None:
+                result["requestReceipt"] = RiskChangeReceipts(self.audit_store, tenant, pool_id, "", "").read(request_id)
+        return result
 
     def resolve_pool_risk_policy(self, pool_id: str, *, stage: Optional[str] = None) -> Dict[str, Any]:
         pool = self.get_pool(pool_id)
@@ -1589,9 +1595,9 @@ def change_paper_pool_risk_profile(pool_id: str, body: ChangePaperRiskProfileReq
 
 
 @app.get("/api/capital-pools/{pool_id}/risk-profile-change")
-def read_paper_pool_risk_profile(pool_id: str, persona_id: str) -> Dict[str, Any]:
+def read_paper_pool_risk_profile(pool_id: str, persona_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
     try:
-        return get_capital_service().read_paper_risk_profile(pool_id, persona_id)
+        return get_capital_service().read_paper_risk_profile(pool_id, persona_id, request_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

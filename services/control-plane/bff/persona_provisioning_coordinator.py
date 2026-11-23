@@ -5330,14 +5330,20 @@ class PersonaProvisioningCoordinator:
         pool = self._owner_get("capital", path)
         meta = pool.get("metadata", {}) if pool else {}
         receipt = (meta.get("risk_profile_change_receipts") or {}).get(request_id)
+        if receipt is None and issued_at_ms is None:
+            # A superseded opaque key may have moved from the bounded row
+            # window to Capital's exact durable audit archive. Scope validation
+            # runs on the same owner read before exposing any receipt.
+            archived = self._owner_get("capital", f"{path}/risk-profile-change?persona_id={_path_id(persona_id)}&request_id={_path_id(request_id)}")
+            receipt = (archived or {}).get("requestReceipt")
         if (not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile
                 or receipt.get("issued_at_ms") != issued_at_ms):
             reason = ("paper_risk_change_idempotency_conflict" if receipt else
                       "paper_risk_change_key_stale" if
-                      (issued_at_ms is None or
+                      (issued_at_ms is not None and (
                        issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)) or
                        issued_at_ms < max((r.get("issued_at_ms") or 0 for r in
-                                          (meta.get("risk_profile_change_receipts") or {}).values()), default=0)) else
+                                          (meta.get("risk_profile_change_receipts") or {}).values()), default=0))) else
                       "paper_risk_change_revision_conflict" if
                       int((meta.get("risk_profile_change") or {}).get("revision", 0)) != before["revision"]
                       else "paper_risk_change_not_committed")

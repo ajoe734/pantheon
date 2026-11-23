@@ -310,3 +310,127 @@ def test_pg_independent_writers_order_retries_and_do_not_touch_other_rows(change
     finally:
         with store._records._connect() as conn:
             conn.execute(f"DROP TABLE {store._records.table}")
+
+
+def test_opaque_receipt_archive_is_durable_bounded_and_retry_safe(change_fixture, tmp_path, monkeypatch):
+    from services.capital.profile_change import MAX_CHANGE_RECEIPTS, RiskChangeReceipts
+    from services.capital.pg_store import JsonlCapitalAuditStore
+
+    pool, reader, _, _ = change_fixture
+    store = PersistentCapitalPoolStore(tmp_path / "opaque-pools.json")
+    store.create(pool)
+    audit = JsonlCapitalAuditStore(tmp_path / "opaque-audit.jsonl")
+    archive = RiskChangeReceipts(audit, pool.owner_id, pool.pool_id, "fixture", "capital.admin")
+    def apply(current, body):
+        return change_profile(current, body, tenant_id=pool.owner_id, reader=reader, loader=None,
+                              receipt_reader=archive.read, receipt_archiver=archive.archive)
+    first = request("medium", "opaque-first", issued_at_ms=None)
+    store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, first))
+    for revision in range(1, MAX_CHANGE_RECEIPTS * 2 + 2):
+        body = request(("low", "medium", "high")[revision % 3], f"opaque-{revision}", revision, None)
+        store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, body))
+    reloaded = PersistentCapitalPoolStore(store._path)
+    archive = RiskChangeReceipts(JsonlCapitalAuditStore(audit.audit_log_path), pool.owner_id, pool.pool_id,
+                                "fixture", "capital.admin")
+    before = deepcopy(reloaded.require(pool.pool_id))
+    assert len(before.metadata["risk_profile_change_receipts"]) == MAX_CHANGE_RECEIPTS
+    assert len(json.dumps(before.metadata).encode()) < 65536
+    replay = first.model_copy(update={"expected_revision": MAX_CHANGE_RECEIPTS * 2 + 2})
+    _, actual = reloaded.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, replay))
+    assert not actual and reloaded.require(pool.pool_id) == before
+    with pytest.raises(CapitalPoolError, match="idempotency_conflict"):
+        reloaded.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(
+            p, replay.model_copy(update={"requested_profile": "high"})))
+    assert len(audit.list_events(tenant_id=pool.owner_id)) == MAX_CHANGE_RECEIPTS + 2
+    assert archive.read(first.request_id) == {"request_hash": first.request_hash, "profile": "medium",
+                                             "revision": 1, "issued_at_ms": None}
+    assert RiskChangeReceipts(audit, "foreign", pool.pool_id, "", "").read(first.request_id) is None
+    assert RiskChangeReceipts(audit, pool.owner_id, "foreign-pool", "", "").read(first.request_id) is None
+
+
+def test_archive_failure_and_pool_commit_failure_never_forget_opaque_key(change_fixture, tmp_path, monkeypatch):
+    from services.capital import profile_change
+    from services.capital.profile_change import RiskChangeReceipts
+    from services.capital.pg_store import JsonlCapitalAuditStore
+
+    monkeypatch.setattr(profile_change, "MAX_CHANGE_RECEIPTS", 1)
+    pool, reader, _, _ = change_fixture
+    store = PersistentCapitalPoolStore(tmp_path / "failure-pools.json")
+    store.create(pool)
+    audit = JsonlCapitalAuditStore(tmp_path / "failure-audit.jsonl")
+    archive = RiskChangeReceipts(audit, pool.owner_id, pool.pool_id, "fixture", "capital.admin")
+    def apply(current, body):
+        return change_profile(current, body, tenant_id=pool.owner_id, reader=reader, loader=None,
+                              receipt_reader=archive.read, receipt_archiver=archive.archive)
+    first = request("medium", "first", issued_at_ms=None)
+    before, _ = store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, first))
+    second = request("high", "second", 1, None)
+    def fail(*a, **k):
+        raise OSError("synthetic archive write failure")
+    with monkeypatch.context() as patcher:
+        patcher.setattr(audit, "append_event", fail)
+        with pytest.raises(OSError, match="archive write"):
+            store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, second))
+    assert store.require(pool.pool_id) == before
+    assert archive.read(first.request_id) is None
+    def commit_failure(current):
+        apply(current, second)  # archive has committed; pool row has not
+        raise OSError("synthetic pool commit failure")
+    with pytest.raises(OSError, match="pool commit"):
+        store.mutate_paper_risk_profile(pool.pool_id, commit_failure)
+    assert store.require(pool.pool_id) == before
+    assert archive.read(first.request_id)
+    # Current row receipt takes precedence over premature retirement evidence.
+    _, changed = store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, first))
+    assert not changed
+    store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, second))
+    assert len(audit.list_events(tenant_id=pool.owner_id)) == 1
+    _, changed = store.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(
+        p, first.model_copy(update={"expected_revision": 2})))
+    assert not changed and read(store.require(pool.pool_id), reader)["requestedRisk"] == "high"
+
+
+def test_pg_opaque_retirement_survives_independent_facades(change_fixture, monkeypatch):
+    import os
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor
+    from services.capital import profile_change
+    from services.capital.profile_change import RiskChangeReceipts
+    from services.capital.pg_store import PostgresCapitalPoolStore, PostgresCapitalAuditStore
+
+    dsn = os.environ.get("CAPITAL_TEST_DSN")
+    if not dsn:
+        pytest.skip("CAPITAL_TEST_DSN must point to a disposable PostgreSQL instance")
+    monkeypatch.setattr(profile_change, "MAX_CHANGE_RECEIPTS", 2)
+    pool, reader, _, _ = change_fixture
+    suffix = uuid.uuid4().hex[:10]
+    store = PostgresCapitalPoolStore(dsn, table="capital.test_opaque_pools_" + suffix)
+    audit = PostgresCapitalAuditStore(dsn, table="capital.test_opaque_audit_" + suffix)
+    object.__setattr__(pool, "tenant_id", pool.owner_id)
+    archive = RiskChangeReceipts(audit, pool.owner_id, pool.pool_id, "fixture", "capital.admin")
+    def apply(current, body):
+        return change_profile(current, body, tenant_id=pool.owner_id, reader=reader, loader=None,
+                              receipt_reader=archive.read, receipt_archiver=archive.archive)
+    try:
+        store.create(pool)
+        first = request("medium", "pg-opaque-first", issued_at_ms=None)
+        writers = [PostgresCapitalPoolStore(dsn, table=store._records.table_name) for _ in range(4)]
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            outcomes = list(executor.map(lambda s: s.mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, first)), writers))
+        assert sum(changed for _, changed in outcomes) == 1
+        for revision, tier in enumerate(("high", "low", "medium"), 1):
+            body = request(tier, f"pg-opaque-{revision}", revision, None)
+            writers[revision].mutate_paper_risk_profile(pool.pool_id, lambda p: apply(p, body))
+        before = store.require(pool.pool_id)
+        archive = RiskChangeReceipts(PostgresCapitalAuditStore(dsn, table=audit._records.table_name),
+                                    pool.owner_id, pool.pool_id, "fixture", "capital.admin")
+        _, changed = writers[0].mutate_paper_risk_profile(pool.pool_id, lambda p: apply(
+            p, first.model_copy(update={"expected_revision": 4})))
+        assert not changed and store.require(pool.pool_id) == before
+        assert len(audit.list_events(tenant_id=pool.owner_id)) == 2
+        assert audit.get_event(archive._id(first.request_id), "foreign") is None
+        assert archive.read(first.request_id)["profile"] == "medium"
+    finally:
+        with store._records._connect() as conn:
+            conn.execute(f"DROP TABLE {store._records.table}")
+            conn.execute(f"DROP TABLE {audit._records.table}")
