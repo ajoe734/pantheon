@@ -233,3 +233,9 @@ rows/page and 4 MiB HTTP reply cap; zero new recurring jobs, persistent writers,
 cache entries or daily BFF storage growth. Request data is released on response;
 Research owns persistence/retention and the chain storage manifest. Prior privacy
 and partial-source fixes remain covered. Residual owners listed above are unchanged.
+
+Validation on the direct-human source/tests: 124 focused tests passed in 23.95 s;
+the ten-file regression passed 282 tests, 100 warnings in 120.84 s. Both bounded
+foreground batches reached terminal exit 0. Diff budget and whitespace checks
+passed. This is a fresh exact-head review request, with no approval/merge,
+deployment or hosted acceptance claim.

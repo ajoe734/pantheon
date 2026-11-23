@@ -19,6 +19,27 @@
     {
       "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
+      "result": "282 passed, 100 warnings in 120.84s; direct-human union/submit/return/rework + Persona input, original privacy/source regressions; bounded foreground terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py --tb=short",
+      "exit_code": 0,
+      "result": "124 passed, 3 warnings in 23.95s; authenticated inbox-to-original-ticket paths with owner HTTP double, including direct submit -> return -> corrected submit; terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k human_work_projects --tb=short",
+      "phase": "before_direct_human_fix",
+      "exit_code": 1,
+      "result": "4 failed, 4 passed in 1.30s; direct open/in_progress/returned missing and transition absent; terminal exit collected"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "result": "Passed at e13c76d0e, production net +287, tests net +680; git diff --check and checkout-scoped interpreter verification passed"
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
       "result": "269 passed, 100 warnings in 104.02s; typed-reference/partial-page correction at b58644f32; bounded foreground batch terminal exit collected"
     },
     {
@@ -134,7 +155,10 @@
     "4 MiB ticket reply and requested page count fail-closed bounds",
     "Research-only authenticated inbox survives missing read store and unconfigured Consultation; single linked ticket per reload with one filtered owner call and honest partial source status",
     "Typed trader/agora_user refs use ordinary subject redaction in all seven fields and nested subject/evidence/disposition mappings; operator, owning trader and unrelated viewer; present/absent/null fallback; immutable minutes",
-    "Readable paginated Research remains degraded through meetings and human_inbox with missing/available store and absent Consultation; rows and cursor survive two reloads with one owner call each"
+    "Readable paginated Research remains degraded through meetings and human_inbox with missing/available store and absent Consultation; rows and cursor survive two reloads with one owner call each",
+    "Human-actionable owner union, lowercase true query and continuation href/cursor; direct human open/in_progress/returned use submit, Persona waiting_for_input uses provide_input; required actor and reviewer resumption explicit",
+    "Authenticated real BFF inbox/ticket routes sharing one owner HTTP double: direct submit/return/rework, criterion and old evidence preserved, wrong approver and viewer denied, replay/stale/evidence validation, durable readback and disappearance after response",
+    "200 unrelated Persona rows before 105 direct human rows: one 100-row owner-filtered page, opaque continuation through original route, no duplicate IDs or per-ticket fanout, unrelated approver excluded and operator visibility retained"
   ],
   "residual_findings": [
     {
@@ -156,5 +180,9 @@
   "source_isolation_rejected_head": "21644e8b59fd4a0cc40219555d02ccee5bd7ddd7",
   "source_isolation_correction_anchor": "7f0a70cf6",
   "typed_reference_partial_page_rejected_head": "99ca1187a642b80c8acf6b8e1614bcfd5039382b",
-  "typed_reference_partial_page_correction_anchor": "b58644f32d085c7582b70424c36a096ad5ab8886"
+  "typed_reference_partial_page_correction_anchor": "b58644f32d085c7582b70424c36a096ad5ab8886",
+  "direct_human_reopened_head": "323ac0cf336aaae796f23d44ce25295666d253b6",
+  "direct_human_source_anchor": "b1e162bf0",
+  "direct_human_test_anchor": "e13c76d0e",
+  "research_human_filter_contract_head_inspected": "ad5dec939"
 }
