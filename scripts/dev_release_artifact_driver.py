@@ -141,13 +141,13 @@ class GuardedDocker(a.Docker):
                     if time.monotonic() > deadline:
                         raise a.ArtifactError("Docker artifact operation timed out")
                     try:
-                        output, _ = process.communicate(timeout=.1)
+                        output, stderr = process.communicate(timeout=.1)
                         break
                     except subprocess.TimeoutExpired:
                         continue
                 self.barrier.check()
                 if process.returncode:
-                    raise a.ArtifactError("Docker artifact operation failed") from subprocess.CalledProcessError(process.returncode, command)
+                    raise a.ArtifactError("Docker artifact operation failed") from subprocess.CalledProcessError(process.returncode, command, output=None, stderr=a.redact_docker_stderr(stderr))
                 return output
             except BaseException:
                 # Stay in the remote watchdog's PGID so its STOP/TERM contains
