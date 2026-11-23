@@ -1,0 +1,19 @@
+{
+  "task": "DEV-DEPLOY-ROLLBACK-RESTORE-READBACK-20261123",
+  "instances": [
+    {"run": "45173817952", "time": "2026-11-23T13:17:58Z", "symptom": "BFF exact-artifact restore failed (Docker exit 1)"},
+    {"run": "45220085583", "time": "2026-11-23T17:45Z", "symptom": "BFF restore failed; compensation readback stopped on incidents at 18:02:10Z (OOM)"}
+  ],
+  "cause_finding": {
+    "established_from_hosted_store": false,
+    "reason": "worker has no hosted store or Docker access; Docker stderr was never recorded",
+    "most_probable": "compose up --wait on the recreated BFF group exits 1 when a container misses its health budget under OOM churn, aborting the restore of every remaining service",
+    "reproduced_by": "test_replay_1123_docker_error_on_restore_and_oom_service_ends_named_not_mixed"
+  },
+  "changes": [
+    "failure record carries docker {operation, image, stderr<=4096 redacted}",
+    "compose up --wait failure tolerated; identity readback still hard",
+    "readback_stack(tolerate_residual) names unhealthy same-image services (oom_killed)"
+  ],
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be the owner's family"
+}
