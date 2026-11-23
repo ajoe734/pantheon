@@ -154,6 +154,12 @@
       "log": "revision-bff-validation.log"
     },
     {
+      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python; then timeout 120 bash /tmp/paper-risk-revision-focused.sh: disposable postgres:16 and timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_profile_change.py services/control-plane/bff/tests/test_persona_risk_profile_change.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "checkout-scoped editable environment verified from foreign cwd with no PYTHONPATH; after dev documentation-only merge, 44 passed, 3 warnings in 31.74s, no skips; PostgreSQL container removed",
+      "log": "revision-provisioned-validation.log"
+    },
+    {
       "command": "timeout 45 python3 scripts/check_storage_manifest.py --output docs/deployment/evidence/PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123/storage-check.json",
       "exit_code": 0,
       "result": "passed; zero failures",
