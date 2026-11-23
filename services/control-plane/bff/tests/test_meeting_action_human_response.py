@@ -538,6 +538,10 @@ def human_delivery_stack(inbox_meetings_stack, research_stack, monkeypatch):
             return 404, {"detail": "not found"}
         if method == "PATCH" and payload["actor_id"] != identity.operator_id:
             return 403, {"detail": "actor mismatch"}
+        if method == "PATCH" and payload["patch"].get("action") == "provide_input":
+            if not (privileged or (identity.operator_id == row["required_actor"]
+                                   and roles & {"operator", "approver", "human"})):
+                return 403, {"detail": "required human role and actor required"}
         if method == "PATCH" and payload["patch"].get("action") == "return":
             patch = payload["patch"]
             if identity.operator_id != row["reviewer_id"] or "reviewer" not in roles:
@@ -576,6 +580,43 @@ def _human_headers(subject="op-inbox", role="approver"):
     token = encode_jwt_hs256({"sub": subject, "roles": [role], "tenant_id": "tenant-a",
                              "exp": 4102444800}, secret=INBOX_SECRET)
     return {"Authorization": "Bearer " + token, "X-Tenant-Id": "tenant-a"}
+
+
+@pytest.mark.parametrize("kind,action", [("human", "submit"), ("persona", "provide_input")])
+@pytest.mark.parametrize("role", ["operator", "admin", "approver", "reviewer", "viewer"])
+def test_authenticated_can_respond_matches_original_patch(human_delivery_stack, kind, action, role):
+    client, state = human_delivery_stack
+    row = state["ticket"]
+    row.update(reviewer_id="chair-reviewer", description="Account holder must supply observations")
+    row["meeting_action"]["assignee_kind"] = kind
+    if kind == "human":
+        row.update(owner="op-inbox", action_state="open")
+    original = copy.deepcopy(row)
+    headers = _human_headers(role=role)
+    allowed = role in {"operator", "admin", "approver"} or (role == "reviewer" and kind == "human")
+    for reload_count in (1, 2):
+        response = client.get("/bff/management/human-inbox", headers=headers)
+        assert response.status_code == 200, response.text
+        item = next(r for r in response.json()["data"]["items"] if r["kind"] == "meeting_action")
+        assert item["can_respond"] is allowed
+        assert item["response_action"] == action
+        assert item["human_requirement"] == (row["description"] if kind == "human" else None)
+        assert item["reason"] == (row["description"] if kind == "human" else row["input_request"]["reason"])
+        assert item["resumes_with"] == ("chair-reviewer" if kind == "human" else "persona-alpha")
+        assert len(state["calls"]) == reload_count  # Still one owner page per reload.
+    assert row == original
+    path = item["links"]["ticket"]
+    assert client.get(path, headers=headers).status_code == 200
+    command = {"action": action, "expected_revision": item["revision"],
+               "evidence_refs": [{"kind": "research_artifact", "artifact_id": "verified-result"}]}
+    result = client.patch(path, headers={**headers, "Idempotency-Key": "respond-permission"}, json=command)
+    assert result.status_code == (200 if allowed else 403), result.text
+    if allowed:
+        assert result.json()["revision"] == 4
+        reloaded = client.get("/bff/management/human-inbox", headers=headers).json()
+        assert not any(r["kind"] == "meeting_action" for r in reloaded["data"]["items"])
+    else:
+        assert row == original
 
 
 @pytest.mark.parametrize("kind,state_name,command", [

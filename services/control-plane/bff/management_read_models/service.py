@@ -4624,7 +4624,7 @@ class ManagementService:
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        readers = self._human_inbox_contributor_readers(store, snap)
+        readers = self._human_inbox_contributor_readers(store, snap, identity=identity)
         if not readers:
             return self.compose_human_inbox(
                 snap,
@@ -4756,7 +4756,7 @@ class ManagementService:
         }
 
     def _human_inbox_contributor_readers(
-        self, store: Any, snap: str
+        self, store: Any, snap: str, *, identity: Optional[Any] = None
     ) -> Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]]:
         """One reader per contributor; each returns (records, surface) or raises."""
         readers: Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = {}
@@ -4817,7 +4817,7 @@ class ManagementService:
 
         def _meetings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
             from services.control_plane.bff.meetings.client import read_human_inbox_meeting_items
-            return read_human_inbox_meeting_items(snap, store=store)
+            return read_human_inbox_meeting_items(snap, store=store, identity=identity)
 
         if store is not None:
             readers["approval_queue"] = _approvals

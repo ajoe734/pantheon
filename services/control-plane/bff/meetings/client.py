@@ -1937,7 +1937,38 @@ def _action_is_overdue(due_at: Any, snapshot_at: str) -> Optional[bool]:
         return None
 
 
-def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapshot_at: str) -> List[Dict[str, Any]]:
+def _can_respond_to_human_ticket(ticket: Mapping[str, Any], identity: Any) -> bool:
+    """UI hint for the existing PATCH, including Research's narrower actor rules.
+
+    This never authorizes a write: Research rechecks actor, tenant, state,
+    revision and evidence on every command. Missing caller/state stays false.
+    """
+    from fastapi import HTTPException
+    from services.control_plane.bff.auth.policy import require_operator_role
+
+    actor = getattr(identity, "operator_id", None)
+    roles = getattr(identity, "roles", None)
+    if not actor or not roles:
+        return False
+    try:
+        require_operator_role(identity)  # Same BFF gate as original ticket PATCH.
+    except HTTPException:
+        return False
+    action = ticket.get("meeting_action")
+    if not isinstance(action, Mapping) or action.get("assignee_kind") not in {"human", "persona"}:
+        return False
+    privileged = bool(set(roles) & {"operator", "admin"})
+    state = ticket.get("action_state")
+    if action.get("assignee_kind") == "human" and state in {"open", "in_progress", "returned"}:
+        return privileged or actor == ticket.get("owner")
+    if state == "waiting_for_input":
+        return privileged or (actor == ticket.get("required_actor")
+                              and bool(set(roles) & {"operator", "approver", "human"}))
+    return False
+
+
+def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapshot_at: str,
+                             identity: Any = None) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for ticket in page.get("data") or []:
@@ -1981,6 +2012,7 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
             "owner": ticket.get("owner"), "assignee": ticket.get("assignee") or ticket.get("owner"),
             "assignee_kind": action.get("assignee_kind"),
             "response_action": "submit" if direct else "provide_input",
+            "can_respond": _can_respond_to_human_ticket(ticket, identity),
             "resumes_with": ticket.get("reviewer_id") if direct else ticket.get("owner"),
             "reviewer_id": ticket.get("reviewer_id"), "review_decision": review,
             "evidence_refs": ticket.get("evidence_refs") or [],
@@ -2019,6 +2051,7 @@ def read_human_inbox_meeting_items(
     *,
     store: Any = None,
     tenant_id: Optional[str] = None,
+    identity: Any = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Contributor reader for ManagementService.get_human_inbox."""
     if store is not None and hasattr(store, "list_meetings"):
@@ -2071,7 +2104,8 @@ def read_human_inbox_meeting_items(
         with _inbox_owner_budget():
             try:
                 page = ResearchServiceClient().list_research_ticket_page(human_actionable=True, page_size=100)
-                items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at))
+                items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at,
+                                                      identity=identity))
                 surfaces["research"] = {
                     "status": "degraded" if page["page_info"].get("next_page_token") else "ok",
                     "reason": "owner_page_has_more" if page["page_info"].get("next_page_token") else None,
