@@ -52,11 +52,12 @@ Three independent bounded owner pages retain outstanding, submitted and newly
 accepted work, including explicit continuation links/tokens. No full meeting
 archive scan is introduced. Actual note contents (or explicit unavailable/changed/
 metadata-only reasons) appear in participant and chair input with criterion,
-evidence and disposition. Submitted work gets evidence-read priority. Acceptance
+evidence and disposition. Each lane receives an independent whole-ticket evidence allocation. Acceptance
 requires an exact criterion/evidence match and a reason, and PATCHes the same
 owner revision with review_source=current meeting. Owner CAS/evidence validation
-remains authoritative. A failed owner/evidence/page read retains the scan boundary and its input
-cursor. The existing schedule automatically continues each bounded lane. A
+remains authoritative. A failed owner ticket page retains its scan boundary and input cursor. Evidence
+failures are explicit, forbid acceptance, and retain the old watermark for the
+next traversal while allowing current ticket-page progress. The existing schedule automatically continues each bounded lane. A
 finished scan advances the inclusive watermark only to its first page start,
 so concurrent insertions and disposition changes behind the cursor are read
 next scan; legacy bare cursors restart safely. Bare metadata cursor authority
@@ -82,9 +83,36 @@ the existing published dissent timestamp now anchors both immutable memos, while
 closed_at records actual completion. The two-meeting test forces a five-second
 retry. No extra writer or recurring job was added.
 
+## Evidence starvation rejection (fa240d554)
+
+The old eight-read global budget plus all-lane evidence gate could repeat the
+first page forever. The reader now asks the owner for one ticket per lane,
+resolving all its at-most-eight references (at most 24 reads across three
+lanes). The original owner cursor remains opaque and is never manufactured.
+This deliberately trades page throughput for a whole-ticket evidence bound:
+N stable tickets in a lane take N same-series meetings per traversal. It adds
+no cache, scheduler, evidence copy between revisions, or second work store.
+
+Successful ticket pages advance independently of unavailable evidence. A sticky
+evidence-failure flag prevents a later healthy page from advancing the watermark
+past failed obligations; the next traversal retries from the prior watermark.
+Completed lanes do not restart while other lanes are still traversing. The
+original scan-start watermark and concurrent earlier-key insertion/disposition
+guarantees remain. No legacy caller needs the exhausted-evidence branch; its
+replacement completely reads each selected ticket's bounded evidence set.
+
+Regression matrix uses both the scripted boundary and frozen real Research
+create/list SQL: 9 returned, 10 submitted and 11 accepted tickets, each with
+2 or 8 evidence refs; 22 distinct meeting identities and actual ConsultationStore
+schedule writes per case. Clean, transient-503 and persistent-503 evidence
+scenarios prove every ticket appears in two successive traversals, actual
+contents reach the context, unread evidence cannot be accepted, independent
+lanes finish, failed evidence retries, and requests/bytes stay bounded.
+Existing five-participant concurrent-insertion tests now traverse nine pages.
+
 ## Validation and resource budget
 
-See evidence.json, validation.txt, focused-validation.txt, measurements.txt and
+See evidence.json, validation.txt, fair-validation.txt, measurements.txt and
 storage.json. The normal adapter schema and engine cover two distinct meetings,
 pending plus submitted tickets, accept/return with reason, zero semantic hits,
 actual result contents in each turn, malformed-reply retry, partial close retry,

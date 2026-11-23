@@ -6,30 +6,102 @@
   "delivery_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
   "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
   "verification": [
-    {"command": "git show cddd6188fc784ced558d6a800e95584aef17636a:services/research/write_owner.py > /tmp/meeting-review-research-owner.py", "exit_code": 0, "result": "Frozen real owner create/list source SHA256 056e0aa3a472e75de633e6a0553ae5578ab80a51911b54b5c64e11261a8c6290; persistence isolated, SQL filtering/order/limit executed using SQLite dialect translation"},
-    {"command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings", "exit_code": 0, "result": "94 passed, 81 warnings in 59.24s", "terminal_output": "validation.txt", "boundary": "Before final removal of legacy metadata cursor fallback; every affected action path revalidated in the focused suite below"},
-    {"command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -s -k 'normalizes_before_freeze or review_traversal or new_review_dispositions or two_meetings_adoption or owner_continuation' --disable-warnings", "exit_code": 0, "result": "12 passed, 49 deselected, 1 warning in 6.91s", "terminal_output": "focused-validation.txt"},
-    {"command": "python3 scripts/dev/provision_python_distribution.py --check-only", "exit_code": 0, "result": "Checkout imports verified from foreign cwd without PYTHONPATH"},
-    {"command": "git diff --check", "exit_code": 0, "result": "No whitespace errors"}
+    {
+      "command": "git show cddd6188fc784ced558d6a800e95584aef17636a:services/research/write_owner.py > /tmp/meeting-review-research-owner.py",
+      "exit_code": 0,
+      "result": "Frozen real owner create/list source SHA256 056e0aa3a472e75de633e6a0553ae5578ab80a51911b54b5c64e11261a8c6290; persistence isolated, SQL filtering/order/limit executed using SQLite dialect translation"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "106 passed, 81 warnings in 62.81s",
+      "terminal_output": "fair-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'evidence_and_lane or review_traversal' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "14 passed, 59 deselected, 1 warning in 6.79s; also included in full suite"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -s -k 'two_meetings_adoption' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "2 passed, 71 deselected, 1 warning in 3.58s; component measurement",
+      "terminal_output": "measurements.txt"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Checkout imports verified from foreign cwd without PYTHONPATH"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
   ],
   "acceptance_coverage": [
-    {"criterion": 1, "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass."},
-    {"criterion": 2, "proof": "Existing Registry/member-facts and privacy regressions pass; safe owner capability GET is exercised at HTTP boundary, role/inline/private fields cannot grant authority. Own pre-read, shared prior result and safe role data reach actual round/chair inputs; no escalation or placeholder reader added."},
-    {"criterion": 3, "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks."},
-    {"criterion": 4, "proof": "Two distinct meetings with pending/submitted work and zero semantic hits, tenant/series isolation, bounded automatic per-lane schedule continuation with stable first-page watermark, concurrent earlier-key insertion/disposition regression across five participants, historical zero-action minutes unchanged, resource count/byte caps and measured growth report."},
-    {"criterion": 5, "proof": "Pre-edit caller/storage trace, obsolete implicit-adoption removal, retained distinct formal/discovery paths, explicit residual owners and source recovery discontinuity are recorded in handoff.md."}
+    {
+      "criterion": 1,
+      "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass."
+    },
+    {
+      "criterion": 2,
+      "proof": "Existing Registry/member-facts and privacy regressions pass; safe owner capability GET is exercised at HTTP boundary, role/inline/private fields cannot grant authority. Own pre-read, shared prior result and safe role data reach actual round/chair inputs; no escalation or placeholder reader added."
+    },
+    {
+      "criterion": 3,
+      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks."
+    },
+    {
+      "criterion": 4,
+      "proof": "Two distinct normal meetings with pending/submitted work and zero semantic hits, tenant/series isolation, and historical zero-action minutes unchanged. Fair-evidence regressions use 22 distinct close/schedule identities per case, unequal lanes of 9/10/11 tickets with 2/8 refs each, transient and persistent unavailable evidence, all ticket identities revisited over two traversals, no acceptance of unread contents. Stable scan-start watermark, independent lane completion, and concurrent earlier-key insertion/disposition across five participants preserved. Resource caps and measured growth reported; throughput is one ticket/lane/meeting."
+    },
+    {
+      "criterion": 5,
+      "proof": "Pre-edit caller/storage trace, obsolete implicit-adoption removal, retained distinct formal/discovery paths, explicit residual owners and source recovery discontinuity are recorded in handoff.md."
+    }
   ],
   "runtime_budget": "storage.json",
   "handoff": "handoff.md",
   "read_only_probe": "probe.py",
   "storage_manifest_owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123; consume this task's storage.json for the chain manifest, no shared manifest edits here",
-  "hosted_acceptance": {"executed": false, "status": "pending", "owner": "MEETING-ACTION-TWO-MEETING-PROOF-20261123 and original MEETING-HOSTED-ACCEPTANCE-20261115", "remaining": "real deployed owner/credential wiring, actual Persona execution/human input, exact hosted pair, natural second meeting and browser proof"},
+  "hosted_acceptance": {
+    "executed": false,
+    "status": "pending",
+    "owner": "MEETING-ACTION-TWO-MEETING-PROOF-20261123 and original MEETING-HOSTED-ACCEPTANCE-20261115",
+    "remaining": "real deployed owner/credential wiring, actual Persona execution/human input, exact hosted pair, natural second meeting and browser proof"
+  },
   "residual_findings": [
-    {"class": "RC6 meetings projections", "owner": "existing consultation/BFF projection work package", "finding": "Legacy list_meetings_view/list_meeting_proposals_view scan the archive", "disposition": "retain existing-domain finding; new action path uses bounded owner pages and direct links"},
-    {"class": "RC3 WP3.1/3.3", "owner": "storage retention/measurement work package", "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive", "disposition": "preserve open/historical data; section caps are not whole-archive boundedness"},
-    {"class": "RC2 WP2.3 Research artifact reads", "owner": "existing Research artifact owner", "finding": "Artifact detail is metadata-only and scans artifact/run history", "disposition": "explicit result-not-read; no acceptance from metadata, no duplicate reader; genuine meeting-bound research notes supported"},
-    {"class": "delivery authentication", "owner": "delivery/authentication work package and final chain integrator", "finding": "Consultation compose lacks dedicated Research assignment credential wiring", "disposition": "configure issued consultation-svc/service credential through authorized deployment; source returns unavailable/pending, never fabricated success"},
-    {"class": "review independence", "owner": "coordinator and assigned reviewer", "finding": "Canonical Codex2-to-Codex assignment is same-family", "disposition": "apply live independent-family capacity rule or record actual exception; owner has manufactured neither capacity nor approval"}
+    {
+      "class": "RC6 meetings projections",
+      "owner": "existing consultation/BFF projection work package",
+      "finding": "Legacy list_meetings_view/list_meeting_proposals_view scan the archive",
+      "disposition": "retain existing-domain finding; new action path uses bounded owner pages and direct links"
+    },
+    {
+      "class": "RC3 WP3.1/3.3",
+      "owner": "storage retention/measurement work package",
+      "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive",
+      "disposition": "preserve open/historical data; section caps are not whole-archive boundedness"
+    },
+    {
+      "class": "RC2 WP2.3 Research artifact reads",
+      "owner": "existing Research artifact owner",
+      "finding": "Artifact detail is metadata-only and scans artifact/run history",
+      "disposition": "explicit result-not-read; no acceptance from metadata, no duplicate reader; genuine meeting-bound research notes supported"
+    },
+    {
+      "class": "delivery authentication",
+      "owner": "delivery/authentication work package and final chain integrator",
+      "finding": "Consultation compose lacks dedicated Research assignment credential wiring",
+      "disposition": "configure issued consultation-svc/service credential through authorized deployment; source returns unavailable/pending, never fabricated success"
+    },
+    {
+      "class": "review independence",
+      "owner": "coordinator and assigned reviewer",
+      "finding": "Canonical Codex2-to-Codex assignment is same-family",
+      "disposition": "apply live independent-family capacity rule or record actual exception; owner has manufactured neither capacity nor approval"
+    }
   ],
-  "independent_review": "Previous d2c889826 rejected; fixes await new frozen-head review. Same-family reviewer assignment remains for coordinator to reconcile with live capacity or evidenced exception before approval; owner records no approval."
+  "independent_review": "Previous fa240d554 rejected for evidence budget starvation; whole-ticket bounded fair reads and independent lane continuation now await new frozen-head review. Same-family reviewer assignment remains for coordinator to reconcile with live capacity or evidenced exception before approval; owner records no approval."
 }
