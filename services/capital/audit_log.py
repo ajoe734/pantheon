@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -22,8 +23,10 @@ def append_audit_event(
     detail: Optional[Dict[str, Any]] = None,
     audit_log_path: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    event_id: Optional[str] = None,
 ) -> str:
-    event_id = str(uuid.uuid4())
+    durable_receipt = event_id is not None
+    event_id = event_id or str(uuid.uuid4())
     event = {
         "event_id": event_id,
         "tenant_id": tenant_id,
@@ -39,4 +42,7 @@ def append_audit_event(
         Path(audit_log_path).parent.mkdir(parents=True, exist_ok=True)
         with open(audit_log_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(event) + "\n")
+            if durable_receipt:
+                handle.flush()
+                os.fsync(handle.fileno())
     return event_id
