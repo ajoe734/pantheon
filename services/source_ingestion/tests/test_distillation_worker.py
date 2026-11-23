@@ -1362,3 +1362,26 @@ class TestMarketSourceNoRegistryDrafts:
         assert queue.list_dead_letters() == []
 
 
+
+
+def test_catch_up_limit_counts_new_versions_and_preserves_pending(tmp_path):
+    worker, queue, _ = _make_worker(tmp_path)
+    old = [_normalized_source(source_id=f"old-{i}") for i in range(4)]
+    for source in old:
+        queue.enqueue_source_record(source)
+    # Known sources must not use all admission slots and starve later sources.
+    new = [_normalized_source(source_id=f"new-{i}") for i in range(3)]
+    result = worker.catch_up([*old, *new], limit=2)
+    assert result.enqueued == 2
+    assert result.processed == 6  # queued work is independent of admission
+    assert queue.get(new[2].source_id) is None
+    assert worker.catch_up([*old, *new], limit=2).enqueued == 1
+    revised = _normalized_source(source_id=old[0].source_id, title="Revised")
+    assert worker.catch_up([*old, revised], limit=1).enqueued == 1
+    assert queue.version_count(old[0].source_id) == 2
+
+
+def test_catch_up_reports_lost_leases(tmp_path, monkeypatch):
+    worker, _, _ = _make_worker(tmp_path)
+    monkeypatch.setattr(worker, "run_pending", lambda *a, **kw: DistillationRunResult(processed=0, created=0, refreshed=0, skipped=0, failed=0, lease_lost=("lost-job",)))
+    assert worker.catch_up([]).lease_lost == ("lost-job",)

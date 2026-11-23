@@ -15,7 +15,7 @@ import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ from services.knowledge.evidence import (
 )
 from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped, _capture_datetime, evidence_item_in_capture_window, evidence_item_linked_entity_types
 from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError, strip_list_heavy_metadata
-from services.source_ingestion.connectors.base import SourceRecord
+from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -843,6 +843,9 @@ def read_source_records_for_tenant(
     *,
     jsonl_path: Path,
     tenant_id: str,
+    limit: int | None = None,
+    already_admitted: Callable[[SourceRecord], bool] | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> list[SourceRecord]:
     """Read normalized records for one tenant without taking source write ownership.
 
@@ -850,14 +853,39 @@ def read_source_records_for_tenant(
     transaction and constrain rows by their persisted tenant claim. JSONL is
     retained for local/test configurations, but the caller still supplies an
     explicit tenant and the repository's tenant index enforces that scope.
+    With ``limit``, SQL filters eligibility and each payload query is limited to
+    that batch size. ``already_admitted`` uses the existing durable version
+    receipts; ``summary`` receives a scalar eligible count from the same snapshot.
+    Without ``limit`` the original read API remains available to other callers.
     """
     tenant = str(tenant_id or "").strip()
     if not tenant or tenant == "*":
         raise ValueError("an explicit non-wildcard tenant_id is required for source evidence reads")
 
+    if limit is not None and limit < 1:
+        raise ValueError("source read limit must be positive")
+
+    def eligible(source: SourceRecord) -> bool:
+        return source.status == SourceRecordStatus.NORMALIZED and not (
+            source.source_type == SourceType.MARKET and source.metadata.get("collector_market_bundle")
+        )
+
     backend = os.getenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl").strip().lower()
     if backend in ("", "jsonl"):
-        return JsonlEvidenceRepository(jsonl_path).list_source_records(tenant_id=tenant)
+        records = JsonlEvidenceRepository(jsonl_path).list_source_records(tenant_id=tenant)
+        if limit is None:
+            return records
+        candidates = [source for source in records if eligible(source)]
+        selected = []
+        for source in candidates:
+            if already_admitted is None or not already_admitted(source):
+                selected.append(source)
+                if len(selected) == limit:
+                    break
+        if summary is not None:
+            summary.update(eligible_source_count=len(candidates), source_read_limit=limit,
+                           source_summary_origin="source-ingest.tenant_eligible_records_jsonl")
+        return selected
     if backend != "postgres":
         raise ValueError("SOURCE_INGEST_EVIDENCE_BACKEND must be jsonl or postgres")
 
@@ -870,30 +898,69 @@ def read_source_records_for_tenant(
     except ImportError as exc:
         raise RuntimeError("psycopg is required when SOURCE_INGEST_EVIDENCE_BACKEND=postgres") from exc
 
-    # This consumer never bootstraps schema, reloads other record kinds, or
-    # writes. Filter in SQL so foreign/unowned rows are not materialized here.
+    # No schema or writes belong to this consumer. A bounded catch-up read
+    # pages eligible rows by append order. Known versions do not consume the
+    # admission budget; a revised payload at an old append_id is seen next tick.
+    records: list[SourceRecord] = []
+    where = "record_type = %s AND payload->'metadata'->>'tenant_id' = %s"
+    params: tuple[Any, ...] = ("source_record", tenant)
+    if limit is not None:
+        # Match SourceRecord's missing-status default and Python truthiness for
+        # the collector marker, including legacy boolean/container values.
+        where += (
+            " AND COALESCE(payload->>'status', 'normalized') = 'normalized'"
+            " AND NOT (payload->>'source_type' = 'market' AND "
+            "COALESCE(payload->'metadata'->'collector_market_bundle', 'null'::jsonb) "
+            "NOT IN ('null'::jsonb, 'false'::jsonb, '0'::jsonb, "
+            "'\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb))"
+        )
     try:
         with psycopg.connect(dsn) as conn:
-            conn.execute("SET TRANSACTION READ ONLY")
-            rows = conn.execute(
-                f"SELECT payload FROM {table} "
-                "WHERE record_type = %s AND payload->'metadata'->>'tenant_id' = %s "
-                "ORDER BY append_id ASC",
-                ("source_record", tenant),
-            ).fetchall()
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            if limit is not None and summary is not None:
+                count_row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", params).fetchone()
+                total = count_row[0] if isinstance(count_row, tuple) else next(iter(count_row.values()))
+                summary.update(eligible_source_count=int(total), source_read_limit=limit,
+                               source_summary_origin="source-ingest.postgres.tenant_eligible_count")
+            after = -1
+            while True:
+                if limit is None:
+                    rows = conn.execute(
+                        f"SELECT payload FROM {table} WHERE {where} ORDER BY append_id ASC", params,
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT payload, append_id FROM {table} WHERE {where} "
+                        "AND append_id > %s ORDER BY append_id ASC LIMIT %s",
+                        (*params, after, limit),
+                    ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    payload = row[0] if isinstance(row, tuple) else row.get("payload")
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if not isinstance(payload, dict):
+                        raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+                    source = SourceRecord.from_dict(payload)
+                    if source.tenant_id != tenant:
+                        raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
+                    if limit is None or (eligible(source) and (
+                        already_admitted is None or not already_admitted(source)
+                    )):
+                        records.append(source)
+                        if limit is not None and len(records) == limit:
+                            return records
+                if limit is None:
+                    break
+                last = rows[-1]
+                after = int(last[1] if isinstance(last, tuple) else last["append_id"])
+                # Release this payload batch before fetching another.
+                del rows, row, last, payload, source
+    except EvidenceValidationError:
+        raise
     except Exception as exc:
         raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
-    records: list[SourceRecord] = []
-    for row in rows:
-        payload = row[0] if isinstance(row, tuple) else row.get("payload")
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        if not isinstance(payload, dict):
-            raise EvidenceValidationError("Source evidence owner returned a malformed source record")
-        source = SourceRecord.from_dict(payload)
-        if source.tenant_id != tenant:
-            raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
-        records.append(source)
     return records
 
 

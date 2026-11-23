@@ -92,6 +92,7 @@ _PRUNED_BYTES: dict[str, int] = {}
 COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
 # Max auth (401/403) dead letters redriven per tick; bounds recovery Registry load.
 AUTH_REDRIVE_PER_TICK = 100
+SOURCE_BATCH_LIMIT = 100
 
 
 def _queue_for(config: "DistillationControllerConfig") -> DistillationJobQueue:
@@ -539,9 +540,19 @@ def run_controller_tick(
     try:
         # 1. Read desired state: normalized SourceRecords
         try:
+            def already_admitted(source: SourceRecord) -> bool:
+                nonlocal queue
+                if queue is None:
+                    queue = _queue_for(config)
+                return queue.get(source.source_id, source_version_digest(source)) is not None
+
+            source_summary: dict[str, Any] = {}
             source_records = read_source_records_for_tenant(
                 jsonl_path=config.evidence_store_path,
                 tenant_id=state.tenant_id,
+                limit=SOURCE_BATCH_LIMIT,
+                already_admitted=already_admitted,
+                summary=source_summary,
             )
         except Exception as exc:
             raise DistillationControllerError("desired_read", f"Failed to read source evidence repo: {exc}")
@@ -553,7 +564,13 @@ def run_controller_tick(
             and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
         ]
         eligible_ids = [s.source_id for s in eligible_records]
-        desired_meta = {"eligible_source_ids": sorted(eligible_ids)}
+        eligible_count = source_summary.get("eligible_source_count", len(eligible_ids))
+        desired_meta = {
+            **source_summary,
+            "eligible_source_count": eligible_count,
+            "eligible_source_ids": sorted(eligible_ids),
+            "eligible_source_ids_scope": "admission_batch",
+        }
         
         # 2. Transactionally admit source versions and process leased events.
         # A job is acknowledged only after Registry terminal readback.
@@ -603,7 +620,7 @@ def run_controller_tick(
                 )
             run_result = worker.catch_up(
                 source_records,
-                limit=100,
+                limit=SOURCE_BATCH_LIMIT,
                 tenant_id=state.tenant_id,
             )
             reconcile_meta = {
@@ -710,10 +727,10 @@ def run_controller_tick(
                 ),
                 backlog=reconcile_meta.get("enqueued", 0),
                 desired_state={
-                    "present": bool(eligible_ids),
+                    "present": bool(eligible_count),
                     "source": "source-ingest.normalized_source_records",
                     "checked_at": observed_at,
-                    "summary": f"{len(eligible_ids)} eligible normalized source records",
+                    "summary": f"{eligible_count} eligible normalized source records",
                     "sources": ["source-ingest.normalized_source_records"],
                 },
                 downstream_actual_state={

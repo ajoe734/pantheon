@@ -1498,3 +1498,43 @@ def test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected(tmp_
     with pytest.raises(Exception, match="degraded"):
         run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
     assert queue.dead_letter_count() == 260
+
+
+def test_controller_bounded_admission_and_truthful_total_across_ticks(tmp_path, monkeypatch):
+    from services.source_ingestion.distillation_worker import RegistrySyncResult
+
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    sources = [_normalized_source(f"source-{i}", tenant_id="test") for i in range(205)]
+    sources.extend([
+        _normalized_source("foreign", tenant_id="other"),
+        _normalized_source("market", tenant_id="test", source_type="market", collector_market_bundle=True),
+    ])
+    evidence_path.write_text("".join(json.dumps({"record_type": "source_record", "payload": s.to_dict()}) + "\n"
+                                     for s in sources))
+    config = DistillationControllerConfig(
+        database_url="postgresql://unused/test", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state.json", alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "queue.sqlite3", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path, source_dirs=[],
+    )
+    state = ControllerState(controller_id="test-controller", controller_name="distillation",
+                            environment="test", tenant_id="test", deployment={"git_sha": "test-sha"})
+    writer = DummyLoopWriter()
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._make_registry_sync",
+                        lambda _: lambda request: RegistrySyncResult(registry_id=f"reg-{request.source.source_id}",
+                                                                    status="synced"))
+    queue = DistillationJobQueue(config.job_queue_path)
+    for size in (100, 100, 5, 0):
+        result = run_controller_tick(config=config, state=state, store=ControllerStateStore(config.state_path),
+                                     writer=writer, queue=queue)
+        assert result["status"] == "success"
+        assert result["reconcile"]["enqueued"] == size
+        assert result["reconcile"]["processed"] == size
+        assert len(result["desired"]["eligible_source_ids"]) == size
+        assert result["desired"]["eligible_source_count"] == 205
+        assert result["desired"]["eligible_source_ids_scope"] == "admission_batch"
+        assert writer.successes[-1]["desired_state"]["present"] is True
+        assert "205 eligible" in writer.successes[-1]["desired_state"]["summary"]
+    assert len(queue.list_all()) == 205
+    assert config.alive_path.exists()
