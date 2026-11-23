@@ -1944,7 +1944,11 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
         if not isinstance(ticket, Mapping) or ticket.get("tenant_id") != tenant_id:
             continue
         action = ticket.get("meeting_action")
-        if not isinstance(action, Mapping) or ticket.get("action_state") != "waiting_for_input":
+        if not isinstance(action, Mapping):
+            continue
+        state = ticket.get("action_state")
+        direct = action.get("assignee_kind") == "human" and state in {"open", "in_progress", "returned"}
+        if not direct and state != "waiting_for_input":
             continue
         tid = str(ticket.get("ticket_id") or "")
         meeting_id = str(action.get("meeting_id") or "")
@@ -1953,17 +1957,23 @@ def _human_input_ticket_items(page: Mapping[str, Any], *, tenant_id: str, snapsh
         seen.add(tid)
         href = f"/management/meetings/{quote(meeting_id, safe='')}?action={quote(tid, safe='')}"
         request = ticket.get("input_request") or {}
+        review = ticket.get("review_decision") or {}
+        reason = (review.get("reason") if state == "returned" else action.get("deliverable")) if direct else request.get("reason")
         items.append({
             "id": f"meeting_action:{tid}", "inbox_id": f"meeting_action:{tid}", "item_id": tid,
             "kind": "meeting_action", "inboxType": "meeting", "inbox_type": "meeting",
             "source_type": "meeting", "source_dataset": "research_tickets", "source_id": tid,
             "action_id": tid, "ticket_id": tid, "meeting_id": meeting_id,
             "title": ticket.get("title") or action.get("deliverable"),
-            "summary": request.get("reason"), "reason": request.get("reason"),
+            "summary": reason, "reason": reason,
             "requested_material": action.get("deliverable"),
             "acceptance_criterion": action.get("acceptance_criterion"),
             "owner": ticket.get("owner"), "assignee": ticket.get("assignee") or ticket.get("owner"),
-            "assignee_kind": action.get("assignee_kind"), "resumes_with": ticket.get("owner"),
+            "assignee_kind": action.get("assignee_kind"),
+            "response_action": "submit" if direct else "provide_input",
+            "resumes_with": ticket.get("reviewer_id") if direct else ticket.get("owner"),
+            "reviewer_id": ticket.get("reviewer_id"), "review_decision": review,
+            "evidence_refs": ticket.get("evidence_refs") or [],
             "required_actor": ticket.get("required_actor"), "input_request": request,
             "status": ticket.get("action_state"), "action_state": "pending",
             "owner_status": ticket.get("status"), "revision": ticket.get("revision"),
@@ -2050,13 +2060,13 @@ def read_human_inbox_meeting_items(
     if resolve_orchestrator_base_url():
         with _inbox_owner_budget():
             try:
-                page = ResearchServiceClient().list_research_ticket_page(action_state="waiting_for_input", page_size=100)
+                page = ResearchServiceClient().list_research_ticket_page(human_actionable=True, page_size=100)
                 items.extend(_human_input_ticket_items(page, tenant_id=eff_tenant, snapshot_at=snapshot_at))
                 surfaces["research"] = {
                     "status": "degraded" if page["page_info"].get("next_page_token") else "ok",
                     "reason": "owner_page_has_more" if page["page_info"].get("next_page_token") else None,
                     "page_info": page["page_info"],
-                    "href": "/api/v1/research/tickets?meeting_linked=true&action_state=waiting_for_input&page_size=100"}
+                    "href": "/api/v1/research/tickets?meeting_linked=true&human_actionable=true&page_size=100"}
             except ResearchCommandError as exc:
                 surfaces["research"] = {"status": "denied" if exc.status_code in (401, 403) else "unavailable",
                                         "reason": str(exc), "status_code": exc.status_code}

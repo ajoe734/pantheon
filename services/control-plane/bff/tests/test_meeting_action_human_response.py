@@ -37,6 +37,32 @@ def ticket():
             "created_at": "2026-11-21T01:00:00Z", "updated_at": "2026-11-23T01:00:00Z"}
 
 
+@pytest.mark.parametrize("state,kind,expected", [
+    ("open", "human", "submit"), ("in_progress", "human", "submit"),
+    ("returned", "human", "submit"), ("waiting_for_input", "persona", "provide_input"),
+    ("submitted", "human", None), ("accepted", "human", None),
+    ("open", "persona", None), ("returned", "persona", None),
+])
+def test_human_work_projects_the_original_owner_transition(state, kind, expected):
+    from services.control_plane.bff.meetings.client import _human_input_ticket_items
+    row = ticket()
+    row.update(action_state=state, owner="op-inbox" if kind == "human" else "persona-alpha",
+               reviewer_id="chair-reviewer", review_decision={"decision": "return", "reason": "Add dates"})
+    row["meeting_action"]["assignee_kind"] = kind
+    rows = _human_input_ticket_items({"data": [row, copy.deepcopy(row)]},
+                                    tenant_id="tenant-a", snapshot_at="2026-11-23T00:00:00Z")
+    assert len(rows) == (1 if expected else 0)
+    if expected:
+        item = rows[0]
+        assert item["response_action"] == expected
+        assert item["required_actor"] == "op-inbox"
+        assert item["resumes_with"] == ("chair-reviewer" if expected == "submit" else "persona-alpha")
+        assert item["acceptance_criterion"] == row["meeting_action"]["acceptance_criterion"]
+        if state == "returned":
+            assert item["reason"] == "Add dates"
+            assert item["review_decision"] == row["review_decision"]
+
+
 @pytest.fixture
 def research_stack(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")

@@ -114,7 +114,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
         ctx.identity(request)
         meeting_linked = str(ctx.query(request, "meeting_linked", "false")).lower() == "true"
         meeting_filters = {key: ctx.query(request, key) for key in (
-            "meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after"
+            "meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after", "human_actionable"
         ) if ctx.query(request, key) is not None}
         if meeting_filters and not meeting_linked:
             raise ctx.bff_error(400, ErrorCode.VALIDATION_FAILED,
@@ -212,6 +212,7 @@ def build_tickets_router(ctx: ResearchRouteContext) -> APIRouter:
     endpoint_list_tickets.__signature__ = _signature(
         _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=200),
         _signature_query("meeting_linked", annotation=bool, default=False),
+        _signature_query("human_actionable", annotation=bool),
         *[_signature_query(key) for key in ("meeting_type", "subject_ref", "action_state", "due_before", "submitted_after", "updated_after")], auth,
     )
     endpoint_get_ticket.__signature__ = _signature(_path("ticket_id"), auth)

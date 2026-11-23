@@ -120,6 +120,8 @@ class ResearchServiceClient:
     def list_research_ticket_page(self, **filters: Any) -> Dict[str, Any]:
         params = {k: v for k, v in filters.items() if v is not None}
         params["meeting_linked"] = "true"
+        if "human_actionable" in params:
+            params["human_actionable"] = str(params["human_actionable"]).lower()
         statuses = params.pop("statuses", None)
         if statuses:
             params["status"] = ",".join(statuses)
