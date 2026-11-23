@@ -6,14 +6,47 @@
   "review_status": "pending_independent_review",
   "branch": "task/BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "inspected_dev_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
-  "refreshed_dev_base": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+  "refreshed_dev_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
   "rejected_head": "4dfc6564cf32051127d5b21e7ff10cd1a36834f7",
   "privacy_correction_anchor": "5f862e759",
+  "null_fallback_rejected_head": "23d5628e9101c9b86ab238849b33299066ad902c",
+  "null_fallback_correction_anchor": "ebd592331",
   "delivery_claim": "component validation only; source PR awaits independent review and supervisor integration",
   "trace": "trace.md",
   "handoff": "handoff.md",
   "resource_measurements": "resources.json",
   "validation": [
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
+      "exit_code": 0,
+      "result": "247 passed, 100 warnings in 101.83s; current-base ten-file foreground batch terminal exit collected"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "result": "Passed; production net +270, tests net +389; each evidence file remains below 400 added lines"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_code": 0,
+      "result": "Verified checkout-scoped interpreter and imports from a foreign cwd without PYTHONPATH"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'action_citations_withhold or synthesis_action_fields' --tb=short",
+      "phase": "before_null_fallback_fix",
+      "exit_code": 1,
+      "result": "30 failed, 48 passed, 11 deselected, 3 warnings in 24.41s; reproduced null-field privacy bypass"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_meeting_action_human_response.py -k 'action_citations_withhold or synthesis_action_fields'",
+      "exit_code": 0,
+      "result": "78 passed, 11 deselected, 3 warnings in 14.31s; terminal exit collected"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings /tmp/test_bff_action_review_null.py",
+      "exit_code": 0,
+      "result": "Original reviewer regression: 6 passed, 1 warning in 3.77s; regression retained in task-owned parameterized tests"
+    },
     {
       "command": "python3 scripts/dev/provision_python_distribution.py",
       "exit_code": 0,
@@ -53,6 +86,7 @@
     "private/foreign action refs and legacy no-action minutes",
     "whole withheld reference mappings, embedded excerpts/metadata, padded scalar IDs and mixed visible/withheld identifiers",
     "current/prior and synthesis-only actions for operator, owning trader and unrelated viewer; source history unchanged",
+    "explicit null current/prior fields separately and together; all seven action fields with absent/null/empty top-level values and private/tenant/trader filtering",
     "one filtered owner page per reload, opaque cursor, no unfiltered failure retry",
     "partial owner results, unavailable consultation and bounded per-owner timeout",
     "4 MiB ticket reply and requested page count fail-closed bounds"

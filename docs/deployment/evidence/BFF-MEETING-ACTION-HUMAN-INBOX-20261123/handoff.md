@@ -120,6 +120,24 @@ in 88.11 s (terminal exit 0). The prescribed checkout Python environment was
 then provisioned and all six privacy cases passed there too (1.49 s, exit 0).
 Exact commands are recorded in `evidence.json`.
 
+Codex subsequently rejected head `23d5628e9101c9b86ab238849b33299066ad902c`:
+an explicit top-level null skipped filtering of the copied synthesis field.
+Anchor `ebd592331` uses synthesis when the top-level field is absent or null,
+then applies the existing visibility filter before returning either copy.
+Explicit non-null values, including empty lists/maps, retain precedence.
+All seven action fields use this path. No caller, stored history or owner
+contract changes; the latest dev work-package registration is merged too.
+
+Before the fix, the expanded authenticated regressions reproduced 30 failures
+(48 passes, exit 1). After the fix, all 78 cases passed (14.31 s, exit 0):
+current/prior null separately and together; all seven fields with absent,
+null or empty top-level values; operator, owning trader and unrelated viewer;
+whole withheld citations, private memory and foreign tenant subtrees. Public
+records remain and original owner history is unchanged. The reviewer's original
+six cases also passed (3.77 s). The current-base ten-file regression passed
+247 tests, 100 warnings in 101.83 s (terminal exit 0). Exact commands are in
+`evidence.json`.
+
 Reviewer-family exception: the current explicit dispatch/canonical assignment
 selects Codex, in the same model family as owner Codex2, as already recorded in
 the rejecting review. This packet requests a fresh review; it claims no approval.
