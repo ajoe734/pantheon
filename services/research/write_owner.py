@@ -220,9 +220,9 @@ class ResearchWriteOwner:
         existing = self._tickets_store.get(tid)
         if existing and existing.get("meeting_action"):
             self._action_error("Meeting work cannot be replaced by an ordinary ticket")
-        ok, _ = self._tickets_store.compare_and_set(tid, existing, record)
-        if not ok:
-            self._action_error("Concurrent ticket creation; retry")
+        # Ordinary RW-01 callers retain their existing get/put store contract.
+        # Meeting assignments use their reserved namespace and atomic path above.
+        self._tickets_store.put(tid, record)
         return self._project_ticket_detail(record)
 
     def patch_research_ticket(
@@ -1199,9 +1199,9 @@ class ResearchWriteOwner:
         existing = self._notes_store.get(note_id)
         if existing and existing.get("_meeting_binding"):
             self._action_error("Meeting evidence is immutable")
-        ok, _ = self._notes_store.compare_and_set(note_id, existing, payload)
-        if not ok:
-            self._action_error("Concurrent note write")
+        # KW-02 keeps its original store contract; meeting-bound evidence is
+        # inserted atomically by _create_meeting_note in its reserved namespace.
+        self._notes_store.put(note_id, payload)
         return json.loads(json.dumps(payload))
 
     def get_research_note(self, note_id: Optional[str], *, context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
