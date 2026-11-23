@@ -551,6 +551,11 @@ class ConsultationStore:
     def list_meeting_schedules(self) -> List[Dict[str, Any]]:
         return [_model_copy(item) for item in self._meeting_schedules.values()]
 
+    def get_meeting_schedule(self, tenant_id: str, persona_id: str, meeting_type: str) -> Optional[Dict[str, Any]]:
+        """Direct existing schedule lookup, without scanning the meeting archive."""
+        row = self._meeting_schedules.get(f"{tenant_id}:{persona_id}:{meeting_type}")
+        return _model_copy(row) if row else None
+
     def put_meeting_refusal(self, refusal: Dict[str, Any]) -> None:
         refusal_id = str(refusal.get("refusal_id") or f"ref-{uuid.uuid4().hex[:12]}")
         saved = _model_copy({**refusal, "refusal_id": refusal_id})

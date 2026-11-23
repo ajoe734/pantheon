@@ -1325,8 +1325,14 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
                          ("submitted", "submitted"), ("reviewed", "accepted")):
         query = {"meeting_linked": "true", "meeting_type": series["meeting_type"],
                  "subject_ref": series["subject_ref"], "action_state": states, "page_size": ACTION_PAGE_SIZE}
+        if lane == "reviewed" and meeting.get("previous_action_review_at"):
+            query["updated_after"] = meeting["previous_action_review_at"]
         if isinstance(tokens, Mapping) and tokens.get(lane):
-            query["page_token"] = str(tokens[lane])
+            if not isinstance(tokens[lane], str) or len(tokens[lane]) > 128:
+                pages[lane] = {"status": "unavailable", "reason": "invalid_continuation_token"}
+                failures.append("invalid_continuation_token")
+                continue
+            query["page_token"] = tokens[lane]
         try:
             reply = _action_request("GET", "/api/research/tickets?" + urllib.parse.urlencode(query), tenant,
                                     transport=transport)
@@ -1350,7 +1356,7 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
     # Resolve actual submitted deliverables through their existing authorized owner.
     # Eight reads total, with full continuation refs retained when there are more.
     evidence, reads = [], 0
-    for item in items:
+    for item in sorted(items, key=lambda a: a["state"] != "submitted"):
         refs = item.get("evidence_refs") or []
         item["evidence_available"] = bool(refs)
         if item["state"] not in {"submitted", "accepted", "returned"}:
@@ -1378,6 +1384,8 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
                         raise MeetingOutputRoutingError("evidence_tenant_mismatch", status_code=502)
                     content = {k: saved[k] for k in ("artifact_id", "title", "summary", "result", "metrics") if k in saved}
                     checksum = saved.get("checksum")
+                    if not any(saved.get(k) for k in ("summary", "result", "metrics")):
+                        raise MeetingOutputRoutingError("artifact_metadata_only_result_not_read", status_code=502)
                 if not content or checksum != ref.get("checksum") or not checksum:
                     raise MeetingOutputRoutingError("evidence_changed_or_missing", status_code=502)
                 if len(json.dumps(content).encode()) > 16384:
@@ -1387,8 +1395,16 @@ def read_meeting_actions(meeting: Mapping[str, Any], *, transport: HttpTransport
                 item["evidence_available"] = False
                 record["reason"] = str(exc) if isinstance(exc, MeetingOutputRoutingError) else type(exc).__name__
             evidence.append(record)
-    return {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
-            "items": items, "pages": pages, "evidence": evidence}
+    result = {"status": "degraded" if failures and items else "unavailable" if failures else "ok",
+              "items": items, "pages": pages, "evidence": evidence}
+    if len(json.dumps(result).encode()) > 524288:
+        for record in evidence:
+            record.pop("content", None)
+            record.update(status="unavailable", reason="shared_action_context_byte_budget")
+        for item in items:
+            item["evidence_available"] = False
+        result["status"] = "degraded"
+    return result
 
 
 def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path | None = None,

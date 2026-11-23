@@ -939,8 +939,15 @@ def test_both_consultation_classes_gate_panel_and_deliberative_with_c2_module(
 
     client: ConsultationServiceClient = stack["client"]
     dispatched_calls: list[dict[str, Any]] = []
+    from services.consultation import meeting_outputs as actual_c2
 
     fake_c2 = SimpleNamespace(
+        # Only the proposal seam is doubled here. Retain the actual action
+        # contract so this older cross-class test exercises the same module API.
+        read_meeting_actions=actual_c2.read_meeting_actions,
+        dispatch_meeting_actions=actual_c2.dispatch_meeting_actions,
+        review_meeting_actions=actual_c2.review_meeting_actions,
+        MeetingOutputRoutingError=actual_c2.MeetingOutputRoutingError,
         dispatch_proposals=lambda meeting: [
             dispatched_calls.append(meeting)
             or {
@@ -2826,8 +2833,18 @@ def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, 
                      'subject_ref': 'persona:persona-alpha'}, idempotency_key=week)[0]
     with output_routing_context(transport=owner, store_path=tmp_path / 'dispatch.json'):
         first = convene('2026-W47')
+        owner.malformed_once = True
+        from services.consultation.meeting_outputs import MeetingOutputRoutingError
+        with pytest.raises(MeetingOutputRoutingError, match='frozen decision retained'):
+            meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
+                                                tenant_id=TENANT, provider=Provider())
+        frozen = store.get_meeting(first['meeting_id'])
+        assert frozen['action_decision_frozen'] and frozen['status'] != 'closed'
+        assert store.get_request(first['meeting_id']).status.value != 'published'
+        before_retry_calls = len(calls)
         m1 = meetings_mod.execute_persona_meeting(store=store, meeting_id=first['meeting_id'],
                                                tenant_id=TENANT, provider=Provider())
+        assert len(calls) == before_retry_calls  # no second synthesis after a lost owner receipt
         assert m1['status'] == 'closed' and m1['synthesis']['proposals'] == []
         assert m1['outcome'] == 'actions_adopted' and len(m1['actions']) == 2
         t1, t2 = owner.tickets.values()
@@ -2862,6 +2879,13 @@ def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, 
         assert detail['actions'][0]['state'] == 'open'  # frozen receipt
         assert detail['actions'][0]['live_owner_status']['ticket']['state'] == t1['action_state']
         assert store.get_meeting(m1['meeting_id'])['actions'][0]['state'] == 'open'
+        import runpy
+        probe = runpy.run_path(str(Path(__file__).resolve().parents[3] /
+            'docs/deployment/evidence/MEETING-ACTION-ADOPTION-AND-REVIEW-20261123/probe.py'))['inspect_records']
+        assert probe(detail, m2)['passed']
+        assert not probe(detail, {**m2, 'meeting_id': m1['meeting_id']})['passed']
+        assert not probe(detail, {**m2, 'tenant_id': 'foreign-tenant'})['passed']
+        assert not probe(detail, {**m2, 'action_review_dispatches': []})['passed']
         unrelated = copy.deepcopy(m2)
         unrelated['meeting_series']['subject_ref'] = 'other-committee'
         assert read_meeting_actions(unrelated)['items'] == []
@@ -2872,6 +2896,8 @@ def test_two_meetings_adoption_actual_round_inputs_review_same_ticket(tmp_path, 
     measurement = {'meetings': [len(json.dumps(m).encode()) for m in (m1, m2)],
                    'max_provider_request_bytes': max(len(json.dumps(c).encode()) for c in calls),
                    'ledger_bytes': (tmp_path / 'dispatch.json').stat().st_size,
+                   'lifecycle_bytes': store.lifecycle_log_path.stat().st_size,
+                   'lifecycle_events': len(store.lifecycle_log_path.read_text().splitlines()),
                    'owner_requests': len(owner.requests)}
     print('ACTION_ENVELOPE_MEASUREMENT ' + json.dumps(measurement, sort_keys=True))
 
@@ -2905,3 +2931,74 @@ def test_adoption_declines_forged_capability_review_and_keeps_legacy_minutes(tmp
     assert detail['actions'] == [] and detail['prior_actions'] == []
     assert store.get_meeting('mtg-W47') == before
     assert detail['synthesis']['summary'] == 'Original no-action minutes'
+
+
+def test_capability_http_owner_result_is_safe_and_does_not_trust_role_or_inline_fields(monkeypatch):
+    from io import BytesIO
+    from contextlib import closing
+    seen = []
+    monkeypatch.setenv('PANTHEON_PERSONA_API_URL', 'http://persona-owner')
+    monkeypatch.delenv('CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE', raising=False)
+    monkeypatch.setenv('CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN', 'issued-read-token')
+    def urlopen(req, timeout):
+        seen.append(req)
+        return closing(BytesIO(json.dumps({'persona_id': 'persona-alpha', 'status': 'advisory_only',
+            'can_receive_persona_action': False, 'role': 'chair', 'private_memory': 'do-not-share',
+            'token': 'do-not-share', 'reason': 'no authorized workflow'}).encode()))
+    monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
+    result = meetings_mod._participant_action_capability(TENANT, 'persona-alpha')
+    assert result['status'] == 'advisory_only' and result['can_receive_persona_action'] is False
+    assert 'do-not-share' not in json.dumps(result) and 'role' not in result
+    assert seen[0].get_header('Authorization') == 'Bearer issued-read-token'
+    assert seen[0].get_header('X-tenant-id') == TENANT
+    assert 'run_purpose=daily_cycle' in seen[0].full_url
+    def denied(*args, **kwargs):
+        raise urllib.error.HTTPError('http://persona-owner', 403, 'private owner details', {}, None)
+    monkeypatch.setattr(urllib.request, 'urlopen', denied)
+    result = meetings_mod._participant_action_capability(TENANT, 'persona-alpha')
+    assert result['status'] == 'denied' and not result['can_receive_persona_action']
+    assert 'private owner details' not in json.dumps(result)
+
+
+def test_action_review_cannot_accept_criterion_mismatch_or_unread_evidence():
+    submitted = {'action_id': 'owner-id', 'state': 'submitted', 'revision': 2,
+                 'acceptance_criterion': 'Compare drawdown', 'evidence_available': True,
+                 'evidence_refs': [{'kind': 'research_note', 'artifact_id': 'result', 'checksum': 'digest'}]}
+    review = {'action_id': 'owner-id', 'decision': 'accept', 'reason': 'Measured result meets criterion',
+              'acceptance_criterion': 'Compare drawdown', 'evidence_refs': submitted['evidence_refs']}
+    meeting = {'prior_actions': [submitted]}
+    assert len(meetings_mod._validate_adopted_actions({'action_reviews': [review]}, meeting, set())[1]) == 1
+    for change in ({'acceptance_criterion': 'Unrelated test'}, {'evidence_refs': []}, {'action_id': ['owner-id']}):
+        _, reviews, rejected = meetings_mod._validate_adopted_actions({'action_reviews': [{**review, **change}]}, meeting, set())
+        assert not reviews and rejected
+    submitted['evidence_available'] = False
+    assert not meetings_mod._validate_adopted_actions({'action_reviews': [review]}, meeting, set())[1]
+
+
+def test_new_review_dispositions_use_schedule_watermark_without_archival_scan(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import read_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    store = ConsultationStore(str(tmp_path / 'schedule'))
+    schedule = {'tenant_id': TENANT, 'persona_id': 'persona-alpha', 'meeting_type': 'MT-1',
+                'action_review_watermark': '2026-11-22T00:00:00Z',
+                'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    store.put_meeting_schedule(schedule)
+    assert store.get_meeting_schedule(TENANT, 'persona-alpha', 'MT-1') == schedule
+    assert store.get_meeting_schedule('foreign', 'persona-alpha', 'MT-1') is None
+    owner = _ActionResearchBoundary()
+    m = {'tenant_id': TENANT, 'meeting_id': 'm2', 'meeting_series': schedule['meeting_series'],
+         'previous_action_review_at': schedule['action_review_watermark'],
+         'metadata': {'prior_actions_page_tokens': {'reviewed': 'same-scope-keyset'}}}
+    result = read_meeting_actions(m, transport=owner)
+    assert result['status'] == 'ok'
+    queries = [urllib.parse.parse_qs(r[1].query) for r in owner.requests]
+    assert all(q.get('updated_after') is None for q in queries[:2])
+    assert queries[2]['updated_after'] == ['2026-11-22T00:00:00Z']
+    assert queries[2]['page_token'] == ['same-scope-keyset']
+
+
+def test_oversize_shared_case_and_provider_envelope_are_refused_without_truncating_work():
+    with pytest.raises(meetings_mod.MeetingRefusedError, match='256 KiB'):
+        meetings_mod._attach_meeting_action_case({'groups': {}, 'unexpected_owner_payload': 'x' * 262145}, [])
+    with pytest.raises(meetings_mod.MeetingRefusedError, match='2 MiB'):
+        meetings_mod._check_meeting_prompt_budget({'meeting': {'prior_actions': [{'deliverable': 'x' * 2097153}]}})

@@ -812,6 +812,8 @@ MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA: dict[str, Any] = {
                         "proposals_issued",
                         "completed_no_proposal",
                         "no_testable_hypothesis",
+                        "actions_adopted",
+                        "REVIEW",
                     ],
                 },
                 "proposals": {

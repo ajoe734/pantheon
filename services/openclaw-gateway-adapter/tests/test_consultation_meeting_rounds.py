@@ -515,6 +515,8 @@ def test_round_1_round_2_and_chair_synthesis_prompt_schemas_validate_meeting_fie
         "proposals_issued",
         "completed_no_proposal",
         "no_testable_hypothesis",
+        "actions_adopted",
+        "REVIEW",
     }
     synth_contrib = dict(synth_resp.json()["contribution"])
     assert synth_contrib["event_content"]["synthesis"]["outcome"] == "proposals_issued"
@@ -604,3 +606,39 @@ def test_configured_missing_shared_token_file_does_not_downgrade_to_adapter(tmp_
     monkeypatch.setenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", str(adapter_file))
     with pytest.raises(FileNotFoundError):
         cp._memory_auth_token()
+
+
+def test_normal_chair_provider_schema_carries_explicit_adoption_and_prior_results(tmp_path):
+    import jsonschema
+    action = {'source_action_id': 'chair-research-1', 'assignee': 'persona-alpha', 'assignee_kind': 'persona',
+              'deliverable': 'Saved analysis', 'acceptance_criterion': 'Compare costs to the stated baseline',
+              'next_review': 'MT-1 pool:persona-alpha 2026-W48', 'source_refs': ['facts:item:1']}
+    event = {'claims': [{'claim': 'Adopt comparison', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Explicitly adopt one research action, zero formal proposals',
+                           'outcome': 'actions_adopted', 'proposals': [], 'actions': [action],
+                           'action_reviews': []}}
+    provider = _ProviderDouble(event_content_override=event)
+    reply = _post_turn(provider, tmp_path, idem_key='explicit-adoption', meeting={
+        'meeting_id': 'mtg-1', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+        'prior_actions': [{'action_id': 'original-owner-ticket', 'state': 'submitted'}],
+        'prior_action_evidence': [{'action_id': 'original-owner-ticket', 'status': 'ok',
+                                   'content': {'body': 'Real saved comparison costs 12 bps'}}],
+        'participant_action_capabilities': [{'persona_id': 'persona-alpha', 'status': 'allowed',
+                                             'can_receive_persona_action': True}],
+        'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []},
+    })
+    assert reply.status_code == 200, reply.text
+    prompt = provider.prompts[0]
+    assert 'Real saved comparison costs 12 bps' in prompt
+    assert 'Round suggestions are advisory' in prompt and 'criterion' in prompt
+    assert 'zero proposals is valid' in prompt and 'can_receive_persona_action' in prompt
+    assert 'execution_authority=none' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    jsonschema.validate(event, schema)
+    returned = reply.json()['contribution']['event_content']['synthesis']
+    assert returned['actions'] == [action] and returned['proposals'] == []
+    malformed = json.loads(json.dumps(event))
+    del malformed['synthesis']['actions'][0]['next_review']
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(malformed, schema)

@@ -1350,7 +1350,14 @@ def _attach_meeting_action_case(case_file: Mapping[str, Any], actions: Sequence[
         body = {k: v for k, v in result.items() if k not in {"case_file_id", "digest"}}
         digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode()).hexdigest()
         result.update(case_file_id=f"casefile-{digest[:24]}", digest=digest)
+    if len(json.dumps(result).encode()) > 262144:
+        raise MeetingRefusedError("case_file_byte_budget_exceeded", "Meeting case file exceeds 256 KiB")
     return result, items
+
+
+def _check_meeting_prompt_budget(request: Mapping[str, Any]) -> None:
+    if len(json.dumps(request).encode()) > 2097152:
+        raise MeetingRefusedError("prompt_byte_budget_exceeded", "Meeting provider request exceeds 2 MiB")
 
 
 def build_participant_pre_read(
@@ -2126,9 +2133,12 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
         action = {k: item.get(k) for k in fields}
         if any(not isinstance(v, str) or not v.strip() or len(v) > (2000 if k in {"deliverable", "acceptance_criterion"} else 256)
                for k, v in action.items()):
-            reason = "missing_or_unbounded_assignment_fields"
+            rejected.append({"index": idx, "reason": "missing_or_unbounded_assignment_fields"})
+            continue
         refs = item.get("source_refs")
-        if not isinstance(refs, list) or not 1 <= len(refs) <= 8 or any(not isinstance(r, str) or r not in allowed_citations for r in refs):
+        if (not isinstance(refs, list) or not 1 <= len(refs) <= 8
+                or any(not isinstance(r, str) or len(r) > 256 or r not in allowed_citations for r in refs)
+                or len(json.dumps(refs).encode()) > 4096):
             reason = "invalid_action_source_refs"
         if not meeting.get("meeting_series"):
             reason = "stable_series_unavailable"
@@ -2136,7 +2146,8 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
             reason = "duplicate_source_action_id"
         if action.get("assignee_kind") == "persona":
             cap = capabilities.get(action.get("assignee"), {})
-            if cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed":
+            if (cap.get("can_receive_persona_action") is not True or cap.get("status") != "allowed"
+                    or "research_note" not in (cap.get("allowed_deliverables") or [])):
                 reason = "persona_owner_did_not_allow_assignment"
         elif action.get("assignee_kind") != "human":
             reason = "invalid_assignee_kind"
@@ -2171,6 +2182,9 @@ def _validate_adopted_actions(raw: Mapping[str, Any], meeting: Mapping[str, Any]
         if not isinstance(item, Mapping):
             continue
         tid = item.get("action_id")
+        if not isinstance(tid, str):
+            rejected.append({"reason": "invalid_review_action_id"})
+            continue
         snapshot = prior.get(tid, {})
         refs = item.get("evidence_refs")
         # The model must compare the actual prior criterion and cite the submitted evidence it saw.
@@ -3315,6 +3329,9 @@ def execute_persona_meeting(
 
     from .meeting_outputs import read_meeting_actions
     if "prior_actions" not in meeting:
+        previous = store.get_meeting_schedule(tenant_id, chair_persona_id, str(meeting["meeting_type"])) if hasattr(store, "get_meeting_schedule") else None
+        if previous and previous.get("meeting_series") == meeting.get("meeting_series"):
+            meeting["previous_action_review_at"] = previous.get("action_review_watermark")
         action_read = read_meeting_actions(meeting)
         meeting["prior_actions"] = action_read["items"]
         meeting["prior_action_evidence"] = action_read.get("evidence") or []
@@ -3485,6 +3502,7 @@ def execute_persona_meeting(
                 "meeting": meeting_ctx,
                 "metadata": {"meeting": meeting_ctx},
             }
+            _check_meeting_prompt_budget(ask_request)
             contribution = provider.obtain(
                 tenant_id=tenant_id,
                 request=ask_request,
@@ -3661,6 +3679,7 @@ def execute_persona_meeting(
     }
 
     raw_synthesis: Optional[Dict[str, Any]] = None
+    _check_meeting_prompt_budget(synth_ask)
     try:
         synth_contrib = provider.obtain(
             tenant_id=tenant_id,
@@ -3869,10 +3888,15 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
         meeting["synthesis"] = synthesis
         store.put_meeting(meeting)
 
-    from .meeting_outputs import dispatch_meeting_actions, review_meeting_actions
+    from .meeting_outputs import dispatch_meeting_actions, review_meeting_actions, MeetingOutputRoutingError
     meeting["actions"] = dispatch_meeting_actions(meeting)
     meeting["action_review_dispatches"] = review_meeting_actions(meeting)
     store.put_meeting(meeting)
+    if (any(a.get("dispatch_error") for a in meeting["actions"])
+            or any(r.get("status") != "recorded" for r in meeting["action_review_dispatches"])):
+        # Use the existing workflow's bounded retry/lease machinery. Publishing a
+        # closed request here would suppress its next attempt permanently.
+        raise MeetingOutputRoutingError("meeting_action_owner_pending; frozen decision retained for retry", status_code=503)
 
     # Step 10: Memory Writeback (Minutes as 1 institutional fact + each participant's outcome to own memory)
     writebacks, inst_entry_id = _write_meeting_memory(
@@ -3910,6 +3934,13 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
     # Update schedule for the chair and trading participants
     cadence = str(spec.get("cadence") or "weekly")
     next_due = compute_next_due_at(now_closed, cadence)
+    source = meeting.get("prior_actions_source") or {}
+    pages = source.get("pages") or {}
+    fully_read = source.get("status") == "ok" and all(not p.get("has_more") and p.get("status") == "ok" for p in pages.values())
+    fully_read = fully_read and all(e.get("status") == "ok" for e in meeting.get("prior_action_evidence") or [])
+    # Never advance past unread pages or failed evidence. Inclusive owner filters
+    # preserve updates made in the same timestamp unit as the previous review.
+    watermark = meeting["created_at"] if fully_read else meeting.get("previous_action_review_at")
     for p in participants:
         if p.get("trading") or p["persona_id"] == chair_persona_id:
             store.put_meeting_schedule(
@@ -3920,6 +3951,8 @@ def _close_persona_meeting(*, store: Any, meeting: Dict[str, Any], spec: Mapping
                     "meeting_code": meeting_code,
                     "last_run_at": now_closed,
                     "next_due_at": next_due,
+                    "meeting_series": meeting.get("meeting_series"),
+                    "action_review_watermark": watermark,
                 }
             )
 
