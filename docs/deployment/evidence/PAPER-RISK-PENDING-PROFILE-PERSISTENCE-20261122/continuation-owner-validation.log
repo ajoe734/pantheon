@@ -1,0 +1,91 @@
+........................................................................ [ 11%]
+........................................................................ [ 23%]
+........................................................................ [ 34%]
+........................................................................ [ 46%]
+........................................................................ [ 58%]
+........................................................................ [ 69%]
+........................................................................ [ 81%]
+...................................................................F.... [ 92%]
+............................................                             [100%]
+=================================== FAILURES ===================================
+___________ test_real_postgres_migration_regression_preexisting_rows ___________
+
+    def test_real_postgres_migration_regression_preexisting_rows():
+        dsn = os.environ.get("CAPITAL_TEST_DSN", "postgresql://postgres:postgres@127.0.0.1:15432/pantheon")
+        try:
+            import psycopg
+            with psycopg.connect(dsn, connect_timeout=2) as conn:
+                pass
+        except Exception:
+            pytest.skip("Disposable PostgreSQL instance not available at " + dsn)
+    
+        from services.capital.pg_store import migrate_capital_tables
+    
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute("CREATE SCHEMA IF NOT EXISTS capital;")
+            for tbl in ("capital_pools", "persona_capital_bindings", "allocation_authority", "audit_events"):
+                conn.execute(f"DROP TABLE IF EXISTS capital.{tbl} CASCADE;")
+                conn.execute(f"CREATE TABLE capital.{tbl} (record_id TEXT PRIMARY KEY, payload JSONB, updated_at TIMESTAMPTZ);")
+    
+            conn.execute("INSERT INTO capital.capital_pools (record_id, payload) VALUES ('pool-1', '{\"name\": \"Alpha Pool\", \"metadata\": {}}');")
+            conn.execute("INSERT INTO capital.persona_capital_bindings (record_id, payload) VALUES ('bind-1', '{\"binding_id\": \"bind-1\", \"metadata\": {}}');")
+            conn.execute("INSERT INTO capital.audit_events (record_id, payload) VALUES ('evt-1', '{\"event_id\": \"evt-1\"}');")
+            alloc_doc = {
+                "schema_version": 3,
+                "allocations": {"al-1": {"allocation_id": "al-1", "current_weight": 0.5}},
+                "rebalances": {"rb-1": {"rebalance_id": "rb-1"}},
+                "containments": {"ct-1": {"containment_id": "ct-1"}},
+                "command_receipts": {"cr-1": {"command_id": "cr-1"}},
+                "containment_commands": {"cc-1": {"command_id": "cc-1"}},
+            }
+            conn.execute("INSERT INTO capital.allocation_authority (record_id, payload) VALUES ('capital-allocation-authority', %s);", (json.dumps(alloc_doc),))
+>           conn.execute("ALTER DATABASE pantheon SET lock_timeout = '1500ms';")
+
+services/capital/test_tenant_scoping.py:1531: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <psycopg.Connection [BAD] at 0x79a3f20f2150>
+query = "ALTER DATABASE pantheon SET lock_timeout = '1500ms';", params = None
+prepare = None, binary = False
+
+    def execute(
+        self,
+        query: Query,
+        params: Params | None = None,
+        *,
+        prepare: bool | None = None,
+        binary: bool = False,
+    ) -> Cursor[Row]:
+        """Execute a query and return a cursor to read its results."""
+        try:
+            cur = self.cursor()
+            if binary:
+                cur.format = BINARY
+    
+            if isinstance(query, Template):
+                if params is not None:
+                    raise TypeError(
+                        "'execute()' with string template query doesn't support parameters"
+                    )
+                return cur.execute(query, prepare=prepare)
+            else:
+                return cur.execute(query, params, prepare=prepare)
+        except e._NO_TRACEBACK as ex:
+>           raise ex.with_traceback(None)
+E           psycopg.errors.InvalidCatalogName: database "pantheon" does not exist
+
+/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/psycopg/connection.py:300: InvalidCatalogName
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/control-plane/bff/test_persona_provisioning_coordinator.py::test_retired_ledger_projects_as_retired_not_paper_running
+services/control-plane/bff/test_persona_provisioning_coordinator.py::test_retired_ledger_projects_as_retired_not_paper_running
+  /tmp/pantheon-worker-worktrees/pantheon/paper-risk-pending-profile-persistence-20261122/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED services/capital/test_tenant_scoping.py::test_real_postgres_migration_regression_preexisting_rows
+1 failed, 619 passed, 3 warnings in 129.77s (0:02:09)

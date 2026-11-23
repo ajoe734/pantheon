@@ -1,0 +1,232 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "register_classes": [
+    "RC2 WP2.1",
+    "RC6"
+  ],
+  "source_review": {
+    "requested_scope": "Actual BFF detail DTO compatibility, stage and raw-owner identity controls, installed pinned dev owner transport, bounded GET-only probe and truthful outstanding hosted proof; same-PR shard-11 release-probe inventory regression correction",
+    "decision": "pending independent review",
+    "hosted_acceptance_required": true
+  },
+  "hosted_acceptance": {
+    "passed": false,
+    "probe_exit_code": 1,
+    "observed_at": "2026-11-22T17:19:05.779546+00:00",
+    "deployment_cutoff": "2026-11-22T15:14:29+00:00",
+    "backend_sha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "frontend_sha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+    "checked_trading_personas": 3,
+    "approval_rows": 697,
+    "fresh_decision_event_ids": [],
+    "fresh_rejection_event_ids": [],
+    "fresh_fill_event_ids": [],
+    "failed": [
+      "persona-2448c7053e33ea48da47:required_profile_mapping_unresolved",
+      "persona-6507750312870d03a241:required_profile_mapping_unresolved",
+      "persona-ee7112a829d38b9135ac:required_profile_mapping_unresolved",
+      "no_fresh_governed_decision:persona-2448c7053e33ea48da47",
+      "no_fresh_governed_decision:persona-6507750312870d03a241",
+      "no_fresh_governed_decision:persona-ee7112a829d38b9135ac",
+      "no_fresh_pre_broker_rejection_with_amounts",
+      "no_fresh_broker_position_cash_reconciled_fill"
+    ],
+    "latest_probe_evidence": "hosted-probe-repaired.json"
+  },
+  "chain_delivery_states": {
+    "policy_binding": "deployed",
+    "bound_policy_sizing": "deployed",
+    "journey_historical_causes": "deployed",
+    "frontend_failure_causes": "deployed",
+    "profile_autoresolve": "merged"
+  },
+  "source_not_hosted": {
+    "autoresolve_merge": "eedf523a5d23e90742e427d2e055e70884664805",
+    "source_pr": 7740
+  },
+  "hosted_identity_files": [
+    "hosted-manifest.json",
+    "hosted-bff-version.json",
+    "hosted-stack.json",
+    "hosted-runtime-owner.json"
+  ],
+  "browser": {
+    "exit_code": 0,
+    "evidence": "hosted-browser.json",
+    "normal_entry": "/management/trade-journeys",
+    "historical_pages": [
+      "tj_57418ba7-ef37-5015-9b5e-b6423872da89",
+      "tj_79726064-4cc2-5510-8e11-7f5e59ff89bd"
+    ],
+    "writes_attempted": 0,
+    "page_errors": 0,
+    "transport_errors": 0,
+    "pair_bookends_match": true
+  },
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q acceptance/test_paper_risk_journey.py acceptance/test_paper_risk_policy_binding.py acceptance/test_trade_journey_readable_probe.py",
+      "exit_code": 0,
+      "result": "63 passed"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/execution/lean_runtime/test_paper_runtime.py -k 'risk_reduc or close_leg'",
+      "exit_code": 0,
+      "result": "2 passed, 150 deselected, 4 subtests passed; local fixtures only"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/reconciliation-drift/tests/test_journey_booking_reconciliation.py",
+      "exit_code": 0,
+      "result": "13 passed; local fixtures only"
+    },
+    {
+      "command": "python3 -m py_compile acceptance/probes/paper-risk-journey acceptance/probes/paper-risk-policy-binding",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 265s python3 /tmp/run-paper-risk-hosted.py",
+      "collector_exit_code": 0,
+      "probe_exit_code": 1,
+      "result": "exact task probe source executed in memory in hosted BFF; no product source files changed"
+    },
+    {
+      "command": "timeout 185s python3 /tmp/run-paper-risk-browser.py",
+      "exit_code": 0,
+      "result": "viewer token exchange and read-only Chromium; token passed through stdin, never persisted"
+    },
+    {
+      "command": "timeout 125s python3 /tmp/collect-paper-runtime.py",
+      "exit_code": 0,
+      "result": "served paper-signal-producer resolver and existing Runtime Manager desired-state GET"
+    },
+    {
+      "command": "timeout 55s python3 /tmp/collect-paper-risk-stack.py",
+      "exit_code": 0,
+      "result": "read-only Docker container/image inspection; inventory is not a full expected-service acceptance"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q acceptance/test_paper_risk_journey.py acceptance/test_paper_risk_policy_binding.py acceptance/test_trade_journey_readable_probe.py",
+      "exit_code": 0,
+      "result": "82 passed in 2.96s; includes actual BFF detail composer, DTO and immutable source negative controls, dev transport scope/failure controls"
+    },
+    {
+      "command": "PYTHONPATH=acceptance /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -",
+      "exit_code": 0,
+      "result": "prior positive passed, prior actual shape failed five checks, repaired actual shape passed; dto-regression.json",
+      "stdin_summary": "Load prior 581cb757d probe using git show; run the same synthetic fixture in invented and hosted DTO shapes, then run current probe against the hosted shape and assert all three outcomes."
+    },
+    {
+      "command": "timeout 265s python3 /tmp/run-paper-risk-hosted-repaired.py",
+      "collector_exit_code": 0,
+      "probe_exit_code": 1,
+      "result": "current executable probe on worker with existing pinned SSH transport; same unresolved mappings and zero fresh samples; hosted-probe-repaired.json"
+    },
+    {
+      "command": "DEV_DEPLOY_SSH_HOST=35.194.154.62 DEV_DEPLOY_SSH_USER=chloe_ong_dev_cctech_support_com DEV_DEPLOY_SSH_KEY_FILE=/home/chloe_ong_dev_cctech_support_com/.ssh/google_compute_engine DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE=/home/chloe_ong_dev_cctech_support_com/.ssh/known_hosts ACCEPTANCE_BFF_URL=https://api.dev.mvl-cap.tw timeout 55s python3 -",
+      "exit_code": 0,
+      "result": "all three owner reads succeeded with existing installed credentials; unresolved policy remains a real owner result; owner-transport-readback.json",
+      "stdin_summary": "Import current policy probe; dev_owner_read telemetry historical event, Capital pool resolution and approvals; assert exact event, pool and tenant identity and record sanitized receipt."
+    },
+    {
+      "command": "timeout 60s /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+      "source_head": "ab1b549a98ed5875ab25842e05a0d737b05bc2ec",
+      "exit_code": 1,
+      "result": "1 failed, 15 passed in 1.14s; existing explicit probe list omitted paper-risk-journey"
+    },
+    {
+      "command": "timeout 90s /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_paper_risk_journey.py acceptance/test_paper_risk_policy_binding.py acceptance/test_trade_journey_readable_probe.py",
+      "exit_code": 0,
+      "result": "98 passed in 4.21s; 16 stage tests plus existing 82 risk/journey tests"
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "one invocation per release under existing post-switch acceptance runner",
+    "max_requests": 72,
+    "max_seconds": 240,
+    "per_request_seconds": 15,
+    "max_response_bytes": 8388608,
+    "rows_per_persona": 50,
+    "detailed_journeys_per_persona": 4,
+    "trading_persona_count": 3,
+    "persistent_product_writes": 0,
+    "growth_per_day_bytes": 0,
+    "cap_and_cleanup": "stdout only; existing runner caps/replaces verdict; fixed task evidence snapshot in git",
+    "remote_owner_call_seconds": 15,
+    "remote_request_accounting": "Each owner GET counts once; approvals GET plus token exchange counts twice, all within existing total budget."
+  },
+  "residual_findings": [
+    {
+      "register_class": "RC2 paper-risk owner",
+      "owning_task": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
+      "finding": "Three genuine owner mappings unresolved. Source dependencies are all satisfied. This is an external owner boundary, not an unfinished declared dependency.",
+      "disposition": "Existing Capital/risk policy owner must disposition its actual scoped owner requests; no engineering-created policy or percentage."
+    },
+    {
+      "register_class": "RC2 exact release delivery",
+      "finding": "#7740 merged but current hosted pair excludes it; deployment 45046752287 failed before switch.",
+      "disposition": "Existing deployment chain must deliver an exact pair and verify every expected steady service at the expected version."
+    },
+    {
+      "register_class": "RC2 WP2.1 / RC6",
+      "owning_task": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+      "finding": "Zero qualifying fresh governed decisions, rejections or reconciled fills in bounded hosted sample.",
+      "disposition": "Keep hosted external_wait; rerun read-only probe after normal deployment and daily flow, require fresh event IDs and comparisons."
+    },
+    {
+      "register_class": "RC2 acceptance probe runner",
+      "finding": "Prior acceptance source required additional owner URLs/tokens despite an installed dev read transport.",
+      "disposition": "Resolved in this source change: runner existing pinned SSH now reads Capital, telemetry and approvals. Actual scoped owner reads succeeded; no new grants. Genuine mapping/deployment/fresh-evidence waits remain in preceding residuals.",
+      "evidence": "owner-transport-readback.json"
+    }
+  ],
+  "fixture_and_replay_boundary": "Fresh positive controls are synthetic tests only. Historical DTO fixture is prior-task recorded shape. Hosted read/browser data is natural readback; no trades, repair, replay, policy activation or deployment performed.",
+  "source_sha256": {
+    "acceptance/probes/paper-risk-journey": "df5790e567ccfa60afa1183b868fd6a2001289b7d30f561793d3898fc944e849",
+    "acceptance/probes/paper-risk-policy-binding": "de5ad7ac441772cffbafbb155428f03ec52121afbb527d9f95a253862e7c46fd",
+    "acceptance/test_paper_risk_journey.py": "1402c1fce8e9934c851e060710ffe9033865a0bb75bd63ecbbe2ea0890893402",
+    "acceptance/test_paper_risk_policy_binding.py": "451fbd9217d5228a9ed8a9cd186ab27e6a5f3b8e7b73610dd4a3a7a141507879",
+    "scripts/test_dev_acceptance_stage.py": "9c0400f18f53166b8e2b1d43ad08c544d8044a956aa5bc4b2dc8ef86b2dca5ca"
+  },
+  "artifact_sha256": {
+    "hosted-probe-execution.json": "47542cc02f46c232fc6e43c0d262f0264a0806f0cda52782d1f2c194a451a7b2",
+    "hosted-runtime-owner.json": "284478ba6aed17aa1c3cfb08c53380e016c48267d175d3ddcc21fbf97de1ebb9",
+    "hosted-manifest.json": "4143fa7f332d646c7e497152fa939992c30fd9b94b29a01cfacdd39dfbf4f61f",
+    "README.md": "8300cb542a41fdb2dd2d44ba5db648f9f0b0e2339760b889c372fb23df998438",
+    "hosted-stack.json": "b8ce1a72f5409b1d501ee2420528e8d5c71a7c109c56cd632ac068659b6fa381",
+    "hosted-browser.json": "0b6bc027869d5f2244f0fb8065e926079fde7a6b1c30ecb02fbd944a2bfd9c37",
+    "hosted-bff-version.json": "479d091951a325c5a252a5b7562bfd292b672595e13091a95a2f417bc74f1a0d",
+    "dto-regression.json": "09d04156d372609961cb305d76ae4e8760bbae93f7f660aa99d9b4f510277be5",
+    "owner-transport-readback.json": "76a7fd584d3166b5d803bef84bdf65b01758cdfe85b846472dc7bef4d860af3c",
+    "hosted-probe-repaired.json": "4966b0522af11ca769ba5df1376953e786952c7e55508834641c8a0796cb64ca"
+  },
+  "source_correction": {
+    "prior_head": "581cb757da05ae5f4a45b6a4210895ecd10717ab",
+    "dto_regression": "dto-regression.json",
+    "actual_bff_composer_test": "test_positive_through_actual_bff_detail_composer",
+    "owner_read_transport": "existing scripts/dev_vm_ssh.sh; installed service credentials remain inside running containers",
+    "owner_read_evidence": "owner-transport-readback.json",
+    "new_credentials_or_grants": false
+  },
+  "ci_evidence_remediation": {
+    "failed_check": "Runtime mirror guard / Diff budget",
+    "run": 45049110353,
+    "reason": "Original hosted-stack inventory added 676 evidence lines above cap 400.",
+    "change": "Commit targeted service observations and aggregate inventory counts; preserve immutable original commit/blob/SHA256 in hosted-stack.json. No product or acceptance logic changes."
+  },
+  "ci_stage_inventory_remediation": {
+    "failed_check": "Test sweep (shard 11)",
+    "run": 45049351184,
+    "job": 137290956561,
+    "prior_head": "ab1b549a98ed5875ab25842e05a0d737b05bc2ec",
+    "change": "Include paper-risk-journey in explicit release probe inventory and verify both risk probes skip with exit 77 without viewer credentials.",
+    "runtime_changes": false,
+    "hosted_status": "external_wait; original observations retained without claiming a new hosted run"
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "task_id": "BFF-TRADING-PULSE-BOUNDED-STRATEGY-READ-20261122",
+  "owner": "Codex2",
+  "reviewer": "Antigravity2",
+  "status": "ready_for_independent_review",
+  "base_commit": "a6db43a6f51e27df12dd926ee24b9e3d3875e4c2",
+  "anchor_commit": "6ea050b51",
+  "work_package": {
+    "class": "RC6 WP6.2 / RC3 strategy reads",
+    "existing_owner_task": "BFF-STRATEGY-READ-REAL-SCALE-20261106",
+    "existing_owner_pr": 7749,
+    "composes_with": "BFF-TRADING-PULSE-OPERATOR-FACTS-20261122",
+    "hosted_acceptance_task": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+    "management_acceptance_task": "MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114"
+  },
+  "change": {
+    "entry_point": "ManagementService.get_trading_pulse",
+    "strategy_owner_method": "ReadSurfacePorts.get_strategy_spec_detail(strategy_id, version_selector='current')",
+    "strategy_owner_route": "GET /api/registry/strategies/{strategy_id}/strategy-specs",
+    "admission": "Read only strategy_id from the bindings admitted by the existing verified operator tenant/persona scope; never probe artifact_id or excluded, retired, failed, foreign or unverified bindings.",
+    "response_validation": "Require a dictionary with the same strategy_id and verified tenant_id before using names or symbols. Missing, empty, failed, foreign and mismatched owner results leave enrichment unknown without altering roster or metrics.",
+    "deduplication": "One owner method call per distinct admitted strategy ID per snapshot, including failures. The local dictionary ends with this invocation; subsequent snapshots retry.",
+    "symbol": "Carry the symbol from the already-read _list_row of the existing page_size=1 Journey projection only after its tenant, environment, runtime, binding, persona and snapshot checks. Use it only if the row has no known symbol; do not issue another Journey read.",
+    "preserved": [
+      "Verified persona names, existing persona/strategy/Journey links and ranking population",
+      "Ledger zero fills, -168.085 TWD observed PnL, zero fill rate, unknown metrics and cash refusal details",
+      "Live viewer requested-quantity redaction",
+      "Rankings and cockpit include_outcomes=False: no Journey reader opened or hydrated"
+    ],
+    "changed_files": [
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "docs/operations/problem-register.md",
+      "docs/deployment/evidence/BFF-TRADING-PULSE-BOUNDED-STRATEGY-READ-20261122/evidence.json"
+    ]
+  },
+  "regression_contract": {
+    "owner_wire_schema": "Real ReadSurfacePorts + DefaultResearchKnowledgeSourcePort with Registry registry_id/artifact_type/artifact_state/version/strategy_id/owner_tenant/metadata.strategy_spec rows; intercept only HTTP transport.",
+    "matrix": "Pulse, rankings and cockpit with successful, empty, unavailable, foreign-tenant and mismatched-ID responses; two snapshots each.",
+    "query_assertion": "Exactly one GET to strategy-p1's owner route per snapshot despite two admitted bindings referencing it. No full listing, raw artifact, excluded persona or other strategy probe. A new snapshot retries prior failures.",
+    "journey_schema": "Existing services.trade_journey.materializer.JourneyProjection passed through the real BFF _list_row; no invented outcome schema.",
+    "journey_assertion": "Same-binding 2317.TWSE supplies the no-fill row's symbol and preserves insufficient_cash, submitted_to_broker=false, required 100034.3461, available 100000, 452 requested shares (redacted for live viewer), currency and immutable event/Journey links. Old-binding projection yields no symbol or Journey link."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned from the supervisor dependency interpreter; all imports verified from a foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      "exit_code": 0,
+      "passed": 138,
+      "failed": 0,
+      "duration_seconds": 58.35,
+      "log": "/tmp/bounded-strategy-focused-tests-final.log"
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_b3_trading_pulse.py services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
+      "exit_code": 0,
+      "passed": 99,
+      "failed": 0,
+      "duration_seconds": 21.19,
+      "note": "Final runtime-source recheck after normalizing the dictionary lookup key; the architecture and owner-port suites above also passed.",
+      "log": "/tmp/bounded-strategy-final-runtime-tests.log"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_research_knowledge_source_ports.py acceptance/test_trading_pulse_operator.py -q",
+      "exit_code": 0,
+      "passed": 78,
+      "failed": 0,
+      "duration_seconds": 5.78,
+      "log": "/tmp/bounded-strategy-port-probe-tests.log"
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "On the existing read request only; no recurring job added or changed.",
+    "owner_call_cap": "At most U strategy-detail calls per snapshot, U distinct strategy IDs among N admitted bindings, U <= N; a hosted fleet of three single-binding trading personas requires at most three calls, never the 5031-row directory.",
+    "temporary_state": "At most U bounded strategy-detail records in the invocation-local dictionary, including empty placeholders for failures; released when the invocation returns.",
+    "journey_calls": "Existing at most one page_size=1 call per admitted binding for the full Pulse; zero for rankings and cockpit. No added Journey calls.",
+    "persistent_writers_added_or_changed": 0,
+    "persistent_growth_bytes_per_day": 0,
+    "new_routes_services_caches_or_gates": 0,
+    "business_writes": 0
+  },
+  "hosted_handoff": {
+    "status": "pending_existing_Task_E",
+    "probe": "acceptance/probes/trading-pulse-operator",
+    "requirements": [
+      "Deploy the merged corrected BFF with the existing C browser verifier and exact FE/BFF serving identities via the normal release chain.",
+      "Verify every expected steady service is healthy at the expected version, not only /bff/version.",
+      "Capture Registry RestartCount and OOM state before and after the normal A API plus C three-page/browser checks; require no new restart/OOM.",
+      "Use real same-tenant read-only sources for the three trading personas, 2317 no-fill symbol/refusal and the other filled personas; retain current amounts/timestamps and existing Task E evidence location.",
+      "Do not repeat full-directory aggregate requests on the unpatched hosted version. Local contracts are not hosted acceptance."
+    ],
+    "hosted_requests_performed_by_this_task": 0,
+    "independent_review": "pending Antigravity2 exact-head review; no approval or merge claimed"
+  },
+  "residual_findings": [
+    {
+      "finding": "ManagementService.get_risk_radar still separately calls list_strategies/list_strategy_summaries/list_strategy_specs without a bounded owner selector. Source inspection only; not replayed on hosted.",
+      "disposition": "Attached to the same RC6/RC3 strategy-read problem-register row for the existing BFF-STRATEGY-READ-REAL-SCALE-20261106 owner/coordinator; excluded from this task's explicitly scoped Pulse shared-entry repair. Must be included in canonical handoff."
+    }
+  ]
+}

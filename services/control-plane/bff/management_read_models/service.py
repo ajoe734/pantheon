@@ -1888,7 +1888,7 @@ def _pulse_performance(row: Dict[str, Any], raw: Optional[Dict[str, Any]], snap:
 def _pulse_latest_outcome(reader: Any, binding: Dict[str, Any], snap: str) -> Dict[str, Any]:
     """Existing indexed journey projection: one latest row, never a ledger scan."""
     result = {"status": "unavailable", **{key: None for key in (
-        "occurred_at", "reason_code", "submitted_to_broker", "requested_quantity", "required", "available", "currency", "journey_id", "source_event_id")}}
+        "occurred_at", "reason_code", "submitted_to_broker", "requested_quantity", "required", "available", "currency", "journey_id", "source_event_id", "symbol")}}
     tenant, stage = binding.get("tenant_id"), _trading_pulse_stage(binding)
     if reader is None or not tenant:
         return result
@@ -1923,6 +1923,7 @@ def _pulse_latest_outcome(reader: Any, binding: Dict[str, Any], snap: str) -> Di
             if not _can_view_live_sensitive(extract_identity(authorization.get()), stage):
                 requested_quantity = None
         return {**result, "status": "available", "occurred_at": at, "journey_id": projection.journey_id,
+                "symbol": item.get("symbol"),
                 "reason_code": outcome.get("reason_code"), "source_event_id": event_id,
                 "submitted_to_broker": outcome.get("submitted_to_broker"),
                 "requested_quantity": requested_quantity,
@@ -4021,13 +4022,22 @@ class ManagementService:
                 if prior is None or str(record.get("collected_at") or "") > str(prior.get("collected_at") or ""):
                     telemetry_by_binding[key] = record
         _, monitoring_by_binding_id = _trading_pulse_monitoring_indexes([r for r in monitoring_sessions if r.get("tenant_id") == operator_scope.get("tenant_id")])
+        # Only admitted bindings may identify a strategy. Reuse each bounded
+        # owner read (including failures) within this snapshot; artifact IDs
+        # are not strategy IDs and must never be probed as a fallback.
         strategies = {}
-        try:
-            for strategy in store.list_strategies() or []:
-                if strategy.get("tenant_id") == operator_scope.get("tenant_id"):
-                    strategies[str(strategy.get("strategy_id") or strategy.get("id"))] = strategy
-        except Exception:
-            pass
+        for binding in runtime_bindings:
+            sid = binding.get("strategy_id")
+            if not isinstance(sid, str) or not sid.strip() or sid in strategies:
+                continue
+            strategies[sid] = {}
+            try:
+                strategy = store.get_strategy_spec_detail(sid, version_selector="current")
+                if (isinstance(strategy, dict) and strategy.get("strategy_id") == sid
+                        and strategy.get("tenant_id") == operator_scope.get("tenant_id")):
+                    strategies[sid] = strategy
+            except Exception:
+                pass
         # Rankings and cockpit summaries need metrics, not per-binding journey
         # pages (each page also counts matches and hydrates stage evidence).
         journey_reader = None
@@ -4059,7 +4069,7 @@ class ManagementService:
                 monitoring_session_record=session, prefetched=True,
             )
             person = personas[str(binding["persona_id"])]
-            strategy = strategies.get(str(binding.get("strategy_id") or binding.get("artifact_id")), {})
+            strategy = strategies.get(str(binding.get("strategy_id") or ""), {})
             symbols = (strategy.get("market_scope") or {}).get("symbols") or (strategy.get("parameters") or {}).get("symbols") or []
             symbol = symbols[0] if isinstance(symbols, list) and len(symbols) == 1 else None
             row.update(tenant_id=binding.get("tenant_id"), persona_name=_persona_label(person) or None,
@@ -4067,6 +4077,8 @@ class ManagementService:
                        underlying_symbol=binding.get("underlying_symbol") or strategy.get("underlying_symbol") or (person.get("metadata") or {}).get("underlying_symbol") or symbol or (raw or {}).get("last_fill", {}).get("symbol"))
             _pulse_performance(row, raw, snap)
             row["latest_outcome"] = _pulse_latest_outcome(journey_reader, binding, snap)
+            if not row.get("underlying_symbol"):
+                row["underlying_symbol"] = row["latest_outcome"].get("symbol")
             if not include_outcomes:
                 row["latest_outcome"]["status"] = "not_requested"
             row["links"] = {"persona": f"/management/personas/{binding['persona_id']}"}

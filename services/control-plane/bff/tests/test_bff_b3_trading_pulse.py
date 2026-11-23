@@ -768,6 +768,81 @@ def _operator_pulse(store):
     return ManagementService(read_store=store).get_trading_pulse(snapshot_at=SNAP)
 
 
+@pytest.mark.parametrize("surface", ["pulse", "rankings", "cockpit"])
+@pytest.mark.parametrize("response", ["ok", "empty", "unavailable", "foreign", "wrong_id"])
+def test_strategy_enrichment_uses_only_admitted_ids_and_bounded_owner_contract(surface, response, monkeypatch):
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core.owner_reads import authorization
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+    store, calls = _OperatorStore(), []
+    for binding in store.bindings:
+        binding["strategy_id"] = "strategy-" + binding["persona_id"]
+    store.bindings[1]["strategy_id"] = "strategy-p1"
+    # Two admitted bindings share one strategy; artifacts without a strategy
+    # identity, excluded personas and unverified bindings must not be probed.
+    artifact_only = {**store.bindings[1], "id": "b-artifact", "binding_id": "b-artifact",
+                     "runtime_id": "r-artifact", "artifact_id": "raw-artifact-id"}
+    artifact_only.pop("strategy_id")
+    store.bindings.extend([artifact_only,
+        {**store.bindings[0], "status": "retired", "strategy_id": "retired-strategy"},
+        {**store.bindings[0], "status": "failed", "strategy_id": "failed-strategy"},
+        {**store.bindings[0], "tenant_id": None, "strategy_id": "unverified-strategy"}])
+
+    def http_read(url, *, method="GET", tenant_id=None, **kwargs):
+        calls.append((url, method, tenant_id))
+        if response == "unavailable":
+            raise RuntimeError("registry offline")
+        if response == "empty":
+            return []
+        return [{"registry_id": "reg-current", "artifact_type": "strategy_spec",
+                 "artifact_state": "approved", "version": "1.0.0",
+                 "strategy_id": "wrong" if response == "wrong_id" else "strategy-p1",
+                 "owner_tenant": "other" if response == "foreign" else "tenant-test",
+                 "metadata": {"strategy_spec": {"title": "合格策略", "market_scope": {"symbols": ["2330.TWSE"]}}}}]
+
+    monkeypatch.setattr(adapter_base, "http_request_json", http_read)
+    ports = ReadSurfacePorts(research_knowledge_source=DefaultResearchKnowledgeSourcePort())
+    store.get_strategy_spec_detail = ports.get_strategy_spec_detail
+    # Record forbidden calls even though the production enrichment tolerates
+    # owner exceptions; a swallowed AssertionError cannot make this test pass.
+    store.list_strategies = lambda: calls.append(("FULL_LIST", None, None)) or []
+    store.trade_journey_projection_reader = lambda: calls.append(("JOURNEY", None, None))
+    service = ManagementService(read_store=store)
+    if surface == "cockpit":
+        for method in ("get_operator_health_status", "get_operator_home", "get_human_inbox",
+                       "get_operator_alerts", "get_management_anomalies"):
+            monkeypatch.setattr(service, method, lambda **kwargs: {"data": {}, "meta": {"surfaces": {}}})
+    token = authorization.set("Bearer bounded:operator:tenant-test")
+    try:
+        for _ in range(2):  # A new snapshot retries even a failed prior read.
+            if surface == "pulse":
+                data = service.get_trading_pulse(snapshot_at=SNAP)["data"]
+            elif surface == "rankings":
+                data = service.get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
+            else:
+                data = service.get_management_cockpit(snapshot_at=SNAP)["data"]["trading_pulse"]
+            assert data["summary"]["runtime_count"] is None
+            assert data["summary"]["operator_scope"]["verified_runtime_count"] == 3
+            if surface != "rankings":
+                row = next(r for r in data["runtime_rows"] if r["runtime_id"] == "r-p1")
+                assert row["strategy_name"] == ("合格策略" if response == "ok" else None)
+                assert row["underlying_symbol"] == ("2330.TWSE" if response == "ok" else None)
+                assert row["persona_name"] and row["links"]["strategy"].endswith("/strategy-p1")
+                assert row["telemetry_summary"]["metrics"]["pnl"] == -168.085
+            else:
+                assert any(block["items"] for block in data["items"])
+    finally:
+        authorization.reset(token)
+    strategy_calls = [c for c in calls if c[0] != "JOURNEY"]
+    assert strategy_calls == [("http://registry.internal/api/registry/strategies/strategy-p1/strategy-specs", "GET", "tenant-test")] * 2
+    assert sum(c[0] == "JOURNEY" for c in calls) == (2 if surface == "pulse" else 0)
+
+
 @pytest.mark.parametrize("surface", ["rankings", "cockpit"])
 def test_operator_summaries_do_not_open_or_hydrate_journeys(surface, monkeypatch):
     store = _OperatorStore()
@@ -980,7 +1055,7 @@ def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding(outcom
     from types import SimpleNamespace
     from services.trade_journey.materializer import JourneyProjection
     event = {"event_id": "projected", "source_event_id": "immutable", "occurred_at": "2026-11-19T23:46:17Z",
-        "stage": "risk_evaluation", "stage_status": "rejected", "reason_code": "insufficient_cash",
+        "stage": "risk_evaluation", "stage_status": "rejected", "reason_code": "insufficient_cash", "symbol": "2317.TWSE",
         "submitted_to_broker": False, "requested_quantity": 452,
         "reason_detail": {"required": 100034.3461, "available": 100000, "currency": "TWD", "requested_quantity": 452}}
     stage, quantity = outcome_caller
@@ -996,6 +1071,8 @@ def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding(outcom
     store = _OperatorStore()
     for binding in store.bindings:
         binding["deployment_stage"] = stage
+    for record in store.records:
+        record["deployment_stage"] = stage
     store.reader = Reader()
     row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
     outcome = row["latest_outcome"]
@@ -1003,9 +1080,12 @@ def test_actual_journey_contract_supplies_refusal_and_rejects_old_binding(outcom
     assert outcome["required"] == 100034.3461 and outcome["available"] == 100000
     assert outcome["requested_quantity"] == quantity and outcome["source_event_id"] == "immutable"
     assert outcome["currency"] == "TWD" and "tj-refusal" in row["links"]["journey"]
+    assert row["underlying_symbol"] == "2317.TWSE"
+    assert row["telemetry_summary"]["metrics"]["total_trades"] == 0
     projection.snapshot["identifiers"]["binding_id"] = ["old-binding"]
     row = next(r for r in _operator_pulse(store)["data"]["runtime_rows"] if r["persona_id"] == "p2")
     assert row["latest_outcome"]["reason_code"] is None and "journey" not in row["links"]
+    assert row["underlying_symbol"] is None
 
 
 def test_actual_owner_port_directory_failure_cannot_become_empty_fleet():

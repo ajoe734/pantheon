@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "repository": "ajoe734/execute-plans",
+  "profile": "operator-live",
+  "pairId": "9912834afc3227c2d2fd48fda521ac7abb3bce4abaf64364a081b5481f777989",
+  "releaseAdmission": {
+    "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
+    "releaseCandidateId": "d902c26ee818a883cc7e85031c8bc71be81fb2b0d467d8b081a9fe12061a7324",
+    "compatibilityStatus": "compatible",
+    "compatibilityManifestSha256": "f68f2c0372cda6265138c1679804557b96fce67e15326cbc94e027e148b01628",
+    "controller": {
+      "repository": "ajoe734/pantheon",
+      "workflow": "nonprod-deploy.yml",
+      "runId": "45029250554"
+    },
+    "backend": {
+      "repository": "ajoe734/pantheon",
+      "branch": "dev",
+      "commitSha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec"
+    },
+    "frontend": {
+      "repository": "ajoe734/execute-plans",
+      "branch": "dev",
+      "commitSha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806"
+    }
+  },
+  "commit": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+  "sourceBranch": "dev",
+  "sourceRef": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+  "frontendSha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+  "frontend": {
+    "repository": "ajoe734/execute-plans",
+    "commitSha": "bf4e79d774bb387a51e9030e5821b4f61bbbb806"
+  },
+  "bffHost": "https://api.dev.mvl-cap.tw",
+  "bffCommit": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+  "bffSourceCommitSha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+  "bffCommitEvidence": true,
+  "bff": {
+    "baseUrl": "https://api.dev.mvl-cap.tw",
+    "sourceCommitSha": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+    "sourceCommitKnown": true
+  },
+  "gate": {
+    "workflow": "pantheon-integration-gate.yml",
+    "runId": "45033823404",
+    "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/45033823404"
+  },
+  "integrationGateRunId": "45033823404",
+  "artifactDigest": "c136f516d41fd4e77062b7a1688f267b3b37c1bd604ead1e537a0eb60e98bcad",
+  "artifactDigestSha256": "c136f516d41fd4e77062b7a1688f267b3b37c1bd604ead1e537a0eb60e98bcad",
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "true",
+    "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+    "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+  },
+  "deploymentState": "accepted",
+  "releaseName": "20261122T151429Z-bf4e79d774bb-gate-45033823404-45035757562-1-702936",
+  "deployedAt": "20261122T151429Z",
+  "previousCommit": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+  "previousArtifactDigest": "c136f516d41fd4e77062b7a1688f267b3b37c1bd604ead1e537a0eb60e98bcad",
+  "previousReleaseName": "20261122T131543Z-bf4e79d774bb-gate-45022061438-45024889851-1-4038916-operator-live",
+  "githubArtifactDigest": "sha256:7995fe957009148756fa1efe595845573b7eb01c56d7a1d799773300553c1ec4",
+  "agoraCompatibility": {
+    "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+    "contract_family": "agora.v1.13",
+    "environment": "dev",
+    "compatibility_status": "accepted",
+    "blocking_reasons": [],
+    "manifest_sha256": "f68f2c0372cda6265138c1679804557b96fce67e15326cbc94e027e148b01628",
+    "gate_controller": {
+      "repo": "ajoe734/pantheon",
+      "commit": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "tree": "38b934c743fc56162a3290b35b6966cda11a3d2a"
+    },
+    "backend": {
+      "repo": "ajoe734/pantheon",
+      "runtime_commit": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+      "tree": "38b934c743fc56162a3290b35b6966cda11a3d2a"
+    },
+    "frontend": {
+      "repo": "ajoe734/execute-plans",
+      "runtime_commit": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+      "tree": "33fdd7d60b5f9de92a4ed48b9e3abecbef0adba1"
+    },
+    "source_handoffs": {
+      "backend": {
+        "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
+        "commit": "773ed904a96f41c562f6f482dbd92b10d36024f9",
+        "sha256": "2e75a2f8d190f3d1bad5bab2fac8effe169e4123f14854988a97cc9daaacf25c"
+      },
+      "frontend": {
+        "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
+        "commit": "a41bf2fa8c6a0360e68926796357ba0c24cd9267",
+        "sha256": "d45a5c384a3e6dea5013810161e6cd71b9131312da157d58040e394408346443"
+      }
+    },
+    "hash_policy": {
+      "file_hash": "sha256-exact-git-bytes-v1",
+      "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+    },
+    "release_candidate": {
+      "schema_version": "pantheon.dev-release-candidate.v1",
+      "environment": "dev",
+      "compatibility_status": "compatible",
+      "compatibility_manifest": {
+        "contract_family": "agora.v1.13",
+        "manifest_version": "1.0",
+        "sha256": "f68f2c0372cda6265138c1679804557b96fce67e15326cbc94e027e148b01628",
+        "source_status": "accepted"
+      },
+      "backend": {
+        "repository": "ajoe734/pantheon",
+        "branch": "dev",
+        "commit": "da78ddacd5225c7c70d8d27a52b8db15ef7a0fec",
+        "tree": "38b934c743fc56162a3290b35b6966cda11a3d2a"
+      },
+      "frontend": {
+        "repository": "ajoe734/execute-plans",
+        "branch": "dev",
+        "commit": "bf4e79d774bb387a51e9030e5821b4f61bbbb806",
+        "tree": "33fdd7d60b5f9de92a4ed48b9e3abecbef0adba1"
+      },
+      "release_candidate_id": "d902c26ee818a883cc7e85031c8bc71be81fb2b0d467d8b081a9fe12061a7324"
+    }
+  },
+  "deploymentProfile": "operator-live",
+  "pair": {
+    "pairId": "9912834afc3227c2d2fd48fda521ac7abb3bce4abaf64364a081b5481f777989",
+    "readOnlyArtifactDigestSha256": "d02dfad62167cfab600eae829b94d06c4f6b7e9e65fb03e2cf5e11c508b37059",
+    "operatorLiveArtifactDigestSha256": "c136f516d41fd4e77062b7a1688f267b3b37c1bd604ead1e537a0eb60e98bcad",
+    "writeProofArtifactDigestSha256": "86e6f857ed5cec36b44d543dfb483065ed843f507996498803ecdb1cc4cdb7b4"
+  },
+  "emergencyOverride": {
+    "enabled": false,
+    "actor": null,
+    "reasonSha256": null
+  },
+  "acceptedAt": "2026-11-22T15:16:32Z",
+  "probes": {
+    "candidatePreSwitch": "passed",
+    "postSwitch": "passed",
+    "rollbackRequired": false
+  }
+}
