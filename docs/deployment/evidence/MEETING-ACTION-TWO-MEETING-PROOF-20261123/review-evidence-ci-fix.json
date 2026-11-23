@@ -1,0 +1,15 @@
+{
+  "task_id": "MEETING-ACTION-TWO-MEETING-PROOF-20261123",
+  "pr": 7775,
+  "scope": "ci-red repair (test-only)",
+  "code_head": "8613cc92b",
+  "changes": [
+    "services/consultation/tests/test_persona_meeting_action_loop.py: series no longer carries tenant_id (Research owner rejects unknown meeting_action fields; tenant is the authenticated scope); assertion uses .get for readable failures",
+    "scripts/test_dev_acceptance_stage.py: expected release probe list includes probe:meeting-action-followthrough"
+  ],
+  "verification": {
+    "local": "py_compile only; no local Postgres/pytest available",
+    "ci_pending": ["Service suites (postgres)", "Test sweep (shard 11)"]
+  },
+  "hosted_acceptance": "unchanged; pending natural second meeting at MEETING-HOSTED-ACCEPTANCE-20261115 (see HANDOFF.md)"
+}
