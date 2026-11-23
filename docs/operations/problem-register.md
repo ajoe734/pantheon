@@ -318,6 +318,7 @@ cycle is the first that can read memory.
 | WP3.1 untagged image enumeration | DEV-UNTAGGED-IMAGE-ENUMERATION-ALL-20261117 (#7476) | merged |
 | WP3.1 distillation stuck lease and unbounded claim | DISTILLATION-LEASE-PER-JOB-AND-BOUNDED-CLAIM-20261117 (#7492) | deployed |
 | WP3.1 distillation seed store rewrite and temp files | DISTILLATION-SEED-STORE-BOUNDED-WRITE-20261117 (#7498) | deployed |
+| WP3.1 / WP3.4 distillation tenant-wide `source_evidence` payload read: 27,803 rows materialized before the 100-job limit, exceeding the existing 640 MiB worker budget and blocking the next RC1 release | DISTILLATION-BOUNDED-EVIDENCE-READ-20261123 (Codex; Antigravity2 review): SQL eligibility and bounded append-order payload pages, receipt-aware new-version admission and scalar eligible count; existing 60 s cadence and writers | open; hosted acceptance remains the normal RC1 exact release, 90 s stack check and a naturally completed scheduler tick (same task evidence E) |
 | WP3.1 lifecycle receipts for non-lifecycle events | TRADE-JOURNEY-RECEIPTS-LIFECYCLE-ONLY-20261117 (#7495) | deployed |
 | WP3.1 infrastructure_health emission and BFF health database | BFF-DOWNSTREAM-HEALTH-STORAGE-BOUND-20261117 (#7490) | deployed |
 | WP3.1 infrastructure_health retention and reclaim of receipts | TELEMETRY-INFRA-HEALTH-RETENTION-20261117 (#7494) | deployed |

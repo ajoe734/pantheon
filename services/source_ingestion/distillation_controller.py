@@ -540,14 +540,18 @@ def run_controller_tick(
     try:
         # 1. Read desired state: normalized SourceRecords
         try:
-            if queue is None:
-                queue = _queue_for(config)
+            def already_admitted(source: SourceRecord) -> bool:
+                nonlocal queue
+                if queue is None:
+                    queue = _queue_for(config)
+                return queue.get(source.source_id, source_version_digest(source)) is not None
+
             source_summary: dict[str, Any] = {}
             source_records = read_source_records_for_tenant(
                 jsonl_path=config.evidence_store_path,
                 tenant_id=state.tenant_id,
                 limit=SOURCE_BATCH_LIMIT,
-                already_admitted=lambda source: queue.get(source.source_id, source_version_digest(source)) is not None,
+                already_admitted=already_admitted,
                 summary=source_summary,
             )
         except Exception as exc:
@@ -726,7 +730,7 @@ def run_controller_tick(
                     "present": bool(eligible_count),
                     "source": "source-ingest.normalized_source_records",
                     "checked_at": observed_at,
-                    "summary": f"{eligible_count} eligible normalized source records; {len(eligible_ids)} in admission batch",
+                    "summary": f"{eligible_count} eligible normalized source records",
                     "sources": ["source-ingest.normalized_source_records"],
                 },
                 downstream_actual_state={

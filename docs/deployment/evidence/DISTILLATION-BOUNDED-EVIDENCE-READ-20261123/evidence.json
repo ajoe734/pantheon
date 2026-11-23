@@ -1,0 +1,100 @@
+{
+  "task_id": "DISTILLATION-BOUNDED-EVIDENCE-READ-20261123",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "delivery": {
+    "source": "ready_for_independent_review",
+    "merged": false,
+    "deployed": false,
+    "accepted": false
+  },
+  "root_cause": {
+    "register_class": "RC3",
+    "work_packages": [
+      "WP3.1",
+      "WP3.4"
+    ],
+    "incident": "Dispatch context reports 27,803 same-tenant source_evidence rows materialized by PostgreSQL fetchall before the controller/worker admission limit. Python exceeded the existing 640 MiB limit; the RC1 release guard blocks the next release.",
+    "verified_source": "run_controller_tick read every same-tenant source payload, then catch_up sliced eligible records to 100 before deduplication. Existing old versions could also starve later eligible sources.",
+    "coordination": "Attached to docs/operations/problem-register.md RC3 and canonical task progress via the supervisor-provided command root; composes with the two satisfied 20261117 distillation tasks and the existing RC1 release owner."
+  },
+  "design": {
+    "postgres": "The controller supplies its existing limit=100. Each payload query uses tenant and normalized-source eligibility in SQL, append_id keyset order and LIMIT 100 in a single REPEATABLE READ READ ONLY transaction. At most 100 selected SourceRecords plus one page of at most 100 payloads remain resident; the next page is fetched only after releasing the prior page. No persistent cursor, table, index or migration is added.",
+    "progress": "Already-admitted exact/legacy versions are checked through existing queue.get receipts and do not consume new-version admission slots. Every tick restarts append-order enumeration, so an upsert at an old append_id is discovered; no high-water mark skips revisions.",
+    "eligibility": "Normalized sources only; market + truthy collector_market_bundle excluded. SQL mirrors Python truthiness for null, false, 0, empty strings/lists/maps. Other market sources retain their existing worker behavior. Explicit tenant claim and Python tenant revalidation remain mandatory.",
+    "summary": "COUNT(*) over the same eligible tenant predicate and snapshot returns eligible_source_count with source_summary_origin. eligible_source_ids contains at most the admission batch and is explicitly labelled admission_batch; desired-state presence and the existing human summary use the full eligible count, including when everything has already been admitted.",
+    "durability": "No source write ownership, seed format, job id, source digest, Registry payload, transaction snapshot, retry/DLQ policy or receipt retention changes. JSONL repository replay remains the existing path with bounded selection afterward. Already queued jobs run independently of the new-admission page. catch_up preserves run_pending lease_lost in its result.",
+    "compatibility": "The standalone read API without limit retains its original full-read behavior; the production distillation controller always passes SOURCE_BATCH_LIMIT=100. JSONL replay is unchanged and still materializes its local/test repository."
+  },
+  "runtime_budget": {
+    "cadence_seconds": 60,
+    "ticks_per_day_at_default_cadence": 1440,
+    "new_versions_admitted_per_tick_max": 100,
+    "new_versions_admitted_per_day_theoretical_max": 144000,
+    "payload_page_rows_max": 100,
+    "selected_source_rows_max": 100,
+    "row_byte_cap": "No new per-source byte limit or content truncation; memory depends on one payload page plus the selected batch, not total tenant row count. An individually oversized eligible source remains a residual.",
+    "writers": "No new writer, emitter, service, job, schema or schedule. Existing controller snapshots/loop records are overwritten or published on the existing tick; scalar summary is constant-sized and retained source ids are <=100.",
+    "growth_per_day": "No additional storage substrate. Admission stays at the existing 100-source ceiling, now able to progress beyond old receipts. Existing permanent outbox receipt overhead continues to grow with genuinely new versions; no new global receipt cap is claimed.",
+    "cleanup": "Existing queue prune: <=500 terminal payload/inbox rows per tick after 7 days; resolved dead letters after 30 days; compaction after 64 MiB pruned. Existing seed store behavior is unchanged. Read pages are released before the next fetch and the read-only connection closes at function exit.",
+    "manifest": "Existing writers are already enumerated in docs/operations/storage-manifest.json (source_ingestion controller/queue/seed entries); no writer registration added. Several entries still describe pre-remediation bounds, recorded as a residual for the RC3 manifest owner."
+  },
+  "validation": {
+    "environment": "Temporary local Python 3.11 venv with source_ingestion requirements, pytest and psycopg; local PostgreSQL 16-alpine in a task-owned tmpfs container. No hosted writes or manual controller tick.",
+    "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=<local-test-dsn> timeout 180s /usr/bin/time -v <venv>/bin/python -m pytest services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_queue_lifetime.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_demand_priority.py -q --disable-warnings --maxfail=3",
+    "exit_status": 0,
+    "result": "176 passed, 13 warnings in 72.09s",
+    "wall_seconds": 73.44,
+    "process_peak_rss_kib": 141144,
+    "measurement_limit": "RSS covers the local test process, not the PostgreSQL server and not the hosted controller. The 27,803-row incident-sized dataset is synthetic (27,598 collector market rows with 2 KiB metadata bodies + 205 eligible papers), not an export of hosted payload sizes.",
+    "coverage": [
+      "SQL payload page limits for tuple and dict result rows; old receipts ahead of new work",
+      "Real PostgreSQL 27,803-row dataset: 100,100,5,0 new-version selections, preserved append order and pruned terminal receipts alongside pending work",
+      "Old append_id content revision produces a distinct source version",
+      "Real PostgreSQL eligibility: legacy missing status, market marker JSON truthiness, rejected, foreign and unowned rows",
+      "Controller 205 eligible JSONL sources over 4 ticks: bounded ids, full total and presence, no duplicates; source-read failure keeps the queue untouched",
+      "Existing worker, lease fencing, transactional Registry replay, demand priority and queue lifetime suites"
+    ],
+    "other_checks": [
+      "python3 -m py_compile on three runtime modules: exit 0",
+      "git diff --check: exit 0",
+      "Embedded hosted probe compiled as Python: syntax valid; not executed on hosted"
+    ]
+  },
+  "independent_review": {
+    "status": "pending",
+    "assigned_reviewer": "Antigravity2",
+    "merge_authority": "canonical supervisor integrator after exact-head independent approval"
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "owner_chain": "existing RC1 exact-release deployment and RC3 E",
+    "required_evidence": [
+      "Independent exact-head PR review and supervisor merge, required CI, then the normal RC1 exact backend/frontend release including the new worker image",
+      "Hosted manifest exact pair and every expected steady service healthy at its expected image; use existing RC1 90-second steady restart-loop samples",
+      "A naturally completed scheduler tick on the new worker, no restart/OOM increase, unchanged 640 MiB limit, memory.current/peak readbacks; do not force a manual tick",
+      "Attach release run, exact images, stack verdict and read-only probe JSON to this same task evidence E. Functional delivery failures remain separate from stack liveness; do not add a dev deploy gate or roll back on a functional failure"
+    ],
+    "probe_usage": "On the RC1-owned current dev host after exact release, set DISTILLATION_CONTAINER_ID, EXPECTED_WORKER_IMAGE_ID (sha256 image id) and EXPECTED_BACKEND_SHA from the verified release manifest, then run the embedded Python below. It samples only Docker inspect, controller state and cgroup memory, waits the existing 90s window, and prints JSON. A timeout/no terminal tick is not passed. This is supplementary read-only task acceptance, not a new deployment gate.",
+    "read_only_probe_python": "import json\nimport os\nimport subprocess\nimport time\n\ncontainer = os.environ['DISTILLATION_CONTAINER_ID']\nexpected_sha = os.environ['EXPECTED_BACKEND_SHA']\nexpected_image = os.environ['EXPECTED_WORKER_IMAGE_ID']\nreadback_code = '''import json, os\nfrom pathlib import Path\nstate = json.loads(Path(os.environ['DISTILLATION_CONTROLLER_STATE_PATH']).read_text())['state']\nresult = {k: state.get(k) for k in ('sequence_no', 'total_successes', 'total_failures', 'last_tick_at', 'last_success_at', 'last_failure_stage')}\nresult['git_sha'] = state['deployment'].get('git_sha')\nfor name in ('memory.current', 'memory.peak', 'memory.max'):\n    result[name] = int(Path('/sys/fs/cgroup', name).read_text())\nresult['oom_kill'] = int(dict(line.split() for line in Path('/sys/fs/cgroup/memory.events').read_text().splitlines())['oom_kill'])\nprint(json.dumps(result))'''\n\ndef command(*args):\n    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=15).stdout\n\ndef snapshot():\n    inspected = json.loads(command('docker', 'inspect', container))[0]\n    state = inspected['State']\n    assert inspected['Image'] == expected_image, 'worker image differs from exact RC1 image'\n    assert state['Running'] and not state.get('OOMKilled'), 'worker is not steadily running'\n    assert state.get('Health', {}).get('Status') == 'healthy', 'worker is not healthy'\n    result = json.loads(command('docker', 'exec', container, 'python', '-c', readback_code))\n    assert result['git_sha'] == expected_sha, 'controller state belongs to another backend'\n    assert inspected['HostConfig']['Memory'] == result['memory.max'] == 640 * 1024 * 1024, '640 MiB budget changed'\n    assert result['memory.current'] <= result['memory.max'], 'memory budget exceeded'\n    result.update(container_id=inspected['Id'], image=inspected['Image'], restarts=inspected['RestartCount'])\n    return result\n\nbefore = snapshot()\ntime.sleep(90)  # existing RC1 observation window; never invokes a controller tick\nfinal = snapshot()\nassert final['container_id'] == before['container_id'], 'container changed inside observation'\nassert final['restarts'] == before['restarts'], 'worker restarted inside observation'\nassert final['oom_kill'] == before['oom_kill'] == 0, 'worker cgroup recorded an OOM kill'\nassert final['sequence_no'] > before['sequence_no'], 'no new scheduler tick started'\nassert final['total_successes'] + final['total_failures'] > before['total_successes'] + before['total_failures'], 'no natural tick completed'\nassert final['last_failure_stage'] in (None, 'registry_sync'), 'tick failed before completing distillation reconciliation'\nprint(json.dumps({'liveness_probe': 'passed', 'before': before, 'after': final,\n                  'functional_failure_stage': final['last_failure_stage']}, sort_keys=True))\n",
+    "probe_command": "python3 -c 'import json; exec(compile(json.load(open(\"docs/deployment/evidence/DISTILLATION-BOUNDED-EVIDENCE-READ-20261123/evidence.json\"))[\"hosted_acceptance\"][\"read_only_probe_python\"], \"<distillation-hosted-probe>\", \"exec\"))'"
+  },
+  "residual_findings": [
+    {
+      "finding": "Eligibility count scans the same-tenant population, and when all eligible versions are known, keyset discovery still traverses eligible history each tick. Python payload residency is bounded, total query work is not history-independent.",
+      "disposition": "RC3 WP3.1 source-ingestion owner; measure hosted latency during RC1 natural tick before considering a new read-index/cursor task. No persistent cursor added because old append_id revisions must remain visible."
+    },
+    {
+      "finding": "One extremely large eligible payload, legacy queue.get version-fallback history, and JSONL repository replay have no new byte cap.",
+      "disposition": "RC3 WP3.1 source-ingestion owner; preserve current content/version and JSONL semantics in this task; escalate if hosted evidence shows these remain the source of OOM."
+    },
+    {
+      "finding": "Permanent outbox receipts and stale pre-remediation storage-manifest descriptions predate this task.",
+      "disposition": "RC3 storage-manifest/retention owner; existing remediation class, no unrequested manifest edits or receipt deletion."
+    },
+    {
+      "finding": "The shared ControllerState desired-state summarizer drops distillation-specific fields (pre-existing); full bounded distillation metadata is published in the loop writer payload, while local state retains tick outcome counters.",
+      "disposition": "Source-ingestion controller-state owner under RC3; no shared snapshot schema changes in this bounded-reader task."
+    }
+  ]
+}
