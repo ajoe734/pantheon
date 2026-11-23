@@ -603,6 +603,17 @@ def test_qualified_social_symbol_rejection_does_not_consult_authority(tmp_path, 
     assert not adapter._community_ledger_path().exists()
 
 
+def test_falsy_social_symbols_stay_empty_refusals_without_authority_scan(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_feature_catalogue import _post
+
+    monkeypatch.setattr(cb, "stored_instrument_authority", lambda *a: pytest.fail("price scan"))
+    adapter = adapter_for({}, [], tmp_path, dataset="tw_community_daily")
+    plan = adapter._plan_governed_features([_post(1, "2026-11-10", [None, False, 0, ""])])
+    assert not plan.rows and not plan.fresh_entries
+    assert sum("empty" in r["reason"] for r in plan.rejected) == 3  # None/False/0 refused, "" skipped
+
+
 def test_empty_social_pull_still_flushes_persisted_ledger_after_day_close(tmp_path, monkeypatch):
     from services.source_ingestion.connectors import collector_bundle as cb
 

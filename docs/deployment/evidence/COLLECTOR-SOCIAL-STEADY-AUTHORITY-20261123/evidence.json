@@ -315,8 +315,16 @@
       "qualified symbols canonicalize as before; unsupported suffix rejected without loading authority",
       "empty pulls flush closed-day persisted ledger exactly once",
       "bare symbols share one current authority snapshot for multiple posts; gzip/plain roots, unknown refusal, cross-venue ambiguity, rewrite and removal respected",
-      "real run-scheduled handler persists verified delivery, cursor and healthy empty no-new-data on warm/restarted runtimes"
+      "real run-scheduled handler persists verified delivery, cursor and healthy empty no-new-data on warm/restarted runtimes",
+      "record symbols [null,false,0,\"\"] never open authority (normalized like resolve_social_symbol); None/False/0 stay recorded empty-symbol refusals, \"\" skipped (test_falsy_social_symbols_stay_empty_refusals_without_authority_scan)"
     ],
+    "falsy_symbol_followup": {
+      "command": "/tmp/agy2venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py",
+      "exit_code": 0,
+      "result": "337 passed, 4 skipped, 1 warning in 106.56s",
+      "captured_at": "2026-11-23T08:25:57Z",
+      "scope": "Connector-only fix on top of 0f0ac3c55; no scheduler, cadence, writer or budget change."
+    },
     "diff_check": "git diff --check: exit 0"
   },
   "review": {

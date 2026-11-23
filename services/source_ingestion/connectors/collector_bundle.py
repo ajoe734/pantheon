@@ -2417,8 +2417,10 @@ class CollectorBundleAdapter:
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
             # Only bare tickers consult stored price history. Empty pulls still
             # rebuild closed-day ledger revisions, but need no instrument lookup.
+            # Normalize exactly like resolve_social_symbol (``raw or ""``) so None,
+            # False, 0 and "" stay recorded empty-symbol refusals without a scan.
             needs_authority = any(
-                str(symbol).strip() and "." not in str(symbol).strip()
+                (text := str(symbol or "").strip()) and "." not in text
                 for record in records for symbol in _social_record_symbols(record)
             )
             entries, rejected_list = community_ledger_entries(
