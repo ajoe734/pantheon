@@ -91,7 +91,7 @@ class ResearchWriteOwner:
         self.schema = schema.strip() or "research"
         self._tickets_store = tickets_store or PostgresJsonOwnerStore(
             dsn=dsn,
-            table=tickets_table or f"{self.schema}.research_tickets",
+            table=tickets_table or ("research.research_tickets" if self.schema == "research" else f"{self.schema}.research_tickets"),
             owner_service="research-svc",
             bootstrap=bootstrap,
         )
@@ -103,7 +103,7 @@ class ResearchWriteOwner:
         )
         self._notes_store = notes_store or PostgresJsonOwnerStore(
             dsn=dsn,
-            table=notes_table or f"{self.schema}.research_notes",
+            table=notes_table or ("research.research_notes" if self.schema == "research" else f"{self.schema}.research_notes"),
             owner_service="research-svc",
             bootstrap=bootstrap,
         )
@@ -183,6 +183,8 @@ class ResearchWriteOwner:
 
         if ticket_id:
             tid = str(ticket_id).strip()
+            if tid.startswith("rt-action-"):
+                self._action_error("Reserved meeting ticket namespace", 400)
         else:
             existing_tickets = self._tickets_store.list_all()
             date_prefix = timestamp[:10].replace("-", "")
@@ -398,7 +400,7 @@ class ResearchWriteOwner:
                                owner: str, actor_id: str, meeting_action: Dict[str, Any],
                                context: Any, ticket_id: Optional[str]) -> Dict[str, Any]:
         ctx = self._action_auth(context, actor_id)
-        if not (self._action_operator(ctx) or self._action_controller(ctx, "consultation-svc")):
+        if not (self._action_operator(ctx) or (ctx.actor_id == "consultation-svc" and "service" in ctx.roles)):
             self._action_error("Only meeting owner or operator can assign meeting work", 403)
         if not isinstance(meeting_action, dict):
             self._action_error("meeting_action must be an object", 400)
@@ -438,7 +440,7 @@ class ResearchWriteOwner:
                   "created_at": timestamp, "updated_at": timestamp, "closed_at": None,
                   "archived_at": None, "linked_experiments": [], "linked_artifacts": [],
                   "evidence_refs": [], "revision": 0, "reviewer_id": action["reviewer_id"],
-                  "required_actor": owner, "assignment_digest": self._action_digest(assignment),
+                  "required_actor": assignment["owner"], "assignment_digest": self._action_digest(assignment),
                   "lifecycle_history": [{"from_status": None, "to_status": "open",
                       "transitioned_at": timestamp, "transitioned_by": actor_id}]}
         inserted, canonical = self._tickets_store.compare_and_set(tid, None, record)
@@ -474,7 +476,7 @@ class ResearchWriteOwner:
         if len(json.dumps(patch).encode()) > self._ACTION_INPUT_MAX_BYTES:
             self._action_error("Action command exceeds 16 KiB", 400)
         action = patch.get("action")
-        if action not in self._ACTION_STATES:
+        if not isinstance(action, str) or action not in self._ACTION_STATES:
             self._action_error("Meeting work requires an explicit owner action; status PATCH is forbidden", 400)
         fields = {"action", "expected_revision", "idempotency_key"}
         fields |= {"request_input": {"reason", "human_actor_id"}, "provide_input": {"evidence_refs", "reason"},
@@ -588,14 +590,16 @@ class ResearchWriteOwner:
                 clauses.append(f"payload->>'{field}' = ANY(%s)")
                 params.append(list(values))
         for expr, op, value in (("payload->'meeting_action'->>'due_at'", "<=", due_before),
-                                 ("payload->>'submitted_at'", ">", submitted_after),
-                                 ("payload->>'updated_at'", ">", updated_after)):
+                                 ("payload->>'submitted_at'", ">=", submitted_after),
+                                 ("payload->>'updated_at'", ">=", updated_after)):
             if value:
                 clauses.append(f"({expr})::timestamptz {op} %s::timestamptz")
                 params.append(value)
         fingerprint = self._action_digest([ctx.tenant_id, ctx.actor_id, sorted(ctx.roles), statuses, owner,
                        meeting_type, subject_ref, action_states, due_before, submitted_after, updated_after])[:24]
         if page_token:
+            if len(page_token) > 128:
+                self._action_error("Invalid page_token", 400)
             try:
                 token_scope, anchor = page_token.split(":", 1)
                 if token_scope != fingerprint or not anchor.startswith("rt-action-") or len(anchor) != 42:
@@ -793,7 +797,9 @@ class ResearchWriteOwner:
 
         if clean_ticket_id:
             ticket = self._tickets_store.get(clean_ticket_id)
-            if ticket and isinstance(ticket, dict):
+            # Meeting work only changes through authenticated CAS actions.
+            # Legacy experiment creation remains supported without touching its obligation.
+            if ticket and isinstance(ticket, dict) and not ticket.get("meeting_action"):
                 linked = list(ticket.get("linked_experiments") or [])
                 if exp_id not in linked:
                     linked.append(exp_id)
@@ -899,7 +905,7 @@ class ResearchWriteOwner:
         """Append the retry to the ticket's links via CAS inside ``conn``'s transaction."""
         ticket = self._tickets_store.get(ticket_id)
         for _ in range(self._RETRY_LINK_CAS_ATTEMPTS):
-            if not isinstance(ticket, dict):
+            if not isinstance(ticket, dict) or ticket.get("meeting_action"):
                 return
             linked = list(ticket.get("linked_experiments") or [])
             if new_exp_id in linked:
@@ -1151,6 +1157,8 @@ class ResearchWriteOwner:
             self._action_error("Reserved evidence binding fields", 400)
         payload = json.loads(json.dumps(note))
         note_id = str(payload.get("note_id") or payload.get("id") or "").strip()
+        if note_id.startswith("note-action-"):
+            self._action_error("Reserved meeting note namespace", 400)
         if not note_id:
             existing_notes = self._notes_store.list_all()
             now_iso = _utc_now_rfc3339()
