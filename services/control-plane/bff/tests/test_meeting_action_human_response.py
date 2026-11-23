@@ -161,6 +161,57 @@ def test_meeting_minutes_preserve_frozen_and_live_actions_without_backfill(meeti
     assert legacy["action_read"]["reason"] == "meeting_actions_not_recorded"
 
 
+@pytest.mark.parametrize("viewer,roles,can_view_trader", [
+    ("op-alice", ["operator"], True),
+    ("trader-alice", ["viewer"], True),
+    ("trader-bob", ["viewer"], False),
+])
+@pytest.mark.parametrize("synthesis_only", [False, True])
+def test_action_citations_withhold_whole_references_for_calling_viewer(
+    meetings_stack, viewer, roles, can_view_trader, synthesis_only,
+):
+    client, _, state = meetings_stack
+    detail = state["details"]["mtg-001"]
+    detail["tenant_id"] = "tenant-a"
+    public = {"item_id": "cf-shared-1", "excerpt": "PUBLIC_ACTION_CITATION"}
+    trader = {"ref_id": " cf-agora-lock-1\t", "excerpt": "TRADER_ACTION_CITATION"}
+    citations = [public, trader, "cf-shared-1", " cf-agora-lock-1\n",
+                 {"item_id": "cf-private-leak-1", "excerpt": "WITHHELD_ACTION_CITATION_CONTENT"},
+                 {"item_id": "cf-shared-1", "ref_id": "cf-private-leak-1",
+                  "excerpt": "WITHHELD_ACTION_CITATION_CONTENT"}]
+    for key in ("item_id", "id", "source_id", "ref_id", "entry_id", "record_id"):
+        citations.append({key: " cf-private-leak-1\t",
+                          "excerpt": "WITHHELD_ACTION_CITATION_CONTENT",
+                          "metadata": {"content": "WITHHELD_ACTION_CITATION_CONTENT"}})
+    citations.extend(["cf-private-leak-1", " cf-private-leak-1\t\n"])
+    action = {**ticket(), "citations": copy.deepcopy(citations),
+              "recorded_disposition": {"citations": copy.deepcopy(citations)}}
+    for key in ("actions", "prior_actions"):
+        detail["synthesis"][key] = [copy.deepcopy(action)]
+        if not synthesis_only:
+            detail[key] = [copy.deepcopy(action)]
+    detail["rounds"][0]["positions"][0]["citations"] = copy.deepcopy(citations)
+    original = copy.deepcopy(detail)
+
+    response = client.get("/bff/management/meetings/mtg-001",
+                          headers=make_headers(sub=viewer, roles=roles))
+    assert response.status_code == 200, response.text
+    expected = [public, trader, "cf-shared-1", " cf-agora-lock-1\n"] if can_view_trader else [public, "cf-shared-1"]
+    body = response.json()
+    for container in (body, body["synthesis"]):
+        for key in ("actions", "prior_actions"):
+            assert container[key][0]["citations"] == expected
+            assert container[key][0]["recorded_disposition"]["citations"] == expected
+            assert container[key][0]["ticket_id"] == action["ticket_id"]
+    assert body["rounds"][0]["positions"][0]["citations"] == expected
+    assert "WITHHELD_ACTION_CITATION_CONTENT" not in response.text
+    assert "cf-private-leak-1" not in response.text
+    if not can_view_trader:
+        assert "TRADER_ACTION_CITATION" not in response.text
+        assert "cf-agora-lock-1" not in response.text
+    assert detail == original  # Visibility shaping must never mutate owner history.
+
+
 def test_inbox_one_real_ticket_entry_and_partial_permission_failure(inbox_meetings_stack, monkeypatch):
     client, _, state = inbox_meetings_stack
     client.app.add_middleware(OwnerReadContextMiddleware)

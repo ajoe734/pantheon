@@ -798,9 +798,13 @@ def _visible_action_data(
     caller_user_id: Optional[str], withheld_ids: Optional[set[str]] = None,
 ) -> Any:
     """Apply the meeting visibility boundary to new owner action subtrees too."""
-    if isinstance(value, str) and value in (withheld_ids or set()):
+    if isinstance(value, str) and value.strip() in (withheld_ids or set()):
         return None
     if isinstance(value, Mapping):
+        # A withheld reference's payload is private too; dropping only its ID
+        # would leave excerpts or metadata behind as an anonymous citation.
+        if withheld_ids and withheld_ids.intersection(_extract_item_ref_ids(value)):
+            return None
         if _is_private_memory_item(value):
             return None
         if value.get("tenant_id") and tenant_id and value["tenant_id"] != tenant_id:
