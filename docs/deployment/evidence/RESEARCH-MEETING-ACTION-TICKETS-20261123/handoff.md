@@ -5,6 +5,12 @@ Source baseline `bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4` (current origin/dev
 at initial tracing and final fetch). Component implementation awaiting independent
 review and canonical integration. No hosted deployment or acceptance is claimed.
 
+CI repair: the first PR head was returned by the integrator for shard 3's
+ordinary RW-01 store compatibility regression. See [ci-repair.md](ci-repair.md)
+and [ci-repair-validation.txt](ci-repair-validation.txt) for the cause, corrected
+boundary, refreshed dev base and bounded rerun results. The changed head is
+submitted to Antigravity for fresh exact-head review.
+
 ## Caller and storage trace before editing
 
 - `services/research/main.py` already exposes POST/GET/list/PATCH

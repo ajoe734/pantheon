@@ -3,6 +3,16 @@
   "owner": "Codex",
   "reviewer": "Antigravity",
   "source_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
+  "ci_repair": {
+    "record": "ci-repair.md",
+    "returned_check": "Test sweep (shard 3)",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/45110756737/job/137488110249",
+    "refreshed_dev_base": "0c806ffed",
+    "repair_anchor": "7954a34411b6870330c6af59f90360798eca3249",
+    "change": "Restore ordinary RW-01/KW-02 get/put store compatibility; retain separate atomic meeting assignment/evidence paths and reserved namespace guards.",
+    "validation": "ci-repair-validation.txt",
+    "review": "New exact-head Antigravity review required; earlier approval is not reused."
+  },
   "summary": "Meeting-linked obligations use the existing RW-01 owner with scoped identity, atomic source reservation, CAS transitions, reviewable evidence and bounded pagination.",
   "scope": [
     "services/research/write_owner.py",
