@@ -98,3 +98,24 @@ identity now reaches that same contributor; `can_respond` is projected on
 the original meeting_action row. No extra owner read, authentication mechanism,
 writer or endpoint is added. Legacy REVIEW/refusal/proposal consumers and all
 ticket writes retain their supported purposes and authorization boundaries.
+
+Legacy-fixture resumption (2026-11-23): task-scoped canonical contract now owns
+`acceptance/test_meeting_review_disposition.py`. Reproduced its isolated
+round-trip failure at report_before after merging dev `2df217b50` (owner PR
+#7766) into the clean published task branch. Traced the fixture's build_bff_app,
+ManagementService contributor, request ContextVars, verified_caller_tenant,
+ResearchServiceClient and default urllib transport. The fixture omitted
+OwnerReadContextMiddleware and the Research owner configuration/response, so
+the current honest source status correctly failed the unchanged probe.
+
+Anchor `978a51aa0` adds the existing middleware and configures one local
+Research HTTP host in that fixture only. The real Research client issues the
+filtered authorized GET; its local transport verifies viewer Bearer, tenant,
+meeting_linked=true, human_actionable=true and page_size=100, returning
+data=[] with page_info. Two probe reads and one reload require exactly three
+Research calls. All original assertions, the executable probe, production
+authorization/degraded behavior and architecture guards remain unchanged.
+No old caller was removed: legacy REVIEW acknowledgement remains a supported
+independent case and cannot deliver action work. Existing residual findings
+retain their owners; the archive scans remain visible in the merged
+Consultation list readers. No product writer, cache, job or storage change.

@@ -11,7 +11,7 @@
   "review_status": "pending_independent_review",
   "branch": "task/BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
   "inspected_dev_base": "bd47d73bc4d987309bf2f60f20ce2fb7b05cfda4",
-  "refreshed_dev_base": "454420828361de17e689e6d9ad307e12b4064d3c",
+  "refreshed_dev_base": "2df217b50c9e960c474a37f8b57b46fca56f6798",
   "rejected_head": "4dfc6564cf32051127d5b21e7ff10cd1a36834f7",
   "privacy_correction_anchor": "5f862e759",
   "null_fallback_rejected_head": "23d5628e9101c9b86ab238849b33299066ad902c",
@@ -21,6 +21,38 @@
   "handoff": "handoff.md",
   "resource_measurements": "resources.json",
   "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings acceptance/test_meeting_review_disposition.py -k isolated_dev_acceptance_write_and_readback --tb=short",
+      "phase": "before_fixture_auth_repair",
+      "exit_code": 1,
+      "result": "1 failed, 3 deselected, 1 warning in 3.31s; report_before passed was false; terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings acceptance/test_meeting_review_disposition.py -k isolated_dev_acceptance_write_and_readback --tb=short",
+      "phase": "after_fixture_auth_repair",
+      "exit_code": 0,
+      "result": "1 passed, 3 deselected, 1 warning in 3.19s; terminal exit collected"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings acceptance/test_meeting_review_disposition.py --tb=short",
+      "exit_code": 0,
+      "result": "4 passed, 1 warning in 3.84s; terminal exit collected"
+    },
+    {
+      "command": "timeout 360 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py --tb=short",
+      "exit_code": 0,
+      "result": "384 passed, 100 warnings in 170.56s; original regression including full architecture suite and genuine outage/degraded/denied coverage; terminal exit collected"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped environment created and imports/dependency interpreter verified; terminal exit collected"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "result": "Passed at 978a51aa0 against dev 2df217b50; production net +451, test net +1023; terminal exit collected"
+    },
     {
       "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py",
       "exit_code": 0,
@@ -217,6 +249,7 @@
     }
   ],
   "coverage": [
+    "Legacy REVIEW isolated real-authority acceptance: existing request middleware, real Research client with local paged HTTP owner, exact caller Bearer/tenant/filters, unchanged probe before/after restart, untouched legacy meeting, viewer denial and one call per inbox read",
     "Caller-specific can_respond from existing authenticated inbox identity and canonical PATCH role gate plus inspected Research actor/state rules; operator/admin/approver/reviewer/viewer GET/PATCH contracts for human submit and Persona provide_input",
     "Visible reviewer of another person's work stays false unless operator/admin; read-only and unknown callers, unknown kind and terminal/unknown states fail closed; row removal after response, original response_action/human_requirement/reason/resumes_with, one owner page per reload and source records unchanged",
     "authenticated normal ticket/list/PATCH and meeting/inbox routes",
@@ -311,5 +344,14 @@
     "change": "Concrete keyword-only owner list filters in the existing page query, all four adapters and existing service caller. Guard/baseline unchanged; no second query, store, route or writer.",
     "regression_log_sha256": "a139bf2e76f49bf30c2362ca5f6e47681dec91917f10ac7bbd27e1fe82ed26a1",
     "scope": "Component validation only; existing independent reviewer and supervisor integration required."
+  },
+  "legacy_fixture_auth_repair": {
+    "source_anchor": "978a51aa043c3656ee9d316da73f39996591918b",
+    "base_merge": "6346def72",
+    "fixture_blob": "29da1576b69ca0190511b6d6829962b0e8694c40",
+    "change": "Install existing OwnerReadContextMiddleware in the isolated fixture and supply local paged Research urllib HTTP. Real client asserts viewer Bearer, tenant, meeting_linked=true, human_actionable=true, page_size=100 and three calls for three inbox reads. All original probe assertions and legacy review behavior retained.",
+    "unchanged": "No production, executable probe, architecture guard, auth/degraded policy or storage change in this repair. Existing outage/permission regressions retained.",
+    "runtime_budget": "On-demand reads; 100 rows/page, 4 MiB owner reply cap; zero new persistent writers, recurring jobs, caches or bytes/day. Request data released after response. Test-only existing tmp_path data follows pytest cleanup.",
+    "delivery": "Updated source PR #7761 requires fresh independent review and supervisor integration; no hosted acceptance claimed."
   }
 }

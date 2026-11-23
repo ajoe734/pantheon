@@ -1,5 +1,39 @@
 # BFF source review handoff
 
+## Legacy REVIEW fixture authentication repair
+
+The operator transferred the isolated legacy fixture into this original task.
+Source/test anchor `978a51aa0` repairs only
+`acceptance/test_meeting_review_disposition.py`; the existing production
+contributor, executable probe, authorization and honest partial-source behavior
+remain unchanged. Current dev `2df217b50` (including Consultation owner #7766)
+was merged through `6346def72` before reproducing the failure.
+
+The fixture now installs the existing `OwnerReadContextMiddleware` and serves
+one locally configured Research HTTP endpoint through its existing urllib
+bridge. The real Research client must forward the viewer Bearer and selected
+tenant and request exactly `meeting_linked=true`, `human_actionable=true`,
+`page_size=100`. The transport returns an authorized empty `data`/`page_info`
+page. Two unchanged probe runs plus the final reload assert three owner GETs.
+Original pre/post-review assertions, restart persistence, viewer write denial
+and untouched legacy user meeting checks are retained. Acknowledging REVIEW
+still records a disposition independently from delivery of action work.
+
+The focused case failed before this correction, then passed (1 test, terminal
+exit 0); the entire acceptance file passed (4 tests, terminal exit 0). The eleven-file
+original regression, including the full architecture suite and genuine source
+outage/denial coverage, passed 384 tests in 170.56 s (terminal exit 0). Exact
+commands/results are recorded in evidence.json. No hosted run was
+performed by this fixture repair; hosted two-meeting proof remains with the
+existing chain owner. Existing residual findings below retain their owners;
+Consultation archive list scans remain visible at merged dev `2df217b50`.
+
+Runtime budget is unchanged: user-request cadence, one Research page of at
+most 100 rows/inbox read, 4 MiB owner reply cap, no persistent BFF writer or
+cache, no recurring job, zero daily storage growth. Request memory is released
+after response; local fixture files live in pytest tmp_path and follow pytest
+cleanup. No storage-manifest entry or product retention change is introduced.
+
 ## Required architecture-gate repair
 
 PR #7761 was reopened after Smoke acceptance rejected
