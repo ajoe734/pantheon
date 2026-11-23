@@ -3064,6 +3064,8 @@ def action_owner_contract(request, monkeypatch):
     class SqlBoundary:
         table = 'tickets'
         _decode_payload = staticmethod(json.loads)
+        def get(self, tid):
+            return copy.deepcopy(owner.tickets.get(tid))
         @contextmanager
         def _connect(self):
             with sqlite3.connect(':memory:') as conn:
@@ -3084,6 +3086,8 @@ def action_owner_contract(request, monkeypatch):
                     values.append(value)
             return self.conn.execute(sql.replace('::timestamptz', '').replace('%s', '?'), values)
     real._tickets_store = SqlBoundary()
+    owner.list_research_tickets = real.list_research_tickets
+    owner.get_research_ticket = real.get_research_ticket
     def insert(store, tid, row, **kwargs):
         if tid in owner.tickets:
             return False, owner.tickets[tid]
@@ -3560,3 +3564,45 @@ def test_human_action_owner_receipt_must_preserve_human_requirement(tmp_path, mo
     delivered, = dispatch_meeting_actions(meeting, transport=owner, store_path=tmp_path / 'ledger.json')
     assert delivered['ticket_id'] and delivered['dispatch_error'] is None
     assert len(owner.tickets) == 1
+
+
+@pytest.mark.parametrize('action_owner_contract', ['real_owner'], indirect=True)
+def test_human_assignment_reaches_authenticated_tenant_operator_at_real_owner(
+        tmp_path, monkeypatch, action_owner_contract):
+    """The inbox target resolves through existing RW-01 roles, not a directory."""
+    from services.consultation.meeting_outputs import dispatch_meeting_actions, action_snapshot
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the signed external statement for the prior quarter.'
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'human-role-delivery',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee': 'operator',
+            'assignee_kind': 'human', 'human_requirement': requirement}]}}
+    delivered, = dispatch_meeting_actions(meeting, transport=action_owner_contract.send,
+                                         store_path=tmp_path / 'dispatch.json')
+    assert delivered['state'] == 'open'
+    owner = action_owner_contract
+    # This actual person differs from both the model target and the convener.
+    operator = SimpleNamespace(tenant_id=TENANT, actor_id='signed-in-alice', roles={'operator'})
+    page = owner.list_research_tickets(context=operator, meeting_linked=True, action_states=['open'])
+    row, = page['data']
+    assert row['ticket_id'] == delivered['ticket_id'] and row['required_actor'] == 'operator'
+    ticket = owner.get_research_ticket(row['ticket_id'], context=operator)
+    assert ticket['description'] == requirement
+    assert row['meeting_action']['deliverable'] == ticket['meeting_action']['deliverable']
+    assert row['meeting_action']['acceptance_criterion'] == ticket['meeting_action']['acceptance_criterion']
+    for ctx in (
+        SimpleNamespace(tenant_id=TENANT, actor_id='unrelated-viewer', roles={'viewer'}),
+        SimpleNamespace(tenant_id=TENANT, actor_id='invented-human-user', roles={'human'}),
+        SimpleNamespace(tenant_id='foreign-tenant', actor_id='signed-in-alice', roles={'operator'}),
+    ):
+        assert owner.list_research_tickets(context=ctx, meeting_linked=True)['data'] == []
+        assert owner.get_research_ticket(row['ticket_id'], context=ctx) is None
+    # Simulate the owner's later disposition; exercise its real projection.
+    stored = owner.tickets[row['ticket_id']]
+    stored.update(action_state='returned', revision=2, review_decision={
+        'decision': 'return', 'reason': 'Signed statement omits March fees', 'review_source': 'next-meeting'})
+    returned, = owner.list_research_tickets(context=operator, meeting_linked=True,
+                                          action_states=['returned'])['data']
+    assert returned['review_decision']['reason'] == 'Signed statement omits March fees'
+    assert action_snapshot(returned)['review_decision'] == returned['review_decision']
+    assert owner.get_research_ticket(row['ticket_id'], context=operator)['description'] == requirement

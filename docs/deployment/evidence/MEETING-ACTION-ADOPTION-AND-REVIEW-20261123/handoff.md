@@ -195,6 +195,15 @@ producer and lost-receipt tests cover truthful delivery and idempotence. The
 real-owner fixture now calls its public list_research_tickets entry point so
 the owner's existing defaults handle added filters without copying private
 signature assumptions. Persistence remains isolated; this is component proof.
+The fixed Research source ad5dec939c33d12089a05653b4f73de07d56e8bc
+(SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273)
+also exercises the real public list/detail authorization: an operator context
+for `signed-in-alice` receives the operator-owned ticket and its exact reason;
+unrelated viewer/human and other-tenant operator contexts receive neither.
+A simulated owner return is read through its actual projections with the
+original reason, criterion and deliverable intact. This does not claim a real
+JWT login, ticket PATCH integration, BFF projection or hosted human submission;
+those remain R/B/V responsibilities.
 
 ## Validation and resource budget
 
@@ -237,6 +246,12 @@ retention debt is explicit. New model requests cap at 2 MiB, case files at
 - Coordinator/reviewer: canonical assignment is Codex2 -> Codex (same family).
   Apply the repository's independent-family capacity rule, recording an actual
   exception if needed; this owner has not manufactured capacity or approval.
+- R/B existing meeting followthrough tasks: the inspected Research ad5dec939
+  human-actionable summary does not yet include ticket.description, even though
+  detail stores/returns it. R's list projection and B's inbox reason projection
+  must carry that existing bounded field (already named in their current
+  canonical follow-up instructions). No per-ticket fanout or alternate field
+  was introduced here; this producer does not claim end-to-end inbox proof.
 - Original MEETING-HOSTED-ACCEPTANCE-20261115 / final two-meeting proof owner:
   natural second meeting, real authorized human input, actual Persona execution,
   exact hosted pair and browser evidence remain pending.

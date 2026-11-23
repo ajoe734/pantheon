@@ -7,6 +7,23 @@
   "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
   "verification": [
     {
+      "command": "git show ad5dec939c33d12089a05653b4f73de07d56e8bc:services/research/write_owner.py > /tmp/meeting-action-research-owner-current.py",
+      "exit_code": 0,
+      "result": "Frozen current Research source SHA256 092aef1e26543734710bd77be2df8809d598bf2d6d1f48cbc3e70dd48fe68273; persistence isolated, public create/list/detail and owner role checks remain real."
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-research-owner-current.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "129 passed, 81 warnings in 103.20s. Complete component regression including existing pagination, interleaved chairs, partial close and 15 new human dispatch/schema cases. The additional real-owner authenticated-context role test below was added afterward; final source contains 130 tests across these four suites.",
+      "terminal_output": "human-validation.txt"
+    },
+    {
+      "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-action-research-owner-current.py timeout 60s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -k 'human_assignment_reaches' --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "1 passed, 95 deselected, 1 warning in 5.90s. Real public owner list/detail allows the same-tenant operator context, denies unrelated viewer/human and foreign-tenant operator contexts; exact requirement and owner return reason remain available. Trusted contexts and isolated persistence, not JWT/BFF/hosted proof.",
+      "terminal_output": "human-operator-validation.txt"
+    },
+    {
       "command": "MEETING_ACTION_RESEARCH_OWNER_SOURCE=/tmp/meeting-review-research-owner-independent.py timeout 180s .venv-pantheon/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings --tb=short",
       "exit_code": 0,
       "result": "114 passed, 81 warnings in 103.77s; includes eight new direct/HTTP, restart and scripted/frozen-owner interleaved-chair cases",
@@ -54,7 +71,7 @@
   "acceptance_coverage": [
     {
       "criterion": 1,
-      "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass."
+      "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass. Human work uses only the existing tenant operator inbox; fabricated human targets are explicitly rejected, with no task delivery claim. Operator- and Persona-convened normal HTTP provider/adapter two-round meetings are covered; a specific external document request requires no human approval/capital boundary."
     },
     {
       "criterion": 2,
@@ -62,7 +79,7 @@
     },
     {
       "criterion": 3,
-      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval."
+      "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Additional real-owner create/list regressions compose frozen Research cddd6188f with isolated persistence. Full PostgreSQL CAS/evidence integration remains with its owner and two-meeting proof tasks. Normal HTTP detail/sync proxy execution now uses the persisted prior_actions_source receipt as the read marker and receives authoritative chair-schedule continuation from the existing detail projection; an empty projected list cannot suppress owner retrieval. Exact normalized human_requirement is sent as the existing ticket.description, while deliverable/criterion/due/source remain structured. Missing/changed reason receipts stay pending. Actual public RW-01 list/detail roles are tested against frozen ad5dec939 with isolated persistence; list/detail JWT/BFF integration remains with R/B/V."
     },
     {
       "criterion": 4,
@@ -113,7 +130,13 @@
       "owner": "coordinator and assigned reviewer",
       "finding": "Canonical Codex2-to-Codex assignment is same-family",
       "disposition": "apply live independent-family capacity rule or record actual exception; owner has manufactured neither capacity nor approval"
+    },
+    {
+      "class": "RC2 WP2.3 / RC6 human action projection",
+      "owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123 and BFF-MEETING-ACTION-HUMAN-INBOX-20261123",
+      "finding": "Inspected R ad5dec939 detail preserves description, but its ticket summary still omits that existing human-only reason field. B must display it with deliverable/criterion and return reason.",
+      "disposition": "Already named in R/B current canonical follow-up scope. This producer sends and checks the exact description; downstream page/inbox projection and real authenticated response remain owned by R/B, without per-ticket fanout."
     }
   ],
-  "independent_review": "Previous 34ddc01c210a45cbe62a9e78383b4c0f16fa0f22 rejected because peer attendance overwrote the independently owned series scan. Chair-only review writes, atomic peer cadence merge and normal HTTP continuation now await new frozen-head review. Same-family Codex2/Codex assignment still requires coordinator live capacity reconciliation or an evidenced exception before approval. No independent approval, merge, deployment or hosted acceptance is claimed."
+  "independent_review": "713563eba source review rejected arbitrary human targets and dropped human_requirement. Current revision binds human work to existing tenant operator inbox, records unresolved model names, preserves/checks ticket.description, and adds normal adapter/two-round/close and real public owner-role regressions. Awaiting fresh exact-head review. Earlier paging/independent-chair fixes remain tested. Same-family assignment still requires coordinator capacity reconciliation or actual evidenced exception. No independent approval, merge, deployment or hosted acceptance claimed."
 }
