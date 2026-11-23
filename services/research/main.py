@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("research-orchestrator")
 
 from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthenticatedTenant, AuthError, TenantBoundaryError, authenticate_tenant
+from services.research.write_owner import MeetingActionError
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.alpha_template import (
@@ -607,6 +608,7 @@ def get_write_owner() -> Any:
         from services.research.write_owner import build_research_write_owner
 
         _write_owner = build_research_write_owner()
+        _write_owner._action_evidence_reader = _meeting_ticket_evidence
         return _write_owner
     except Exception as exc:
         raise HTTPException(
@@ -618,6 +620,8 @@ def get_write_owner() -> Any:
 def set_write_owner(owner: Optional[Any]) -> None:
     global _write_owner
     _write_owner = owner
+    if owner is not None and hasattr(owner, "_action_evidence_reader"):
+        owner._action_evidence_reader = _meeting_ticket_evidence
 alpha_replication_admission_store = ReplicationAdmissionStore(ALPHA_REPLICATION_DATA_DIR)
 alpha_replication_queue = AlphaReplicationQueue(ALPHA_REPLICATION_DATA_DIR)
 register_fastapi_health_routes(
@@ -5281,39 +5285,112 @@ def get_saved_research_artifact(artifact_id: str, tenant_id: str = Depends(_auth
     raise HTTPException(status_code=404, detail=f"Research artifact '{artifact_id}' not found")
 
 
-@app.post("/api/research/tickets")
-def create_research_ticket(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def _optional_ticket_actor(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Optional[AuthenticatedTenant]:
+    # Anonymous ordinary RW-01 callers keep their existing contract. Meeting
+    # rows enforce auth again at the owner, including direct in-process calls.
+    if authorization is None and x_tenant_id is None:
+        return None
     try:
-        return get_write_owner().create_research_ticket(
-            title=str(body.get("title") or ""), description=str(body.get("description") or ""),
-            priority=str(body.get("priority") or "medium"), owner=str(body.get("owner") or ""),
-            actor_id=str(body.get("actor_id") or "operator"), created_at=body.get("created_at"), ticket_id=body.get("ticket_id"),
-        )
+        actor = authenticate_tenant(authorization=authorization, tenant_id=x_tenant_id,
+            service_prefix="RESEARCH", required_roles=(*AUTHENTICATED_SERVICE_ROLES, "viewer", "reviewer", "human", "persona"))
+        tenants = _structured_token_tenants(authorization)
+        if tenants and "*" not in tenants and actor.tenant_id not in tenants:
+            raise TenantBoundaryError("Authenticated actor is not authorized for tenant")
+        return actor
+    except (AuthError, TenantBoundaryError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def _meeting_ticket_evidence(ref: Dict[str, Any], tenant_id: str, ticket_id: str) -> Optional[Dict[str, Any]]:
+    """Re-read original scoped owners, never fetch caller URLs or trust inline receipts."""
+    if ref["kind"] == "research_artifact":
+        artifact = store.get_artifact(ref["artifact_id"])
+        if not artifact or _saved_artifact_tenant(artifact) != tenant_id:
+            return None
+        return {"tenant_id": tenant_id, "checksum": artifact.get("checksum")}
+    if ref["kind"] == "research_note":
+        # Meeting-bound notes are written only by the authenticated note branch
+        # below; legacy notes cannot self-assert a meeting binding.
+        note = get_write_owner()._notes_store.get(ref["artifact_id"])
+        binding = (note or {}).get("_meeting_binding") or {}
+        if binding.get("tenant_id") == tenant_id and binding.get("ticket_id") == ticket_id:
+            return {"tenant_id": tenant_id, "checksum": note.get("_meeting_digest")}
+    return None
+
+
+def _ticket_call(operation: Any) -> Any:
+    try:
+        return operation()
+    except MeetingActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _ticket_body_actor(body: Dict[str, Any], context: Optional[AuthenticatedTenant]) -> str:
+    if context:
+        for candidate in (body.get("actor_id"), (body.get("patch") or {}).get("actor_id") if isinstance(body.get("patch"), dict) else None):
+            if candidate is not None and candidate != context.actor_id:
+                raise HTTPException(status_code=403, detail="actor_id must match authenticated principal")
+        if body.get("tenant_id") is not None and body["tenant_id"] != context.tenant_id:
+            raise HTTPException(status_code=403, detail="tenant_id must match authenticated tenant")
+    nested = (body.get("patch") or {}).get("actor_id") if isinstance(body.get("patch"), dict) else None
+    return str(body.get("actor_id") or nested or (context.actor_id if context else "operator"))
+
+
+@app.post("/api/research/tickets")
+def create_research_ticket(body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    actor = _ticket_body_actor(body, context)
+    kwargs = {"title": str(body.get("title") or ""), "description": str(body.get("description") or ""),
+              "priority": str(body.get("priority") or "medium"), "owner": str(body.get("owner") or ""),
+              "actor_id": actor, "created_at": body.get("created_at"), "ticket_id": body.get("ticket_id")}
+    if "meeting_action" in body:
+        if body["meeting_action"] is None:
+            raise HTTPException(status_code=400, detail="meeting_action cannot be null")
+        kwargs.update(meeting_action=body["meeting_action"], context=context)
+    return _ticket_call(lambda: get_write_owner().create_research_ticket(**kwargs))
+
+
 @app.patch("/api/research/tickets/{ticket_id}")
-def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    actor = _ticket_body_actor(body, context)
     patch = body.get("patch") if isinstance(body.get("patch"), dict) else body
-    result = get_write_owner().patch_research_ticket(
-        ticket_id, patch=patch, actor_id=str(body.get("actor_id") or patch.get("actor_id") or "operator"),
-        updated_at=body.get("updated_at") or patch.get("updated_at"),
-    )
+    kwargs = {"patch": patch, "actor_id": actor, "updated_at": body.get("updated_at") or patch.get("updated_at")}
+    if context is not None:
+        kwargs["context"] = context
+    result = _ticket_call(lambda: get_write_owner().patch_research_ticket(ticket_id, **kwargs))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return result
 
 
 @app.get("/api/research/tickets")
-def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None),
+    meeting_linked: bool = Query(default=False), meeting_type: Optional[str] = Query(default=None),
+    human_actionable: bool = Query(default=False),
+    subject_ref: Optional[str] = Query(default=None), action_state: Optional[str] = Query(default=None),
+    due_before: Optional[str] = Query(default=None), submitted_after: Optional[str] = Query(default=None),
+    updated_after: Optional[str] = Query(default=None), page_size: int = Query(default=50, ge=1, le=100),
+    page_token: Optional[str] = Query(default=None), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor),
+) -> Any:
     statuses = [item.strip() for item in status.split(",") if item.strip()] if status else None
-    return get_write_owner().list_research_tickets(statuses=statuses, owner=owner)
+    kwargs = {"statuses": statuses, "owner": owner}
+    if meeting_linked:
+        kwargs.update(context=context, meeting_linked=True, meeting_type=meeting_type, subject_ref=subject_ref,
+            action_states=action_state.split(",") if action_state else None, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after, human_actionable=human_actionable,
+            page_size=page_size, page_token=page_token)
+    elif any((meeting_type, subject_ref, action_state, due_before, submitted_after, updated_after, page_token, human_actionable)):
+        raise HTTPException(status_code=400, detail="Meeting filters require meeting_linked=true")
+    return _ticket_call(lambda: get_write_owner().list_research_tickets(**kwargs))
 
 
 @app.get("/api/research/tickets/{ticket_id}")
-def get_research_ticket(ticket_id: str) -> Dict[str, Any]:
-    result = get_write_owner().get_research_ticket(ticket_id)
+def get_research_ticket(ticket_id: str, context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().get_research_ticket(ticket_id, **({"context": context} if context else {})))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return result
@@ -5366,8 +5443,8 @@ def invalidate_research_experiment(experiment_id: str, body: Optional[Dict[str, 
 
 
 @app.post("/api/research/notes")
-def create_research_note(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    result = get_write_owner().create_research_note(body)
+def create_research_note(body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().create_research_note(body, **({"context": context} if context else {})))
     if result is None:
         raise HTTPException(status_code=400, detail="Invalid note payload")
     return result
@@ -5379,8 +5456,8 @@ def list_research_notes() -> List[Dict[str, Any]]:
 
 
 @app.get("/api/research/notes/{note_id}")
-def get_research_note(note_id: str) -> Dict[str, Any]:
-    result = get_write_owner().get_research_note(note_id)
+def get_research_note(note_id: str, context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().get_research_note(note_id, **({"context": context} if context else {})))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return result
