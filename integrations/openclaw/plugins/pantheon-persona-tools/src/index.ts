@@ -126,7 +126,7 @@ const proposalParameters = {
       type: "string",
       enum: [
         "demand", "admit", "reweight", "mutate_request", "remove",
-        "widen_universe", "consult_request", "harness_patch", "no_action",
+        "widen_universe", "consult_request", "harness_patch", "no_action", "meeting_action",
       ],
     },
     reason: { type: "string", minLength: 1, maxLength: 4000 },

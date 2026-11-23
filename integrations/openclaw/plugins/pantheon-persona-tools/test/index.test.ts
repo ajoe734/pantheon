@@ -102,6 +102,7 @@ test("registers three tools with JSON-schema parameters and no reflect tool", ()
   assert.deepEqual(recall.required, ["query"]);
   assert.deepEqual(recall.properties.bank.enum, ["own", "facts"]);
   assert.equal(recall.properties.persona_id, undefined); // the agent cannot name a persona
+  assert.ok(tools[2].parameters.properties.kind.enum.includes("meeting_action"));
 });
 
 test("no identity from the host means no tool is exposed", () => {
