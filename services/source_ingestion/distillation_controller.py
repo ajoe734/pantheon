@@ -336,6 +336,7 @@ def _build_registry_payload(
     *,
     request: RegistrySyncRequest,
     registry_id: str,
+    created_at: str | None = None,
 ) -> dict[str, Any]:
     from services.research.strategy_spec.conversion import (
         StrategySpecConversionService,
@@ -384,6 +385,7 @@ def _build_registry_payload(
         strategy_id=f"strat-{source.source_id}-{job.source_digest[-12:]}",
         title=source.title,
         version="1.0.0",
+        created_at=created_at,
     )
     registry_payload = dict(conversion.registry_payload)
 
@@ -405,6 +407,43 @@ def _build_registry_payload(
     registry_payload["registry_id"] = registry_id
     registry_payload["source_digest"] = job.source_digest
     return registry_payload
+
+
+def _registry_entry_matches_replay(
+    entry: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    request: RegistrySyncRequest,
+) -> bool:
+    """Rebuild a versioned draft using its retained creation time, then verify all content.
+
+    The bounded seed store can evict a seed after the Registry write but before
+    queue acknowledgement. Recreating that seed supplies today's timestamp.
+    Only the existing draft's timestamp is reused; no other Registry content is
+    copied into the expected projection, and the full comparator still applies.
+    """
+    if _registry_entry_matches_expected(entry, expected):
+        return True
+    if not request.job.source_digest or _registry_artifact_state(entry) != "draft":
+        return False
+    payload = _registry_entry_payload(entry)
+    metadata = payload.get("metadata")
+    spec = metadata.get("strategy_spec") if isinstance(metadata, Mapping) else None
+    provenance = spec.get("provenance") if isinstance(spec, Mapping) else None
+    created_at = provenance.get("created_at") if isinstance(provenance, Mapping) else None
+    if not isinstance(created_at, str) or not created_at.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return False
+        replay = _build_registry_payload(
+            request=request,
+            registry_id=str(expected["registry_id"]),
+            created_at=created_at,
+        )
+    except ValueError:
+        return False
+    return _registry_entry_matches_expected(entry, replay)
 
 
 def _make_registry_sync(
@@ -442,7 +481,7 @@ def _make_registry_sync(
                     status="immutable",
                     reason=f"Registry artifact {registry_id} is immutable ({state})",
                 )
-            if not _registry_entry_matches_expected(existing, payload):
+            if not _registry_entry_matches_replay(existing, payload, request):
                 raise RuntimeError(
                     f"Registry artifact {registry_id} exists with conflicting "
                     f"distillation lineage/content for source {source.source_id}"
@@ -478,7 +517,7 @@ def _make_registry_sync(
                 status="immutable",
                 reason=f"Registry artifact {registry_id} became immutable ({state})",
             )
-        if not _registry_entry_matches_expected(readback, payload):
+        if not _registry_entry_matches_replay(readback, payload, request):
             raise RuntimeError(
                 f"Registry write readback mismatched distillation lineage/content for {registry_id}"
             )
