@@ -1,0 +1,45 @@
+{
+  "task_id": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "source_base": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+  "delivery_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
+  "summary": "Explicit chair adoption dispatches to original Research tickets, preserves frozen decisions across partial close, and supplies bounded same-series evidence and reasoned review to the next normal meeting.",
+  "verification": [
+    {
+      "command": "timeout 180s /tmp/meeting-adoption-venv/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_meeting_outputs.py services/openclaw-gateway-adapter/tests/test_consultation_meeting_rounds.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "85 passed, 81 warnings in 70.80s",
+      "terminal_output": "validation.txt",
+      "boundary": "Broad suites before final adoption capability refresh; latest affected paths revalidated in focused suite below."
+    },
+    {
+      "command": "timeout 100s /tmp/meeting-adoption-venv/bin/python3 -m pytest services/consultation/tests/test_persona_meetings.py -q -s -k 'action_dispatch_malformed or action_http_fault or two_meetings_adoption or unrelated_committees or adoption_declines or capability_http or action_review_cannot or new_review_dispositions or oversize_shared' --disable-warnings",
+      "exit_code": 0,
+      "result": "16 passed, 36 deselected, 1 warning in 4.66s",
+      "terminal_output": "focused-validation.txt"
+    },
+    {"command": "python3 docs/deployment/evidence/MEETING-ACTION-ADOPTION-AND-REVIEW-20261123/probe.py --help", "exit_code": 0, "result": "read-only component probe CLI available; positive and false-identity/tenant/no-review fixtures verified in two-meeting regression"},
+    {"command": "git diff --check", "exit_code": 0, "result": "no whitespace errors"}
+  ],
+  "acceptance_coverage": [
+    {"criterion": 1, "proof": "Normal convene/two-round/close engine plus actual adapter schema tests: advisory round suggestions, explicit accountable action with due/criterion/citations, zero formal proposals, denied capability and REVIEW create no action. Existing proposal/sponsor/paper routing suites pass."},
+    {"criterion": 2, "proof": "Existing Registry/member-facts and privacy regressions pass; safe owner capability GET is exercised at HTTP boundary, role/inline/private fields cannot grant authority. Own pre-read, shared prior result and safe role data reach actual round/chair inputs; no escalation or placeholder reader added."},
+    {"criterion": 3, "proof": "Owner-returned ticket ID only, empty/malformed 2xx and 503 retry, frozen partial close with no second model call, same-ticket accept/return with reason and real evidence contents, frozen minutes plus separate live readback. Research/Persona HTTP boundaries are scripted component contracts; owner CAS/evidence checks remain in their owner tasks."},
+    {"criterion": 4, "proof": "Two distinct meetings with pending/submitted work and zero semantic hits, tenant/series isolation, visible remaining-page cursors, inclusive same-series schedule watermark, historical zero-action minutes unchanged, resource count/byte caps and measured growth report."},
+    {"criterion": 5, "proof": "Pre-edit caller/storage trace, obsolete implicit-adoption removal, retained distinct formal/discovery paths, explicit residual owners and source recovery discontinuity are recorded in handoff.md."}
+  ],
+  "runtime_budget": "storage.json",
+  "handoff": "handoff.md",
+  "read_only_probe": "probe.py",
+  "storage_manifest_owner": "RESEARCH-MEETING-ACTION-TICKETS-20261123; consume this task's storage.json for the chain manifest, no shared manifest edits here",
+  "hosted_acceptance": {"executed": false, "status": "pending", "owner": "MEETING-ACTION-TWO-MEETING-PROOF-20261123 and original MEETING-HOSTED-ACCEPTANCE-20261115", "remaining": "real deployed owner/credential wiring, actual Persona execution/human input, exact hosted pair, natural second meeting and browser proof"},
+  "residual_findings": [
+    {"class": "RC6 meetings projections", "owner": "existing consultation/BFF projection work package", "finding": "Legacy list_meetings_view/list_meeting_proposals_view scan the archive", "disposition": "retain existing-domain finding; new action path uses bounded owner pages and direct links"},
+    {"class": "RC3 WP3.1/3.3", "owner": "storage retention/measurement work package", "finding": "Meeting lifecycle and dispatch ledger have no whole-history cleanup/cap; atomic ledger writes rewrite existing archive", "disposition": "preserve open/historical data; section caps are not whole-archive boundedness"},
+    {"class": "RC2 WP2.3 Research artifact reads", "owner": "existing Research artifact owner", "finding": "Artifact detail is metadata-only and scans artifact/run history", "disposition": "explicit result-not-read; no acceptance from metadata, no duplicate reader; genuine meeting-bound research notes supported"},
+    {"class": "delivery authentication", "owner": "delivery/authentication work package and final chain integrator", "finding": "Consultation compose lacks dedicated Research assignment credential wiring", "disposition": "configure issued consultation-svc/service credential through authorized deployment; source returns unavailable/pending, never fabricated success"},
+    {"class": "review independence", "owner": "coordinator and assigned reviewer", "finding": "Canonical Codex2-to-Codex assignment is same-family", "disposition": "apply live independent-family capacity rule or record actual exception; owner has manufactured neither capacity nor approval"}
+  ],
+  "independent_review": "pending assigned reviewer on frozen exact PR head; no approval recorded by owner"
+}

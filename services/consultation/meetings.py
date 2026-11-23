@@ -2059,6 +2059,8 @@ def _meeting_series(meeting: Mapping[str, Any]) -> Optional[Dict[str, str]]:
     """Join only a verified stable subject, never a meeting-type global default."""
     code = str(meeting.get("meeting_code") or "")
     ref = str(meeting.get("subject_ref") or "").strip()
+    if len(ref) > 256:
+        return None
     chair = str(meeting.get("chair_persona_id") or "")
     convener = meeting.get("convened_by") or {}
     if code == "MT-1":
@@ -3742,6 +3744,13 @@ def execute_persona_meeting(
         allowed_case_ids=allowed_case_ids,
         chair_preread_ids=preread_ids_by_persona.get(chair_persona_id, set()),
     )
+    # Recheck the assigned participants at adoption, after the model round.
+    raw_actions = (raw_synthesis or {}).get("actions") or []
+    assigned = {a.get("assignee") for a in raw_actions if isinstance(a, Mapping) and isinstance(a.get("assignee"), str)} if isinstance(raw_actions, list) else set()
+    meeting["participant_action_capabilities"] = [
+        _participant_action_capability(tenant_id, c["persona_id"]) if c["persona_id"] in assigned else c
+        for c in meeting["participant_action_capabilities"]
+    ]
     actions, reviews, rejected_actions = _validate_adopted_actions(
         raw_synthesis or {}, meeting, allowed_case_ids | preread_ids_by_persona.get(chair_persona_id, set()))
     # A malformed/REVIEW synthesis cannot become a new source of work.

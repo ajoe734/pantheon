@@ -1,0 +1,82 @@
+{
+  "task_id": "MEETING-ACTION-ADOPTION-AND-REVIEW-20261123",
+  "measurement_scope": "isolated component fixture, two normal convene/two-round/close paths with scripted Research HTTP boundary; not hosted measurements",
+  "hosted_scale_basis": {
+    "enrolled_trading_personas": 3,
+    "catalogue_meetings_per_persona_per_week": 3,
+    "upper_meetings_per_week": 9,
+    "human_convened": "H additional meetings/day, counted separately; existing caller/operator budget overrides are not assumed zero"
+  },
+  "measured": {
+    "meetings": 2,
+    "participants_per_meeting": 2,
+    "rounds_per_meeting": 2,
+    "new_actions": 2,
+    "reviews": 1,
+    "lost_response_retry": 1,
+    "meeting_record_bytes": [
+      10852,
+      14831
+    ],
+    "maximum_provider_request_bytes": 15632,
+    "lifecycle_log_bytes": 206358,
+    "lifecycle_events": 39,
+    "dispatch_ledger_bytes": 5009,
+    "owner_requests_including_probe_and_isolation_checks": 19,
+    "source": "measurements.txt; sizes use JSON default ASCII encoding, ledger includes formatting"
+  },
+  "read_bounds": {
+    "owner_ticket_pages_per_meeting": 3,
+    "rows_per_page": 8,
+    "lanes": [
+      "outstanding including returned/waiting_for_input",
+      "submitted",
+      "accepted updated since last fully read same-series review"
+    ],
+    "maximum_prior_action_snapshots": 24,
+    "snapshot_bytes": 8192,
+    "evidence_refs_per_action": 8,
+    "maximum_evidence_owner_reads_per_meeting": 8,
+    "evidence_contents_bytes_each": 16384,
+    "shared_action_context_bytes": 524288,
+    "owner_reply_bytes": 262144,
+    "capability_reads_per_execution_attempt": "one per participant before rounds (at most 5), plus one recheck per distinct assigned participant at adoption (at most 5)",
+    "case_file_bytes": 262144,
+    "case_file_items": "existing four groups at 8 each plus at most 24 action citation items; original excerpt/subject-field total 12000 characters plus at most 9600 action excerpt characters",
+    "provider_request_bytes": 2097152,
+    "provider_calls": "existing at most 16 per meeting; two rounds normally, third only with chair evidence",
+    "pagination": "per-lane owner_query, next_page_token and has_more retained in minutes and every actual round/chair input; continuation via existing request metadata prior_actions_page_tokens. A page/owner/evidence failure never advances the existing schedule watermark. No unfinished work is evicted.",
+    "live_action_detail_reads": "at most 8 current plus 24 prior direct owner reads per detail request; legacy proposal status reads remain a separate existing cost"
+  },
+  "existing_writers": [
+    {
+      "name": "consultation meeting lifecycle records",
+      "cadence": "existing convene, pre-read, round, synthesis, close and explicit workflow retries; no new timer",
+      "counts": "at most 8 adopted actions and 8 reviews per meeting; at most 24 prior snapshots and 8 resolved evidence contents; bounded references only, mutable progress remains at Research",
+      "growth_per_day_measured_model": "logical latest records about 16511 + 12842*H bytes/day; lifecycle append bytes about 132659 + 103179*H/day and 25.1 + 19.5*H events/day for this measured two-participant workload",
+      "maximum_scale": "new actions at most 72/week plus 8*H/day; request/case/section caps above apply also to separately counted human work; physical growth depends on actual participants, rounds, evidence, retries and pre-existing content, so the measured model is not a maximum",
+      "cap_and_cleanup": "existing four-group case budget plus 256 KiB encoded case and 2 MiB encoded provider request enforced; reference caps enforced before persistence/dispatch. No whole-history retention or cleanup verified; inherited RC3 WP3.1/3.3 debt, no deletion/backfill of open or historical obligations"
+    },
+    {
+      "name": "meeting_output_dispatches.json",
+      "cadence": "two upserts per attempted new action/review (frozen request then genuine receipt), at most 32 upserts per meeting with 8 creations and 8 reviews; successful replay is read-only",
+      "counts": "one existing-ledger row per tenant/meeting/source action or tenant/reviewing meeting/ticket; POST omits ticket_id; no second ID hash",
+      "growth_per_day_measured_model": "about 3220 + 2505*H bytes/day for this measured two-action/one-review workload; failed retries replace their existing row",
+      "cap_and_cleanup": "bounded request/reference/receipt envelopes; owner enforces 8 assignments/origin and 16 KiB command/assignment. Existing ledger has no whole-file cap or retention and rewrites the archive atomically; RC3 owner retains that debt"
+    },
+    {
+      "name": "existing meeting_schedule",
+      "cadence": "existing successful meeting close, at most 5 participant updates/meeting",
+      "counts": "same tenant/persona/meeting_type key; adds stable series and one review watermark, no new per-week or per-series collection",
+      "growth_per_day": "updates existing rows, bounded metadata under 1 KiB/row for owner contract identifiers; no per-meeting row growth on repeated keys",
+      "cap_and_cleanup": "same existing lifecycle retention; watermark advances only after complete source/evidence reads, retaining an inclusive boundary"
+    }
+  ],
+  "manifest_handoff": "R (RESEARCH-MEETING-ACTION-TICKETS-20261123) owns all chain storage-manifest edits; supply this measured report and affected existing writer list without editing R's shared file",
+  "residual_owners": {
+    "whole_archive_retention_and_ledger_rewrite": "RC3 WP3.1/3.3",
+    "legacy_meeting_list_scans": "RC6 consultation/BFF projection work package",
+    "metadata_only_artifact_detail_and_archive_scan": "existing Research artifact owner / RC2 WP2.3",
+    "hosted_physical_storage_and_natural_two_meeting_proof": "original chain hosted acceptance owner"
+  }
+}
