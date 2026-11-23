@@ -80,3 +80,17 @@ cleared through existing governed recovery; show/progress subsequently succeeded
   The failure (`test_submit_next_same_subject...`, probe `created_at` ordering) passed
   4/4 alone and on baseline; suspected same-second `created_at` tie flake. Residual for
   the Persona test owner. Plugin npm test and diff budget not rerun.
+
+## Correction round 3 (head after e0fff8407)
+
+- Capability: a paper_advisory receipt (persona_opinion only, no tools/workflows) no longer caps the
+  daily cycle. For run_purpose=daily_cycle the ceiling derives from the broker profile, active
+  five-step harness, owner policy resolver and data availability; explicit restrictions, expiry,
+  downgrade, unverified authority and consultation purpose still deny. get_for_persona(run_purpose=
+  daily_cycle) prefers explicit non-advisory receipts so a later advisory receipt cannot shadow a
+  daily denial/grant. Same check at assignment and execution. No backfilled grants.
+- Evidence: title/id/checksum-only artifact projection raises evidence_content_missing, so the ticket
+  keeps requesting the genuine missing input; same-ticket note bodies remain consumable.
+- Residual: test_submit_next_same_subject_citation_and_restart_concurrency failed once under heavy
+  parallel load and passed on reruns; owner Persona chain to confirm no timing sensitivity.
+- Not yet shown: hosted acceptance. State is merged-pending (PR #7765 CI queued); not deployed/accepted.

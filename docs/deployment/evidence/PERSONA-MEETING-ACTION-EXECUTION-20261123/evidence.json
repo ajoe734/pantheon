@@ -6,9 +6,9 @@
   "hosted_accepted": false,
   "source_base": "0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c",
   "runtime_blobs": {
-    "services/persona/persona_cycle_controller.py": "0823204830f29163b1b2792e283bf51d50a18f97",
-    "services/persona/write_owner.py": "2bd8fcefdcd6ab4fd5ceb437c9e2310d0f3dfdd6",
-    "services/control-plane/persona/persona_policy_resolver.py": "3678828542466ce2cffe76a2adbbdfdb1fdf0d58",
+    "services/persona/persona_cycle_controller.py": "e1ed6dec7db213435a272bad9cf5399716dd0c49",
+    "services/persona/write_owner.py": "ba152417c10c2fbd8beaaf6306c53c60030a15e4",
+    "services/control-plane/persona/persona_policy_resolver.py": "1047f37e01ad080605d27b46369f158253473259",
     "integrations/openclaw/persona_ooda_runtime.py": "fe032094dbc093b96d703aa7aabff414e42d705c",
     "integrations/openclaw/plugins/pantheon-persona-tools/src/index.ts": "76a99a8c08078bfe9644da581e958a1eb5c82bc9"
   },
@@ -38,6 +38,12 @@
     {
       "command": "python3 docs/deployment/evidence/PERSONA-MEETING-ACTION-EXECUTION-20261123/probe.py --help",
       "exit_code": 0
+    },
+    {
+      "command": "pytest services/persona/test_meeting_action_execution.py services/persona/test_persona_cycle_controller.py services/persona/test_case_file_outcomes.py services/persona/test_meeting_triggers.py services/openclaw-gateway-adapter",
+      "exit_code": 0,
+      "passed": 821,
+      "note": "one run showed a single concurrency-test failure under parallel machine load; passes on isolated and combined reruns"
     }
   ],
   "acceptance_evidence": {
