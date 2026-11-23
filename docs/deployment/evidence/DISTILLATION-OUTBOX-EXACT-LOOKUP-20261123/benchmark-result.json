@@ -1,0 +1,41 @@
+{
+  "admitted_receipts": 37461,
+  "new_sources": 205,
+  "sqlite": "3.45.1",
+  "pg_seed_seconds": 1.357,
+  "sqlite_receipt_seed_seconds": 450.321,
+  "outbox_rows": 37461,
+  "source_version_rows": 37461,
+  "db_bytes_legacy_schema": 107233280,
+  "wal_or_shm_present": [
+    "queue.sqlite3-shm",
+    "queue.sqlite3-wal"
+  ],
+  "legacy_no_index_100_keys_seconds": 0.9033,
+  "legacy_no_index_extrapolated_full_receipt_scan_seconds": 338.4,
+  "index_build_via_bootstrap_seconds": 0.1991,
+  "plan_after": [
+    "SEARCH distillation_outbox USING INDEX distillation_outbox_source_version_idx (source_id=? AND source_digest=?)"
+  ],
+  "index_bytes_dbstat": 3493888,
+  "db_bytes_with_index_vacuumed": 110727168,
+  "index_bytes_by_file_delta": 3493888,
+  "index_bytes_per_row": 93.3,
+  "indexed_first_scan_page_cold": [
+    100,
+    17.136
+  ],
+  "indexed_repeat_scan_page_warm": [
+    100,
+    15.987
+  ],
+  "indexed_100_keys_seconds": 0.0307,
+  "indexed_multipage_full_drain": {
+    "pages_with_data": 3,
+    "admitted_new": 205,
+    "total_seconds": 76.683,
+    "max_page_seconds": 23.156,
+    "eligible_source_count": 37666
+  },
+  "indexed_multipage_within_300s": true
+}
