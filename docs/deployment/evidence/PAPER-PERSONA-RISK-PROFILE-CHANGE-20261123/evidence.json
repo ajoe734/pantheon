@@ -4,7 +4,7 @@
   "assigned_independent_reviewer": "Codex2",
   "problem_register_class": "RC2 WP2.1",
   "evidence_kind": "source_validation_not_hosted_acceptance",
-  "source_review": "pending_independent_re_review_after_UUID_rejection_at_ad7e7edd770e9a80eda860d27d7fc32b22dafb2c",
+  "source_review": "pending_independent_re_review_after_release_replay_inventory_repair",
   "delivery_state": null,
   "frontend_task": "FE-PERSONA-RISK-PROFILE-CHANGE-20261123",
   "contract": {
@@ -89,7 +89,16 @@
     }
   ],
   "reviewer_family_exception": "Antigravity2 terminal quota recovery; Codex and Codex2 are distinct configured identities in the same model family; no reviewer approval is asserted by the owner",
-  "validated_source_commit": "4b994301bb51a3e587c2cd98ef564a10a9e59f16",
+  "validated_source_commit": "87f991dfbbed5d89c56f623431d1e7c764b1f8fa",
+  "ci_replay_repair": {
+    "failed_head": "472b25875ccd0ca6d156ae1a8a809dc9e144f9d0",
+    "job": "https://github.com/ajoe734/pantheon/actions/runs/45116879762/job/137514287607",
+    "terminal_job_result": "shard 11/12: 52 passed, 1 failed; sole failure was release replay probe inventory missing probe:persona-risk-profile-change at index 6",
+    "local_reproduction": "same replay test failed with the identical index 6 inventory difference before repair",
+    "change": "retain actual probe discovery and release verdict; add shipped probe to expected inventory and assert exit 77; exercise explicit Persona with missing viewer credentials",
+    "other_ci_failures_at_inspection": [],
+    "ci_caveat": "old-head workflow still had queued/running jobs; fresh-head CI and independent review remain required"
+  },
   "historical_validation_at_rejected_head": [
     {
       "command": "timeout 240 bash /tmp/paper-risk-validation.sh (disposable postgres:16 with database pantheon; CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
@@ -171,6 +180,18 @@
     }
   ],
   "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "21 passed; complete release acceptance stage file plus normal risk-change probe tests",
+      "log": "ci-replay-validation.log"
+    },
+    {
+      "command": "env -u ACCEPTANCE_BFF_URL -u ACCEPTANCE_VIEWER_CLIENT_ID -u ACCEPTANCE_VIEWER_CLIENT_SECRET ACCEPTANCE_EXPECTED_PERSONA_IDS=fixture-persona timeout 15 acceptance/probes/persona-risk-profile-change",
+      "exit_code": 77,
+      "result": "expected credentialless skip with explicit isolated Persona; no hosted requests or acceptance claim",
+      "log": "ci-probe-no-credentials.log"
+    },
     {
       "command": "timeout 140 bash /tmp/paper-risk-revision-focused.sh (disposable postgres:16, CAPITAL_TEST_DSN supplied; timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_profile_change.py services/control-plane/bff/tests/test_persona_risk_profile_change.py acceptance/test_persona_risk_profile_change.py)",
       "exit_code": 0,

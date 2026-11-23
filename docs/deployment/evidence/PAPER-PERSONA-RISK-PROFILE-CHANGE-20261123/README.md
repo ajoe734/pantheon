@@ -104,6 +104,13 @@ stale full-store snapshot cannot overwrite another pool's new intent.
 ## Verification and hosted continuation
 
 See `evidence.json` and committed logs for commands, exit codes and residuals.
+PR #7762's original CI shard 11 failed only because the release replay test's
+expected inventory omitted the shipped `persona-risk-profile-change` probe.
+The replay now includes it and requires its credentialless exit 77, preserving
+the actual release discovery and verdict. The complete stage test file and
+probe tests pass (21 tests; `ci-replay-validation.log`). Direct execution with
+an explicit fixture Persona and no viewer credentials also exits 77
+(`ci-probe-no-credentials.log`); this is a skip, not hosted acceptance.
 The focused normal-route tests exercise real Capital HTTP handlers and owner
 stores with synthetic local approval snapshots. One unchanged running paper
 algorithm reads the new approved policy at both submission sizing and order
