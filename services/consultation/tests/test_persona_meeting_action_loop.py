@@ -18,7 +18,7 @@ from services.research.tests.test_meeting_action_tickets import (  # noqa: F401 
 )
 
 TENANT = "tenant-a"
-SERIES = {"tenant_id": TENANT, "meeting_type": "MT-1", "subject_ref": "pool-1"}
+SERIES = {"meeting_type": "MT-1", "subject_ref": "pool-1"}  # tenant is the authenticated scope, not a series field
 
 
 def _bridge(client):
@@ -51,7 +51,7 @@ def test_two_meeting_loop_real_owner_idempotent_and_series_scoped(world, tmp_pat
           "synthesis": {"actions": [_adopted("p1", "persona-1", "persona"),
                                     _adopted("h1", "operator", "human", human_requirement="Supply licensed excerpt")]}}
     first = mo.dispatch_meeting_actions(m1, transport=transport, store_path=ledger)
-    assert all(a["ticket_id"] and not a["dispatch_error"] for a in first), first
+    assert all(a.get("ticket_id") and not a.get("dispatch_error") for a in first), first
     posts = len([c for c in calls if c[0] == "POST"])
     # Restart (fresh process state, same ledger/owner): no duplicate dispatch, same canonical ids.
     again = mo.dispatch_meeting_actions(copy.deepcopy(m1), transport=transport, store_path=ledger)
@@ -76,7 +76,7 @@ def test_two_meeting_loop_real_owner_idempotent_and_series_scoped(world, tmp_pat
     # Another series / tenant never sees M1's work.
     other = mo.read_meeting_actions({**m2, "meeting_series": {**SERIES, "subject_ref": "pool-2"}}, transport=transport)
     assert other["items"] == []
-    foreign = mo.read_meeting_actions({**m2, "tenant_id": "tenant-b", "meeting_series": {**SERIES, "tenant_id": "tenant-b"}},
+    foreign = mo.read_meeting_actions({**m2, "tenant_id": "tenant-b", "meeting_series": dict(SERIES)},
                                       transport=transport)
     assert all(i["action_id"] not in {pid, hid} for i in foreign["items"])
 
