@@ -90,6 +90,7 @@ class _AdapterModelDouble:
         self.synthesis_mode: str = "normal"  # "normal" | "unreadable" | "mt4_no_hypothesis"
         self.custom_citations_by_persona: dict[str, list[str]] = {}
         self.custom_proposals: list[dict[str, Any]] | None = None
+        self.custom_actions: list[dict[str, Any]] | None = None
 
     def _gateway_call(self, method: str, **kwargs: Any) -> Any:
         if method == "config.get":
@@ -234,6 +235,10 @@ class _AdapterModelDouble:
                     "proposals": proposals,
                 },
             }
+            if self.custom_actions is not None:
+                event_content["synthesis"].update(
+                    outcome="actions_adopted", actions=[
+                        {**a, "source_refs": [first_case_id]} for a in self.custom_actions])
         else:
             is_panel_turn = isinstance((req.get("metadata") or {}).get("panel"), dict)
             prior = meeting.get("prior_round_positions") or []
@@ -3091,7 +3096,7 @@ def action_owner_contract(request, monkeypatch):
         if method == 'POST':
             return 201, real._create_meeting_ticket(**body, actor_id=ctx.actor_id, context=ctx, ticket_id=None)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
-        return 200, real._list_meeting_tickets(context=ctx, statuses=None, owner=None,
+        return 200, real.list_research_tickets(context=ctx, meeting_linked=True, statuses=None, owner=None,
             meeting_type=q['meeting_type'], subject_ref=q['subject_ref'], action_states=q['action_state'].split(','),
             due_before=None, submitted_after=None, updated_after=q.get('updated_after'),
             page_size=int(q['page_size']), page_token=q.get('page_token'))
@@ -3410,3 +3415,148 @@ def test_interleaved_pool_chairs_keep_owned_review_state(tmp_path, monkeypatch, 
         assert saved['meeting_series']['subject_ref'] == f'pool:{chair}'
         assert not saved['action_review_scan']
         assert saved['action_review_watermark'] == f'2026-11-21T0{lane}:00:00Z'
+
+
+@pytest.mark.parametrize('convener', [
+    {'kind': 'persona', 'id': 'persona-alpha'},
+    {'kind': 'operator', 'id': 'op-1'},
+])
+@pytest.mark.parametrize('assignee', ['operator', 'invented-human-user'])
+def test_human_action_normal_adapter_two_round_close_targets_existing_inbox(
+        stack, tmp_path, monkeypatch, convener, assignee):
+    """No approval/capital prerequisite: a human must obtain a real document."""
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    monkeypatch.setattr(meetings_mod, '_write_meeting_memory', lambda **kwargs: ([], None))
+    monkeypatch.setattr(meetings_mod, 'build_participant_pre_read', lambda **kwargs: [])
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': assignee,
+           'deliverable': 'Provide the broker-signed historical fee statement',
+           'acceptance_criterion': 'Statement covers the full prior quarter and lists every fee',
+           'human_requirement': requirement}
+    stack['double'].custom_proposals = []
+    stack['double'].custom_actions = [raw]
+    created = open_persona_meeting(
+        base_url=stack['api_url'], token=SERVICE_TOKEN, tenant_id=TENANT,
+        meeting_type='MT-1', topic='Resolve missing historical fee evidence',
+        convened_by=convener, subject_ref='persona:persona-alpha',
+        participants=['persona-alpha', 'persona-risk-officer'],
+        idempotency_key='human-work', iso_week='2026-W47')
+    cfg = stack['cfg']
+    provider = HttpContributionProvider(endpoint=cfg.provider_url, bearer_token=cfg.provider_token,
+        service_actor=cfg.provider_service_actor, timeout_seconds=cfg.timeout_seconds)
+    owner = _ActionResearchBoundary()
+    with output_routing_context(transport=owner, store_path=tmp_path / 'human-dispatch.json'):
+        meeting = meetings_mod.execute_persona_meeting(store=consultation_main.store,
+            meeting_id=created['meeting_id'], tenant_id=TENANT, provider=provider)
+        calls_before_retry = len(stack['double'].calls)
+        meetings_mod.execute_persona_meeting(store=consultation_main.store,
+            meeting_id=created['meeting_id'], tenant_id=TENANT, provider=provider)
+    assert meeting['status'] == 'closed' and len(meeting['rounds']) == 2
+    assert meeting['synthesis']['proposals'] == []
+    assert len(stack['double'].calls) == calls_before_retry == 5
+    prompt = stack['double'].calls[-1]['prompt']
+    assert 'existing tenant operator inbox' in prompt and 'Do not invent usernames' in prompt
+    if assignee != 'operator':
+        assert not owner.tickets and meeting['actions'] == []
+        assert meeting['synthesis']['rejected_actions'] == [
+            {'index': 0, 'reason': 'human_assignee_unresolvable_use_operator_inbox'}]
+        return
+    ticket, = owner.tickets.values()
+    action, = meeting['actions']
+    assert action['assignee'] == ticket['owner'] == 'operator'
+    assert action['human_requirement'] == ticket['description'] == requirement
+    assert ticket['meeting_action']['deliverable'] == raw['deliverable']
+    assert ticket['meeting_action']['acceptance_criterion'] == raw['acceptance_criterion']
+    assert ticket['meeting_action']['due_at'] == raw['due_at']
+    assert ticket['meeting_action']['assignee_kind'] == 'human'
+    assert len([r for r in owner.requests if r[0] == 'POST']) == 1
+
+
+@pytest.mark.parametrize('requirement', [None, '', '   ', ['invented text'], 23, 'x' * 2001])
+def test_human_action_requires_bounded_specific_reason_and_never_dispatches(
+        tmp_path, requirement):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': 'operator',
+           'human_requirement': requirement}
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'invalid-human',
+               'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [raw]}, meeting, {'facts:source'})
+    assert actions == [] and rejected == [
+        {'index': 0, 'reason': 'human_requirement_required_or_unbounded'}]
+    # Older frozen producers also fail visibly without issuing an owner request.
+    meeting['synthesis'] = {'actions': [raw]}
+    def no_owner_call(*args):
+        pytest.fail('Invalid human assignment must not reach the owner')
+    pending, = dispatch_meeting_actions(meeting, transport=no_owner_call,
+                                       store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'human_requirement_required_or_unbounded'
+
+
+def test_frozen_invented_human_target_is_unresolved_without_dispatch(tmp_path):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'old-producer',
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee_kind': 'human',
+            'assignee': 'fabricated-user', 'human_requirement': 'Obtain a signed source document'}]}}
+    def no_owner_call(*args):
+        pytest.fail('Invented human target must not receive a ticket')
+    pending, = dispatch_meeting_actions(meeting, transport=no_owner_call,
+                                       store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'human_assignee_unresolvable_use_operator_inbox'
+
+
+def test_human_reason_frozen_across_lost_receipt_real_owner_create(
+        tmp_path, monkeypatch, action_owner_contract):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    raw = {**_adopted_action(), 'assignee_kind': 'human', 'assignee': ' operator ',
+           'human_requirement': ' ' + requirement + ' '}
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'human-receipt-retry',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'}}
+    actions, _, rejected = meetings_mod._validate_adopted_actions(
+        {'actions': [raw]}, meeting, {'facts:source'})
+    assert not rejected
+    meeting['synthesis'] = {'actions': actions}
+    calls = []
+    def transport(*args):
+        calls.append(copy.deepcopy(args[3]))
+        code, reply = action_owner_contract.send(*args)
+        return (200, {}) if len(calls) == 1 else (code, reply)
+    path = tmp_path / 'ledger.json'
+    pending, = dispatch_meeting_actions(meeting, transport=transport, store_path=path)
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    # A process restart reloads both frozen meeting state and its ledger.
+    restored = json.loads(json.dumps(meeting))
+    delivered, = dispatch_meeting_actions(restored, transport=transport, store_path=path)
+    assert delivered['ticket_id'] and delivered['state'] == 'open'
+    dispatch_meeting_actions(restored, transport=transport, store_path=path)
+    assert len(calls) == 2 and calls[0] == calls[1]
+    ticket, = action_owner_contract.tickets.values()
+    assert ticket['owner'] == 'operator' and ticket['description'] == requirement
+    assert ticket['meeting_action']['deliverable'] == raw['deliverable']
+    assert ticket['meeting_action']['acceptance_criterion'] == raw['acceptance_criterion']
+    assert 'human_requirement' not in ticket['meeting_action']  # existing RW-01 schema
+
+
+def test_human_action_owner_receipt_must_preserve_human_requirement(tmp_path, monkeypatch):
+    from services.consultation.meeting_outputs import dispatch_meeting_actions
+    monkeypatch.setenv('PANTHEON_RESEARCH_JWT_SECRET', 'test-action-secret-with-enough-length')
+    requirement = 'Only a human can obtain the broker-signed historical fee statement.'
+    meeting = {'tenant_id': TENANT, 'meeting_id': 'missing-human-reason',
+        'meeting_series': {'meeting_type': 'MT-1', 'subject_ref': 'pool:persona-alpha'},
+        'synthesis': {'actions': [{**_adopted_action(), 'assignee': 'operator',
+            'assignee_kind': 'human', 'human_requirement': requirement}]}}
+    owner = _ActionResearchBoundary()
+    def transport(*args):
+        status, receipt = owner(*args)
+        receipt['description'] = 'Generic task acknowledgement'
+        return status, receipt
+    pending, = dispatch_meeting_actions(meeting, transport=transport, store_path=tmp_path / 'ledger.json')
+    assert pending['state'] == 'dispatch_pending' and 'ticket_id' not in pending
+    assert pending['dispatch_error'] == 'research_owner_human_requirement_mismatch'
+    delivered, = dispatch_meeting_actions(meeting, transport=owner, store_path=tmp_path / 'ledger.json')
+    assert delivered['ticket_id'] and delivered['dispatch_error'] is None
+    assert len(owner.tickets) == 1

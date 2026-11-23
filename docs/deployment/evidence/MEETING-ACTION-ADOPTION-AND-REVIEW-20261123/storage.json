@@ -80,5 +80,11 @@
     "legacy_meeting_list_scans": "RC6 consultation/BFF projection work package",
     "metadata_only_artifact_detail_and_archive_scan": "existing Research artifact owner / RC2 WP2.3",
     "hosted_physical_storage_and_natural_two_meeting_proof": "original chain hosted acceptance owner"
+  },
+  "human_assignment_revision": {
+    "writer_change": "Existing human_requirement max 2000 characters is normalized and required; existing ticket description max 2000 characters now holds that reason instead of repeating criterion. Structured criterion and deliverable retain their original limits. No new collection, row type, cadence, request, schedule or cleanup job.",
+    "hosted_count_and_growth": "Unchanged at most 8 adopted actions/meeting, 72/week for 3 personas plus 8*H/day; one existing dispatch row/action and at most two existing upserts/attempt. Replacing the description value preserves its previous 2000-character bound. UTF-8/escaped record bytes remain governed by existing owner 16 KiB input, snapshot and meeting/provider caps; prior measured figures above are the unchanged Persona component workload, not a new human or hosted measurement.",
+    "cap_cleanup": "No archive cleanup introduced. Invalid target/reason makes no owner call or dispatch-ledger upsert; original synthesis records the refusal under existing max 8 actions. Existing RC3 retention obligations remain.",
+    "manifest_owner": "R consumes this revision together with existing budget; B reads description from original filtered owner page, no per-ticket fanout required."
   }
 }

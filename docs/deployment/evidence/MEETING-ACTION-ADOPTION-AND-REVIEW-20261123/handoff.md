@@ -151,6 +151,51 @@ or extra mutable work store. Closed historical projections stay unchanged.
 The new HTTP matrix would fail on either missing-continuation or skipped-read
 behavior, and retains peer state across sync and replay.
 
+## Human target and reason rejection (713563eba)
+
+The chair's human assignee was previously arbitrary model text. A nonempty
+username did not prove an actual recipient. Human actions now use only the
+existing tenant operator inbox (`assignee=operator`, `assignee_kind=human`),
+where RW-01's authenticated operator/admin role already authorizes receipt and
+response. This works for operator-convened and naturally Persona-convened
+meetings without a human approval or capital prerequisite. We deliberately do
+not bind from `convened_by`: the stored field is supplied by the caller, not a
+persisted authenticated human principal. No human directory or new routing
+authority was added.
+
+The normal chair prompt/schema names that target and requires a nonempty,
+bounded specific human-only reason. Adoption rejects invented usernames with
+`human_assignee_unresolvable_use_operator_inbox`, recorded in the original
+synthesis's `rejected_actions`; it does not invent a recipient or create a
+ticket. Older frozen decisions bypassing adoption retain a visible pending
+dispatch/error and make no owner call for an unresolved target or missing
+reason. The previous arbitrary-human branch served no independently verified
+recipient contract and was removed. Persona capability checks remain distinct.
+
+The exact normalized `human_requirement` goes into existing ticket `description`.
+The structured `meeting_action.deliverable` and `acceptance_criterion` stay
+unchanged, as do due/review, source identity and the owner-written
+`review_decision.reason` on return. A receipt missing/changing the human reason
+stays dispatch_pending. Lost responses retry the exact request and retain the
+single genuine ticket; retries after success do not create another ticket.
+
+R owns making this bounded description available in its existing human-actionable
+list projection; B owns displaying description as the direct-human reason,
+deliverable, structured criterion and return reason in the normal inbox. These
+contract fields and ownership were recorded via canonical task progress; their
+implementation and authenticated response path are outside this producer task.
+No parallel schema, inbox, scheduler, migration or work store is introduced.
+The return/accept tests and all earlier paging/independent-chair tests remain.
+
+New normal-engine tests convene through authenticated HTTP, obtain both rounds
+and synthesis through the real HTTP contribution provider/adapter, and close
+with no formal proposals. Both convener kinds exercise the operator inbox and
+fabricated-target rejection. Additional schema, bounded-reason, frozen invalid
+producer and lost-receipt tests cover truthful delivery and idempotence. The
+real-owner fixture now calls its public list_research_tickets entry point so
+the owner's existing defaults handle added filters without copying private
+signature assumptions. Persistence remains isolated; this is component proof.
+
 ## Validation and resource budget
 
 See evidence.json, validation.txt, fair-validation.txt, interleaved-validation.txt,

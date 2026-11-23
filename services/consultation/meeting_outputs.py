@@ -1479,6 +1479,8 @@ def dispatch_meeting_actions(meeting: dict[str, Any], *, store_path: str | Path 
                                       transport=transport, key=key), tenant, origin=origin)
             if ticket.get("owner") != action["assignee"]:
                 raise MeetingOutputRoutingError("research_owner_assignment_mismatch", status_code=502)
+            if action["assignee_kind"] == "human" and ticket.get("description") != description:
+                raise MeetingOutputRoutingError("research_owner_human_requirement_mismatch", status_code=502)
             receipt = {"action_id": ticket["ticket_id"], "ticket_id": ticket["ticket_id"],
                        "state": ticket["action_state"], "downstream": action_snapshot(ticket)["downstream"],
                        "dispatch_error": None}

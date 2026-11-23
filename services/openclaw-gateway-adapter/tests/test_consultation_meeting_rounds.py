@@ -642,3 +642,36 @@ def test_normal_chair_provider_schema_carries_explicit_adoption_and_prior_result
     del malformed['synthesis']['actions'][0]['next_review']
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(malformed, schema)
+
+
+def test_normal_chair_human_action_schema_uses_existing_operator_inbox(tmp_path):
+    import jsonschema
+    from consultation_provider import _meeting_event_content_schema
+    requirement = 'Only a human can obtain the broker-signed source statement.'
+    action = {'source_action_id': 'human-document', 'assignee': 'operator', 'assignee_kind': 'human',
+              'deliverable': 'Provide broker-signed statement', 'acceptance_criterion': 'Complete quarter of fees',
+              'next_review': 'MT-1 pool:persona-alpha 2026-W48', 'source_refs': ['facts:item:1'],
+              'human_requirement': requirement}
+    event = {'claims': [{'claim': 'Obtain the unavailable external document', 'evidence_refs': ['facts:item:1']}],
+             'summary_evidence_refs': ['facts:item:1'],
+             'synthesis': {'summary': 'Adopt a specific human deliverable', 'outcome': 'actions_adopted',
+                           'proposals': [], 'actions': [action]}}
+    provider = _ProviderDouble(event_content_override=event)
+    meeting = {'meeting_id': 'mtg-1', 'meeting_type': 'MT-1', 'round': 'synthesis', 'phase': 'synthesis',
+               'own_pre_read': {'persona_id': 'persona-alpha', 'entries': []}}
+    reply = _post_turn(provider, tmp_path, idem_key='human-adoption', meeting=meeting)
+    assert reply.status_code == 200, reply.text
+    prompt = provider.prompts[0]
+    assert 'existing tenant operator inbox' in prompt and 'Do not invent usernames' in prompt
+    schema = _extract_prompt_schema(prompt)['properties']['event_content']
+    jsonschema.validate(event, schema)
+    assert schema == _meeting_event_content_schema(meeting)
+    for override in ({'assignee': 'fabricated-human'}, {'human_requirement': ''}, {'human_requirement': 'x' * 2001}):
+        malformed = json.loads(json.dumps(event))
+        malformed['synthesis']['actions'][0].update(override)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(malformed, schema)
+    malformed = json.loads(json.dumps(event))
+    del malformed['synthesis']['actions'][0]['human_requirement']
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(malformed, schema)
