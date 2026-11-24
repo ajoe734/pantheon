@@ -1,0 +1,68 @@
+{
+  "task_id": "INCIDENTS-MEMORY-OOM-DURING-DEPLOY-CHURN-20261123",
+  "class": "RC3 WP3.4",
+  "hosted_observation_from_task": {
+    "oom_kills_utc": [
+      "2026-11-23T17:57:38Z",
+      "2026-11-23T18:02:48Z"
+    ],
+    "limit": "DEV_MEM_LIMIT_INCIDENTS 2 GiB",
+    "rss_after_restart": "about 1.25 GiB",
+    "memory_peak": "1.44 GiB",
+    "cpu": "about 100% of one core",
+    "resolve_log_rate": "about 20 IncidentCase infra-bff-... -> resolved per minute"
+  },
+  "hosted_measurement": {
+    "status": "NOT_MEASURED_BY_WORKER",
+    "reason": "read-only hosted access (gcloud/ssh/psql) is not available in the worker sandbox (gcloud fails to start: transient scope DBus error); counts by type/status must be taken by the operator or the daily measurement",
+    "queries_to_run": [
+      "SELECT payload->>'status', (payload->>'binding_id') LIKE 'infra-subject-%' AS infra, count(*) FROM incident.incident_cases GROUP BY 1,2",
+      "SELECT count(*) FROM incident.postmortems",
+      "SELECT pg_total_relation_size('incident.incident_cases'), pg_total_relation_size('incident.postmortems')"
+    ]
+  },
+  "cause_found_in_code": [
+    "PostgresIncidentStore._refresh_from_disk ran list_all() on BOTH tables and parsed every row into dataclasses; it is called by every read method, so one GET /api/incidents?open_only=true cost two full-table loads (more with the stale-finding probe), each materialising all cases and postmortems.",
+    "/health metrics used len(store.list_incidents()), a full load per scrape.",
+    "consume-agent-finding counted ids with list_incidents(); infrastructure recovery fallback iterated list_incidents(); retired-binding resolve iterated list_incidents().",
+    "Startup built the same full cache, and a deploy-restart burst of degradation/recovery calls repeated the full reload per call."
+  ],
+  "fix": {
+    "store": "PostgresIncidentStore keeps only open/investigating cases resident (status IN predicate); point reads by record_id for any other case; postmortems never preloaded (keyed by postmortem_id or incident_id); query_incidents filters in SQL with ORDER BY/LIMIT; count_incidents/count_incidents_with_id_prefix use SELECT count(*); list_postmortems and by-binding/pool reads capped at 1000 rows; infra alias and latest-component lookups restricted to infra bindings with LIMIT.",
+    "routes": "GET /api/incidents uses store.query_incidents with new optional limit; default page 1000 unless open_only (bounded by open set). /health uses count_incidents. Consumer/agent-finding/retired-binding paths use the bounded store methods.",
+    "owner_store": "PostgresJsonOwnerStore.select_where and count_where added (trusted SQL, parameterised values).",
+    "compose": "DEV_MEM_LIMIT_INCIDENTS unchanged (2g); no peak was measured, so no change is justified"
+  },
+  "tests": {
+    "files": [
+      "services/incidents/test_history_bounded_reads.py",
+      "services/incidents/test_read_sweep_cost.py",
+      "services/incidents/pg_owner_fake.py"
+    ],
+    "volume": "6000 resolved + 12 open BFF degradation incidents, 4000 postmortems (previously measured hosted shape was 2600 incidents / 2000 postmortems; hosted 11/23 counts unmeasured)",
+    "bounds_proved_by": "rows returned per owner-table call and list_all call counts, not wall clock",
+    "results": {
+      "startup_rows_loaded": "12 of 6012 (before: 6012 + 4000)",
+      "open_only_read_max_rows_per_call": "<=12",
+      "unfiltered_list_max_rows": "<=1000",
+      "burst_40_open_plus_10_recovery_max_rows_per_call": "<=53, cache peak <=53 (before: full history per call)",
+      "full_table_reads": 0
+    },
+    "suite": "services/incidents + services/incident: 268 passed, 7 skipped; scripts/test_check_storage_manifest.py 10 passed"
+  },
+  "runtime_budget": {
+    "store": "incident.incident_cases / incident.postmortems (manifest entries updated)",
+    "cadence": "write on each BFF/monitor/drift report (create or in-place CAS update) and on each resolve",
+    "rows_per_day": "hosted 11/23 not measured; manifest records about 228 BFF degradation incidents/day before the 11/20 flap fix, single digits expected after",
+    "growth": "one case row (~1.35 KB) and one postmortem draft per resolved incident",
+    "cap": "resident memory bounded by open cases or 1000-row page; disk growth unbounded",
+    "cleanup": "none for resolved history yet; stays an RC3 operator decision (disk only)"
+  },
+  "hosted_acceptance_pending": "After deploy, the daily memory measurement (DEV-MEMORY-BUDGET-DAILY-MEASUREMENT-20261117) must show no incidents OOM kill across a Root switch and incidents CPU well below one core; also record the counts above.",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family (Claude2 owner, Claude reviewer).",
+  "residual_findings": [
+    "Resolved-history retention/archival is still absent (disk only).",
+    "The JSON-file backend (INCIDENT_STORE_BACKEND=json) still loads the whole file per refresh; hosted uses postgres.",
+    "Other services (BFF personas/management read models, evolution sweep, postmortems service) still call list_incidents()/list_postmortems(); these are now capped at 1000 rows each on postgres, so callers that needed more than the newest 1000 plus all open cases are out of scope here."
+  ]
+}

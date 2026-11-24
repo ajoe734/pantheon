@@ -890,7 +890,7 @@ class IncidentStore:
     @_serialized_store_read
     def get_incident(self, incident_id: str) -> Optional[IncidentCase]:
         self._refresh_from_disk()
-        return self._incidents.get(incident_id)
+        return self._incident_by_id(incident_id)
 
     def require_incident(self, incident_id: str) -> IncidentCase:
         inc = self.get_incident(incident_id)
@@ -902,6 +902,68 @@ class IncidentStore:
     def list_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return list(self._incidents.values())
+
+    # ---- Bounded-read hooks (overridden by the Postgres store) ----
+
+    def _incident_by_id(self, incident_id: str) -> Optional[IncidentCase]:
+        """Point lookup that may reach beyond the resident cache."""
+        return self._incidents.get(incident_id)
+
+    def _postmortem_by_id(self, postmortem_id: str) -> Optional[Postmortem]:
+        return self._postmortems.get(postmortem_id)
+
+    def _postmortem_for_incident_id(self, incident_id: str) -> Optional[Postmortem]:
+        matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
+        return matches[0] if matches else None
+
+    @_serialized_store_read
+    def count_incidents(self) -> int:
+        self._refresh_from_disk()
+        return len(self._incidents)
+
+    @_serialized_store_read
+    def count_incidents_with_id_prefix(self, prefix: str) -> int:
+        self._refresh_from_disk()
+        return sum(1 for i in self._incidents.values() if i.incident_id.startswith(prefix))
+
+    @_serialized_store_read
+    def query_incidents(
+        self,
+        *,
+        binding_id: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        open_only: bool = False,
+        limit: Optional[int] = None,
+    ) -> List[IncidentCase]:
+        """Filtered incidents, most recently created first, optionally capped."""
+        self._refresh_from_disk()
+        rows = [
+            i
+            for i in self._incidents.values()
+            if (not binding_id or i.binding_id == binding_id)
+            and (not capital_pool_id or i.capital_pool_id == capital_pool_id)
+            and (not status or i.status == status)
+            and (not severity or i.severity == severity)
+            and (not open_only or i.is_open())
+        ]
+        rows.sort(key=lambda i: (i.created_at, i.incident_id), reverse=True)
+        return rows[:limit] if limit is not None else rows
+
+    @_serialized_store_read
+    def find_latest_infrastructure_incident_for_component(
+        self,
+        component: str,
+    ) -> Optional[IncidentCase]:
+        self._refresh_from_disk()
+        for candidate in reversed(list(self._incidents.values())):
+            if (
+                is_infrastructure_health_incident(candidate)
+                and extract_infrastructure_incident_component(candidate) == component
+            ):
+                return candidate
+        return None
 
     @_serialized_store_read
     def find_incidents_by_binding(self, binding_id: str) -> List[IncidentCase]:
@@ -1003,7 +1065,7 @@ class IncidentStore:
         target = str(incident_id or "").strip()
         if not target:
             return None
-        direct = self._incidents.get(target)
+        direct = self._incident_by_id(target)
         if direct is not None and is_infrastructure_health_incident(direct):
             return direct
         candidates = sorted(
@@ -1024,7 +1086,7 @@ class IncidentStore:
         errors = validate_incident_case(inc)
         if errors:
             raise IncidentError(f"Invalid IncidentCase: {errors}")
-        if inc.incident_id in self._incidents:
+        if self._incident_by_id(inc.incident_id) is not None:
             raise IncidentError(f"IncidentCase already exists: {inc.incident_id}")
         self._incidents[inc.incident_id] = inc
         self._save(
@@ -1693,7 +1755,7 @@ class IncidentStore:
     @_serialized_store_read
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
-        return self._postmortems.get(postmortem_id)
+        return self._postmortem_by_id(postmortem_id)
 
     def require_postmortem(self, postmortem_id: str) -> Postmortem:
         pm = self.get_postmortem(postmortem_id)
@@ -1709,8 +1771,7 @@ class IncidentStore:
     @_serialized_store_read
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
-        matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
-        return matches[0] if matches else None
+        return self._postmortem_for_incident_id(incident_id)
 
     # ---- Postmortem writes ----
 
@@ -1725,24 +1786,17 @@ class IncidentStore:
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
-        if pm.postmortem_id in self._postmortems:
+        if self._postmortem_by_id(pm.postmortem_id) is not None:
             raise IncidentConcurrencyError(
                 f"Postmortem already exists: {pm.postmortem_id}"
             )
-        if pm.incident_id not in self._incidents:
+        parent = self._incident_by_id(pm.incident_id)
+        if parent is None:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        parent = self._incidents[pm.incident_id]
-        existing_for_incident = next(
-            (
-                candidate
-                for candidate in self._postmortems.values()
-                if candidate.incident_id == pm.incident_id
-            ),
-            None,
-        )
+        existing_for_incident = self._postmortem_for_incident_id(pm.incident_id)
         if existing_for_incident is not None:
             raise IncidentConcurrencyError(
                 "Postmortem already exists for IncidentCase "
@@ -1782,12 +1836,12 @@ class IncidentStore:
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
-        if pm.incident_id not in self._incidents:
+        parent = self._incident_by_id(pm.incident_id)
+        if parent is None:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        parent = self._incidents[pm.incident_id]
         self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
         self._save(
