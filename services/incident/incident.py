@@ -36,7 +36,6 @@ import json
 import math
 import os
 import re
-import tempfile
 import threading
 from copy import deepcopy
 from contextlib import contextmanager
@@ -115,8 +114,11 @@ def _serialized_store_write(method):
             # that durable state so a failed _save (or any other exception after
             # mutation) cannot leak an uncommitted transition through reads.
             self._refresh_from_disk()
-            incidents_before = deepcopy(self._incidents)
-            postmortems_before = deepcopy(self._postmortems)
+            # IncidentCase/Postmortem are frozen and every mutation replaces the
+            # record, so a shallow map copy restores durable state exactly.  A
+            # whole-store deepcopy here cost ~40 MB per write at hosted scale.
+            incidents_before = dict(self._incidents)
+            postmortems_before = dict(self._postmortems)
             loaded_mtime_before = self._loaded_mtime_ns
             try:
                 return method(self, *args, **kwargs)
@@ -844,6 +846,9 @@ class IncidentStore:
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
+        if path:
+            with self._write_guard():
+                pass
 
     @contextmanager
     def _write_guard(self) -> Iterator[None]:
@@ -864,11 +869,11 @@ class IncidentStore:
             try:
                 if fcntl is not None:
                     fcntl.flock(descriptor, fcntl.LOCK_EX)
-                if self._path.exists():
-                    self._incidents.clear()
-                    self._postmortems.clear()
-                    self._load(self._path)
-                    self._loaded_mtime_ns = self._path.stat().st_mtime_ns
+                self._sweep_stale_temp_files()
+                # Reparse only when another writer changed the file; the
+                # previous unconditional reload re-read the whole store on
+                # every write.
+                self._reload_if_changed()
                 yield
             finally:
                 self._write_guard_depth = 0
@@ -877,13 +882,49 @@ class IncidentStore:
                 os.close(descriptor)
 
     def _refresh_from_disk(self) -> None:
+        self._reload_if_changed()
+
+    def _reload_if_changed(self) -> None:
         if not self._path or not self._path.exists():
             return
         mtime_ns = self._path.stat().st_mtime_ns
         if self._loaded_mtime_ns == mtime_ns:
             return
+        self._incidents.clear()
+        self._postmortems.clear()
         self._load(self._path)
         self._loaded_mtime_ns = mtime_ns
+
+    def _temp_path(self) -> Path:
+        assert self._path is not None
+        return self._path.with_name(f".{self._path.name}.tmp")
+
+    def _sweep_stale_temp_files(self) -> List[Path]:
+        """Remove partial atomic-write leftovers; call only under the write lock.
+
+        Rule: the only temp sibling a live writer owns is the deterministic
+        ``.<name>.tmp``; every other ``.<name>.*.tmp`` is a legacy random-name
+        leftover from a killed write.  Writers hold the exclusive flock, so no
+        in-flight write can be removed.  Cap: at most one temp file (the
+        deterministic one) can exist between writes, bounded by one store size.
+        """
+
+        removed: List[Path] = []
+        if self._path is None:
+            return removed
+        prefix = f".{self._path.name}."
+        try:
+            entries = list(os.scandir(self._path.parent))
+        except OSError:
+            return removed
+        for entry in entries:
+            if entry.name.startswith(prefix) and entry.name.endswith(".tmp") and entry.is_file(follow_symlinks=False):
+                try:
+                    os.unlink(entry.path)
+                    removed.append(Path(entry.path))
+                except OSError:
+                    continue
+        return removed
 
     # ---- IncidentCase reads ----
 
@@ -1951,22 +1992,22 @@ class IncidentStore:
     ) -> None:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "incidents": [i.to_dict() for i in self._incidents.values()],
-                "postmortems": [p.to_dict() for p in self._postmortems.values()],
-            }
-            handle = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self._path.parent,
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-                delete=False,
-            )
-            temporary_path = Path(handle.name)
+            temporary_path = self._temp_path()
             try:
-                with handle:
-                    json.dump(data, handle, indent=2)
+                with temporary_path.open("w", encoding="utf-8") as handle:
+                    # Stream one record at a time in compact form: no whole-store
+                    # dict, no indent (the pure-Python encoder path), ~half the bytes.
+                    handle.write('{"incidents":[')
+                    for index, record in enumerate(self._incidents.values()):
+                        if index:
+                            handle.write(",")
+                        handle.write(json.dumps(record.to_dict(), separators=(",", ":")))
+                    handle.write('],"postmortems":[')
+                    for index, record in enumerate(self._postmortems.values()):
+                        if index:
+                            handle.write(",")
+                        handle.write(json.dumps(record.to_dict(), separators=(",", ":")))
+                    handle.write("]}")
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary_path, self._path)
@@ -1976,15 +2017,21 @@ class IncidentStore:
                 finally:
                     os.close(directory_fd)
             finally:
-                if temporary_path.exists():
-                    temporary_path.unlink()
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:
-        text = path.read_text()
-        if not text.strip():
-            return
-        data = json.loads(text)
+        with path.open("r", encoding="utf-8") as handle:
+            try:
+                data = json.load(handle)
+            except json.JSONDecodeError:
+                handle.seek(0)
+                if not handle.read().strip():
+                    return
+                raise
         for record in data.get("incidents", []):
             inc = IncidentCase.from_dict(record)
             self._incidents[inc.incident_id] = inc
