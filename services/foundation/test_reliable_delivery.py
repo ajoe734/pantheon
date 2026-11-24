@@ -566,3 +566,41 @@ def test_concurrent_divergent_inbox_idempotency_key_fails_closed(tmp_path, monke
     records = _inbox(tmp_path).impl.list_all()
     assert len(records) == 1
     assert records[0]["result_ref"] in {"pm-1", "pm-2"}
+
+
+def test_atomic_json_store_writes_compact_plain_json_and_sweeps_stale_temp(tmp_path):
+    import json as _json
+
+    path = tmp_path / "records.json"
+    store = AtomicJsonRecordStore(path)
+    store.put("b", {"x": 1})
+    store.put("a", {"y": [1, 2]})
+    text = path.read_text(encoding="utf-8")
+    assert "\n" not in text and ": " not in text
+    assert _json.loads(text) == {"a": {"y": [1, 2]}, "b": {"x": 1}}
+    (tmp_path / "records.json.tmp").write_text("{trunc", encoding="utf-8")
+    (tmp_path / ".records.json.deadbeefdeadbeefdeadbeefdeadbeef.tmp").write_text("x")
+    (tmp_path / "other.json.tmp").write_text("keep")
+    AtomicJsonRecordStore(path)
+    assert not (tmp_path / "records.json.tmp").exists()
+    assert not (tmp_path / ".records.json.deadbeefdeadbeefdeadbeefdeadbeef.tmp").exists()
+    assert (tmp_path / "other.json.tmp").exists()
+    assert store.get("a") == {"y": [1, 2]}
+
+
+def test_atomic_json_store_reads_legacy_indented_file(tmp_path):
+    path = tmp_path / "records.json"
+    path.write_text('{\n  "a": {\n    "v": 1\n  }\n}', encoding="utf-8")
+    store = AtomicJsonRecordStore(path)
+    assert store.get("a") == {"v": 1}
+
+
+def test_compare_and_set_many_is_one_guarded_rewrite(tmp_path):
+    store = AtomicJsonRecordStore(tmp_path / "records.json")
+    store.put("a", {"v": 1})
+    store.put("b", {"v": 1})
+    assert store.compare_and_set_many(
+        [("a", {"v": 1}, {"v": 2}), ("b", {"v": 9}, {"v": 2})]
+    ) == [True, False]
+    assert store.get("a") == {"v": 2}
+    assert store.get("b") == {"v": 1}
