@@ -2675,3 +2675,25 @@ def test_compare_risk_policies_direction_table() -> None:
     result = compare_risk_policies({**cur, "gross_limit": 1.2}, cur)
     assert result["risk_comparison"]["gross_limit"] == "looser"
     assert result["risk_comparison"]["max_single_name_weight"] == "equal"
+
+
+def test_require_valid_any_accepts_any_member_of_a_value_set_and_nothing_else():
+    import pytest
+    from services.capital.risk_policy import require_valid_any
+
+    class Approval:
+        def __init__(self, direction):
+            self.direction = direction
+
+        def require_valid(self, *, expected, **kwargs):
+            if expected["subject.risk_direction"] != self.direction or expected["target_id"] != "pool-1":
+                raise ValueError("mismatch")
+            return "ok"
+
+    accepted = {"target_id": "pool-1", "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})}
+    for direction in ("increase", "reduce", "neutral"):
+        assert require_valid_any(Approval(direction), expected=accepted) == "ok"
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("sideways"), expected=accepted)
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("reduce"), expected={**accepted, "target_id": "other"})

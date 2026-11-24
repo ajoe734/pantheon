@@ -113,11 +113,7 @@ class ApprovalEvidence(BaseModel):
         for name, value in (expected or {}).items():
             if name.startswith('subject.'):
                 values[name] = subject.get(name[8:])
-            if isinstance(value, (set, frozenset)):
-                matched = values.get(name) in value  # evidence may satisfy any listed value
-            else:
-                matched = value is not None and value != '' and values.get(name) == value
-            if not matched:
+            if value is None or value == '' or values.get(name) != value:
                 raise ApprovalInvalid(f'Approval does not match expected {name}')
         return self
 

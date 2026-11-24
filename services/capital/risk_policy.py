@@ -1353,6 +1353,25 @@ def compare_risk_policies(
     return {"risk_direction": direction, "risk_comparison": comparison}
 
 
+def require_valid_any(approval: Any, *, expected: Mapping[str, Any], **kwargs: Any) -> Any:
+    """``approval.require_valid`` where an expected value may be a set of accepted values.
+
+    The computed risk direction is any of increase, reduce or neutral; evidence satisfying any one member
+    passes, every other expected field is matched exactly. The first failure is raised when none passes.
+    """
+    candidates: list[dict[str, Any]] = [dict(expected)]
+    for key, value in expected.items():
+        if isinstance(value, (set, frozenset)):
+            candidates = [{**c, key: member} for c in candidates for member in sorted(value)]
+    failure: Exception | None = None
+    for candidate in candidates:
+        try:
+            return approval.require_valid(expected=candidate, **kwargs)
+        except Exception as exc:
+            failure = failure or exc
+    raise failure  # type: ignore[misc]
+
+
 def risk_policy_digest(policy: RiskPolicy | Mapping[str, Any] | None) -> str:
     """Compute the canonical SHA-256 digest of a RiskPolicy binding all executable limits and provenance."""
     if policy is None:
@@ -1784,7 +1803,8 @@ class CapitalOwnerApprovalReader:
     ) -> Any:
         pool_id = _optional_text(expected.get("target_id") or expected.get("subject.pool_id"))
         tenant_id = _optional_text(expected.get("tenant_id"))
-        return self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id).require_valid(
+        return require_valid_any(
+            self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id),
             expected=expected,
             now=now,
             usage_context=usage_context,
@@ -2293,7 +2313,8 @@ def _verify_policy_owner_approval_decisions(
                 expected_decision_id in explicit_candidate_ids
                 and callable(getattr(loaded_ev, "require_valid", None))
             ):
-                res_ev = loaded_ev.require_valid(
+                res_ev = require_valid_any(
+                    loaded_ev,
                     expected={
                         **expected_binding,
                         "subject.risk_policy_digest": computed_digest,
@@ -2319,7 +2340,8 @@ def _verify_policy_owner_approval_decisions(
             return None
 
         try:
-            evidence.require_valid(
+            require_valid_any(
+                evidence,
                 expected=expected_binding,
                 now=now_dt,
                 usage_context=usage_ctx,
