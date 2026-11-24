@@ -1242,12 +1242,26 @@ def test_risk_policy_in_bounds_draft_verifies_and_identity_is_admitted(tmp_path)
 @pytest.mark.parametrize("patch,named", [
     ({"max_single_name_weight": 0.5}, "max_single_name_weight"),
     ({"min_cash_reserve_pct": 0.05}, "min_cash_reserve_pct"),
+    ({"gross_limit": 2.5}, "gross_limit"),
+    ({"max_leverage": 2.5}, "max_leverage"),
     ({"max_leverage": None}, "max_leverage"),
 ])
 def test_risk_policy_out_of_bounds_or_incomplete_names_the_failing_field(patch, named):
     policy = {**_LOW_POLICY, **patch}
     policy = {k: v for k, v in policy.items() if v is not None}
     assert scope_module.risk_policy_candidate_failure(_risk_decision(policy)).startswith(named)
+
+
+def test_risk_policy_at_the_bound_passes_and_failure_names_value_and_bound():
+    at = {**_LOW_POLICY, "gross_limit": 2.0, "max_leverage": 2.0}
+    assert scope_module.risk_policy_candidate_failure(_risk_decision(at)) is None
+    msg = scope_module.risk_policy_candidate_failure(_risk_decision({**at, "gross_limit": 2.5}))
+    assert "gross_limit" in msg and "2.5" in msg and "2.0" in msg
+
+
+def test_governance_default_bounds_mirror_the_capital_defaults():
+    from services.capital.risk_policy import DEFAULT_PROFILE_OUTER_BOUNDS
+    assert {k: dict(v) for k, v in DEFAULT_PROFILE_OUTER_BOUNDS.items()} == scope_module.RISK_POLICY_DEFAULT_BOUNDS
 
 
 def test_risk_policy_without_draft_provenance_or_policy_is_refused():

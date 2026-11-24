@@ -17,7 +17,7 @@ INPUTS = DraftInputs(
     budget=100000, currency="TWD", instruments=("2317.TW",), mandate="steady TW large caps",
     evidence=("2026-11-19 buy 452 x 2317 @ 221 would use 100,034 TWD cash",),
     policy_id="rp-pool-persona-paper-x", version="2.0",
-    bounds={"max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10},
+    bounds={"gross_limit": 2.0, "max_leverage": 2.0, "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10},
 )
 
 GOOD = {"gross_limit": 0.8, "net_limit": 0.8, "max_leverage": 1.0, "max_single_name_weight": 0.15,
@@ -54,6 +54,8 @@ def test_valid_draft_carries_risk_officer_provenance_and_inputs_in_prompt() -> N
 @pytest.mark.parametrize("mutate,reason", [
     ({"max_single_name_weight": 0.5}, "outside_bounds:max_single_name_weight"),
     ({"min_cash_reserve_pct": 0.05}, "outside_bounds:min_cash_reserve_pct"),
+    ({"gross_limit": 2.01}, "outside_bounds:gross_limit=2.01 exceeds low bound 2.0"),
+    ({"max_leverage": 2.5}, "outside_bounds:max_leverage=2.5 exceeds low bound 2.0"),
     ({"max_single_name_weight": 1.0}, "single_name_not_below_1"),
     ({"min_cash_reserve_pct": 0.0}, "not_positive"),
     ({"gross_limit": None}, "missing_or_non_numeric:gross_limit"),
@@ -94,6 +96,12 @@ def test_input_digest_is_stable_and_input_sensitive() -> None:
     assert "none configured" in build_prompt(DraftInputs(**{**INPUTS.__dict__, "bounds": {}}))
 
 
+def test_drafter_prompt_carries_all_four_bounds() -> None:
+    prompt = build_prompt(INPUTS)
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct"):
+        assert f'"{name}": ' in prompt.split("rejected: ", 1)[1].split(". Return", 1)[0]
+
+
 def test_capital_validator_and_configured_bounds() -> None:
     base = {"risk_policy_id": "rp", "version": "2.0", "status": "active", **{k: GOOD[k] for k in GOOD if k != "rationale"}}
     assert validate_drafted_pool_risk_policy(base, profile="low")[0] is not None
@@ -102,7 +110,19 @@ def test_capital_validator_and_configured_bounds() -> None:
     assert validate_drafted_pool_risk_policy({**base, "max_single_name_weight": 0.9}, profile="high")[0] is not None
     assert validate_drafted_pool_risk_policy({**base, "max_single_name_weight": 1.0}, profile="high")[0] is None
     assert validate_drafted_pool_risk_policy({**base, "min_cash_reserve_pct": None}, profile="high")[0] is None
-    assert profile_outer_bounds({})["low"] == {"max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}
+    assert profile_outer_bounds({})["low"] == {"gross_limit": 2.0, "max_leverage": 2.0,
+                                               "max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}
+    # exactly at the bound passes
+    at = {**base, "gross_limit": 2.0, "net_limit": 1.0, "max_leverage": 2.0, "max_single_name_weight": 0.2,
+          "min_cash_reserve_pct": 0.1}
+    assert validate_drafted_pool_risk_policy(at, profile="low")[0] is not None
+    model, reason = validate_drafted_pool_risk_policy({**at, "gross_limit": 2.5}, profile="low")
+    assert model is None and "gross_limit=2.5" in reason and "bound 2.0" in reason
+    ok = profile_outer_bounds({"PANTHEON_PAPER_RISK_PROFILE_BOUNDS": '{"low": {"gross_limit": 1.5, "max_leverage": 1.5}}'})
+    assert ok["low"] == {"gross_limit": 1.5, "max_leverage": 1.5}
+    for bad in ('{"low": {"gross_limit": "x"}}', '{"low": {"net_limit": 1}}', '[1]', '{bad'):
+        with pytest.raises(Exception):
+            profile_outer_bounds({"PANTHEON_PAPER_RISK_PROFILE_BOUNDS": bad})
     custom = profile_outer_bounds({"PANTHEON_PAPER_RISK_PROFILE_BOUNDS": '{"high": {"max_single_name_weight": 0.5}}'})
     assert "low" not in custom and custom["high"] == {"max_single_name_weight": 0.5}
     with pytest.raises(Exception):

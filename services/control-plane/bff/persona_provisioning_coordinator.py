@@ -2485,12 +2485,13 @@ class PersonaProvisioningCoordinator:
         if policy:
             model, reason = validate_drafted_pool_risk_policy(policy, profile=requested_profile)
             outcome = "approved" if model is not None else "rejected"
-            rationale = ("Paper pool risk policy verified inside operator outer bounds (P-4 automated gate)"
+            rationale = ("Paper pool risk policy verified inside operator outer bounds (gross_limit, max_leverage, "
+                         "max_single_name_weight, min_cash_reserve_pct; P-4 automated gate)"
                          if model is not None else f"Refused by paper gate: {reason}")
         else:
             outcome = "rejected"
             rationale = (f"Refused by paper gate: risk_officer_draft absent; the {requested_profile} profile requires "
-                         "max_single_name_weight and min_cash_reserve_pct within the operator outer bounds; "
+                         "gross_limit, max_leverage, max_single_name_weight and min_cash_reserve_pct within the operator outer bounds; "
                          "superseded by the risk-officer draft")
         try:
             receipt = self._paper_gate_decide_risk_policy(proposal, outcome=outcome, rationale=rationale)
