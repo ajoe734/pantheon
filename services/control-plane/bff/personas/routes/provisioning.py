@@ -80,6 +80,9 @@ def _failed_governance_proposal(data: Any) -> Optional[Dict[str, Any]]:
             status = node.get("governance_proposal_status")
             if isinstance(status, str) and status.startswith(("proposal_rejected", "proposal_unavailable")):
                 return node
+            gate = node.get("paper_gate_status")
+            if isinstance(gate, str) and gate.startswith(("gate_refused", "gate_unavailable")):
+                return node
             stack.extend(node.values())
         elif isinstance(node, list):
             stack.extend(node)
@@ -285,16 +288,21 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
         failed = _failed_governance_proposal(data)
         if failed is not None:
             # Never report a failed proposal as success (RC2): surface owner status and reason.
-            http_status = 502 if str(failed.get("governance_proposal_status", "")).startswith(
-                "proposal_unavailable") else 422
+            http_status = 502 if (
+                str(failed.get("governance_proposal_status", "")).startswith("proposal_unavailable")
+                or str(failed.get("paper_gate_status", "")).startswith("gate_unavailable")
+            ) else 422
+            gate_failed = str(failed.get("paper_gate_status", "")).startswith(("gate_refused", "gate_unavailable"))
             return JSONResponse(
                 status_code=http_status,
                 content={
                     "data": data,
                     "error": {
-                        "code": "governance_proposal_failed",
+                        "code": "paper_gate_failed" if gate_failed else "governance_proposal_failed",
                         "governance_proposal_status": failed.get("governance_proposal_status"),
                         "governance_proposal_error": failed.get("governance_proposal_error"),
+                        "paper_gate_status": failed.get("paper_gate_status"),
+                        "paper_gate_error": failed.get("paper_gate_error"),
                     },
                     "meta": {"snapshot_at": utc_now()},
                 },

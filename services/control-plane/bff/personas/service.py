@@ -1423,6 +1423,9 @@ def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoord
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
         runtime_binding_reader=_runtime_bindings_for_case,
     )
 

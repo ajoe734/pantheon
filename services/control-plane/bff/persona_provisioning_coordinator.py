@@ -296,6 +296,14 @@ def _owner_digest(value: Any, *, label: str) -> str:
     return value.strip()
 
 
+class _PaperGateFailure(Exception):
+    """The paper automated gate's Governance review/decide was refused or unavailable."""
+
+    def __init__(self, kind: str, step: str, http_status: int | None, detail: str) -> None:
+        super().__init__(f"{kind} at {step}: {detail}")
+        self.kind, self.step, self.http_status, self.detail = kind, step, http_status, detail
+
+
 class PersonaProvisioningCoordinator:
     """Coordinate owner writes as a GET-first, checkpointed paper admission saga."""
 
@@ -1923,6 +1931,7 @@ class PersonaProvisioningCoordinator:
         payload: Mapping[str, Any] | Callable[[Mapping[str, Any] | None], Mapping[str, Any]],
         ready: Callable[[Mapping[str, Any]], bool],
         validate: Callable[[Mapping[str, Any]], None],
+        on_mutation_error: Callable[[Exception], None] | None = None,
     ) -> dict[str, Any]:
         receipt = self._owner_get(owner, get_path)
         mutation_error: Exception | None = None
@@ -1932,6 +1941,8 @@ class PersonaProvisioningCoordinator:
                 self.transport.post(owner, post_path, deepcopy(dict(resolved_payload)))
             except Exception as exc:  # response loss is reconciled by authoritative GET
                 mutation_error = exc
+                if on_mutation_error is not None:
+                    on_mutation_error(exc)
             receipt = self._owner_get(owner, get_path)
         if receipt is None:
             detail = f" after mutation error: {mutation_error}" if mutation_error else ""
@@ -1940,6 +1951,8 @@ class PersonaProvisioningCoordinator:
             )
         try:
             validate(receipt)
+        except _PaperGateFailure:
+            raise
         except Exception as exc:
             if mutation_error is not None:
                 raise PersonaProvisioningCoordinationError(
@@ -2173,6 +2186,7 @@ class PersonaProvisioningCoordinator:
         dry_run: bool = False,
         proposal_key: str = "",
         draft: DraftResult | None = None,
+        baseline_policy: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if draft is not None and draft.policy:
             proposal_key = proposal_key or str(draft.provenance.get("input_digest") or "")
@@ -2213,8 +2227,13 @@ class PersonaProvisioningCoordinator:
             cand_pol_digest = risk_policy_digest(draft.policy)
 
         # Risk direction is computed, never assumed: candidate vs the pool's currently effective policy.
+        # ``baseline_policy`` is the policy in effect before the repair; ``resolution`` may already describe
+        # the candidate itself, which would compare the draft with itself (always neutral).
         effective = getattr(resolution, "policy", None)
-        effective_policy = effective.to_dict() if hasattr(effective, "to_dict") else None
+        effective_policy = (
+            dict(baseline_policy) if baseline_policy
+            else effective.to_dict() if hasattr(effective, "to_dict") else None
+        )
         direction = compare_risk_policies(draft.policy if draft is not None and draft.policy else None, effective_policy)
 
         deterministic_proposal_id = self._risk_profile_proposal_id(
@@ -2462,14 +2481,37 @@ class PersonaProvisioningCoordinator:
 
     # -- paper automated gate for pool risk-policy proposals (operator decision P-4) ------------------
     def _paper_gate_decide_risk_policy(self, proposal: Mapping[str, Any], *, outcome: str, rationale: str) -> dict[str, Any]:
+        """Review then decide through Governance; a refused/lost mutation is raised, never assumed to succeed."""
         decision_id = str(proposal.get("decision_id") or "")
         path = f"/api/governance/approvals/{_path_id(decision_id)}"
+        errors: list[Exception] = []
+
+        def not_ready(step: str, want: str) -> Callable[[Mapping[str, Any]], None]:
+            def check(receipt: Mapping[str, Any]) -> None:
+                state = str(receipt.get("decision_state") or "")
+                if step == "decide" and state == "decided" and str(receipt.get("decision") or "") != outcome:
+                    raise _PaperGateFailure(
+                        "decided_with_different_outcome", step, None,
+                        f"Governance readback decided {receipt.get('decision')!r}, expected {outcome!r}")
+                ok = state == "decided" if step == "decide" else state in {"under_review", "decided"}
+                if not ok:
+                    exc = errors[-1] if errors else None
+                    from .persona_paper_enrollment import _error_detail, _error_status
+                    code = _error_status(exc) if exc is not None else None
+                    detail = (_error_detail(exc) or exc.__class__.__name__) if exc is not None else (
+                        f"Governance readback is {state!r}, expected {want}")
+                    unavailable = exc is not None and (code is None or code >= 500)
+                    raise _PaperGateFailure(
+                        "gate_unavailable" if unavailable else "gate_refused", step, code, detail)
+            return check
+
         review = self._transition_then_get(
             owner="governance", get_path=path, post_path=f"{path}/review",
             payload=lambda curr: {"actor_role": "automated_gate", "actor_id": self.governance_actor_id,
                                   "expected_version": int((curr or {}).get("version") or 0)},
             ready=lambda r: str(r.get("decision_state") or "") in {"under_review", "decided"},
-            validate=lambda r: None)
+            validate=not_ready("review", "under_review"), on_mutation_error=errors.append)
+        errors.clear()
         return self._transition_then_get(
             owner="governance", get_path=path, post_path=f"{path}/decide",
             payload=lambda curr: {
@@ -2479,7 +2521,7 @@ class PersonaProvisioningCoordinator:
                 "expires_at": (curr or review).get("expires_at"),
                 "expected_version": int((curr or {}).get("version") or 0)},
             ready=lambda r: r.get("decision_state") == "decided",
-            validate=lambda r: None)
+            validate=not_ready("decide", "decided"), on_mutation_error=errors.append)
 
     def _apply_paper_gate_to_risk_policy_proposal(
         self, proposal: Mapping[str, Any], decision_req: dict[str, Any], *, requested_profile: str,
@@ -2488,6 +2530,7 @@ class PersonaProvisioningCoordinator:
 
         Idempotent per proposal (review/decide short-circuit on readback); an unavailable gate leaves the
         proposal pending for the next pass.  No AI or service principal casts a human vote.
+        ``paper_gate_status`` says ``decided_*`` only when the Governance readback is decided with that outcome.
         """
         if self.transport is None:
             return
@@ -2508,8 +2551,17 @@ class PersonaProvisioningCoordinator:
                          "superseded by the risk-officer draft")
         try:
             receipt = self._paper_gate_decide_risk_policy(proposal, outcome=outcome, rationale=rationale)
+        except _PaperGateFailure as exc:
+            decision_req["paper_gate_status"] = (
+                f"{exc.kind}:{exc.http_status}" if exc.http_status is not None else exc.kind)
+            decision_req["paper_gate_error"] = {
+                "owner": "governance", "step": exc.step, "http_status": exc.http_status, "reason": exc.detail}
+            return
         except Exception as exc:
-            decision_req["paper_gate_status"] = "unavailable:" + type(exc).__name__
+            decision_req["paper_gate_status"] = "gate_unavailable"
+            decision_req["paper_gate_error"] = {
+                "owner": "governance", "step": "unknown", "http_status": None,
+                "reason": str(exc) or type(exc).__name__}
             return
         decision_req["governance_proposal_state"] = str(receipt.get("decision_state") or "")
         decision_req["governance_proposal_outcome"] = str(receipt.get("decision") or outcome)
@@ -5968,6 +6020,12 @@ class PersonaProvisioningCoordinator:
                         resolution=owner_decision_res,
                         dry_run=dry_run,
                         draft=repair_draft,
+                        baseline_policy=(
+                            before_resolution.policy.to_dict() if before_resolution.policy is not None
+                            else dict(inline_policy) if inline_policy is not None
+                            else auto_res.candidate_policy.to_dict() if auto_res.candidate_policy is not None
+                            else None
+                        ),
                     )
                     after_dict = owner_decision_res.to_dict()
                     after_dict["owner_decision_request"] = routed_req
