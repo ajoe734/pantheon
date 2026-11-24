@@ -376,3 +376,26 @@ def test_conflict_repair_does_not_clear_a_live_delivery_claim():
     assert canonical is not None
     assert canonical.claim_token == claimed[0].claim_token
     assert outbox_store.claim_due(worker_id="worker-b") == []
+
+
+def test_incident_delivery_read_timeout_empty_message_is_recorded_and_bounded():
+    _seed_incident()
+    assert client.post("/api/incidents/inc-123/status", json={"status": "resolved"}).status_code == 200
+
+    with patch("httpx.AsyncClient.post", side_effect=httpx.ReadTimeout("")) as mock_post:
+        for expected in (1, 2):
+            asyncio.run(process_incidents_outbox())
+            records = outbox_store.list_pending_and_failed()
+            assert len(records) == 1
+            assert records[0].delivery_attempts == expected
+            assert records[0].status == "failed"
+            assert records[0].last_error == "ReadTimeout"
+        asyncio.run(process_incidents_outbox())
+        assert mock_post.call_count == 3
+        assert outbox_store.list_pending_and_failed() == []
+
+
+def test_outbox_mark_failed_tolerates_empty_error():
+    from services.foundation.outbox import describe_exception
+    assert describe_exception(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert describe_exception(ValueError("x")) == "ValueError: x"
