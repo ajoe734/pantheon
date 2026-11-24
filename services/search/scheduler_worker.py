@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -38,6 +39,24 @@ def _post_json(api_url: str, path: str, body: dict[str, Any], *, timeout_seconds
     return json.loads(text) if text else {}
 
 
+def is_timeout_error(exc: BaseException) -> bool:
+    """True when the client gave up waiting; the server-side run may still be going."""
+
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(exc, urllib.error.URLError) and not isinstance(exc, urllib.error.HTTPError):
+        return isinstance(exc.reason, (TimeoutError, socket.timeout))
+    return False
+
+
+def retry_delay_seconds(consecutive_failures: int, interval_seconds: int, base_seconds: int = 15) -> int:
+    """Delay after a failed tick: base, doubling per consecutive failure, capped at the interval."""
+
+    if consecutive_failures <= 0:
+        return interval_seconds
+    return min(interval_seconds, base_seconds * (2 ** min(consecutive_failures - 1, 16)))
+
+
 def _describe_error(exc: BaseException) -> str:
     if isinstance(exc, urllib.error.HTTPError):
         try:
@@ -54,7 +73,8 @@ def run_tick(
     force_full: bool = False,
     materialize: bool = False,
     trigger_ref: str | None = None,
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float = 120.0,
+    materialize_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Refresh the durable search index and optionally materialize a recovery snapshot."""
 
@@ -75,7 +95,7 @@ def run_tick(
             api_url,
             "/api/search/index/materialize",
             {},
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=timeout_seconds if materialize_timeout_seconds is None else materialize_timeout_seconds,
         )
     return result
 
@@ -117,20 +137,46 @@ def main() -> int:
     force_full = _env_bool("SEARCH_INDEX_SCHEDULER_FORCE_FULL", False)
     materialize = _env_bool("SEARCH_INDEX_SCHEDULER_MATERIALIZE", True)
     max_stalled_ticks = _env_int("SEARCH_INDEX_SCHEDULER_MAX_STALLED_TICKS", 6, minimum=1)
+    # A cold search-svc loads its embedding model inside the first refresh (26.4 s measured), so the
+    # default covers that plus a bounded refresh; materialize only writes a snapshot.
+    tick_timeout = _env_int("SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS", 120, minimum=1)
+    materialize_timeout = _env_int("SEARCH_INDEX_SCHEDULER_MATERIALIZE_TIMEOUT_SECONDS", tick_timeout, minimum=1)
+    retry_base = _env_int("SEARCH_INDEX_SCHEDULER_RETRY_BASE_SECONDS", 15, minimum=1)
+    # A previous container's alive file must not decide this container's health.
+    alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
+    if alive_path:
+        try:
+            Path(alive_path).unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
     tick = 0
+    failures = 0
     stalled = 0
     last_backlog: int | None = None
     while True:
         tick += 1
         try:
-            result = run_tick(api_url=api_url, force_full=force_full, materialize=materialize)
+            result = run_tick(
+                api_url=api_url,
+                force_full=force_full,
+                materialize=materialize,
+                timeout_seconds=tick_timeout,
+                materialize_timeout_seconds=materialize_timeout,
+            )
         except Exception as exc:  # noqa: BLE001 - recoverable tick failure must stay observable, not fatal
             # Failed tick: report reason, do NOT touch the alive file (health stays honest), keep looping.
+            failures += 1
+            timed_out = is_timeout_error(exc)
             print(
                 json.dumps(
                     {
                         "tick": tick,
-                        "status": "failed",
+                        # A timed-out refresh keeps running server-side; the retry is answered
+                        # "in_progress" by the server instead of starting a parallel run.
+                        "status": "refresh_in_progress_timeout" if timed_out else "failed",
+                        "retry_in_seconds": retry_delay_seconds(failures, interval_seconds, retry_base),
                         "error_type": type(exc).__name__,
                         "error": _describe_error(exc),
                     },
@@ -139,10 +185,10 @@ def main() -> int:
                 flush=True,
             )
         else:
+            failures = 0
             progressing, last_backlog, reason = assess_progress(result.get("refresh"), last_backlog)
             stalled = 0 if progressing else stalled + 1
             healthy = stalled < max_stalled_ticks
-            alive_path = os.getenv("SEARCH_INDEX_SCHEDULER_ALIVE_PATH")
             if alive_path and healthy:
                 try:
                     alive_p = Path(alive_path)
@@ -166,7 +212,7 @@ def main() -> int:
             )
         if max_ticks and tick >= max_ticks:
             return 0
-        time.sleep(interval_seconds)
+        time.sleep(retry_delay_seconds(failures, interval_seconds, retry_base))
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose/smoke worker.
