@@ -64,3 +64,35 @@ class TradingPersonaAgentClient(OpenClawOpsClient):
         )
         memory = response.get("memory")
         return memory if isinstance(memory, dict) else {}
+
+
+# The risk officer is a panel persona with no Persona owner record; its own agent is ensured from this fixed record
+# through the same adapter route and tool profile as every trading persona (read + brokered memory/proposal tools;
+# no order, broker, capital or lifecycle tool). The record is constant, so the ensure digest is constant.
+RISK_OFFICER_PERSONA_RECORD: Dict[str, Any] = {
+    "persona_id": "persona-risk-officer",
+    "name": "Risk Officer",
+    "mandate": (
+        "Independent risk officer: draft and review paper-trading risk limits and review lessons, "
+        "proposal-only; never trade, never vote."
+    ),
+    "strategy_family": "risk_oversight",
+}
+_ensured_risk_officer: Dict[str, str] = {}
+
+
+def ensure_risk_officer_agent(client: "TradingPersonaAgentClient | None" = None) -> Dict[str, Any]:
+    """Idempotently ensure the risk officer's own agent; one adapter call per process and record digest.
+
+    Raises ``OpenClawOpsClientError`` / ``RuntimeError`` on failure so the caller fails closed.
+    """
+    digest = hashlib.sha256(json.dumps(RISK_OFFICER_PERSONA_RECORD, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    persona_id = RISK_OFFICER_PERSONA_RECORD["persona_id"]
+    if _ensured_risk_officer.get(persona_id) == digest:
+        return {"agent_id": persona_id, "status": "already_ensured", "digest": digest}
+    client = client or TradingPersonaAgentClient()
+    if not client.configured:
+        raise RuntimeError("openclaw_adapter_unconfigured")
+    agent = client.ensure_trading_persona_agent(dict(RISK_OFFICER_PERSONA_RECORD))
+    _ensured_risk_officer[persona_id] = digest
+    return {**agent, "digest": digest}

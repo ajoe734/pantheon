@@ -170,6 +170,33 @@ def default_turn_runner(persona_id: str, prompt: str, **kwargs: Any) -> Any:
     return run_persona_ooda_turn(persona_id, prompt, **kwargs)
 
 
+def ensuring_turn_runner(
+    turn_runner: Callable[..., Any],
+    ensure: Callable[[], Any] | None = None,
+) -> Callable[..., Any]:
+    """Wrap a turn runner so the risk officer's own agent exists before its turn (idempotent, fail closed).
+
+    Other personas pass through untouched. An ensure failure yields an error turn (never raises), which the
+    callers already turn into a readable pending reason with no fallback policy.
+    """
+    def run(persona_id: str, prompt: str, **kwargs: Any) -> Any:
+        if persona_id == RISK_PERSONA_ID:
+            try:
+                if ensure is not None:
+                    ensure()
+                else:
+                    from integrations.openclaw.persona_agent_client import ensure_risk_officer_agent
+
+                    ensure_risk_officer_agent()
+            except Exception as exc:  # noqa: BLE001
+                from integrations.openclaw.persona_ooda_runtime import PersonaOodaTurn
+
+                return PersonaOodaTurn(persona_id, "error", "", 0, f"openclaw/{persona_id}",
+                                       error="risk_officer_agent_ensure_failed:" + type(exc).__name__)
+        return turn_runner(persona_id, prompt, **kwargs)
+    return run
+
+
 def make_drafter(turn_runner: Callable[..., Any] | None = None) -> Callable[[DraftInputs], DraftResult]:
-    runner = turn_runner or default_turn_runner
+    runner = ensuring_turn_runner(turn_runner or default_turn_runner)
     return lambda inputs: draft_pool_risk_policy(inputs, turn_runner=runner)
