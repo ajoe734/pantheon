@@ -868,7 +868,7 @@ def test_ac6_postgres_incident_store_owner_table_reads_per_get_before_and_after(
         r_before = client.get("/api/incidents?open_only=true")
         assert r_before.status_code == 200
     assert stats["list_all_calls"] == 0
-    assert before_list_ops["deepcopy"] == 2
+    assert before_list_ops["deepcopy"] == 0
 
 
 def test_ac7_fifty_sequential_open_only_requests_under_50ms_median(
@@ -900,3 +900,84 @@ def test_ac7_fifty_sequential_open_only_requests_under_50ms_median(
     sorted_lat = sorted(latencies_ms)
     p95_ms = sorted_lat[int(0.95 * (len(sorted_lat) - 1))]
     assert median_ms < 50.0, f"Expected median < 50ms, got {median_ms:.2f}ms (p95={p95_ms:.2f}ms)"
+
+
+# ---------------------------------------------------------------------------
+# INCIDENTS-MEMORY-OOM-R2-20261124: hosted dev runs the JSON backend.
+# ---------------------------------------------------------------------------
+
+
+def _json_inc(idx: int) -> IncidentCase:
+    return IncidentCase.from_dict(
+        _build_real_incident_dict(idx, now_dt=datetime(2026, 11, 4, 3, 30, tzinfo=timezone.utc))
+    )
+
+
+def test_json_write_does_not_reparse_or_deepcopy_when_file_unchanged(tmp_path, monkeypatch):
+    path = tmp_path / "incidents.json"
+    store = IncidentStore(path=path)
+    store.create_incident(_json_inc(0))
+
+    loads: List[int] = []
+    orig_load = IncidentStore._load
+    monkeypatch.setattr(
+        IncidentStore, "_load", lambda self, p: (loads.append(1), orig_load(self, p))[1]
+    )
+
+    def _no_deepcopy(*args, **kwargs):  # pragma: no cover - failure path
+        raise AssertionError("whole-store deepcopy on a JSON write")
+
+    monkeypatch.setattr(incident_mod, "deepcopy", _no_deepcopy)
+    store.create_incident(_json_inc(1))
+    store.create_incident(_json_inc(2))
+    assert loads == []
+    assert len(IncidentStore(path=path).list_incidents()) == 3
+
+
+def test_json_write_reloads_when_another_writer_changed_the_file(tmp_path):
+    path = tmp_path / "incidents.json"
+    first = IncidentStore(path=path)
+    second = IncidentStore(path=path)
+    first.create_incident(_json_inc(0))
+    second.create_incident(_json_inc(1))
+    first.create_incident(_json_inc(2))
+    assert {i.incident_id for i in IncidentStore(path=path).list_incidents()} == {
+        _json_inc(0).incident_id,
+        _json_inc(1).incident_id,
+        _json_inc(2).incident_id,
+    }
+
+
+def test_json_failed_write_rolls_back_in_memory_state(tmp_path, monkeypatch):
+    store = IncidentStore(path=tmp_path / "incidents.json")
+    store.create_incident(_json_inc(0))
+
+    def boom(**kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_save", boom)
+    with pytest.raises(OSError):
+        store.create_incident(_json_inc(1))
+    monkeypatch.undo()
+    assert [i.incident_id for i in store.list_incidents()] == [_json_inc(0).incident_id]
+
+
+def test_json_stale_temp_files_swept_and_at_most_one_temp_left(tmp_path):
+    path = tmp_path / "incidents.json"
+    IncidentStore(path=path).create_incident(_json_inc(0))
+    stale = [
+        tmp_path / ".incidents.json.abcd1234.tmp",
+        tmp_path / ".incidents.json.deadbeef.tmp",
+        tmp_path / ".incidents.json.tmp",
+    ]
+    for item in stale:
+        item.write_text("{partial")
+    unrelated = tmp_path / ".incidents_outbox.json.cafe.tmp"
+    unrelated.write_text("keep")
+
+    store = IncidentStore(path=path)
+    assert not any(item.exists() for item in stale)
+    assert unrelated.exists()
+    store.create_incident(_json_inc(1))
+    assert not list(tmp_path.glob(".incidents.json.*tmp"))
+    assert json.loads(path.read_text())["incidents"]

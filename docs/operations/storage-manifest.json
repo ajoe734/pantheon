@@ -6089,6 +6089,16 @@
    "size": "one ApprovalDecision row update (<=8 KiB) plus its audit entry per decision",
    "task": "PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
    "writer": "services/control-plane/bff/persona_provisioning_coordinator.py _paper_gate_decide_risk_policy -> existing Governance POST /api/governance/approvals/{id}/review and /decide as the dedicated automated gate; no new file, table or queue"
+  },
+  {
+   "growth_per_day": "0 B/day outside releases; <=5 MiB per dev release inside the existing 30-day pantheon-cross-repo-release artifact; nothing written to the dev VM or any database",
+   "cleanup": "existing 30-day retention of the release evidence artifact; runner temp is discarded with the runner",
+   "name": "dev release Trading Pulse browser QA evidence",
+   "owner": "release workflow (nonprod-deploy dev release, supplementary non-gating step)",
+   "register_class": "RC6",
+   "size": "trading-pulse-readonly-qa.json (<=16 KiB) + trading-pulse-summary.json + <=2 masked PNG screenshots; CLI-enforced total <=5 MiB per release (summary included)",
+   "task": "TRADING-PULSE-BROWSER-ACCEPTANCE-IN-RELEASE-20261124",
+   "writer": "scripts/run_dev_trading_pulse_readonly_qa.py (viewer GET reads only, plus the viewer login POST)"
   }
  ]
 }

@@ -100,6 +100,7 @@ from services.foundation.reliable_delivery import (
     reconcile_prepared,
 )
 from services.foundation.serialization import sha256_checksum
+from services.foundation.outbox import describe_exception
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -1132,7 +1133,7 @@ async def process_incidents_outbox():
                             canonical.status,
                         )
             except Exception as exc:
-                err_msg = str(exc)
+                err_msg = describe_exception(exc)
                 log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
                 applied, canonical = outbox_store.complete_failed(
                     record,
