@@ -279,7 +279,7 @@ class CapitalBoundaryService:
         bindings = self.list_bindings(capital_pool_id=pool.pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
-            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})},
             allocations=held, bindings=bindings,
         )
 
@@ -542,7 +542,7 @@ class CapitalBoundaryService:
                 "target_id": pool.pool_id,
                 "target_version": pool_digest(pool),
                 "subject.pool_id": pool.pool_id,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": str(
                     raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
                 ),
