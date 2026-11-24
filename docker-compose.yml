@@ -720,6 +720,7 @@ services:
     environment:
       SEARCH_API_URL: http://search-svc:8098
       SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
+      SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS: ${SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS:-120}
       SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
       SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
       SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
@@ -739,7 +740,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      start_period: 300s
 
   training-session-svc:
     profiles: ["research", "root"]
