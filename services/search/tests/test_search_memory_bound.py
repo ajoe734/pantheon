@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+
+import pytest
 import time
 import tracemalloc
 from datetime import datetime, timedelta, timezone
@@ -213,3 +215,208 @@ def test_pipeline_store_reload_memory_is_bounded_by_one_line(tmp_path) -> None:
     assert all(r.indexed_object_ids == [] for r in store.list_runs(40)[:-1])
     # Old behaviour: peak >= file size (read_text) plus every parsed id list. Now ~ one line + latest ids.
     assert peak < file_size * 0.25, (peak, file_size)
+
+
+# ---------------------------------------------------------------------------
+# Streaming evidence repository + cursor pipeline: memory is O(page/batch), not O(rows)
+# ---------------------------------------------------------------------------
+
+class _GeneratedKoTable:
+    """source_evidence fake that holds NO rows: payloads are generated per request, so any growth in
+    process memory is attributable to the code under test, not to the fixture."""
+
+    def __init__(self, total: int, body_bytes: int = 2048) -> None:
+        self.total = total  # knowledge objects have append_id 1..total
+        self.body = "x" * body_bytes
+        self.updated: dict[int, str] = {}  # append_id -> updated_at (in-place upserts)
+        self.max_rows_returned = 0
+        self.statements: list[str] = []
+        self.keep_statements = True
+
+    def ko(self, append_id: int) -> dict:
+        meta = {"created_at": "2026-01-01T00:00:00Z"}
+        if append_id in self.updated:
+            meta["updated_at"] = self.updated[append_id]
+        return KnowledgeObject(
+            knowledge_object_id=f"ko-{append_id}", source_id=f"src-{append_id}",
+            evidence_item_id=f"evi-{append_id}", evidence_bundle_id=f"evb-{append_id}",
+            title=f"t{append_id}", text=self.body, source_type="paper", license_scope="internal",
+            access_scope=["operator"], environment_scope=["paper"], keywords=["k"], metadata=meta,
+        ).to_dict()
+
+    def connect(self, dsn):
+        table = self
+
+        class Conn:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+            def execute(self, sql, params=()):
+                flat = " ".join(sql.split())
+                if table.keep_statements:
+                    table.statements.append(flat)
+                if flat.startswith("SELECT count(*)"):
+                    after = params[0]
+                    top = params[1] if "append_id <= %s" in flat else table.total
+                    return SimpleNamespace(fetchall=lambda: [(max(0, min(top, table.total) - after),)])
+                if flat.startswith("SELECT append_id, payload"):
+                    after, limit = params[0], params[-1]
+                    top = params[1] if "append_id <= %s" in flat else table.total
+                    ids = range(after + 1, min(top, table.total) + 1)
+                    rows = []
+                    for i in ids:
+                        if "left(" in flat and i not in table.updated:
+                            continue  # date-prefix prefilter: only in-place updated rows qualify
+                        rows.append((i, table.ko(i)))
+                        if len(rows) >= limit:
+                            break
+                    table.max_rows_returned = max(table.max_rows_returned, len(rows))
+                    return SimpleNamespace(fetchall=lambda: rows)
+                if "GROUP BY" in flat:
+                    return SimpleNamespace(fetchall=lambda: [("paper", "2026-01-01T00:00:00Z")])
+                return SimpleNamespace(fetchall=lambda: [])
+
+        return Conn()
+
+
+class _CountingBackend:
+    """Records what was indexed in O(1) per object (a 1-byte-per-object tally), never the objects."""
+
+    def __init__(self, total: int = 0) -> None:
+        self.tally = bytearray(max(total, 200) + 2)
+        self.count = 0
+        self.indexed: list[str] = []  # only used by small tests
+
+    def index_documents(self, records) -> int:
+        for r in records:
+            n = int(r.id.split("-")[1])
+            if n < len(self.tally):
+                self.tally[n] += 1
+            if self.count < 100:
+                self.indexed.append(r.id)
+            self.count += 1
+        return len(records)
+
+
+def _streaming_repo(table: _GeneratedKoTable):
+    repo = pg_store.PostgresStreamingEvidenceRepository(dsn="postgres://x")
+    repo._connect = lambda: table.connect("x")
+    return repo
+
+
+def _drain(tmp_path, table, batch=16, chunk=4):
+    from services.search.index_pipeline import IncrementalIndexPipeline
+
+    repo = _streaming_repo(table)
+    backend = _CountingBackend(table.total)
+    store = JsonlIndexPipelineStore(tmp_path / "p.jsonl", max_retention=5)
+    pipe = IncrementalIndexPipeline(repo, store, retrieval_backend=backend,
+                                    max_batch_size=batch, chunk_size=chunk, time_budget_seconds=60)
+    runs = 0
+    while True:
+        snap = pipe.run()
+        runs += 1
+        if snap.backlog_remaining == 0:
+            return repo, backend, store, pipe, runs
+        assert runs < 10_000
+
+
+def test_streaming_repository_startup_and_refresh_hold_no_rows() -> None:
+    table = _GeneratedKoTable(50_000)
+    tracemalloc.start()
+    repo = _streaming_repo(table)
+    repo.reload()
+    repo.refresh()
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert table.statements == []  # no table read at all on startup / reload / refresh
+    assert peak < 1_000_000
+    assert not repo._knowledge_objects and not repo._evidence_items
+
+
+def test_streaming_drain_peak_memory_depends_on_batch_not_row_count(tmp_path) -> None:
+    """Drain 500 vs 4000 knowledge objects (2 KiB each): peak heap must be flat in row count and bounded
+    by page/batch size. Wall clock is never asserted."""
+    warm = tmp_path / "warm"
+    warm.mkdir()
+    _drain(warm, _GeneratedKoTable(10))  # import-time allocations are not per-row cost
+    peaks = {}
+    for total in (500, 4_000):
+        table = _GeneratedKoTable(total)
+        table.keep_statements = False
+        sub = tmp_path / str(total)
+        sub.mkdir()
+        tracemalloc.start()
+        repo, backend, store, _, _ = _drain(sub, table)
+        _, peaks[total] = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert backend.tally[1:total + 1] == bytes([1]) * total  # every object indexed exactly once
+        assert backend.count == total
+        assert table.max_rows_returned <= pg_store._STREAM_PAGE_SIZE
+        assert store.get_latest().indexed_append_cursor == total
+        assert store.get_latest().indexed_object_ids == []
+    assert peaks[4_000] < peaks[500] * 1.5, peaks  # 8x rows, ~flat memory
+    page_bytes = pg_store._STREAM_PAGE_SIZE * 2048
+    assert peaks[4_000] < page_bytes * 10, (peaks, page_bytes)
+
+
+def test_streaming_point_reads_and_scalar_summaries_do_not_load_rows() -> None:
+    table = _GeneratedKoTable(1_000)
+    repo = _streaming_repo(table)
+    assert repo.knowledge_object_count() == 1_000
+    assert repo.source_watermarks() == {"paper": "2026-01-01T00:00:00Z"}
+    assert all("LIMIT" not in s for s in table.statements)  # aggregates only
+    with pytest.raises(Exception):
+        repo.list_evidence_items()
+
+
+def test_streaming_pipeline_resumes_from_cursor_and_indexes_only_new_rows(tmp_path) -> None:
+    table = _GeneratedKoTable(40)
+    repo, backend, store, pipe, _ = _drain(tmp_path, table)
+    assert backend.count == 40
+    table.total = 47  # source-ingest appended 7 more objects
+    snap = pipe.run()
+    assert snap.backlog_remaining == 0
+    assert backend.count == 47 and backend.tally[41:48] == bytes([1]) * 7
+    assert snap.indexed_append_cursor == 47
+
+
+def test_streaming_pipeline_reindexes_in_place_updates_once(tmp_path) -> None:
+    table = _GeneratedKoTable(30)
+    repo, backend, store, pipe, _ = _drain(tmp_path, table)
+    before = backend.count
+    table.updated[5] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")  # upsert keeps append_id, bumps updated_at
+    pipe.run()
+    assert backend.count == before + 1 and backend.tally[5] == 2
+    pipe.run()
+    assert backend.count == before + 1  # not re-embedded on later runs
+
+
+def test_streaming_pipeline_honours_legacy_id_checkpoint_without_reembedding(tmp_path) -> None:
+    from services.search.index_pipeline import IncrementalIndexPipeline
+
+    table = _GeneratedKoTable(30)
+    legacy = [f"ko-{i}" for i in range(1, 21)]
+    store = JsonlIndexPipelineStore(tmp_path / "p.jsonl")
+    store.record_run(IndexPipelineSnapshot(
+        pipeline_run_id="old", schema_version="v", triggered_by="t", trigger_ref=None,
+        indexed_count=20, incremental_count=0, removed_count=0, indexed_watermarks={},
+        indexed_at="2099-01-01T00:00:00Z", is_full_rebuild=False, freshness_sla_seconds=60,
+        indexed_object_ids=legacy,
+    ))
+    backend = _CountingBackend(30)
+    pipe = IncrementalIndexPipeline(_streaming_repo(table), store, retrieval_backend=backend,
+                                    max_batch_size=4, chunk_size=2, time_budget_seconds=60)
+    while pipe.run().backlog_remaining:
+        pass
+    assert backend.tally[1:21] == bytes(20) and backend.tally[21:31] == bytes([1]) * 10
+    assert store.get_latest().indexed_object_ids == []  # id list dropped once the cursor caught up
+
+
+def test_runtime_budget_at_observed_growth_is_stated() -> None:
+    """Budget arithmetic for the registered instance (see problem-register WP3.1 row)."""
+    page_mb = pg_store._STREAM_PAGE_SIZE * 3_400 / 1e6  # ~290 MB / 86.5k rows = ~3.4 KB/row
+    batch_mb = 16 * 3_400 / 1e6
+    fixed_model_mb = 1_550  # e5-large ONNX measured in SEARCH-SVC-PEAK-MEMORY-AND-STALL-SIGNAL-20261120
+    embed_mb = 600
+    assert fixed_model_mb + embed_mb + page_mb + batch_mb < 13 * 1024 * 0.25

@@ -100,6 +100,17 @@ class KeywordIndexAdapter:
         return documents
 
     def snapshot(self) -> SearchIndexAdapterSnapshot:
+        summary = getattr(self.repository, "knowledge_object_index_summary", None)
+        if summary is not None:  # aggregate; never materializes the knowledge objects
+            source_types, latest_text = summary()
+            latest = _parse_time(latest_text)
+            return SearchIndexAdapterSnapshot(
+                adapter_id=self.adapter_id,
+                adapter_state=self.adapter_state,
+                indexed_source_types=tuple(source_types),
+                source_watermarks=self.source_watermarks,
+                snapshot_at=latest.replace(microsecond=0).isoformat().replace("+00:00", "Z") if latest else None,
+            )
         source_types = sorted({item.source_type for item in self.repository.list_knowledge_objects()})
         latest = None
         for document in self.documents_for(self.repository.list_knowledge_objects()):
