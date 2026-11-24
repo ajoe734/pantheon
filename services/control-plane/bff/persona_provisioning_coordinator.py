@@ -2140,6 +2140,8 @@ class PersonaProvisioningCoordinator:
                 target_id: str,
                 decision_state: str | None = "decided",
                 max_items: int = 16,
+                history: bool = False,
+                now: datetime | None = None,
             ) -> list[dict[str, Any]]:
                 clean_type = str(target_type or "").strip()
                 clean_id = str(target_id or "").strip()
@@ -2157,7 +2159,7 @@ class PersonaProvisioningCoordinator:
                     return []
                 if not isinstance(raw_items, list):
                     return []
-                from services.governance.approval_authority import BoundedApprovalList
+                from services.governance.approval_authority import bound_candidate_history
 
                 bound = max(1, min(int(max_items or 16), 64))
                 matched: list[dict[str, Any]] = []
@@ -2171,11 +2173,10 @@ class PersonaProvisioningCoordinator:
                         continue
                     if decision_state and str(item.get("decision_state") or "") != decision_state:
                         continue
-                    if len(matched) >= bound:
-                        overflow = True
-                        break
                     matched.append(deepcopy(dict(item)))
-                return BoundedApprovalList(matched, overflow=overflow)
+                out = bound_candidate_history(matched, bound=bound, now=now, history=history)
+                out.overflow = out.overflow or overflow
+                return out
 
         return _TransportApprovalReader()
 
@@ -2340,6 +2341,7 @@ class PersonaProvisioningCoordinator:
                     target_id=pool_id,
                     decision_state=None,
                     max_items=16,
+                    history=True,
                 ):
                     if not matches_request(item):
                         continue
@@ -2630,7 +2632,7 @@ class PersonaProvisioningCoordinator:
         try:
             items = self._governance_approval_reader().list_for_target(
                 target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
-                max_items=MAX_PENDING_SUPERSEDE)
+                max_items=MAX_PENDING_SUPERSEDE, history=True)
         except Exception:
             return None
         for item in items:
@@ -2897,7 +2899,7 @@ class PersonaProvisioningCoordinator:
         try:
             items = self._governance_approval_reader().list_for_target(
                 target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
-                max_items=MAX_PENDING_SUPERSEDE)
+                max_items=MAX_PENDING_SUPERSEDE, history=True)
         except Exception:
             return
         closed: list[str] = []
