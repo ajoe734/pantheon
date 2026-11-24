@@ -1,0 +1,13 @@
+{
+  "task": "PAPER-RISK-DRAFT-UNITS-20261124",
+  "class": "RC2",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "root_cause": "Draft prompt asked to size limits from pool budget without units; hosted dev returned gross_limit 10000 / net_limit 10000 for a low pool.",
+  "change": {
+    "prompt": "services/persona/risk_policy_draft.py states units for every field and shows outer bounds in the same units",
+    "retry": "at most one extra turn carrying the refusal reason; fail closed with the reason; max two turns; no fallback numbers; no new writer"
+  },
+  "tests": "services/persona/test_risk_policy_draft.py (units/bounds in prompt; hosted draft 10000 refused naming gross_limit and bound 2.0, retried once, compliant second accepted; two refusals fail closed after exactly two turns); 173 passed with coordinator and capital risk_policy suites",
+  "hosted_acceptance": "pending: operator repair dry run for the three trading personas returns drafts inside all four bounds with a rationale, served before 2026-11-25T10:00Z",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family."
+}
