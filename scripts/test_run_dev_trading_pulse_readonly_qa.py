@@ -18,9 +18,9 @@ PEOPLE = [{"persona_id": "p1", "tenant_id": T, "name": "澄川"}, {"persona_id":
           {"persona_id": "px", "tenant_id": "other", "name": "Foreign"}]
 BINDINGS = [
     {"runtime_id": "rt-1", "runtime_binding_id": "rb-1", "persona_id": "p1", "deployment_stage": "paper",
-     "tenant_id": T, "underlying_symbol": "2317.TWSE"},
+     "tenant_id": T, "strategy_id": "s1"},
     {"runtime_id": "rt-2", "runtime_binding_id": "rb-2", "persona_id": "p2", "deployment_stage": "paper",
-     "tenant_id": T, "underlying_symbol": "0050.TWSE"},
+     "tenant_id": T, "strategy_id": "s2"},
     {"runtime_id": "rt-3", "runtime_binding_id": "rb-3", "persona_id": "p1", "deployment_stage": "paper",
      "tenant_id": T, "status": "retired"},
 ]
@@ -38,8 +38,13 @@ SUMMARY = {"schema": qa.SUMMARY_SCHEMA, "mode": "acceptance", "pass": True,
                     {"locale": "en-US", "width": 1440}]}
 
 
+SPEC = {"strategy_id": "s1", "owner_tenant": T,
+        "metadata": {"strategy_spec": {"market_scope": {"symbols": ["2317.TWSE"]}}}}
+
+
 class Net:
-    def __init__(self, drift=False, tenant=T, roster_change=False, telemetry=None):
+    def __init__(self, drift=False, tenant=T, roster_change=False, telemetry=None, spec=SPEC, spec_status=200):
+        self.spec, self.spec_status = spec, spec_status
         self.calls, self.version_calls, self.roster_calls = [], 0, 0
         self.drift, self.tenant, self.roster_change = drift, tenant, roster_change
         self.telemetry = telemetry or TELEMETRY
@@ -66,6 +71,8 @@ class Net:
             self.roster_calls += 1
             extra = [{"runtime_id": "rt-n", "persona_id": "p1", "deployment_stage": "paper", "tenant_id": T}]
             return 200, {"data": BINDINGS + (extra if self.roster_change and self.roster_calls > 1 else [])}
+        if path == "/api/v1/knowledge/strategy-specs/s1":
+            return self.spec_status, {"data": self.spec}
         if path == "/api/v1/telemetry/rt-1/summary":
             return 200, {"data": self.telemetry}
         if path.startswith("/bff/management/trade-journeys/j1/timeline"):
@@ -202,3 +209,37 @@ def test_main_exit_code_and_required_args(tmp_path, capsys):
             "--history-event-id", "ev1", "--frontend-checkout", str(tmp_path), "--out-dir", str(tmp_path / "o"),
             "--evidence-out", str(tmp_path / "e.json")]
     assert qa.main(argv, {}) == 2  # no CLI / credentials: unproven, never pass
+
+
+def test_symbol_comes_from_strategy_spec_not_binding_or_telemetry(tmp_path):
+    tele = {**TELEMETRY, "underlying_symbol": "WRONG.TELEMETRY"}
+    ev, net, cli = run(tmp_path, net=Net(telemetry=tele))
+    assert ev["outcome"] == "pass", ev
+    payload = json.loads(cli.calls[-1][1])
+    assert payload["sources"]["rows"][0]["underlying_symbol"] == "2317.TWSE"
+    assert any("strategy-specs/s1" in u for _, u in net.calls)
+
+
+@pytest.mark.parametrize("net", [
+    Net(spec={**SPEC, "metadata": {}}),
+    Net(spec={**SPEC, "owner_tenant": "other"}),
+    Net(spec={**SPEC, "strategy_id": "zzz"}),
+    Net(spec={**SPEC, "metadata": {"strategy_spec": {"market_scope": {"symbols": ["A", "B"]}}}}),
+    Net(spec_status=503),
+])
+def test_unavailable_symbol_source_is_unproven_naming_row_and_fact(tmp_path, net):
+    ev, _, cli = run(tmp_path, net=net)
+    assert ev["outcome"] == "unproven" and ev["reason_code"] == "identity_missing"
+    assert "澄川" in ev["reason"] and "rt-1" in ev["reason"]
+    assert not any("--mode" in argv for argv, _ in cli.calls)
+
+
+def test_binding_without_strategy_id_has_no_symbol_source(tmp_path):
+    sid = BINDINGS[0].pop("strategy_id")
+    BINDINGS[0]["underlying_symbol"] = "2317.TWSE"  # a binding-carried symbol is not an independent source
+    try:
+        ev, _, _ = run(tmp_path)
+    finally:
+        BINDINGS[0]["strategy_id"] = sid
+        del BINDINGS[0]["underlying_symbol"]
+    assert ev["reason_code"] == "identity_missing" and "no strategy_id" in ev["reason"]
