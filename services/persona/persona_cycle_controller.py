@@ -43,6 +43,7 @@ from services.persona.cron_ooda_closure import (
     append_ooda_packet, compact_ooda_packet_store, load_packet_index, resolve_ooda_packet_store_path, _utc_now,
 )
 from services.persona.lesson_cycle import LessonCycle, lesson_summary
+from services.persona.risk_policy_draft import ensuring_turn_runner
 from services.persona.runtime_profile import build_persona_runtime_profile
 
 log = logging.getLogger(__name__)
@@ -872,7 +873,7 @@ class PersonaCycleController:
 
     def _lesson_cycle(self) -> Any:
         if self.lesson_cycle is None:
-            self.lesson_cycle = LessonCycle(turn_runner=self.turn_runner)
+            self.lesson_cycle = LessonCycle(turn_runner=ensuring_turn_runner(self.turn_runner))
         return self.lesson_cycle
 
     @staticmethod

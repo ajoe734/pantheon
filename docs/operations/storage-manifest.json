@@ -6055,6 +6055,23 @@
     "file": "services/capital/profile_change.py",
     "contains": "MAX_CHANGE_RECEIPTS = 128"
    }
+  },
+  {
+   "bound_proof": {
+    "contains": "MAX_EVIDENCE_ITEMS = 8",
+    "file": "services/persona/risk_policy_draft.py"
+   },
+   "cadence": "one ensure per BFF/persona process per risk-officer record digest (in-process memo; the adapter sync is itself idempotent and the route has no replay cache); no recurring job; one risk-officer turn per (pool, requested profile, input digest), reusing the governance proposal that already carries the draft",
+   "cap": "one agent identity persona-risk-officer; ensure fixed record; MAX_EVIDENCE_ITEMS=8 and MAX_TEXT=400 bound the drafting prompt",
+   "cleanup": "none needed for the single agent; gateway session transcripts follow the existing gateway retention; retiring the agent is an operator persona-agent removal, not part of this task",
+   "count_at_hosted_scale": "1 agent, 1 workspace directory, 1 SOUL.md (the fixed record yields a constant digest); 3 low pools => at most 3 drafting turns, 0 on retry",
+   "growth_per_day": "0 B/day steady for the agent and SOUL (re-ensure rewrites the same files); drafting adds <=1 session transcript per new (pool, profile, input digest), i.e. 0 on a quiet day; lesson-cycle review turns are unchanged by this task",
+   "name": "persona-risk-officer own agent ensure and drafting turn",
+   "owner": "operator-bff (caller), openclaw-gateway-adapter (existing persona/ensure writer)",
+   "register_class": "RC2",
+   "size": "agent registry entry <=2 KiB; SOUL.md <=8 KiB; memory cache bounded by the existing persona memory materializer; a turn adds one gateway session transcript per turn (existing gateway session retention)",
+   "task": "PAPER-RISK-OFFICER-AGENT-ENSURE-20261124",
+   "writer": "integrations/openclaw/persona_agent_client.py ensure_risk_officer_agent -> existing POST /api/openclaw-adapter/agents/persona/ensure (persona_agent_sync: one agents.list entry, one SOUL.md, one memory-cache file in the gateway workspace); no new file, table or queue"
   }
  ]
 }

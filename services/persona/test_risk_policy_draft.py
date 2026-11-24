@@ -107,3 +107,100 @@ def test_capital_validator_and_configured_bounds() -> None:
     assert "low" not in custom and custom["high"] == {"max_single_name_weight": 0.5}
     with pytest.raises(Exception):
         profile_outer_bounds({"PANTHEON_PAPER_RISK_PROFILE_BOUNDS": '{"low": {"gross": 1}}'})
+
+
+# --- agent existence through the real turn path (HTTP faked at urllib.request.urlopen only) ---------------------
+import io
+import urllib.error
+import urllib.request
+
+import services.persona.risk_policy_draft as agent_client
+from services.persona.risk_policy_draft import make_drafter
+
+
+class _FakeHosted:
+    """Gateway /v1/responses answers 400 for an unknown agent; the adapter persona ensure route creates it."""
+
+    def __init__(self, ensure_status: int = 201) -> None:
+        self.agents: set[str] = set()
+        self.ensure_calls: list[dict] = []
+        self.turn_models: list[str] = []
+        self.ensure_status = ensure_status
+
+    def __call__(self, req, timeout=None):
+        url, body = req.full_url, json.loads(req.data.decode("utf-8"))
+        if url.endswith("/v1/responses"):
+            self.turn_models.append(body["model"])
+            if body["model"].split("/", 1)[1] not in self.agents:
+                raise urllib.error.HTTPError(url, 400, "bad", {}, io.BytesIO(b'{"error":"unknown agent"}'))
+            return _Resp(200, {"model": "mu", "provider": "p",
+                               "output": [{"content": [{"type": "output_text", "text": json.dumps(GOOD)}]}]})
+        assert url.endswith("/api/openclaw-adapter/agents/persona/ensure"), url
+        self.ensure_calls.append({"body": body, "headers": dict(req.header_items())})
+        if self.ensure_status >= 400:
+            raise urllib.error.HTTPError(url, self.ensure_status, "x", {}, io.BytesIO(b'{"message":"nope"}'))
+        pid = body["persona"]["persona_id"]
+        self.agents.add(pid)
+        return _Resp(self.ensure_status, {"status": "ok", "agent": {"agent_id": pid, "status": "created"}})
+
+
+class _Resp:
+    def __init__(self, status, payload):
+        self.status, self._raw = status, json.dumps(payload).encode("utf-8")
+
+    def getcode(self):
+        return self.status
+
+    def read(self):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture()
+def hosted(monkeypatch):
+    monkeypatch.setenv("OPENCLAW_GATEWAY_URL", "http://gw:18789")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://adapter:8104")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "tok")
+    monkeypatch.setattr(agent_client, "_ensured_risk_officer", {})
+    fake = _FakeHosted()
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    return fake
+
+
+def test_without_ensure_the_real_turn_path_fails_like_hosted(hosted) -> None:
+    from services.persona.risk_policy_draft import default_turn_runner
+
+    result = draft_pool_risk_policy(INPUTS, turn_runner=default_turn_runner)
+    assert not result.ok
+    assert result.reason == "risk_officer_turn_failed:/v1/responses HTTP 400"
+
+
+def test_drafter_ensures_own_read_only_agent_once_then_drafts(hosted) -> None:
+    drafter = make_drafter()
+    first, second = drafter(INPUTS), drafter(INPUTS)
+    assert first.ok and second.ok, (first.reason, second.reason)
+    assert first.policy["metadata"]["risk_officer_draft"]["risk_persona_id"] == RISK_PERSONA_ID
+    assert len(hosted.ensure_calls) == 1  # idempotent: one ensure per agent identity/digest per process
+    assert hosted.ensure_calls[0]["body"]["persona"]["persona_id"] == RISK_PERSONA_ID
+    assert hosted.turn_models == [f"openclaw/{RISK_PERSONA_ID}"] * 2
+
+
+def test_ensure_failure_fails_closed_with_readable_reason_and_no_turn(hosted) -> None:
+    hosted.ensure_status = 503
+    result = make_drafter()(INPUTS)
+    assert not result.ok and result.policy is None
+    assert result.reason.startswith("risk_officer_turn_failed:risk_officer_agent_ensure_failed")
+    assert hosted.turn_models == []
+
+
+def test_ensure_is_not_called_for_other_personas(hosted) -> None:
+    from services.persona.risk_policy_draft import ensuring_turn_runner
+
+    seen = []
+    ensuring_turn_runner(lambda pid, prompt, **k: seen.append(pid))("persona-a", "x")
+    assert seen == ["persona-a"] and hosted.ensure_calls == []
