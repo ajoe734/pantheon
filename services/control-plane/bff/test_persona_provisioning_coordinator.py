@@ -4379,6 +4379,12 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert routed_req["governance_proposal_id"] == prop_id
     assert routed_req["governance_proposal_status"] == "proposed_to_governance_human_inbox"
     assert tx_prov.mutations[("governance", "/api/governance/approvals")] == 1
+    # Direction is computed against the pool's effective policy (here identical to the draft) and stored with
+    # the per-limit comparison; paper pool proposals are low risk with the bounded expiry the paper gate needs.
+    proposed_decision = tx_prov.objects[("governance", f"/api/governance/approvals/{prop_id}")]
+    assert proposed_decision["metadata"]["subject"]["risk_direction"] == "neutral"
+    assert set(proposed_decision["metadata"]["subject"]["risk_comparison"].values()) == {"equal"}
+    assert proposed_decision["risk_level"] == "low" and proposed_decision["expires_at"]
     # Provisional pool was suspended and marked provisional_unresolved_risk_policy=True so it cannot add risk
     assert tx_prov.objects[("capital", prov_pool_path)]["status"] == "suspended"
     assert tx_prov.objects[("capital", prov_pool_path)]["metadata"]["provisional_unresolved_risk_policy"] is True
@@ -5622,3 +5628,68 @@ def test_old_request_requires_verified_matching_real_persona(mismatch):
         assert required is True
         assert profile == (None if mismatch else "medium")
     assert record.request_payload == original
+
+
+# --- paper automated gate for pool risk-policy proposals (operator decision P-4) ---------------------
+
+_GATE_LOW_POLICY = {"risk_policy_id": "rp-pool", "version": "2.0", "gross_limit": 1.0, "net_limit": 1.0,
+                    "max_leverage": 1.0, "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10}
+
+
+def _gate_coordinator(monkeypatch, *, fail=False):
+    coordinator = PersonaProvisioningCoordinator.__new__(PersonaProvisioningCoordinator)
+    coordinator.transport = object()
+    decided: list[dict[str, Any]] = []
+
+    def fake_decide(proposal, *, outcome, rationale):
+        if fail:
+            raise RuntimeError("gate unavailable")
+        decided.append({"id": proposal["decision_id"], "outcome": outcome, "rationale": rationale})
+        return {"decision_state": "decided", "decision": outcome}
+
+    monkeypatch.setattr(coordinator, "_paper_gate_decide_risk_policy", fake_decide)
+    return coordinator, decided
+
+
+def _gate_proposal(policy):
+    draft = {"policy": policy, "provenance": {"source": "risk_officer_draft"}} if policy else None
+    return {"decision_id": "apv-risk-profile-x", "metadata": {"subject": {
+        "pool_id": "pool-1", "requested_risk": "low", **({"risk_officer_draft": draft} if draft else {})}}}
+
+
+def test_paper_gate_approves_a_policy_inside_the_outer_bounds(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
+    assert [d["outcome"] for d in decided] == ["approved"]
+    assert req["paper_gate_status"] == "decided_approved_by_automated_gate"
+
+
+def test_paper_gate_refuses_out_of_bounds_with_the_named_limit(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal({**_GATE_LOW_POLICY, "max_single_name_weight": 0.5}), req, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "max_single_name_weight" in decided[0]["rationale"]
+    assert "max_single_name_weight" in req["paper_gate_reason"]
+
+
+def test_paper_gate_refuses_a_v1_proposal_without_the_cap_and_reserve_and_names_the_draft(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    v1 = {k: v for k, v in _GATE_LOW_POLICY.items() if k not in {"max_single_name_weight", "min_cash_reserve_pct"}}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(_gate_proposal(v1), req, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "max_single_name_weight" in decided[0]["rationale"]
+    req2: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(_gate_proposal(None), req2, requested_profile="low")
+    assert decided[1]["outcome"] == "rejected"
+    assert "superseded by the risk-officer draft" in decided[1]["rationale"]
+
+
+def test_paper_gate_unavailable_leaves_the_proposal_pending(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch, fail=True)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
+    assert decided == [] and req["paper_gate_status"].startswith("unavailable:")

@@ -570,6 +570,9 @@ def test_grant_content_carries_both_explicit_widenings_the_issued_proposers_matc
         path.write_text(issuer.GOVERNANCE_GRANT_CONTENT)
         path.chmod(0o600)
         lifecycle, card = _grant_widenings({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
+        from services.governance.paper_approval_scope import configured_risk_policy_grant
+        risk = configured_risk_policy_grant({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
+    assert risk.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
     assert lifecycle.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
     assert card.proposer_subject == issuer.CARD_PROPOSER_SUBJECT
 

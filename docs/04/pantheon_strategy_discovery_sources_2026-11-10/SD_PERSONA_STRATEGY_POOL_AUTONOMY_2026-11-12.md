@@ -46,6 +46,20 @@ Decisions on the coordinator's questions:
 | P-5 | Universe | 「當然，本來設計就有機制是要按照策略選出要交易的標的候選池阿，然後才從交易候選池思考設計用那些衍生性金融商品來交抑或是直接交易標的商品」; the persona may propose widening its permitted list within governed Taiwan data |
 | P-6 | Safety ceiling | keep a wide ceiling that only guards against runaway code (「好」) |
 
+**P-4 for pool risk policy (PAPER-RISK-POLICY-GATE-PER-PLAN-20261124, 2026-11-24).** P-4 puts paper actions under the
+automated gate, so a paper pool's risk-policy proposal is no longer routed to two human deciders. The coordinator
+computes the proposal's risk direction by comparing the candidate with the pool's effective policy limit by limit
+(`compare_risk_policies`: every limit equal or stricter -> `reduce`/`neutral`; any looser limit, a missing limit
+counting as unlimited, or no effective policy -> `increase`) and stores the direction plus the per-limit comparison in
+the proposal subject; no constant direction or risk level remains. For a paper pool a candidate that verifies inside
+the operator outer bounds (`low`: single name <= 20%, cash reserve >= 10%) and carries risk-officer draft provenance
+is decided by the existing automated gate (`pantheon-dev-paper-provisioner`) whatever its direction; a candidate
+outside the bounds is refused by the same gate with the named limit and reason, and the pool keeps its effective
+policy. The widening is an explicit grant clause (`risk_policy=paper_pool;risk_proposer=<subject>`), dev and paper
+only, capital scale 0, proposer-bound; canary and live keep the two-distinct-decider rule. Pending human proposals
+for the pool that no longer match the draft (the v1.0 requests lacking the single-name cap and cash reserve) are
+refused through the same gate and superseded by the risk-officer draft; no AI or service principal casts a human vote.
+
 The O-13 … O-20 decisions of the same day (「都依照你的建議處理」) stay in force where they do not assume one
 persona per strategy: demand triggers, reviewed weekly query plans, a contradicted prediction blocks admission,
 20-trading-day revalidation, weekly exploration with 50 variants and a 500-trial family cap, fixed query

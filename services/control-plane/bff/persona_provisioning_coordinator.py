@@ -20,6 +20,7 @@ from urllib.parse import quote
 from services.capital.risk_policy import (
     BoundPoolRiskPolicyResolution,
     capital_pool_approval_digest,
+    compare_risk_policies,
     discover_approved_profile_risk_policy,
     resolve_pool_risk_policy_binding,
     risk_policy_digest,
@@ -52,6 +53,7 @@ FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 # The bound is anchored to persisted owner timestamps, never to wall-clock at
 # retry time, so a response-loss retry composes byte-identical bodies.
 APPROVAL_TTL = timedelta(hours=24)
+MAX_PENDING_SUPERSEDE = 16  # bound of the pending paper policy proposals scanned per pool
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _UNKNOWN_SOURCE_COMMIT = "0" * 40
 # Settlement currency of canonical markets whose paper venue settles in one
@@ -2210,6 +2212,11 @@ class PersonaProvisioningCoordinator:
             cand_pol_ver = str(draft.policy.get("version") or cand_pol_ver)
             cand_pol_digest = risk_policy_digest(draft.policy)
 
+        # Risk direction is computed, never assumed: candidate vs the pool's currently effective policy.
+        effective = getattr(resolution, "policy", None)
+        effective_policy = effective.to_dict() if hasattr(effective, "to_dict") else None
+        direction = compare_risk_policies(draft.policy if draft is not None and draft.policy else None, effective_policy)
+
         deterministic_proposal_id = self._risk_profile_proposal_id(
             tenant_id, pool_id, requested_profile, cand_pol_id, cand_pol_ver, proposal_key
         )
@@ -2276,7 +2283,7 @@ class PersonaProvisioningCoordinator:
                 and item.get("target_id") == pool_id
                 and item.get("target_version") == cand_pool_digest
                 and subj.get("pool_id") == pool_id
-                and subj.get("risk_direction") == "increase"
+                and subj.get("risk_direction") in {"increase", "reduce", "neutral"}
                 and profiles and all(value == requested_profile for value in profiles)
                 and subj.get("risk_policy_id") == cand_pol_id
                 and subj.get("risk_policy_version") == cand_pol_ver
@@ -2326,6 +2333,14 @@ class PersonaProvisioningCoordinator:
             decision_req["human_inbox_action_url"] = f"/management/approvals?approval={found_id}"
             if found_state in {"proposed", "under_review"}:
                 decision_req["governance_proposal_status"] = "reused_existing_pending_proposal"
+                if not dry_run:
+                    self._apply_paper_gate_to_risk_policy_proposal(
+                        existing_prop, decision_req, requested_profile=requested_profile)
+                    if draft is not None and draft.policy:
+                        self._close_superseded_risk_policy_proposals(
+                            tenant_id=tenant_id, pool_id=pool_id, keep_id=found_id,
+                            requested_profile=requested_profile, matches_request=matches_request,
+                            decision_req=decision_req)
                 return decision_req
             if found_state == "decided" and found_outcome == "rejected":
                 decision_req["governance_proposal_outcome"] = "rejected"
@@ -2368,14 +2383,18 @@ class PersonaProvisioningCoordinator:
                 "target_type": "capital_pool_activation",
                 "target_id": pool_id,
                 "target_version": cand_pool_digest,
-                "risk_level": "medium",
+                # Paper pool, capital scale 0: low risk, decided by the paper automated gate (P-4).
+                "risk_level": "low",
                 "capital_pool_id": pool_id,
                 "persona_id": persona_id,
                 "tenant_id": tenant_id,
                 "owner_user_id": eff_proposer_actor,
+                "expires_at": (datetime.now(timezone.utc) + APPROVAL_TTL - timedelta(minutes=5)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
                 "subject": {
                     "pool_id": pool_id,
-                    "risk_direction": "increase",
+                    "risk_direction": direction["risk_direction"],
+                    "risk_comparison": dict(direction["risk_comparison"]),
                     "requested_risk": requested_profile,
                     "risk_policy_id": cand_pol_id,
                     "risk_policy_version": cand_pol_ver,
@@ -2415,11 +2434,101 @@ class PersonaProvisioningCoordinator:
                 decision_req["governance_proposal_state"] = str(created_prop.get("decision_state") or "proposed")
                 decision_req["governance_proposal_status"] = "proposed_to_governance_human_inbox"
                 decision_req["human_inbox_action_url"] = f"/management/approvals?approval={prop_id}"
+                self._apply_paper_gate_to_risk_policy_proposal(
+                    created_prop, decision_req, requested_profile=requested_profile)
+                if draft is not None and draft.policy:
+                    self._close_superseded_risk_policy_proposals(
+                        tenant_id=tenant_id, pool_id=pool_id, keep_id=prop_id,
+                        requested_profile=requested_profile, matches_request=matches_request,
+                        decision_req=decision_req)
                 return decision_req
 
         decision_req["governance_proposal_status"] = "routed_to_open_owner_disposition"
         decision_req["human_inbox_action_url"] = f"/management/approvals?approval={deterministic_proposal_id}"
         return decision_req
+
+    # -- paper automated gate for pool risk-policy proposals (operator decision P-4) ------------------
+    def _paper_gate_decide_risk_policy(self, proposal: Mapping[str, Any], *, outcome: str, rationale: str) -> dict[str, Any]:
+        decision_id = str(proposal.get("decision_id") or "")
+        path = f"/api/governance/approvals/{_path_id(decision_id)}"
+        review = self._transition_then_get(
+            owner="governance", get_path=path, post_path=f"{path}/review",
+            payload=lambda curr: {"actor_role": "automated_gate", "actor_id": self.governance_actor_id,
+                                  "expected_version": int((curr or {}).get("version") or 0)},
+            ready=lambda r: str(r.get("decision_state") or "") in {"under_review", "decided"},
+            validate=lambda r: None)
+        return self._transition_then_get(
+            owner="governance", get_path=path, post_path=f"{path}/decide",
+            payload=lambda curr: {
+                "actor_role": "automated_gate", "actor_id": self.governance_actor_id,
+                "outcome": outcome, "rationale": rationale,
+                "candidate_digest": (curr or review).get("candidate_digest"),
+                "expires_at": (curr or review).get("expires_at"),
+                "expected_version": int((curr or {}).get("version") or 0)},
+            ready=lambda r: r.get("decision_state") == "decided",
+            validate=lambda r: None)
+
+    def _apply_paper_gate_to_risk_policy_proposal(
+        self, proposal: Mapping[str, Any], decision_req: dict[str, Any], *, requested_profile: str,
+    ) -> None:
+        """Approve a paper pool policy inside the outer bounds; otherwise refuse it with the named field.
+
+        Idempotent per proposal (review/decide short-circuit on readback); an unavailable gate leaves the
+        proposal pending for the next pass.  No AI or service principal casts a human vote.
+        """
+        if self.transport is None:
+            return
+        meta = proposal.get("metadata") if isinstance(proposal.get("metadata"), Mapping) else {}
+        subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+        draft = subj.get("risk_officer_draft") if isinstance(subj.get("risk_officer_draft"), Mapping) else {}
+        policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+        if policy:
+            model, reason = validate_drafted_pool_risk_policy(policy, profile=requested_profile)
+            outcome = "approved" if model is not None else "rejected"
+            rationale = ("Paper pool risk policy verified inside operator outer bounds (P-4 automated gate)"
+                         if model is not None else f"Refused by paper gate: {reason}")
+        else:
+            outcome = "rejected"
+            rationale = (f"Refused by paper gate: risk_officer_draft absent; the {requested_profile} profile requires "
+                         "max_single_name_weight and min_cash_reserve_pct within the operator outer bounds; "
+                         "superseded by the risk-officer draft")
+        try:
+            receipt = self._paper_gate_decide_risk_policy(proposal, outcome=outcome, rationale=rationale)
+        except Exception as exc:
+            decision_req["paper_gate_status"] = "unavailable:" + type(exc).__name__
+            return
+        decision_req["governance_proposal_state"] = str(receipt.get("decision_state") or "")
+        decision_req["governance_proposal_outcome"] = str(receipt.get("decision") or outcome)
+        decision_req["paper_gate_status"] = f"decided_{outcome}_by_automated_gate"
+        if outcome == "rejected":
+            decision_req["paper_gate_reason"] = rationale
+
+    def _close_superseded_risk_policy_proposals(
+        self, *, tenant_id: str, pool_id: str, keep_id: str, requested_profile: str,
+        matches_request: Callable[[Mapping[str, Any]], bool], decision_req: dict[str, Any],
+    ) -> None:
+        """Close the pool's other pending paper policy proposals (e.g. v1.0) through the same gate."""
+        try:
+            items = self._governance_approval_reader().list_for_target(
+                target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
+                max_items=MAX_PENDING_SUPERSEDE)
+        except Exception:
+            return
+        closed: list[str] = []
+        for item in items:
+            if (item.get("decision_id") == keep_id or item.get("tenant_id") != tenant_id
+                    or str(item.get("decision_state") or "") not in {"proposed", "under_review"}):
+                continue
+            meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+            subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+            if subj.get("requested_risk") != requested_profile:
+                continue
+            probe: dict[str, Any] = {}
+            self._apply_paper_gate_to_risk_policy_proposal(item, probe, requested_profile=requested_profile)
+            if probe.get("paper_gate_status", "").startswith("decided_"):
+                closed.append(str(item.get("decision_id")))
+        if closed:
+            decision_req["superseded_proposals_closed"] = closed
 
     @staticmethod
     def _verified_requested_profile(*sources: tuple[str, str | None]) -> str:

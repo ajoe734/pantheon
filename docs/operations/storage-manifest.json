@@ -6072,6 +6072,23 @@
    "size": "agent registry entry <=2 KiB; SOUL.md <=8 KiB; memory cache bounded by the existing persona memory materializer; a turn adds one gateway session transcript per turn (existing gateway session retention)",
    "task": "PAPER-RISK-OFFICER-AGENT-ENSURE-20261124",
    "writer": "integrations/openclaw/persona_agent_client.py ensure_risk_officer_agent -> existing POST /api/openclaw-adapter/agents/persona/ensure (persona_agent_sync: one agents.list entry, one SOUL.md, one memory-cache file in the gateway workspace); no new file, table or queue"
+  },
+  {
+   "bound_proof": {
+    "contains": "MAX_PENDING_SUPERSEDE = 16",
+    "file": "services/control-plane/bff/persona_provisioning_coordinator.py"
+   },
+   "cadence": "at most one gate review and one gate decision per (pool, requested profile, input digest) proposal, run from the existing enrollment reconcile / persona daily cycle route; replays read back the decided record and write nothing; no new recurring job",
+   "cap": "list_for_target max_items=16 per pool bounds the superseded-proposal scan; one decision per proposal",
+   "cleanup": "none; decided Governance approval records follow the existing approval retention",
+   "count_at_hosted_scale": "3 low pools => 3 gate decisions for the risk-officer drafts plus 3 closures of the v1.0 human requests, then 0 on retry",
+   "growth_per_day": "0 records on a quiet day; <=2 audit events per new (pool, profile, input digest)",
+   "name": "paper pool risk-policy automated gate decision",
+   "owner": "governance (decision writer), operator-bff persona provisioning coordinator (caller)",
+   "register_class": "RC2",
+   "size": "one ApprovalDecision row update (<=8 KiB) plus its audit entry per decision",
+   "task": "PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
+   "writer": "services/control-plane/bff/persona_provisioning_coordinator.py _paper_gate_decide_risk_policy -> existing Governance POST /api/governance/approvals/{id}/review and /decide as the dedicated automated gate; no new file, table or queue"
   }
  ]
 }

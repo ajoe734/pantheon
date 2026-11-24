@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from services.capital.risk_policy import (
+    compare_risk_policies,
     RiskPolicy,
     RiskPolicyDecision,
     RiskPolicyEvaluationContext,
@@ -2653,3 +2654,46 @@ def test_cash_reserve_policy_limits_digest_binding_and_evaluator() -> None:
     assert rejected_eval.rejected is True
     assert any(c.code == "cash_reserve_breach" for c in rejected_eval.checks)
 
+
+
+def test_compare_risk_policies_direction_table() -> None:
+    cur = {"gross_limit": 1.0, "max_single_name_weight": 0.1, "min_cash_reserve_pct": 0.1}
+    cases = {
+        "equal": (dict(cur), "neutral"),
+        "stricter": ({**cur, "gross_limit": 0.8, "min_cash_reserve_pct": 0.2}, "reduce"),
+        "looser": ({**cur, "gross_limit": 1.2}, "increase"),
+        "mixed": ({**cur, "gross_limit": 0.5, "max_single_name_weight": 0.2}, "increase"),
+        "missing_max_limit": ({"gross_limit": 1.0, "min_cash_reserve_pct": 0.1}, "increase"),
+        "missing_cash_reserve": ({"gross_limit": 1.0, "max_single_name_weight": 0.1}, "increase"),
+        "new_limit_stricter": ({**cur, "net_limit": 0.5}, "reduce"),
+    }
+    for name, (cand, want) in cases.items():
+        assert compare_risk_policies(cand, cur)["risk_direction"] == want, name
+    new_pool = compare_risk_policies(cur, None)
+    assert new_pool["risk_direction"] == "increase"
+    assert compare_risk_policies(cur, {})["risk_direction"] == "increase"
+    result = compare_risk_policies({**cur, "gross_limit": 1.2}, cur)
+    assert result["risk_comparison"]["gross_limit"] == "looser"
+    assert result["risk_comparison"]["max_single_name_weight"] == "equal"
+
+
+def test_require_valid_any_accepts_any_member_of_a_value_set_and_nothing_else():
+    import pytest
+    from services.capital.risk_policy import require_valid_any
+
+    class Approval:
+        def __init__(self, direction):
+            self.direction = direction
+
+        def require_valid(self, *, expected, **kwargs):
+            if expected["subject.risk_direction"] != self.direction or expected["target_id"] != "pool-1":
+                raise ValueError("mismatch")
+            return "ok"
+
+    accepted = {"target_id": "pool-1", "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})}
+    for direction in ("increase", "reduce", "neutral"):
+        assert require_valid_any(Approval(direction), expected=accepted) == "ok"
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("sideways"), expected=accepted)
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("reduce"), expected={**accepted, "target_id": "other"})

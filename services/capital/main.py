@@ -77,7 +77,7 @@ try:
     )
     from .write_authority import is_authorized, matrix_as_list
     from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
-    from .risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest
+    from .risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest
     from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
         CapitalInboundAuthority,
@@ -127,7 +127,7 @@ except ImportError:
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
     from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
-    from risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
+    from risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
     import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthority,
@@ -279,7 +279,7 @@ class CapitalBoundaryService:
         bindings = self.list_bindings(capital_pool_id=pool.pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
-            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})},
             allocations=held, bindings=bindings,
         )
 
@@ -542,7 +542,7 @@ class CapitalBoundaryService:
                 "target_id": pool.pool_id,
                 "target_version": pool_digest(pool),
                 "subject.pool_id": pool.pool_id,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": str(
                     raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
                 ),
@@ -550,7 +550,7 @@ class CapitalBoundaryService:
                 "subject.risk_policy_digest": risk_policy_digest(raw_policy) if raw_policy else "",
                 "subject.requested_risk": req_risk,
             }
-            res_ev = loaded.require_valid(expected=expected_binding)
+            res_ev = require_valid_any(loaded, expected=expected_binding)
             if isinstance(res_ev, ApprovalEvidence):
                 evidence = res_ev
             elif isinstance(res_ev, dict):

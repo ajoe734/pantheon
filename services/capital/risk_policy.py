@@ -1287,6 +1287,91 @@ _FLEX_EXPOSURE_LIMIT_FIELDS: tuple[str, ...] = (
 )
 
 
+_MAX_LIMITS = (
+    "gross_limit", "net_limit", "max_single_name_weight", "max_leverage", "turnover_limit",
+    "max_target_overlap", "max_signal_correlation", "max_canary_capital_scale_pct",
+    "max_canary_gross_scale_pct", "max_sector_exposure", "max_factor_exposure",
+    "max_strategy_family_concentration",
+)
+_MIN_LIMITS = ("min_cash_reserve_pct", "min_cash_reserve")
+
+
+def _limit_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _compare_limit(kind: str, cand: Any, cur: Any) -> str:
+    """One limit: 'stricter' | 'equal' | 'looser'. Missing is unlimited (max: +inf, min: 0)."""
+    if isinstance(cand, Mapping) or isinstance(cur, Mapping):
+        cm = cand if isinstance(cand, Mapping) else {}
+        um = cur if isinstance(cur, Mapping) else {}
+        scalar_c = None if isinstance(cand, Mapping) else _limit_number(cand)
+        scalar_u = None if isinstance(cur, Mapping) else _limit_number(cur)
+        results = []
+        for key in sorted(set(cm) | set(um)):
+            results.append(_compare_limit(
+                kind, _limit_number(cm.get(key)) if key in cm else scalar_c,
+                _limit_number(um.get(key)) if key in um else scalar_u))
+        if not results:
+            results.append(_compare_limit(kind, scalar_c, scalar_u))
+        for verdict in ("looser", "stricter"):
+            if verdict in results:
+                return verdict
+        return "equal"
+    c, u = _limit_number(cand), _limit_number(cur)
+    if kind == "max":
+        c = math.inf if c is None else c
+        u = math.inf if u is None else u
+        return "equal" if c == u else ("stricter" if c < u else "looser")
+    c = 0.0 if c is None else c
+    u = 0.0 if u is None else u
+    return "equal" if c == u else ("stricter" if c > u else "looser")
+
+
+def compare_risk_policies(
+    candidate: Mapping[str, Any] | None, current: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Risk direction of a candidate pool policy against the pool's effective policy.
+
+    Every limit equal or stricter -> 'reduce' (some stricter) or 'neutral' (all equal);
+    any looser limit, or no effective policy -> 'increase'. Returns the direction and the
+    per-limit comparison for the proposal subject.
+    """
+    cand = candidate if isinstance(candidate, Mapping) else {}
+    if not isinstance(current, Mapping) or not current:
+        return {"risk_direction": "increase", "risk_comparison": {"_effective_policy": "absent"}}
+    cur = current
+    comparison: dict[str, str] = {}
+    for name in (*_MAX_LIMITS, *_MIN_LIMITS):
+        if name not in cand and name not in cur:
+            continue
+        comparison[name] = _compare_limit("min" if name in _MIN_LIMITS else "max", cand.get(name), cur.get(name))
+    values = set(comparison.values())
+    direction = "increase" if "looser" in values else ("reduce" if "stricter" in values else "neutral")
+    return {"risk_direction": direction, "risk_comparison": comparison}
+
+
+def require_valid_any(approval: Any, *, expected: Mapping[str, Any], **kwargs: Any) -> Any:
+    """``approval.require_valid`` where an expected value may be a set of accepted values.
+
+    The computed risk direction is any of increase, reduce or neutral; evidence satisfying any one member
+    passes, every other expected field is matched exactly. The first failure is raised when none passes.
+    """
+    candidates: list[dict[str, Any]] = [dict(expected)]
+    for key, value in expected.items():
+        if isinstance(value, (set, frozenset)):
+            candidates = [{**c, key: member} for c in candidates for member in sorted(value)]
+    failure: Exception | None = None
+    for candidate in candidates:
+        try:
+            return approval.require_valid(expected=candidate, **kwargs)
+        except Exception as exc:
+            failure = failure or exc
+    raise failure  # type: ignore[misc]
+
+
 def risk_policy_digest(policy: RiskPolicy | Mapping[str, Any] | None) -> str:
     """Compute the canonical SHA-256 digest of a RiskPolicy binding all executable limits and provenance."""
     if policy is None:
@@ -1718,7 +1803,8 @@ class CapitalOwnerApprovalReader:
     ) -> Any:
         pool_id = _optional_text(expected.get("target_id") or expected.get("subject.pool_id"))
         tenant_id = _optional_text(expected.get("tenant_id"))
-        return self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id).require_valid(
+        return require_valid_any(
+            self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id),
             expected=expected,
             now=now,
             usage_context=usage_context,
@@ -2199,7 +2285,7 @@ def _verify_policy_owner_approval_decisions(
                 "target_id": policy_model.risk_policy_id,
                 "target_version": ev_target_ver,
                 "subject.pool_id": subj_pool,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": policy_model.risk_policy_id,
                 "subject.risk_policy_version": str(policy_model.version),
             }
@@ -2209,7 +2295,7 @@ def _verify_policy_owner_approval_decisions(
                 "target_type": "capital_pool_activation",
                 "target_id": resolved_pool_id,
                 "subject.pool_id": resolved_pool_id,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": policy_model.risk_policy_id,
                 "subject.risk_policy_version": str(policy_model.version),
             }
@@ -2227,7 +2313,8 @@ def _verify_policy_owner_approval_decisions(
                 expected_decision_id in explicit_candidate_ids
                 and callable(getattr(loaded_ev, "require_valid", None))
             ):
-                res_ev = loaded_ev.require_valid(
+                res_ev = require_valid_any(
+                    loaded_ev,
                     expected={
                         **expected_binding,
                         "subject.risk_policy_digest": computed_digest,
@@ -2253,7 +2340,8 @@ def _verify_policy_owner_approval_decisions(
             return None
 
         try:
-            evidence.require_valid(
+            require_valid_any(
+                evidence,
                 expected=expected_binding,
                 now=now_dt,
                 usage_context=usage_ctx,

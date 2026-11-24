@@ -501,3 +501,17 @@ the dedicated dev paper automated gate (`pantheon-dev-paper-provisioner`) may re
   `authorization_scope`, so a consumer must present the paper usage context.
 * **Limit.** The paper ladder only. `live_owner`, canary, live, `frozen`, `retired` and every other transition stay
   with the operator; registry, capital, canary and live behaviour of the existing grant is unchanged.
+
+### Paper pool risk-policy widening (PAPER-RISK-POLICY-GATE-PER-PLAN-20261124)
+
+Operator decision P-4 (「paper 自動核准」) applied to pool risk policy. The grant content may add
+`;risk_policy=paper_pool;risk_proposer=<subject>` (a half pair, another value or the gate's own subject widens
+nothing and disables the principal). When present the gate may review and decide a `capital_pool_activation`
+proposal owned by the named proposer: dev only, tenant, low risk, pool identity consistent, expiry within 24h,
+stamped with the dev paper `authorization_scope` (paper, capital scale 0). Approval additionally requires the
+proposal subject to carry a risk-officer draft (policy and provenance) whose gross, net, leverage, single-name and
+cash-reserve limits are finite, positive and inside the operator outer bounds (`PANTHEON_PAPER_RISK_PROFILE_BOUNDS`,
+default `low`: single name <= 0.20, cash reserve >= 0.10); otherwise `422` names the failing field and only a
+rejection can be recorded. The gate alone is a complete decider for a paper pool activation whatever its
+`risk_direction`; any other decider set keeps the two-distinct-decider rule, so canary and live are unchanged.
+The absent clause means no widening.
