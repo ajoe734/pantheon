@@ -114,7 +114,7 @@ import io
 import urllib.error
 import urllib.request
 
-import integrations.openclaw.persona_agent_client as agent_client
+import services.persona.risk_policy_draft as agent_client
 from services.persona.risk_policy_draft import make_drafter
 
 

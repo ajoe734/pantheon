@@ -4,7 +4,7 @@
   "register_row": "RC2: Paper pools that requested low carry a hardcoded policy",
   "observed_hosted": {"build": "adaa418de", "dry_run_error": "risk_officer_turn_failed:/v1/responses HTTP 400 (risk_officer_draft_unavailable)", "probes_failing": ["paper-risk-policy-binding", "paper-risk-journey"], "probe_reason": "draft_provenance_missing"},
   "fix": {
-    "ensure_helper": "integrations/openclaw/persona_agent_client.py ensure_risk_officer_agent (existing adapter persona/ensure route, existing persona tool profile: read + brokered memory/proposal tools, no order/broker/capital/lifecycle tool)",
+    "ensure_helper": "services/persona/risk_policy_draft.py ensure_risk_officer_agent via existing integrations/openclaw/persona_agent_client.py TradingPersonaAgentClient (existing adapter persona/ensure route, existing persona tool profile: read + brokered memory/proposal tools, no order/broker/capital/lifecycle tool)",
     "wrapper": "services/persona/risk_policy_draft.py ensuring_turn_runner, used by make_drafter and by the lesson cycle built in persona_cycle_controller",
     "wiring": "docker-compose.yml operator-bff: PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL / _SERVICE_TOKEN / _SERVICE_AUTH_REQUIRED (persona service already had them)",
     "fail_closed": "ensure failure -> error turn risk_officer_agent_ensure_failed:<type> -> pending with readable reason, no fallback policy, no turn attempted; outer bounds and Governance proposal path unchanged; no vote cast"

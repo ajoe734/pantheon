@@ -170,6 +170,41 @@ def default_turn_runner(persona_id: str, prompt: str, **kwargs: Any) -> Any:
     return run_persona_ooda_turn(persona_id, prompt, **kwargs)
 
 
+# The risk officer is a panel persona with no Persona owner record; its own agent is ensured from this fixed record
+# through the existing adapter persona/ensure route and tool profile (read + brokered memory/proposal tools;
+# no order, broker, capital or lifecycle tool). The record is constant, so the ensure digest is constant.
+RISK_OFFICER_PERSONA_RECORD: dict[str, Any] = {
+    "persona_id": "persona-risk-officer",
+    "name": "Risk Officer",
+    "mandate": (
+        "Independent risk officer: draft and review paper-trading risk limits and review lessons, "
+        "proposal-only; never trade, never vote."
+    ),
+    "strategy_family": "risk_oversight",
+}
+_ensured_risk_officer: dict[str, str] = {}
+
+
+def ensure_risk_officer_agent(client: Any = None) -> dict[str, Any]:
+    """Idempotently ensure the risk officer's own agent; one adapter call per process and record digest.
+
+    Raises on failure so the caller fails closed.
+    """
+    digest = hashlib.sha256(json.dumps(RISK_OFFICER_PERSONA_RECORD, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    persona_id = RISK_OFFICER_PERSONA_RECORD["persona_id"]
+    if _ensured_risk_officer.get(persona_id) == digest:
+        return {"agent_id": persona_id, "status": "already_ensured", "digest": digest}
+    if client is None:
+        from integrations.openclaw.persona_agent_client import TradingPersonaAgentClient
+
+        client = TradingPersonaAgentClient()
+    if not client.configured:
+        raise RuntimeError("openclaw_adapter_unconfigured")
+    agent = client.ensure_trading_persona_agent(dict(RISK_OFFICER_PERSONA_RECORD))
+    _ensured_risk_officer[persona_id] = digest
+    return {**agent, "digest": digest}
+
+
 def ensuring_turn_runner(
     turn_runner: Callable[..., Any],
     ensure: Callable[[], Any] | None = None,
@@ -185,8 +220,6 @@ def ensuring_turn_runner(
                 if ensure is not None:
                     ensure()
                 else:
-                    from integrations.openclaw.persona_agent_client import ensure_risk_officer_agent
-
                     ensure_risk_officer_agent()
             except Exception as exc:  # noqa: BLE001
                 from integrations.openclaw.persona_ooda_runtime import PersonaOodaTurn
