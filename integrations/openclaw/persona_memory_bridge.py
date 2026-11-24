@@ -177,10 +177,21 @@ def materialize_persona_memory_from_api(
                 except Exception as exc:  # noqa: BLE001
                     missing.append({"scope": name, "reason": type(exc).__name__ + ":" + str(exc)[:120]})
         if not payloads:
-            raise RuntimeError("memory_unavailable:" + ",".join(m["scope"] for m in missing))
+            raise RuntimeError(
+                "memory_unavailable:" + ",".join(m["scope"] for m in missing)
+                + " (" + "; ".join(m["reason"] for m in missing) + ")")
     hits: List[Any] = []
+    seen: set = set()
     for part in payloads:
-        hits.extend(part.get("hits") or [])
+        for hit in part.get("hits") or []:
+            entry = hit.get("entry") if isinstance(hit, dict) else None
+            entry = entry if isinstance(entry, dict) else {}
+            key = entry.get("memory_id") or entry.get("entry_id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            hits.append(hit)
     hits.sort(key=lambda h: float((h or {}).get("relevance_score") or 0), reverse=True)
     payload = {**payloads[0], "hits": hits[: int(limit)], "scope": scope}
     result = materialize_openclaw_memory_context(
