@@ -4547,11 +4547,20 @@ def resolve_bound_pool_risk_policy(
 # Risk-officer drafted paper-pool policy: Capital-owned validation + outer bounds
 # ---------------------------------------------------------------------------
 PROFILE_OUTER_BOUNDS_ENV = "PANTHEON_PAPER_RISK_PROFILE_BOUNDS"
-# Operator configuration (2026-11-23): profile ``low`` single name <= 20% of NAV, cash reserve >= 10% of NAV.
-# Override with PANTHEON_PAPER_RISK_PROFILE_BOUNDS='{"low": {"max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}}'.
+# Override with PANTHEON_PAPER_RISK_PROFILE_BOUNDS='{"low": {"gross_limit": 2.0, "max_leverage": 2.0,
+# "max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}}'.  Mirrored in services/governance/paper_approval_scope.py.
 DEFAULT_PROFILE_OUTER_BOUNDS: Mapping[str, Mapping[str, float]] = {
-    "low": {"max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10},
+    "low": {
+        # Operator decision 2026-11-07 (DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER Q3): gross and leverage <= 2.0x pool equity.
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        # Operator decision 2026-11-23: single name <= 20% of NAV, cash reserve >= 10% of NAV.
+        "max_single_name_weight": 0.20,
+        "min_cash_reserve_pct": 0.10,
+    },
 }
+PROFILE_OUTER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
+_PROFILE_UPPER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight")
 DRAFT_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
 
 
@@ -4564,7 +4573,7 @@ def profile_outer_bounds(env: Mapping[str, str] | None = None) -> dict[str, dict
         raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV} must be a JSON object")
     bounds: dict[str, dict[str, float]] = {}
     for profile, limits in loaded.items():
-        if not isinstance(limits, Mapping) or set(limits) - {"max_single_name_weight", "min_cash_reserve_pct"}:
+        if not isinstance(limits, Mapping) or set(limits) - set(PROFILE_OUTER_BOUND_KEYS):
             raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}] has unsupported bounds")
         bounds[str(profile).strip().lower()] = {k: float(v) for k, v in limits.items()}
     return bounds
@@ -4597,10 +4606,11 @@ def validate_drafted_pool_risk_policy(
         return None, f"risk_policy_draft_cash_reserve_not_below_1:min_cash_reserve_pct={model.min_cash_reserve_pct!r}"
     limits = (profile_outer_bounds() if bounds is None else bounds).get(str(profile or "").strip().lower())
     if limits:
-        cap = limits.get("max_single_name_weight")
-        if cap is not None and float(model.max_single_name_weight) > cap + 1e-12:
-            return None, (f"risk_policy_draft_outside_bounds:max_single_name_weight="
-                          f"{model.max_single_name_weight!r} exceeds {profile} bound {cap!r}")
+        for name in _PROFILE_UPPER_BOUND_KEYS:
+            cap = limits.get(name)
+            if cap is not None and float(getattr(model, name)) > cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:{name}="
+                              f"{getattr(model, name)!r} exceeds {profile} bound {cap!r}")
         reserve = limits.get("min_cash_reserve_pct")
         if reserve is not None and float(model.min_cash_reserve_pct) + 1e-12 < reserve:
             return None, (f"risk_policy_draft_outside_bounds:min_cash_reserve_pct="

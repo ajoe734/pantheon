@@ -511,7 +511,7 @@ proposal owned by the named proposer: dev only, tenant, low risk, pool identity 
 stamped with the dev paper `authorization_scope` (paper, capital scale 0). Approval additionally requires the
 proposal subject to carry a risk-officer draft (policy and provenance) whose gross, net, leverage, single-name and
 cash-reserve limits are finite, positive and inside the operator outer bounds (`PANTHEON_PAPER_RISK_PROFILE_BOUNDS`,
-default `low`: single name <= 0.20, cash reserve >= 0.10); otherwise `422` names the failing field and only a
+default `low`: gross_limit <= 2.0 and max_leverage <= 2.0 (operator decision 2026-11-07), single name <= 0.20 and cash reserve >= 0.10 (operator decision 2026-11-23); a `gross_limit` or `max_leverage` above its bound is refused naming field, value and bound; the Capital default and this mirror are identical); otherwise `422` names the failing field and only a
 rejection can be recorded. The gate alone is a complete decider for a paper pool activation whatever its
 `risk_direction`; any other decider set keeps the two-distinct-decider rule, so canary and live are unchanged.
 The absent clause means no widening.

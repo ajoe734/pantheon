@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from services.capital.risk_policy import risk_policy_digest
+from services.capital.risk_policy import profile_outer_bounds, risk_policy_digest
 from services.governance.write_authority import is_authorized_to_decide
 from services.governance.paper_approval_scope import (
     ApprovalUsageContext, DEV_PAPER_PROVISIONER_SUBJECT, enforce_authorization_scope, require_dedicated_subject_scope,
@@ -181,6 +181,20 @@ def _bounded_limits(policy):
     if not (_positive_below_one(pct) or (not isinstance(absolute, bool) and isinstance(absolute, (int, float))
                                           and math.isfinite(absolute) and absolute > 0)):
         errors.append("draft_cash_reserve_missing_or_not_positive")
+    return errors + _outer_bound_errors(policy)
+
+
+def _outer_bound_errors(policy, profile="low"):
+    """A draft limit outside the operator outer bound (gross, leverage, single name, cash reserve) fails."""
+    errors = []
+    limits = profile_outer_bounds().get(profile) or {}
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight"):
+        cap, value = limits.get(name), policy.get(name)
+        if cap is not None and isinstance(value, (int, float)) and not isinstance(value, bool) and value > cap + 1e-12:
+            errors.append("draft_outside_bound:" + name)
+    reserve, pct = limits.get("min_cash_reserve_pct"), policy.get("min_cash_reserve_pct")
+    if reserve is not None and isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct + 1e-12 < reserve:
+        errors.append("draft_outside_bound:min_cash_reserve_pct")
     return errors
 
 
@@ -306,7 +320,7 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
     now = now or datetime.now(timezone.utc)
     expected = tuple(expected)
     report = {"checked": 0, "expected": len(expected), "personas": {}, "failed": [],
-              "observed_at": now.isoformat()}
+              "observed_at": now.isoformat(), "outer_bounds": profile_outer_bounds()}
     if not expected or len(expected) > 10 or len(set(expected)) != len(expected):
         report.update(passed=False, failed=["expected_personas_empty_duplicate_or_over_budget"])
         return report
