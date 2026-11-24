@@ -3012,6 +3012,23 @@ def discover_approved_profile_risk_policy(
             except Exception:
                 pass
 
+        if is_def_id:
+            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
+            # embedded in the decision subject, bound to the approved digest.
+            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
+            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+            if (
+                draft_policy is not None
+                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
+                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
+                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
+            ):
+                raw_draft = dict(draft_policy)
+                decision_policy_candidates.append(
+                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
+                )
+                continue
+
         if isinstance(base_meta.get("risk_policy"), Mapping):
             base_pol_dict = dict(base_meta["risk_policy"])
             if str(base_pol_dict.get("risk_policy_id") or "") == subj_pol_id:
@@ -3045,22 +3062,6 @@ def discover_approved_profile_risk_policy(
                     continue
                 except Exception:
                     pass
-
-        if is_def_id:
-            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
-            # embedded in the decision subject, bound to the approved digest.
-            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
-            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
-            if (
-                draft_policy is not None
-                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
-                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
-                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
-            ):
-                raw_draft = dict(draft_policy)
-                decision_policy_candidates.append(
-                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
-                )
 
     # Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
     # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.

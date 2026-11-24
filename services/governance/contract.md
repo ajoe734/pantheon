@@ -515,3 +515,12 @@ default `low`: gross_limit <= 2.0 and max_leverage <= 2.0 (operator decision 202
 rejection can be recorded. The gate alone is a complete decider for a paper pool activation whatever its
 `risk_direction`; any other decider set keeps the two-distinct-decider rule, so canary and live are unchanged.
 The absent clause means no widening.
+
+**Subject value type (PAPER-RISK-PROPOSAL-GOVERNANCE-CONTRACT-20261124).** `ProposeApprovalRequest.subject` is
+`Dict[str, Any]`, widened from `Dict[str, str]` because the risk-policy proposal carries nested objects
+(`risk_comparison`, `risk_officer_draft`); with string-only values every such proposal failed `422` on hosted dev.
+Required subject fields (`approval_targets.SUBJECT_FIELDS`) must still be non-empty strings, so action-bound targets
+are not loosened; stored string-only subjects (v1.0 proposals) read back unchanged. The paper gate is confined to
+`risk_level=low` decisions: the three stored v1.0 proposals (`risk_level=medium`, no draft) answer `403` to the
+gate's review and stay `proposed`. Closing them is an operator action in the Governance inbox
+(`/management/approvals`) by a human with a decider role; no AI or service principal casts that vote.

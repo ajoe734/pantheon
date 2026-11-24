@@ -2414,10 +2414,12 @@ class PersonaProvisioningCoordinator:
             if cand_pol_digest:
                 proposal_body["candidate_digest"] = cand_pol_digest
             created_prop = None
+            proposal_failure: Exception | None = None
             try:
                 created_prop = proposer.post("governance", "/api/governance/approvals", proposal_body)
-            except Exception:
+            except Exception as exc:
                 created_prop = None
+                proposal_failure = exc
             if self.transport is not None:
                 try:
                     readback_prop = self._owner_get(
@@ -2441,6 +2443,17 @@ class PersonaProvisioningCoordinator:
                         tenant_id=tenant_id, pool_id=pool_id, keep_id=prop_id,
                         requested_profile=requested_profile, matches_request=matches_request,
                         decision_req=decision_req)
+                return decision_req
+            if proposal_failure is not None:
+                # A failed proposal is never reported as success: name the owner status and reason.
+                from .persona_paper_enrollment import _error_detail, _error_status
+
+                code = _error_status(proposal_failure)
+                kind = "proposal_rejected" if code is not None and code < 500 else "proposal_unavailable"
+                decision_req["governance_proposal_status"] = f"{kind}:{code}" if code is not None else kind
+                decision_req["governance_proposal_error"] = {
+                    "owner": "governance", "http_status": code,
+                    "reason": _error_detail(proposal_failure) or proposal_failure.__class__.__name__}
                 return decision_req
 
         decision_req["governance_proposal_status"] = "routed_to_open_owner_disposition"
