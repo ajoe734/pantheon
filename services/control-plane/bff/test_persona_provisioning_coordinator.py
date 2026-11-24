@@ -5142,7 +5142,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert repair_revoked_data["owner_decision_request"]["absence_source"] == "policy_approval_revoked"
     (policy_dir / "rp-route-low-1.json").unlink()
 
-    # 8e. Transport approval reader signals overflow when > 16 target decisions exist and repair fails closed
+    # 8e. Transport approval reader signals overflow when > 16 current target decisions (history never counts) exist and repair fails closed
     for idx in range(17):
         over_dec = approval_snapshot(
             decision_id=f"apv-route-over-{idx:02d}",
@@ -5150,7 +5150,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
             target_type="capital_pool_activation",
             target_id=created_pool_id,
             target_version="1.0",
-            decision="rejected",
+            decision="approved",
             owner_user_id="proposer",
             risk_level="medium",
         )
