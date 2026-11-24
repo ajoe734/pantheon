@@ -1,0 +1,21 @@
+{
+  "task": "PAPER-RISK-ENVELOPE-OPERATOR-DECISIONS-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC2: Paper pools that requested low carry a hardcoded policy",
+  "bounds": {
+    "low": {
+      "gross_limit": 2.0,
+      "max_leverage": 2.0,
+      "max_single_name_weight": 0.2,
+      "min_cash_reserve_pct": 0.1
+    }
+  },
+  "decisions": {
+    "gross_limit,max_leverage": "operator 2026-11-07 DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER Q3",
+    "max_single_name_weight,min_cash_reserve_pct": "operator 2026-11-23"
+  },
+  "runtime_budget": "no new persistent writer, job or emitter",
+  "focused_tests": "services/persona/test_risk_policy_draft.py services/governance/test_paper_approval_scope.py services/capital/test_risk_policy.py acceptance/test_paper_risk_policy_binding.py services/control-plane/bff/test_persona_provisioning_coordinator.py: 518 passed; 3 failed only for missing psycopg in the scratch venv (card admission stamping tests, unrelated)",
+  "hosted_acceptance": "pending: dry-run risk-officer draft for the three trading personas inside all four bounds; probe paper-risk-policy-binding reports outer_bounds; must be served on hosted dev before 2026-11-25 10:00Z, otherwise say so in handoff",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family"
+}

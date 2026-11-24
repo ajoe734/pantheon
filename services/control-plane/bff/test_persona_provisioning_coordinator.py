@@ -5675,6 +5675,18 @@ def test_paper_gate_refuses_out_of_bounds_with_the_named_limit(monkeypatch):
     assert "max_single_name_weight" in req["paper_gate_reason"]
 
 
+def test_paper_gate_refuses_gross_over_the_bound_and_rationale_names_all_four(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal({**_GATE_LOW_POLICY, "gross_limit": 3.0}), {}, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "gross_limit" in decided[0]["rationale"]
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), {}, requested_profile="low")
+    assert decided[1]["outcome"] == "approved"
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct"):
+        assert name in decided[1]["rationale"]
+
+
 def test_paper_gate_refuses_a_v1_proposal_without_the_cap_and_reserve_and_names_the_draft(monkeypatch):
     coordinator, decided = _gate_coordinator(monkeypatch)
     req: dict[str, Any] = {}
