@@ -73,6 +73,20 @@ def _number(value: Any) -> "float | None":
     return out if math.isfinite(out) else None
 
 
+def _pnl_period(raw: Mapping[str, Any]) -> "str | None":
+    """Period basis the frontend CLI compares: pnl_period, else pnl_period_label, else pnl_period_start_at.
+
+    Never a composed start/end string; a missing fact stays None (unproven group).
+    """
+    value = raw.get("pnl_period")
+    if isinstance(value, Mapping):
+        value = value.get("start_at")
+    for candidate in (value, raw.get("pnl_period_label"), raw.get("pnl_period_start_at")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return None
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -112,7 +126,7 @@ class Caller:
         return text
 
     # -- reads -----------------------------------------------------------
-    def _get(self, bff: str, path: str) -> Any:
+    def _get(self, bff: str, path: str, bare: bool = False) -> Any:
         status, doc = self.http(bff + path, "GET", {"Authorization": f"Bearer {self.token}",
                                                     "Accept": "application/json"}, None, 30)
         if status != 200 or not isinstance(doc, dict):
@@ -122,6 +136,9 @@ class Caller:
         if meta.get("status") in bad or meta.get("read_state") == "unavailable" or any(
                 isinstance(s, dict) and s.get("status") in bad for s in (meta.get("surfaces") or {}).values()):
             raise Unproven("source_unavailable", f"independent read {path.split('?')[0]} is degraded")
+        if bare and "data" not in doc:
+            # The strategy-spec owner read sends the document at top level (no data envelope).
+            return {k: v for k, v in doc.items() if k != "meta"}
         return doc.get("data")
 
     def _login(self, bff: str) -> None:
@@ -173,7 +190,8 @@ class Caller:
             return "", "binding has no strategy_id to resolve the symbol"
         if sid not in cache:
             try:
-                cache[sid] = self._get(bff, f"/api/v1/knowledge/strategy-specs/{quote(sid, safe='')}")
+                cache[sid] = self._get(bff, f"/api/v1/knowledge/strategy-specs/{quote(sid, safe='')}",
+                                    bare=True)
             except Unproven:
                 cache[sid] = None
         doc = cache[sid]
@@ -242,13 +260,13 @@ class Caller:
             symbol, missing = self._strategy_symbol(bff, b, meta, spec_cache)
             fills = raw.get("ledger_fill_count", raw.get("total_trades"))
             details = raw.get("fill_rate_details") if isinstance(raw.get("fill_rate_details"), dict) else {}
-            start, end = raw.get("pnl_period_start_at"), raw.get("pnl_at")
+            period = _pnl_period(raw)
             row = {
                 "persona_id": pid, "persona_name": str(person.get("name") or ""), "runtime_id": runtime,
                 "binding_id": bid, "underlying_symbol": str(symbol or ""), "stage": stage,
                 "ledger_fill_count": _number(fills), "pnl": _number(raw.get("pnl")),
                 "pnl_currency": raw.get("pnl_currency") if isinstance(raw.get("pnl_currency"), str) else None,
-                "pnl_period": f"{start}/{end}" if start and end else None,
+                "pnl_period": period,
                 "filled_quantity": _number(details.get("numerator")),
                 "requested_quantity": _number(details.get("denominator")),
             }
