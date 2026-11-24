@@ -4011,6 +4011,46 @@ jobs:
           echo "- original paired read-only QA (supplementary, non-gating): exit ${qa_status}; raw outcome in original-paired-readonly-qa.json" >> "${GITHUB_STEP_SUMMARY}"
           exit "${qa_status}"
 
+      - name: Trading Pulse page read-only browser QA (supplementary, non-gating)
+        id: trading_pulse_readonly_qa
+        # Same supplementary position as the paired QA above: viewer profile
+        # only, exact served FE/BFF pair, sources witness built in the caller
+        # from independent registry/ledger reads.  Its outcome never feeds the
+        # deploy, switch or rollback decision.  Evidence is one sanitized
+        # summary plus at most two masked screenshots (<= 5 MiB per release).
+        if: ${{ always() && steps.original_qa_prepare.outcome == 'success' && steps.original_paired_readonly_qa.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          QA_TENANT_ID: ${{ vars.DEV_ORIGINAL_QA_TENANT_ID }}
+          PULSE_HISTORY_JOURNEY_ID: ${{ vars.DEV_TRADING_PULSE_HISTORY_JOURNEY_ID }}
+          PULSE_HISTORY_EVENT_ID: ${{ vars.DEV_TRADING_PULSE_HISTORY_EVENT_ID }}
+          PULSE_HISTORY_ENVIRONMENT: ${{ vars.DEV_TRADING_PULSE_HISTORY_ENVIRONMENT || 'paper' }}
+          QA_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          QA_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # The caller maps the CLI exit 0/1/2 to pass/failed/unproven and its
+          # own exit code without rewriting; this step is continue-on-error.
+          evidence="${RELEASE_EVIDENCE_DIR}/trading-pulse-readonly-qa.json"
+          out_dir="${RUNNER_TEMP}/trading-pulse-qa-private-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${out_dir}"
+          python3 "${GITHUB_WORKSPACE}/.target/scripts/run_dev_trading_pulse_readonly_qa.py" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --fe-sha "${QA_FRONTEND_SHA}" --bff-sha "${QA_BACKEND_SHA}" \
+            --root-run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --tenant-id "${QA_TENANT_ID}" \
+            --history-journey-id "${PULSE_HISTORY_JOURNEY_ID}" --history-event-id "${PULSE_HISTORY_EVENT_ID}" \
+            --history-environment "${PULSE_HISTORY_ENVIRONMENT}" \
+            --frontend-checkout "${GITHUB_WORKSPACE}/.original-qa-frontend" \
+            --out-dir "${out_dir}" --evidence-dir "${RELEASE_EVIDENCE_DIR}/trading-pulse" --evidence-out "${evidence}"
+          qa_status=$?
+          echo "- Trading Pulse read-only browser QA (supplementary, non-gating): exit ${qa_status}; raw outcome in trading-pulse-readonly-qa.json" >> "${GITHUB_STEP_SUMMARY}"
+          exit "${qa_status}"
+
       - name: Upload accepted or compensated release evidence
         id: release_evidence_upload
         if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' }}
