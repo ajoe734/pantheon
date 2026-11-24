@@ -208,8 +208,7 @@ def test_dev_login_sets_access_and_refresh_cookies(tmp_path):
     cookies = response.headers.get_list("set-cookie")
     refresh = next(c for c in cookies if c.startswith("pantheon_refresh_token="))
     assert "HttpOnly" in refresh and "Secure" in refresh and "SameSite=lax" in refresh and "Path=/bff/auth" in refresh
-    max_age = int(next(part.split("=", 1)[1] for part in refresh.split("; ") if part.startswith("Max-Age=")))
-    assert 2592000 - 30 <= max_age <= 2592000
+    assert "Max-Age=2592000" in refresh or "Max-Age=2591999" in refresh
     assert any(c.startswith("pantheon_session=") for c in cookies)
     body = response.json()
     assert "access_token" not in body and "refresh_token" not in body
