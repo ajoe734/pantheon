@@ -275,6 +275,19 @@
       "failure": "Exact dev push Branch CI latest=pending:null",
       "switch_executed": false,
       "acceptance_stage": "skipped"
+    },
+    {
+      "observed_at": "2026-11-24T09:15Z",
+      "served_manifest": {
+        "fe": "364cdd47a2b6422d8d26ad40d3c9e4d03b00046c",
+        "bff": "524bcb241c120353696f23157834f571e366ebe1",
+        "release_run": "45335902815",
+        "state": "accepted",
+        "note": "Root 45335902815 overall verdict failed (risk, meeting probes); only trading-pulse-operator passed; browser trading-pulse mode not in that run."
+      },
+      "in_progress_run": "45355577020 dispatched from 7d92756 which lacks TRADING-PULSE-BROWSER-ACCEPTANCE-IN-RELEASE (5560c63f9); not eligible for this acceptance.",
+      "pending": "dev push Branch CI 45360373301 (21503a1c0) and 45361868748 (64e44aa37, includes #7786) not complete; no release containing the in-release browser step has run.",
+      "hosted_accepted": false
     }
   ]
 }
