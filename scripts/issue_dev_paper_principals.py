@@ -37,6 +37,8 @@ CARD_PROPOSER_SUBJECT = "pantheon-dev-research-card-proposer"
 GOVERNANCE_GRANT_CONTENT = (
     "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
     + ";persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+    # Pool risk-policy proposals come from the same enrolment proposer (PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID).
+    + ";risk_policy=paper_pool;risk_proposer=" + ENROLLMENT_PROPOSER_SUBJECT
 )
 GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-reader"
 GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"

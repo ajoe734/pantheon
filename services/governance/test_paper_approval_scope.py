@@ -1196,3 +1196,84 @@ def test_empty_pool_envelope_must_continue_the_approved_previous_envelope():
     previous["artifact_state"] = "candidate"
     with pytest.raises(PaperCandidateInvalid, match="approved execution_bundle"):
         _verify(flat_entry, {previous["registry_id"]: {"entry": previous}})
+
+
+# ---------------------------------------------------------------------------
+# Paper pool risk-policy widening (operator decision P-4)
+# ---------------------------------------------------------------------------
+
+RISK_CLAUSE = ";risk_policy=paper_pool;risk_proposer=" + PROPOSER
+_LOW_POLICY = {"risk_policy_id": "rp-pool", "version": "2.0", "gross_limit": 1.0, "net_limit": 1.0,
+               "max_leverage": 1.0, "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10}
+
+
+def _risk_decision(policy=None, **overrides):
+    policy = _LOW_POLICY if policy is None else policy
+    values = dict(
+        target_type="capital_pool_activation", target_id=POOL, capital_pool_id=POOL, tenant_id=TENANT,
+        owner_user_id=PROPOSER, risk_level="low", created_at="2026-09-08T12:00:00Z",
+        expires_at=(NOW + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        metadata={"subject": {"pool_id": POOL, "risk_direction": "increase", "requested_risk": "low",
+                              "risk_officer_draft": {"policy": policy, "provenance": {"source": "risk_officer_draft"}}}})
+    values.update(overrides)
+    return values
+
+
+def test_risk_policy_clause_is_explicit_and_half_pairs_widen_nothing(tmp_path):
+    grant = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled" + RISK_CLAUSE))
+    assert grant.risk_policy.proposer_subject == PROPOSER
+    assert grant.risk_policy.grant_id.startswith("dev-paper-grant:risk-policy-paper-pool:")
+    assert grant.persona_lifecycle is None and grant.card_admission is None
+    assert resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled")).risk_policy is None
+    for bad in ("enabled;risk_policy=paper_pool", "enabled;risk_proposer=" + PROPOSER,
+                "enabled;risk_policy=live;risk_proposer=" + PROPOSER):
+        with pytest.raises(PaperApprovalDenied):  # malformed content widens nothing and enables nothing
+            resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, bad))
+
+
+def test_risk_policy_in_bounds_draft_verifies_and_identity_is_admitted(tmp_path):
+    grant = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled" + RISK_CLAUSE))
+    decision = _risk_decision()
+    assert scope_module.risk_policy_candidate_failure(decision) is None
+    evidence = scope_module.require_paper_risk_policy_decision(decision, grant=grant, now=NOW, env=ENABLED_ENV)
+    assert evidence["grant_id"] == grant.risk_policy.grant_id and evidence["pool_id"] == POOL
+
+
+@pytest.mark.parametrize("patch,named", [
+    ({"max_single_name_weight": 0.5}, "max_single_name_weight"),
+    ({"min_cash_reserve_pct": 0.05}, "min_cash_reserve_pct"),
+    ({"max_leverage": None}, "max_leverage"),
+])
+def test_risk_policy_out_of_bounds_or_incomplete_names_the_failing_field(patch, named):
+    policy = {**_LOW_POLICY, **patch}
+    policy = {k: v for k, v in policy.items() if v is not None}
+    assert scope_module.risk_policy_candidate_failure(_risk_decision(policy)).startswith(named)
+
+
+def test_risk_policy_without_draft_provenance_or_policy_is_refused():
+    no_policy = _risk_decision()
+    no_policy["metadata"]["subject"].pop("risk_officer_draft")
+    assert "risk_officer_draft.policy" in scope_module.risk_policy_candidate_failure(no_policy)
+    no_prov = _risk_decision()
+    no_prov["metadata"]["subject"]["risk_officer_draft"].pop("provenance")
+    assert "provenance" in scope_module.risk_policy_candidate_failure(no_prov)
+
+
+@pytest.mark.parametrize("change", [
+    {"owner_user_id": "someone-else"}, {"owner_user_id": DEV_PAPER_PROVISIONER_SUBJECT},
+    {"tenant_id": "tenant-other"}, {"risk_level": "medium"}, {"target_id": "other-pool"},
+    {"expires_at": "2026-09-10T00:00:00Z"},
+])
+def test_risk_policy_identity_denials(tmp_path, change):
+    grant = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled" + RISK_CLAUSE))
+    with pytest.raises(PaperApprovalDenied):
+        scope_module.require_paper_risk_policy_decision(_risk_decision(**change), grant=grant, now=NOW, env=ENABLED_ENV)
+
+
+def test_risk_policy_widening_is_dev_only_and_absent_clause_denies(tmp_path):
+    grant = resolve_dev_paper_grant(_ctx(), env=_grant_env(tmp_path, "enabled" + RISK_CLAUSE))
+    with pytest.raises(PaperApprovalDenied):
+        scope_module.require_paper_risk_policy_decision(_risk_decision(), grant=grant, now=NOW,
+                                                        env={**ENABLED_ENV, "PANTHEON_ENV": "prod"})
+    with pytest.raises(PaperApprovalDenied):
+        scope_module.require_paper_risk_policy_decision(_risk_decision(), grant=GRANT, now=NOW, env=ENABLED_ENV)
