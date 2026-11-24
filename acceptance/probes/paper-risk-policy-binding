@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.capital.risk_policy import risk_policy_digest
 from services.governance.write_authority import is_authorized_to_decide
 from services.governance.paper_approval_scope import (
-    ApprovalUsageContext, enforce_authorization_scope, require_dedicated_subject_scope,
+    ApprovalUsageContext, DEV_PAPER_PROVISIONER_SUBJECT, enforce_authorization_scope, require_dedicated_subject_scope,
 )
 
 DEFAULT_PERSONAS = (
@@ -220,6 +220,24 @@ def risk_officer_draft_errors(policy, approvals, persona, pool):
     return ([], pending) if pending else (errors, None)
 
 
+def computed_direction_errors(approval, subject):
+    """Risk direction is computed from the per-limit comparison, never a constant; paper gate decisions
+    must be decided by the dedicated automated gate subject (operator decision P-4)."""
+    gate = approval.get("actor_role") == "automated_gate"
+    if gate and approval.get("actor_id") != DEV_PAPER_PROVISIONER_SUBJECT:
+        return True
+    if subject.get("risk_direction") not in {"increase", "reduce", "neutral"}:
+        return True
+    comparison = subject.get("risk_comparison")
+    if (gate or subject.get("risk_direction") != "increase") and not (isinstance(comparison, dict) and comparison):
+        return True
+    if isinstance(comparison, dict):
+        looser = "looser" in comparison.values() or comparison.get("_effective_policy") == "absent"
+        if looser != (subject.get("risk_direction") == "increase"):
+            return True
+    return False
+
+
 def approved_mapping(approvals, persona, pool, policy, now):
     """Look for explicit owner proof in existing governance decision subjects.
 
@@ -256,7 +274,7 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
                 or (subject.get("requested_risk") or subject.get("requested_profile") or subject.get("risk_profile")) != persona.get("risk")
-                or subject.get("risk_direction") != "increase"
+                or computed_direction_errors(approval, subject)
                 or subject.get("risk_policy_id") != policy.get("risk_policy_id")
                 or subject.get("risk_policy_version") != policy.get("version")
                 or subject.get("risk_policy_digest") not in digests):

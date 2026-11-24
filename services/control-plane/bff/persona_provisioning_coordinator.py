@@ -53,6 +53,7 @@ FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 # The bound is anchored to persisted owner timestamps, never to wall-clock at
 # retry time, so a response-loss retry composes byte-identical bodies.
 APPROVAL_TTL = timedelta(hours=24)
+MAX_PENDING_SUPERSEDE = 16  # bound of the pending paper policy proposals scanned per pool
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _UNKNOWN_SOURCE_COMMIT = "0" * 40
 # Settlement currency of canonical markets whose paper venue settles in one
@@ -2509,7 +2510,8 @@ class PersonaProvisioningCoordinator:
         """Close the pool's other pending paper policy proposals (e.g. v1.0) through the same gate."""
         try:
             items = self._governance_approval_reader().list_for_target(
-                target_type="capital_pool_activation", target_id=pool_id, decision_state=None, max_items=16)
+                target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
+                max_items=MAX_PENDING_SUPERSEDE)
         except Exception:
             return
         closed: list[str] = []

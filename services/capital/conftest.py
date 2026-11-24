@@ -18,7 +18,9 @@ class _ApprovesWhatIsAsked:
 
         class Bound:
             def require_valid(self, *, expected, **kwargs):
-                subject = {k[8:]: v for k, v in expected.items() if k.startswith("subject.")}
+                # a set of accepted values (e.g. risk_direction) is satisfied by any member; the fake picks one
+                subject = {k[8:]: (max(v) if isinstance(v, (set, frozenset)) else v)
+                           for k, v in expected.items() if k.startswith("subject.")}
                 body = approval_snapshot(
                     decision_id=decision_id, tenant_id=expected["tenant_id"],
                     target_type=expected["target_type"], target_id=expected["target_id"],

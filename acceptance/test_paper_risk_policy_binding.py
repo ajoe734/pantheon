@@ -404,3 +404,32 @@ def test_pending_draft_must_be_bounded_pool_scoped_and_digest_bound():
                                  "risk_officer_draft": {"policy": bad}}}})
     row = check(payload)["personas"]["fixture-persona"]
     assert row["risk_officer_draft"] == "missing"
+
+
+def _gate_payload(direction, comparison, actor_id="pantheon-dev-paper-provisioner"):
+    payload = evidence()
+    approval = payload["/api/v1/approval-decisions"]["data"][0]
+    approval.update({"risk_level": "low", "actor_role": "automated_gate", "actor_id": actor_id,
+                     "owner_user_id": "pantheon-dev-persona-enrollment-proposer",
+                     "authorization_scope": {"environment": "dev", "allowed_target_stages": ["paper"],
+                                             "max_capital_scale_pct": 0}})
+    subject = approval["metadata"]["subject"]
+    subject["risk_direction"] = direction
+    if comparison is not None:
+        subject["risk_comparison"] = comparison
+    return payload
+
+
+def test_paper_gate_decision_with_computed_direction_is_accepted():
+    for direction, comparison in (("increase", {"_effective_policy": "absent"}),
+                                  ("reduce", {"gross_limit": "stricter", "net_limit": "equal"}),
+                                  ("neutral", {"gross_limit": "equal"})):
+        report = check(_gate_payload(direction, comparison))
+        assert report["passed"], (direction, report)
+
+
+def test_paper_gate_decision_needs_consistent_computed_direction_and_the_gate_subject():
+    assert not check(_gate_payload("reduce", {"gross_limit": "looser"}))["passed"]
+    assert not check(_gate_payload("increase", {"gross_limit": "equal"}))["passed"]
+    assert not check(_gate_payload("reduce", None))["passed"]
+    assert not check(_gate_payload("reduce", {"gross_limit": "stricter"}, actor_id="some-service"))["passed"]
