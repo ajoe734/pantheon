@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from services.consultation import models as cm
+from services.control_plane.bff.agora.committee.client import CommitteeOwnerClient
 from services.control_plane.bff.auth.policy import bff_error, extract_identity, require_read_role
 from services.control_plane.bff.bootstrap.dependencies import AppDependencies
 from services.control_plane.bff.command_queue import CommandStore
@@ -490,3 +491,272 @@ def test_consultation_outage_is_recorded_not_guessed(stack):
     control["response"][("consultation.test", "/api/consult/requests/panel-a/transcript")] = {"request_id": "x"}
     view = client.get(PANEL + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
     assert view["reason"] == "invalid_transcript_response" and view["case_file"] is None
+
+
+def record_meeting(
+    store,
+    *,
+    meeting_id: str = "mtg-a",
+    tenant_id: str = TENANT,
+    case: dict | None = None,
+    rounds: list[dict] | None = None,
+    rejected_positions: list[dict] | None = None,
+    convened_by: dict | None = None,
+    participants: list[dict] | None = None,
+):
+    eff_participants = participants or [
+        {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
+        {"persona_id": "persona-b", "role": "advisor", "origin": "institutional"},
+    ]
+    eff_rounds = rounds if rounds is not None else []
+    meeting_record = {
+        "meeting_id": meeting_id,
+        "tenant_id": tenant_id,
+        "meeting_type": "MT-1",
+        "meeting_code": "MT-1",
+        "topic": "Weekly strategy pool review",
+        "agenda": ["Weekly strategy pool review"],
+        "status": "closed",
+        "outcome": "proposals_issued",
+        "chair_persona_id": "persona-a",
+        "convened_by": convened_by or {"kind": "persona", "id": "persona-a"},
+        "participants": eff_participants,
+        "round": len(eff_rounds),
+        "rounds": eff_rounds,
+        "rejected_positions": list(rejected_positions or []),
+        "case_file_items": items(case) if isinstance(case, dict) and isinstance(case.get("groups"), dict) else [],
+        **({"case_file": case} if case is not None else {}),
+        "pre_read": [],
+        "synthesis": {
+            "summary": f"Synthesis for {meeting_id}",
+            "outcome": "proposals_issued",
+            "proposals": [],
+            "dissent_memo_id": f"mem-dissent-{meeting_id}",
+            "tally": {"mean_confidence": 0.82},
+        },
+        "writebacks": [{"persona_id": "persona-a", "entry_id": f"pmem-{meeting_id}"}],
+        "usage": {"participants": len(eff_participants), "rounds": len(eff_rounds), "calls": 3},
+        "created_at": "2026-11-24T10:00:00Z",
+        "closed_at": "2026-11-24T10:05:00Z",
+    }
+    store.put_meeting(meeting_record)
+    store.put_request(
+        cm.ConsultRequest(
+            request_id=meeting_id,
+            tenant_id=tenant_id,
+            request_type="persona_policy",
+            requested_by=cm.ActorRef(actor_type="persona", actor_id="persona-a"),
+            from_persona_id="persona-a",
+            target_type="MT-1",
+            target_id=meeting_id,
+            consultation_type="persona_meeting",
+            trace_id=f"trace-{meeting_id}",
+            evidence_refs=[],
+            status="published",
+        )
+    )
+    for memo_id, memo_type, author_ref, summary in (
+        (f"mem-summary-{meeting_id}", "committee_summary", "persona-a", f"Summary memo for {meeting_id}"),
+        (f"mem-dissent-{meeting_id}", "dissent", "persona-b", f"Dissent memo for {meeting_id}"),
+    ):
+        store.put_memo(
+            cm.ConsultMemo(
+                memo_id=memo_id,
+                request_id=meeting_id,
+                memo_type=memo_type,
+                author_type="persona",
+                author_ref=author_ref,
+                target_type="MT-1",
+                target_id=meeting_id,
+                summary=summary,
+                recommendation="approve_with_conditions",
+                trace_id=f"trace-{meeting_id}",
+                status="published",
+            )
+        )
+    return meeting_record
+
+
+def test_deliberative_meeting_and_memo_show_case_file_citations_and_rejections_without_transcript_read(seeded):
+    client, calls, _, _, _, store = seeded
+    case = compose("")  # shared committee memory only
+    cited = items(case)[0]["item_id"]
+    record_meeting(
+        store,
+        meeting_id="mtg-a",
+        case=case,
+        rounds=[
+            {
+                "round": 1,
+                "positions": [
+                    {
+                        "label": "chair_momentum",
+                        "persona_id": "persona-a",
+                        "role": "chair",
+                        "style": "momentum",
+                        "stance": "support",
+                        "summary": "Grounded in shared case file evidence",
+                        "confidence": 0.85,
+                        "citations": [cited, "lessons:ghost"],
+                        "changed": False,
+                    }
+                ],
+            }
+        ],
+        rejected_positions=[
+            {
+                "round": 1,
+                "persona_id": "persona-b",
+                "role": "advisor",
+                "reason": "claim_uncited",
+                "citations": [],
+            }
+        ],
+    )
+
+    calls.clear()
+    memos_resp = client.get(PANEL + "/mtg-a/memos", headers=headers())
+    assert memos_resp.status_code == 200, memos_resp.text
+    memo_calls = [(method, host, path) for method, host, path, *_ in calls]
+    # Runtime budget: <= 1 GET /api/consult/meetings/{id} + 1 GET /api/consult/memos,
+    # and 0 calls to /api/consult/requests/{id}/transcript or /api/consult/requests/{id}.
+    assert memo_calls == [
+        ("GET", "consultation.test", "/api/consult/meetings/mtg-a"),
+        ("GET", "consultation.test", "/api/consult/memos"),
+    ]
+
+    meeting_resp = client.get("/bff/agora/committee/meetings/mtg-a", headers=headers())
+    session_resp = client.get(PANEL + "/mtg-a", headers=headers())
+    assert meeting_resp.status_code == session_resp.status_code == 200
+    direct_view = CommitteeOwnerClient(TENANT, "alice", user_id="alice").case_file_view("mtg-a")
+
+    memo_rows = memos_resp.json()["data"]
+    assert len(memo_rows) == 2
+    for view in (
+        meeting_resp.json()["data"]["case_file_view"],
+        session_resp.json()["data"]["case_file_view"],
+        memo_rows[0]["case_file_view"],
+        memo_rows[1]["case_file_view"],
+        direct_view,
+    ):
+        assert view["status"] == "ok"
+        assert view["reason"] is None
+        assert view["case_file"]["case_file_id"] == case["case_file_id"]
+        got = {i["item_id"]: i for g in view["case_file"]["groups"].values() for i in g["items"]}
+        assert got[cited]["excerpt"] and got[cited]["retrieval_mode"] and got[cited]["source_id"]
+        assert len(view["contributions"]) == 1
+        contrib = view["contributions"][0]
+        assert contrib["persona_id"] == "persona-a"
+        assert contrib["event_id"] == "evt-mtg-a-r1-persona-a"
+        assert contrib["recommendation"] == "support"
+        assert contrib["role"] == "chair"
+        assert contrib["claims"] == [
+            {
+                "claim": "Grounded in shared case file evidence",
+                "cited_item_ids": [cited],
+                "unresolved_item_ids": ["lessons:ghost"],
+            }
+        ]
+        assert contrib["summary_cited_item_ids"] == [cited]
+        assert contrib["summary_unresolved_item_ids"] == ["lessons:ghost"]
+        assert view["rejected_contributions"] == [
+            {
+                "persona_id": "persona-b",
+                "contribution_id": "evt-mtg-a-r1-persona-b-rejected",
+                "reason": "claim_uncited",
+                "cited": False,
+            }
+        ]
+
+
+def test_deliberative_meeting_case_file_privacy_audience_and_missing_case_file_boundaries(seeded):
+    client, calls, _, _, _, store = seeded
+
+    # 1. Private items (persona_private and user_private) in a meeting case_file are withheld and counted.
+    case_with_private = copy.deepcopy(compose("persona-a"))
+    user_priv_item = {
+        "item_id": "lessons:user-private-1",
+        "kind": "memory_user_private",
+        "source_owner": "memory",
+        "source_id": "upmem-1",
+        "excerpt": "USER_PRIVATE_SERVANT_SECRET_NEVER_LEAK",
+        "retrieval_mode": "tag_match",
+        "retrieval_score": 0.9,
+        "memory_scope": "user_private",
+    }
+    case_with_private["groups"]["lessons"]["items"].append(user_priv_item)
+    private_ids = {
+        i["item_id"]
+        for i in items(case_with_private)
+        if i.get("relevance_scope") == "persona_private" or i.get("memory_scope") == "user_private"
+    }
+    assert len(private_ids) >= 2
+    record_meeting(store, meeting_id="mtg-priv", case=case_with_private)
+
+    for route in (
+        "/bff/agora/committee/meetings/mtg-priv",
+        PANEL + "/mtg-priv",
+        PANEL + "/mtg-priv/memos",
+    ):
+        resp = client.get(route, headers=headers())
+        assert resp.status_code == 200, resp.text
+        assert "USER_PRIVATE_SERVANT_SECRET_NEVER_LEAK" not in resp.text
+        assert "momentum consult private lesson" not in resp.text
+        payload = resp.json()["data"]
+        view = payload[0]["case_file_view"] if isinstance(payload, list) else payload["case_file_view"]
+        shown_ids = {i["item_id"] for g in view["case_file"]["groups"].values() for i in g["items"]}
+        assert not (shown_ids & private_ids)
+        assert view["case_file"]["private_items_withheld"] == len(private_ids)
+        if isinstance(payload, dict):
+            assert "case_file" not in payload
+            assert payload["private_items_withheld"] == len(private_ids)
+
+    # 2. Historical or refused deliberative meetings with empty {} or absent case_file return no_case_file_recorded.
+    record_meeting(store, meeting_id="mtg-0f7fa4993625ca47", case={})
+    record_meeting(store, meeting_id="mtg-absent-case", case=None)
+    for mid in ("mtg-0f7fa4993625ca47", "mtg-absent-case"):
+        for route in (
+            f"/bff/agora/committee/meetings/{mid}",
+            f"{PANEL}/{mid}",
+            f"{PANEL}/{mid}/memos",
+        ):
+            resp = client.get(route, headers=headers())
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()["data"]
+            view = payload[0]["case_file_view"] if isinstance(payload, list) else payload["case_file_view"]
+            assert view == {
+                "status": "unavailable",
+                "reason": "no_case_file_recorded",
+                "case_file": None,
+            }
+
+    # 3. Tenant mismatch and foreign agora_user_id private-servant meetings fail closed with 404 before memo reads.
+    record_meeting(store, meeting_id="mtg-foreign-tenant", tenant_id="tenant-b", case=compose(""))
+    record_meeting(
+        store,
+        meeting_id="mtg-bob-servant",
+        tenant_id=TENANT,
+        case=compose(""),
+        convened_by={"kind": "agora_user", "id": "bob"},
+        participants=[
+            {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
+            {
+                "persona_id": "agora-servant-bob",
+                "role": "servant",
+                "origin": "private_servant",
+                "agora_user_id": "bob",
+            },
+        ],
+    )
+    for forbidden_id in ("mtg-foreign-tenant", "mtg-bob-servant"):
+        calls.clear()
+        for route in (
+            f"/bff/agora/committee/meetings/{forbidden_id}",
+            f"{PANEL}/{forbidden_id}",
+            f"{PANEL}/{forbidden_id}/memos",
+        ):
+            resp = client.get(route, headers=headers())
+            assert resp.status_code == 404, (forbidden_id, route, resp.text)
+            assert "case_file" not in resp.text
+            assert f"Summary memo for {forbidden_id}" not in resp.text
+        assert not any(path.startswith("/api/consult/memos") for _, _, path, *_ in calls)

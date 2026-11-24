@@ -67,6 +67,9 @@ from services.governance.paper_approval_scope import (
     configured_paper_registry_reader,
     configured_persona_paper_binding_verifier,
     is_persona_lifecycle_decision,
+    is_risk_policy_decision,
+    require_paper_risk_policy_decision,
+    risk_policy_candidate_failure,
     require_paper_lifecycle_decision,
     require_card_admission_decision,
     require_paper_owned_decision,
@@ -1588,6 +1591,18 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
                 decision.authorization_scope = grant.authorization_scope
                 if operation == 'decide':
                     validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+            elif is_risk_policy_decision(current, grant) and grant.risk_policy is not None:
+                # Pool risk-policy widening (operator decision P-4): identity is rechecked on every
+                # review/decide; approval additionally needs the policy inside the outer bounds, so an
+                # out-of-bounds candidate can only be rejected, with the named failing field.
+                lifecycle_evidence = require_paper_risk_policy_decision(current, grant=grant, now=now)
+                decision.authorization_scope = grant.authorization_scope
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+                    if str(getattr(body.outcome, 'value', body.outcome)) == 'approved':
+                        failure = risk_policy_candidate_failure(current)
+                        if failure is not None:
+                            raise PaperApprovalDenied('Paper risk policy outside bounds or unverified: ' + failure, 422)
             else:
                 require_paper_owned_decision(current, grant=grant, now=now)
                 widening = grant.card_admission

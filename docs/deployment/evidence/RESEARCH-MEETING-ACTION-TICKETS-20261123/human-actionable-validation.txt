@@ -1,0 +1,51 @@
+2026-11-23 human inbox scope correction, Codex
+Code anchor: 16e204b04
+Refreshed origin/dev: 0c806ffed (contained by head)
+Interpreter/imports verified against this task checkout's .venv-pantheon.
+All test batches ran under timeout in foreground; terminal output and exit
+status collected before publication/handoff. No timeout/killed batch counted.
+
+Isolated local database, not hosted:
+$ timeout 40s docker run --rm -d --name research-human-actionable-20261123 -e POSTGRES_USER=research_test -e POSTGRES_PASSWORD=<local-test-only> -e POSTGRES_DB=research_test -p 127.0.0.1::5432 postgres:16
+container=e9ca27311e6fe392384713f13f060e3c41a1094b02d27aec87df38fdfe64e87d
+exit_code=0
+Readiness via bounded 30s pg_isready loop; exit_code=0.
+Unique per-test schemas are removed by the original fixture.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 150s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+................                                                         [100%]
+16 passed, 161 warnings in 16.53s
+exit_code=0
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py --disable-warnings
+........................................................................ [ 47%]
+........................................................................ [ 95%]
+.......                                                                  [100%]
+151 passed, 523 warnings in 76.48s (0:01:16)
+exit_code=0
+
+$ timeout 45s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 3.684s
+
+OK
+exit_code=0
+
+$ timeout 30s python3 scripts/check_storage_manifest.py
+passed=true; failures=[]; entries=374; bounded=17; unbounded=21; unreviewed=336; waivers=3
+exit_code=0
+
+$ timeout 30s docker stop research-human-actionable-20261123
+research-human-actionable-20261123
+exit_code=0
+The --rm container and its temporary database were removed.
+
+$ git diff --check
+exit_code=0
+
+Runtime budget delta: no recurring execution or new persistent writer. Read
+on demand; SQL transfers at most page_size+1 rows, capped at 101, and returns
+at most 100 summaries. Existing per-record byte limits, open-obligation
+preservation, growth/day and cleanup remain in storage.json and manifest.
+This optional filter adds zero stored bytes, writes/day or new cleanup work.

@@ -1,0 +1,21 @@
+{
+  "task": "PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC2: Paper pools that requested low carry a hardcoded policy",
+  "fix": {
+    "direction": "services/capital/risk_policy.py compare_risk_policies: per-limit comparison against the effective policy (missing limit = unlimited, no effective policy = increase); stored with risk_comparison in the proposal subject; Capital pool-activation evidence accepts increase/reduce/neutral through require_valid_any (expands the accepted-value set, every other field exact; used by capital_guard, main and the policy resolver)",
+    "grant": "services/governance/paper_approval_scope.py clause risk_policy=paper_pool;risk_proposer=<subject> (absent = no widening); scripts/issue_dev_paper_principals.py GOVERNANCE_GRANT_CONTENT carries it for the enrolment proposer",
+    "gate": "services/governance/main.py: identity rechecked per review/decide; approval needs risk_policy_candidate_failure == None (risk-officer draft + provenance, required limits finite/positive, single name <= 0.20, cash reserve >= 0.10 by default); otherwise 422 names the field and only a rejection is recorded; services/governance/approval_targets.py: the dedicated gate alone completes a pool activation, any other decider set keeps two deciders",
+    "coordinator": "persona_provisioning_coordinator.py: computed direction, risk_level low, 24h expiry, paper gate review/decide on created or reused proposals, closure of superseded pending proposals (v1.0) through the same gate; gate unavailable leaves proposals pending",
+    "probe": "acceptance/probes/paper-risk-policy-binding accepts only a consistent computed direction and, for automated_gate decisions, the dedicated gate subject"
+  },
+  "tests": {
+    "services/governance/test_paper_approval_scope.py + test_approval_targets.py + scripts/test_issue_dev_paper_principals.py": "pass (grant clause, bounds, identity denials, gate-only decider, issuer content)",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py + test_persona_provisioning_readback.py": "194 passed (gate approve, out-of-bounds refusal naming the limit, v1.0 refusal superseded by draft, gate unavailable stays pending, computed direction in subject)",
+    "acceptance/test_paper_risk_policy_binding.py": "53 passed",
+    "not run": "services/governance/test_governance_api.py and test_approval_authority_postgres.py need a Postgres test database absent from the worker"
+  },
+  "runtime_budget": "storage-manifest.json runtime_budgets entry PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "hosted_acceptance": "pending after deploy with PAPER-RISK-OFFICER-AGENT-ENSURE-20261124: three low pools active within bounds decided by the automated gate, three v1.0 requests closed with reason, probes paper-risk-policy-binding and paper-risk-journey pass; record runs here"
+}

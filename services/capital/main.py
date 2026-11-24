@@ -47,6 +47,7 @@ try:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -76,7 +77,7 @@ try:
     )
     from .write_authority import is_authorized, matrix_as_list
     from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
-    from .risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest
+    from .risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest
     from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
         CapitalInboundAuthority,
@@ -96,6 +97,7 @@ except ImportError:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -125,7 +127,7 @@ except ImportError:
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
     from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
-    from risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
+    from risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
     import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthority,
@@ -277,7 +279,7 @@ class CapitalBoundaryService:
         bindings = self.list_bindings(capital_pool_id=pool.pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
-            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})},
             allocations=held, bindings=bindings,
         )
 
@@ -391,6 +393,9 @@ class CapitalBoundaryService:
                 if body.risk_policy_ref is not None
                 else pool.risk_policy_ref
             )
+            from services.capital.pg_store import ordered_pool_patch
+
+            ordered_pool_patch(pool, {"risk_policy_ref": next_ref, "metadata": merged_meta})
             candidate_pool = replace(
                 pool,
                 status=body.status,
@@ -399,7 +404,10 @@ class CapitalBoundaryService:
             )
             if pool_tenant:
                 object.__setattr__(candidate_pool, "tenant_id", pool_tenant)
-            if body.status == "active" and (pool.status != "active" or has_policy_patch):
+            # Unrelated annotations do not change the approved policy digest.
+            # Keep legacy activation behavior before the first ordered intent.
+            activation_patch = has_policy_patch and not (pool.metadata or {}).get("risk_profile_change")
+            if body.status == "active" and (pool.status != "active" or activation_patch):
                 self._authorize_pool_activation(candidate_pool, body.approval_decision_id)
             if has_policy_patch:
                 patch_fields: Dict[str, Any] = {
@@ -428,6 +436,41 @@ class CapitalBoundaryService:
             detail=detail,
         )
         return updated
+
+    def change_paper_risk_profile(self, pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPool:
+        from .profile_change import change_profile, RiskChangeReceipts
+
+        self._authorize("CapitalPool", "update_status", body.actor_role)
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        receipts = RiskChangeReceipts(self.audit_store, tenant, pool_id, body.actor_id, body.actor_role)
+        with self._CAPITAL_STATE_APPLY_LOCK:
+            updated, changed = self.pool_store.mutate_paper_risk_profile(
+                pool_id, lambda current: change_profile(
+                    current, body, tenant_id=tenant,
+                    reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader,
+                    receipt_reader=receipts.read, receipt_archiver=receipts.archive,
+                ),
+            )
+        if changed:
+            self._emit(event_type="capital_pool_status_updated", resource_type="CapitalPool",
+                       resource_id=pool_id, actor_id=body.actor_id, actor_role=body.actor_role,
+                       detail={"requested_risk_profile": body.requested_profile,
+                               "risk_change_revision": updated.metadata["risk_profile_change"]["revision"]})
+        return updated
+
+    def read_paper_risk_profile(self, pool_id: str, persona_id: str, request_id: str | None = None) -> Dict[str, Any]:
+        from .profile_change import read_change, RiskChangeReceipts
+
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        result = read_change(pool, tenant_id=tenant, persona_id=persona_id,
+                             reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader)
+        if request_id:
+            result["requestReceipt"] = (pool.metadata.get("risk_profile_change_receipts") or {}).get(request_id)
+            if result["requestReceipt"] is None:
+                result["requestReceipt"] = RiskChangeReceipts(self.audit_store, tenant, pool_id, "", "").read(request_id)
+        return result
 
     def resolve_pool_risk_policy(self, pool_id: str, *, stage: Optional[str] = None) -> Dict[str, Any]:
         pool = self.get_pool(pool_id)
@@ -499,7 +542,7 @@ class CapitalBoundaryService:
                 "target_id": pool.pool_id,
                 "target_version": pool_digest(pool),
                 "subject.pool_id": pool.pool_id,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": str(
                     raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
                 ),
@@ -507,7 +550,7 @@ class CapitalBoundaryService:
                 "subject.risk_policy_digest": risk_policy_digest(raw_policy) if raw_policy else "",
                 "subject.requested_risk": req_risk,
             }
-            res_ev = loaded.require_valid(expected=expected_binding)
+            res_ev = require_valid_any(loaded, expected=expected_binding)
             if isinstance(res_ev, ApprovalEvidence):
                 evidence = res_ev
             elif isinstance(res_ev, dict):
@@ -1538,6 +1581,23 @@ def get_capital_pool_risk_policy(
     service = get_capital_service()
     try:
         return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post("/api/capital-pools/{pool_id}/risk-profile-change", response_model=CapitalPoolBody)
+def change_paper_pool_risk_profile(pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPoolBody:
+    try:
+        body = bind_capital_mutation(body)
+        return _pool_body(get_capital_service().change_paper_risk_profile(pool_id, body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/risk-profile-change")
+def read_paper_pool_risk_profile(pool_id: str, persona_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+    try:
+        return get_capital_service().read_paper_risk_profile(pool_id, persona_id, request_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 

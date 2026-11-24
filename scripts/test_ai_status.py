@@ -13138,12 +13138,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 # Head-only binding (no base) sees only the clean head.
                 ai_status.reject_owner_trailer_mismatch_at_handoff(task, {"head_sha": head})
 
-    def test_handoff_accepts_prior_owner_trailer_with_audited_chain(self) -> None:
+    def test_handoff_reads_owner_audit_once_for_multiple_prior_owner_commits(self) -> None:
         task_id = "REG-002"
         with tempfile.TemporaryDirectory() as tmpdir:
             repo, base, head = self._owner_trailer_repo(
                 tmpdir,
-                [f"{task_id}: a\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+                [
+                    f"{task_id}: {part}\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"
+                    for part in ("main change", "review findings")
+                ],
             )
             event = audited_reassignment_event(
                 task_id=task_id, old_owner="Claude", new_owner="Claude2",
@@ -13156,10 +13159,20 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             with (
                 mock.patch.object(ai_status, "LOG_FILE", log_file),
                 mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+                mock.patch.object(
+                    ai_status, "_audited_reassignment_events", wraps=ai_status._audited_reassignment_events
+                ) as read_audit,
+                mock.patch.object(
+                    ai_status,
+                    "_verified_done_owner_reassignment",
+                    wraps=ai_status._verified_done_owner_reassignment,
+                ) as verify_commit,
             ):
                 ai_status.reject_owner_trailer_mismatch_at_handoff(
                     task, {"head_sha": head, "base_sha": base}
                 )
+                read_audit.assert_called_once()
+                self.assertEqual(verify_commit.call_count, 2)
 
     def test_handoff_refuses_prior_owner_trailer_after_reassignment(self) -> None:
         task_id = "REG-002"

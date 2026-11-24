@@ -31,6 +31,8 @@ except ImportError:
         PersonaProvisioningCoordinationError,
         deterministic_provisioning_ids,
     )
+from services.capital.risk_policy import risk_policy_digest
+from services.persona.risk_policy_draft import DraftInputs, DraftResult
 from services.registry.paper_strategy_spec import validate_strategy_spec
 from services.registry.strategy_artifact import (
     strategy_artifact_checksum,
@@ -185,7 +187,7 @@ class FakeOwnerTransport:
 
         pool_id = matched_ids.capital_pool_id
         version = str(matched_record.request_payload.get("risk_policy_version") or "1.0").strip() or "1.0"
-        policy = PersonaProvisioningCoordinator._default_paper_pool_risk_policy(pool_id, version=version)
+        policy = _fixture_paper_policy(pool_id, version=version)
         try:
             currency = PersonaProvisioningCoordinator._capital_pool_currency(matched_record)
         except Exception:
@@ -225,6 +227,7 @@ class FakeOwnerTransport:
                     "risk_policy_id": str(policy.get("risk_policy_id") or f"rp-{pool_id}"),
                     "risk_policy_version": str(policy.get("version") or "1.0"),
                     "risk_policy_digest": risk_policy_digest(policy),
+                    "risk_officer_draft": {"policy": policy, "provenance": {"source": "risk_officer_draft"}},
                 },
                 "approvals": [
                     {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -765,6 +768,53 @@ def _schedule_receipt(
     }
 
 
+def _fixture_paper_policy(pool_id: str, *, policy_id: str | None = None, version: str = "1.0") -> dict[str, Any]:
+    """Test-only stand-in for a risk-officer drafted policy (production never supplies fixed limits)."""
+    return {
+        "risk_policy_id": str(policy_id or f"rp-{pool_id}"),
+        "version": str(version or "1.0"),
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "max_single_name_weight": 0.2,
+        "min_cash_reserve_pct": 0.1,
+        "allowed_asset_classes": ["equity", "future"],
+    }
+
+
+def _draft_embed(owner_decision_request: Mapping[str, Any]) -> dict[str, Any]:
+    """Draft carried by an owner decision request, or the fixture for a retained valid inline policy."""
+    found = owner_decision_request.get("risk_officer_draft")
+    if isinstance(found, Mapping):
+        return dict(found)
+    return {"policy": _fixture_paper_policy(
+        owner_decision_request["capital_pool_id"], version=owner_decision_request["candidate_risk_policy_version"])}
+
+
+DRAFTER_CALLS: list[DraftInputs] = []
+
+
+def _fake_risk_officer_drafter(inputs: DraftInputs) -> DraftResult:
+    DRAFTER_CALLS.append(inputs)
+    policy = _fixture_paper_policy(inputs.pool_id, policy_id=inputs.policy_id, version=inputs.version)
+    prov = {"source": "risk_officer_draft", "risk_persona_id": "persona-risk-officer",
+            "input_digest": inputs.input_digest, "requested_profile": inputs.profile,
+            "capital_pool_id": inputs.pool_id}
+    policy["metadata"] = {"risk_officer_draft": {**prov, "rationale": "test"}}
+    return DraftResult(True, policy=policy, provenance=prov)
+
+
+@pytest.fixture(autouse=True)
+def _default_risk_officer_drafter(monkeypatch):
+    """Coordinators built by service ingress get the fake drafter (a real turn needs the OpenClaw gateway)."""
+    module = sys.modules[PersonaProvisioningCoordinator.__module__]
+    monkeypatch.setenv("OPENCLAW_GATEWAY_URL", "http://openclaw-gateway.test")
+    monkeypatch.setattr(module, "make_drafter", lambda *a, **k: _fake_risk_officer_drafter)
+    DRAFTER_CALLS.clear()
+
+
 def _coordinator(
     store,
     transport,
@@ -788,6 +838,7 @@ def _coordinator(
         lease_seconds=lease_seconds,
         actor_id=actor_id,
         governance_actor_id=governance_actor_id,
+        risk_policy_drafter=_fake_risk_officer_drafter,
     )
 
 
@@ -3094,16 +3145,10 @@ def test_non_baseline_paper_persona_writes_expression_policy_controls_and_pool_r
 
     # 1. Pool risk policy
     pool = _post_payload(transport, "/api/capital-pools")
-    assert pool["metadata"]["risk_policy"] == {
-        "risk_policy_id": f"rp-{ids.capital_pool_id}",
-        "version": "1.0",
-        "status": "active",
-        "allowed_stages": ["paper"],
-        "gross_limit": 2.0,
-        "net_limit": 2.0,
-        "max_leverage": 2.0,
-        "allowed_asset_classes": ["equity", "future"],
-    }
+    drafted = dict(pool["metadata"]["risk_policy"])
+    drafted.pop("metadata", None)
+    assert drafted == _fixture_paper_policy(ids.capital_pool_id)
+    assert drafted["max_single_name_weight"] < 1.0 and drafted["min_cash_reserve_pct"] > 0
     parsed_policy = RiskPolicy.from_mapping(pool["metadata"]["risk_policy"])
     assert parsed_policy.max_leverage == 2.0
     assert parsed_policy.gross_limit == 2.0
@@ -3485,7 +3530,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
     ids_ord = deterministic_provisioning_ids(record_ord)
     tx_ord = FakeOwnerTransport()
     coord_ord = _coordinator(store_ord, tx_ord, _schedule_receipt)
-    baseline_v1 = coord_ord._default_paper_pool_risk_policy(ids_ord.capital_pool_id, version="1.0")
+    baseline_v1 = _fixture_paper_policy(ids_ord.capital_pool_id, version="1.0")
     ord_candidate_pool_digest = capital_pool_approval_digest(
         {
             "pool_id": ids_ord.capital_pool_id,
@@ -3515,6 +3560,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
                 "risk_policy_id": baseline_v1["risk_policy_id"],
                 "risk_policy_version": "1.0",
                 "risk_policy_digest": risk_policy_digest(baseline_v1),
+                "risk_officer_draft": {"policy": baseline_v1},
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -3552,6 +3598,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
                 "risk_policy_id": baseline_v1["risk_policy_id"],
                 "risk_policy_version": "1.0",
                 "risk_policy_digest": risk_policy_digest(baseline_v1),
+                "risk_officer_draft": {"policy": baseline_v1},
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -3619,6 +3666,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
                 "risk_policy_id": f"rp-{ids_rep.capital_pool_id}",
                 "risk_policy_version": "1.0",
                 "risk_policy_digest": unapproved_repair["owner_decision_request"]["candidate_risk_policy_digest"],
+                "risk_officer_draft": _draft_embed(unapproved_repair["owner_decision_request"]),
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -3682,6 +3730,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
                 "risk_policy_id": f"rp-{ids_rep.capital_pool_id}",
                 "risk_policy_version": "2.0",
                 "risk_policy_digest": unapproved_v2["owner_decision_request"]["candidate_risk_policy_digest"],
+                "risk_officer_draft": _draft_embed(unapproved_v2["owner_decision_request"]),
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -3717,6 +3766,7 @@ def test_coordinator_pool_risk_policy_covers_new_existing_retries_rebinding_vers
                 "risk_policy_id": f"rp-{ids_rep.capital_pool_id}",
                 "risk_policy_version": "2.0",
                 "risk_policy_digest": unapproved_v2["owner_decision_request"]["candidate_risk_policy_digest"],
+                "risk_officer_draft": _draft_embed(unapproved_v2["owner_decision_request"]),
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -4084,7 +4134,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     ids_arb = deterministic_provisioning_ids(record_arb)
     tx_arb = FakeOwnerTransport(response_loss={"/api/capital-pools"}, seed_pool_policy_approval=False)
     coord_arb = _coordinator(store_arb, tx_arb, _schedule_receipt, seed_pool_approval=False)
-    baseline_arb = coord_arb._default_paper_pool_risk_policy(ids_arb.capital_pool_id, version="1.0")
+    baseline_arb = _fixture_paper_policy(ids_arb.capital_pool_id, version="1.0")
     arb_pool_digest = capital_pool_approval_digest(
         {
             "pool_id": ids_arb.capital_pool_id,
@@ -4114,6 +4164,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
                 "risk_policy_id": baseline_arb["risk_policy_id"],
                 "risk_policy_version": "1.0",
                 "risk_policy_digest": risk_policy_digest(baseline_arb),
+                "risk_officer_draft": {"policy": baseline_arb},
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -4328,6 +4379,12 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert routed_req["governance_proposal_id"] == prop_id
     assert routed_req["governance_proposal_status"] == "proposed_to_governance_human_inbox"
     assert tx_prov.mutations[("governance", "/api/governance/approvals")] == 1
+    # Direction is computed against the pool's effective policy (here identical to the draft) and stored with
+    # the per-limit comparison; paper pool proposals are low risk with the bounded expiry the paper gate needs.
+    proposed_decision = tx_prov.objects[("governance", f"/api/governance/approvals/{prop_id}")]
+    assert proposed_decision["metadata"]["subject"]["risk_direction"] == "neutral"
+    assert set(proposed_decision["metadata"]["subject"]["risk_comparison"].values()) == {"equal"}
+    assert proposed_decision["risk_level"] == "low" and proposed_decision["expires_at"]
     # Provisional pool was suspended and marked provisional_unresolved_risk_policy=True so it cannot add risk
     assert tx_prov.objects[("capital", prov_pool_path)]["status"] == "suspended"
     assert tx_prov.objects[("capital", prov_pool_path)]["metadata"]["provisional_unresolved_risk_policy"] is True
@@ -4358,6 +4415,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
                 "risk_policy_id": routed_req["candidate_risk_policy_id"],
                 "risk_policy_version": routed_req["candidate_risk_policy_version"],
                 "risk_policy_digest": routed_req["candidate_risk_policy_digest"],
+                "risk_officer_draft": _draft_embed(routed_req),
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -4410,7 +4468,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
                 "execution_context": "paper",
                 "tenant_id": "tenant-dev",
                 "persona_id": p_id,
-                "risk_policy": coord_3._default_paper_pool_risk_policy(cp_id, version="1.0"),
+                "risk_policy": _fixture_paper_policy(cp_id, version="1.0"),
             },
         }
         first_rep = coord_3.repair_paper_pool_risk_policy(
@@ -4466,6 +4524,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
                     "risk_policy_id": od_req["candidate_risk_policy_id"],
                     "risk_policy_version": "1.0",
                     "risk_policy_digest": od_req["candidate_risk_policy_digest"],
+                    "risk_officer_draft": _draft_embed(od_req),
                 },
                 "approvals": [
                     {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -4542,6 +4601,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
                 "risk_policy_id": v2_unapproved["owner_decision_request"]["candidate_risk_policy_id"],
                 "risk_policy_version": "2.0",
                 "risk_policy_digest": v2_unapproved["owner_decision_request"]["candidate_risk_policy_digest"],
+                "risk_officer_draft": _draft_embed(v2_unapproved["owner_decision_request"]),
             },
             "approvals": [
                 {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
@@ -4920,7 +4980,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
             "execution_context": "paper",
             "tenant_id": route_tenant_id,
             "persona_id": created_pid,
-            "risk_policy": route_coord._default_paper_pool_risk_policy(created_pool_id, version="1.0"),
+            "risk_policy": _fixture_paper_policy(created_pool_id, version="1.0"),
         },
     }
     for n in (1, 2):
@@ -5156,6 +5216,74 @@ def pending_profile_owner(tmp_path, monkeypatch):
     return RealCapitalTransport(), capital
 
 
+def test_legacy_hardcoded_inline_policy_gets_next_version_drafted_by_risk_officer_once(pending_profile_owner):
+    """The three dev `low` pools carry inline v1.0 (2x, no single-name cap, no cash reserve).
+
+    The next version (2.0) is drafted by the risk officer, proposed to Governance with the digest + draft
+    provenance, idempotently (one turn, one proposal), and nothing is approved or bound by the repair.
+    """
+    tx, capital = pending_profile_owner
+    store, record = _record_and_store({"risk": "low"}, seed_pool_approval=False)
+    ids = deterministic_provisioning_ids(record)
+    legacy = {"risk_policy_id": f"rp-{ids.capital_pool_id}", "version": "1.0", "status": "active",
+              "allowed_stages": ["paper"], "gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0,
+              "allowed_asset_classes": ["equity", "future"]}
+    tx.service.pool_store.create(capital.CapitalPool(
+        pool_id=ids.capital_pool_id, name="legacy low", owner_id=record.tenant_id, owner_type="org",
+        status="active", created_at=_owner_now(), budget=100000.0, currency="TWD",
+        metadata={"tenant_id": record.tenant_id, "persona_id": record.persona_id, "execution_context": "paper",
+                  "risk_policy": legacy,
+                  "recent_paper_evidence": ["2026-11-19 buy 452 x 2317 @ 221 vs 100,000 TWD"]},
+    ))
+    coord = PersonaProvisioningCoordinator(
+        store=store, transport=tx, schedule_registrar=_schedule_receipt, lease_owner="test-worker",
+        governance_proposer=tx, governance_proposer_actor_id=tx.governance_subject,
+        risk_policy_drafter=_fake_risk_officer_drafter,
+    )
+    tx.service.guard._approval_reader = coord._governance_approval_reader()
+    kwargs = dict(tenant_id=record.tenant_id, persona_id=record.persona_id)
+    first = coord.repair_paper_pool_risk_policy(**kwargs)
+    second = coord.repair_paper_pool_risk_policy(**kwargs)
+    assert len(DRAFTER_CALLS) == 1
+    assert DRAFTER_CALLS[0].version == "2.0" and DRAFTER_CALLS[0].profile == "low"
+    assert DRAFTER_CALLS[0].currency == "TWD" and DRAFTER_CALLS[0].budget == 100000.0
+    assert any("452" in e for e in DRAFTER_CALLS[0].evidence)
+    request = first["owner_decision_request"]
+    assert request["candidate_risk_policy_version"] == "2.0"
+    assert request["risk_officer_draft"]["provenance"]["source"] == "risk_officer_draft"
+    assert request["risk_officer_draft"]["policy"]["max_single_name_weight"] < 1.0
+    assert request["candidate_risk_policy_digest"] == risk_policy_digest(request["risk_officer_draft"]["policy"])
+    assert request["governance_proposal_id"] == second["owner_decision_request"]["governance_proposal_id"]
+    assert tx.mutations[("governance", "/api/governance/approvals")] == 1
+    assert first["repaired"] is False and second["repaired"] is False
+    stored = tx.service.pool_store.require(ids.capital_pool_id).metadata["risk_policy"]
+    assert stored["version"] == "1.0" and "max_single_name_weight" not in stored  # nothing bound without approval
+
+
+def test_no_drafter_or_failed_draft_leaves_pool_pending_without_invented_limits(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_GATEWAY_URL", raising=False)
+    store, record = _record_and_store(seed_pool_approval=False)
+    transport = FakeOwnerTransport()
+    transport.seed_pool_policy_approval = False
+    unconfigured = PersonaProvisioningCoordinator(
+        store=store, transport=transport, schedule_registrar=_schedule_receipt, lease_owner="test-worker")
+    result = unconfigured.coordinate(record)
+    assert result.state == "failed" and result.error["reason_code"] == "risk_officer_draft_unavailable"
+    assert "not configured" in result.error["terminal_reason"]
+    assert not [c for c in transport.calls if c[0] != "GET" and "/api/capital-pools" in str(c[2])]
+
+    store2, record2 = _record_and_store(seed_pool_approval=False)
+    transport2 = FakeOwnerTransport()
+    transport2.seed_pool_policy_approval = False
+    bad = PersonaProvisioningCoordinator(
+        store=store2, transport=transport2, schedule_registrar=_schedule_receipt, lease_owner="test-worker",
+        risk_policy_drafter=lambda inputs: DraftResult(
+            False, reason="risk_policy_draft_outside_bounds:max_single_name_weight=0.5 exceeds low bound 0.2"))
+    result2 = bad.coordinate(record2)
+    assert result2.state == "failed" and "outside_bounds" in result2.error["terminal_reason"]
+    assert not [c for c in transport2.calls if c[0] != "GET" and "/api/capital-pools" in str(c[2])]
+
+
 @pytest.mark.parametrize("profile", ["low", "medium", "high"])
 def test_pending_profile_real_owner_readback_retry_and_response_loss(pending_profile_owner, profile):
     tx, capital = pending_profile_owner
@@ -5166,7 +5294,7 @@ def test_pending_profile_real_owner_readback_retry_and_response_loss(pending_pro
         owner_type="org", status="active", created_at=_owner_now(), budget=25000.0,
         metadata={"tenant_id": record.tenant_id, "persona_id": record.persona_id,
                   "execution_context": "paper", "operator_note": "keep",
-                  "risk_policy": PersonaProvisioningCoordinator._default_paper_pool_risk_policy(ids.capital_pool_id)},
+                  "risk_policy": _fixture_paper_policy(ids.capital_pool_id)},
     )
     tx.service.pool_store.create(pool)
     coord = PersonaProvisioningCoordinator(store=store, transport=tx, schedule_registrar=_schedule_receipt, lease_owner="test-worker", governance_proposer=tx,
@@ -5500,3 +5628,80 @@ def test_old_request_requires_verified_matching_real_persona(mismatch):
         assert required is True
         assert profile == (None if mismatch else "medium")
     assert record.request_payload == original
+
+
+# --- paper automated gate for pool risk-policy proposals (operator decision P-4) ---------------------
+
+_GATE_LOW_POLICY = {"risk_policy_id": "rp-pool", "version": "2.0", "gross_limit": 1.0, "net_limit": 1.0,
+                    "max_leverage": 1.0, "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10}
+
+
+def _gate_coordinator(monkeypatch, *, fail=False):
+    coordinator = PersonaProvisioningCoordinator.__new__(PersonaProvisioningCoordinator)
+    coordinator.transport = object()
+    decided: list[dict[str, Any]] = []
+
+    def fake_decide(proposal, *, outcome, rationale):
+        if fail:
+            raise RuntimeError("gate unavailable")
+        decided.append({"id": proposal["decision_id"], "outcome": outcome, "rationale": rationale})
+        return {"decision_state": "decided", "decision": outcome}
+
+    monkeypatch.setattr(coordinator, "_paper_gate_decide_risk_policy", fake_decide)
+    return coordinator, decided
+
+
+def _gate_proposal(policy):
+    draft = {"policy": policy, "provenance": {"source": "risk_officer_draft"}} if policy else None
+    return {"decision_id": "apv-risk-profile-x", "metadata": {"subject": {
+        "pool_id": "pool-1", "requested_risk": "low", **({"risk_officer_draft": draft} if draft else {})}}}
+
+
+def test_paper_gate_approves_a_policy_inside_the_outer_bounds(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
+    assert [d["outcome"] for d in decided] == ["approved"]
+    assert req["paper_gate_status"] == "decided_approved_by_automated_gate"
+
+
+def test_paper_gate_refuses_out_of_bounds_with_the_named_limit(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal({**_GATE_LOW_POLICY, "max_single_name_weight": 0.5}), req, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "max_single_name_weight" in decided[0]["rationale"]
+    assert "max_single_name_weight" in req["paper_gate_reason"]
+
+
+def test_paper_gate_refuses_gross_over_the_bound_and_rationale_names_all_four(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal({**_GATE_LOW_POLICY, "gross_limit": 3.0}), {}, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "gross_limit" in decided[0]["rationale"]
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), {}, requested_profile="low")
+    assert decided[1]["outcome"] == "approved"
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct"):
+        assert name in decided[1]["rationale"]
+
+
+def test_paper_gate_refuses_a_v1_proposal_without_the_cap_and_reserve_and_names_the_draft(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch)
+    req: dict[str, Any] = {}
+    v1 = {k: v for k, v in _GATE_LOW_POLICY.items() if k not in {"max_single_name_weight", "min_cash_reserve_pct"}}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(_gate_proposal(v1), req, requested_profile="low")
+    assert decided[0]["outcome"] == "rejected" and "max_single_name_weight" in decided[0]["rationale"]
+    req2: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(_gate_proposal(None), req2, requested_profile="low")
+    assert decided[1]["outcome"] == "rejected"
+    assert "superseded by the risk-officer draft" in decided[1]["rationale"]
+
+
+def test_paper_gate_unavailable_leaves_the_proposal_pending(monkeypatch):
+    coordinator, decided = _gate_coordinator(monkeypatch, fail=True)
+    req: dict[str, Any] = {}
+    coordinator._apply_paper_gate_to_risk_policy_proposal(
+        _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
+    assert decided == [] and req["paper_gate_status"].startswith("unavailable:")

@@ -24,10 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from services.capital.risk_policy import risk_policy_digest
+from services.capital.risk_policy import profile_outer_bounds, risk_policy_digest
 from services.governance.write_authority import is_authorized_to_decide
 from services.governance.paper_approval_scope import (
-    ApprovalUsageContext, enforce_authorization_scope, require_dedicated_subject_scope,
+    ApprovalUsageContext, DEV_PAPER_PROVISIONER_SUBJECT, enforce_authorization_scope, require_dedicated_subject_scope,
 )
 
 DEFAULT_PERSONAS = (
@@ -163,6 +163,95 @@ def policy_errors(policy):
     return errors
 
 
+DRAFT_PROFILES = ("low",)
+DRAFT_SOURCE = "risk_officer_draft"
+
+
+def _positive_below_one(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and 0 < value < 1)
+
+
+def _bounded_limits(policy):
+    """Single-name cap < 1 and a positive cash reserve; the reserve may be a pct or an absolute amount."""
+    errors = []
+    if not _positive_below_one(policy.get("max_single_name_weight")):
+        errors.append("draft_single_name_cap_missing_or_not_below_1")
+    pct, absolute = policy.get("min_cash_reserve_pct"), policy.get("min_cash_reserve")
+    if not (_positive_below_one(pct) or (not isinstance(absolute, bool) and isinstance(absolute, (int, float))
+                                          and math.isfinite(absolute) and absolute > 0)):
+        errors.append("draft_cash_reserve_missing_or_not_positive")
+    return errors + _outer_bound_errors(policy)
+
+
+def _outer_bound_errors(policy, profile="low"):
+    """A draft limit outside the operator outer bound (gross, leverage, single name, cash reserve) fails."""
+    errors = []
+    limits = profile_outer_bounds().get(profile) or {}
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight"):
+        cap, value = limits.get(name), policy.get(name)
+        if cap is not None and isinstance(value, (int, float)) and not isinstance(value, bool) and value > cap + 1e-12:
+            errors.append("draft_outside_bound:" + name)
+    reserve, pct = limits.get("min_cash_reserve_pct"), policy.get("min_cash_reserve_pct")
+    if reserve is not None and isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct + 1e-12 < reserve:
+        errors.append("draft_outside_bound:min_cash_reserve_pct")
+    return errors
+
+
+def pending_risk_officer_draft(approvals, persona, pool):
+    """A pending Governance proposal that carries a risk-officer drafted policy for this pool, or None."""
+    for approval in approvals:
+        subject = (approval.get("metadata") or {}).get("subject") or {}
+        draft = subject.get("risk_officer_draft") or {}
+        policy = draft.get("policy")
+        if (approval.get("tenant_id") == persona.get("tenantId")
+                and approval.get("target_type") == "capital_pool_activation"
+                and approval.get("target_id") == pool.get("pool_id")
+                and approval.get("decision_state") in {"proposed", "under_review"}
+                and subject.get("pool_id") == pool.get("pool_id")
+                and (subject.get("requested_risk") or subject.get("requested_profile")) == persona.get("risk")
+                and isinstance(policy, dict)
+                and (policy.get("metadata") or {}).get("risk_officer_draft", {}).get("source") == DRAFT_SOURCE
+                and not _bounded_limits(policy)
+                and subject.get("risk_policy_digest") in {policy_digest(policy), risk_policy_digest(policy)}):
+            return approval.get("decision_id")
+    return None
+
+
+def risk_officer_draft_errors(policy, approvals, persona, pool):
+    """Active policy must be bounded and carry risk-officer provenance; else a pending draft must exist.
+
+    The former hardcoded 2x v1.0 (no single-name cap, no cash reserve, no provenance) fails here.
+    Returns (errors, pending_decision_id).
+    """
+    errors = _bounded_limits(policy)
+    prov = ((policy.get("metadata") or {}).get("risk_officer_draft") or {})
+    if prov.get("source") != DRAFT_SOURCE or prov.get("risk_persona_id") != "persona-risk-officer":
+        errors.append("draft_provenance_missing")
+    if not errors:
+        return [], None
+    pending = pending_risk_officer_draft(approvals, persona, pool)
+    return ([], pending) if pending else (errors, None)
+
+
+def computed_direction_errors(approval, subject):
+    """Risk direction is computed from the per-limit comparison, never a constant; paper gate decisions
+    must be decided by the dedicated automated gate subject (operator decision P-4)."""
+    gate = approval.get("actor_role") == "automated_gate"
+    if gate and approval.get("actor_id") != DEV_PAPER_PROVISIONER_SUBJECT:
+        return True
+    if subject.get("risk_direction") not in {"increase", "reduce", "neutral"}:
+        return True
+    comparison = subject.get("risk_comparison")
+    if (gate or subject.get("risk_direction") != "increase") and not (isinstance(comparison, dict) and comparison):
+        return True
+    if isinstance(comparison, dict):
+        looser = "looser" in comparison.values() or comparison.get("_effective_policy") == "absent"
+        if looser != (subject.get("risk_direction") == "increase"):
+            return True
+    return False
+
+
 def approved_mapping(approvals, persona, pool, policy, now):
     """Look for explicit owner proof in existing governance decision subjects.
 
@@ -199,7 +288,7 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
                 or (subject.get("requested_risk") or subject.get("requested_profile") or subject.get("risk_profile")) != persona.get("risk")
-                or subject.get("risk_direction") != "increase"
+                or computed_direction_errors(approval, subject)
                 or subject.get("risk_policy_id") != policy.get("risk_policy_id")
                 or subject.get("risk_policy_version") != policy.get("version")
                 or subject.get("risk_policy_digest") not in digests):
@@ -231,7 +320,7 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
     now = now or datetime.now(timezone.utc)
     expected = tuple(expected)
     report = {"checked": 0, "expected": len(expected), "personas": {}, "failed": [],
-              "observed_at": now.isoformat()}
+              "observed_at": now.isoformat(), "outer_bounds": profile_outer_bounds()}
     if not expected or len(expected) > 10 or len(set(expected)) != len(expected):
         report.update(passed=False, failed=["expected_personas_empty_duplicate_or_over_budget"])
         return report
@@ -284,6 +373,11 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
             reader = (lambda ref: owner["policy"]) if owner is not None else referenced_policy_reader
             policy, origin = effective_policy(pool, reader)
             failures.extend(policy_errors(policy))
+            if persona.get("risk") in DRAFT_PROFILES:
+                draft_errors, pending_draft = risk_officer_draft_errors(policy, approvals, persona, pool)
+                failures.extend(draft_errors)
+                result["risk_officer_draft"] = "pending:" + pending_draft if pending_draft else (
+                    "active" if not draft_errors else "missing")
             policy_meta = policy.get("metadata") or {}
             if (policy.get("tenant_id") or policy_meta.get("tenant_id")) not in (None, tenant):
                 failures.append("policy_tenant_mismatch")

@@ -570,6 +570,9 @@ def test_grant_content_carries_both_explicit_widenings_the_issued_proposers_matc
         path.write_text(issuer.GOVERNANCE_GRANT_CONTENT)
         path.chmod(0o600)
         lifecycle, card = _grant_widenings({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
+        from services.governance.paper_approval_scope import configured_risk_policy_grant
+        risk = configured_risk_policy_grant({"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(path)})
+    assert risk.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
     assert lifecycle.proposer_subject == issuer.ENROLLMENT_PROPOSER_SUBJECT
     assert card.proposer_subject == issuer.CARD_PROPOSER_SUBJECT
 
@@ -973,3 +976,63 @@ def test_consultation_telemetry_read_principal_is_viewer_only_file_delivered_and
     ):
         denied = client.post(write_path, json={}, headers=headers)
         assert denied.status_code == 403 and denied.get_json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+def test_consultation_research_principal_is_admitted_by_research_owner_checks_and_file_delivered(tmp_path):
+    import yaml
+    from types import SimpleNamespace
+    from services.research.write_owner import ResearchWriteOwner as Owner
+    from services.service_token_file import configured_service_token
+
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_RESEARCH_SERVICE_TOKEN"
+    # One consumer only; the persona-pool-cycle research file used by the daily Persona is untouched.
+    assert variable in CONSUMER_FILES["consultation-svc"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    assert "PERSONA_RESEARCH_SERVICE_TOKEN" in CONSUMER_FILES["persona"]
+    assert READERS["PERSONA_RESEARCH_SERVICE_TOKEN"][0] == "persona-pool-cycle"
+
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == "consultation-svc" and claims["roles"] == ["service"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert not {"operator", "admin", "viewer"} & set(claims["roles"])  # least role the owner admits
+    assert values[variable] != values["PERSONA_RESEARCH_SERVICE_TOKEN"]  # no shared credential
+
+    def ctx(c):
+        return SimpleNamespace(tenant_id=c["tenant_id"], actor_id=c["sub"], roles=set(c["roles"]))
+
+    mine = ctx(claims)
+    assert Owner._action_controller(mine, "consultation-svc")
+    assert not Owner._action_operator(mine)  # creation passes through the controller branch, not operator
+    for other in ("pantheon-dev-consultation-persona-pool-reader", "pantheon-dev-persona-evaluator-bff-reader",
+                  "persona-pool-cycle"):
+        subject_claims = verify(values[next(v for v, (s, _) in READERS.items() if s == other)])
+        assert not Owner._action_controller(ctx(subject_claims), "consultation-svc")
+    # Same subject without the service role, and a wrong tenant, are refused by the owner and verifier.
+    assert not Owner._action_controller(SimpleNamespace(actor_id="consultation-svc", roles={"consultation_session"},
+                                                         tenant_id="tenant-dev"), "consultation-svc")
+    with pytest.raises(AuthError):
+        verify(values[variable], audience="other-audience")
+
+    # Rotating file: request-time read, rotation visible, missing/unsafe file fails closed (no env fallback).
+    path = tmp_path / variable
+    path.write_text(values[variable]); path.chmod(0o600)
+    env = {variable + "_FILE": str(path), variable: "stale-env-value"}
+    assert configured_service_token(variable, env) == values[variable]
+    rotated = issue_environment(configured(), now=NOW + 5)[variable]
+    path.write_text(rotated)
+    assert configured_service_token(variable, env) == rotated
+    path.chmod(0o644)
+    with pytest.raises(RuntimeError):
+        configured_service_token(variable, env)
+    path.unlink()
+    with pytest.raises(RuntimeError) as err:
+        configured_service_token(variable, env)
+    assert rotated not in str(err.value)
+
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
+    assert compose[variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert not any("JWT_SECRET" in key for key in compose)  # no signing secret distributed
+    assert issuer.revoked_environment(
+        {**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""

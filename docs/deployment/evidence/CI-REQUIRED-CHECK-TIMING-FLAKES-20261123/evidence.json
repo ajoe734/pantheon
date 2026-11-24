@@ -1,0 +1,29 @@
+{
+  "task": "CI-REQUIRED-CHECK-TIMING-FLAKES-20261123",
+  "class": "RC1 Required check that fails under CI load (repairs merged #7638)",
+  "runtime_budget": "none (no recurring job, emitter or persistent writer added)",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family",
+  "load_method": "8 parallel `python3 -c 'while True: pass'` busy processes pinned with taskset -c 0 to the same core as the pytest process (12-core host); venv /tmp/ctf-venv with pytest 9.2",
+  "root_causes": {
+    "watchdog": "test sent one heartbeat then stopped; watchdog fails (exit 75) when the child exits with heartbeat age >= pause. Fix: keep sending sequenced heartbeats every 0.10s until exit; pause 0.50s, chunk gaps 0.60s, silence_kill 20s. Interval must also stay slow enough not to hit the watchdog's >32-frame heartbeat-flood limit when the watchdog is starved (0.02s interval failed 13/30 for exactly that reason).",
+    "memory_lifespan": "catch-up worker builds its own store from the JSON path while the lifespan body writes concurrently; stores used non-atomic Path.write_text so the reader could see a truncated file, the factory raised inside the worker, and _catchup_worker_loop swallowed it and dropped the continuation (no memory_units call, no restart). Reproduced on whole-file order under load: failure state had no threads, no continuation, startup yielded. Fixed in institutional/persona stores (atomic os.replace) and hindsight_index._resolve_catchup_store (bounded retry), with deterministic unit tests.",
+    "alpha_replication": "lease_seconds=1 expired before _process_entry on a slow runner; now 300s with injected now=+3600s for the expired-claim recovery."
+  },
+  "before_change": {
+    "memory_lifespan": "services/memory/test_main.py whole file, taskset single core + 6-8 busy procs: 3 failures observed in ~30 runs with identical signature `assert client.entered.wait(2)` (first at run 1/5)",
+    "watchdog": "HEAD test, 20 runs under load: 19 passed, 1 failed (exit 75)",
+    "alpha_replication": "HEAD test, 20 runs under load: 20 passed (lease race not hit locally; root cause is deterministic from lease_seconds=1 and was seen only on CI run 45114368522)",
+    "unit": "new test_scheduled_catch_up_survives_transient_store_build_failure fails against HEAD hindsight_index.py (no _resolve_catchup_store); test_json_store_save_is_atomic_and_leaves_no_temp_files passes at HEAD (guards the no-temp-file contract, not the race)"
+  },
+  "after_change": {
+    "watchdog_large_envelope": "30/30 passed under load",
+    "alpha_crash_reclaim": "30/30 passed under load",
+    "memory_lifespan_alone": "30/30 passed under load",
+    "memory_suite_services_memory": "3/3 complete runs passed under load (203 passed, 10 skipped; 117-174s); 2 further runs exceeded the 150s harness timeout and are not counted as passes",
+    "test_hindsight_index.py": "28 passed"
+  },
+  "not_done": [
+    "30 whole-file runs of services/memory under load were not completed (3 complete runs); lifespan test itself 30/30",
+    "no skip/xfail/quarantine/rerun-on-failure; no new elapsed-time assertion (wall-clock waits replaced by event waits with 30s failure bounds)"
+  ]
+}

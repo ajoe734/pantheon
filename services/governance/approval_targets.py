@@ -17,6 +17,10 @@ SUBJECT_FIELDS = {
                               'ranking_snapshot_id', 'proposal_content_digest'),
     'evolution_execute': ('proposal_id', 'proposal_content_digest'),
 }
+# The dedicated dev paper gate subject (services/governance/paper_approval_scope.DEV_PAPER_PROVISIONER_SUBJECT).
+# Its authority is bound to dev/paper/capital scale 0 by authorization_scope, so a pool risk decision decided
+# by it alone (the P-4 paper automated gate) is complete without a second human decider.
+PAPER_GATE_SUBJECT = 'pantheon-dev-paper-provisioner'
 RISK_DIRECTIONS = frozenset({'increase', 'reduce', 'neutral'})
 
 
@@ -64,6 +68,11 @@ def required_deciders(target_type: Any, metadata: Optional[Mapping[str, Any]]) -
     """A risk-increasing capital or rebalance target needs two distinct deciders."""
     if target_name(target_type) in ('capital_pool_activation', 'capital_binding_activation', 'rebalance_apply') \
             and subject_of(metadata).get('risk_direction') == 'increase':
+        if target_name(target_type) == 'capital_pool_activation':
+            votes = [a for a in approvals(metadata) if isinstance(a, Mapping)]
+            if votes and all(v.get('actor_id') == PAPER_GATE_SUBJECT and v.get('actor_role') == 'automated_gate'
+                             for v in votes):
+                return 1
         return 2
     return 1
 

@@ -461,7 +461,14 @@ class PersonaMemoryStore:
         if not self._path:
             return
         records = [entry.to_dict() for entry in self._entries.values()]
-        self._path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+        # Atomic replace: a concurrent reader (e.g. the background hindsight catch-up building
+        # its own store from this path) must never observe a truncated or empty JSON file.
+        tmp_path = self._path.with_name(f"{self._path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            tmp_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+            os.replace(tmp_path, self._path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     def _load(self, path: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
