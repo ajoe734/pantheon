@@ -19,6 +19,7 @@ mirror.  No synthetic data is created here.
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import logging
@@ -428,6 +429,7 @@ def ensure_layers(client: Any, bank: str) -> None:
 
 
 def forget_layers(bank: str) -> None:
+    invalidate_recall_cache()
     with _LAYER_LOCK:
         for key in [k for k in _LAYERED_BANKS if k[1] == bank]:
             _LAYERED_BANKS.discard(key)
@@ -645,7 +647,21 @@ DIAGNOSTICS = MirrorDiagnostics()
 
 def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEMPTS,
                  backoff: float = MIRROR_BACKOFF_SECONDS) -> dict:
-    """Mirror one canonical entry after it persisted. Never raises."""
+    """Mirror one canonical entry after it persisted. Never raises.
+
+    The bank's recall cache is invalidated before and after the write, so a recall
+    that overlapped it can never be stored as current.
+    """
+    try:
+        return _mirror_entry(entry, client=client, attempts=attempts, backoff=backoff)
+    finally:
+        try:
+            _bump_recall_bank(bank_for(entry))
+        except Exception:  # noqa: BLE001 - unmappable entry has no bank cache
+            invalidate_recall_cache()
+
+
+def _mirror_entry(entry: Any, *, client: Any, attempts: int, backoff: float) -> dict:
     entry_id = canonical_id(entry)
     action = "retain" if is_indexable(entry) else "invalidate"
     try:
@@ -653,6 +669,7 @@ def mirror_entry(entry: Any, *, client: Any = None, attempts: int = MIRROR_ATTEM
         if client is None:
             raise HindsightError("hindsight_unconfigured")
         bank = bank_for(entry)
+        _bump_recall_bank(bank)
         key = (bank, entry_id)
         reason = "hindsight_unreachable"
         for attempt in range(1, max(1, attempts) + 1):
@@ -1278,6 +1295,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
     global _REBUILDING, _REBUILD_CLIENT
     report: Dict[str, Any] = {"banks": 0, "retained": 0, "inactive_skipped": 0, "anchor_none": 0,
                               "failures": [], "bank_counts": {}}
+    invalidate_recall_cache()
     with _REBUILD_LOCK:
         if not flush_mirrors():  # queued post-persistence mirrors must not race the bank drop
             report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
@@ -1363,6 +1381,7 @@ def rebuild(institutional_store: Any, persona_store: Any, *, client: Any = None)
                     report["failures"].append({"reason": "hindsight_mirror_drain_timeout"})
             finally:
                 _REBUILD_CLIENT = None
+                invalidate_recall_cache()
         return report
 
 
@@ -1416,25 +1435,140 @@ def recall_canonical_ids(client: Any, bank: str, *, query: str, groups: List[dic
     return sorted(ordered.items(), key=lambda item: item[1], reverse=True)
 
 
+# --- recall contention control -------------------------------------------------
+# Reranking costs ~5 s of CPU on two ONNX threads, so concurrent recalls only slow
+# each other past the deadline. Recalls therefore pass one bounded gate, and a
+# standing query's result is reused per bank until that bank changes.
+DEFAULT_RECALL_CONCURRENCY = 1
+DEFAULT_RECALL_QUEUE_WAIT_SECONDS = 10.0
+RECALL_CACHE_MAX_ENTRIES = 64        # whole process
+RECALL_CACHE_MAX_PER_BANK = 8
+RECALL_CACHE_TTL_SECONDS = 900.0     # safety net; writes invalidate immediately
+
+_RECALL_GATE_LOCK = threading.Lock()
+_RECALL_GATE: Optional[threading.BoundedSemaphore] = None
+_RECALL_GATE_SIZE = 0
+_RECALL_CACHE_LOCK = threading.Lock()
+_RECALL_CACHE: "collections.OrderedDict[tuple, tuple]" = collections.OrderedDict()
+_RECALL_BANK_VERSION: Dict[str, int] = {}
+_RECALL_GENERATION = 0
+RECALL_STATS = {"cache_hit": 0, "cache_miss": 0, "queue_timeout": 0, "recalls": 0}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def recall_queue_wait_seconds() -> float:
+    return _env_float("PANTHEON_MEMORY_HINDSIGHT_RECALL_QUEUE_WAIT_SECONDS", DEFAULT_RECALL_QUEUE_WAIT_SECONDS)
+
+
+def _recall_gate() -> threading.BoundedSemaphore:
+    global _RECALL_GATE, _RECALL_GATE_SIZE
+    try:
+        size = max(1, int(os.getenv("PANTHEON_MEMORY_HINDSIGHT_RECALL_CONCURRENCY", "")))
+    except ValueError:
+        size = DEFAULT_RECALL_CONCURRENCY
+    with _RECALL_GATE_LOCK:
+        if _RECALL_GATE is None or size != _RECALL_GATE_SIZE:
+            _RECALL_GATE, _RECALL_GATE_SIZE = threading.BoundedSemaphore(size), size
+        return _RECALL_GATE
+
+
+def _bump_recall_bank(bank: str) -> None:
+    with _RECALL_CACHE_LOCK:
+        _RECALL_BANK_VERSION[bank] = _RECALL_BANK_VERSION.get(bank, 0) + 1
+
+
+def invalidate_recall_cache() -> None:
+    """Drop every cached recall (bank rebuild / layer reset)."""
+    global _RECALL_GENERATION
+    with _RECALL_CACHE_LOCK:
+        _RECALL_GENERATION += 1
+        _RECALL_CACHE.clear()
+
+
+def _cache_key(bank: str, query: str, groups: List[dict], limit: int) -> tuple:
+    return (bank, query, json.dumps(groups, sort_keys=True, default=str), int(limit))
+
+
+def _cache_get(key: tuple) -> Optional[List[Tuple[str, float]]]:
+    with _RECALL_CACHE_LOCK:
+        item = _RECALL_CACHE.get(key)
+        if item is None:
+            return None
+        result, version, generation, stored_at = item
+        if (version != _RECALL_BANK_VERSION.get(key[0], 0) or generation != _RECALL_GENERATION
+                or time.monotonic() - stored_at > RECALL_CACHE_TTL_SECONDS):
+            _RECALL_CACHE.pop(key, None)
+            return None
+        _RECALL_CACHE.move_to_end(key)
+        return list(result)
+
+
+def _cache_put(key: tuple, result: List[Tuple[str, float]], version: int, generation: int) -> None:
+    with _RECALL_CACHE_LOCK:
+        if version != _RECALL_BANK_VERSION.get(key[0], 0) or generation != _RECALL_GENERATION:
+            return  # the bank changed while this recall ran
+        _RECALL_CACHE[key] = (list(result), version, generation, time.monotonic())
+        _RECALL_CACHE.move_to_end(key)
+        same_bank = [k for k in _RECALL_CACHE if k[0] == key[0]]
+        while len(same_bank) > RECALL_CACHE_MAX_PER_BANK:
+            _RECALL_CACHE.pop(same_bank.pop(0), None)
+        while len(_RECALL_CACHE) > RECALL_CACHE_MAX_ENTRIES:
+            _RECALL_CACHE.popitem(last=False)
+
+
 def bounded_recall_canonical_ids(client: Any, bank: str, *, query: str, groups: List[dict],
                                  limit: int) -> List[Tuple[str, float]]:
-    """``recall_canonical_ids`` under the recall deadline.
+    """``recall_canonical_ids`` under the recall deadline and the shared recall gate.
 
-    Raises ``HindsightError("hindsight_recall_timeout")`` when the deadline passes;
-    the caller then reports the keyword fallback instead of blocking.
+    A cached result for an unchanged bank is returned without recalling. Otherwise
+    the recall waits for the gate (at most the queue-wait budget) and then runs under
+    the recall deadline. Raises ``HindsightError("hindsight_recall_timeout")`` when
+    either budget passes; the caller then reports the keyword fallback.
     """
     import concurrent.futures
+    key = _cache_key(bank, query, groups, limit)
+    cached = _cache_get(key)
+    if cached is not None:
+        RECALL_STATS["cache_hit"] += 1
+        return cached
+    RECALL_STATS["cache_miss"] += 1
     deadline = recall_timeout_seconds()
+    queue_wait = recall_queue_wait_seconds()
     if isinstance(client, HindsightClient):
         client = HindsightClient(client.url, client.api_key, timeout=deadline + 2.0)
+    gate = _recall_gate()
+    with _RECALL_CACHE_LOCK:
+        version, generation = _RECALL_BANK_VERSION.get(bank, 0), _RECALL_GENERATION
+    if not gate.acquire(timeout=queue_wait):
+        RECALL_STATS["queue_timeout"] += 1
+        raise HindsightError("hindsight_recall_timeout", f"recall queue exceeded {queue_wait}s")
+
+    def _run() -> List[Tuple[str, float]]:
+        # The gate is held until the recall truly ends, even if the caller timed out,
+        # so an abandoned rerank cannot overlap the next one.
+        try:
+            return recall_canonical_ids(client, bank, query=query, groups=groups, limit=limit)
+        finally:
+            gate.release()
+
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="hs-recall")
-    future = pool.submit(recall_canonical_ids, client, bank, query=query, groups=groups, limit=limit)
+    RECALL_STATS["recalls"] += 1
+    future = pool.submit(_run)
     try:
-        return future.result(timeout=deadline)
+        result = future.result(timeout=deadline)
     except concurrent.futures.TimeoutError as exc:
         raise HindsightError("hindsight_recall_timeout", f"recall exceeded {deadline}s") from exc
     finally:
         pool.shutdown(wait=False)
+    _cache_put(key, result, version, generation)
+    return result
 
 
 def reflect_citations(response: dict) -> List[str]:
