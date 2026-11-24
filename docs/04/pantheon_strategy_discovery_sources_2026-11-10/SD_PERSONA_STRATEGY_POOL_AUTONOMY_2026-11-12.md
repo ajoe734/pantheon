@@ -52,7 +52,7 @@ computes the proposal's risk direction by comparing the candidate with the pool'
 (`compare_risk_policies`: every limit equal or stricter -> `reduce`/`neutral`; any looser limit, a missing limit
 counting as unlimited, or no effective policy -> `increase`) and stores the direction plus the per-limit comparison in
 the proposal subject; no constant direction or risk level remains. For a paper pool a candidate that verifies inside
-the operator outer bounds (`low`: single name <= 20%, cash reserve >= 10%) and carries risk-officer draft provenance
+the operator outer bounds (`low`: gross and leverage <= 2.0x pool equity per operator decision 2026-11-07, single name <= 20% and cash reserve >= 10% per operator decision 2026-11-23) and carries risk-officer draft provenance
 is decided by the existing automated gate (`pantheon-dev-paper-provisioner`) whatever its direction; a candidate
 outside the bounds is refused by the same gate with the named limit and reason, and the pool keeps its effective
 policy. The widening is an explicit grant clause (`risk_policy=paper_pool;risk_proposer=<subject>`), dev and paper

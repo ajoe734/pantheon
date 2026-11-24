@@ -62,8 +62,16 @@ RISK_POLICY_TARGET = "capital_pool_activation"
 RISK_POLICY_BOUNDS_ENV = "PANTHEON_PAPER_RISK_PROFILE_BOUNDS"
 # Default operator outer bounds for the low profile (mirrors services/capital/risk_policy.py).
 RISK_POLICY_DEFAULT_BOUNDS: dict[str, dict[str, float]] = {
-    "low": {"max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10},
+    "low": {
+        # Operator decision 2026-11-07 (DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER Q3): gross and leverage <= 2.0x pool equity.
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        # Operator decision 2026-11-23: single name <= 20% of NAV, cash reserve >= 10% of NAV.
+        "max_single_name_weight": 0.20,
+        "min_cash_reserve_pct": 0.10,
+    },
 }
+_RISK_POLICY_UPPER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight")
 RISK_POLICY_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage",
                                "max_single_name_weight", "min_cash_reserve_pct")
 _GRANT_KEYS = frozenset({"persona_lifecycle", "proposer", "card_admission", "card_proposer",
@@ -569,9 +577,10 @@ def risk_policy_candidate_failure(decision: Mapping[str, Any], env: Mapping[str,
     for name in ("max_single_name_weight", "min_cash_reserve_pct"):
         if not values[name] < 1.0:
             return f"{name}: must be below 1, got {values[name]!r}"
-    cap = limits.get("max_single_name_weight")
-    if cap is not None and values["max_single_name_weight"] > float(cap) + 1e-12:
-        return f"max_single_name_weight: {values['max_single_name_weight']!r} exceeds {profile} bound {cap!r}"
+    for name in _RISK_POLICY_UPPER_BOUND_KEYS:
+        cap = limits.get(name)
+        if cap is not None and values[name] > float(cap) + 1e-12:
+            return f"{name}: {values[name]!r} exceeds {profile} bound {cap!r}"
     reserve = limits.get("min_cash_reserve_pct")
     if reserve is not None and values["min_cash_reserve_pct"] + 1e-12 < float(reserve):
         return f"min_cash_reserve_pct: {values['min_cash_reserve_pct']!r} below {profile} bound {reserve!r}"
