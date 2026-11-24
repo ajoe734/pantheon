@@ -44,6 +44,16 @@ MIRROR_BACKOFF_SECONDS = 0.5
 MAX_RETRY_AFTER_SECONDS = 5.0
 REQUEST_TIMEOUT_SECONDS = 60.0
 DEFAULT_FLUSH_TIMEOUT_SECONDS = 30.0
+DEFAULT_RECALL_TIMEOUT_SECONDS = 8.0
+
+
+def recall_timeout_seconds() -> float:
+    """Deadline for one read-path recall (separate from the 60 s write/mirror timeout)."""
+    try:
+        value = float(os.getenv("PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS", ""))
+    except ValueError:
+        return DEFAULT_RECALL_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_RECALL_TIMEOUT_SECONDS
 FAILURE_LOG_LIMIT = 500
 DEFAULT_MIRROR_WORKERS = 1
 MAX_PENDING_MIRRORS = 256
@@ -1404,6 +1414,27 @@ def recall_canonical_ids(client: Any, bank: str, *, query: str, groups: List[dic
             if score > ordered.get(doc_id, float("-inf")):
                 ordered[doc_id] = score
     return sorted(ordered.items(), key=lambda item: item[1], reverse=True)
+
+
+def bounded_recall_canonical_ids(client: Any, bank: str, *, query: str, groups: List[dict],
+                                 limit: int) -> List[Tuple[str, float]]:
+    """``recall_canonical_ids`` under the recall deadline.
+
+    Raises ``HindsightError("hindsight_recall_timeout")`` when the deadline passes;
+    the caller then reports the keyword fallback instead of blocking.
+    """
+    import concurrent.futures
+    deadline = recall_timeout_seconds()
+    if isinstance(client, HindsightClient):
+        client = HindsightClient(client.url, client.api_key, timeout=deadline + 2.0)
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="hs-recall")
+    future = pool.submit(recall_canonical_ids, client, bank, query=query, groups=groups, limit=limit)
+    try:
+        return future.result(timeout=deadline)
+    except concurrent.futures.TimeoutError as exc:
+        raise HindsightError("hindsight_recall_timeout", f"recall exceeded {deadline}s") from exc
+    finally:
+        pool.shutdown(wait=False)
 
 
 def reflect_citations(response: dict) -> List[str]:

@@ -1364,6 +1364,43 @@ def test_preread_memory_refusal_is_named_and_does_not_block(monkeypatch):
     assert calls[0]["actor_id"] and calls[0]["actor_roles"]
 
 
+def test_preread_runs_concurrently_with_one_slow_participant_and_unchanged_refusals(monkeypatch):
+    import time
+    import urllib.error
+    import integrations.openclaw.persona_memory_bridge as bridge
+    from services.consultation.meetings import build_participant_pre_read
+
+    started = []
+
+    def fetch(url, **kw):
+        pid = kw["persona_id"]
+        started.append(pid)
+        time.sleep(0.8 if pid == "persona-slow" else 0.4)
+        if pid == "persona-refused":
+            raise urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+        return {"hits": [{"type": "persona", "relevance_score": 1.0,
+                          "entry": {"memory_id": f"canon-{pid}", "persona_id": pid,
+                                    "relevance_scope": "persona_and_committee",
+                                    "content": {"summary": f"memory {pid}"}}}]}
+
+    monkeypatch.setattr(bridge, "fetch_canonical_memory", fetch)
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ID", "")
+    monkeypatch.setenv("PANTHEON_MEMORY_ACTOR_ROLES", "")
+    refusals: dict = {}
+    participants = [{"persona_id": pid, "role": "r", "style": "s", "origin": "o"}
+                    for pid in ("persona-slow", "persona-a", "persona-refused", "persona-b")]
+    t0 = time.monotonic()
+    out = build_participant_pre_read(
+        refusals=refusals, meeting_id="m1", tenant_id=TENANT, topic="t",
+        memory_url="http://memory.invalid", participants=participants)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.4  # sequential would take 2.0 s; concurrent is bounded by the slow one
+    assert [r["persona_id"] for r in out] == [p["persona_id"] for p in participants]
+    assert refusals == {"persona-refused": "memory_read_refused:HTTPError:http_403"}
+    assert out[1]["entry_ids"] == ["canon-persona-a"]
+    assert out[2]["entry_ids"] == ["preread:persona-refused:1"]
+
+
 # --- CONSULTATION-WRITEBACK-PROBE-AND-PERSONA-DIRECTORY-20261120 ------------
 
 _DIR_SECRET = "directory-read-test-secret"

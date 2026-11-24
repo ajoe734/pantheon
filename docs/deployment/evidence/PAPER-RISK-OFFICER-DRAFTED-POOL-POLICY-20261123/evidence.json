@@ -1,0 +1,42 @@
+{
+  "task_id": "PAPER-RISK-OFFICER-DRAFTED-POOL-POLICY-20261123",
+  "class": "RC2 existing risk-binding row (PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122 / PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121)",
+  "operator_instruction": "2026-11-23 coordinator dialog: risk policy content is produced by the system's risk LLM; feature freeze overridden for this feature only",
+  "status": "source and focused tests complete; hosted proof pending deploy",
+  "root_cause": "PersonaProvisioningCoordinator._default_paper_pool_risk_policy and two Capital discover_approved_profile_risk_policy fallbacks synthesized gross/net/leverage 2.0 with no max_single_name_weight and no cash reserve for every requested profile",
+  "changes": {
+    "services/capital/risk_policy.py": "removed both synthesized 2.0 fallbacks in discover_approved_profile_risk_policy (default-id approval and missing inline policy); a default-id approval now only yields a candidate from a risk-officer draft embedded in its subject and bound to the approved digest; added profile_outer_bounds (config, env PANTHEON_PAPER_RISK_PROFILE_BOUNDS, default low: single name <= 0.20, reserve >= 0.10) and validate_drafted_pool_risk_policy",
+    "services/persona/risk_policy_draft.py": "one persona-risk-officer turn through turn_runner(RISK_PERSONA_ID, prompt) with pool budget/currency, instruments, requested profile, persona mandate and recent paper evidence; output validated by Capital; never raises, never falls back to numbers",
+    "services/control-plane/bff/persona_provisioning_coordinator.py": "removed _default_paper_pool_risk_policy and its four call sites; no approved policy -> draft -> Governance proposal (existing _route_or_reuse path, deterministic id incl. input digest, subject carries draft policy + provenance); missing/failed/out-of-bounds draft or missing profile -> pool stays pending with a readable reason; legacy generated v1.0 inline policies (no cap/reserve) get the next major version (2.0) drafted",
+    "docker-compose.yml": "operator-bff gets OPENCLAW_GATEWAY_URL/TOKEN (same gateway the persona cycle uses) and PANTHEON_PAPER_RISK_PROFILE_BOUNDS",
+    "acceptance/probes/paper-risk-policy-binding": "low pools must show an active policy or a pending Governance proposal with single-name cap < 1, positive cash reserve and risk-officer provenance; the old hardcoded v1.0 fails",
+    "docs/operations/problem-register.md": "RC2 instance added"
+  },
+  "governance": "Approval stays the existing two-distinct-decider rule. The task and its code never cast a vote or approve; the proposer is the existing enrolment proposer principal. Binding after approval uses the existing Capital binding / version-change path (#7762); no redeploy",
+  "runtime_budget": {
+    "risk_officer_turns": "one per (pool, requested profile, input digest) missing-policy event; idempotent because the Governance proposal id embeds the input digest and the stored proposal carries the draft, which is reused without another turn",
+    "recurring_job": "none (drafting runs inside the existing provisioning coordinate/repair calls; no new service, cron or gate)",
+    "storage": "one governance proposal row per draft in the existing store, bounded by pools x profile changes; nothing new to clean",
+    "storage_manifest": "no new writer or store: the governance proposal writer already existed; scripts/check_storage_manifest.py passed (failures: [])"
+  },
+  "scope_note": "services/persona/persona_cycle_controller.py and lesson_cycle.py were not changed: the draft is driven from the existing provisioning coordinate/repair path (which already observes pending pools) and reuses the lesson_cycle turn_runner pattern; adding a loop there would duplicate the pending-pool observation",
+  "evidence_input_limits": "recent paper evidence is read from pool/request metadata `recent_paper_evidence` and an optional coordinator.risk_evidence_reader hook; no telemetry reader is wired in this change, so the 2026-11-19 452-share rejection reaches the prompt only if recorded in that metadata",
+  "execution_enforcement": "services/execution/lean_runtime/test_expression_inputs.py::test_low_profile_bounds_reduce_the_2317_452_share_request_and_name_the_limit: 100,000 TWD, 2317 @ 221 with Taiwan costs, single name 20% / reserve 10% -> permitted_units 90 (order notional 19,890 <= 20,000; remaining cash >= 10,000), binding_limit max_single_name_weight; the old request of 452 is reduced",
+  "tests": {
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py": "125 passed (includes legacy v1.0 -> drafted 2.0 once + one proposal, and no-drafter / failed-draft pending without invented limits)",
+    "services/persona/test_risk_policy_draft.py": "13 passed (provenance, prompt inputs, outside bounds, missing keys, garbage, failed turn, exception, digest)",
+    "services/capital": "all passed",
+    "services/execution/lean_runtime/test_expression_inputs.py": "24 passed",
+    "services/control-plane/bff/test_persona_provisioning_readback.py": "65 passed",
+    "acceptance/test_paper_risk_policy_binding.py": "51 passed",
+    "pre_existing_failures_unrelated": [
+      "services/control-plane/bff/tests/test_persona_paper_onboarding_capital_integration.py::test_paper_onboarding_creates_and_activates_pool_and_binding_without_approval_or_policy (risk_policy_wrong_tenant tenant-test vs tenant-a; fails identically on 19a746ebc)",
+      "services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads and ::test_persona_list_projects_only_requested_page (strategy_store_unavailable; fail identically on 19a746ebc)"
+    ]
+  },
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; the reviewer (Claude2) may be from the owner's family.",
+  "hosted_proof_pending": [
+    "after deploy each of 青禾 pool-persona-paper-06d4775a9b6a8f63b311, 澄川 pool-persona-paper-039ad01f8bcd2b4aa466, 衡岳 pool-persona-paper-a81b4fd15944698341aa shows a pending 2.0 proposal in /bff/approvals (two humans approve); the probe then shows an active policy with cap < 1, positive reserve and risk-officer provenance",
+    "requires OPENCLAW_GATEWAY_URL reachable from operator-bff and a configured enrolment proposer principal"
+  ]
+}
