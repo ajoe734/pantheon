@@ -1555,11 +1555,6 @@ services:
       # input digest) and approved through Governance; the gateway is the same one the persona cycle uses.
       OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
-      # The risk officer's own agent is ensured through the adapter persona-agent route before its drafting turn
-      # (PAPER-RISK-OFFICER-AGENT-ENSURE-20261124); same URL/token wiring as the persona service.
-      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
-      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
-      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       # Operator outer bounds per profile, enforced as validation (empty = built-in low: single name <= 20%, reserve >= 10%).
       PANTHEON_PAPER_RISK_PROFILE_BOUNDS: ${PANTHEON_PAPER_RISK_PROFILE_BOUNDS:-}
       BFF_DATA_DIR: /data/bff
