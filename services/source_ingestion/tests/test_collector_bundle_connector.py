@@ -541,6 +541,165 @@ def test_unequal_public_cap_community_does_not_lose_unreturned_rows(tmp_path, mo
     assert raw_returned
 
 
+@pytest.mark.parametrize("source", ["collector-tw-ptt-stock", "collector-tw-threads"])
+@pytest.mark.parametrize("symbols", [None, [], ["", "  "], "2330.TW", ["2330.TWSE", "6488.TWO"]])
+def test_social_pull_without_bare_symbols_never_reads_price_authority(tmp_path, monkeypatch, source, symbols):
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    files, entry, _ = make_bundle(source_id=source)
+    base = f"bundles/{source}/2026-11-10/run1"
+    items = [json.loads(line) for line in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for item in items:
+        item["symbols"] = symbols
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(item) for item in items).encode()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("social pull opened historical price authority without a bare ticker")
+
+    monkeypatch.setattr(cb, "stored_instrument_authority", forbidden)
+    def make():
+        return adapter_for(files, [entry], tmp_path, source_id=source, dataset="tw_community_daily",
+                           clock=lambda: datetime(2026, 11, 11, tzinfo=timezone.utc))
+    with cb.deferred_collector_acknowledgement():
+        result = make().pull()
+    assert result.next_cursor == f"{entry['finished_at']}#run1"
+    feature_symbols = {r.metadata["symbol"] for r in result.records
+                       if r.content_ref.startswith("collector-feature://")}
+    expected = {"2330.TWSE"} if symbols == "2330.TW" else (
+        {"2330.TWSE", "6488.TPEX"} if symbols == ["2330.TWSE", "6488.TWO"] else set()
+    )
+    assert feature_symbols == expected
+    assert result.feature_rejected == ()
+    # Planning and failed persistence never acknowledge ledger/markers or cursor.
+    assert not make()._community_ledger_path().exists()
+    assert not make()._resume_cursor_path().exists()
+    result.delivery.validate(result.records)
+    result.delivery.acknowledge()
+    boundary = cb.verify_bundle(make().transport, expected_source_id=source, entry=entry)
+    assert make()._has_verified_boundary(boundary, persisted_only=True)
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in raw_files(tmp_path)}
+    # Fresh adapters model cold process state as well as subsequent empty ticks.
+    for _ in range(2):
+        with cb.deferred_collector_acknowledgement():
+            empty = make().pull(cursor=result.next_cursor)
+        assert empty.records == ()
+        empty.delivery.validate(empty.records)
+        empty.delivery.acknowledge()
+    assert {p.relative_to(tmp_path): p.read_bytes() for p in raw_files(tmp_path)} == before
+    if not symbols or symbols == ["", "  "]:
+        assert not make()._community_ledger_path().exists()
+        assert not make()._community_ledger_path().with_name("community_emitted.jsonl").exists()
+
+
+def test_qualified_social_symbol_rejection_does_not_consult_authority(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_feature_catalogue import _post
+
+    monkeypatch.setattr(cb, "stored_instrument_authority", lambda *a: pytest.fail("price scan"))
+    adapter = adapter_for({}, [], tmp_path, dataset="tw_community_daily")
+    plan = adapter._plan_governed_features([_post(1, "2026-11-10", ["2330.BAD"])])
+    assert not plan.rows and not plan.fresh_entries
+    assert len(plan.rejected) == 1
+    assert not adapter._community_ledger_path().exists()
+
+
+def test_falsy_social_symbols_stay_empty_refusals_without_authority_scan(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_feature_catalogue import _post
+
+    monkeypatch.setattr(cb, "stored_instrument_authority", lambda *a: pytest.fail("price scan"))
+    adapter = adapter_for({}, [], tmp_path, dataset="tw_community_daily")
+    plan = adapter._plan_governed_features([_post(1, "2026-11-10", [None, False, 0, ""])])
+    assert not plan.rows and not plan.fresh_entries
+    assert sum("empty" in r["reason"] for r in plan.rejected) == 3  # None/False/0 refused, "" skipped
+
+
+def test_empty_social_pull_still_flushes_persisted_ledger_after_day_close(tmp_path, monkeypatch):
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    files, entry, _ = make_bundle()
+    base = "bundles/collector-tw-ptt-stock/2026-11-10/run1"
+    items = [json.loads(line) for line in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for item in items:
+        item["symbol"] = "2330.TW"
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(item) for item in items).encode()
+    monkeypatch.setattr(cb, "stored_instrument_authority", lambda *a: pytest.fail("price scan"))
+    early = adapter_for(files, [entry], tmp_path, dataset="tw_community_daily",
+                        clock=lambda: datetime(2026, 11, 10, 3, tzinfo=timezone.utc))
+    with cb.deferred_collector_acknowledgement():
+        first = early.pull()
+    first.delivery.validate(first.records)
+    first.delivery.acknowledge()
+    assert early._community_ledger_path().exists()
+    assert not early._community_ledger_path().with_name("community_emitted.jsonl").exists()
+    late = replace(early, clock=lambda: datetime(2026, 11, 11, tzinfo=timezone.utc))
+    with cb.deferred_collector_acknowledgement():
+        flushed = late.pull(cursor=first.next_cursor)
+    features = [r.metadata["normalized_row"] for r in flushed.records]
+    assert len(features) == 1
+    assert features[0]["symbol"] == "2330.TWSE"
+    assert features[0]["post_volume"] == 2
+    flushed.delivery.validate(flushed.records)
+    flushed.delivery.acknowledge()
+    with cb.deferred_collector_acknowledgement():
+        assert late.pull(cursor=first.next_cursor).records == ()
+
+
+def test_bare_social_symbols_share_current_governed_evidence_and_refusals(tmp_path, monkeypatch):
+    import gzip
+    from services.source_ingestion.connectors import collector_bundle as cb
+
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    raw_root, market_root = tmp_path / "store", tmp_path / "market"
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(market_root))
+
+    def write(root, name, symbols):
+        path = root / "normalized/tw_price_daily/date=2026-11-10" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        opener = gzip.open if name.endswith(".gz") else Path.open
+        with opener(path, "wt", encoding="utf-8") as handle:
+            for symbol in symbols:
+                handle.write(json.dumps({"metadata": {"normalized_row": {"symbol_canonical": symbol}}}) + "\n")
+        return path
+
+    write(raw_root, "a.jsonl", ["2330.TWSE", "1234.TWSE"])
+    changed = write(market_root, "b.jsonl.gz", ["6488.TWO", "1234.TPEX"])
+    expected = cb.stored_instrument_authority(raw_root, market_root)
+    files, entry, _ = make_bundle()
+    base = "bundles/collector-tw-ptt-stock/2026-11-10/run1"
+    items = [json.loads(line) for line in files[f"{base}/items.jsonl"].decode().splitlines()]
+    for item in items:
+        item["symbols"] = ["2330", "6488", "1234", "9999", "1101.TW"]
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(item) for item in items).encode()
+    adapter = adapter_for(files, [entry], tmp_path, dataset="tw_community_daily",
+                          clock=lambda: datetime(2026, 11, 11, tzinfo=timezone.utc))
+    bundle = cb.verify_bundle(adapter.transport, expected_source_id=adapter.source_id, entry=entry)
+    records = tuple(adapter._record(bundle, row, trace_id="test") for row in bundle.items)
+    original = CollectorBundleAdapter._instrument_authority
+    snapshots = []
+
+    def counted(self):
+        snapshot = original(self)
+        snapshots.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_instrument_authority", counted)
+    for _ in range(2):  # cold and warm, never reuse stale authority across requests
+        plan = adapter._plan_governed_features(records)
+        assert snapshots[-1] == expected
+        assert {r["symbol"] for r in plan.rows} == {"2330.TWSE", "6488.TWO", "1101.TWSE"}
+        assert sum("ambiguous" in r["reason"] for r in plan.rejected) == 2
+        assert sum("no governed instrument" in r["reason"] for r in plan.rejected) == 2
+    assert len(snapshots) == 2  # one complete authority snapshot per request, not per post/symbol
+    write(market_root, changed.name, ["6488.TWO", "1234.TWSE", "9999.TWSE"])
+    updated = adapter._plan_governed_features(records)
+    assert {r["symbol"] for r in updated.rows} == {"2330.TWSE", "6488.TWO", "1234.TWSE", "9999.TWSE", "1101.TWSE"}
+    changed.unlink()
+    removed = adapter._plan_governed_features(records)
+    assert {r["symbol"] for r in removed.rows} == {"2330.TWSE", "1234.TWSE", "1101.TWSE"}
+    assert len(snapshots) == 4
+
+
 def _two_bundles(source_id, *, macro=False):
     files, entries = {}, []
     for run_id, finished in (("cap-a", "2026-11-10T02:05:00Z"), ("cap-b", "2026-11-10T03:05:00Z")):

@@ -30,6 +30,7 @@ from services.foundation.reliable_delivery import (
 )
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 from services.persona.harness import PersistentHarnessOwner, register_harness_routes
+from services.control_plane.persona.persona_policy_resolver import evaluate_participant_action_capability
 
 
 def _utc_now() -> str:
@@ -1118,12 +1119,17 @@ class PersistentCapabilitySnapshotOwner:
             )
         return CapabilitySnapshotBody.model_validate(record)
 
-    def get_for_persona(self, persona_id: str) -> CapabilitySnapshotBody:
+    def get_for_persona(self, persona_id: str, run_purpose: str | None = None) -> CapabilitySnapshotBody:
         matches = [
             CapabilitySnapshotBody.model_validate(record)
             for record in self._records.list_all()
             if str(record.get("persona_id") or "") == persona_id
         ]
+        if run_purpose == "daily_cycle":
+            # A later paper_advisory receipt must not shadow an explicit daily
+            # grant, denial or expiry; it is only the fallback when none exists.
+            explicit = [m for m in matches if (m.metadata or {}).get("scope") != "paper_advisory"]
+            matches = explicit or matches
         if not matches:
             raise CapabilitySnapshotNotFound(
                 f"Capability snapshot for Persona {persona_id!r} not found"
@@ -1821,6 +1827,7 @@ def create_app(
     harness_owner: PersistentHarnessOwner | None = None,
     lesson_registrar: MemoryLessonRegistrar | None = None,
     lesson_rule_converter: Any | None = None,
+    action_policy_resolver: Any | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1854,6 +1861,32 @@ def create_app(
     register_harness_routes(app, persistent_owner, active_harness)
     from services.persona.lesson_rule_proposals import build_lesson_rule_converter, register_lesson_rule_routes
     register_lesson_rule_routes(app, persistent_owner, lesson_rule_converter or build_lesson_rule_converter(active_harness))
+
+    @app.get("/api/personas/{persona_id}/action-capability")
+    def action_capability(
+        persona_id: str, run_purpose: str = "daily_cycle",
+        required_data: list[str] = Query(default=[]),
+        authorization: str | None = Header(default=None),
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        try:
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+            persona = persistent_owner.get(persona_id).model_dump(mode="json")
+            if persona.get("tenant_id") != admitted:
+                raise HTTPException(status_code=404, detail="Persona not found")
+            try:
+                snapshot = persistent_capability_owner.get_for_persona(persona_id, run_purpose).model_dump(mode="json")
+            except CapabilitySnapshotNotFound:
+                snapshot = None
+            except Exception:
+                return evaluate_participant_action_capability(persona, None, owner_available=False)
+            return evaluate_participant_action_capability(
+                persona, snapshot, run_purpose=run_purpose,
+                requirements={"required_data": required_data}, resolver=action_policy_resolver)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail="Persona not found") from exc
 
     @app.post(
         "/api/personas",

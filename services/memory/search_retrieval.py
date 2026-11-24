@@ -109,8 +109,8 @@ def _candidates(client: Any, bank: str, *, query: str, groups: List[dict], limit
         _fallback(diagnostics, "hindsight_unconfigured")
         return None
     try:
-        recalled = hs.recall_canonical_ids(client, bank, query=query, groups=groups,
-                                           limit=max(limit * 3, 20))
+        recalled = hs.bounded_recall_canonical_ids(client, bank, query=query, groups=groups,
+                                                   limit=max(limit * 3, 20))
     except hs.HindsightError as exc:
         _fallback(diagnostics, exc.reason)
         return None

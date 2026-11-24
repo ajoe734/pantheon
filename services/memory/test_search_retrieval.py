@@ -114,3 +114,52 @@ def test_keyword_fallback_is_explicit_with_reason(client, query, reason):
     hits = retrieve_institutional(store, client=client, query=query, tenant_id="t1", diagnostics=diag)
     assert diag == {"retrieval_mode": "keyword_fallback", "fallback_reason": reason}
     assert hits == [] or hits[0].entry.entry_id == mid("a")
+
+
+def test_slow_recall_returns_keyword_fallback_within_deadline(monkeypatch):
+    import time
+    monkeypatch.setenv("PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS", "0.3")
+    store = InstitutionalMemoryStore()
+    store.create(inst(mid("a")))
+
+    class Slow:
+        def recall(self, bank, body):
+            time.sleep(2.0)
+            return {"results": []}
+
+    diagnostics = {}
+    started = time.monotonic()
+    retrieve_institutional(store, client=Slow(), query="q", tenant_id="default", diagnostics=diagnostics)
+    assert time.monotonic() - started < 0.3 + 1.0
+    assert diagnostics["retrieval_mode"] == "keyword_fallback"
+    assert diagnostics["fallback_reason"] == "hindsight_recall_timeout"
+
+
+def test_scope_both_issues_recalls_in_parallel(monkeypatch):
+    import threading
+    from services.memory import main
+    barrier = threading.Barrier(2, timeout=3)
+    seen = []
+
+    def fake_inst(*a, diagnostics, **k):
+        seen.append("inst"); barrier.wait(); diagnostics.update(retrieval_mode="hindsight", fallback_reason=None)
+        return []
+
+    def fake_persona(*a, diagnostics, **k):
+        seen.append("persona"); barrier.wait(); diagnostics.update(retrieval_mode="hindsight", fallback_reason=None)
+        return []
+
+    from services.memory import search_retrieval as sr
+    monkeypatch.setattr(sr, "retrieve_institutional", fake_inst)
+    monkeypatch.setattr(sr, "retrieve_persona", fake_persona)
+    monkeypatch.setattr(main, "_authorize_memory_read",
+                        lambda *a, **k: (None, [], "default", "persona_and_committee", {}))
+    monkeypatch.setattr(main, "_store", lambda: None)
+    monkeypatch.setattr(main, "_persona_store", lambda: None)
+    import asyncio
+    result = asyncio.run(main.retrieve_memory(
+        review_required=False, actor_id="a", actor_roles=["r"], session_id="s", persona_id="p",
+        session_persona_id=None, scope="both", query="q", knowledge_type=None, memory_type=None,
+        scope_filter=None, tags=None, subject_anchors=None, limit=5, authorization=None))
+    assert sorted(seen) == ["inst", "persona"]  # barrier passed only because both ran together
+    assert result["retrieval_mode"] == "hindsight"

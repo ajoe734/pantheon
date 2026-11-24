@@ -194,6 +194,9 @@ def failure_record(error: Exception, stage: str) -> dict:
     record = {"status": "error", "error_code": FAILURE_CODE,
             "failure_stage": stage if isinstance(stage, str) and stage in FAILURE_STAGES else "initialize",
             "failure_kind": kind, "failure_location": location, "exit_code": code}
+    docker_detail = docker_failure_detail(cause)
+    if docker_detail:
+        record["docker"] = docker_detail
     if isinstance(error, SourceCompatibilityError):
         record["source_compatibility"] = {"reason": error.reason, "line": error.line}
     if isinstance(error, StackError) and error.services:
@@ -210,7 +213,7 @@ def remote_failure_record(raw: bytes) -> dict | None:
             value = _json(line)
         except (ArtifactError, ValueError, TypeError, RecursionError):
             continue
-        if not isinstance(value, dict) or set(value) - {"source_compatibility", "services"} != {
+        if not isinstance(value, dict) or set(value) - {"source_compatibility", "services", "docker"} != {
             "status", "error_code", "failure_stage", "failure_kind", "failure_location", "exit_code"
         }:
             continue
@@ -219,6 +222,13 @@ def remote_failure_record(raw: bytes) -> dict | None:
             if not isinstance(detail, dict) or set(detail) != {"reason", "line"} or \
                     not isinstance(detail["reason"], str) or detail["reason"] not in SOURCE_FAILURE_REASONS or \
                     (detail["line"] is not None and (type(detail["line"]) is not int or not 0 < detail["line"] < 100000000)):
+                continue
+        if "docker" in value:
+            detail = value["docker"]
+            if not isinstance(detail, dict) or set(detail) != {"operation", "image", "stderr"} or \
+                    not isinstance(detail["operation"], str) or len(detail["operation"]) > 64 or \
+                    not (detail["image"] is None or (isinstance(detail["image"], str) and len(detail["image"]) <= 160)) or \
+                    not isinstance(detail["stderr"], str) or len(detail["stderr"]) > DOCKER_STDERR_LIMIT:
                 continue
         if "services" in value and (not isinstance(value["services"], list) or len(value["services"]) > 64 or
                                     not all(isinstance(n, str) and SERVICE_NAME.fullmatch(n) for n in value["services"])):
@@ -248,6 +258,52 @@ class Docker:
         except (OSError, subprocess.SubprocessError) as exc:
             raise ArtifactError("Docker artifact operation failed") from exc
         return result.stdout
+
+
+DOCKER_STDERR_LIMIT = 4096
+_DOCKER_VERBS = frozenset({"image", "compose", "inspect", "tag", "stop", "start", "rm", "ps", "load"})
+_DOCKER_SUBVERBS = frozenset({"load", "inspect", "up", "config"})
+_DOCKER_REF = re.compile(r"(?:sha256:[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9_.\-/]{0,127}(?::[A-Za-z0-9_.\-]{1,128})?(?:@sha256:[0-9a-f]{64})?)")
+_SECRET_ASSIGN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=\S+")
+_SECRET_TOKEN = re.compile(r"(?i)\b(?:bearer|basic)\s+\S+|\b(?:gh[pousr]_|github_pat_|sk-|xox[a-z]-|AKIA)[A-Za-z0-9_\-]{8,}")
+_LONG_BLOB = re.compile(r"(?<![0-9a-f:])[A-Za-z0-9+/_\-]{40,}={0,2}")
+
+
+def redact_docker_stderr(raw, limit: int = DOCKER_STDERR_LIMIT) -> str:
+    """Bounded, redacted Docker CLI stderr: no NAME=value, tokens or long blobs."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    text = "".join(c if c == "\n" or c == "\t" or c.isprintable() else "?" for c in raw[-limit * 4:])
+    text = _SECRET_TOKEN.sub("<redacted>", text)
+    text = _SECRET_ASSIGN.sub(lambda m: m.group(0).split("=", 1)[0] + "=<redacted>", text)
+    text = _LONG_BLOB.sub("<redacted>", text)
+    text = text.strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def docker_failure_detail(cause) -> dict | None:
+    """Operation, image reference and stderr excerpt of a failed Docker CLI call."""
+    if not isinstance(cause, subprocess.CalledProcessError) or not isinstance(cause.cmd, (list, tuple)):
+        return None
+    args = [x for x in cause.cmd[1:] if isinstance(x, str)]
+    if args[:1] == ["--host"]:
+        args = args[2:]
+    words = [x for x in args if not x.startswith("-")][:6]
+    operation = [w for w in words[:1] if w in _DOCKER_VERBS]
+    operation += [w for w in words[1:] if w in _DOCKER_SUBVERBS][:1]
+    image = None
+    for word in args:
+        if _DOCKER_REF.fullmatch(word) and (word.startswith("sha256:") or ":" in word or "@" in word):
+            image = word
+            break
+    if image is None and "--input" in args:
+        i = args.index("--input")
+        if i + 1 < len(args):
+            image = Path(args[i + 1]).name[:128]
+    return {"operation": " ".join(operation) or "unknown", "image": image,
+            "stderr": redact_docker_stderr(getattr(cause, "stderr", None))}
 
 
 def _match(value, pattern, label):
@@ -935,6 +991,16 @@ def _resolved_image_id(docker: Docker, ref: str) -> str | None:
         return None
 
 
+def _residual_reason(docker: Docker, row: dict, reason: str) -> str:
+    """Named cause of a residual: oom_killed when Docker says so, else the observed state."""
+    try:
+        if _json(docker.call("inspect", "--format", "{{json .State.OOMKilled}}", row["container_id"]).encode()) is True:
+            return "oom_killed"
+    except Exception:  # diagnostics only; never turn a named residual into a crash
+        pass
+    return reason.replace("-", "_")
+
+
 def _mixed(problems: dict[str, str]) -> StackMixedError:
     return StackMixedError("stack is mixed: " + ", ".join(sorted(problems)), problems)
 
@@ -943,13 +1009,18 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
                    recreated=(), sleep: Callable[[float], None] = time.sleep,
                    monotonic: Callable[[], float] = time.monotonic,
                    budget_seconds: int = STACK_READBACK_SECONDS,
-                   compose_refs: dict[str, str] | None = None) -> dict:
+                   compose_refs: dict[str, str] | None = None,
+                   tolerate_residual: bool = False) -> dict:
     """Prove each recorded service runs its recorded image, healthy within budget.
 
     A wrong image, missing container or surviving candidate-only service fails at
     once; run/health states may heal and are polled until ``budget_seconds``.
+    With ``tolerate_residual`` a service that is on its recorded image but still not
+    running/healthy at the deadline is reported by name (``residual_unhealthy``)
+    instead of failing: the restore cannot change why it is unhealthy.
     """
     deadline = monotonic() + budget_seconds
+    residual: dict[str, str] = {}
     while True:
         check_lease()
         current = _stack_rows(docker)
@@ -959,7 +1030,11 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
         if not soft:
             break
         if monotonic() >= deadline:
-            raise _mixed(soft)
+            if not tolerate_residual:
+                raise _mixed(soft)
+            residual = {service: _residual_reason(docker, current[service][0], reason)
+                        for service, reason in soft.items()}
+            break
         sleep(STACK_POLL_SECONDS)
     if compose_refs:
         # A later "compose up" without an override must not start a candidate.
@@ -994,7 +1069,8 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
                                    "observed_image_id": current[service][0]["image_id"]}
                          for service, row in sorted(stack["services"].items())},
             "candidate_only_stopped": sorted(s for s in current if s not in stack["services"]),
-            **({"unhealthy_at_capture": unhealthy} if unhealthy else {})}
+            **({"unhealthy_at_capture": unhealthy} if unhealthy else {}),
+            **({"residual_unhealthy": residual} if residual else {})}
 
 
 def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
@@ -1072,6 +1148,8 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             out["restart"] = row["control"]["restart"]
         return out
 
+    wait_failed: list[str] = []
+
     def compose_up(stage: str, services: dict[str, dict], tail: tuple[str, ...], names: list[str]) -> None:
         override = Path(stage) / "images.json"
         # JSON is valid YAML; the sentinel becomes Compose's "!reset null" tag.
@@ -1084,7 +1162,18 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             command.extend(("-f", str(path)))
         command.extend(("-f", str(override), "up", "-d", "--no-build", "--pull", "never", *tail, *names))
         check_lease()
-        docker.call(*command)
+        try:
+            docker.call(*command)
+        except ArtifactError as error:
+            # "--wait" exits 1 when a recreated container is not healthy inside
+            # its budget (OOM/restart churn). That does not undo the recreate:
+            # keep restoring the rest. Identity and container presence are
+            # proven by the readback below, which still fails hard on a wrong
+            # image or missing container; health is polled and, if it stays
+            # bad, reported as a named residual.
+            if "--wait" not in tail or not isinstance(error.__cause__, subprocess.CalledProcessError):
+                raise
+            wait_failed.extend(names)
         override.unlink()
 
     recreated, started = [], []
@@ -1155,12 +1244,20 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
     if stack is not None:
         proof = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
-                                         budget_seconds=readback_seconds, compose_refs=refs)
+                                         budget_seconds=readback_seconds, compose_refs=refs,
+                                         tolerate_residual=True)
         # Reported beside (not inside) the strict stack proof: health is not a restore requirement here.
         unhealthy = proof.pop("unhealthy_at_capture", None)
         result["stack"] = proof
         if unhealthy:
             result["unhealthy_at_capture"] = unhealthy
+        residual = proof.pop("residual_unhealthy", None)
+        if residual:
+            result["residual_unhealthy"] = residual
+            result["verdict"] = "restored; " + "; ".join(
+                f"{service} unhealthy: {reason}" for service, reason in sorted(residual.items()))
+        if wait_failed:
+            result["restore_wait_failed"] = sorted(wait_failed)
         result["recreated_services"] = sorted(recreated)
         result["started_services"] = sorted(started)
     check_lease()

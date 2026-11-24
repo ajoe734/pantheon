@@ -1,0 +1,238 @@
+{
+  "task_id": "PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123",
+  "owner": "Codex",
+  "assigned_independent_reviewer": "Codex2",
+  "problem_register_class": "RC2 WP2.1",
+  "evidence_kind": "source_validation_not_hosted_acceptance",
+  "source_review": "pending_independent_re_review_after_release_replay_inventory_repair",
+  "delivery_state": null,
+  "frontend_task": "FE-PERSONA-RISK-PROFILE-CHANGE-20261123",
+  "contract": {
+    "path": "GET|PATCH /bff/personas/{id}",
+    "fields": [
+      "requestedRisk",
+      "effectiveRisk",
+      "status",
+      "policyVersion",
+      "approvalId"
+    ],
+    "statuses": [
+      "effective",
+      "pending_approval",
+      "unavailable"
+    ],
+    "null_semantics": "effectiveRisk/version/approval remain null without verified installed tier; unavailable read has requestedRisk null; no aliases",
+    "get_authoritative": true,
+    "operator_and_idempotency_header_required": true,
+    "idempotency_key_format": "existing opaque public header contract, including UUIDs and frontend idk_<base36 issued milliseconds>_<nonce>; keep exact key across retries; opaque keys use durable owner receipts without retry arrival timestamps",
+    "frontend_compatibility": "existing UUID/opaque callers and execute-plans idempotencyKey() supported without response/body changes"
+  },
+  "reproduction": {
+    "base_commit": "bd47d73bc",
+    "local_fixture_log": "normal-entry-before.log",
+    "fixture_source": "baseline-normal-entry.py",
+    "result": "normal PATCH 200 medium, GET 200 low, Capital requested profile low unchanged, later medium repair 409; original create risk low unchanged",
+    "hosted_receipt": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121-closure-20261122.yjscFJxG/policy-version-change-live-dryrun-20261123.json"
+  },
+  "controls": [
+    "approved later low/medium/high exact binding and reverse edits",
+    "sizing and order gate in the same running paper algorithm",
+    "pending request retains verified old effective policy or null; holds increases and preserves genuine reductions",
+    "unapproved/foreign/live/wrong tier/wrong digest/incomplete/ambiguous approval rejection",
+    "independent PostgreSQL facades: one actual update for six same-key writers; unrelated row unchanged; stale repair rejected",
+    "lost commit response, reload, superseded key, revision conflict, durable idempotency mismatch",
+    "normal BFF operator/header and tenant permissions, unrelated edits, Capital outage and later Persona-update failure",
+    "bounded explicit read-only probe: persisted latest request, scoped pool/grant, pending guard, authoritative reload",
+    "rolling issued-time receipt window; durable eviction watermark; delayed unseen keys and post-eviction restart-safe rejection",
+    "unrelated metadata/status annotation through real Capital API and independent PostgreSQL row writer",
+    "existing governed reconcile route after independent mapping approval converges same running evaluator without another risk PATCH",
+    "native UUID and opaque real PATCH/refetch; retired opaque replay and payload mismatch after restart; archive outage and pool failure after durable archive; PostgreSQL exact-key tenant-filtered audit lookup"
+  ],
+  "runtime_budget": {
+    "cadence": "event-driven normal risk PATCH or approved reconciliation; no recurring job",
+    "state": "existing pool row <=64 KiB including <=128 receipts and latest intent/watermark; retired opaque receipts use existing Capital audit writer, no new table/file",
+    "hosted_count": "3 trading pools plus 1 isolated acceptance pool; <=256 KiB total increment; real trading pools untouched",
+    "growth": "0 B/day steady; <=384 B per new row receipt until 128 then zero net row growth; <=2 KiB ordinary audit event plus <=2 KiB opaque retirement per new edit after window fills; four pools x E edits/pool/day gives <=16E KiB/day total incremental audit growth",
+    "cleanup": "inline owner-locked receipt retirement: timestamp watermark or durable exact opaque audit tombstone before row eviction; pool row follows lifecycle; opaque tombstones require pool-lifetime retention/preservation by future RC3 cleanup; audit total cap/cleanup remains RC3 WP3.1, not claimed bounded",
+    "manifest": "docs/operations/storage-manifest.json"
+  },
+  "hosted_acceptance": {
+    "status": "pending_after_independent_source_review_and_exact_pair_integration",
+    "isolated_persona_id": "persona-d64835a203ce276b8fbb",
+    "probe": "acceptance/probes/persona-risk-profile-change",
+    "operator_edit_reload_required": true,
+    "real_three_pool_changes_authorized": false,
+    "business_votes_or_invented_limits_used": false,
+    "procedure": "README.md#verification-and-hosted-continuation"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 canonical BFF read/fixture chain",
+      "finding": "two baseline Persona list tests return 503 strategy_store_unavailable/caller authorization",
+      "evidence": "baseline-list-failures.log",
+      "disposition": "coordinator must attach instance to existing owning chain before closure; no weakened registry authorization"
+    },
+    {
+      "class": "RC2/RC6 risk read model",
+      "finding": "legacy Persona scalar remains original request hint for supported paper edits; detail GET/PATCH use Capital latest intent",
+      "disposition": "non-detail consumers must adopt Capital-owned contract; frontend counterpart covers detail only; tier hint never grants execution"
+    },
+    {
+      "class": "RC3 WP3.1",
+      "finding": "existing whole Capital audit retention remains unbounded/unreviewed; exact opaque retirement tombstones now require pool-lifetime preservation",
+      "disposition": "RC3 WP3.1 existing retention owner; incremental size/cadence registered; future cleanup must preserve/migrate exact tombstones before deleting events"
+    },
+    {
+      "class": "RC2 WP2.1",
+      "finding": "hosted operator edit/reload and exact-pair acceptance pending",
+      "disposition": "continue after source review/integration using isolated acceptance Persona only"
+    }
+  ],
+  "reviewer_family_exception": "Antigravity2 terminal quota recovery; Codex and Codex2 are distinct configured identities in the same model family; no reviewer approval is asserted by the owner",
+  "validated_source_commit": "87f991dfbbed5d89c56f623431d1e7c764b1f8fa",
+  "ci_replay_repair": {
+    "failed_head": "472b25875ccd0ca6d156ae1a8a809dc9e144f9d0",
+    "job": "https://github.com/ajoe734/pantheon/actions/runs/45116879762/job/137514287607",
+    "terminal_job_result": "shard 11/12: 52 passed, 1 failed; sole failure was release replay probe inventory missing probe:persona-risk-profile-change at index 6",
+    "local_reproduction": "same replay test failed with the identical index 6 inventory difference before repair",
+    "change": "retain actual probe discovery and release verdict; add shipped probe to expected inventory and assert exit 77; exercise explicit Persona with missing viewer credentials",
+    "other_ci_failures_at_inspection": [],
+    "ci_caveat": "old-head workflow still had queued/running jobs; fresh-head CI and independent review remain required"
+  },
+  "historical_validation_at_rejected_head": [
+    {
+      "command": "timeout 240 bash /tmp/paper-risk-validation.sh (disposable postgres:16 with database pantheon; CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
+      "exit_code": 0,
+      "result": "546 passed, 1 warning in 93.43s; no skips; disposable container removed",
+      "log": "final-capital-validation.log"
+    },
+    {
+      "command": "timeout 150 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_bff_test_architecture.py acceptance/test_persona_risk_profile_change.py --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page",
+      "exit_code": 0,
+      "result": "195 passed, 2 deselected, 3 warnings in 106.28s; deselections are independently reproduced baseline failures, not passing tests",
+      "log": "final-bff-validation.log"
+    },
+    {
+      "command": "timeout 120 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_coordinator.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "139 passed, 3 warnings in 43.85s; final GET provenance guard rejects display-default request inference",
+      "log": "final-provenance-validation.log"
+    },
+    {
+      "command": "initial complete BFF/coordinator/normal API/probe batch, without deselections",
+      "exit_code": 1,
+      "result": "153 passed, 2 failed (Persona list strategy registry caller authorization)",
+      "log": "bff-validation.log",
+      "acceptance_evidence": false
+    },
+    {
+      "command": "timeout 100 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page (clean git archive origin/dev bd47d73bc)",
+      "exit_code": 1,
+      "result": "same 2 failures reproduced on clean base; strategy_store_unavailable/caller authorization",
+      "log": "baseline-list-failures.log",
+      "acceptance_evidence": false
+    },
+    {
+      "command": "PYTHONPATH=. PANTHEON_BFF_AUTH_MODE=permissive timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q -s <task evidence>/baseline-normal-entry.py (clean origin/dev archive; local route fixture auth mode matches bff/conftest.py)",
+      "exit_code": 0,
+      "result": "1 passed in 5.30s; original bug reproduced, no hosted writes",
+      "log": "normal-entry-before.log"
+    },
+    {
+      "command": "timeout 45 python3 scripts/check_storage_manifest.py --output <task evidence>/storage-check.json",
+      "exit_code": 0,
+      "result": "passed; zero failures",
+      "log": "storage-check.json"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    },
+    {
+      "command": "timeout 240 bash /tmp/paper-risk-validation.sh: disposable postgres:16, database pantheon, CAPITAL_TEST_DSN supplied; timeout 180 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "549 passed, 1 warning in 95.34s; no skips; independent PostgreSQL writers exercised; disposable container removed and absence verified",
+      "log": "revision-capital-validation.log"
+    },
+    {
+      "command": "timeout 150 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_bff_test_architecture.py acceptance/test_persona_risk_profile_change.py --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page",
+      "exit_code": 0,
+      "result": "200 passed, 2 deselected, 3 warnings in 106.22s; baseline failures remain residuals and are not claimed passed",
+      "log": "revision-bff-validation.log"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --dependency-python /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python; then timeout 120 bash /tmp/paper-risk-revision-focused.sh: disposable postgres:16 and timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_profile_change.py services/control-plane/bff/tests/test_persona_risk_profile_change.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "checkout-scoped editable environment verified from foreign cwd with no PYTHONPATH; after dev documentation-only merge, 44 passed, 3 warnings in 31.74s, no skips; PostgreSQL container removed",
+      "log": "revision-provisioned-validation.log"
+    },
+    {
+      "command": "timeout 45 python3 scripts/check_storage_manifest.py --output docs/deployment/evidence/PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123/storage-check.json",
+      "exit_code": 0,
+      "result": "passed; zero failures",
+      "log": "storage-check.json"
+    },
+    {
+      "command": "git diff --check origin/dev",
+      "exit_code": 0,
+      "result": "passed across complete base-to-result diff, including previously committed evidence logs; committed HEAD is rechecked before handoff"
+    }
+  ],
+  "validation": [
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_persona_risk_profile_change.py",
+      "exit_code": 0,
+      "result": "21 passed; complete release acceptance stage file plus normal risk-change probe tests",
+      "log": "ci-replay-validation.log"
+    },
+    {
+      "command": "env -u ACCEPTANCE_BFF_URL -u ACCEPTANCE_VIEWER_CLIENT_ID -u ACCEPTANCE_VIEWER_CLIENT_SECRET ACCEPTANCE_EXPECTED_PERSONA_IDS=fixture-persona timeout 15 acceptance/probes/persona-risk-profile-change",
+      "exit_code": 77,
+      "result": "expected credentialless skip with explicit isolated Persona; no hosted requests or acceptance claim",
+      "log": "ci-probe-no-credentials.log"
+    },
+    {
+      "command": "timeout 140 bash /tmp/paper-risk-revision-focused.sh (disposable postgres:16, CAPITAL_TEST_DSN supplied; timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/capital/test_profile_change.py services/control-plane/bff/tests/test_persona_risk_profile_change.py acceptance/test_persona_risk_profile_change.py)",
+      "exit_code": 0,
+      "result": "50 passed, 3 warnings in 33.55s; no skips; PostgreSQL opaque archive, independent writers, UUID/FE actual PATCH and recovery exercised",
+      "log": "opaque-focused-validation.log"
+    },
+    {
+      "command": "timeout 240 bash /tmp/opaque-capital-validation.sh (copy committed as opaque-postgres-validation.sh; disposable postgres:16 with CAPITAL_TEST_DSN; timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/capital acceptance/test_paper_risk_policy_binding.py acceptance/test_persona_risk_profile_change.py)",
+      "exit_code": 0,
+      "result": "552 passed, 1 warning in 105.04s; no skips; disposable container removed",
+      "log": "opaque-capital-validation.log"
+    },
+    {
+      "command": "timeout 160 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_bff_test_architecture.py acceptance/test_persona_risk_profile_change.py --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads --deselect services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page",
+      "exit_code": 0,
+      "result": "203 passed, 2 deselected, 3 warnings in 118.60s; two unchanged baseline failures remain explicit residuals, not passing tests",
+      "log": "opaque-bff-validation.log"
+    },
+    {
+      "command": "PANTHEON_BFF_AUTH_MODE=permissive timeout 60 .venv-pantheon/bin/python3 -m pytest -q /tmp/test_codex2_paper_risk_keys_20261123.py (unchanged reviewer reproduction from rejected head)",
+      "exit_code": 0,
+      "result": "2 passed, 1 warning in 6.21s; native uuid.uuid4 and existing FE keys actual PATCH/reload verify medium effective",
+      "log": "opaque-reviewer-reproduction.log"
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output docs/deployment/evidence/PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123/storage-check.json",
+      "exit_code": 0,
+      "result": "passed, zero failures",
+      "log": "storage-check.json"
+    },
+    {
+      "command": "git diff --check origin/dev; python3 scripts/git/diff_budget.py --base 0c806ffedf6b16f61b905a94dba5ebb8bd1fc12c --head HEAD",
+      "exit_code": 0,
+      "result": "whole committed base-to-head whitespace and per-file evidence budget checked before exact-head handoff; diff totals reported in handoff"
+    }
+  ],
+  "review_remediation": {
+    "P1": "258 real low/medium/high edits pass beyond the 128 receipt boundary; JSON reload plus latest expected revision cannot replay the evicted first key; BFF post-boundary edit and cleared-cache old retry covered; old unseen timestamps conflict; future timestamps cannot poison the window",
+    "P2": "partial unrelated metadata merges at both JSON and PostgreSQL owner locks; active-status API annotation succeeds without fresh policy approval; tenant pinning retained; stale risk/scope/policy writes still refused",
+    "governed_reconcile": "pending normal PATCH -> separately issued fixture approval made available -> existing POST /bff/personas/{id}/provisioning/paper-capital/risk-policy with {} -> same running evaluator sizing/order gate converge; no second risk PATCH or new revision; viewer forbidden; actual trigger described in README",
+    "whitespace": "trimmed trailing whitespace in baseline-list-failures.log and bff-validation.log; validate whole base-to-HEAD diff, not only clean worktree",
+    "UUID_P1": "restored opaque public key contract including native UUIDs, no arrival timestamp on retry; <=128 row receipts; opaque retirement persisted in existing audit store before row eviction, exact scoped readback after restart; archive failure and pool commit failure close the eviction gap; actual FE and UUID PATCH/refetch regressions replace rejection test"
+  }
+}

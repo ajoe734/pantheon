@@ -1,0 +1,366 @@
+{
+  "schema_version": "pantheon_task_evidence.v1",
+  "task_id": "COLLECTOR-SOCIAL-STEADY-AUTHORITY-20261123",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "captured_at": "2026-11-23T08:04:39.310523+00:00",
+  "delivery": {
+    "source": "pending independent review and supervisor merge",
+    "hosted": "not deployed by this task; no acceptance claimed"
+  },
+  "register": {
+    "classes": [
+      "RC2 Collector intake / market-data owner cb4f6795",
+      "RC1 WP1.3 steady-service verification"
+    ],
+    "composes_with": [
+      "COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122 (#7746)",
+      "SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118 (#7574)"
+    ]
+  },
+  "diagnosis": {
+    "root_workflow": "https://github.com/ajoe734/pantheon/actions/runs/45124155084",
+    "dispatch_packet": ".orchestrator/assistant-dev-packets/sources/collector-social-steady-authority-20261123/EXECUTION_TASKS.md",
+    "packet_observations_not_remeasured": {
+      "candidate_backend": "ba7c32e071a5d357067afc08addd78736aa25fd8",
+      "candidate_frontend": "cd42fa8e8fdd084c472e6c442015b7d872b8cfc8",
+      "scheduler_container": "221509f48474",
+      "scheduler_readback_times_utc": [
+        "2026-11-23T07:34:14Z",
+        "2026-11-23T07:36:25Z",
+        "2026-11-23T07:38:37Z",
+        "2026-11-23T07:40:48Z"
+      ],
+      "timeout_seconds": 65.6,
+      "component_receipt_time": "2026-11-23T07:38:33Z",
+      "component_status": "57 expected services present at correct versions; sole unhealthy service source-ingest-scheduler",
+      "earlier_source_observation": "Previous Collector-hosted owner observed different old normalized/tw_price_daily run files open every 0.5 s during 396-419 s zero-row PTT/Threads pulls."
+    },
+    "independently_read_hosted_receipts": {
+      "captured_at": "2026-11-23T07:58:29.690453+00:00",
+      "reader_override": null,
+      "source_journal": {
+        "path": "/data/source-ingest/ingest_schedule.jsonl",
+        "bytes": 107484631,
+        "tail_bytes_examined": 16000000,
+        "receipts": [
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-c8c3cca47ef5",
+            "started_at": "2026-11-23T05:26:21Z",
+            "finished_at": "2026-11-23T05:34:59Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-ptt-stock",
+            "ingest_run_id": "ingest-6879c6e0e0b2",
+            "started_at": "2026-11-23T05:35:01Z",
+            "finished_at": "2026-11-23T05:42:17Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-4e5c92e72909",
+            "started_at": "2026-11-23T05:52:40Z",
+            "finished_at": "2026-11-23T06:01:39Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-7ddc6009ce2c",
+            "started_at": "2026-11-23T06:01:40Z",
+            "finished_at": "2026-11-23T06:09:19Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-ptt-stock",
+            "ingest_run_id": "ingest-bdeceffb5275",
+            "started_at": "2026-11-23T06:09:21Z",
+            "finished_at": "2026-11-23T06:17:20Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-386fc7624ca3",
+            "started_at": "2026-11-23T06:26:09Z",
+            "finished_at": "2026-11-23T06:33:09Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-96b372f50edd",
+            "started_at": "2026-11-23T06:33:10Z",
+            "finished_at": "2026-11-23T06:40:17Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-ptt-stock",
+            "ingest_run_id": "ingest-993b873e1955",
+            "started_at": "2026-11-23T06:41:22Z",
+            "finished_at": "2026-11-23T06:48:32Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-ptt-stock",
+            "ingest_run_id": "ingest-8746cd890eb9",
+            "started_at": "2026-11-23T06:48:33Z",
+            "finished_at": "2026-11-23T06:55:27Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-84370b0c2f6a",
+            "started_at": "2026-11-23T07:05:09Z",
+            "finished_at": "2026-11-23T07:18:37Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-threads",
+            "ingest_run_id": "ingest-a565e7c08dd7",
+            "started_at": "2026-11-23T07:18:37Z",
+            "finished_at": "2026-11-23T07:26:43Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": null,
+            "trigger_type": "scheduled"
+          },
+          {
+            "connector_id": "collector-tw-ptt-stock",
+            "ingest_run_id": "ingest-016f8ba0dac0",
+            "started_at": "2026-11-23T07:34:14Z",
+            "finished_at": "2026-11-23T07:42:49Z",
+            "status": "failed",
+            "raw_count": 0,
+            "normalized_count": 0,
+            "rejected_count": 0,
+            "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+            "trigger_type": "scheduled"
+          }
+        ]
+      },
+      "price_inventory_metadata_only": {
+        "files": 8559,
+        "bytes": 13317462912
+      },
+      "social_state": [
+        {
+          "path": "state/collector-tw-cmoney-forum/community_emitted.jsonl",
+          "bytes": 23097,
+          "rows": 234
+        },
+        {
+          "path": "state/collector-tw-cmoney-forum/community_ledger.jsonl",
+          "bytes": 459262,
+          "rows": 766
+        },
+        {
+          "path": "state/collector-tw-instagram-popular/community_emitted.jsonl",
+          "bytes": 103,
+          "rows": 1
+        },
+        {
+          "path": "state/collector-tw-instagram-popular/community_ledger.jsonl",
+          "bytes": 935,
+          "rows": 2
+        },
+        {
+          "path": "state/collector-tw-ptt-stock/community_emitted.jsonl",
+          "bytes": 2346,
+          "rows": 25
+        },
+        {
+          "path": "state/collector-tw-ptt-stock/community_ledger.jsonl",
+          "bytes": 14521,
+          "rows": 27
+        },
+        {
+          "path": "state/collector-tw-threads/community_emitted.jsonl",
+          "bytes": 155,
+          "rows": 2
+        },
+        {
+          "path": "state/collector-tw-threads/community_ledger.jsonl",
+          "bytes": 544,
+          "rows": 2
+        }
+      ]
+    },
+    "read_method": "Read-only direct SSH to current Dev identity from deployment plan section 3.1; docker exec python streams last 16 MB of ingest_schedule.jsonl, extracts only PTT/Threads receipts, stats normalized price files without opening their contents, counts community state lines. No HTTP writes, source mutation, rollout or provider pull.",
+    "readback_sha256": "d4888a39d67cb4a7c7070f8f5d4bef5befb8d88d6b902dc9d2f7b9429fa13cda",
+    "correlation": "Natural PTT ingest-016f8ba0dac0 started at 07:34:14Z exactly with the candidate scheduler window and ended at 07:42:49Z (515 s), zero raw/normalized/rejected rows; Threads ingest-a565e7c08dd7 took 486 s (07:18:37-07:26:43Z). Current read confirms default run_files reader, 8,559 price files and 13,317,462,912 bytes. Candidate containers were already replaced by compensation when inspected, so exact candidate socket/file-descriptor timing is the dispatch packet observation, not a new measurement.",
+    "verified_call_path": "controller collector_steady_pull -> POST /api/source-ingest/run-scheduled -> configured CollectorBundleAdapter.pull -> _pull_ordered -> _plan_governed_features -> unconditional _instrument_authority -> stored_instrument_authority -> normalized/tw_price_daily/date=*/*.jsonl* (JSON decode per line). The community resolver uses authority only for symbols without a dot.",
+    "causal_limits": "515 s receipts and the unconditional all-file read identify avoidable in-process work; they do not measure provider transport separately on the removed candidate. The 15 s Collector transport budget does not bound the subsequent social feature plan. No attribution of unrelated slow readbacks/reconcile, memory, provider errors or empty-boundary refusal to this patch."
+  },
+  "change": {
+    "owned_layer": "_plan_governed_features examines the same symbol extraction used by community_ledger_entries; only a nonblank bare ticker causes one authority load for the whole request. Empty pulls still rebuild/flush due ledger revisions.",
+    "governance": "Original stored-instrument reader and configured roots plus known_instruments remain authoritative. Bare unknowns remain refused, two venue identities remain ambiguous, explicit suffixes use the original canonicalizer. Durable ACK/cursor commit and feature counts/weights are unchanged.",
+    "cache": "No new authority cache or memory reuse; all true bare requests reread current evidence, including rewritten, removed or compressed run files. No invalidation protocol or cache bound is added.",
+    "unchanged": [
+      "run_files reader mode across the environment",
+      "65.6 s RPC and 15 s transport budget",
+      "single connector per scheduled request",
+      "60 s controller cadence",
+      "services, jobs, gates, persistent schemas and writers"
+    ]
+  },
+  "local_handler_measurements": {
+    "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py -k social_scheduled_handler --tb=short -o junit_family=legacy --junitxml=/tmp/collector-social-handler-results.xml",
+    "result": "3 passed, 212 deselected in 7.33 s",
+    "handler_seconds": {
+      "no-symbols": {
+        "cold_handler_seconds": 0.116648,
+        "warm-empty_handler_seconds": 0.103638,
+        "restart-empty_handler_seconds": 0.078075
+      },
+      "qualified": {
+        "cold_handler_seconds": 0.129974,
+        "warm-empty_handler_seconds": 0.107836,
+        "restart-empty_handler_seconds": 0.095107
+      },
+      "bare": {
+        "cold_handler_seconds": 0.109334,
+        "warm-empty_handler_seconds": 0.092224,
+        "restart-empty_handler_seconds": 0.085112
+      }
+    },
+    "fixture": "Real FastAPI run-scheduled route and runtime/pipeline/persistent stores; existing producer BundleWriter fixture with 2 posts, 1,393 rows in a local normalized price file, one connector/one concurrency slot. Cold requests with no symbols, qualified symbols or a bare symbol; warm empty and reconstructed-runtime empty requests. This is a small local fixture, not a 13.3 GB hosted performance claim.",
+    "price_file_opens": "zero for no-symbol/qualified requests and every empty request; exactly one for the bare cold request; stored ACK and verified no_new_data survive runtime reconstruction.",
+    "clock_bound": "Measurements are recorded, not asserted as wall-clock CI gates. The deterministic assertion forbids price file opens on no-lookup paths, regardless of history size."
+  },
+  "runtime_budget": {
+    "cadence_seconds": 60,
+    "maximum_requests_per_day": 1440,
+    "connectors_per_request": 1,
+    "steady_rpc_timeout_seconds": 65.6,
+    "collector_read_budget_seconds": 15.0,
+    "new_persistent_writers": [],
+    "new_jobs_emitters_services": [],
+    "new_cache_entries": 0,
+    "added_bytes_per_day": 0,
+    "added_files_or_rows_per_day": 0,
+    "existing_social_state": {
+      "observed_files": 8,
+      "observed_bytes": 500963,
+      "observed_lines": 1059,
+      "growth": "No added ledger/marker rows for empty no-new-data requests; unchanged per-post ledger and per-revision marker append behavior. Existing total daily baseline is unmeasured, not invented from a snapshot.",
+      "cap": "No verified cap for pre-existing community ledger/marker journals.",
+      "cleanup": "No cleanup in pre-existing ledger/marker writers; existing RC3 WP3.1 obligation remains.",
+      "storage_manifest": "docs/operations/storage-manifest.json entries community_ledger.jsonl and community_emitted.jsonl are already registered unreviewed; this read-only optimization adds or changes no writer."
+    }
+  },
+  "verification": {
+    "focused_suite": {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_feature_catalogue.py services/source_ingestion/tests/test_collector_outcome_truth.py --tb=short -o junit_family=legacy --junitxml=/tmp/collector-social-focused-results.xml",
+      "exit_code": 0,
+      "passed": 490,
+      "skipped": 4,
+      "failed": 0,
+      "duration_seconds": 128.29,
+      "warnings": "Existing FastAPI/Starlette httpx deprecation only."
+    },
+    "regressions": [
+      "PTT and Threads first pull then two fresh-adapter empty pulls never access price authority and preserve byte-identical persisted state",
+      "qualified symbols canonicalize as before; unsupported suffix rejected without loading authority",
+      "empty pulls flush closed-day persisted ledger exactly once",
+      "bare symbols share one current authority snapshot for multiple posts; gzip/plain roots, unknown refusal, cross-venue ambiguity, rewrite and removal respected",
+      "real run-scheduled handler persists verified delivery, cursor and healthy empty no-new-data on warm/restarted runtimes",
+      "record symbols [null,false,0,\"\"] never open authority (normalized like resolve_social_symbol); None/False/0 stay recorded empty-symbol refusals, \"\" skipped (test_falsy_social_symbols_stay_empty_refusals_without_authority_scan)"
+    ],
+    "falsy_symbol_followup": {
+      "command": "/tmp/agy2venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py",
+      "exit_code": 0,
+      "result": "337 passed, 4 skipped, 1 warning in 106.56s",
+      "captured_at": "2026-11-23T08:25:57Z",
+      "scope": "Connector-only fix on top of 0f0ac3c55; no scheduler, cadence, writer or budget change."
+    },
+    "diff_check": "git diff --check: exit 0"
+  },
+  "review": {
+    "decision": "pending assigned independent reviewer; no owner approval claimed",
+    "delivery_binding": "Owner will bind this committed manifest to the exact PR head using governed handoff; supervisor alone integrates.",
+    "same_family_recovery_exception": "Supervisor recovery reassigned owner from Antigravity2 after durable terminal_quota:antigravity2, retaining reviewer Codex2 (separate configured identity, same family as owner). Record this exception for supervisor capacity assessment; if another family has live capacity, supervisor must reassign before approval. Worker has not asserted capacity equivalence or produced a reviewer attestation."
+  },
+  "hosted_acceptance": {
+    "owners": [
+      "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113",
+      "TRADING-PULSE-OPERATOR-READABILITY-20261122 Task E"
+    ],
+    "procedure": [
+      "Supervisor merges independently approved exact SHA with existing CI checks.",
+      "Release owner runs normal Root with the exact admitted FE/BFF pair; existing 57-service stack and steady restart checks remain unchanged.",
+      "Read natural PTT/Threads scheduled receipts plus controller timestamps; confirm request duration inside existing 65.6 s bound, proper delivery/empty refusal and durable cursor/ACK.",
+      "Task E performs paired hosted bilingual 390px real interaction and records exact release acceptance."
+    ],
+    "read_only_probes": [
+      "scripts/dev_steady_state_rows.py (existing RC1 steady-service checks)",
+      "Existing Collector hosted acceptance probe.py in the retained COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113 artifact directory",
+      "Natural ingest_schedule.jsonl receipts and scheduler/source logs; no forced pull or journal repair by this worker"
+    ]
+  },
+  "residual_findings": [
+    {
+      "finding": "Empty PTT/Threads pulls can still fail collector_complete_boundary_unverified (and Threads cursor_lag_over_7_days); bypassing an unused authority scan does not establish producer/persisted boundary proof.",
+      "disposition": "Existing RC2 COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113 owner retains boundary acceptance obligation; no relaxed ACK or validation."
+    },
+    {
+      "finding": "A true bare-symbol request still scans all configured run-file evidence. No natural nonempty bare request was identified in the observed candidate receipts; cold hosted bare time is unmeasured.",
+      "disposition": "Existing RC2 market-data package must measure if naturally encountered; further bounded reuse needs same-authority and invalidation proof. No global daily_bars mode change or speculative cache in this repair."
+    },
+    {
+      "finding": "Pre-existing community ledger and marker journals have no verified cap or cleanup.",
+      "disposition": "Already registered under RC3 WP3.1 in storage-manifest; preserve that obligation with observed size/count above."
+    }
+  ]
+}

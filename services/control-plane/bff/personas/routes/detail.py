@@ -593,6 +593,9 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 overlay=rb_overlay or None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
             )
+            from ..risk_changes import project_risk_change
+
+            project_risk_change(dto, raw, caller_tenant)
             containment = _service.get_persona_containment(persona_id)
             if containment:
                 containment_state = str(containment.get("containment_state") or "frozen")
