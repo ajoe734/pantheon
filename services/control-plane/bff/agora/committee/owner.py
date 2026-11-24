@@ -232,6 +232,112 @@ def project_meeting_proposal(proposal: Any, *, meeting_id: Optional[str] = None)
     }
 
 
+def project_meeting_case_file(
+    meeting: Mapping[str, Any],
+    *,
+    tenant_id: str,
+    meeting_id: Optional[str] = None,
+) -> dict:
+    """Case file, round position citations, and rejected positions of one deliberative meeting."""
+    raw_case = meeting.get("case_file")
+    if raw_case is None or (isinstance(raw_case, Mapping) and not raw_case):
+        return unavailable_case("no_case_file_recorded")
+    view = project_case_file(raw_case, tenant_id=tenant_id)
+    if view["status"] != "ok":
+        return view
+    mid = str(meeting_id or meeting.get("meeting_id") or meeting.get("request_id") or "").strip()
+    known = item_ids(view)
+    contributions: list[dict[str, Any]] = []
+    raw_rounds = meeting.get("rounds")
+    if isinstance(raw_rounds, list):
+        for r in raw_rounds:
+            if not isinstance(r, Mapping) or not isinstance(r.get("positions"), list):
+                continue
+            round_no = r.get("round")
+            for idx, pos in enumerate(r["positions"]):
+                if not isinstance(pos, Mapping) or _private(pos):
+                    continue
+                pid = pos.get("persona_id")
+                event_id = pos.get("event_id") or (
+                    f"evt-{mid}-r{round_no}-{pid or idx + 1}"
+                    if mid and round_no is not None
+                    else f"r{round_no}-{pid or idx + 1}"
+                )
+                recommendation = pos.get("recommendation") or pos.get("stance")
+                pos_citations = (
+                    pos.get("citations")
+                    if isinstance(pos.get("citations"), list)
+                    else pos.get("evidence_refs")
+                )
+                raw_claims = pos.get("claims")
+                if isinstance(raw_claims, list) and raw_claims:
+                    claims = [
+                        {
+                            "claim": cl.get("claim") if cl.get("claim") is not None else cl.get("summary"),
+                            **_citations(
+                                cl.get("evidence_refs")
+                                if cl.get("evidence_refs") is not None
+                                else cl.get("citations"),
+                                known,
+                            ),
+                        }
+                        for cl in raw_claims
+                        if isinstance(cl, Mapping) and not _private(cl)
+                    ]
+                else:
+                    claim_text = (
+                        pos.get("summary")
+                        or pos.get("claim")
+                        or pos.get("stance")
+                        or pos.get("recommendation")
+                        or pos.get("label")
+                    )
+                    claims = [{"claim": claim_text, **_citations(pos_citations, known)}]
+                summary_refs = (
+                    pos.get("summary_evidence_refs")
+                    if pos.get("summary_evidence_refs") is not None
+                    else pos_citations
+                )
+                contributions.append({
+                    "persona_id": pid,
+                    "event_id": event_id,
+                    "recommendation": recommendation,
+                    "role": pos.get("role"),
+                    "claims": claims,
+                    **{"summary_" + k: v for k, v in _citations(summary_refs, known).items()},
+                })
+    rejected: list[dict[str, Any]] = []
+    raw_rejected = meeting.get("rejected_positions")
+    if isinstance(raw_rejected, list):
+        for idx, rej in enumerate(raw_rejected):
+            if not isinstance(rej, Mapping) or _private(rej):
+                continue
+            pid = rej.get("persona_id")
+            r_no = rej.get("round")
+            contrib_id = (
+                rej.get("contribution_id")
+                or rej.get("event_id")
+                or (
+                    f"evt-{mid}-r{r_no}-{pid or idx + 1}-rejected"
+                    if mid and r_no is not None
+                    else f"rej-{mid or 'meeting'}-{idx + 1}"
+                )
+            )
+            rejected.append({
+                "persona_id": pid,
+                "contribution_id": contrib_id,
+                "reason": rej.get("reason"),
+                "cited": False,
+            })
+    return {
+        "status": "ok",
+        "reason": None,
+        **view,
+        "contributions": contributions,
+        "rejected_contributions": rejected,
+    }
+
+
 def project_meeting(
     item: Any,
     *,
@@ -278,7 +384,7 @@ def project_meeting(
                 raise unavailable("consultation", "invalid_meeting_response")
             origin = str(p.get("origin") or "institutional").strip()
             servant_user = str(p.get("agora_user_id") or "").strip() or None
-            if origin == "private_servant" and user_id and servant_user and servant_user != user_id:
+            if (origin == "private_servant" or servant_user) and user_id and servant_user and servant_user != user_id:
                 raise unavailable("consultation", "meeting_not_found", 404)
             entry: dict[str, Any] = {
                 "persona_id": str(p["persona_id"]),
@@ -290,17 +396,33 @@ def project_meeting(
             participants.append(entry)
 
     private_withheld = 0
+    withheld_case_item_ids: set[str] = set()
     case_file_items: list[dict[str, Any]] = []
     for citem in merged.get("case_file_items") or []:
         if not isinstance(citem, Mapping):
             continue
         if _private(citem):
             private_withheld += 1
+            if citem.get("item_id"):
+                withheld_case_item_ids.add(str(citem["item_id"]))
             continue
         case_file_items.append({
             k: v for k, v in citem.items()
             if k not in {"private_memory", "persona_private_memory"}
         })
+
+    raw_case = merged.get("case_file")
+    if isinstance(raw_case, Mapping) and isinstance(raw_case.get("groups"), Mapping):
+        for grp in raw_case["groups"].values():
+            if not isinstance(grp, Mapping):
+                continue
+            for gitem in grp.get("items") or []:
+                if isinstance(gitem, Mapping) and _private(gitem):
+                    gid = str(gitem.get("item_id") or "")
+                    if not gid or gid not in withheld_case_item_ids:
+                        private_withheld += 1
+                        if gid:
+                            withheld_case_item_ids.add(gid)
 
     pre_read_raw = merged.get("pre_read")
     if isinstance(pre_read_raw, list):
@@ -346,6 +468,10 @@ def project_meeting(
                 if _private(pos):
                     private_withheld += 1
                     continue
+                if isinstance(pos.get("claims"), list):
+                    for cl in pos["claims"]:
+                        if isinstance(cl, Mapping) and _private(cl):
+                            private_withheld += 1
                 positions.append({
                     "label": pos.get("label"),
                     "persona_id": pos.get("persona_id"),
@@ -360,6 +486,11 @@ def project_meeting(
                 "round": int(r["round"]),
                 "positions": positions,
             })
+
+    if isinstance(merged.get("rejected_positions"), list):
+        for rej in merged["rejected_positions"]:
+            if isinstance(rej, Mapping) and _private(rej):
+                private_withheld += 1
 
     synthesis_raw = merged.get("synthesis")
     synthesis: Optional[dict[str, Any]] = None
@@ -379,8 +510,14 @@ def project_meeting(
     if round_count is None:
         round_count = len(rounds)
 
+    case_file_view = project_meeting_case_file(merged, tenant_id=tenant_id, meeting_id=meeting_id)
+
     return {
-        **{k: v for k, v in merged.items() if k not in {"case_file_items", "pre_read", "rounds", "synthesis"}},
+        **{
+            k: v
+            for k, v in merged.items()
+            if k not in {"case_file", "case_file_items", "pre_read", "rounds", "synthesis", "rejected_positions"}
+        },
         "session_id": meeting_id,
         "meeting_id": meeting_id,
         "request_id": meeting_id,
@@ -395,6 +532,7 @@ def project_meeting(
         "rounds": rounds,
         "agenda": merged.get("agenda") or merged.get("topic"),
         "case_file_items": case_file_items,
+        "case_file_view": case_file_view,
         "pre_read": pre_read,
         "synthesis": synthesis,
         "proposals": projected_proposals,

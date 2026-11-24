@@ -49,6 +49,13 @@ class IndexPipelineSnapshot:
     freshness_sla_seconds: int
     indexed_object_ids: list[str] = field(default_factory=list)
     backlog_remaining: int = 0
+    # Streaming-mode checkpoint (bounded, independent of row count). ``indexed_append_cursor`` is the
+    # append_id below which every knowledge object is indexed; ``updates_*`` is the in-place-update
+    # sweep position; ``audit_cursor`` is the rolling backend-presence audit position.
+    indexed_append_cursor: int = 0
+    updates_cursor: int = 0
+    updates_since: str | None = None
+    audit_cursor: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +72,10 @@ class IndexPipelineSnapshot:
             "freshness_sla_seconds": self.freshness_sla_seconds,
             "indexed_object_ids": list(self.indexed_object_ids),
             "backlog_remaining": self.backlog_remaining,
+            "indexed_append_cursor": self.indexed_append_cursor,
+            "updates_cursor": self.updates_cursor,
+            "updates_since": self.updates_since,
+            "audit_cursor": self.audit_cursor,
         }
 
     @classmethod
@@ -83,6 +94,10 @@ class IndexPipelineSnapshot:
             freshness_sla_seconds=int(data.get("freshness_sla_seconds") or 3600),
             indexed_object_ids=list(data.get("indexed_object_ids") or []),
             backlog_remaining=int(data.get("backlog_remaining") or 0),
+            indexed_append_cursor=int(data.get("indexed_append_cursor") or 0),
+            updates_cursor=int(data.get("updates_cursor") or 0),
+            updates_since=data.get("updates_since"),
+            audit_cursor=int(data.get("audit_cursor") or 0),
         )
 
 
@@ -291,6 +306,9 @@ class IncrementalIndexPipeline:
         self.retrieval_backend = retrieval_backend
 
     def _source_watermarks(self) -> dict[str, str | None]:
+        pushed_down = getattr(self.repository, "source_watermarks", None)
+        if pushed_down is not None:
+            return dict(pushed_down())
         watermarks: dict[str, str | None] = {}
         for source in self.repository.list_source_records():
             source_type = source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type)
@@ -352,6 +370,9 @@ class IncrementalIndexPipeline:
         else:
             refresh()
         self.pipeline_store.reload()
+
+        if hasattr(self.repository, "fetch_knowledge_object_page"):
+            return self._run_streaming(triggered_by, trigger_ref, force_full)
 
         previous = self.pipeline_store.get_latest()
         previous_ids: set[str] = set(previous.indexed_object_ids) if previous else set()
@@ -452,6 +473,213 @@ class IncrementalIndexPipeline:
             freshness_sla_seconds=self.freshness_sla_seconds,
             indexed_object_ids=sorted(checkpoint_ids),
             backlog_remaining=backlog_remaining,
+        )
+        return self.pipeline_store.record_run(snapshot)
+
+    @staticmethod
+    def _indexable(obj: Any) -> bool:
+        # Numeric Collector bundles are provenance refs, not semantic documents.
+        return not (obj.source_type == "market" and obj.metadata.get("collector_market_bundle"))
+
+    def _index_chunk(self, chunk: list[Any]) -> None:
+        if self.retrieval_backend is not None:
+            self.retrieval_backend.index_documents(
+                [_knowledge_object_to_retrieval_record(obj, self.repository) for obj in chunk]
+            )
+
+    def _run_streaming(self, triggered_by: str, trigger_ref: str | None, force_full: bool) -> IndexPipelineSnapshot:
+        """Cursor-based run: memory is O(page + batch), never O(total rows).
+
+        Phases share one batch/time budget: (A) knowledge objects above ``indexed_append_cursor``;
+        (B) a sweep for objects updated in place (append_id is preserved by upserts), bounded by
+        ``updates_cursor``; (C) a rolling page audit that re-indexes objects the retrieval backend
+        lacks. Legacy checkpoints (id lists, no cursor) are honoured once as a skip-set while the
+        cursor catches up, then the id list is dropped.
+        """
+        repo = self.repository
+        previous = self.pipeline_store.get_latest()
+        fresh = force_full or previous is None
+        is_full_rebuild = fresh
+        legacy_ids: set[str] = set() if fresh else set(previous.indexed_object_ids)
+        old_cursor = 0 if fresh else previous.indexed_append_cursor
+        updates_cursor = 0 if fresh else previous.updates_cursor
+        updates_since = None if fresh else (previous.updates_since or previous.indexed_at)
+        audit_cursor = 0 if fresh else previous.audit_cursor
+        sweep_started_at = _now_iso_precise()
+        since_dt = _parse_time(updates_since)
+
+        deadline = time.monotonic() + self.time_budget_seconds
+        processed_count = 0
+
+        def budget_left() -> int:
+            if processed_count and time.monotonic() >= deadline:
+                return 0
+            return self.max_batch_size - processed_count
+
+        def drain(scan: Any) -> bool:
+            """Index chunks from ``scan(n) -> [(append_id, obj)]`` until budget or source is spent.
+
+            Returns False when an index error stopped it after earlier progress (the failed chunk is
+            retried next run); raises when nothing at all was processed.
+            """
+            nonlocal processed_count
+            while budget_left() > 0:
+                chunk = scan(min(self.chunk_size, budget_left()))
+                if not chunk:
+                    return True
+                try:
+                    self._index_chunk([obj for _, obj in chunk])
+                except Exception:  # noqa: BLE001
+                    if not processed_count:
+                        raise
+                    return False
+                processed_count += len(chunk)
+            return True
+
+        # (A) new objects above the cursor
+        committed = old_cursor
+        scan_pos = old_cursor
+
+        def scan_new(n: int) -> list[tuple[int, Any]]:
+            nonlocal scan_pos
+            scan_pos = committed
+            chunk: list[tuple[int, Any]] = []
+            while len(chunk) < n:
+                page = repo.fetch_knowledge_object_page(scan_pos)
+                if not page:
+                    break
+                for append_id, obj in page:
+                    scan_pos = append_id
+                    if not self._indexable(obj):
+                        continue
+                    if obj.knowledge_object_id in legacy_ids:
+                        effective = self._object_effective_time(obj)
+                        if not (effective is None or since_dt is None or effective >= since_dt):
+                            continue  # already indexed by the legacy checkpoint and untouched since
+                    chunk.append((append_id, obj))
+                    if len(chunk) >= n:
+                        break
+            return chunk
+
+        def drain_new() -> None:
+            nonlocal committed, processed_count
+            while budget_left() > 0:
+                chunk = scan_new(min(self.chunk_size, budget_left()))
+                if chunk:
+                    try:
+                        self._index_chunk([obj for _, obj in chunk])
+                    except Exception:  # noqa: BLE001
+                        if not processed_count:
+                            raise
+                        return
+                    processed_count += len(chunk)
+                committed = scan_pos
+                if not chunk:
+                    return
+
+        drain_new()
+        new_cursor = committed
+
+        # (B) in-place update sweep over rows indexed before this run
+        sweep_done = True
+        if updates_since is not None and old_cursor > 0:
+            if budget_left() <= 0:
+                sweep_done = False
+            else:
+                sweep_pos = updates_cursor
+                sweep_exhausted = False
+
+                def scan_updates(n: int) -> list[tuple[int, Any]]:
+                    nonlocal sweep_pos, sweep_exhausted
+                    chunk: list[tuple[int, Any]] = []
+                    while len(chunk) < n:
+                        page = repo.fetch_knowledge_object_page(
+                            sweep_pos, max_append_id=old_cursor, touched_since=updates_since
+                        )
+                        if not page:
+                            sweep_exhausted = True
+                            break
+                        for append_id, obj in page:
+                            sweep_pos = append_id
+                            if not self._indexable(obj):
+                                continue
+                            effective = self._object_effective_time(obj)
+                            if effective is None or since_dt is None or effective >= since_dt:
+                                chunk.append((append_id, obj))
+                                if len(chunk) >= n:
+                                    break
+                    return chunk
+
+                clean = drain(scan_updates)
+                if clean:
+                    updates_cursor = sweep_pos
+                sweep_done = clean and sweep_exhausted
+        if sweep_done:
+            updates_since = sweep_started_at
+            updates_cursor = 0
+
+        # (C) rolling presence audit (only when the backend can report presence)
+        probe = getattr(self.retrieval_backend, "indexed_document_states", None)
+        if probe is not None and budget_left() > 0 and new_cursor > 0:
+            page = repo.fetch_knowledge_object_page(audit_cursor, max_append_id=new_cursor)
+            if not page:
+                audit_cursor = 0
+            else:
+                by_tenant: dict[str, list[tuple[int, Any]]] = {}
+                for append_id, obj in page:
+                    if self._indexable(obj):
+                        tenant = str((dict(obj.metadata) if obj.metadata else {}).get("tenant_id") or "default")
+                        by_tenant.setdefault(tenant, []).append((append_id, obj))
+                missing: list[tuple[int, Any]] = []
+                supported = True
+                for tenant, rows in by_tenant.items():
+                    states = probe(tenant, [o.knowledge_object_id for _, o in rows])
+                    if not isinstance(states, dict):
+                        supported = False
+                        break
+                    missing.extend((a, o) for a, o in rows if states.get(o.knowledge_object_id) is not _desired_active(o))
+                if supported:
+                    missing.sort(key=lambda pair: pair[0])
+                    audit_cursor = page[-1][0]
+                    fixed = 0
+                    while fixed < len(missing) and budget_left() > 0:
+                        part = missing[fixed:fixed + min(self.chunk_size, budget_left())]
+                        try:
+                            self._index_chunk([o for _, o in part])
+                        except Exception:  # noqa: BLE001
+                            if not processed_count:
+                                raise
+                            audit_cursor = missing[fixed][0] - 1
+                            break
+                        fixed += len(part)
+                        processed_count += len(part)
+                    else:
+                        if fixed < len(missing):
+                            audit_cursor = missing[fixed][0] - 1
+
+        backlog_remaining = repo.count_knowledge_objects(new_cursor, indexable_only=True)
+        indexed_total = repo.count_knowledge_objects(0, max_append_id=new_cursor, indexable_only=True)
+
+        snapshot = IndexPipelineSnapshot(
+            pipeline_run_id=str(uuid.uuid4()),
+            schema_version=PIPELINE_SCHEMA_VERSION,
+            triggered_by=triggered_by,
+            trigger_ref=trigger_ref,
+            indexed_count=indexed_total,
+            incremental_count=processed_count,
+            removed_count=0,
+            indexed_watermarks=self._source_watermarks(),
+            indexed_at=_now_iso_precise(),
+            is_full_rebuild=is_full_rebuild,
+            freshness_sla_seconds=self.freshness_sla_seconds,
+            # Legacy id checkpoint is carried (one-time, bounded by its old size) only until the cursor
+            # has caught up with the table; afterwards the run line holds no id list at all.
+            indexed_object_ids=sorted(legacy_ids) if backlog_remaining > 0 else [],
+            backlog_remaining=backlog_remaining,
+            indexed_append_cursor=new_cursor,
+            updates_cursor=updates_cursor,
+            updates_since=updates_since,
+            audit_cursor=audit_cursor,
         )
         return self.pipeline_store.record_run(snapshot)
 

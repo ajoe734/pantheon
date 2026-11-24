@@ -1,0 +1,18 @@
+{
+  "observed_at": "2026-11-23T07:58:46.613303+00:00",
+  "command_runtime_sha": "42f13b2bfcbcf52bdb27ac0ccf1762d034384166",
+  "capacity_evidence": {
+    "antigravity": "antigravity:cannot_take_task; antigravity2:cannot_take_task",
+    "claude": "claude:cannot_take_task; claude2:cannot_take_task",
+    "copilot": "copilot:configured_zero_capacity",
+    "piastra": "piastra:configured_zero_capacity"
+  },
+  "eligible": {
+    "Antigravity": false,
+    "Antigravity2": false,
+    "Claude": false,
+    "Claude2": false,
+    "Copilot": false,
+    "Piastra": false
+  }
+}

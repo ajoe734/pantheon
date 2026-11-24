@@ -6,6 +6,8 @@ used as an unaudited direct-write path back into memory.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import urllib.parse
 import urllib.request
@@ -34,6 +36,7 @@ class MemoryMaterializationResult:
     source_refs: List[Dict[str, str]] = field(default_factory=list)
     rejected_hits: List[Dict[str, str]] = field(default_factory=list)
     retrieval: Dict[str, Any] = field(default_factory=dict)
+    missing_scopes: List[Dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,6 +49,8 @@ class MemoryMaterializationResult:
             "source_refs": list(self.source_refs),
             "rejected_hits": list(self.rejected_hits),
             "retrieval": dict(self.retrieval),
+            "missing_scopes": list(self.missing_scopes),
+            "partial": bool(self.missing_scopes),
         }
 
 
@@ -138,20 +143,58 @@ def materialize_persona_memory_from_api(
     generated_at: Optional[str] = None,
     tags: Iterable[str] = (),
 ) -> MemoryMaterializationResult:
-    payload = fetch_canonical_memory(
-        memory_api_url,
-        persona_id=persona_id,
-        actor_id=actor_id,
-        actor_roles=actor_roles,
-        session_id=session_id or f"openclaw-memory-sync-{persona_id}",
-        scope=scope,
-        query=query,
-        limit=limit,
-        timeout_seconds=timeout_seconds,
-        auth_token=auth_token,
-        tags=tags,
-    )
-    return materialize_openclaw_memory_context(
+    scopes = ["institutional", "persona"] if scope == "both" else [scope]
+
+    def _fetch(one_scope: str) -> Dict[str, Any]:
+        return fetch_canonical_memory(
+            memory_api_url,
+            persona_id=persona_id,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            session_id=session_id or f"openclaw-memory-sync-{persona_id}",
+            scope=one_scope,
+            query=query,
+            limit=limit,
+            timeout_seconds=timeout_seconds,
+            auth_token=auth_token,
+            tags=tags,
+            session_persona_id=persona_id if one_scope == "persona" else None,
+        )
+
+    # One call per scope: a slow or failed scope degrades to "missing" instead of
+    # discarding the scope that did answer.
+    payloads: List[Dict[str, Any]] = []
+    missing: List[Dict[str, str]] = []
+    if len(scopes) == 1:
+        payloads.append(_fetch(scopes[0]))
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(scopes), thread_name_prefix="persona-memory") as pool:
+            futures = {name: pool.submit(_fetch, name) for name in scopes}
+            for name, future in futures.items():
+                try:
+                    payloads.append(future.result())
+                except Exception as exc:  # noqa: BLE001
+                    missing.append({"scope": name, "reason": type(exc).__name__ + ":" + str(exc)[:120]})
+        if not payloads:
+            raise RuntimeError(
+                "memory_unavailable:" + ",".join(m["scope"] for m in missing)
+                + " (" + "; ".join(m["reason"] for m in missing) + ")")
+    hits: List[Any] = []
+    seen: set = set()
+    for part in payloads:
+        for hit in part.get("hits") or []:
+            entry = hit.get("entry") if isinstance(hit, dict) else None
+            entry = entry if isinstance(entry, dict) else {}
+            key = entry.get("memory_id") or entry.get("entry_id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            hits.append(hit)
+    hits.sort(key=lambda h: float((h or {}).get("relevance_score") or 0), reverse=True)
+    payload = {**payloads[0], "hits": hits[: int(limit)], "scope": scope}
+    result = materialize_openclaw_memory_context(
         persona_id=persona_id,
         workspace=workspace,
         retrieval_payload=payload,
@@ -161,6 +204,11 @@ def materialize_persona_memory_from_api(
         generated_at=generated_at,
         tags=tags,
     )
+    if missing:
+        result = dataclasses.replace(
+            result, missing_scopes=missing,
+            retrieval={**result.retrieval, "missing_scopes": [m["scope"] for m in missing]})
+    return result
 
 
 def materialize_openclaw_memory_context(

@@ -13,6 +13,7 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 
 from .owner import (
     project_meeting,
+    project_meeting_case_file,
     project_meeting_proposal,
     project_panel,
     project_panel_rounds,
@@ -140,14 +141,45 @@ class CommitteeOwnerClient:
             raise unavailable("consultation", "panel_tenant_mismatch")
         return [r for r in items if r.get("consultation_type") == "persona_panel"]
 
-    def case_file_view(self, session_id: str) -> dict:
-        """Owner-persisted case file of a panel; failure is a recorded reason, never a guess."""
+    def _panel_case_file_view(self, session_id: str, *, fallback_to_meeting_on_404: bool = False) -> dict:
         try:
             transcript = self.call("GET", f"/api/consult/requests/{quote(session_id, safe='')}/transcript")
         except HTTPException as exc:
+            if fallback_to_meeting_on_404 and exc.status_code == 404:
+                try:
+                    return self.meeting(session_id)["case_file_view"]
+                except HTTPException as meeting_exc:
+                    m_detail = meeting_exc.detail if isinstance(meeting_exc.detail, Mapping) else {}
+                    if meeting_exc.status_code == 404 and m_detail.get("reason") in {
+                        "meeting_tenant_mismatch",
+                        "meeting_not_found",
+                    }:
+                        raise
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             return no_case(str(detail.get("reason") or "consultation_owner_unavailable"))
         return project_panel(transcript, request_id=session_id, tenant_id=self.tenant_id)
+
+    def case_file_view(
+        self,
+        session_id: str,
+        *,
+        meeting_detail: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """Owner-persisted case file of a panel or deliberative meeting; failure is a recorded reason, never a guess."""
+        if isinstance(meeting_detail, Mapping):
+            existing = meeting_detail.get("case_file_view")
+            if isinstance(existing, dict):
+                return existing
+            return project_meeting_case_file(meeting_detail, tenant_id=self.tenant_id, meeting_id=session_id)
+        if str(session_id).startswith("mtg-"):
+            try:
+                return self.meeting(session_id)["case_file_view"]
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    raise
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                return no_case(str(detail.get("reason") or "consultation_owner_unavailable"))
+        return self._panel_case_file_view(session_id, fallback_to_meeting_on_404=True)
 
     def _panel_with_rounds(self, item: Mapping[str, Any], *, include_case_file: bool = False) -> dict:
         sid = str(item["request_id"])
@@ -283,6 +315,8 @@ class CommitteeOwnerClient:
         return results
 
     def session_detail(self, session_id: str) -> dict:
+        if str(session_id).startswith("mtg-"):
+            return self.meeting(session_id)
         try:
             panel_item = self.panel(session_id)
         except HTTPException as exc:
@@ -357,26 +391,38 @@ class CommitteeOwnerClient:
         return dict(response)
 
     def memos(self, session_id: str) -> list:
-        try:
-            self.panel(session_id)
-            is_panel = True
-        except HTTPException as exc:
-            if exc.status_code != 404:
-                raise
+        meeting_detail: Optional[dict] = None
+        if str(session_id).startswith("mtg-"):
             meeting_detail = self.meeting(session_id)
             is_panel = False
+        else:
+            try:
+                self.panel(session_id)
+                is_panel = True
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                meeting_detail = self.meeting(session_id)
+                is_panel = False
         items = self.call("GET", "/api/consult/memos?request_id=" + quote(session_id, safe=""))
         if not isinstance(items, list) or any(not isinstance(r, dict) or not r.get("memo_id")
                                              or r.get("request_id") != session_id for r in items):
-            if not is_panel:
+            if not is_panel and meeting_detail is not None:
                 synthesis = meeting_detail.get("synthesis") if isinstance(meeting_detail.get("synthesis"), Mapping) else {}
                 dissent_id = synthesis.get("dissent_memo_id")
                 if dissent_id:
                     memo = self.call("GET", "/api/consult/memos/" + quote(str(dissent_id), safe=""))
                     if isinstance(memo, dict) and memo.get("memo_id") == dissent_id:
-                        return [memo]
-                return []
-            raise unavailable("consultation", "invalid_memo_list_response")
+                        items = [memo]
+                    else:
+                        items = []
+                else:
+                    items = []
+            else:
+                raise unavailable("consultation", "invalid_memo_list_response")
+        if not is_panel and meeting_detail is not None:
+            view = self.case_file_view(session_id, meeting_detail=meeting_detail)
+            return [{**m, "case_file_view": view} for m in items]
         return items
 
     def publish(self, session_id: str, memo_id: str) -> dict:

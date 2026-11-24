@@ -22,7 +22,9 @@ NOW = datetime(2026, 11, 21, tzinfo=timezone.utc)
 def evidence():
     policy = {"risk_policy_id": "fixture-policy", "version": "fixture-v1", "status": "active",
               "allowed_stages": ["paper"], "gross_limit": 0.8, "net_limit": 0.7,
-              "max_leverage": 0.8, "max_single_name_weight": 0.2}
+              "max_leverage": 0.8, "max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1,
+              "metadata": {"risk_officer_draft": {"source": "risk_officer_draft",
+                                                  "risk_persona_id": "persona-risk-officer"}}}
     persona = {"id": "fixture-persona", "name": "Fixture trader", "tenantId": "fixture-tenant",
                "ownerLifecycleState": "paper_owner", "capitalMode": "paper", "risk": "low",
                "runtimeBindingId": "old-binding"}
@@ -353,3 +355,81 @@ def test_cli_uses_installed_dev_transport_for_catalog_and_approval_reads(monkeyp
     assert probe.main() == 0
     assert [call[0] for call in calls] == ["approvals", "capital"]
     assert "viewer-secret" not in capsys.readouterr().out
+
+
+def legacy_v1_policy():
+    return {"risk_policy_id": "rp-fixture-pool", "version": "1.0", "status": "active", "allowed_stages": ["paper"],
+            "gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0,
+            "allowed_asset_classes": ["equity", "future"]}
+
+
+def test_hardcoded_v1_policy_fails_the_low_pool_draft_check():
+    payload = evidence()
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"] = legacy_v1_policy()
+    report = check(payload)
+    failed = report["personas"]["fixture-persona"]["failed"]
+    assert not report["passed"]
+    assert "draft_single_name_cap_missing_or_not_below_1" in failed
+    assert "draft_cash_reserve_missing_or_not_positive" in failed
+    assert "draft_provenance_missing" in failed
+    assert report["personas"]["fixture-persona"]["risk_officer_draft"] == "missing"
+
+
+def test_pending_risk_officer_draft_satisfies_the_draft_check_for_a_legacy_pool():
+    payload = evidence()
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"] = legacy_v1_policy()
+    draft = {**legacy_v1_policy(), "version": "2.0", "max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1,
+             "metadata": {"risk_officer_draft": {"source": "risk_officer_draft", "risk_persona_id": "persona-risk-officer"}}}
+    payload["/api/v1/approval-decisions"]["data"].append({
+        "decision_id": "pending-draft", "tenant_id": "fixture-tenant", "target_type": "capital_pool_activation",
+        "target_id": "fixture-pool", "decision_state": "proposed",
+        "metadata": {"subject": {"pool_id": "fixture-pool", "requested_risk": "low", "risk_policy_digest":
+                                 probe.policy_digest(draft),
+                                 "risk_officer_draft": {"policy": draft, "provenance": {"source": "risk_officer_draft"}}}}})
+    row = check(payload)["personas"]["fixture-persona"]
+    assert row["risk_officer_draft"] == "pending:pending-draft"
+    assert not any(f.startswith("draft_") for f in row["failed"])
+
+
+def test_pending_draft_must_be_bounded_pool_scoped_and_digest_bound():
+    payload = evidence()
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"] = legacy_v1_policy()
+    bad = {**legacy_v1_policy(), "version": "2.0", "max_single_name_weight": 1.0, "min_cash_reserve_pct": 0.1,
+           "metadata": {"risk_officer_draft": {"source": "risk_officer_draft"}}}
+    payload["/api/v1/approval-decisions"]["data"].append({
+        "decision_id": "pending-bad", "tenant_id": "fixture-tenant", "target_type": "capital_pool_activation",
+        "target_id": "fixture-pool", "decision_state": "proposed",
+        "metadata": {"subject": {"pool_id": "fixture-pool", "requested_risk": "low",
+                                 "risk_policy_digest": probe.policy_digest(bad),
+                                 "risk_officer_draft": {"policy": bad}}}})
+    row = check(payload)["personas"]["fixture-persona"]
+    assert row["risk_officer_draft"] == "missing"
+
+
+def _gate_payload(direction, comparison, actor_id="pantheon-dev-paper-provisioner"):
+    payload = evidence()
+    approval = payload["/api/v1/approval-decisions"]["data"][0]
+    approval.update({"risk_level": "low", "actor_role": "automated_gate", "actor_id": actor_id,
+                     "owner_user_id": "pantheon-dev-persona-enrollment-proposer",
+                     "authorization_scope": {"environment": "dev", "allowed_target_stages": ["paper"],
+                                             "max_capital_scale_pct": 0}})
+    subject = approval["metadata"]["subject"]
+    subject["risk_direction"] = direction
+    if comparison is not None:
+        subject["risk_comparison"] = comparison
+    return payload
+
+
+def test_paper_gate_decision_with_computed_direction_is_accepted():
+    for direction, comparison in (("increase", {"_effective_policy": "absent"}),
+                                  ("reduce", {"gross_limit": "stricter", "net_limit": "equal"}),
+                                  ("neutral", {"gross_limit": "equal"})):
+        report = check(_gate_payload(direction, comparison))
+        assert report["passed"], (direction, report)
+
+
+def test_paper_gate_decision_needs_consistent_computed_direction_and_the_gate_subject():
+    assert not check(_gate_payload("reduce", {"gross_limit": "looser"}))["passed"]
+    assert not check(_gate_payload("increase", {"gross_limit": "equal"}))["passed"]
+    assert not check(_gate_payload("reduce", None))["passed"]
+    assert not check(_gate_payload("reduce", {"gross_limit": "stricter"}, actor_id="some-service"))["passed"]

@@ -88,8 +88,8 @@ def test_a_supplied_query_replaces_the_bootstrap_default(env):
         body = {"persona_id": "persona-a", "workspace_ref": str(root / "persona-a")}
         client.post(ROUTE, headers=HEADERS, json={**body, "query": "carry 2882"})
         client.post(ROUTE, headers=HEADERS, json=body)
-    assert "query=carry+2882" in seen[0] and DEFAULT_MEMORY_QUERY.split()[0] not in seen[0]
-    assert "query=recent+lessons" in seen[1]
+    assert all("query=carry+2882" in u and DEFAULT_MEMORY_QUERY.split()[0] not in u for u in seen[:2])
+    assert all("query=recent+lessons" in u for u in seen[2:])
 
 
 def _strict_memory_app(tmp_path, monkeypatch):
@@ -158,3 +158,44 @@ def test_adapter_principal_is_refused_by_memory_writes_and_a_bad_file_fails_clos
     monkeypatch.setenv("PANTHEON_MEMORY_AUTH_TOKEN", "stale-env-token")
     with pytest.raises(RuntimeError):
         adapter_main.adapter_memory_credential()
+
+
+def _scope_of(request):
+    return request.full_url.split("scope=")[1].split("&")[0]
+
+
+def _inst_hit():
+    return {"type": "institutional", "relevance_score": 0.8, "entry": {
+        "entry_id": "mem-1", "title": "t", "summary": "s", "content": {}, "written_at": "2026-11-24T00:00:00Z",
+        "knowledge_type": "lesson", "tenant_id": "default"}}
+
+
+def test_one_scope_timing_out_is_partial_not_503(env):
+    root, client = env
+
+    def fake_urlopen(request, timeout):
+        if _scope_of(request) == "persona":
+            raise TimeoutError("timed out")
+        return _Memory({"hits": [_inst_hit()]})
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", fake_urlopen):
+        response = client.post(ROUTE, headers=HEADERS, json={
+            "persona_id": "persona-a", "workspace_ref": str(root / "persona-a"), "query": "momentum"})
+    assert response.status_code == 200, response.text
+    memory = response.json()["memory"]
+    assert memory["partial"] is True
+    assert [m["scope"] for m in memory["missing_scopes"]] == ["persona"]
+    assert memory["retrieval"]["missing_scopes"] == ["persona"]
+
+
+def test_every_scope_failing_is_503(env):
+    root, client = env
+
+    def fake_urlopen(request, timeout):
+        raise TimeoutError("timed out")
+
+    with patch("integrations.openclaw.persona_memory_bridge.urllib.request.urlopen", fake_urlopen):
+        response = client.post(ROUTE, headers=HEADERS, json={
+            "persona_id": "persona-a", "workspace_ref": str(root / "persona-a"), "query": "momentum"})
+    assert response.status_code == 503
+    assert response.json()["error_code"] == "PERSONA_MEMORY_MATERIALIZATION_FAILED"

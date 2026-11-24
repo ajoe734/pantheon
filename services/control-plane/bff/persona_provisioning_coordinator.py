@@ -20,10 +20,14 @@ from urllib.parse import quote
 from services.capital.risk_policy import (
     BoundPoolRiskPolicyResolution,
     capital_pool_approval_digest,
+    compare_risk_policies,
     discover_approved_profile_risk_policy,
     resolve_pool_risk_policy_binding,
     risk_policy_digest,
+    profile_outer_bounds,
+    validate_drafted_pool_risk_policy,
 )
+from services.persona.risk_policy_draft import DraftInputs, DraftResult, make_drafter
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     canonical_market_context,
@@ -49,6 +53,7 @@ FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 # The bound is anchored to persisted owner timestamps, never to wall-clock at
 # retry time, so a response-loss retry composes byte-identical bodies.
 APPROVAL_TTL = timedelta(hours=24)
+MAX_PENDING_SUPERSEDE = 16  # bound of the pending paper policy proposals scanned per pool
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _UNKNOWN_SOURCE_COMMIT = "0" * 40
 # Settlement currency of canonical markets whose paper venue settles in one
@@ -312,6 +317,7 @@ class PersonaProvisioningCoordinator:
         governance_proposer: OwnerTransport | None = None,
         governance_proposer_actor_id: str | None = None,
         pool_publisher_factory: Callable[[], Any] | None = None,
+        risk_policy_drafter: Callable[[DraftInputs], DraftResult] | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -342,6 +348,8 @@ class PersonaProvisioningCoordinator:
         self.governance_proposer = governance_proposer
         self.governance_proposer_actor_id = governance_proposer_actor_id
         self.pool_publisher_factory = pool_publisher_factory
+        self.risk_policy_drafter = risk_policy_drafter
+        self.risk_evidence_reader: Callable[[str, str], Any] | None = None
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -1941,23 +1949,159 @@ class PersonaProvisioningCoordinator:
             raise
         return receipt
 
+    # -- risk-officer drafted pool policy (replaces the former hardcoded 2x default) --------------------
+    def _drafter(self) -> Callable[[DraftInputs], DraftResult] | None:
+        if self.risk_policy_drafter is not None:
+            return self.risk_policy_drafter
+        if os.getenv("OPENCLAW_GATEWAY_URL", "").strip():
+            self.risk_policy_drafter = make_drafter()
+        return self.risk_policy_drafter
+
     @staticmethod
-    def _default_paper_pool_risk_policy(
-        pool_id: str,
+    def _is_legacy_default_policy(policy: Mapping[str, Any], pool_id: str, profile: str) -> bool:
+        """A generated per-pool inline policy that lacks single-name cap / cash reserve (the old 2x default).
+
+        Operator-authored catalog policies keep their own identity and are never replaced by a draft.
+        """
+        policy_id = str(policy.get("risk_policy_id") or "")
+        generated = policy_id.startswith(("rp-pool-", "paper-inline-policy:")) or policy_id == f"rp-{pool_id}"
+        return generated and validate_drafted_pool_risk_policy(policy, profile=profile)[0] is None
+
+    @staticmethod
+    def _next_policy_version(existing: Any, explicit: str | None = None) -> str:
+        if explicit:
+            return explicit
+        raw = str(existing or "").strip().lstrip("vV")
+        try:
+            return f"{int(float(raw)) + 1}.0" if raw else "1.0"
+        except ValueError:
+            return "1.0"
+
+    @staticmethod
+    def _risk_profile_proposal_id(
+        tenant_id: str, pool_id: str, profile: str, policy_id: str, version: str, proposal_key: str = ""
+    ) -> str:
+        prop_hash = hashlib.sha256(
+            (f"{tenant_id}|{pool_id}|{profile}|{policy_id}|{version}"
+             + (f"|{proposal_key}" if proposal_key else "")).encode("utf-8")
+        ).hexdigest()[:20]
+        return f"apv-risk-profile-{prop_hash}"
+
+    def _draft_inputs(
+        self,
         *,
-        policy_id: str | None = None,
-        version: str = "1.0",
-    ) -> dict[str, Any]:
-        return {
-            "risk_policy_id": str(policy_id or f"rp-{pool_id}"),
-            "version": str(version or "1.0"),
-            "status": "active",
-            "allowed_stages": ["paper"],
-            "gross_limit": 2.0,
-            "net_limit": 2.0,
-            "max_leverage": 2.0,
-            "allowed_asset_classes": ["equity", "future"],
-        }
+        tenant_id: str,
+        persona_id: str,
+        pool_id: str,
+        profile: str,
+        budget: Any,
+        currency: str,
+        request: Mapping[str, Any] | None,
+        base_pool: Mapping[str, Any] | None,
+        version: str,
+    ) -> DraftInputs:
+        req = request if isinstance(request, Mapping) else {}
+        req_meta = req.get("metadata") if isinstance(req.get("metadata"), Mapping) else {}
+        pool_meta = (
+            base_pool.get("metadata") if isinstance(base_pool, Mapping) and isinstance(base_pool.get("metadata"), Mapping)
+            else {}
+        )
+        persona: Mapping[str, Any] = {}
+        try:
+            getter = getattr(self.persona_owner_provider(), "get_persona", None)
+            found = getter(persona_id) if callable(getter) else None
+            persona = found if isinstance(found, Mapping) else {}
+        except Exception:
+            persona = {}
+        persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+
+        def first(*values: Any) -> Any:
+            return next((v for v in values if v not in (None, "", [], ())), None)
+
+        raw_symbols = first(req.get("symbols"), req_meta.get("symbols"), pool_meta.get("symbols"),
+                            persona_meta.get("symbols"), persona.get("symbols"))
+        if isinstance(raw_symbols, str):
+            raw_symbols = [raw_symbols]
+        instruments = tuple(str(x) for x in raw_symbols) if isinstance(raw_symbols, (list, tuple)) else ()
+        if not instruments:
+            market = first(req.get("market"), req_meta.get("market"), persona_meta.get("market"))
+            instruments = (str(market),) if market else ()
+        mandate = str(first(req.get("mandate"), req_meta.get("mandate"), persona.get("mandate"),
+                            persona_meta.get("mandate"), persona.get("description")) or "")
+        raw_evidence = first(pool_meta.get("recent_paper_evidence"), req_meta.get("recent_paper_evidence"))
+        evidence = tuple(str(x) for x in raw_evidence) if isinstance(raw_evidence, (list, tuple)) else ()
+        reader = getattr(self, "risk_evidence_reader", None)
+        if callable(reader):
+            try:
+                evidence = (*evidence, *(str(x) for x in reader(tenant_id, pool_id)))
+            except Exception:
+                pass
+        return DraftInputs(
+            pool_id=pool_id, tenant_id=tenant_id, persona_id=persona_id, profile=profile, budget=budget,
+            currency=currency, instruments=instruments, mandate=mandate, evidence=evidence,
+            policy_id=f"rp-{pool_id}", version=version,
+            bounds=profile_outer_bounds().get(str(profile).strip().lower(), {}),
+        )
+
+    def _risk_officer_policy_candidate(
+        self,
+        *,
+        tenant_id: str,
+        persona_id: str,
+        pool_id: str,
+        profile: str | None,
+        budget: Any,
+        currency: str,
+        request: Mapping[str, Any] | None,
+        base_pool: Mapping[str, Any] | None,
+        version: str,
+    ) -> DraftResult:
+        """Policy content for a pool with no approved applicable policy.
+
+        Never invents numbers: returns a validated risk-officer draft, or raises so the pool stays pending
+        with a readable reason. Idempotent on (pool, profile, input digest): a Governance proposal that already
+        carries the draft for that key is reused without another risk-officer turn.
+        """
+        def pending(reason: str, code: str = "risk_officer_draft_unavailable") -> PersonaProvisioningCoordinationError:
+            return PersonaProvisioningCoordinationError(
+                f"CapitalPool risk policy pending: {reason} ({code})",
+                reason_code=code,
+                absence_source="policy_draft_unavailable",
+                resolution_status="unresolved_profile_mapping",
+            )
+
+        if not profile:
+            raise pending("no requested risk profile to draft a policy for", "risk_policy_profile_required")
+        inputs = self._draft_inputs(
+            tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id, profile=profile, budget=budget,
+            currency=currency, request=request, base_pool=base_pool, version=version,
+        )
+        proposal_id = self._risk_profile_proposal_id(
+            tenant_id, pool_id, profile, inputs.policy_id, version, inputs.input_digest
+        )
+        if self.transport is not None:
+            try:
+                existing = self._owner_get("governance", f"/api/governance/approvals/{_path_id(proposal_id)}")
+            except Exception:
+                existing = None
+            meta = existing.get("metadata") if isinstance(existing, Mapping) and isinstance(existing.get("metadata"), Mapping) else {}
+            subject = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+            stored = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
+            if isinstance(stored.get("policy"), Mapping):
+                model, _ = validate_drafted_pool_risk_policy(stored["policy"], profile=profile)
+                if model is not None and risk_policy_digest(stored["policy"]) == subject.get("risk_policy_digest"):
+                    return DraftResult(True, policy=deepcopy(dict(stored["policy"])),
+                                       provenance=dict(stored.get("provenance") or {}))
+        drafter = self._drafter()
+        if drafter is None:
+            raise pending("risk officer drafter is not configured")
+        result = drafter(inputs)
+        if not result.ok or result.policy is None:
+            raise pending(result.reason or "risk officer returned no usable draft")
+        return result
+
+    def _draft_candidate_policy_dict(self, draft: DraftResult) -> dict[str, Any]:
+        return deepcopy(dict(draft.policy or {}))
 
     def _governance_approval_reader(self) -> Any:
         coordinator = self
@@ -2027,7 +2171,11 @@ class PersonaProvisioningCoordinator:
         requested_profile: str,
         resolution: Any,
         dry_run: bool = False,
+        proposal_key: str = "",
+        draft: DraftResult | None = None,
     ) -> dict[str, Any]:
+        if draft is not None and draft.policy:
+            proposal_key = proposal_key or str(draft.provenance.get("input_digest") or "")
         base_req = (
             dict(resolution.owner_decision_request)
             if isinstance(getattr(resolution, "owner_decision_request", None), Mapping)
@@ -2059,11 +2207,19 @@ class PersonaProvisioningCoordinator:
             or ""
         )
         cand_pool_digest = str(base_req.get("candidate_pool_approval_digest") or "")
+        if draft is not None and draft.policy:
+            cand_pol_id = str(draft.policy.get("risk_policy_id") or cand_pol_id)
+            cand_pol_ver = str(draft.policy.get("version") or cand_pol_ver)
+            cand_pol_digest = risk_policy_digest(draft.policy)
 
-        prop_hash = hashlib.sha256(
-            f"{tenant_id}|{pool_id}|{requested_profile}|{cand_pol_id}|{cand_pol_ver}".encode("utf-8")
-        ).hexdigest()[:20]
-        deterministic_proposal_id = f"apv-risk-profile-{prop_hash}"
+        # Risk direction is computed, never assumed: candidate vs the pool's currently effective policy.
+        effective = getattr(resolution, "policy", None)
+        effective_policy = effective.to_dict() if hasattr(effective, "to_dict") else None
+        direction = compare_risk_policies(draft.policy if draft is not None and draft.policy else None, effective_policy)
+
+        deterministic_proposal_id = self._risk_profile_proposal_id(
+            tenant_id, pool_id, requested_profile, cand_pol_id, cand_pol_ver, proposal_key
+        )
 
         decision_req: dict[str, Any] = {
             "policy_owner": "services/capital/risk_policy.py",
@@ -2096,6 +2252,12 @@ class PersonaProvisioningCoordinator:
                 }
             },
             "deterministic_proposal_id": deterministic_proposal_id,
+            **(
+                {"risk_officer_draft": {
+                    "provenance": dict(draft.provenance), "policy": deepcopy(dict(draft.policy)),
+                }}
+                if draft is not None and draft.policy else {}
+            ),
             "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
             "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
             "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121",
@@ -2121,7 +2283,7 @@ class PersonaProvisioningCoordinator:
                 and item.get("target_id") == pool_id
                 and item.get("target_version") == cand_pool_digest
                 and subj.get("pool_id") == pool_id
-                and subj.get("risk_direction") == "increase"
+                and subj.get("risk_direction") in {"increase", "reduce", "neutral"}
                 and profiles and all(value == requested_profile for value in profiles)
                 and subj.get("risk_policy_id") == cand_pol_id
                 and subj.get("risk_policy_version") == cand_pol_ver
@@ -2171,6 +2333,14 @@ class PersonaProvisioningCoordinator:
             decision_req["human_inbox_action_url"] = f"/management/approvals?approval={found_id}"
             if found_state in {"proposed", "under_review"}:
                 decision_req["governance_proposal_status"] = "reused_existing_pending_proposal"
+                if not dry_run:
+                    self._apply_paper_gate_to_risk_policy_proposal(
+                        existing_prop, decision_req, requested_profile=requested_profile)
+                    if draft is not None and draft.policy:
+                        self._close_superseded_risk_policy_proposals(
+                            tenant_id=tenant_id, pool_id=pool_id, keep_id=found_id,
+                            requested_profile=requested_profile, matches_request=matches_request,
+                            decision_req=decision_req)
                 return decision_req
             if found_state == "decided" and found_outcome == "rejected":
                 decision_req["governance_proposal_outcome"] = "rejected"
@@ -2213,14 +2383,18 @@ class PersonaProvisioningCoordinator:
                 "target_type": "capital_pool_activation",
                 "target_id": pool_id,
                 "target_version": cand_pool_digest,
-                "risk_level": "medium",
+                # Paper pool, capital scale 0: low risk, decided by the paper automated gate (P-4).
+                "risk_level": "low",
                 "capital_pool_id": pool_id,
                 "persona_id": persona_id,
                 "tenant_id": tenant_id,
                 "owner_user_id": eff_proposer_actor,
+                "expires_at": (datetime.now(timezone.utc) + APPROVAL_TTL - timedelta(minutes=5)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
                 "subject": {
                     "pool_id": pool_id,
-                    "risk_direction": "increase",
+                    "risk_direction": direction["risk_direction"],
+                    "risk_comparison": dict(direction["risk_comparison"]),
                     "requested_risk": requested_profile,
                     "risk_policy_id": cand_pol_id,
                     "risk_policy_version": cand_pol_ver,
@@ -2228,6 +2402,13 @@ class PersonaProvisioningCoordinator:
                     "absence_source": absence_source,
                     "disposition_task_id": "PAPER-RISK-LOW-POLICY-OWNER-DISPOSITION-20261122",
                     "hosted_proof_task_id": "PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121",
+                    **(
+                        {"risk_officer_draft": {
+                            "provenance": dict(draft.provenance),
+                            "policy": deepcopy(dict(draft.policy)),
+                        }}
+                        if draft is not None and draft.policy else {}
+                    ),
                 },
             }
             if cand_pol_digest:
@@ -2253,11 +2434,102 @@ class PersonaProvisioningCoordinator:
                 decision_req["governance_proposal_state"] = str(created_prop.get("decision_state") or "proposed")
                 decision_req["governance_proposal_status"] = "proposed_to_governance_human_inbox"
                 decision_req["human_inbox_action_url"] = f"/management/approvals?approval={prop_id}"
+                self._apply_paper_gate_to_risk_policy_proposal(
+                    created_prop, decision_req, requested_profile=requested_profile)
+                if draft is not None and draft.policy:
+                    self._close_superseded_risk_policy_proposals(
+                        tenant_id=tenant_id, pool_id=pool_id, keep_id=prop_id,
+                        requested_profile=requested_profile, matches_request=matches_request,
+                        decision_req=decision_req)
                 return decision_req
 
         decision_req["governance_proposal_status"] = "routed_to_open_owner_disposition"
         decision_req["human_inbox_action_url"] = f"/management/approvals?approval={deterministic_proposal_id}"
         return decision_req
+
+    # -- paper automated gate for pool risk-policy proposals (operator decision P-4) ------------------
+    def _paper_gate_decide_risk_policy(self, proposal: Mapping[str, Any], *, outcome: str, rationale: str) -> dict[str, Any]:
+        decision_id = str(proposal.get("decision_id") or "")
+        path = f"/api/governance/approvals/{_path_id(decision_id)}"
+        review = self._transition_then_get(
+            owner="governance", get_path=path, post_path=f"{path}/review",
+            payload=lambda curr: {"actor_role": "automated_gate", "actor_id": self.governance_actor_id,
+                                  "expected_version": int((curr or {}).get("version") or 0)},
+            ready=lambda r: str(r.get("decision_state") or "") in {"under_review", "decided"},
+            validate=lambda r: None)
+        return self._transition_then_get(
+            owner="governance", get_path=path, post_path=f"{path}/decide",
+            payload=lambda curr: {
+                "actor_role": "automated_gate", "actor_id": self.governance_actor_id,
+                "outcome": outcome, "rationale": rationale,
+                "candidate_digest": (curr or review).get("candidate_digest"),
+                "expires_at": (curr or review).get("expires_at"),
+                "expected_version": int((curr or {}).get("version") or 0)},
+            ready=lambda r: r.get("decision_state") == "decided",
+            validate=lambda r: None)
+
+    def _apply_paper_gate_to_risk_policy_proposal(
+        self, proposal: Mapping[str, Any], decision_req: dict[str, Any], *, requested_profile: str,
+    ) -> None:
+        """Approve a paper pool policy inside the outer bounds; otherwise refuse it with the named field.
+
+        Idempotent per proposal (review/decide short-circuit on readback); an unavailable gate leaves the
+        proposal pending for the next pass.  No AI or service principal casts a human vote.
+        """
+        if self.transport is None:
+            return
+        meta = proposal.get("metadata") if isinstance(proposal.get("metadata"), Mapping) else {}
+        subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+        draft = subj.get("risk_officer_draft") if isinstance(subj.get("risk_officer_draft"), Mapping) else {}
+        policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+        if policy:
+            model, reason = validate_drafted_pool_risk_policy(policy, profile=requested_profile)
+            outcome = "approved" if model is not None else "rejected"
+            rationale = ("Paper pool risk policy verified inside operator outer bounds (gross_limit, max_leverage, "
+                         "max_single_name_weight, min_cash_reserve_pct; P-4 automated gate)"
+                         if model is not None else f"Refused by paper gate: {reason}")
+        else:
+            outcome = "rejected"
+            rationale = (f"Refused by paper gate: risk_officer_draft absent; the {requested_profile} profile requires "
+                         "gross_limit, max_leverage, max_single_name_weight and min_cash_reserve_pct within the operator outer bounds; "
+                         "superseded by the risk-officer draft")
+        try:
+            receipt = self._paper_gate_decide_risk_policy(proposal, outcome=outcome, rationale=rationale)
+        except Exception as exc:
+            decision_req["paper_gate_status"] = "unavailable:" + type(exc).__name__
+            return
+        decision_req["governance_proposal_state"] = str(receipt.get("decision_state") or "")
+        decision_req["governance_proposal_outcome"] = str(receipt.get("decision") or outcome)
+        decision_req["paper_gate_status"] = f"decided_{outcome}_by_automated_gate"
+        if outcome == "rejected":
+            decision_req["paper_gate_reason"] = rationale
+
+    def _close_superseded_risk_policy_proposals(
+        self, *, tenant_id: str, pool_id: str, keep_id: str, requested_profile: str,
+        matches_request: Callable[[Mapping[str, Any]], bool], decision_req: dict[str, Any],
+    ) -> None:
+        """Close the pool's other pending paper policy proposals (e.g. v1.0) through the same gate."""
+        try:
+            items = self._governance_approval_reader().list_for_target(
+                target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
+                max_items=MAX_PENDING_SUPERSEDE)
+        except Exception:
+            return
+        closed: list[str] = []
+        for item in items:
+            if (item.get("decision_id") == keep_id or item.get("tenant_id") != tenant_id
+                    or str(item.get("decision_state") or "") not in {"proposed", "under_review"}):
+                continue
+            meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+            subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
+            if subj.get("requested_risk") != requested_profile:
+                continue
+            probe: dict[str, Any] = {}
+            self._apply_paper_gate_to_risk_policy_proposal(item, probe, requested_profile=requested_profile)
+            if probe.get("paper_gate_status", "").startswith("decided_"):
+                closed.append(str(item.get("decision_id")))
+        if closed:
+            decision_req["superseded_proposals_closed"] = closed
 
     @staticmethod
     def _verified_requested_profile(*sources: tuple[str, str | None]) -> str:
@@ -2564,7 +2836,6 @@ class PersonaProvisioningCoordinator:
         explicit_req_version = (
             str(req.get("risk_policy_version") or req_meta.get("risk_policy_version") or "").strip() or None
         )
-        requested_version = explicit_req_version or "1.0"
         currency = self._capital_pool_currency(record)
         budget = req.get("budget")
 
@@ -2661,6 +2932,7 @@ class PersonaProvisioningCoordinator:
                         verified_res.profile_mapping_approval_id or resolved_apv_id,
                     )
 
+            draft_result: DraftResult | None = None
             if auto_res.status == "ambiguous_profile_mapping":
                 unmapped = self._ambiguous_profile_resolution(
                     pool_id=ids.capital_pool_id,
@@ -2683,14 +2955,28 @@ class PersonaProvisioningCoordinator:
                     ).strip()
                     or None
                 )
-                candidate_fallback = (
-                    auto_res.candidate_policy.to_dict()
-                    if auto_res.candidate_policy is not None
-                    else self._default_paper_pool_risk_policy(
-                        ids.capital_pool_id,
-                        version=requested_version,
+                if auto_res.candidate_policy is not None and not self._is_legacy_default_policy(
+                    auto_res.candidate_policy.to_dict(), ids.capital_pool_id, eff_profile
+                ):
+                    candidate_fallback = auto_res.candidate_policy.to_dict()
+                else:
+                    draft_result = self._risk_officer_policy_candidate(
+                        tenant_id=record.tenant_id,
+                        persona_id=record.persona_id,
+                        pool_id=ids.capital_pool_id,
+                        profile=eff_profile,
+                        budget=budget,
+                        currency=currency,
+                        request=req,
+                        base_pool=base_pool,
+                        version=self._next_policy_version(
+                            (auto_res.candidate_policy.version if auto_res.candidate_policy is not None
+                             else (base_existing_meta.get("risk_policy") or {}).get("version")
+                             if isinstance(base_existing_meta.get("risk_policy"), Mapping) else None),
+                            explicit_req_version,
+                        ),
                     )
-                )
+                    candidate_fallback = self._draft_candidate_policy_dict(draft_result)
                 candidate_pool = self._candidate_pool_with_approval_digest(
                     base_pool=base_pool,
                     pool_id=ids.capital_pool_id,
@@ -2736,6 +3022,7 @@ class PersonaProvisioningCoordinator:
                 pool_id=ids.capital_pool_id,
                 requested_profile=eff_profile,
                 resolution=unmapped,
+                draft=draft_result,
             )
             if (
                 isinstance(base_pool, Mapping)
@@ -2898,11 +3185,15 @@ class PersonaProvisioningCoordinator:
                 )
             return clean_ref, loaded_policy_dict, True, ref_validation.profile_mapping_approval_id
 
-        default_policy = self._default_paper_pool_risk_policy(
-            ids.capital_pool_id,
-            version=requested_version,
+        # No explicit policy, reference or approved mapping applies. Never invent limits: the pool stays
+        # pending until a requested profile is mapped through the risk-officer draft + Governance path.
+        raise PersonaProvisioningCoordinationError(
+            "CapitalPool risk policy pending: no approved applicable risk policy and no requested risk profile "
+            "to draft one for (risk_policy_profile_required)",
+            reason_code="risk_policy_profile_required",
+            absence_source="policy_definition_and_approval_absent",
+            resolution_status="unresolved_profile_mapping",
         )
-        return None, default_policy, False, None
 
     def _resolve_requested_pool_risk_policy(
         self,
@@ -5293,6 +5584,72 @@ class PersonaProvisioningCoordinator:
             raise PoolDispatchUncertain(str(exc), _receipt(None)) from exc
         return _receipt(saga.get("status"))
 
+    def read_paper_risk_change(self, *, tenant_id: str, persona_id: str, pool_id: str) -> dict[str, Any]:
+        from services.capital.profile_change import validate_scope
+        from services.capital.pg_store import CapitalPool
+
+        path = f"/api/capital-pools/{_path_id(pool_id)}"
+        pool = self._owner_get("capital", path)
+        if pool is None or pool.get("pool_id") != pool_id or not self._formal_tenant_matches(pool, tenant_id):
+            raise PersonaProvisioningCoordinationError("paper_risk_change_pool_readback_failed")
+        validate_scope(CapitalPool.from_dict(pool), tenant_id, persona_id)
+        change = self._owner_get("capital", f"{path}/risk-profile-change?persona_id={_path_id(persona_id)}")
+        if not change or change.get("requestedRisk") not in {None, "low", "medium", "high"}:
+            raise PersonaProvisioningCoordinationError("paper_risk_change_readback_failed")
+        return change
+
+    def change_paper_risk_profile(
+        self, *, tenant_id: str, persona_id: str, pool_id: str,
+        profile: str, request_id: str, request_hash: str, requested_by: str, issued_at_ms: int | None,
+    ) -> dict[str, Any]:
+        before = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
+        path = f"/api/capital-pools/{_path_id(pool_id)}"
+        failure = None
+        try:
+            self.transport.post("capital", f"{path}/risk-profile-change", {
+                "actor_id": self.actor_id, "actor_role": "capital.admin",
+                "requested_by": requested_by,
+                "expected_persona_id": persona_id, "expected_revision": before["revision"],
+                "issued_at_ms": issued_at_ms,
+                "request_id": request_id, "request_hash": request_hash, "requested_profile": profile,
+            })
+        except Exception as exc:
+            failure = exc
+        # Lost responses are recovered only from a durable, scoped receipt.
+        pool = self._owner_get("capital", path)
+        meta = pool.get("metadata", {}) if pool else {}
+        receipt = (meta.get("risk_profile_change_receipts") or {}).get(request_id)
+        if receipt is None and issued_at_ms is None:
+            # A superseded opaque key may have moved from the bounded row
+            # window to Capital's exact durable audit archive. Scope validation
+            # runs on the same owner read before exposing any receipt.
+            archived = self._owner_get("capital", f"{path}/risk-profile-change?persona_id={_path_id(persona_id)}&request_id={_path_id(request_id)}")
+            receipt = (archived or {}).get("requestReceipt")
+        if (not receipt or receipt.get("request_hash") != request_hash or receipt.get("profile") != profile
+                or receipt.get("issued_at_ms") != issued_at_ms):
+            reason = ("paper_risk_change_idempotency_conflict" if receipt else
+                      "paper_risk_change_key_stale" if
+                      (issued_at_ms is not None and (
+                       issued_at_ms <= int(meta.get("risk_profile_change_watermark_ms", 0)) or
+                       issued_at_ms < max((r.get("issued_at_ms") or 0 for r in
+                                          (meta.get("risk_profile_change_receipts") or {}).values()), default=0))) else
+                      "paper_risk_change_revision_conflict" if
+                      int((meta.get("risk_profile_change") or {}).get("revision", 0)) != before["revision"]
+                      else "paper_risk_change_not_committed")
+            raise PersonaProvisioningCoordinationError(reason, reason_code=reason) from failure
+        change = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id)
+        resolution = change.get("resolution") or {}
+        owner_request = resolution.get("owner_decision_request")
+        if change.get("requestId") == request_id and change.get("status") == "pending_approval" and owner_request:
+            from types import SimpleNamespace
+
+            change["ownerDecisionRequest"] = self._route_or_reuse_risk_policy_owner_decision_request(
+                tenant_id=tenant_id, persona_id=persona_id, pool_id=pool_id,
+                requested_profile=change["requestedRisk"], resolution=SimpleNamespace(**resolution),
+                proposal_key=str(owner_request.get("candidate_risk_policy_digest") or ""),
+            )
+        return change
+
     def repair_paper_pool_risk_policy(
         self,
         *,
@@ -5359,6 +5716,25 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 f"CapitalPool {resolved_pool_id!r} belongs to persona {pool_meta.get('persona_id')!r}, not {persona_id!r}"
             )
+
+        latest_change = pool_meta.get("risk_profile_change")
+        if isinstance(latest_change, Mapping):
+            if (requested_profile not in (None, latest_change.get("requested_profile"))
+                    or any(v is not None for v in (risk_policy_ref, risk_policy, risk_policy_version, approval_decision_id))):
+                raise PersonaProvisioningCoordinationError("paper_risk_change_superseded; use normal Persona PATCH")
+            if dry_run:
+                change = self.read_paper_risk_change(tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id)
+            else:
+                rid = latest_change["request_id"]
+                receipt = pool_meta["risk_profile_change_receipts"][rid]
+                change = self.change_paper_risk_profile(
+                    tenant_id=tenant_id, persona_id=persona_id, pool_id=resolved_pool_id,
+                    profile=latest_change["requested_profile"], request_id=rid, request_hash=receipt["request_hash"],
+                    requested_by=latest_change["requested_by"],
+                    issued_at_ms=receipt["issued_at_ms"],
+                )
+            return {"tenant_id": tenant_id, "persona_id": persona_id, "capital_pool_id": resolved_pool_id,
+                    "dry_run": dry_run, "riskPolicyChange": change, "after_resolution": change.get("resolution")}
 
         pcb = self._owner_get("capital", f"/api/bindings/{_path_id(resolved_binding_id)}")
         if pcb is not None:
@@ -5502,18 +5878,35 @@ class PersonaProvisioningCoordinator:
                     "owner_decision_request": routed_req,
                 }
             elif not pool_existing_ref or not before_resolution.resolved or before_resolution.profile_mapping_status != "explicit_policy":
-                candidate_baseline = (
-                    auto_res.candidate_policy.to_dict()
-                    if auto_res.candidate_policy is not None
-                    else (
-                        deepcopy(dict(pool_meta["risk_policy"]))
-                        if isinstance(pool_meta.get("risk_policy"), Mapping)
-                        else self._default_paper_pool_risk_policy(
-                            resolved_pool_id,
-                            version=str(risk_policy_version or "1.0").strip() or "1.0",
-                        )
+                repair_draft: DraftResult | None = None
+                inline_policy = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), Mapping) else None
+                if auto_res.candidate_policy is not None and not self._is_legacy_default_policy(
+                    auto_res.candidate_policy.to_dict(), resolved_pool_id, str(effective_profile or "")
+                ):
+                    candidate_baseline = auto_res.candidate_policy.to_dict()
+                elif auto_res.candidate_policy is None and inline_policy is not None and validate_drafted_pool_risk_policy(
+                    inline_policy, profile=str(effective_profile or "")
+                )[0] is not None:
+                    candidate_baseline = deepcopy(dict(inline_policy))
+                else:
+                    # Absent, or a legacy inline policy without single-name cap / cash reserve (the former
+                    # hardcoded default): the next version is drafted by the risk officer, never invented here.
+                    repair_draft = self._risk_officer_policy_candidate(
+                        tenant_id=tenant_id,
+                        persona_id=persona_id,
+                        pool_id=resolved_pool_id,
+                        profile=effective_profile,
+                        budget=pool.get("budget"),
+                        currency=str(pool.get("currency") or ""),
+                        request=ledger_record.request_payload if ledger_record is not None else None,
+                        base_pool=pool,
+                        version=self._next_policy_version(
+                            auto_res.candidate_policy.version if auto_res.candidate_policy is not None
+                            else inline_policy.get("version") if inline_policy is not None else None,
+                            explicit_repair_version,
+                        ),
                     )
-                )
+                    candidate_baseline = self._draft_candidate_policy_dict(repair_draft)
                 if (
                     explicit_repair_version is not None
                     and str(candidate_baseline.get("risk_policy_id") or "").startswith(
@@ -5561,6 +5954,7 @@ class PersonaProvisioningCoordinator:
                         requested_profile=effective_profile,
                         resolution=owner_decision_res,
                         dry_run=dry_run,
+                        draft=repair_draft,
                     )
                     after_dict = owner_decision_res.to_dict()
                     after_dict["owner_decision_request"] = routed_req
@@ -5657,11 +6051,12 @@ class PersonaProvisioningCoordinator:
                     )
                 target_policy["version"] = str(risk_policy_version).strip()
         elif before_resolution.status == "missing" and not has_existing_inline_or_markers:
-            default_id = f"rp-{resolved_pool_id}"
-            target_policy = self._default_paper_pool_risk_policy(
-                resolved_pool_id,
-                policy_id=default_id,
-                version=str(risk_policy_version or "1.0").strip() or "1.0",
+            raise PersonaProvisioningCoordinationError(
+                "CapitalPool risk policy repair rejected: no policy exists and none may be invented; a risk "
+                "profile mapping drafted by the risk officer and approved by Governance is required "
+                "(risk_policy_profile_required)",
+                reason_code="risk_policy_profile_required",
+                resolution_status="missing",
             )
         else:
             raise PersonaProvisioningCoordinationError(

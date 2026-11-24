@@ -151,15 +151,18 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
     # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
     assert [r["id"] for r in results] == [
         "check:deployed-pair-identity",
+        "probe:meeting-action-followthrough",
         "probe:meeting-review-disposition",
         "probe:mgmt-strategy-meeting-research-readable",
         "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
         "probe:persona-pool-member-rules",
+        "probe:persona-risk-profile-change",
         "probe:trade-journey-readable",
         "probe:trading-pulse-operator",
     ]
-    for probe_id in ("probe:paper-risk-journey", "probe:paper-risk-policy-binding"):
+    for probe_id in ("probe:paper-risk-journey", "probe:paper-risk-policy-binding",
+                     "probe:persona-risk-profile-change"):
         risk_probe = next(r for r in results if r["id"] == probe_id)
         assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
     assert "probe:persona-day" not in {r["id"] for r in results}

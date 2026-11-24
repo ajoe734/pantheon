@@ -1852,6 +1852,8 @@ def test_provisioned_paper_persona_readback_retains_expression_policy_and_future
         "gross_limit": 2.0,
         "net_limit": 2.0,
         "max_leverage": 2.0,
+        "max_single_name_weight": 0.2,
+        "min_cash_reserve_pct": 0.1,
         "allowed_asset_classes": ["equity", "future"],
     }
 

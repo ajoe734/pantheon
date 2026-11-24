@@ -4624,8 +4624,8 @@ class ManagementService:
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        from services.consultation.client import ConsultationServiceClient
-        if store is None and not ConsultationServiceClient.configured():
+        readers = self._human_inbox_contributor_readers(store, snap, identity=identity)
+        if not readers:
             return self.compose_human_inbox(
                 snap,
                 completed={},
@@ -4638,7 +4638,6 @@ class ManagementService:
                 page_size=page_size,
             )
 
-        readers = self._human_inbox_contributor_readers(store, snap)
         timeout_budget = human_inbox_surface_timeout_seconds()
         outer_remaining = remaining_management_read_budget()
         if outer_remaining is not None:
@@ -4757,7 +4756,7 @@ class ManagementService:
         }
 
     def _human_inbox_contributor_readers(
-        self, store: Any, snap: str
+        self, store: Any, snap: str, *, identity: Optional[Any] = None
     ) -> Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]]:
         """One reader per contributor; each returns (records, surface) or raises."""
         readers: Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = {}
@@ -4818,7 +4817,7 @@ class ManagementService:
 
         def _meetings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
             from services.control_plane.bff.meetings.client import read_human_inbox_meeting_items
-            return read_human_inbox_meeting_items(snap, store=store)
+            return read_human_inbox_meeting_items(snap, store=store, identity=identity)
 
         if store is not None:
             readers["approval_queue"] = _approvals
@@ -4827,7 +4826,8 @@ class ManagementService:
             if hasattr(store, "list_personas"):
                 readers["persona_readiness"] = _personas
         from services.consultation.client import ConsultationServiceClient
-        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured():
+        from services.control_plane.bff.research.client import resolve_orchestrator_base_url
+        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured() or resolve_orchestrator_base_url():
             readers["meetings"] = _meetings
         return readers
 
@@ -4863,6 +4863,8 @@ class ManagementService:
         for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness", "meetings"):
             if key in completed:
                 surfaces[key] = completed[key][1]
+                if key == "meetings" and surfaces[key].get("status") in {"degraded", "unavailable", "denied"}:
+                    failure_surfaces[key] = surfaces[key]
             elif key in failure_surfaces:
                 surfaces[key] = failure_surfaces[key]
         items = _human_inbox_project_items(

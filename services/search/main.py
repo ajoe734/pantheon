@@ -581,7 +581,20 @@ def _repository_from_documents(documents: list[SearchDocumentBody]) -> InMemoryE
     return repository
 
 
+def _indexed_object_count(repository: InMemoryEvidenceRepository) -> int | None:
+    counter = getattr(repository, "knowledge_object_count", None)
+    if counter is None:
+        return len(repository.list_knowledge_objects())
+    try:  # aggregate read; a database blip must not fail /health
+        return int(counter())
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str | None]:
+    pushed_down = getattr(repository, "source_watermarks", None)
+    if pushed_down is not None:
+        return dict(pushed_down())
     watermarks: dict[str, str | None] = {}
     for source in repository.list_source_records():
         source_type = source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type)
@@ -764,7 +777,7 @@ def create_app(
             "materialized_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "triggered_by": triggered_by,
             "trigger_ref": trigger_ref,
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "index": adapter.snapshot().to_dict(),
             "evidence_store_path": str(durable_repository.path),
         }
@@ -813,7 +826,7 @@ def create_app(
         },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "pipeline_run_count": pipeline_store.count_runs(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         },
@@ -836,7 +849,7 @@ def create_app(
             "index_store_path": str(store.path),
             "evidence_store_path": str(durable_repository.path),
             "snapshot_count": len(store.list_snapshots()),
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "pipeline_run_count": pipeline_store.count_runs(),
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
@@ -977,7 +990,7 @@ def create_app(
             return {
                 "index": adapter.snapshot().to_dict(),
                 "evidence_store_path": str(durable_repository.path),
-                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+                "indexed_object_count": _indexed_object_count(durable_repository),
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -994,7 +1007,7 @@ def create_app(
             return {
                 "index": adapter.snapshot().to_dict(),
                 "evidence_store_path": str(durable_repository.path),
-                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+                "indexed_object_count": _indexed_object_count(durable_repository),
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -319,6 +319,19 @@ def test_proposals_are_validated_recorded_and_never_applied(env):
     assert len(broker.run_record(ref)["proposals"]) == 1  # refused proposals are not in the record
 
 
+def test_meeting_action_uses_existing_proposal_tool_and_panel_remains_read_only(env):
+    broker, _, memory = env
+    ref = register(broker)
+    proposal = {**PROPOSAL, "kind": "meeting_action", "parameters": {
+        "ticket_id": "rt-action-1", "action": "submit", "analysis": "Compare the observed evidence"}}
+    assert call(broker, "persona_proposal_submit", proposal).status_code == 200
+    assert broker.run_record(ref)["proposals"][0]["kind"] == "meeting_action"
+    assert memory.requests == []
+    register(broker, session="meeting-read", purpose="panel_interpretation")
+    response = call(broker, "persona_proposal_submit", proposal, session_key="x:meeting-read", run_id="read-run")
+    assert response.status_code == 403
+
+
 def test_per_run_call_limits_are_enforced_per_tool(limited):
     broker, _, memory = limited
     ref = register(broker)

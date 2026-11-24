@@ -1,0 +1,54 @@
+{
+  "task_id": "BFF-AGORA-DELIBERATIVE-MEMO-CASE-FILE-20261124",
+  "title": "Agora 審議會議備忘錄讀取會議自身決策卷宗與引文（保留隱私過濾與門檻面板行為）",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "register_work_package": "RC6 WP6.3 Agora deliberative meeting memo case-file row (linked to FE-DECISION-CASE-FILE-VIEWS-20261113 and MEETING-HOSTED-ACCEPTANCE-20261115)",
+  "incident_context": {
+    "symptom": "On Hosted Dev, GET /bff/agora/committee/sessions/{session_id}/memos returned case_file_view = {'status': 'unavailable', 'reason': 'no_case_file_recorded', 'case_file': null} for every deliberative meeting (persona_meeting, e.g. mtg-ce73f5966e7f23be, mtg-72ee4d6606ed5712, mtg-e585f6a827ede4d4, mtg-34ee6bcfe9cf8d22) even when GET /api/consult/meetings/{meeting_id} held a composed case_file, rounds, and rejected_positions.",
+    "root_cause": "create_committee_router.memos() called CommitteeOwnerClient.memos(session_id) (which already fetched GET /api/consult/meetings/{session_id} for deliberative meetings) and then unconditionally called CommitteeOwnerClient.case_file_view(session_id), which always queried GET /api/consult/requests/{session_id}/transcript and ran project_panel() looking for a panel_case_file_attached transcript event that only gate panels (persona_panel) emit."
+  },
+  "owned_layer": "Agora committee BFF read projection and Consultation owner client/router wiring (services/control-plane/bff/agora/committee/{owner,client,router}.py)",
+  "not_changed": [
+    "Consultation service meeting storage, case-file composition, and memo generation",
+    "Gate-panel (persona_panel) transcript case_file_view projection (project_panel) and memo publish flow",
+    "OODA packet case_file_view projection (project_packet)",
+    "Frontend CaseFileViewPanel and CommitteePage (already bound in FE-AGORA-DELIBERATIVE-MEMO-CASE-FILE-20261121 / execute-plans #1054)"
+  ],
+  "changes": [
+    "services/control-plane/bff/agora/committee/owner.py: add project_meeting_case_file() and attach case_file_view in project_meeting() from the meeting's persisted case_file, rounds, and rejected_positions via project_case_file(..., tenant_id=tenant_id); resolve round position citations into cited_item_ids / unresolved_item_ids on contributions and map rejected_positions into rejected_contributions; withhold persona_private and user_private items and count them in private_items_withheld; strip raw unfiltered case_file and rejected_positions from the projected meeting payload; return unavailable_case('no_case_file_recorded') when case_file is empty {} or absent",
+    "services/control-plane/bff/agora/committee/client.py: reuse the already-fetched meeting_detail in CommitteeOwnerClient.memos() to attach its projected case_file_view on deliberative meeting memos without calling GET /api/consult/requests/{session_id}/transcript (and route mtg-* session_detail/memos/case_file_view directly to self.meeting(session_id)); preserve gate-panel transcript case_file_view and memo publish behavior",
+    "services/control-plane/bff/agora/committee/router.py: preserve pre-attached deliberative memo case_file_view in GET /bff/agora/committee/sessions/{session_id}/memos while calling client.case_file_view(session_id) for gate-panel memos",
+    "services/control-plane/bff/tests/test_agora_meetings.py and services/control-plane/bff/tests/test_case_file_views.py: add focused regression tests covering deliberative meeting memo/detail/session case_file_view projection, citation resolution, rejected_positions mapping, persona_private/user_private filtering, tenant and foreign private-servant 404 boundaries, empty/absent case_file handling, gate-panel transcript invariance, and the internal HTTP call budget"
+  ],
+  "runtime_budget": {
+    "mode": "pure in-memory read-only BFF projection",
+    "persistent_writers_added": 0,
+    "recurring_jobs_added": 0,
+    "tables_files_caches_added": 0,
+    "internal_http_calls_per_deliberative_memo_read": "<= 1 GET /api/consult/meetings/{id} + 1 GET /api/consult/memos (eliminates GET /api/consult/requests/{id}/transcript and GET /api/consult/requests/{id} on deliberative meetings)"
+  },
+  "verification": {
+    "focused_suites": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_meetings.py services/control-plane/bff/tests/test_case_file_views.py services/control-plane/bff/tests/test_agora_committee_memory_owners.py",
+      "test_agora_meetings.py": "6 passed",
+      "test_case_file_views.py": "13 passed",
+      "test_agora_committee_memory_owners.py": "17 passed",
+      "total": "36 passed, 0 failed"
+    },
+    "storage_manifest_guard": {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "result": "passed=true, failures=[]"
+    }
+  },
+  "residual_findings": [
+    {
+      "finding": "Source-only BFF delivery; live Hosted Dev verification of positive case-file content on natural deliberative meeting memos (e.g. mtg-ce73f5966e7f23be, mtg-72ee4d6606ed5712, mtg-e585f6a827ede4d4, mtg-34ee6bcfe9cf8d22) and recorded no_case_file_recorded on historical W47 meetings without a persisted case_file (e.g. mtg-0f7fa4993625ca47) requires the merged BFF commit to be deployed to Hosted Dev.",
+      "owning_work_package": "RC6 WP6.3",
+      "owning_tasks": [
+        "FE-DECISION-CASE-FILE-VIEWS-20261113",
+        "MEETING-HOSTED-ACCEPTANCE-20261115"
+      ]
+    }
+  ]
+}

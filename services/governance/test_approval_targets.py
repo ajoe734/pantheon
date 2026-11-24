@@ -432,3 +432,25 @@ def test_scheduled_paper_candidacy_inbox_decision_journey(owner_env, monkeypatch
         for server in servers:
             server.shutdown()
             server.server_close()
+
+
+def _pool_activation(direction, votes):
+    return {'subject': {'pool_id': 'pool1', 'risk_direction': direction},
+            'approvals': [{'actor_id': a, 'actor_role': r} for a, r in votes]}
+
+
+def test_paper_gate_alone_completes_a_pool_activation_whatever_its_direction():
+    from services.governance import approval_targets as t
+    from services.governance.paper_approval_scope import DEV_PAPER_PROVISIONER_SUBJECT
+    assert t.PAPER_GATE_SUBJECT == DEV_PAPER_PROVISIONER_SUBJECT
+    gate = [(t.PAPER_GATE_SUBJECT, 'automated_gate')]
+    assert t.required_deciders('capital_pool_activation', _pool_activation('increase', gate)) == 1
+    # humans (canary/live) keep the two distinct deciders rule; a single human or a human+gate mix is not enough
+    human = [('reviewer-1', 'governance_reviewer')]
+    assert t.required_deciders('capital_pool_activation', _pool_activation('increase', human)) == 2
+    assert t.required_deciders('capital_pool_activation', _pool_activation('increase', human + gate)) == 2
+    assert t.required_deciders('capital_pool_activation', _pool_activation('increase', [])) == 2
+    # another subject claiming the gate role, or another target type, is not exempted
+    assert t.required_deciders('capital_pool_activation',
+                               _pool_activation('increase', [('other', 'automated_gate')])) == 2
+    assert t.required_deciders('rebalance_apply', _pool_activation('increase', gate)) == 2

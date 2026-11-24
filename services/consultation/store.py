@@ -126,6 +126,7 @@ class ConsultationStore:
         self._handoffs: Dict[str, ConsultGateHandoff] = {}
         self._meetings: Dict[str, Dict[str, Any]] = {}
         self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
+        self._meeting_action_reviews: Dict[Tuple[str, ...], Dict[str, Any]] = {}
         self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
         self._last_lifecycle_event_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._pending_meeting_reviews: Dict[str, Dict[str, Any]] = {}
@@ -241,6 +242,18 @@ class ConsultationStore:
             self._meetings[record_id] = _model_copy(payload)
         elif record_type == "meeting_schedule":
             self._meeting_schedules[record_id] = _model_copy(payload)
+            # Cadence has one slot per chair/type; review progress belongs to
+            # each stable subject. Derive both projections from the existing
+            # events, including older events whose cadence slot was replaced.
+            series = payload.get("meeting_series")
+            if isinstance(series, dict) and series.get("subject_ref"):
+                key = (str(payload.get("tenant_id") or "default"), str(payload["persona_id"]),
+                       str(payload["meeting_type"]), str(series.get("meeting_type") or ""),
+                       str(series["subject_ref"]))
+                self._meeting_action_reviews[key] = _model_copy({
+                    k: payload[k] for k in ("meeting_series", "action_review_watermark", "action_review_scan")
+                    if k in payload
+                })
         elif record_type == "meeting_refusal":
             self._meeting_refusals[record_id] = _model_copy(payload)
 
@@ -539,17 +552,31 @@ class ConsultationStore:
         persona_id = str(schedule_entry["persona_id"])
         meeting_type = str(schedule_entry["meeting_type"])
         record_id = f"{tenant_id}:{persona_id}:{meeting_type}"
-        saved = _model_copy(dict(schedule_entry))
-        self._append_lifecycle_event(
-            record_type="meeting_schedule",
-            record_id=record_id,
-            trace_id=record_id,
-            payload=saved,
-        )
-        self._meeting_schedules[record_id] = saved
+        with self._lock:
+            # Peer attendance sends only cadence. Preserve the independently
+            # owned chair scan in the same serialized write and replay record.
+            saved = _model_copy({**self._meeting_schedules.get(record_id, {}), **schedule_entry})
+            self._append_lifecycle_event(
+                record_type="meeting_schedule",
+                record_id=record_id,
+                trace_id=record_id,
+                payload=saved,
+            )
+            self._meeting_schedules[record_id] = saved
 
     def list_meeting_schedules(self) -> List[Dict[str, Any]]:
         return [_model_copy(item) for item in self._meeting_schedules.values()]
+
+    def get_meeting_schedule(self, tenant_id: str, persona_id: str, meeting_type: str,
+                             *, meeting_series: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+        """Direct cadence or exact-series review lookup, without archive scans."""
+        if meeting_series is not None:
+            key = (tenant_id, persona_id, meeting_type, str(meeting_series.get("meeting_type") or ""),
+                   str(meeting_series.get("subject_ref") or ""))
+            review = self._meeting_action_reviews.get(key)
+            return _model_copy(review) if review else None
+        row = self._meeting_schedules.get(f"{tenant_id}:{persona_id}:{meeting_type}")
+        return _model_copy(row) if row else None
 
     def put_meeting_refusal(self, refusal: Dict[str, Any]) -> None:
         refusal_id = str(refusal.get("refusal_id") or f"ref-{uuid.uuid4().hex[:12]}")
@@ -631,6 +658,7 @@ class PostgresConsultationStore(ConsultationStore):
         self._handoffs: Dict[str, ConsultGateHandoff] = {}
         self._meetings: Dict[str, Dict[str, Any]] = {}
         self._meeting_schedules: Dict[str, Dict[str, Any]] = {}
+        self._meeting_action_reviews: Dict[Tuple[str, ...], Dict[str, Any]] = {}
         self._meeting_refusals: Dict[str, Dict[str, Any]] = {}
         self._last_lifecycle_event_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._pending_meeting_reviews: Dict[str, Dict[str, Any]] = {}
@@ -745,6 +773,7 @@ class PostgresConsultationStore(ConsultationStore):
         self._handoffs.clear()
         self._meetings.clear()
         self._meeting_schedules.clear()
+        self._meeting_action_reviews.clear()
         self._meeting_refusals.clear()
         self._last_lifecycle_event_by_key.clear()
         self._next_sequence_no = 1

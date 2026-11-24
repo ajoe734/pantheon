@@ -13,6 +13,7 @@ from services.capital.risk_policy import (
     RiskPolicyError,
     RiskPolicyEvaluator,
     _optional_float,
+    require_valid_any,
     resolve_pool_risk_policy_binding,
 )
 
@@ -403,7 +404,7 @@ class CapitalGuard:
         reader = self._approval_reader or configured_approval_reader("capital")
         binding = {"tenant_id": tenant, "target_type": target_type, "target_id": target_id, **expected}
         try:
-            reader.get(str(decision_id or "")).require_valid(expected=binding)
+            require_valid_any(reader.get(str(decision_id or "")), expected=binding)
         except ApprovalInvalid as exc:
             raise CapitalGuardError(f"Governance approval rejected: {exc}") from exc
         except Exception as exc:
