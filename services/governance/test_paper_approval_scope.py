@@ -1317,28 +1317,102 @@ def _coordinator_risk_proposal(decision_id, policy):
 @pytest.mark.parametrize("policy,outcome", [
     (_LOW_POLICY, "approved"), ({**_LOW_POLICY, "max_single_name_weight": 0.5}, "rejected")])
 def test_real_governance_accepts_nested_risk_proposal_and_gate_decides(tmp_path, monkeypatch, policy, outcome):
-    from services.governance import paper_approval_scope as scope
+    from services.capital.risk_policy import (
+        discover_approved_profile_risk_policy,
+        resolve_pool_risk_policy_binding,
+    )
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        DraftResult,
+        PersonaProvisioningCoordinator,
+    )
 
-    client, store, issued = _governance_world(
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(tmp_path / "no-policies"))
+    client, _store, issued = _governance_world(
         tmp_path, monkeypatch, "enabled;risk_policy=paper_pool;risk_proposer=pantheon-dev-persona-enrollment-proposer")
-    did = "apv-risk-" + outcome
-    body = _coordinator_risk_proposal(did, policy)
-    proposer = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"],
-                "Idempotency-Key": "p-" + did}
-    created = client.post("/api/governance/approvals", json=body, headers=proposer)
-    assert created.status_code == 201, created.text
-    gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
-    reviewed = client.post(f"/api/governance/approvals/{did}/review", headers={**gate, "Idempotency-Key": "r-" + did},
-                           json={"actor_role": "automated_gate", "actor_id": "pantheon-dev-paper-provisioner",
-                                 "expected_version": 1})
-    assert reviewed.status_code == 200, reviewed.text
-    stored = client.get(f"/api/governance/approvals/{did}", headers=gate).json()
+    proposer_headers = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"]}
+    gate_headers = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
+    idem_counter = 0
+
+    class _RealGovAdapter:
+        def post(self, owner, path, payload, *, as_proposer=False):
+            nonlocal idem_counter
+            assert owner == "governance"
+            idem_counter += 1
+            headers = dict(proposer_headers if as_proposer else gate_headers)
+            headers["Idempotency-Key"] = f"idem-{outcome}-{idem_counter}"
+            resp = client.post(path, json=payload, headers=headers)
+            assert resp.status_code in (200, 201), f"{path} -> {resp.status_code}: {resp.text}"
+            return resp.json()
+
+        def get(self, owner, path):
+            assert owner == "governance"
+            resp = client.get(path, headers=gate_headers)
+            if resp.status_code == 404:
+                return None
+            assert resp.status_code == 200, f"{path} -> {resp.status_code}: {resp.text}"
+            return resp.json()
+
+        def list(self, owner, path):
+            return self.get(owner, path) or []
+
+    adapter = _RealGovAdapter()
+
+    class _Proposer:
+        def post(self, owner, path, payload):
+            return adapter.post(owner, path, payload, as_proposer=True)
+
+    coord = PersonaProvisioningCoordinator(
+        store=None,
+        transport=adapter,
+        schedule_registrar=lambda *a, **k: {},
+        lease_owner="real-gov-test",
+        governance_actor_id="pantheon-dev-paper-provisioner",
+        governance_proposer=_Proposer(),
+        governance_proposer_actor_id="pantheon-dev-persona-enrollment-proposer",
+    )
+    draft_policy = {**policy, "risk_policy_id": f"rp-{POOL}", "status": "active", "allowed_stages": ["paper"]}
+    legacy_v1 = {"risk_policy_id": f"rp-{POOL}", "version": "1.0", "status": "active", "allowed_stages": ["paper"],
+                 "gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0}
+    base_pool = {"pool_id": POOL, "tenant_id": TENANT, "owner_id": TENANT, "owner_type": "org",
+                 "currency": "TWD", "budget": 100000.0, "single_runtime_enforced": True,
+                 "metadata": {"tenant_id": TENANT, "persona_id": PERSONA, "execution_context": "paper",
+                              "requested_risk_profile": "low", "require_approved_profile_mapping": True,
+                              "risk_policy": legacy_v1}}
+    candidate_pool = PersonaProvisioningCoordinator._candidate_pool_with_approval_digest(
+        base_pool=base_pool, pool_id=POOL, tenant_id=TENANT, currency="TWD", budget=100000.0,
+        risk_policy_ref=None, metadata={**base_pool["metadata"], "profile_auto_resolved": True, "risk_policy": dict(draft_policy)})
+    reader = coord._governance_approval_reader()
+    unmapped = resolve_pool_risk_policy_binding(
+        capital_pool_id=POOL, pool=candidate_pool, expected_tenant_id=TENANT, expected_stage="paper",
+        requested_profile="low", require_approved_profile_mapping=True, approval_reader=reader,
+        require_active=True, require_limits=("gross_limit",), raise_on_error=False)
+    assert not unmapped.resolved
+    draft = DraftResult(True, policy=dict(draft_policy), provenance={"source": "risk_officer_draft", "agent_id": "risk-officer"})
+    routed = coord._route_or_reuse_risk_policy_owner_decision_request(
+        tenant_id=TENANT, persona_id=PERSONA, pool_id=POOL, requested_profile="low", resolution=unmapped, draft=draft)
+    did = routed["governance_proposal_id"]
+    assert routed["governance_proposal_state"] == "decided"
+    assert routed["governance_proposal_outcome"] == outcome
+    stored = client.get(f"/api/governance/approvals/{did}", headers=gate_headers).json()
     assert stored["metadata"]["subject"]["risk_officer_draft"]["policy"]["gross_limit"] == 1.0
-    assert stored["metadata"]["subject"]["risk_comparison"]["direction"] == "increase"
-    failure = scope.risk_policy_candidate_failure(store.get(did).to_dict()) if hasattr(store.get(did), "to_dict") else None
-    assert (failure is None) == (outcome == "approved")
-    if outcome == "rejected":
-        assert "max_single_name_weight" in failure
+    assert isinstance(stored["metadata"]["subject"]["risk_comparison"], dict)
+    assert "gross_limit" in stored["metadata"]["subject"]["risk_comparison"]
+    auto_res = discover_approved_profile_risk_policy(
+        resolved_pool_id=POOL, effective_tenant_id=TENANT, clean_stage="paper", clean_profile="low",
+        base_pool=base_pool, currency="TWD", budget=100000.0, approval_reader=reader, require_limits=("gross_limit",))
+    resolved_pool = PersonaProvisioningCoordinator._candidate_pool_with_approval_digest(
+        base_pool=base_pool, pool_id=POOL, tenant_id=TENANT, currency="TWD", budget=100000.0, risk_policy_ref=None,
+        metadata={**base_pool["metadata"], "risk_policy": dict(draft_policy), "profile_mapping_approval_id": did})
+    bound = resolve_pool_risk_policy_binding(
+        capital_pool_id=POOL, pool=resolved_pool, expected_tenant_id=TENANT, expected_stage="paper",
+        requested_profile="low", require_approved_profile_mapping=True, approval_decision_id=did,
+        approval_reader=reader, require_active=True, require_limits=("gross_limit",), raise_on_error=False)
+    if outcome == "approved":
+        assert auto_res.resolved and auto_res.approval_decision_id == did
+        assert bound.resolved and bound.profile_mapping_approval_id == did and bound.allow_new_or_increased_risk is True
+    else:
+        assert "max_single_name_weight" in routed["paper_gate_reason"]
+        assert not auto_res.resolved and not bound.resolved and bound.allow_new_or_increased_risk is False
 
 
 def test_real_governance_legacy_v1_proposal_stays_readable_and_gate_closure_is_stated(tmp_path, monkeypatch):

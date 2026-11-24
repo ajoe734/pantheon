@@ -2,9 +2,9 @@
   "task": "PAPER-RISK-PROPOSAL-GOVERNANCE-CONTRACT-20261124",
   "root_cause_class": "RC2",
   "defect": "Governance ProposeApprovalRequest.subject was Dict[str,str]; coordinator sent nested risk_comparison/risk_officer_draft -> 422; BFF swallowed the error and returned 200; coordinator tests used a governance fake.",
-  "fix": ["models.subject -> Dict[str, Any]", "coordinator records proposal_rejected:<code>/proposal_unavailable", "repair route returns 422/502 with error field"],
+  "fix": ["models.subject -> Dict[str, Any]", "coordinator records proposal_rejected:<code>/proposal_unavailable", "repair route returns 422/502 with error field", "discover_approved_profile_risk_policy extracts risk_officer_draft before legacy inline base_pool policy"],
   "tests": [
-    "services/governance/test_paper_approval_scope.py::test_real_governance_accepts_nested_risk_proposal_and_gate_decides (fails 422 on old model)",
+    "services/governance/test_paper_approval_scope.py::test_real_governance_accepts_nested_risk_proposal_and_gate_decides (draft -> propose -> gate review/decide -> readback -> profile-mapping resolution against real governance app; fails 422 on old model)",
     "services/governance/test_paper_approval_scope.py::test_real_governance_legacy_v1_proposal_stays_readable_and_gate_closure_is_stated",
     "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_failed_governance_proposal_is_never_reported_as_success"
   ],
