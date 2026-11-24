@@ -43,8 +43,8 @@ SPEC = {"strategy_id": "s1", "owner_tenant": T,
 
 
 class Net:
-    def __init__(self, drift=False, tenant=T, roster_change=False, telemetry=None, spec=SPEC, spec_status=200):
-        self.spec, self.spec_status = spec, spec_status
+    def __init__(self, drift=False, tenant=T, roster_change=False, telemetry=None, spec=SPEC, spec_status=200, bare=False):
+        self.spec, self.spec_status, self.bare = spec, spec_status, bare
         self.calls, self.version_calls, self.roster_calls = [], 0, 0
         self.drift, self.tenant, self.roster_change = drift, tenant, roster_change
         self.telemetry = telemetry or TELEMETRY
@@ -72,7 +72,7 @@ class Net:
             extra = [{"runtime_id": "rt-n", "persona_id": "p1", "deployment_stage": "paper", "tenant_id": T}]
             return 200, {"data": BINDINGS + (extra if self.roster_change and self.roster_calls > 1 else [])}
         if path == "/api/v1/knowledge/strategy-specs/s1":
-            return self.spec_status, {"data": self.spec}
+            return self.spec_status, (self.spec if self.bare else {"data": self.spec})
         if path == "/api/v1/telemetry/rt-1/summary":
             return 200, {"data": self.telemetry}
         if path.startswith("/bff/management/trade-journeys/j1/timeline"):
@@ -243,3 +243,55 @@ def test_binding_without_strategy_id_has_no_symbol_source(tmp_path):
         BINDINGS[0]["strategy_id"] = sid
         del BINDINGS[0]["underlying_symbol"]
     assert ev["reason_code"] == "identity_missing" and "no strategy_id" in ev["reason"]
+
+
+# Sanitized hosted shape: the strategy-spec document at top level, no data envelope.
+HOSTED_SPEC = {"strategy_id": "s1", "owner_tenant": T,
+               "metadata": {"strategy_spec": {"market_scope": {"symbols": ["2317.TWSE"]}}},
+               "meta": {"surfaces": {"strategy_spec_detail": {"status": "ok"}}}}
+
+
+def test_bare_hosted_strategy_spec_yields_symbol(tmp_path):
+    ev, _, cli = run(tmp_path, net=Net(spec=HOSTED_SPEC, bare=True))
+    assert ev["outcome"] == "pass", ev
+    assert json.loads(cli.calls[-1][1])["sources"]["rows"][0]["underlying_symbol"] == "2317.TWSE"
+
+
+def test_enveloped_strategy_spec_still_accepted(tmp_path):
+    ev, _, _ = run(tmp_path, net=Net(spec=HOSTED_SPEC))
+    assert ev["outcome"] == "pass", ev
+
+
+@pytest.mark.parametrize("status", ["degraded", "unavailable"])
+def test_degraded_spec_surface_yields_no_symbol(tmp_path, status):
+    spec = {**HOSTED_SPEC, "meta": {"surfaces": {"strategy_spec_detail": {"status": status}}}}
+    ev, _, _ = run(tmp_path, net=Net(spec=spec, bare=True))
+    assert ev["reason_code"] in {"identity_missing", "source_unavailable"} and ev["outcome"] == "unproven"
+
+
+def cli_period(row):
+    """Pinned copy of the frontend CLI basis: pnl_period, else pnl_period_label, else pnl_period_start_at."""
+    return row.get("pnl_period") or row.get("pnl_period_label") or row.get("pnl_period_start_at")
+
+
+@pytest.mark.parametrize("tele,expected", [
+    ({"pnl_period_start_at": "2026-11-01T00:00:00Z", "pnl_at": "e"}, "2026-11-01T00:00:00Z"),
+    ({"pnl_period_start_at": "s", "pnl_period_label": "2026Q4"}, "2026Q4"),
+    ({"pnl_period_start_at": "s", "pnl_period_label": "L", "pnl_period": "P"}, "P"),
+    ({"pnl_period_start_at": "s", "pnl_period": {"start_at": "S0", "as_of": "A"}}, "S0"),
+])
+def test_pnl_period_uses_cli_basis_and_groups_match(tmp_path, tele, expected):
+    base = {k: v for k, v in TELEMETRY.items() if k not in {"pnl_period_start_at", "pnl_at"}}
+    ev, _, cli = run(tmp_path, net=Net(telemetry={**base, **tele}))
+    assert ev["outcome"] == "pass", ev
+    src = json.loads(cli.calls[-1][1])["sources"]
+    assert src["rows"][0]["pnl_period"] == expected
+    assert "/" not in str(src["rows"][0]["pnl_period"]) or expected.count("/") == 0
+    assert [g["period"] for g in src["pnl_groups"]] == [cli_period({"pnl_period": expected})]
+
+
+def test_missing_period_stays_unproven_group(tmp_path):
+    base = {k: v for k, v in TELEMETRY.items() if k not in {"pnl_period_start_at", "pnl_at"}}
+    _, _, cli = run(tmp_path, net=Net(telemetry=base))
+    src = json.loads(cli.calls[-1][1])["sources"]
+    assert src["rows"][0]["pnl_period"] is None and src["pnl_groups"] == []

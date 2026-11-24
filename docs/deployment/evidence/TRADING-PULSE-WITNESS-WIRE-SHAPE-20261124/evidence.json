@@ -1,0 +1,17 @@
+{
+  "task": "TRADING-PULSE-WITNESS-WIRE-SHAPE-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC6 WP6.5",
+  "root_cause": "witness required a data envelope on the strategy-spec read (hosted sends the document at top level) and wrote pnl_period as start/end while the frontend CLI compares pnl_period, else pnl_period_label, else pnl_period_start_at",
+  "change": {
+    "strategy_spec_read": "top-level document accepted, enveloped still accepted; degraded/unavailable meta.surfaces still yield no symbol",
+    "pnl_period": "pnl_period (string, or start_at of an object), else pnl_period_label, else pnl_period_start_at; never composed; missing stays unproven; pnl_groups keys follow the same basis"
+  },
+  "frontend_changes": "none; no CLI threshold, check or role requirement changed",
+  "nothing_invented": true,
+  "tests": "scripts/test_run_dev_trading_pulse_readonly_qa.py: 30 passed; 5 new cases fail on dev head 44b6159b9",
+  "runtime_budget": "no new writer; evidence size unchanged",
+  "hosted_acceptance": "pending: next Root trading-pulse-readonly-qa.json must reach the page checks and pass; then reopen TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family (Claude)",
+  "residual_findings": ["pnl_currency is null on the ledger summary and the page although the ledger knows the per-symbol currency; rows lacking it stay unproven", "tests use a pinned copy of the CLI period basis because the frontend checkout is not in this repo"]
+}
