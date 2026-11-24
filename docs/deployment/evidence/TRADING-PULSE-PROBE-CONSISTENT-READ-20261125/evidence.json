@@ -1,0 +1,15 @@
+{
+  "task": "TRADING-PULSE-PROBE-CONSISTENT-READ-20261125",
+  "root_cause_class": "RC2",
+  "defect": "probe compared pulse timestamps with raw telemetry read seconds later while heartbeats move them every 15 s; unverifiable 3/3 releases",
+  "fix": [
+    "acceptance/probes/trading-pulse-operator: pulse then all raw summaries back to back, <=6 pairs, 240 s budget, no tolerance",
+    "unchanged raw between two attempts with disagreeing pulse => failure pulse_stale_against_unchanged_source",
+    "never agreeing => Unverifiable source_changed_during_read:attempts=6 (exit 77)"
+  ],
+  "tests": "acceptance/test_trading_pulse_operator.py: 39 passed (first-read consistent, later attempt, never consistent, stale vs unchanged source, time budget; fake clock, no sleeping)",
+  "hosted_run": "not run by the owner; the coordinator must run acceptance/probes/trading-pulse-operator read-only on hosted dev after merge. Result is not claimed as accepted.",
+  "no_new_writer": true,
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residual_findings": []
+}
