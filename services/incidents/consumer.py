@@ -587,12 +587,9 @@ class InfrastructureHealthIncidentConsumer:
             if existing is not None:
                 return InfrastructureHealthIncidentResult(incident=existing, created=False)
         comp_norm = _safe_component(service_name)
-        for candidate in reversed(self._store.list_incidents()):
-            if (
-                is_infrastructure_health_incident(candidate)
-                and extract_infrastructure_incident_component(candidate) == comp_norm
-            ):
-                return InfrastructureHealthIncidentResult(incident=candidate, created=False)
+        candidate = self._store.find_latest_infrastructure_incident_for_component(comp_norm)
+        if candidate is not None:
+            return InfrastructureHealthIncidentResult(incident=candidate, created=False)
         raise IncidentConsumerError(
             f"No infrastructure incident found to resolve for component {service_name!r}"
         )

@@ -1015,3 +1015,36 @@ def test_resync_map_enforces_256kb_payload_budget_and_maintains_no_unbounded_mir
     assert 0 < hs.pending_resync_bytes() <= hs.MAX_PENDING_RESYNC_BYTES
     assert hs.DIAGNOSTICS.snapshot()["pending_resync_bytes"] <= hs.MAX_PENDING_RESYNC_BYTES
 
+
+
+def test_scheduled_catch_up_survives_transient_store_build_failure(monkeypatch):
+    monkeypatch.setattr(hs, "CATCHUP_STORE_RESOLVE_BACKOFF_SECONDS", 0.0)
+    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    entry = istore.create(inst(mid("catchup-transient-build")))
+    assert hs.flush_mirrors()
+    client = FakeClient()
+    hs.set_hindsight_client(client)
+    hs.DIAGNOSTICS.reset()
+
+    builds = {"count": 0}
+
+    def flaky_institutional_store():
+        builds["count"] += 1
+        if builds["count"] < 3:
+            raise ValueError("truncated store file")  # as seen when a writer is mid-write
+        return istore
+
+    result = hs.schedule_catch_up_mirrors(flaky_institutional_store, pstore, client=client)
+    assert result["status"] == "scheduled"
+    assert hs.flush_mirrors(timeout=30)
+    assert builds["count"] == 3
+    assert {items[0]["document_id"] for _bank, items in client.retained} == {entry.entry_id}
+
+
+def test_json_store_save_is_atomic_and_leaves_no_temp_files(tmp_path):
+    path = tmp_path / "inst.json"
+    store = InstitutionalMemoryStore(path)
+    store.create(inst(mid("atomic-1")))
+    store.create(inst(mid("atomic-2")))
+    assert len(InstitutionalMemoryStore(path).list(active_only=False)) == 2
+    assert [p.name for p in tmp_path.iterdir()] == ["inst.json"]
