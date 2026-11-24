@@ -514,6 +514,42 @@ def agora_meetings_stack(monkeypatch):
             ],
         },
         "convene_by_key": {},
+        "memos": {
+            "panel-gate-1": [
+                {
+                    "memo_id": "memo-panel-gate-1",
+                    "request_id": "panel-gate-1",
+                    "memo_type": "committee_summary",
+                    "author_type": "persona",
+                    "author_ref": "persona-risk-officer",
+                    "summary": "Gate panel summary",
+                    "recommendation": "approve",
+                    "status": "published",
+                }
+            ],
+            "mtg-delib-1": [
+                {
+                    "memo_id": "mem-summary-mtg-delib-1",
+                    "request_id": "mtg-delib-1",
+                    "memo_type": "committee_summary",
+                    "author_type": "persona",
+                    "author_ref": "persona-inst-1",
+                    "summary": "Deliberative synthesis for mtg-delib-1",
+                    "recommendation": "approve_with_conditions",
+                    "status": "published",
+                },
+                {
+                    "memo_id": "memo-dissent-1",
+                    "request_id": "mtg-delib-1",
+                    "memo_type": "dissent",
+                    "author_type": "persona",
+                    "author_ref": "agora-servant-alice",
+                    "summary": "Minority perspective recorded for mtg-delib-1",
+                    "recommendation": "approve_with_conditions",
+                    "status": "published",
+                },
+            ],
+        },
     }
     calls: list[dict[str, Any]] = []
 
@@ -641,6 +677,19 @@ def agora_meetings_stack(monkeypatch):
             if mid in owner_state["meetings"]:
                 return _reply(200, owner_state["meetings"][mid])
             return _reply(404, {"detail": "meeting not found"})
+
+        if req.method == "GET" and u.path == "/api/consult/memos":
+            q = parse_qs(u.query)
+            req_id = (q.get("request_id") or [""])[0]
+            return _reply(200, list(owner_state["memos"].get(req_id, [])))
+
+        if req.method == "GET" and u.path.startswith("/api/consult/memos/"):
+            memo_id = u.path.removeprefix("/api/consult/memos/")
+            for memo_list in owner_state["memos"].values():
+                for m in memo_list:
+                    if m.get("memo_id") == memo_id:
+                        return _reply(200, m)
+            return _reply(404, {"detail": "memo not found"})
 
         raise AssertionError(f"Unhandled consultation request: {req.method} {u.path}")
 
@@ -1184,4 +1233,215 @@ def test_mt4_attribution_meeting_batch_candidate_route_and_participant_budget_ca
     assert items[0]["proposal_id"] == "prop-unsponsored-1"
     assert items[0]["downstream_target"] == "agora_candidate_decision"
     assert batch_res.json()["data"]["execution_authority"] == "none"
+
+
+def test_deliberative_meeting_memos_and_detail_project_case_file_view_and_preserve_privacy_and_http_budget(
+    agora_meetings_stack,
+) -> None:
+    client, calls, owner_state, _, _ = agora_meetings_stack
+
+    # 1. Without a persisted case_file (or with empty {}), deliberative meeting detail, session, and memos
+    #    return unavailable_case("no_case_file_recorded") without issuing /api/consult/requests/{id}/transcript.
+    calls.clear()
+    no_case_memos = client.get(
+        "/bff/agora/committee/sessions/mtg-delib-1/memos",
+        headers=_auth_headers("alice"),
+    )
+    assert no_case_memos.status_code == 200, no_case_memos.text
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("GET", "/api/consult/meetings/mtg-delib-1"),
+        ("GET", "/api/consult/memos"),
+    ]
+    for memo in no_case_memos.json()["data"]:
+        assert memo["case_file_view"] == {
+            "status": "unavailable",
+            "reason": "no_case_file_recorded",
+            "case_file": None,
+        }
+
+    owner_state["meetings"]["mtg-delib-1"]["case_file"] = {}
+    empty_case_detail = client.get(
+        "/bff/agora/committee/meetings/mtg-delib-1",
+        headers=_auth_headers("alice"),
+    )
+    assert empty_case_detail.status_code == 200
+    assert empty_case_detail.json()["data"]["case_file_view"] == {
+        "status": "unavailable",
+        "reason": "no_case_file_recorded",
+        "case_file": None,
+    }
+
+    # 2. Attach a persisted Consultation case_file with shared, persona_private, and user_private items,
+    #    round citations (both resolved and unresolved), and rejected_positions.
+    owner_state["meetings"]["mtg-delib-1"]["case_file"] = {
+        "case_file_id": "casefile-mtg-delib-1",
+        "digest": "sha256-mtg-delib-1",
+        "composed_at": "2026-11-16T10:00:00Z",
+        "subject": {
+            "decision_type": "consult",
+            "meeting_type": "MT-3",
+            "persona_id": "persona-inst-1",
+            "tenant_id": "tenant-a",
+        },
+        "groups": {
+            "facts": {
+                "status": "ok",
+                "reason": None,
+                "truncated": False,
+                "unavailable": [],
+                "items": [
+                    {
+                        "item_id": "cf-shared-1",
+                        "kind": "research_finding",
+                        "excerpt": "Intraday range expansion precedes trend continuation.",
+                        "source_owner": "research",
+                        "source_id": "rf-101",
+                        "retrieval_mode": "owner_read",
+                        "retrieval_score": None,
+                        "relevance_scope": "committee",
+                    }
+                ],
+            },
+            "lessons": {
+                "status": "ok",
+                "reason": None,
+                "truncated": False,
+                "unavailable": [],
+                "items": [
+                    {
+                        "item_id": "cf-private-1",
+                        "kind": "private_memory",
+                        "excerpt": "SECRET_PRIVATE_MEMORY_NEVER_RETURN",
+                        "source_owner": "memory",
+                        "source_id": "pmem-priv-1",
+                        "retrieval_mode": "tag_match",
+                        "retrieval_score": 0.91,
+                        "relevance_scope": "persona_private",
+                    },
+                    {
+                        "item_id": "cf-user-private-1",
+                        "kind": "user_private_memory",
+                        "excerpt": "SECRET_USER_PRIVATE_MEMORY_NEVER_RETURN",
+                        "source_owner": "memory",
+                        "source_id": "upmem-priv-1",
+                        "retrieval_mode": "tag_match",
+                        "retrieval_score": 0.88,
+                        "memory_scope": "user_private",
+                    },
+                ],
+            },
+        },
+    }
+    owner_state["meetings"]["mtg-delib-1"]["rounds"][0]["positions"][0]["citations"] = [
+        "cf-shared-1",
+        "preread:persona-inst-1:1",
+    ]
+    owner_state["meetings"]["mtg-delib-1"]["rejected_positions"] = [
+        {
+            "round": 1,
+            "persona_id": "persona-advisor-1",
+            "role": "advisor",
+            "reason": "citation_outside_case_file_or_own_pre_read:ghost-ref",
+            "citations": ["ghost-ref"],
+        }
+    ]
+
+    calls.clear()
+    memos_resp = client.get(
+        "/bff/agora/committee/sessions/mtg-delib-1/memos",
+        headers=_auth_headers("alice"),
+    )
+    assert memos_resp.status_code == 200, memos_resp.text
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("GET", "/api/consult/meetings/mtg-delib-1"),
+        ("GET", "/api/consult/memos"),
+    ]
+    assert not any(c["path"].endswith("/transcript") for c in calls)
+    assert "SECRET_PRIVATE_MEMORY_NEVER_RETURN" not in memos_resp.text
+    assert "SECRET_USER_PRIVATE_MEMORY_NEVER_RETURN" not in memos_resp.text
+
+    meeting_resp = client.get(
+        "/bff/agora/committee/meetings/mtg-delib-1",
+        headers=_auth_headers("alice"),
+    )
+    session_resp = client.get(
+        "/bff/agora/committee/sessions/mtg-delib-1",
+        headers=_auth_headers("alice"),
+    )
+    assert meeting_resp.status_code == session_resp.status_code == 200
+    assert "SECRET_PRIVATE_MEMORY_NEVER_RETURN" not in meeting_resp.text
+    assert "SECRET_USER_PRIVATE_MEMORY_NEVER_RETURN" not in meeting_resp.text
+
+    memos_data = memos_resp.json()["data"]
+    assert [m["memo_id"] for m in memos_data] == ["mem-summary-mtg-delib-1", "memo-dissent-1"]
+    for view in (
+        memos_data[0]["case_file_view"],
+        memos_data[1]["case_file_view"],
+        meeting_resp.json()["data"]["case_file_view"],
+        session_resp.json()["data"]["case_file_view"],
+    ):
+        assert view["status"] == "ok"
+        assert view["case_file"]["case_file_id"] == "casefile-mtg-delib-1"
+        assert view["case_file"]["private_items_withheld"] == 2
+        assert [i["item_id"] for i in view["case_file"]["groups"]["facts"]["items"]] == ["cf-shared-1"]
+        assert view["case_file"]["groups"]["lessons"]["items"] == []
+        assert len(view["contributions"]) == 6
+        first_contrib = view["contributions"][0]
+        assert first_contrib["persona_id"] == "persona-inst-1"
+        assert first_contrib["event_id"] == "evt-mtg-delib-1-r1-persona-inst-1"
+        assert first_contrib["recommendation"] == "support"
+        assert first_contrib["role"] == "chair"
+        assert first_contrib["claims"][0]["cited_item_ids"] == ["cf-shared-1"]
+        assert first_contrib["claims"][0]["unresolved_item_ids"] == ["preread:persona-inst-1:1"]
+        assert first_contrib["summary_cited_item_ids"] == ["cf-shared-1"]
+        assert first_contrib["summary_unresolved_item_ids"] == ["preread:persona-inst-1:1"]
+        assert view["rejected_contributions"] == [
+            {
+                "persona_id": "persona-advisor-1",
+                "contribution_id": "evt-mtg-delib-1-r1-persona-advisor-1-rejected",
+                "reason": "citation_outside_case_file_or_own_pre_read:ghost-ref",
+                "cited": False,
+            }
+        ]
+
+    # 3. Another user's private-servant meeting and foreign-tenant meeting fail closed with 404 before memo reads.
+    calls.clear()
+    bob_resp = client.get(
+        "/bff/agora/committee/sessions/mtg-delib-1/memos",
+        headers=_auth_headers("bob"),
+    )
+    assert bob_resp.status_code == 404, bob_resp.text
+    assert "casefile-mtg-delib-1" not in bob_resp.text
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("GET", "/api/consult/meetings/mtg-delib-1"),
+    ]
+
+    owner_state["meetings"]["mtg-foreign-1"] = {
+        **owner_state["meetings"]["mtg-delib-1"],
+        "meeting_id": "mtg-foreign-1",
+        "tenant_id": "tenant-b",
+    }
+    calls.clear()
+    foreign_resp = client.get(
+        "/bff/agora/committee/sessions/mtg-foreign-1/memos",
+        headers=_auth_headers("alice"),
+    )
+    assert foreign_resp.status_code == 404, foreign_resp.text
+    assert "casefile-mtg-delib-1" not in foreign_resp.text
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("GET", "/api/consult/meetings/mtg-foreign-1"),
+    ]
+
+    # 4. Gate panel (persona_panel) memo read still uses GET /api/consult/requests/{id}/transcript (project_panel).
+    calls.clear()
+    panel_memos = client.get(
+        "/bff/agora/committee/sessions/panel-gate-1/memos",
+        headers=_auth_headers("alice"),
+    )
+    assert panel_memos.status_code == 200, panel_memos.text
+    assert [(c["method"], c["path"]) for c in calls] == [
+        ("GET", "/api/consult/requests/panel-gate-1"),
+        ("GET", "/api/consult/memos"),
+        ("GET", "/api/consult/requests/panel-gate-1/transcript"),
+    ]
 
