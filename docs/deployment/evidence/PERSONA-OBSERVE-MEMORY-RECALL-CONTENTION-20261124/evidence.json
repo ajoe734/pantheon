@@ -1,0 +1,21 @@
+{
+  "task": "PERSONA-OBSERVE-MEMORY-RECALL-CONTENTION-20261124",
+  "status": "implemented_pending_hosted_acceptance",
+  "root_cause": "Hindsight rerank ~5 s/recall on 2 ONNX threads; concurrent recalls contend for CPU and exceed the 8 s recall limit; adapter urlopen default 5 s turned any slow retrieve into 503 and one slow scope discarded the other.",
+  "changes": {
+    "memory_svc": "single recall gate (concurrency 1, queue wait 10 s) + per-bank standing-query cache (64 entries, 8 per bank, 900 s TTL, invalidated on every mirror write and on rebuild/layer reset)",
+    "adapter_bridge": "per-scope concurrent reads, partial result with missing_scopes, 503 only when no scope readable, timeout 20 s",
+    "cycle_controller": "records canonical_memory_missing_scopes and proceeds"
+  },
+  "runtime_budget": {
+    "cache_memory": "in-process only; <=64 entries of <=24 (id,score) pairs; no files or tables",
+    "worst_case_retrieve_latency_s": "10 queue + 8 recall = 18 (adapter timeout 20, controller timeout 30)",
+    "cpu": "at most one rerank at a time (2 ONNX threads) instead of N concurrent"
+  },
+  "local_tests": "services/memory/test_hindsight_index.py, test_search_retrieval.py, test_main.py, adapter test_persona_memory_materialize_query.py, persona test_persona_cycle_controller.py; 3 pre-existing baseline failures unrelated (test_memory_auth_env_forwards_oidc_and_role_map, test_deployed_persona_lifespan_consumes_cycle_and_stops x2)",
+  "not_done": [
+    "hosted-shaped measurement of per-recall rerank/total time at 10:00Z concurrency (no hosted access from this worker)",
+    "hosted deploy before 2026-11-25T09:05Z and 2026-11-25T10:00Z terminal_packet_today probe for the three trading personas",
+    "exact-head independent review (owner-family reviewer exception: other model families at quota until 2026-11-27T10:03Z)"
+  ]
+}

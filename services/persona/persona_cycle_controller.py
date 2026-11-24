@@ -1684,6 +1684,10 @@ class CycleOwners:
             if memory.get("status") != "ok" or not isinstance(memory.get("memory"), dict):
                 raise ValueError("invalid memory receipt")
             bundle["retrieved_memory"] = memory["memory"]
+            missing = memory["memory"].get("missing_scopes") or []
+            if missing:
+                # Partial memory is usable: record which scope is absent and proceed.
+                bundle["canonical_memory_missing_scopes"] = [str(m.get("scope")) for m in missing]
         except Exception:
             bundle["unavailable"].append("canonical_memory")
             bundle["canonical_memory_reason"] = "memory_materialization_unavailable"

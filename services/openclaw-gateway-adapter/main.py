@@ -3157,6 +3157,8 @@ def _gateway_state_memory_materializer(
         ] or ["operator"],
         session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{spec.persona_id}",
         limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
+        # Must outlast memory-svc's recall queue wait (10 s) plus one recall deadline (8 s).
+        timeout_seconds=float(os.getenv("PANTHEON_OPENCLAW_MEMORY_TIMEOUT_SECONDS", "20")),
         auth_token=adapter_memory_credential() or None,
         **({"query": query, "tags": list(tags or [])} if query else {}),
     )
