@@ -93,7 +93,7 @@ def test_input_digest_is_stable_and_input_sensitive() -> None:
     assert INPUTS.input_digest == DraftInputs(**{**INPUTS.__dict__}).input_digest
     other = DraftInputs(**{**INPUTS.__dict__, "evidence": ()})
     assert other.input_digest != INPUTS.input_digest
-    assert "none configured" in build_prompt(DraftInputs(**{**INPUTS.__dict__, "bounds": {}}))
+    assert "none configured" in build_prompt(DraftInputs(**{**INPUTS.__dict__, "bounds": {}, "profile": "unbounded-x"}))
 
 
 def test_drafter_prompt_carries_all_four_bounds() -> None:
@@ -224,3 +224,52 @@ def test_ensure_is_not_called_for_other_personas(hosted) -> None:
     seen = []
     ensuring_turn_runner(lambda pid, prompt, **k: seen.append(pid))("persona-a", "x")
     assert seen == ["persona-a"] and hosted.ensure_calls == []
+
+
+def test_prompt_states_units_and_bounds_in_the_same_units() -> None:
+    prompt = build_prompt(INPUTS)
+    for needle in ("multiples of the pool's equity", "1.0 = 100% of equity", "fractions of equity",
+                   "context for sizing only", "gross_limit at most 2.0 x equity", "max_leverage at most 2.0 x equity",
+                   "max_single_name_weight at most 0.2 of equity", "min_cash_reserve_pct at least 0.1 of equity"):
+        assert needle in prompt
+    assert "Your previous draft was refused" not in prompt
+    assert "gross_limit" in build_prompt(INPUTS, "x") and "Your previous draft was refused" in build_prompt(INPUTS, "x")
+
+
+HOSTED_BAD = {**GOOD, "gross_limit": 10000, "net_limit": 10000, "max_leverage": 1.0, "max_single_name_weight": 0.1,
+              "min_cash_reserve_pct": 0.2}
+
+
+def _sequence_runner(payloads, calls):
+    items = list(payloads)
+
+    def run(pid, prompt, **kwargs):
+        calls.append(prompt)
+        return _runner(items[min(len(calls) - 1, len(items) - 1)])(pid, prompt)
+    return run
+
+
+def test_refused_draft_is_retried_once_with_reason_then_accepted() -> None:
+    calls: list = []
+    result = draft_pool_risk_policy(INPUTS, turn_runner=_sequence_runner([HOSTED_BAD, GOOD], calls))
+    assert result.ok, result.reason
+    assert len(calls) == 2
+    assert "Your previous draft was refused" not in calls[0]
+    assert "gross_limit=10000" in calls[1] and "bound 2.0" in calls[1]
+
+
+def test_two_refusals_fail_closed_after_exactly_two_turns() -> None:
+    calls: list = []
+    result = draft_pool_risk_policy(INPUTS, turn_runner=_sequence_runner([HOSTED_BAD, HOSTED_BAD, GOOD], calls))
+    assert not result.ok and result.policy is None and "gross_limit=10000" in result.reason
+    assert len(calls) == 2
+
+
+def test_malformed_first_answer_is_retried_and_failed_turn_is_not() -> None:
+    calls: list = []
+    assert draft_pool_risk_policy(INPUTS, turn_runner=_sequence_runner(["not json", GOOD], calls)).ok
+    assert len(calls) == 2
+    calls = []
+    failed = draft_pool_risk_policy(INPUTS, turn_runner=_sequence_runner(
+        [{}], calls) if False else (lambda pid, prompt, **k: calls.append(prompt) or _runner(GOOD, status="error")(pid, prompt)))
+    assert not failed.ok and len(calls) == 1
