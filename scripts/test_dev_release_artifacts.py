@@ -456,7 +456,10 @@ def test_failure_record_preserves_innermost_subprocess_status_and_never_message(
     assert row["exit_code"] == (status if status > 0 else 128 - status)
     assert row["failure_kind"] == "subprocess"
     assert row["failure_location"].startswith("dev_release_artifacts.py:")
-    assert "fixture-secret" not in json.dumps(row)
+    # Only the bounded, redacted stderr excerpt is public; command/argv/message are not.
+    assert row["docker"]["stderr"] == "fixture-secret-stderr"
+    assert "fixture-secret" not in json.dumps({k: v for k, v in row.items() if k != "docker"})
+    assert "fixture-secret-command" not in json.dumps(row) and "fixture-secret-image" not in json.dumps(row)
     assert artifacts.remote_failure_record(json.dumps(row).encode()) == row
 
 
@@ -582,6 +585,8 @@ class StackDocker:
         self.unhealthy = set()      # services that never become healthy
         self.no_stop = set()        # services that ignore "docker stop"
         self.up_calls = []
+        self.wait_fails = False     # "compose up --wait" exits 1 after recreating (health budget)
+        self.oom = set()            # services whose container reports OOMKilled
         self.pinned = {}            # service -> digest-pinned Compose image reference
         self.source_scratch = tempfile.TemporaryDirectory(prefix="source-codec-test-")
         self.source_journal = Path(self.source_scratch.name) / "journal.jsonl"
@@ -642,6 +647,8 @@ class StackDocker:
             return "".join(row["cid"] + "\n" for _, row in rows)
         if args[0] == "inspect":
             service, row = self.by_cid(args[-1])
+            if args[2] == "{{json .State.OOMKilled}}":
+                return json.dumps(service in self.oom)
             if args[2] == artifacts.STACK_FORMAT:
                 return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
                                    "status": row["status"], "exit_code": row["exit_code"],
@@ -711,6 +718,9 @@ class StackDocker:
                 row.update(image_id=override[name]["image"], env=env,
                            status="exited" if name == ONE_SHOT else "running",
                            health=None if name == ONE_SHOT else ("unhealthy" if name in self.unhealthy else "healthy"))
+            if self.wait_fails and "--wait" in args:
+                raise artifacts.ArtifactError("Docker artifact operation failed") from \
+                    subprocess.CalledProcessError(1, ["docker", *args], stderr="container is unhealthy")
             return ""
         raise AssertionError(args)
 
@@ -872,9 +882,9 @@ def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
     _, docker, _, _, _, _, _ = stack_case
     docker.mutate_to_candidate()
     docker.unhealthy.add("svc-20")
-    with pytest.raises(artifacts.StackMixedError) as error:
-        _, _ = restore_stack(stack_case, readback_seconds=60)
-    assert error.value.services == ("svc-20",)
+    result, clock = restore_stack(stack_case, readback_seconds=60)
+    assert clock.now >= 60  # polled for the whole stated budget before naming the residual
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}
 
 
 def _recapture_with_unhealthy(stack_case, service):
@@ -899,9 +909,12 @@ def test_service_healthy_at_capture_restored_unhealthy_still_fails_after_budget(
     assert stack["services"]["svc-20"]["healthy_at_capture"] is True
     docker.mutate_to_candidate()
     docker.unhealthy.add("svc-20")
-    with pytest.raises(artifacts.StackMixedError) as error:
-        restore_stack(stack_case, readback_seconds=60)
-    assert error.value.services == ("svc-20",)
+    # Same image as baseline, health unchanged by the restore: named residual, not a stop.
+    result, _ = restore_stack(stack_case, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}
+    assert result["verdict"] == "restored; svc-20 unhealthy: not_healthy"
+    for service in docker.names:
+        assert docker.containers[service]["image_id"] == stack_case[6][service]["image_id"], service
 
 
 def test_unhealthy_at_capture_does_not_excuse_image_mismatch(stack_case):
@@ -922,9 +935,8 @@ def test_baseline_without_capture_health_field_still_requires_healthy(stack_case
     assert artifacts.validate_stack(stack, bundle=bundle) == stack        # and the new baseline
     docker.mutate_to_candidate()
     docker.unhealthy.add("svc-20")
-    with pytest.raises(artifacts.StackMixedError) as error:
-        restore_stack(stack_case, stack=legacy, readback_seconds=60)
-    assert error.value.services == ("svc-20",)
+    result, _ = restore_stack(stack_case, stack=legacy, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}  # still not silently healthy
 
 
 def test_previous_version_baseline_shape_is_the_new_shape_minus_one_optional_key(stack_case):
@@ -1904,3 +1916,76 @@ def test_failure_record_names_services_without_exception_text():
     bad = {**row, "services": ["bad name!"]}
     assert artifacts.remote_failure_record(json.dumps(bad).encode()) is None
     assert "services" not in artifacts.failure_record(artifacts.ArtifactError("x"), "capture")
+
+
+def test_replay_1123_docker_error_on_restore_and_oom_service_ends_named_not_mixed(stack_case):
+    """Candidate failed; the BFF restore group hits a Docker error; a second service OOMs."""
+    _, docker, _, _, _, _, baseline = stack_case
+    docker.mutate_to_candidate()
+    docker.wait_fails = True
+    docker.unhealthy.add("svc-20")
+    docker.oom.add("svc-20")
+    result, _ = restore_stack(stack_case, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "oom_killed"}
+    assert result["verdict"] == "restored; svc-20 unhealthy: oom_killed"
+    assert set(SEALED) <= set(result["restore_wait_failed"])
+    # Every other service is on its recorded image: no silent mixed stack.
+    assert all(docker.containers[s]["image_id"] == baseline[s]["image_id"] for s in docker.names)
+    assert docker.containers["candidate-only"]["status"] == "exited"
+
+
+def test_wait_failure_with_wrong_or_missing_image_still_fails_hard(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    docker.wait_fails = True
+    docker.stuck.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_non_wait_compose_failure_is_not_tolerated(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    original = docker.call
+
+    def failing(*args):
+        if args[0] == "compose" and "--wait" not in args and "up" in args and "--force-recreate" in args:
+            raise artifacts.ArtifactError("Docker artifact operation failed")
+        return original(*args)
+    docker.call = failing
+    with pytest.raises(artifacts.ArtifactError):
+        restore_stack(stack_case, readback_seconds=60)
+
+
+def test_failure_record_carries_bounded_redacted_docker_stderr():
+    secret = "A" * 64
+    stderr = ("Error response from daemon: write /var/lib/docker/x: no space left\n"
+              f"PANTHEON_TOKEN=hunter2 ghp_{secret} Bearer abc.def " + "x" * 9000)
+    cause = subprocess.CalledProcessError(
+        1, ["docker", "--host", "unix:///var/run/docker.sock", "image", "load", "--input", "/root/images/" + "ab" * 8 + ".tar"],
+        stderr=stderr)
+    try:
+        raise artifacts.ArtifactError("Docker artifact operation failed") from cause
+    except artifacts.ArtifactError as error:
+        record = artifacts.failure_record(error, "restore")
+    docker = record["docker"]
+    assert docker["operation"] == "image load" and docker["image"] == "ab" * 8 + ".tar"
+    assert "no space left" in docker["stderr"] or len(docker["stderr"]) <= artifacts.DOCKER_STDERR_LIMIT
+    assert len(docker["stderr"]) <= artifacts.DOCKER_STDERR_LIMIT
+    for leaked in ("hunter2", secret, "abc.def"):
+        assert leaked not in docker["stderr"]
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_failure_record_names_image_reference_and_rejects_forged_docker_detail():
+    image = "sha256:" + "c" * 64
+    cause = subprocess.CalledProcessError(1, ["docker", "tag", image, "pantheon-operator-bff"], stderr="boom")
+    try:
+        raise artifacts.ArtifactError("x") from cause
+    except artifacts.ArtifactError as error:
+        record = artifacts.failure_record(error, "restore")
+    assert record["docker"] == {"operation": "tag", "image": image, "stderr": "boom"}
+    forged = {**record, "docker": {**record["docker"], "stderr": "x" * 5000}}
+    assert artifacts.remote_failure_record(json.dumps(forged).encode()) is None
+    assert "docker" not in artifacts.failure_record(artifacts.ArtifactError("plain"), "restore")

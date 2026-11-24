@@ -1,0 +1,8 @@
+................                                                         [100%]
+16 passed, 88 deselected, 1 warning in 20.17s
+exit_code: 0
+
+Replay regression terminal output:
+..                                                                       [100%]
+2 passed, 104 deselected, 1 warning in 3.03s
+exit_code: 0

@@ -2959,22 +2959,25 @@ def discover_approved_profile_risk_policy(
                     pass
 
         if is_def_id:
-            default_raw = {
-                "risk_policy_id": subj_pol_id,
-                "version": subj_pol_ver,
-                "status": "active",
-                "allowed_stages": ["paper"],
-                "gross_limit": 2.0,
-                "net_limit": 2.0,
-                "max_leverage": 2.0,
-                "allowed_asset_classes": ["equity", "future"],
-            }
-            norm_p = normalize_risk_policy(default_raw, default_id=subj_pol_id)
-            decision_policy_candidates.append((None, norm_p, default_raw))
+            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
+            # embedded in the decision subject, bound to the approved digest.
+            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
+            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+            if (
+                draft_policy is not None
+                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
+                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
+                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
+            ):
+                raw_draft = dict(draft_policy)
+                decision_policy_candidates.append(
+                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
+                )
 
     # Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
     # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.
     fallback_inline_raw: dict[str, Any]
+    fallback_inline_policy: RiskPolicy | None
     fallback_is_vetoed = False
     if isinstance(base_meta.get("risk_policy"), Mapping) and _is_policy_content_mapping(base_meta["risk_policy"]):
         fallback_inline_raw = dict(base_meta["risk_policy"])
@@ -2994,18 +2997,11 @@ def discover_approved_profile_risk_policy(
                 fallback_is_vetoed = True
                 diagnostic_source = _higher_priority_absence_source(diagnostic_source, fb_veto)
     else:
-        fallback_inline_raw = {
-            "risk_policy_id": f"rp-{resolved_pool_id}",
-            "version": req_version or "1.0",
-            "status": "active",
-            "allowed_stages": ["paper"],
-            "gross_limit": 2.0,
-            "net_limit": 2.0,
-            "max_leverage": 2.0,
-            "allowed_asset_classes": ["equity", "future"],
-        }
-        fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
-    if not fallback_is_vetoed:
+        # No inline policy: nothing is invented. A candidate can only come from the catalog or an approved
+        # decision that embeds a risk-officer draft.
+        fallback_inline_raw = {}
+        fallback_inline_policy = None
+    if not fallback_is_vetoed and fallback_inline_policy is not None:
         decision_policy_candidates.append((None, fallback_inline_policy, fallback_inline_raw))
 
     # 3. Verify each candidate policy against Governance approvals.
@@ -3142,13 +3138,17 @@ def discover_approved_profile_risk_policy(
         if (catalog_candidates or unapproved_catalog_policies)
         else "policy_definition_and_approval_absent"
     )
+    on_policy = (
+        f" on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r}"
+        if best_candidate_policy is not None else ""
+    )
     return ProfilePolicyAutoResolution(
         resolved=False,
         status="unresolved_profile_mapping",
         reason_code="risk_policy_profile_mapping_unapproved",
         reason=(
             f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
-            f"{eff_profile!r} on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r} "
+            f"{eff_profile!r}{on_policy} "
             f"(absence_source={final_absence}); policy owner must approve explicit gross_limit/net_limit/"
             f"max_leverage/max_single_name_weight or bind an approved risk_policy_ref."
         ),
@@ -4453,3 +4453,68 @@ def resolve_bound_pool_risk_policy(
         raise RiskPolicyLoadError(f"{resolution.reason} ({resolution.reason_code})")
     raise RiskPolicyError(f"{resolution.reason} ({resolution.reason_code})")
 
+
+
+# ---------------------------------------------------------------------------
+# Risk-officer drafted paper-pool policy: Capital-owned validation + outer bounds
+# ---------------------------------------------------------------------------
+PROFILE_OUTER_BOUNDS_ENV = "PANTHEON_PAPER_RISK_PROFILE_BOUNDS"
+# Operator configuration (2026-11-23): profile ``low`` single name <= 20% of NAV, cash reserve >= 10% of NAV.
+# Override with PANTHEON_PAPER_RISK_PROFILE_BOUNDS='{"low": {"max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}}'.
+DEFAULT_PROFILE_OUTER_BOUNDS: Mapping[str, Mapping[str, float]] = {
+    "low": {"max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10},
+}
+DRAFT_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
+
+
+def profile_outer_bounds(env: Mapping[str, str] | None = None) -> dict[str, dict[str, float]]:
+    """Operator outer bounds per profile. A malformed override fails closed (raises)."""
+    source = os.environ if env is None else env
+    raw = str(source.get(PROFILE_OUTER_BOUNDS_ENV) or "").strip()
+    loaded: Any = json.loads(raw) if raw else DEFAULT_PROFILE_OUTER_BOUNDS
+    if not isinstance(loaded, Mapping):
+        raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV} must be a JSON object")
+    bounds: dict[str, dict[str, float]] = {}
+    for profile, limits in loaded.items():
+        if not isinstance(limits, Mapping) or set(limits) - {"max_single_name_weight", "min_cash_reserve_pct"}:
+            raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}] has unsupported bounds")
+        bounds[str(profile).strip().lower()] = {k: float(v) for k, v in limits.items()}
+    return bounds
+
+
+def validate_drafted_pool_risk_policy(
+    policy: Mapping[str, Any],
+    *,
+    profile: str,
+    bounds: Mapping[str, Mapping[str, float]] | None = None,
+) -> tuple[RiskPolicy | None, str | None]:
+    """Validate a risk-officer drafted policy. Returns ``(model, None)`` or ``(None, reason)``.
+
+    Requires gross/net/leverage, a single-name cap strictly inside (0, 1) and a positive cash reserve < 1, and
+    enforces the configured operator outer bounds for ``profile`` as hard validation.
+    """
+    try:
+        model = normalize_risk_policy(policy)
+    except (RiskPolicyError, TypeError, ValueError) as exc:
+        return None, f"risk_policy_draft_malformed: {exc}"
+    for name in DRAFT_REQUIRED_LIMITS:
+        val = getattr(model, name)
+        if val is None or isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+            return None, f"risk_policy_draft_missing_or_non_numeric:{name}"
+        if float(val) <= 0.0:
+            return None, f"risk_policy_draft_limit_not_positive:{name}={val!r}"
+    if not float(model.max_single_name_weight) < 1.0:
+        return None, f"risk_policy_draft_single_name_not_below_1:max_single_name_weight={model.max_single_name_weight!r}"
+    if not float(model.min_cash_reserve_pct) < 1.0:
+        return None, f"risk_policy_draft_cash_reserve_not_below_1:min_cash_reserve_pct={model.min_cash_reserve_pct!r}"
+    limits = (profile_outer_bounds() if bounds is None else bounds).get(str(profile or "").strip().lower())
+    if limits:
+        cap = limits.get("max_single_name_weight")
+        if cap is not None and float(model.max_single_name_weight) > cap + 1e-12:
+            return None, (f"risk_policy_draft_outside_bounds:max_single_name_weight="
+                          f"{model.max_single_name_weight!r} exceeds {profile} bound {cap!r}")
+        reserve = limits.get("min_cash_reserve_pct")
+        if reserve is not None and float(model.min_cash_reserve_pct) + 1e-12 < reserve:
+            return None, (f"risk_policy_draft_outside_bounds:min_cash_reserve_pct="
+                          f"{model.min_cash_reserve_pct!r} below {profile} bound {reserve!r}")
+    return model, None

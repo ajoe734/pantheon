@@ -283,7 +283,7 @@ register_fastapi_health_routes(
     app,
     "incidents",
     dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
-    metrics=lambda: {"incident_count": len(store.list_incidents())},
+    metrics=lambda: {"incident_count": store.count_incidents()},
     details=lambda: {
         "data_dir": DATA_DIR,
         "store_path": str(STORE_PATH),
@@ -809,7 +809,7 @@ def consume_agent_finding_incident(
     for _ in range(5):
         # Sequence is read before the open check: a creator that lost the race
         # either sees the winner's open incident or collides on the same id.
-        seq = sum(1 for i in store.list_incidents() if i.incident_id.startswith(prefix))
+        seq = store.count_incidents_with_id_prefix(prefix)
         matched = _match_open_agent_finding_incident(
             store.find_open_incidents(),
             incoming=incoming,
@@ -839,6 +839,9 @@ def consume_agent_finding_incident(
 # Routes — list / lookup
 # ---------------------------------------------------------------------------
 
+LIST_INCIDENTS_DEFAULT_LIMIT = 1000
+
+
 @app.get(
     "/api/incidents",
     response_model=List[IncidentResponse],
@@ -850,23 +853,23 @@ def list_incidents(
     status: Optional[str] = Query(None, description="Filter by status"),
     severity: Optional[str] = Query(None, description="Filter by severity"),
     open_only: bool = Query(False, description="Return only open+investigating incidents"),
+    limit: Optional[int] = Query(None, ge=1, le=5000, description="Page size; defaults to 1000 unless open_only"),
 ) -> List[IncidentResponse]:
     """List IncidentCases with optional filters.  Most-recent first."""
     resolve_stale_agent_finding_incidents()
-    incidents = store.list_incidents()
-
-    if binding_id:
-        incidents = [i for i in incidents if i.binding_id == binding_id]
-    if capital_pool_id:
-        incidents = [i for i in incidents if i.capital_pool_id == capital_pool_id]
-    if status:
-        incidents = [i for i in incidents if i.status == status]
-    if severity:
-        incidents = [i for i in incidents if i.severity == severity]
-    if open_only:
-        incidents = [i for i in incidents if i.is_open()]
-
-    incidents.sort(key=lambda i: i.created_at, reverse=True)
+    # Filters run in the store so memory is bounded by the match set (open
+    # cases for open_only) or the page cap, never by total stored history.
+    effective_limit = limit if limit is not None else (
+        None if open_only else LIST_INCIDENTS_DEFAULT_LIMIT
+    )
+    incidents = store.query_incidents(
+        binding_id=binding_id,
+        capital_pool_id=capital_pool_id,
+        status=status,
+        severity=severity,
+        open_only=open_only,
+        limit=effective_limit,
+    )
     return [_to_response(i) for i in incidents]
 
 
@@ -1434,9 +1437,7 @@ def resolve_retired_binding_drift_incidents(
     if not binding_id:
         raise HTTPException(status_code=400, detail="binding_id is required")
     resolved_ids: List[str] = []
-    for inc in store.list_incidents():
-        if inc.binding_id != binding_id or not inc.is_open():
-            continue
+    for inc in store.query_incidents(binding_id=binding_id, open_only=True):
         if not str(inc.incident_cluster_id or "").startswith("drift:"):
             continue
         update_status(

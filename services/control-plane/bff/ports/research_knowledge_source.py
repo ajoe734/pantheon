@@ -3710,6 +3710,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
         }
 
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        source = self._get_research_write_owner()
+        if source is None or not hasattr(source, "list_research_ticket_page"):
+            raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+        return source.list_research_ticket_page(
+            statuses=statuses, owner=owner,
+            meeting_type=meeting_type, subject_ref=subject_ref,
+            action_state=action_state, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after,
+            human_actionable=human_actionable, page_token=page_token,
+            page_size=page_size
+        )
+
     def list_research_tickets(
         self,
         *,
@@ -3766,6 +3793,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             created_at=created_at,
         )
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
@@ -3785,6 +3814,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
         result = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result

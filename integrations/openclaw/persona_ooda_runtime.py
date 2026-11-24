@@ -31,7 +31,7 @@ DEFAULT_GATEWAY_HTTP_URL = "http://openclaw-gateway:18789"
 class CycleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["demand", "admit", "reweight", "mutate_request", "remove",
-                  "widen_universe", "consult_request", "harness_patch", "no_action"]
+                  "widen_universe", "consult_request", "harness_patch", "no_action", "meeting_action"]
     reason: str = Field(min_length=1, max_length=4000, pattern=r"\S")
     evidence_refs: list[str] = Field(max_length=100)
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -79,6 +79,13 @@ def build_brokered_cycle_prompt(persona: Mapping[str, Any], observe: Mapping[str
         "persona_proposal_submit count; a proposal written in your reply text is ignored. Cite only "
         "item_id values from the CaseFile below or canonical_ref values returned to you by the memory tools. "
         "When done, reply with a one-line summary.\n"
+        "For meeting_actions.runnable, propose kind=meeting_action through the same tool. Parameters: "
+        "ticket_id, action=submit, title, analysis (concrete evidence-linked analysis, at most 8000 UTF-8 bytes), "
+        "evidence_refs (the approved reference objects supplied in Observe). If an external human-only "
+        "requirement is missing use action=request_input, missing_requirement and human_actor_id. "
+        "Use action=decline with a reason when declining; never claim delivery from reading a ticket. "
+        "Cite the ticket's facts:meeting_action_ticket:<ticket_id> item. For later decisions cite "
+        "facts:meeting_action_result:<ticket_id> when relevant, including an explicit reason to keep course.\n"
         "Persona:\n" + json.dumps({"persona_id": persona["persona_id"], "mandate": persona.get("mandate")})
         + "\nObserve:\n" + json.dumps(bound_observe(observe), ensure_ascii=False, allow_nan=False)
     )

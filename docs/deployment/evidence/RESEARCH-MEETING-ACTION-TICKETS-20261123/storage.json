@@ -1,0 +1,60 @@
+{
+  "history_bytes": 1665,
+  "history_count": 3,
+  "note_jsonb_text_bytes": 539,
+  "notes": 1,
+  "source": "local Postgres 16 actual HTTP fixture; not hosted measurement",
+  "ticket_jsonb_text_bytes": 3203,
+  "tickets": 1,
+  "writes": {
+    "note_insert": 1,
+    "ticket_insert": 1,
+    "ticket_updates": 2
+  },
+  "hosted_scale": {
+    "enrolled_trading_personas": 3,
+    "scheduled_meetings_per_persona_week_max": 3,
+    "scheduled_meetings_week_max": 9,
+    "ticket_count_per_origin_max": 8,
+    "ticket_count_per_week_max": 72,
+    "notes_per_ticket_lifetime_max": 128,
+    "human_convened_meetings": "count separately; +8 tickets/origin maximum"
+  },
+  "bounds": {
+    "ticket_json_bytes_max": 262144,
+    "history_entries_max": 256,
+    "note_json_bytes_max": 16384,
+    "command_json_bytes_max": 16384,
+    "evidence_refs_max": 8,
+    "evidence_metadata_bytes_max": 4096,
+    "page_rows_max": 100,
+    "sql_rows_fetched_max": 101,
+    "full_table_retention": "unbounded legacy owner; RC3 WP3.1"
+  },
+  "cadence": "Explicit action commands and existing Persona daily cycle; no new job, queue or collection",
+  "cleanup": "No deletion of historical rows or unfinished obligations; count/byte limits reject new writes; producer snapshots reuse their existing retention",
+  "daily_payload_growth": {
+    "typical_1_ticket_and_1_note_per_meeting_bytes": 4811.14,
+    "max8_tickets_and_1_note_each_per_meeting_bytes": 38489.14,
+    "max_lifetime_row_payload_allocated_to_daily_scheduled_origins_bytes": 24267044.57
+  },
+  "measurement_limitations": [
+    "Local PostgreSQL JSONB text bytes, not hosted relation size/WAL/MVCC growth.",
+    "Maximum growth charges full lifetime capacity to each new origin; not a measured daily write rate.",
+    "Actual meeting/chair/cycle snapshot byte caps are verified by their producer tasks and final integrated acceptance."
+  ],
+  "inline_evidence_budget": {
+    "cadence": "On-demand authorized submit/provide_input; existing Persona cadence only. No new job, table, queue or collection.",
+    "successful_write_count": "One existing-ticket CAS and at most one existing-KW-02 note insert, committed together. Failed/denied/stale commands and exact retries: zero writes/events.",
+    "size_count": "Existing command/note <=16384 encoded bytes; <=128 notes per ticket; <=256 history entries and <=262144 encoded ticket bytes. Inline note plus <=7 ordinary refs.",
+    "hosted_growth_per_day": "Same <=72 scheduled-origin tickets/week; one inline note each <=10.29 notes/day (<=168521.15 encoded note bytes/day at max16KiB). No growth beyond already-budgeted lifetime <=128 notes/ticket (~20.58MiB/day maximum lifetime note payload allocated to new scheduled origins). Unscheduled human-convened meetings counted separately.",
+    "reads": "Lists do not resolve bodies. Authorized detail resolves <=16 distinct note primary keys (current submission plus human_input), <=256KiB note records in addition to original <=256KiB ticket. Direct human-actionable descriptions come from the same SQL page, <=100 rows and no extra per-ticket requests. Probe adds <=16 note GETs on demand.",
+    "cleanup": "No temporary/orphan note after partial inline failure: transaction rollback removes both writes. Successful immutable notes retain original preservation policy; full-table retention remains unbounded RC3 WP3.1. No deleting historical or open obligations."
+  },
+  "required_data_budget": {
+    "cadence": "Optional metadata in the existing assignment insert; no new job, table, queue, write or recurring cadence.",
+    "size_count": "0..8 distinct dataset identifiers, raw <=256 characters each, trimmed nonempty; normalized array <=4096 encoded JSON bytes. Field plus JSON key <=4115 bytes per ticket within existing 16KiB assignment and 256KiB ticket caps. Not copied into lifecycle history.",
+    "hosted_growth_per_day": "At <=72 scheduled-origin tickets/week, <=42325.72 bytes/day extra field allocation if every ticket uses the full bound, within existing lifetime payload budget; each unscheduled human meeting adds <=8 x4115=32920 bytes. Evidence-only/old tickets omit the field with zero incremental bytes.",
+    "cleanup": "Same existing preservation policy: no deleting historical/open obligations, no backfill. Full-table retention remains unbounded RC3 WP3.1; local metadata bound is not hosted relation/WAL evidence."
+  }
+}
