@@ -5131,7 +5131,10 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
         json={},
     )
     route_tx.governance_subject = _prior_subject
-    assert resp_repair_revoked.status_code == 200, resp_repair_revoked.text
+    # The fake governance refuses the gate (403, subject mismatch): reported truthfully, never as approved.
+    assert resp_repair_revoked.status_code == 422, resp_repair_revoked.text
+    assert resp_repair_revoked.json()["error"]["code"] == "paper_gate_failed"
+    assert resp_repair_revoked.json()["error"]["paper_gate_error"]["http_status"] == 403
     repair_revoked_data = resp_repair_revoked.json()["data"]
     assert repair_revoked_data["repaired"] is False
     assert repair_revoked_data["after_resolution"]["resolved"] is False
@@ -5735,4 +5738,15 @@ def test_paper_gate_unavailable_leaves_the_proposal_pending(monkeypatch):
     req: dict[str, Any] = {}
     coordinator._apply_paper_gate_to_risk_policy_proposal(
         _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
-    assert decided == [] and req["paper_gate_status"].startswith("unavailable:")
+    assert decided == [] and req["paper_gate_status"] == "gate_unavailable"
+
+
+@pytest.mark.parametrize("gate_status", ["gate_refused:403", "gate_unavailable", "gate_unavailable:503"])
+def test_failed_paper_gate_is_found_for_a_non_2xx_repair_response(gate_status):
+    from services.control_plane.bff.personas.routes.provisioning import _failed_governance_proposal
+
+    routed = {"governance_proposal_status": "reused_existing_pending_proposal", "paper_gate_status": gate_status}
+    assert _failed_governance_proposal({"after_resolution": {"owner_decision_request": routed}}) is routed
+    decided = {"governance_proposal_status": "reused_existing_pending_proposal",
+               "paper_gate_status": "decided_approved_by_automated_gate"}
+    assert _failed_governance_proposal({"owner_decision_request": decided}) is None
