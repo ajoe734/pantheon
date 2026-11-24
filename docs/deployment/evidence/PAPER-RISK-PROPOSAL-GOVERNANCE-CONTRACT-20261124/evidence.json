@@ -1,0 +1,14 @@
+{
+  "task": "PAPER-RISK-PROPOSAL-GOVERNANCE-CONTRACT-20261124",
+  "root_cause_class": "RC2",
+  "defect": "Governance ProposeApprovalRequest.subject was Dict[str,str]; coordinator sent nested risk_comparison/risk_officer_draft -> 422; BFF swallowed the error and returned 200; coordinator tests used a governance fake.",
+  "fix": ["models.subject -> Dict[str, Any]", "coordinator records proposal_rejected:<code>/proposal_unavailable", "repair route returns 422/502 with error field"],
+  "tests": [
+    "services/governance/test_paper_approval_scope.py::test_real_governance_accepts_nested_risk_proposal_and_gate_decides (fails 422 on old model)",
+    "services/governance/test_paper_approval_scope.py::test_real_governance_legacy_v1_proposal_stays_readable_and_gate_closure_is_stated",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_failed_governance_proposal_is_never_reported_as_success"
+  ],
+  "v1_proposals": "risk_level=medium; paper gate review answers 403 (low-risk only); a human decider must reject them in /management/approvals; no vote cast by this task",
+  "hosted_acceptance": "pending deployment",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family"
+}

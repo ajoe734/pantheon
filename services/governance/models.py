@@ -100,7 +100,7 @@ class ProposeApprovalRequest(ApprovalCommand):
     candidate_digest: Optional[str] = None
     proof_digest: Optional[str] = None
     expires_at: Optional[str] = None
-    subject: Optional[Dict[str, str]] = None  # binds one exact action for action-bound target types
+    subject: Optional[Dict[str, Any]] = None  # binds one exact action; risk-policy proposals also carry nested risk_comparison / risk_officer_draft objects
 
 
 class AcceptReviewRequest(ApprovalCommand):

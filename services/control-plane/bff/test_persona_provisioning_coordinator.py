@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 import pytest
+from services.control_plane.bff.persona_paper_enrollment import EnrollmentRefused
 
 try:
     from services.control_plane.bff.persona_provisioning import (
@@ -5121,11 +5122,15 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
         },
     }
     (policy_dir / "rp-route-low-1.json").write_text(json.dumps(revoked_route_pol), encoding="utf-8")
+    # The proposal is made by the enrolment proposer principal; a mismatched subject is now a visible 403.
+    _prior_subject = route_tx.governance_subject
+    route_tx.governance_subject = "pantheon-dev-persona-enrollment-proposer"
     resp_repair_revoked = route_client.post(
         f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
         headers=AUTH_HEADERS,
         json={},
     )
+    route_tx.governance_subject = _prior_subject
     assert resp_repair_revoked.status_code == 200, resp_repair_revoked.text
     repair_revoked_data = resp_repair_revoked.json()["data"]
     assert repair_revoked_data["repaired"] is False
@@ -5412,6 +5417,32 @@ def test_pending_or_rejected_proposal_must_match_entire_request(state, mismatch)
     retry = coord.coordinate(record)
     assert retry.error["owner_decision_request"]["governance_proposal_id"] == proposal_id
     assert tx.mutations[("governance", "/api/governance/approvals")] == 2
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (EnrollmentRefused("governance_proposal_http_422"), "proposal_rejected:422"),
+    (EnrollmentRefused("governance_proposal_http_403"), "proposal_rejected:403"),
+    (EnrollmentRefused("governance_proposal_http_503", retryable=True), "proposal_unavailable:503"),
+    (TimeoutError("timed out"), "proposal_unavailable"),
+])
+def test_failed_governance_proposal_is_never_reported_as_success(failure, expected):
+    from services.control_plane.bff.personas.routes.provisioning import _failed_governance_proposal
+
+    class FailingProposer:
+        def post(self, owner, path, payload):
+            raise failure
+
+    store, record = _record_and_store({"risk": "medium"}, seed_pool_approval=False)
+    tx = FakeOwnerTransport(seed_pool_policy_approval=False,
+                            governance_subject="pantheon-dev-persona-enrollment-proposer",
+                            governance_roles=("approval_proposer",))
+    coord = PersonaProvisioningCoordinator(store=store, transport=tx, schedule_registrar=_schedule_receipt,
+                                          lease_owner="test-worker", governance_proposer=FailingProposer())
+    routed = coord.coordinate(record).error["owner_decision_request"]
+    assert routed["governance_proposal_status"] == expected
+    assert routed["governance_proposal_error"]["owner"] == "governance"
+    assert "governance_proposal_id" not in routed
+    assert _failed_governance_proposal({"after_resolution": {"owner_decision_request": routed}}) is routed
 
 
 @pytest.fixture

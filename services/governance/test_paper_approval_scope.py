@@ -1291,3 +1291,74 @@ def test_risk_policy_widening_is_dev_only_and_absent_clause_denies(tmp_path):
                                                         env={**ENABLED_ENV, "PANTHEON_ENV": "prod"})
     with pytest.raises(PaperApprovalDenied):
         scope_module.require_paper_risk_policy_decision(_risk_decision(), grant=GRANT, now=NOW, env=ENABLED_ENV)
+
+
+# ---------------------------------------------------------------------------
+# RC2: the exact coordinator proposal body (nested subject) against the real Governance application
+# ---------------------------------------------------------------------------
+
+def _coordinator_risk_proposal(decision_id, policy):
+    """Shape of ``proposal_body`` built by PersonaProvisioningCoordinator (nested subject values)."""
+    expires = (datetime.now(timezone.utc) + timedelta(hours=23)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "expected_version": 0, "decision_id": decision_id, "target_type": "capital_pool_activation",
+        "target_id": POOL, "target_version": "d" * 64, "risk_level": "low", "capital_pool_id": POOL,
+        "persona_id": PERSONA, "tenant_id": TENANT, "owner_user_id": "pantheon-dev-persona-enrollment-proposer",
+        "expires_at": expires, "candidate_digest": "d" * 64,
+        "subject": {
+            "pool_id": POOL, "risk_direction": "increase",
+            "risk_comparison": {"direction": "increase", "fields": {"gross_limit": {"from": 0.5, "to": 1.0}}},
+            "requested_risk": "low", "risk_policy_id": "rp-pool", "risk_policy_version": "2.0",
+            "risk_policy_digest": "d" * 64, "absence_source": "none",
+            "risk_officer_draft": {"provenance": {"source": "risk_officer_draft"}, "policy": dict(policy)}},
+    }
+
+
+@pytest.mark.parametrize("policy,outcome", [
+    (_LOW_POLICY, "approved"), ({**_LOW_POLICY, "max_single_name_weight": 0.5}, "rejected")])
+def test_real_governance_accepts_nested_risk_proposal_and_gate_decides(tmp_path, monkeypatch, policy, outcome):
+    from services.governance import paper_approval_scope as scope
+
+    client, store, issued = _governance_world(
+        tmp_path, monkeypatch, "enabled;risk_policy=paper_pool;risk_proposer=pantheon-dev-persona-enrollment-proposer")
+    did = "apv-risk-" + outcome
+    body = _coordinator_risk_proposal(did, policy)
+    proposer = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"],
+                "Idempotency-Key": "p-" + did}
+    created = client.post("/api/governance/approvals", json=body, headers=proposer)
+    assert created.status_code == 201, created.text
+    gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
+    reviewed = client.post(f"/api/governance/approvals/{did}/review", headers={**gate, "Idempotency-Key": "r-" + did},
+                           json={"actor_role": "automated_gate", "actor_id": "pantheon-dev-paper-provisioner",
+                                 "expected_version": 1})
+    assert reviewed.status_code == 200, reviewed.text
+    stored = client.get(f"/api/governance/approvals/{did}", headers=gate).json()
+    assert stored["metadata"]["subject"]["risk_officer_draft"]["policy"]["gross_limit"] == 1.0
+    assert stored["metadata"]["subject"]["risk_comparison"]["direction"] == "increase"
+    failure = scope.risk_policy_candidate_failure(store.get(did).to_dict()) if hasattr(store.get(did), "to_dict") else None
+    assert (failure is None) == (outcome == "approved")
+    if outcome == "rejected":
+        assert "max_single_name_weight" in failure
+
+
+def test_real_governance_legacy_v1_proposal_stays_readable_and_gate_closure_is_stated(tmp_path, monkeypatch):
+    """Stored v1.0 proposals (risk_level medium, string-only subject, no draft) remain readable; the gate's
+    closure of them on the real app is recorded here (see contract.md for the operator action when refused)."""
+    client, store, issued = _governance_world(
+        tmp_path, monkeypatch, "enabled;risk_policy=paper_pool;risk_proposer=pantheon-dev-persona-enrollment-proposer")
+    did = "apv-risk-v1"
+    body = _coordinator_risk_proposal(did, _LOW_POLICY)
+    body["risk_level"] = "medium"
+    body["subject"] = {"pool_id": POOL, "risk_direction": "increase", "requested_risk": "medium",
+                       "risk_policy_id": "rp-pool", "risk_policy_version": "1.0"}
+    proposer = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"],
+                "Idempotency-Key": "p-" + did}
+    assert client.post("/api/governance/approvals", json=body, headers=proposer).status_code == 201
+    gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
+    assert client.get(f"/api/governance/approvals/{did}", headers=gate).status_code == 200
+    reviewed = client.post(f"/api/governance/approvals/{did}/review", headers={**gate, "Idempotency-Key": "r-v1"},
+                           json={"actor_role": "automated_gate", "actor_id": "pantheon-dev-paper-provisioner",
+                                 "expected_version": 1})
+    # The paper gate is confined to low-risk decisions: it cannot close a medium v1.0 proposal.
+    assert reviewed.status_code == 403 and "low-risk" in reviewed.text
+    assert client.get(f"/api/governance/approvals/{did}", headers=gate).json()["decision_state"] == "proposed"
