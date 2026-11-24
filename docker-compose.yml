@@ -175,6 +175,9 @@ services:
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE: "4"
       HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE: "4"
+      # Observe/consult recalls must finish in ~1 s: the neural cross-encoder cost 5-10 s per recall on two
+      # CPU threads. 'rrf' keeps the fused semantic+BM25+graph+temporal order (no model call).
+      HINDSIGHT_API_RERANKER_PROVIDER: rrf
       OMP_NUM_THREADS: "2"
     networks: [memory-index, memory-index-storage, memory-llm-bridge]
     depends_on:
