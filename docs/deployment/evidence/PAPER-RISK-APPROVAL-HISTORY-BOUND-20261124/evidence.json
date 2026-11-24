@@ -5,7 +5,6 @@
   "fix": [
     "services/governance/approval_authority.py: is_current_candidate_decision / split_candidate_decisions / bound_candidate_history; ApprovalReader.list_for_target applies the bound to current candidates only (+ history=True full read, cap 4096)",
     "services/capital/risk_policy.py: CapitalOwnerApprovalReader.list_for_target same; discovery (_verify_policy_owner_approval_decisions and pool decision collection) bounds current candidates only, historical rows feed diagnostics; renewal overlap (same policy id/version/digest) collapses to pool-bound else most recently created; different digests stay ambiguous with both ids",
-    "services/capital/main.py: pool approval evidence list returns the full history (cap 4096) instead of 17 rows",
     "services/control-plane/bff/persona_provisioning_coordinator.py: transport reader same; carried-draft, existing-proposal and superseded-proposal lookups use history=True"
   ],
   "tests": [
@@ -25,6 +24,7 @@
   "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; the reviewer may be from the owner's family (Claude owner, Claude2 reviewer)",
   "hosted_acceptance": "pending after deploy: with the hosted pools past 16 renewals, a repair dry run and a risk-profile change resolve instead of ambiguous_profile_mapping",
   "residual_findings": [
+    "services/capital/main.py list_pool_approval_evidence caps its response at 17 rows (outside this task contract); it now receives current candidates first then history from the reader, so discovery through Capital still sees every current candidate and treats more than 16 current as ambiguous",
     "The Governance list endpoint returns the full history unpaginated and filtering is client-side; a server-side filter for current decisions would cut the 22 MB/repair read (Governance owner, out of scope)",
     "Pending proposals still count toward the 16-candidate bound; closure of superseded pending proposals is capped by MAX_PENDING_SUPERSEDE only for the candidate window"
   ]
