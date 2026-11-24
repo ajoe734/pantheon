@@ -1,0 +1,31 @@
+{
+  "task": "PAPER-RISK-APPROVAL-HISTORY-BOUND-20261124",
+  "root_cause_class": "RC2",
+  "defect": "Policy discovery bounded its Governance read to 16 decisions per pool and counted expired, rejected, revoked and superseded ones; each daily renewal adds one decision, so after about 16 renewals discovery returned policy_candidates_ambiguous and repair, redraft and risk-profile change could not be applied. Carried-draft and superseded-proposal lookups read the same truncated window.",
+  "fix": [
+    "services/governance/approval_authority.py: is_current_candidate_decision / split_candidate_decisions / bound_candidate_history; ApprovalReader.list_for_target applies the bound to current candidates only (+ history=True full read, cap 4096)",
+    "services/capital/risk_policy.py: CapitalOwnerApprovalReader.list_for_target same; discovery (_verify_policy_owner_approval_decisions and pool decision collection) bounds current candidates only, historical rows feed diagnostics; renewal overlap (same policy id/version/digest) collapses to pool-bound else most recently created; different digests stay ambiguous with both ids",
+    "services/capital/main.py: pool approval evidence list returns the full history (cap 4096) instead of 17 rows",
+    "services/control-plane/bff/persona_provisioning_coordinator.py: transport reader same; carried-draft, existing-proposal and superseded-proposal lookups use history=True"
+  ],
+  "tests": [
+    "services/control-plane/bff/tests/test_paper_risk_approval_history_bound.py: real-chain 40 renewals then repair; redraft after 20 renewals; unit bound semantics (365 expired + rejected/revoked/superseded do not count, 17 current still overflow); read-cost bound",
+    "test_persona_provisioning_coordinator.py 8e now builds 17 approved current decisions for the overflow case (rejected history no longer counts)",
+    "regression: test_paper_risk_policy_renewal, test_paper_risk_policy_gate_real_chain, test_persona_provisioning_coordinator, services/capital/test_risk_policy.py, services/governance/test_approval_authority.py"
+  ],
+  "fails_on_previous_head": "test_forty_renewals_then_repair_profile_change_and_redraft_all_resolve: after_resolution status ambiguous_profile_mapping",
+  "preexisting_failures": [
+    "services/capital/test_risk_policy.py::test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer_and_reconciler_envs (ModuleNotFoundError: yaml in the worker venv; fails identically without this change)"
+  ],
+  "runtime_budget": {
+    "new_writer_or_job": "none; read path only; no governance history deleted",
+    "read_cost_one_repair": "measured in the real chain: one repair issues about 20 Governance list requests and about 5 exact GETs (28 owner requests in total), independent of history length; each list response carries every decision of the target. At 1 year of renewals (365 decisions per pool, about 3 KB each) one list response is about 1.1 MB, so one operator repair reads on the order of 20 x 1.1 MB = 22 MB in-process, held one response at a time; candidate verification is bounded to 16 current decisions, historical rows are only classified. Operator repair is manual and rare; no recurring job reads it",
+    "hard_cap": "4096 rows per list read; beyond it the read signals overflow and discovery fails closed"
+  },
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; the reviewer may be from the owner's family (Claude owner, Claude2 reviewer)",
+  "hosted_acceptance": "pending after deploy: with the hosted pools past 16 renewals, a repair dry run and a risk-profile change resolve instead of ambiguous_profile_mapping",
+  "residual_findings": [
+    "The Governance list endpoint returns the full history unpaginated and filtering is client-side; a server-side filter for current decisions would cut the 22 MB/repair read (Governance owner, out of scope)",
+    "Pending proposals still count toward the 16-candidate bound; closure of superseded pending proposals is capped by MAX_PENDING_SUPERSEDE only for the candidate window"
+  ]
+}

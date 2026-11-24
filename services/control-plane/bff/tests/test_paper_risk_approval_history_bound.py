@@ -22,6 +22,7 @@ from .test_paper_risk_policy_gate_real_chain import DRAFT, PERSONA, POOL, TENANT
 from .test_paper_risk_policy_renewal import (  # noqa: F401  (fixtures + helpers)
     _approved,
     _coordinator,
+    _draftless_resolution,
     _pool_meta,
     _resolved,
     clock,
@@ -90,3 +91,36 @@ def test_historical_decisions_do_not_count_toward_the_candidate_bound():
     assert bound_candidate_history(many, bound=16, now=now).overflow is True
     # the history read returns everything up to its cap
     assert len(bound_candidate_history(old, bound=16, now=now, history=True)) == 365
+
+
+def test_redraft_after_history_creates_a_new_policy_version_and_resolves(world, clock, monkeypatch):
+    _repair()
+    assert _resolved(world)
+    _renew_many(world, clock, 20)
+    before = _pool_meta(world)["profile_mapping_approval_id"]
+    redraft = {**DRAFT, "version": "3.0", "gross_limit": 0.08, "net_limit": 0.08, "max_leverage": 0.08}
+    draft = DraftResult(True, policy=dict(redraft), provenance={"source": "risk_officer_draft", "input_digest": "redraft"})
+    monkeypatch.setattr(PersonaProvisioningCoordinator, "_drafter", lambda self: (lambda inputs: draft))
+    coordinator, resolution = _draftless_resolution(world)
+    resolution.owner_decision_request.update(
+        candidate_risk_policy_version="3.0", candidate_risk_policy_digest=risk_policy_digest(redraft))
+    resolution.risk_policy_version, resolution.risk_policy_digest = "3.0", risk_policy_digest(redraft)
+    req = coordinator._route_or_reuse_risk_policy_owner_decision_request(
+        tenant_id=TENANT, persona_id=PERSONA, pool_id=POOL, requested_profile="low", resolution=resolution, draft=draft)
+    assert req.get("paper_gate_status") == "decided_approved_by_automated_gate", req
+    after = _repair()["after_resolution"]
+    assert after["resolved"] is True, after
+    # the redraft was proposed and approved after 20 renewals; the pool stays bound to its approved policy
+    assert after["risk_policy_version"] == "2.0" and after["allow_new_or_increased_risk"] is True, after
+
+
+def test_one_repair_read_cost_is_a_few_list_calls_and_no_per_decision_reads(world, clock):
+    _repair()
+    assert _resolved(world)
+    _renew_many(world, clock, 20)
+    world.seen.clear()
+    assert _repair()["after_resolution"]["resolved"] is True
+    lists = [p for m, p in world.seen if m == "GET" and p.split("?")[0].endswith("/approvals")]
+    exact = [p for m, p in world.seen if m == "GET" and "/approvals/" in p.split("?")[0]]
+    history = len(_approved(world))
+    assert len(lists) <= 24 and len(exact) <= 10 and len(world.seen) <= 40, (len(lists), len(exact), len(world.seen))

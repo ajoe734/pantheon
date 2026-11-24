@@ -81,6 +81,9 @@ from the same route go through the existing harness pipeline instead.
 ### `GET /api/governance/approvals`
 List decisions.  Supports filters: `target_type`, `target_id`,
 `decision_state`, `risk_level`.  Returns most-recent first.
+Returns every decision of the target, including expired, rejected, revoked and
+superseded ones (history is never deleted).  Consumers that bound a candidate
+read count only current decisions; see `approval_authority.bound_candidate_history`.
 
 ---
 

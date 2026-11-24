@@ -2460,7 +2460,6 @@ def _verify_policy_owner_approval_decisions(
                             target_id=t_id,
                             decision_state=None,
                             max_items=MAX_BOUNDED_APPROVAL_CANDIDATES,
-                            now=now_dt,
                         )
                         or []
                     )
@@ -2882,7 +2881,6 @@ def discover_approved_profile_risk_policy(
                         target_id=resolved_pool_id,
                         decision_state=None,
                         max_items=MAX_BOUNDED_APPROVAL_CANDIDATES,
-                        now=effective_now,
                     )
                     or []
                 )
