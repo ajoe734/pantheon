@@ -1480,10 +1480,17 @@ def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
             ]
 
         def list_strategies(self) -> List[Dict[str, Any]]:
-            return [
-                {"strategy_id": "strat-1", "name": "Trend Following"},
-                {"strategy_id": "strat-2", "name": "Statistical Arbitrage"},
-            ]
+            raise AssertionError("unpaged list_strategies must not be called by get_risk_radar")
+
+        def list_strategy_summaries_page(self, **kwargs: Any) -> Dict[str, Any]:
+            return {
+                "items": [
+                    {"strategy_id": "strat-1", "name": "Trend Following"},
+                    {"strategy_id": "strat-2", "name": "Statistical Arbitrage"},
+                ],
+                "total": 2,
+                "next_page_token": None,
+            }
 
         def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
             return [
@@ -1511,6 +1518,7 @@ def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
 
     # Row 1 (Alpha): has real telemetry
     row_alpha = next(r for r in rows if r["persona_id"] == "persona-a")
+    assert row_alpha["strategy_label"] == "Trend Following"
     assert row_alpha["total_exposure"] == 25000.0
     assert row_alpha["worst_drawdown"] == 0.08
     assert row_alpha["value_at_risk"] == 2000.0
@@ -1521,6 +1529,7 @@ def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
 
     # Row 2 (Beta): NO telemetry -> must remain None, NOT synthetic 10000.0 / 0.05 / 500.0
     row_beta = next(r for r in rows if r["persona_id"] == "persona-b")
+    assert row_beta["strategy_label"] == "Statistical Arbitrage"
     assert row_beta["total_exposure"] is None
     assert row_beta["worst_drawdown"] is None
     assert row_beta["value_at_risk"] is None
@@ -1808,3 +1817,278 @@ def test_main_preserves_management_evolution_journal_once():
         and entry.raw_path == "/bff/management/evolution-journal"
     ]
     assert len(matching) == 1
+
+
+def test_risk_radar_uses_bounded_strategy_summary_page_and_targeted_detail_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Risk Radar must query bounded strategy_summary_page / targeted detail and never call unpaged list_strategies."""
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core.owner_reads import authorization
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import (
+        DefaultResearchKnowledgeSourcePort,
+    )
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    http_calls: List[Tuple[str, str, Optional[str]]] = []
+
+    def fake_http_read(
+        url: str, *, method: str = "GET", tenant_id: Optional[str] = None, **kwargs: Any
+    ) -> Any:
+        http_calls.append((url, method, tenant_id))
+        if "view=strategy_summary_page" in url:
+            return {
+                "items": [
+                    {
+                        "strategy_id": "strat-page-1",
+                        "title": "Bounded Summary Strategy 1",
+                        "current_spec_version_id": "reg-strat-page-1-v1",
+                        "current_spec_version": "1.0.0",
+                        "lifecycle_state": "approved",
+                        "tenant_id": "tenant-test",
+                    }
+                ],
+                "total": 1,
+                "next_page_token": None,
+            }
+        if url.endswith("/api/registry/strategies/strat-detail-2/strategy-specs"):
+            return [
+                {
+                    "registry_id": "reg-strat-detail-2-v1",
+                    "artifact_type": "strategy_spec",
+                    "artifact_state": "approved",
+                    "version": "1.0.0",
+                    "strategy_id": "strat-detail-2",
+                    "owner_tenant": "tenant-test",
+                    "metadata": {
+                        "strategy_spec": {
+                            "title": "Targeted Detail Strategy 2",
+                            "market_scope": {"symbols": ["2330.TWSE"]},
+                        }
+                    },
+                }
+            ]
+        raise AssertionError(f"Unexpected registry URL called: {url}")
+
+    monkeypatch.setattr(adapter_base, "http_request_json", fake_http_read)
+    ports = ReadSurfacePorts(
+        research_knowledge_source=DefaultResearchKnowledgeSourcePort()
+    )
+
+    class BoundedRadarStore:
+        def list_runtime_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "runtime_id": "run-1",
+                    "persona_id": "persona-a",
+                    "strategy_id": "strat-page-1",
+                    "capital_pool_id": "pool-main",
+                    "status": "running",
+                    "deployment_stage": "paper",
+                },
+                {
+                    "runtime_id": "run-2",
+                    "persona_id": "persona-b",
+                    "strategy_id": "strat-detail-2",
+                    "capital_pool_id": "pool-main",
+                    "status": "running",
+                    "deployment_stage": "paper",
+                },
+            ]
+
+        def list_deployment_plans(self) -> List[Dict[str, Any]]:
+            return []
+
+        def list_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return []
+
+        def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [{"pool_id": "pool-main", "name": "Main Pool", "risk_budget": 100000.0}]
+
+        def list_personas(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+            return [
+                {"persona_id": "persona-a", "name": "Persona A"},
+                {"persona_id": "persona-b", "name": "Persona B"},
+            ]
+
+        def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "runtime_id": "run-1",
+                    "metrics": {"total_exposure": 10000.0, "worst_drawdown": 0.02, "value_at_risk": 500.0},
+                },
+                {
+                    "runtime_id": "run-2",
+                    "metrics": {"total_exposure": 20000.0, "worst_drawdown": 0.03, "value_at_risk": 800.0},
+                },
+            ]
+
+        def list_strategies(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise AssertionError("unpaged list_strategies must not be called")
+
+        def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise AssertionError("unpaged list_strategy_summaries must not be called")
+
+        def list_strategy_specs(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise AssertionError("unpaged list_strategy_specs must not be called")
+
+        list_strategy_summaries_page = ports.list_strategy_summaries_page
+        get_strategy_spec_detail = ports.get_strategy_spec_detail
+
+    store = BoundedRadarStore()
+    app = FastAPI()
+    app.include_router(
+        create_management_router(get_read_store=lambda: store, tenant_payload_fn=_verified_tenant)
+    )
+    client = TestClient(app)
+
+    token = authorization.set("Bearer op-1:operator:tenant-test")
+    try:
+        resp = client.get(
+            "/bff/management/risk-radar",
+            headers={"Authorization": "Bearer op-1:operator:tenant-test"},
+        )
+    finally:
+        authorization.reset(token)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    rows_by_strategy = {r["strategy_id"]: r for r in body["data"]["rows"]}
+    assert rows_by_strategy["strat-page-1"]["strategy_label"] == "Bounded Summary Strategy 1"
+    assert rows_by_strategy["strat-detail-2"]["strategy_label"] == "Targeted Detail Strategy 2"
+    assert body["meta"]["surfaces"]["strategies"]["status"] == "ok"
+    assert len(http_calls) == 2
+    assert "view=strategy_summary_page" in http_calls[0][0]
+    assert "exclude_state=draft" in http_calls[0][0]
+    assert http_calls[1][0].endswith("/api/registry/strategies/strat-detail-2/strategy-specs")
+
+
+def test_router_mounted_trading_pulse_pnl_currency_single_mixed_and_empty_ledger() -> None:
+    """Verify router-mounted /bff/management/trading-pulse resolves pnl_currency for single TWD, mixed, and empty ledgers."""
+    store = create_in_memory_read_surface_ports()
+    runtime_bindings = [
+        {
+            "id": "binding-twd-1",
+            "binding_id": "binding-twd-1",
+            "runtime_id": "runtime-twd-1",
+            "persona_id": "p-twd-1",
+            "tenant_id": "tenant-test",
+            "deployment_stage": "paper",
+            "status": "running",
+        },
+        {
+            "id": "binding-twd-2",
+            "binding_id": "binding-twd-2",
+            "runtime_id": "runtime-twd-2",
+            "persona_id": "p-twd-2",
+            "tenant_id": "tenant-test",
+            "deployment_stage": "paper",
+            "status": "running",
+        },
+    ]
+    store.list_personas = lambda: [
+        {"id": b["persona_id"], "name": b["persona_id"], "tenant_id": "tenant-test"}
+        for b in runtime_bindings
+    ]
+    store.list_runtime_bindings = lambda: list(runtime_bindings)
+    snap = "2026-11-25T08:00:00Z"
+    telemetry_records: List[Dict[str, Any]] = [
+        {
+            "runtime_id": "runtime-twd-1",
+            "runtime_binding_id": "binding-twd-1",
+            "tenant_id": "tenant-test",
+            "deployment_stage": "paper",
+            "window": "1h",
+            "pnl": 1250.5,
+            "pnl_period_start_at": "2026-11-01T00:00:00Z",
+            "pnl_at": snap,
+            "pnl_definition": "fill_cash_ledger_mark_to_market",
+            "ledger_fill_count": 2,
+            "positions": [
+                {"symbol": "2330.TWSE", "quantity": 1000, "currency": "TWD"},
+                {"symbol": "2317.TWSE", "quantity": 500, "currency": "TWD"},
+            ],
+            "collected_at": snap,
+            "last_event_at": snap,
+        },
+        {
+            "runtime_id": "runtime-twd-2",
+            "runtime_binding_id": "binding-twd-2",
+            "tenant_id": "tenant-test",
+            "deployment_stage": "paper",
+            "window": "1h",
+            "pnl": -250.0,
+            "pnl_period_start_at": "2026-11-01T00:00:00Z",
+            "pnl_at": snap,
+            "pnl_definition": "fill_cash_ledger_mark_to_market",
+            "ledger_fill_count": 1,
+            "positions": [
+                {"symbol": "2454.TWSE", "quantity": 200, "currency": "TWD"},
+            ],
+            "collected_at": snap,
+            "last_event_at": snap,
+        },
+    ]
+    store.list_telemetry_summaries = lambda: list(telemetry_records)
+    store.list_paper_runtime_monitoring_sessions = lambda: []
+    store.list_paper_live_drift_reports = lambda: []
+
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
+
+    # 1. Single unambiguous ISO currency (TWD) derived from constituent positions
+    resp_single = client.get("/bff/management/trading-pulse", headers=headers)
+    assert resp_single.status_code == 200, resp_single.text
+    data_single = resp_single.json()["data"]
+    assert data_single["summary"]["pnl_currency"] == "TWD"
+    assert data_single["summary"]["pnl_currency_status"] == "single_currency"
+    assert data_single["summary"]["pnl_currency_reason"] is None
+    assert data_single["summary"]["total_pnl"] == 1000.5
+    pnl_card = next(c for c in data_single["cards"] if c["card_id"] == "pnl")
+    assert pnl_card["details"]["pnl_currency"] == "TWD"
+    assert pnl_card["details"]["pnl_currency_status"] == "single_currency"
+    for row in data_single["runtime_rows"]:
+        assert row["pnl_currency"] == "TWD"
+        assert row["performance_context"]["pnl_currency"] == "TWD"
+        assert row["performance_context"]["metric_units"]["pnl"] == "TWD"
+        assert row["telemetry_summary"]["pnl_currency"] == "TWD"
+
+    # 2. Mixed currencies across constituent positions / ledgers -> pnl_currency is None with mixed semantics
+    telemetry_records[1]["positions"] = [
+        {"symbol": "2454.TWSE", "quantity": 200, "currency": "TWD"},
+        {"symbol": "AAPL.US", "quantity": 10, "currency": "USD"},
+    ]
+    resp_mixed = client.get("/bff/management/trading-pulse", headers=headers)
+    assert resp_mixed.status_code == 200, resp_mixed.text
+    data_mixed = resp_mixed.json()["data"]
+    assert data_mixed["summary"]["pnl_currency"] is None
+    assert data_mixed["summary"]["pnl_currency_status"] == "mixed"
+    assert data_mixed["summary"]["pnl_currency_reason"] == "mixed_currency_without_fx"
+    assert data_mixed["summary"]["total_pnl"] is None
+    mixed_row = next(r for r in data_mixed["runtime_rows"] if r["runtime_id"] == "runtime-twd-2")
+    assert mixed_row["pnl_currency"] is None
+    assert mixed_row["performance_context"]["pnl_currency"] is None
+    assert mixed_row["performance_context"]["pnl_currency_status"] == "mixed"
+    assert mixed_row["performance_context"]["pnl_currency_reason"] == "mixed_currency_without_fx"
+
+    # 3. Empty ledger (0 fills, no positions, no currency facts) -> pnl_currency is None with empty_ledger semantics
+    for record in telemetry_records:
+        record.update(pnl=None, ledger_fill_count=0, positions=[])
+    resp_empty = client.get("/bff/management/trading-pulse", headers=headers)
+    assert resp_empty.status_code == 200, resp_empty.text
+    data_empty = resp_empty.json()["data"]
+    assert data_empty["summary"]["pnl_currency"] is None
+    assert data_empty["summary"]["pnl_currency_status"] == "unknown"
+    assert data_empty["summary"]["pnl_currency_reason"] == "empty_ledger"
+    assert data_empty["summary"]["total_pnl"] is None
+    for row in data_empty["runtime_rows"]:
+        assert row["pnl_currency"] is None
+        assert row["performance_context"]["pnl_currency"] is None
+        assert row["performance_context"]["pnl_currency_status"] == "unknown"
+        assert row["performance_context"]["pnl_currency_reason"] == "empty_ledger"
