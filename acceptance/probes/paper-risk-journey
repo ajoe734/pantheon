@@ -3,7 +3,9 @@
 """Bounded, GET-only hosted paper proof after viewer token exchange.
 
 No replay, repair, order submission or fixture generation. Missing fresh evidence
-fails (1); absent release/auth configuration skips (77). See acceptance/README.md.
+fails (1) unless every finding is a no-fresh-sample finding, which is pending (77) and judged
+later by acceptance/paper_risk_journey_day.py; absent release/auth configuration skips (77).
+See acceptance/README.md.
 """
 import importlib.machinery
 import importlib.util
@@ -25,6 +27,22 @@ BASE = "/bff/management/trade-journeys"
 HISTORICAL = ("tj_79726064-4cc2-5510-8e11-7f5e59ff89bd", "tj_57418ba7-ef37-5015-9b5e-b6423872da89")
 CHECKS = {"broker_fill_qty", "broker_fill_price", "position_change", "cash_change",
           "committed_snapshot_position", "committed_snapshot_cash"}
+
+
+NO_SAMPLE_PREFIX = "no_fresh_governed_decision:"
+NO_SAMPLE_FINDINGS = {"no_fresh_pre_broker_rejection_with_amounts", "no_fresh_broker_position_cash_reconciled_fill"}
+
+
+def is_no_sample(finding):
+    return finding in NO_SAMPLE_FINDINGS or (
+        finding.startswith(NO_SAMPLE_PREFIX) and len(finding) > len(NO_SAMPLE_PREFIX))
+
+
+def verdict(failed):
+    """passed: nothing; pending: only missing-sample findings; failed: any other finding."""
+    if not failed:
+        return "passed"
+    return "pending" if all(is_no_sample(f) for f in failed) else "failed"
 
 
 def timestamp(value):
@@ -192,6 +210,9 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
     if after != manifest or version_after != version:
         failed.append("served_identity_changed_during_probe")
     report["passed"] = not failed
+    report["verdict"] = verdict(failed)
+    report["pending"] = [f for f in failed if is_no_sample(f)] if report["verdict"] == "pending" else []
+    report["exit_code"] = {"passed": 0, "pending": 77, "failed": 1}[report["verdict"]]
     return report
 
 
@@ -205,9 +226,12 @@ def main():
     def runner(fetch, expected, pool_reader, public_read, owner_read):
         def source_read(eid, tenant):
             return owner_read("telemetry", eid, tenant)
-        return check(fetch, public_read, source_read, expected=expected, pool_policy_reader=pool_reader,
-                     backend_sha=os.environ[required[1]], frontend_sha=os.environ[required[2]])
-    return binding.main(runner)
+        captured["report"] = check(fetch, public_read, source_read, expected=expected, pool_policy_reader=pool_reader,
+                                   backend_sha=os.environ[required[1]], frontend_sha=os.environ[required[2]])
+        return captured["report"]
+    captured = {}
+    code = binding.main(runner)
+    return captured["report"]["exit_code"] if "report" in captured else code
 
 
 if __name__ == "__main__":
