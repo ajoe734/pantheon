@@ -265,11 +265,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     "WHERE a.attrelid = %s::regclass AND a.attname = 'evidence_verified' AND NOT a.attisdropped",
                     (self.table,),
                 ).fetchone()
-                if existing is not None and (existing[0] if isinstance(existing, tuple) else list(existing.values())[0]) != marker:
-                    # One-time rewrite of the two confidence-derived projections.
-                    conn.execute(
-                        f"ALTER TABLE {self.table} DROP COLUMN evidence_verified, DROP COLUMN evidence_credibility_tier"
-                    )
+                rewrite_columns = existing is not None and (
+                    existing[0] if isinstance(existing, tuple) else list(existing.values())[0]
+                ) != marker
+                # Bound the wait for ACCESS EXCLUSIVE so a busy old container cannot hang
+                # service start; the one-time rewrite below is a single atomic ALTER
+                # (drop + re-add in one statement), so an old container reading during
+                # the switch sees either the old or the new column, never none.
+                conn.execute("SET lock_timeout = '15s'")
                 entity_values = " || ".join([
                     "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
                     "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
@@ -298,11 +301,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
                     "evidence_verified": ("BOOLEAN", verified_expr),
                 }
+                rewritten = ("evidence_verified", "evidence_credibility_tier")
                 alterations = ", ".join(
-                    f"ADD COLUMN IF NOT EXISTS {name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
+                    ("DROP COLUMN " + name + ", ADD COLUMN " if rewrite_columns and name in rewritten else "ADD COLUMN IF NOT EXISTS ")
+                    + f"{name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
                     for name, (kind, expr) in projections.items()
                 )
                 conn.execute(f"ALTER TABLE {self.table} {alterations}")
+                conn.execute("RESET lock_timeout")
                 conn.execute(f"COMMENT ON COLUMN {self.table}.evidence_verified IS '{marker}'")
                 # Paging selects ids from this index only (no payload read for rows
                 # skipped by the offset); size/build time recorded in evidence.
