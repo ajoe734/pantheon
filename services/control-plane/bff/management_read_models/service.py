@@ -727,8 +727,17 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "source_ref": source_ref,
         "captured_at": captured_at,
         "link_type": link_type,
+        "source_class": item.get("source_class") or source_document.get("source_class"),
+        "source_document": {
+            "title": title,
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "captured_at": captured_at,
+            "excerpt": source_document.get("excerpt"),
+        },
         "credibility": json.loads(json.dumps(credibility)),
         "linked_object_summary": json.loads(json.dumps(linked_summary)),
+        "linked_decisions": json.loads(json.dumps(item.get("linked_decisions") or [])),
         "resolved_link": json.loads(json.dumps(resolved_link)),
         "route_href": route_href,
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
@@ -795,16 +804,10 @@ def _management_evidence_summary(
         }
     if population_summary is not None:
         if page_items and not visible_page_items:
-            verified_count = 0
             by_source_type: Dict[str, int] = {}
             by_link_type: Dict[str, int] = {}
             by_credibility_tier: Dict[str, int] = {}
         else:
-            verified_count = int(
-                population_summary.get("verified_count")
-                if population_summary.get("verified_count") is not None
-                else (population_summary.get("verified_evidence") or 0)
-            )
             by_source_type = {
                 str(k): int(v) for k, v in (population_summary.get("by_source_type") or {}).items()
             }
@@ -820,8 +823,8 @@ def _management_evidence_summary(
             "returned_evidence": len(page_items),
             "visible_evidence": len(visible_page_items),
             "redacted_evidence": redacted_count,
-            "verified_evidence": verified_count,
-            "verified_count": verified_count,
+            "verified_evidence": None,
+            "verified_count": None,
             "by_source_type": by_source_type,
             "by_link_type": by_link_type,
             "by_credibility_tier": by_credibility_tier,
@@ -829,13 +832,6 @@ def _management_evidence_summary(
 
     source_items = population_items if population_items is not None else page_items
     visible_items = [item for item in source_items if not item.get("redacted")]
-    verified_count = len(
-        [
-            item
-            for item in visible_items
-            if bool((item.get("credibility") or {}).get("verified") if (item.get("credibility") or {}).get("verified") is not None else item.get("verified"))
-        ]
-    )
     by_source_type = {}
     for item in visible_items:
         source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
@@ -865,8 +861,8 @@ def _management_evidence_summary(
         "returned_evidence": len(page_items),
         "visible_evidence": len(visible_page_items),
         "redacted_evidence": redacted_count,
-        "verified_evidence": verified_count,
-        "verified_count": verified_count,
+        "verified_evidence": None,
+        "verified_count": None,
         "by_source_type": by_source_type,
         "by_link_type": by_link_type,
         "by_credibility_tier": by_credibility_tier,
@@ -937,7 +933,7 @@ def _management_evidence_degraded_payload(
             "summary": summary,
             "facets": facets,
         },
-        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "page_info": {"next_page_token": None, "total": None, "page_size": page_size},
         "meta": meta,
     }
 
@@ -6248,21 +6244,71 @@ class ManagementService:
     # 12. Evidence Explorer
     # -----------------------------------------------------------------------
     def get_evidence_item(self, ref_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        """Management detail of one evidence item, or None when absent.
+        """Flat management detail of ONE evidence item, or None when absent.
 
-        Same read, redaction and mapping as the list with ``ref_id`` so the
-        two surfaces cannot disagree.
+        Same read, redaction and mapping as the list (one public-item mapping),
+        answered as one object with ``meta.surfaces.evidence_ref_detail``. An
+        unreadable owner is ``status: unavailable`` with a reason, never a list
+        envelope and never ``None`` (which the route turns into 404).
         """
         payload = self.get_evidence(ref_id=ref_id, page_size=1, identity=identity)
+        snap = (payload.get("meta") or {}).get("snapshot_at") or self._utc_now()
         items = (payload.get("data") or {}).get("items") or []
         wanted = str(ref_id or "").strip()
+        surfaces = (payload.get("meta") or {}).get("surfaces") or {}
+        read_surface = surfaces.get("evidence_refs") if isinstance(surfaces.get("evidence_refs"), dict) else {}
         for item in items:
             if str(item.get("ref_id") or item.get("id") or "") == wanted:
-                return {**payload, "data": {**payload["data"], "items": [item]}}
-        status = ((payload.get("meta") or {}).get("surfaces") or {}).get("management_evidence", {})
-        if isinstance(status, dict) and status.get("status") == "unavailable":
-            return payload
+                return {
+                    "data": dict(item),
+                    "meta": {
+                        **_snapshot_meta(snap),
+                        "surfaces": {
+                            "evidence_ref_detail": {
+                                "status": "ok",
+                                "source": read_surface.get("source"),
+                                "snapshot_at": snap,
+                            }
+                        },
+                        "redacted_evidence_count": (payload.get("meta") or {}).get("redacted_evidence_count", 0),
+                    },
+                }
+        if read_surface.get("status") == "unavailable" or (
+            isinstance(surfaces.get("management_evidence"), dict)
+            and surfaces["management_evidence"].get("status") == "unavailable"
+        ):
+            return self.evidence_detail_unavailable_payload(wanted, snapshot_at=snap, reason="read_error")
         return None
+
+    def evidence_detail_unavailable_payload(
+        self, ref_id: str, *, snapshot_at: Optional[str] = None, reason: str = "read_timeout"
+    ) -> Dict[str, Any]:
+        """Detail-shaped (flat, all fields null) answer for an unreadable owner."""
+        now = snapshot_at or self._utc_now()
+        meta = _snapshot_meta(now)
+        meta["surfaces"] = {
+            "evidence_ref_detail": {
+                "status": "unavailable",
+                "reason": reason,
+                "message": "Evidence item read surface is unavailable.",
+                "snapshot_at": now,
+                "staleness": {"served_from": "unverifiable", "last_known_at": now},
+            }
+        }
+        return {
+            "data": {
+                "id": ref_id,
+                "ref_id": ref_id,
+                "title": None,
+                "source_class": None,
+                "source_document": None,
+                "credibility": None,
+                "resolved_link": None,
+                "linked_decisions": [],
+                "redacted": None,
+            },
+            "meta": meta,
+        }
 
     def get_evidence(
         self,
@@ -6444,7 +6490,7 @@ class ManagementService:
             evidence_refs = [
                 item
                 for item in evidence_refs
-                if bool(
+                if (
                     (item.get("credibility") or {}).get("verified")
                     if (item.get("credibility") or {}).get("verified") is not None
                     else item.get("verified")
@@ -6469,10 +6515,12 @@ class ManagementService:
         )
 
         unavailable = evidence_surface.get("status") == "unavailable" and not evidence_refs
-        total: int = len(evidence_refs)
+        total: Optional[int] = len(evidence_refs)
         if unavailable:
+            # A failed read is "unknown", never an empty list with total 0.
             page_items: List[Dict[str, Any]] = []
             next_page_token = None
+            total = None
         elif owner_page_served:
             page_items, next_page_token = evidence_refs, owner_next_token
             total = owner_total if owner_total is not None else len(evidence_refs)

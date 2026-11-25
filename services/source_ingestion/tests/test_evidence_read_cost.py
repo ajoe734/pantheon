@@ -132,15 +132,23 @@ def test_real_pg_summary_exact_fast_and_updated_by_independent_writes(volume_rep
     record_measurement("summary_query_plan", plan_text)
     # A second SQL writer updates the generated projections atomically; no cache.
     import psycopg
+    # Verification is a recorded method + time, not a confidence: the writer adds one.
+    record = json.dumps({"method": "manual_review", "verified_at": "2026-02-16T00:00:00Z"})
     with psycopg.connect(repo.dsn) as conn:
-        conn.execute(f"UPDATE {repo.table} SET payload = jsonb_set(payload, '{{confidence}}', '0.1'::jsonb) WHERE record_id = 'ev-00000'")
+        conn.execute(
+            f"UPDATE {repo.table} SET payload = jsonb_set(payload, '{{metadata,verification}}', %s::jsonb) WHERE record_id = 'ev-00000'",
+            (record,),
+        )
     try:
         changed = repo.summarize_evidence_items(VOLUME_TENANT)
         assert changed["total"] == 9000
-        assert changed["verified_count"] == expected["verified_count"] - 1
+        assert "verified_count" not in changed and "verified_evidence" not in changed
+        tiers = changed["by_credibility_tier"]
+        assert tiers.get("verified", 0) == expected["by_credibility_tier"].get("verified", 0) + 1
+        assert tiers["unverified"] == expected["by_credibility_tier"]["unverified"] - 1
     finally:
         with psycopg.connect(repo.dsn) as conn:
-            conn.execute(f"UPDATE {repo.table} SET payload = jsonb_set(payload, '{{confidence}}', '1.0'::jsonb) WHERE record_id = 'ev-00000'")
+            conn.execute(f"UPDATE {repo.table} SET payload = payload #- '{{metadata,verification}}' WHERE record_id = 'ev-00000'")
     assert repo.summarize_evidence_items(VOLUME_TENANT) == expected
 
 
@@ -198,3 +206,98 @@ def test_real_pg_existing_table_migrates_idempotently_and_link_updates_stay_exac
             repo.close()
         with psycopg.connect(volume_repo.dsn) as conn:
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+def test_real_pg_deep_page_cost_is_flat_with_the_offset_and_plan_is_id_first():
+    """43000-row table: token 0, 20000 and 41000 answer within the same bound."""
+    import psycopg
+    from services.source_ingestion.test_pg_store import _get_test_pg_dsn
+
+    dsn = _get_test_pg_dsn()
+    if not dsn:
+        pytest.skip("real PostgreSQL required; set SOURCE_INGEST_TEST_POSTGRES_DSN")
+    schema = f"evidence_deep_{uuid.uuid4().hex[:12]}"
+    repo = PostgresSourceEvidenceRepository(dsn, table=f"{schema}.evidence", max_connections=4)
+    try:
+        # Real row shape: confidence 1.0, source_class by_source_type mix, heavy body/raw refs.
+        classes = ["official_reference"] * 20102 + ["source_record"] * 18503 + ["research_grade"] * 2770 + ["taiwan_chip"] * 1447 + ["internal"] * 178
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor().copy(f"COPY {repo.table} (record_type, record_id, payload) FROM STDIN") as copy:
+                for i, klass in enumerate(classes):
+                    row = replace(
+                        _item(f"evi-{i:06d}", available="2026-02-15T00:00:00Z"),
+                        metadata={"tenant_id": VOLUME_TENANT, "source_class": klass, "raw_storage_refs": ["heavy-" * 300]},
+                        confidence=1.0, body="body-" * 300,
+                    )
+                    copy.write_row(("evidence_item", row.evidence_item_id, json.dumps(row.to_dict())))
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(f"VACUUM ANALYZE {repo.table}")
+        timings = {}
+        for offset in (0, 20000, 41000):
+            best = []
+            for _ in range(3):
+                start = time.monotonic()
+                items, total = repo.list_evidence_items_page(VOLUME_TENANT, limit=200, offset=offset)
+                best.append(time.monotonic() - start)
+            assert total == len(classes) == 43000
+            assert len(items) == min(200, len(classes) - offset)
+            assert items[0].evidence_item_id == f"evi-{len(classes) - 1 - offset:06d}"
+            timings[offset] = min(best)
+        assert max(timings.values()) < 1.0, timings
+        assert timings[41000] < max(timings[0] * 6, 0.25), timings
+        record_measurement("deep_page_seconds_by_offset", timings)
+        with repo._get_connection() as conn:
+            plan = conn.execute(
+                f"EXPLAIN (ANALYZE, BUFFERS) SELECT payload FROM {repo.table} t JOIN ("
+                f"SELECT append_id FROM {repo.table} WHERE record_type = 'evidence_item' AND evidence_tenant_id = %s "
+                "ORDER BY append_id DESC LIMIT 200 OFFSET 41000) page USING (append_id) ORDER BY t.append_id DESC",
+                (VOLUME_TENANT,),
+            ).fetchall()
+        plan_text = "\n".join(row[0] for row in plan)
+        assert "source_evidence_page_idx" in plan_text, plan_text
+        record_measurement("deep_page_query_plan", plan_text)
+        with repo._get_connection() as conn:
+            size = conn.execute(
+                "SELECT pg_relation_size(%s::regclass), pg_total_relation_size(%s::regclass)",
+                (f"{schema}.source_evidence_page_idx", f"{schema}.evidence"),
+            ).fetchone()
+        record_measurement("page_idx_bytes_and_table_total_bytes", list(size))
+        start = time.monotonic()
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f"DROP INDEX {schema}.source_evidence_page_idx")
+            conn.execute(
+                f"CREATE INDEX source_evidence_page_idx ON {repo.table} (evidence_tenant_id, append_id DESC) WHERE record_type = 'evidence_item'"
+            )
+        record_measurement("page_idx_build_seconds", time.monotonic() - start)
+    finally:
+        repo.close()
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def test_real_pg_tenant_item_under_bare_record_id_is_readable_by_detail_as_the_list_shows_it():
+    import psycopg
+    from services.source_ingestion.test_pg_store import _get_test_pg_dsn
+
+    dsn = _get_test_pg_dsn()
+    if not dsn:
+        pytest.skip("real PostgreSQL required; set SOURCE_INGEST_TEST_POSTGRES_DSN")
+    schema = f"evidence_bare_{uuid.uuid4().hex[:12]}"
+    repo = PostgresSourceEvidenceRepository(dsn, table=f"{schema}.evidence")
+    try:
+        mine = replace(_item("evi-607b5b55229e8f72", available=Q1[0]), metadata={"tenant_id": VOLUME_TENANT})
+        theirs = replace(_item("evi-foreign", available=Q1[0]), metadata={"tenant_id": "other-tenant"})
+        with psycopg.connect(dsn) as conn:
+            for row in (mine, theirs):  # stored under the bare id, not the tenant-scoped one
+                conn.execute(
+                    f"INSERT INTO {repo.table} (record_type, record_id, payload) VALUES ('evidence_item', %s, %s::jsonb)",
+                    (row.evidence_item_id, json.dumps(row.to_dict())),
+                )
+        listed, total = repo.list_evidence_items_page(VOLUME_TENANT, limit=10)
+        assert [i.evidence_item_id for i in listed] == ["evi-607b5b55229e8f72"] and total == 1
+        assert repo.get_evidence_item("evi-607b5b55229e8f72", tenant_id=VOLUME_TENANT).evidence_item_id == "evi-607b5b55229e8f72"
+        assert repo.get_evidence_item("evi-foreign", tenant_id=VOLUME_TENANT) is None
+    finally:
+        repo.close()
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

@@ -13753,66 +13753,10 @@ def _management_prune_camel_aliases(value: Any) -> Any:
 
 # --- _management_evidence_public_item ---
 def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
-    display_label = item.get("display_label") or ref_id
-    if item.get("redacted"):
-        required_capability = item.get("required_capability")
-        return {
-            "id": ref_id,
-            "ref_id": ref_id,
-            "display_label": display_label,
-            "kind": item.get("kind"),
-            "required_capability": required_capability,
-            "reason": item.get("reason"),
-            "redacted": True,
-        }
+    """One mapping for list, detail and persona surfaces (single owner: management_read_models)."""
+    from ..management_read_models.service import _management_evidence_public_item as _one
 
-    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
-    linked_summary = (
-        item.get("linked_object_summary")
-        if isinstance(item.get("linked_object_summary"), dict)
-        else {}
-    )
-    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
-    credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
-    source_type = source_document.get("source_type") or item.get("source_type") or item.get("sourceType")
-    source_ref = source_document.get("source_ref") or item.get("source_ref") or item.get("sourceRef")
-    captured_at = source_document.get("captured_at") or item.get("captured_at") or item.get("capturedAt")
-    link_type = item.get("link_type")
-    route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
-    title = source_document.get("title") or item.get("title") or display_label
-    public_item = {
-        "id": ref_id,
-        "ref_id": ref_id,
-        "title": title,
-        "display_label": display_label,
-        "source_type": source_type,
-        "source_ref": source_ref,
-        "captured_at": captured_at,
-        "link_type": link_type,
-        "credibility": json.loads(json.dumps(credibility)),
-        "linked_object_summary": json.loads(json.dumps(linked_summary)),
-        "resolved_link": json.loads(json.dumps(resolved_link)),
-        "route_href": route_href,
-        "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
-        "redacted": False,
-    }
-    artifact_manifest = item.get("artifact_manifest")
-    if isinstance(artifact_manifest, dict):
-        cloned_manifest = _management_json_clone(artifact_manifest)
-        public_item["artifact_manifest"] = cloned_manifest
-    criteria = item.get("criteria")
-    if isinstance(criteria, dict):
-        public_item["criteria"] = _management_json_clone(criteria)
-    operator_remediation = item.get("operator_remediation")
-    if isinstance(operator_remediation, dict):
-        public_item["operator_remediation"] = _management_json_clone(operator_remediation)
-    release_gate_summary = item.get("release_gate_summary")
-    if isinstance(release_gate_summary, dict):
-        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
-    if "overall" in item:
-        public_item["overall"] = item.get("overall")
-    return public_item
+    return _one(item)
 
 
 # --- _request_dry_run_requested ---

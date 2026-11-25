@@ -250,14 +250,26 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 # Stored scalar projections avoid repeatedly detoasting the payload in
                 # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
                 # writes from independent owner processes; no cache invalidation path.
+                # A connector confidence is a score, not a verification: "verified"
+                # requires a recorded verification with a method and a time
+                # (BFF-EVIDENCE-DETAIL-AND-PAGING-20261125). Null confidence no
+                # longer reads as verified.
                 verified_expr = (
-                    "CASE "
-                    "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
-                    "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-                    "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-                    "ELSE FALSE "
-                    "END"
+                    "CASE WHEN LENGTH(BTRIM(COALESCE(payload->'metadata'->'verification'->>'method', ''))) > 0 "
+                    "AND LENGTH(BTRIM(COALESCE(payload->'metadata'->'verification'->>'verified_at', "
+                    "payload->'metadata'->'verification'->>'time', ''))) > 0 THEN TRUE ELSE FALSE END"
                 )
+                marker = "verification-record-v2"
+                existing = conn.execute(
+                    "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+                    "WHERE a.attrelid = %s::regclass AND a.attname = 'evidence_verified' AND NOT a.attisdropped",
+                    (self.table,),
+                ).fetchone()
+                if existing is not None and (existing[0] if isinstance(existing, tuple) else list(existing.values())[0]) != marker:
+                    # One-time rewrite of the two confidence-derived projections.
+                    conn.execute(
+                        f"ALTER TABLE {self.table} DROP COLUMN evidence_verified, DROP COLUMN evidence_credibility_tier"
+                    )
                 entity_values = " || ".join([
                     "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
                     "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
@@ -291,6 +303,13 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     for name, (kind, expr) in projections.items()
                 )
                 conn.execute(f"ALTER TABLE {self.table} {alterations}")
+                conn.execute(f"COMMENT ON COLUMN {self.table}.evidence_verified IS '{marker}'")
+                # Paging selects ids from this index only (no payload read for rows
+                # skipped by the offset); size/build time recorded in evidence.
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_page_idx ON {self.table} "
+                    "(evidence_tenant_id, append_id DESC) WHERE record_type = 'evidence_item'"
+                )
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
                     "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
@@ -540,7 +559,10 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def _read_one(self, r_type: str, r_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> Any | None:
         if tenant_id is not _UNSCOPED:
-            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, _scoped_record_id(tenant_id, r_id))
+            # A tenant item may be stored under its scoped id or (as the list shows
+            # it) under the bare id; the payload tenant claim is re-checked below.
+            sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = ANY(%s) ORDER BY append_id DESC LIMIT 2"
+            params = (r_type, list({_scoped_record_id(tenant_id, r_id), r_id}))
         else:
             sql = (
                 "SELECT payload FROM ("
@@ -660,8 +682,12 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
         total = int((count_row[0] if isinstance(count_row, tuple) else list(count_row.values())[0]) if count_row else 0)
+        # Ids first (index-only walk), payloads only for the page: the heap and
+        # TOAST cost no longer grows with the offset.
         items = self._fetch_records(
-            f"SELECT {stripped} {base} ORDER BY append_id DESC LIMIT %s OFFSET %s",
+            f"SELECT {stripped} FROM {self.table} t JOIN ("
+            f"SELECT append_id {base} ORDER BY append_id DESC LIMIT %s OFFSET %s"
+            ") page USING (append_id) ORDER BY t.append_id DESC",
             ("evidence_item", *scope_params, int(limit), int(offset)),
             "evidence_item",
             tenant_id=tenant_id,
@@ -780,9 +806,9 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             where, scope_params = "TRUE", ()
         sql = (
             "SELECT evidence_source_type AS source_type, evidence_link_type AS link_type, evidence_credibility_tier AS credibility_tier, "
-            "evidence_verified AS verified, COUNT(*) AS row_count "
+            "COUNT(*) AS row_count "
             f"FROM {self.table} WHERE record_type = %s AND {where} "
-            "GROUP BY 1, 2, 3, 4"
+            "GROUP BY 1, 2, 3"
         )
         try:
             with self._get_connection() as conn:
@@ -790,7 +816,6 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
         total = 0
-        verified_count = 0
         by_source_type: dict[str, int] = {}
         by_link_type: dict[str, int] = {}
         by_credibility_tier: dict[str, int] = {}
@@ -799,24 +824,18 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 source_type = str(row.get("source_type") or "internal").strip() or "unknown"
                 link_type = str(row.get("link_type") or "supporting").strip() or "unknown"
                 credibility_tier = str(row.get("credibility_tier") or "unverified").strip() or "unknown"
-                verified = bool(row.get("verified"))
                 count = int(row.get("row_count") or 0)
             else:
                 source_type = str(row[0] or "internal").strip() or "unknown"
                 link_type = str(row[1] or "supporting").strip() or "unknown"
                 credibility_tier = str(row[2] or "unverified").strip() or "unknown"
-                verified = bool(row[3])
-                count = int(row[4] or 0)
+                count = int(row[3] or 0)
             total += count
-            if verified:
-                verified_count += count
             by_source_type[source_type] = by_source_type.get(source_type, 0) + count
             by_link_type[link_type] = by_link_type.get(link_type, 0) + count
             by_credibility_tier[credibility_tier] = by_credibility_tier.get(credibility_tier, 0) + count
         return {
             "total": total,
-            "verified_count": verified_count,
-            "verified_evidence": verified_count,
             "by_source_type": by_source_type,
             "by_link_type": by_link_type,
             "by_credibility_tier": by_credibility_tier,
