@@ -1,0 +1,42 @@
+{
+  "task_id": "PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "class": "RC4 and RC5",
+  "root_cause": "paper-fleet-reconciler and paper-signal-producer cached a single static PANTHEON_RUNTIME_MANAGER_TOKEN string at process initialization instead of minting fresh short-lived HS256 JWTs or re-reading rotated token files on each RuntimeManager request, causing minted/short-lived runtime-manager bearer tokens to expire under long-running processes.",
+  "changes": {
+    "services/runtime_auth.py": "Extended RuntimeManagerAuthConfig and resolve_runtime_manager_auth to mint fresh short-lived HS256 JWTs on each headers()/token evaluation when signing secret/actor/role env vars are configured (source='jwt_mint'), re-read token_file on stat mtime/size/inode changes or JWT exp expiry when file-backed (source='token_file'), preserve _BoundAuthToken back-references when passed through RuntimeIdentity.runtime_manager_auth.token, redact secrets/tokens in __repr__/status_dict, and preserve explicit static token and permissive default fallbacks.",
+    "services/runtime-manager/runtime_manager_client.py": "Bound RuntimeManagerClient._bearer_token dynamically to self._auth.token and accepted RuntimeManagerAuthConfig / _BoundAuthToken without freezing a single startup token string.",
+    "services/paper_fleet_reconciler/paper_fleet_reconciler.py": "Replaced static self._token header string freezing with resolve_runtime_manager_auth and per-request self._runtime_manager_headers() in _fetch_fleet_state and _transition_binding, while propagating token_file or dynamic env config to spawned worker subprocesses without logging token or secret values.",
+    "services/execution/lean_runtime/paper_signal_producer.py": "Updated fetch_eligible_paper_bindings and main() to resolve RuntimeManagerAuthConfig and generate dynamic Authorization headers on every desired-state and binding-detail HTTP request without freezing a startup token string or logging credentials.",
+    "services/execution/lean_runtime/runtime_identity.py": "Isolated explicit env mappings from os.environ when env={} is passed and added RuntimeIdentity.runtime_manager_headers().",
+    "docker-compose.yml": "Wired PANTHEON_RUNTIME_MANAGER_TOKEN_FILE, PANTHEON_RUNTIME_JWT_SECRET, PANTHEON_RUNTIME_JWT_ISSUER, PANTHEON_RUNTIME_JWT_AUDIENCE, PANTHEON_RUNTIME_MANAGER_ACTOR_ID, and PANTHEON_RUNTIME_MANAGER_ROLES into paper-fleet-reconciler and paper-signal-producer while preserving static fallback defaults."
+  },
+  "runtime_budget": {
+    "cadence": "per-request in-memory HS256 header generation / bounded os.stat check on existing RuntimeManager poll cycles (reconciler 15s, producer 60s)",
+    "recurring_jobs_added": 0,
+    "emitters_added": 0,
+    "persistent_writers_added": 0,
+    "growth_per_day_bytes": 0
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/test_runtime_auth.py services/execution/lean_runtime/test_runtime_identity.py services/runtime-manager/test_runtime_hardening.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_expression_inputs.py scripts/test_paper_runtime_topology_contract.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_current_l12_compose_wiring.py scripts/test_dev_paper_principal_renewal.py scripts/test_paper_image_dependencies.py"
+    ],
+    "results": {
+      "services/test_runtime_auth.py": "4 passed",
+      "services/execution/lean_runtime/test_runtime_identity.py": "3 passed",
+      "services/runtime-manager/test_runtime_hardening.py": "35 passed",
+      "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py": "137 passed, 2 skipped",
+      "services/execution/lean_runtime/test_paper_signal_producer.py": "104 passed",
+      "services/execution/lean_runtime/test_expression_inputs.py": "22 passed",
+      "scripts/test_paper_runtime_topology_contract.py": "7 passed",
+      "scripts/test_current_l12_compose_wiring.py + scripts/test_dev_paper_principal_renewal.py + scripts/test_paper_image_dependencies.py": "38 passed"
+    }
+  },
+  "residual_findings": [
+    "Other non-paper runtime-manager callers (monitor-agent, incidents, postmortems, reconciliation-drift-svc/consumer, openclaw-gateway-adapter live_gate_adapter/paper_broker_adapter) still read static PANTHEON_RUNTIME_MANAGER_TOKEN directly from os.environ while runtime-manager defaults to PANTHEON_RUNTIME_AUTH_MODE=permissive (tracked under RC5 in docs/operations/problem-register.md)."
+  ]
+}

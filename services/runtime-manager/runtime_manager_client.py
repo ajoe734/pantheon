@@ -36,7 +36,10 @@ from services.runtime_manager import (
     RuntimeManagerError,
     RuntimeManagerService,
 )
-from services.runtime_auth import resolve_runtime_manager_auth  # noqa: E402
+from services.runtime_auth import (  # noqa: E402
+    RuntimeManagerAuthConfig,
+    resolve_runtime_manager_auth,
+)
 
 
 class RuntimeManagerClientError(RuntimeError):
@@ -63,7 +66,8 @@ class RuntimeManagerClient:
         self,
         *,
         base_url: Optional[str] = None,
-        bearer_token: Optional[str] = None,
+        bearer_token: Optional[str | RuntimeManagerAuthConfig] = None,
+        auth: Optional[RuntimeManagerAuthConfig] = None,
         timeout_seconds: Optional[int] = None,
         require_remote: bool = False,
         allow_local: bool = False,
@@ -78,14 +82,21 @@ class RuntimeManagerClient:
                 "PANTHEON_RUNTIME_MANAGER_URL is required; refusing an in-process "
                 "RuntimeManager fallback unless allow_local=True is explicit."
             )
-        self._auth = resolve_runtime_manager_auth(token=bearer_token)
-        self._bearer_token = self._auth.token
+        self._auth = (
+            auth
+            if auth is not None
+            else resolve_runtime_manager_auth(token=bearer_token)
+        )
         self._timeout_seconds = int(
             timeout_seconds
             if timeout_seconds is not None
             else os.getenv("PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS", "15")
         )
         self._local_service: Optional[RuntimeManagerService] = None
+
+    @property
+    def _bearer_token(self) -> str:
+        return self._auth.token
 
     # ------------------------------------------------------------------
     # Public API

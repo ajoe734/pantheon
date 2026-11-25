@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+from services.runtime_auth_inbound import AuthError, validate_request_auth
 
 
 class TestRuntimeIdentity(unittest.TestCase):
@@ -58,6 +61,64 @@ class TestRuntimeIdentity(unittest.TestCase):
             identity.to_health_payload()["runtime_manager_auth"]["source"],
             "token_file",
         )
+
+    def test_dynamic_jwt_minting_and_health_redaction_across_clock_advances(self):
+        secret = "runtime-identity-dynamic-jwt-secret-key-2026!"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+            "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev-issuer",
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": "pantheon-runtime-manager",
+        }
+        clock_now = [1_700_200_000.0]
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-lean-paper-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_PAPER_RUNTIME_ID": "paper-runtime-001",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+                "PANTHEON_RUNTIME_JWT_SECRET": secret,
+                "PANTHEON_RUNTIME_JWT_ISSUER": "pantheon-dev-issuer",
+                "PANTHEON_RUNTIME_JWT_AUDIENCE": "pantheon-runtime-manager",
+                "PANTHEON_RUNTIME_MANAGER_ROLES": "operator",
+                "PANTHEON_RUNTIME_MANAGER_JWT_TTL_SECONDS": "30",
+            }
+        )
+        self.assertEqual(identity.runtime_manager_auth.source, "jwt_mint")
+
+        with mock.patch("time.time", side_effect=lambda: clock_now[0]):
+            first_headers = identity.runtime_manager_headers()
+            ctx0 = validate_request_auth(
+                authorization=first_headers["Authorization"],
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            self.assertEqual(ctx0.actor_id, "paper-runtime-001")
+
+            clock_now[0] = 1_700_200_045.0
+            with self.assertRaises(AuthError) as expired:
+                validate_request_auth(
+                    authorization=first_headers["Authorization"],
+                    required_roles=("operator",),
+                    env=strict_env,
+                    allow_shared_secret=True,
+                )
+            self.assertEqual(expired.exception.code, "AUTH_JWT_EXPIRED")
+
+            second_headers = identity.runtime_manager_headers()
+            ctx1 = validate_request_auth(
+                authorization=second_headers["Authorization"],
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            self.assertEqual(ctx1.actor_id, "paper-runtime-001")
+
+            health_dump = json.dumps(identity.to_health_payload())
+            self.assertNotIn(secret, health_dump)
+            self.assertNotIn(str(identity.runtime_manager_auth.token), health_dump)
 
 
 if __name__ == "__main__":
