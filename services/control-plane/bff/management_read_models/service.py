@@ -6805,6 +6805,11 @@ class ManagementService:
                 return fail_closed_redacted_refs(refs, default_kind="artifact")
 
         item_reader = getattr(store, "read_evidence_ref_item", None) if store is not None else None
+        # Registry owner read behind GET /bff/artifacts/{id}: names a cited
+        # artifact by the strategy id the Registry records for it.
+        artifact_reader = (
+            getattr(store, "read_registry_strategy_artifact_detail", None) if store is not None else None
+        )
         try:
             names = current_resolver(store)
         except Exception:
@@ -6812,6 +6817,7 @@ class ManagementService:
         return cited_evidence.compose_cited_evidence(
             ctx,
             item_reader=item_reader if callable(item_reader) else None,
+            artifact_reader=artifact_reader if callable(artifact_reader) else None,
             names=names,
             redact=_redact,
             page_token=page_token,
