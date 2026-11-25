@@ -1,0 +1,179 @@
+{
+ "task": "POOL-CYCLE-SPEC-READ-BOUNDED-20261125",
+ "register_instance": [
+  "RC3",
+  "RC1 (release blocked by registry OOM)"
+ ],
+ "hosted_access_used": false,
+ "hosted_verification": "not done here; functional and memory evidence only (in-process registry app, in-memory owner). Postgres-owner page cost is from REGISTRY-DISCOVERY-SPEC-PAGE-20261125 evidence.",
+ "review_independence_exception": "Reviewer Claude is from the owner model family: the other model families are at terminal quota until 2026-11-27 10:03Z (task brief).",
+ "feature_freeze": "Operator approval 2026-11-25 06:2xZ in conversation 5724fc3b names this scope; the freeze does not apply (task brief).",
+ "base": "origin/dev f176c1262 (includes PR 7865 REGISTRY-DISCOVERY-SPEC-PAGE-20261125 and PR 7862 CARD-ADMISSION-DRAFT-READ-BOUNDED-20261125)",
+ "change": {
+  "read": "HttpPoolCyclePorts.read_strategy_specs reads GET /api/registry/strategy-specs?view=discovery_candidates&tenant_id=<persona tenant>&page_size=50[&page_token] (owner excludes retired/rejected in SQL and returns only registry_id, strategy_id, artifact_state, lineage, metadata). The unpaged GET /api/registry/strategy-specs is no longer issued from the cycle path.",
+  "projection": "Each spec is reduced to HttpPoolCyclePorts.SCORER_SPEC_KEYS: the keys _candidate_from_strategy_spec and the demand pre-filter in persona_strategy_discovery.discover_for_demand read, plus strategy_spec_registry_id and lineage (carried before). Spec bodies such as signals/parameters/description are dropped after the page arrives.",
+  "owner_filter_or_projection_gap": "none: the owner view supplies the retired/rejected filter and five-field projection; no block needed.",
+  "caps": {
+   "page_size": "50 (PERSONA_DISCOVERY_SPEC_PAGE_SIZE, clamped 1..50 = owner max)",
+   "max_pages_per_read": "40 (PERSONA_DISCOVERY_SPEC_MAX_PAGES) => at most 2,000 specs per read",
+   "time_budget_seconds_per_read": "30 (PERSONA_DISCOVERY_SPEC_BUDGET_SECONDS), checked before each page after the first",
+   "per_page_timeout_seconds": "15 (existing urlopen timeout, unchanged)",
+   "reuse_seconds": "600 (PERSONA_DISCOVERY_SPEC_REUSE_SECONDS): one successful read per tenant serves every open demand and every persona of that tenant in the window"
+  },
+  "stop_conditions": "no next_page_token (complete), page_cap, time_budget, page_failed:<Exc> after >=1 page (partial, keeps what was read), resumed_tail (a read that started from a resume cursor reached the end; it saw only the tail). A failed first page raises RuntimeError strategy_spec_read_unavailable:pages=0:specs=0:<Exc> and the demand is recorded discovery_unavailable.",
+  "coverage_across_cycles": "a capped read stores the owner's next_page_token per tenant (in memory) and the next read resumes from it, so 8,019 visible hosted rows (161 pages) are covered in 5 reads; after the tail the next read starts from the beginning.",
+  "demand_record": "every run whose specs were read by the port carries spec_read {specs_seen, pages, bytes, seconds, partial, stop_reason, resumed, max_pages, page_size, budget_seconds}; a partial read sets partial=true, specs_seen, spec_pages, spec_partial_reason, and with no match the reason is partial_spec_read:<n>_specs_seen_no_match_yet (a partial seed read reason is kept first). Never no_candidate_fits_persona / no_candidates_available for a partial read.",
+  "starvation": "each persona's read is bounded by 40 pages and 30 s; a read failure is per demand and isolated (the next demand reads again, failures are not cached); personas of the same tenant reuse one read within 600 s.",
+  "seed_read": "DISCOVERY-SEED-READ-BOUNDED-20261125 behaviour unchanged (same partial fields and partial_seed_read reason; test_partial_seed_read_is_recorded_as_partial_never_as_no_match passes).",
+  "tenant_and_credential": "unchanged: same _call/transport, same PERSONA_REGISTRY_SERVICE_TOKEN bearer and X-Tenant-Id = persona tenant; tenant_id query = the same persona tenant (the owner rejects a mismatching header with 403).",
+  "scorer": "services/control-plane/persona/persona_strategy_discovery.py not changed (no change needed).",
+  "files": [
+   "services/persona/pool_autonomy_cycle.py",
+   "services/persona/test_pool_autonomy_cycle.py",
+   "services/persona/test_persona_demand_discovery.py",
+   "docs/deployment/evidence/POOL-CYCLE-SPEC-READ-BOUNDED-20261125/evidence.json"
+  ]
+ },
+ "tests": {
+  "new": [
+   "test_spec_read_is_paged_tenant_scoped_projected_and_never_unpaged",
+   "test_spec_read_stops_at_page_cap_and_resumes_on_the_next_read",
+   "test_spec_read_stops_at_time_budget",
+   "test_failed_first_page_is_unavailable_and_later_page_failure_is_partial_with_counts",
+   "test_one_read_serves_every_demand_and_persona_of_the_tenant_within_reuse_window",
+   "test_capped_spec_read_is_recorded_partial_never_no_match_and_failed_read_unavailable",
+   "test_scoring_is_identical_to_the_previous_unpaged_read[d1,d2,d3]",
+   "test_hosted_scale_three_cycle_reads_stay_far_below_registry_memory_limit"
+  ],
+  "unpaged_guard": "FakeRegistry.transport and the hosted-scale transport assert view=discovery_candidates on every registry request; any unpaged list from the cycle path fails the test. test_persona_demand_discovery's fake no longer answers the unpaged path (falls through to its AssertionError).",
+  "equality": "test_scoring_is_identical_to_the_previous_unpaged_read keeps the replaced function verbatim as _previous_read_strategy_specs and compares, over a recorded set (draft/approved/candidate, retired and rejected rows, metadata-level and spec-level mechanism/mechanism_status/mechanism_support, negative_memory_match warning and info, lineage with parent ids and execution_route, missing metadata/lineage, required_data and allowed_use): same registry ids in order, equal StrategyCandidate per spec, equal lineage/mechanism*/negative_memory_match/metadata, and equal discover_for_demand output for three demands (no filter, tried family, missing dataset) with max_matches 50.",
+  "changed_existing_assertions": [
+   {
+    "test": "services/persona/test_persona_demand_discovery.py World.transport (fake owner)",
+    "change": "answers /api/registry/strategy-specs?view=discovery_candidates&... with {items, next_page_token} and excludes retired/rejected like the owner, instead of the unpaged path returning a list.",
+    "justification": "the fake must emulate the owner route the code now calls; no assertion changed; the unpaged path now fails the test, which strengthens it. File is outside the declared artifacts but has to follow the request path."
+   },
+   {
+    "test": "services/persona/test_pool_autonomy_cycle.py::test_partial_seed_read_is_recorded_as_partial_never_as_no_match",
+    "change": "its catch-all transport returns {items: [], next_page_token: None} instead of {}.",
+    "justification": "{} was read as an empty unpaged list; the paged read treats a response without items as an unavailable owner (fail closed). Assertions unchanged."
+   }
+  ],
+  "deleted_or_weakened": "none",
+  "runs": {
+   "command": ".venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider <17 files that reference pool_autonomy_cycle / persona_strategy_discovery / read_strategy_specs> services/registry/test_discovery_spec_page.py",
+   "result": "228 passed, 20 skipped, 12 failed in 361.62 s",
+   "failures": "all 12 in services/control-plane/bff/tests/test_persona_router.py (e.g. test_route_inventory_count: assert 55 == 49 routes). BFF router code; this branch changes no file under services/control-plane, so pre-existing on dev and unrelated.",
+   "focused": "services/persona/test_pool_autonomy_cycle.py services/persona/test_persona_demand_discovery.py services/registry/test_discovery_spec_page.py: 75 passed, 3 skipped (Postgres tests skip without TEST_DATABASE_URL)"
+  }
+ },
+ "measurement": {
+  "test": "services/persona/test_pool_autonomy_cycle.py::test_hosted_scale_three_cycle_reads_stay_far_below_registry_memory_limit (POOL_CYCLE_SPEC_READ_EVIDENCE_OUT)",
+  "environment": "real registry FastAPI app (services.registry.service.app, strict JWT auth, in-memory owner) in TestClient, same process as the reader; tracemalloc; Python from PANTHEON_DEPENDENCY_PYTHON via provision_python_distribution.py",
+  "population": "services.registry.test_discovery_spec_page._hosted_entries: 9,940 hosted-shape rows at about 5.6 kB (tenant-a 7521 draft / 1556 retired / 338 approved / 150 candidate, tenant-b 200, builtin 10, other types 165) plus the 183 builtins seeded at startup = 10123 rows; 8,019 visible to tenant-a",
+  "three_consecutive_reads": [
+   {
+    "budget_seconds": 600.0,
+    "bytes": 9686168,
+    "max_pages": 40,
+    "page_size": 50,
+    "pages": 40,
+    "partial": true,
+    "resumed": false,
+    "seconds": 6.012,
+    "specs_seen": 2000,
+    "stop_reason": "page_cap"
+   },
+   {
+    "budget_seconds": 600.0,
+    "bytes": 9662866,
+    "max_pages": 40,
+    "page_size": 50,
+    "pages": 40,
+    "partial": true,
+    "resumed": true,
+    "seconds": 6.004,
+    "specs_seen": 2000,
+    "stop_reason": "page_cap"
+   },
+   {
+    "budget_seconds": 600.0,
+    "bytes": 9667436,
+    "max_pages": 40,
+    "page_size": 50,
+    "pages": 40,
+    "partial": true,
+    "resumed": true,
+    "seconds": 5.777,
+    "specs_seen": 2000,
+    "stop_reason": "page_cap"
+   }
+  ],
+  "requests": 120,
+  "registry_request_python_peak_bytes_max": 1058018,
+  "registry_request_python_peak_bytes_median": 791666,
+  "response_bytes_max": 233480,
+  "persona_held_bytes_max_per_read": 19853247,
+  "three_reads_seconds_with_tracemalloc": 18.001,
+  "assertions": "every request is view=discovery_candidates; 3 x 40 pages, 2,000 specs each, resumed on reads 2 and 3; registry per-page peak < 8 MiB; persona held < 64 MiB",
+  "postgres_owner_reference": "REGISTRY-DISCOVERY-SPEC-PAGE-20261125 evidence: 20 pages 2.2 MB Python peak, three concurrent 20-page readers 5.3 MB, RSS growth 0 / 8.2 MiB; the unpaged list on the same 9,940 rows peaked at 207 MB Python and +462 MiB RSS (above the 256 MiB limit)."
+ },
+ "runtime_budget": {
+  "before": {
+   "reads_per_cycle": "1 unpaged GET /api/registry/strategy-specs per open demand of each persona (a persona with k open demands made k full reads)",
+   "rows_per_read": "every tenant-visible strategy_spec entry, retired/rejected included (filtered client side): about 9,600 on hosted",
+   "bytes_per_read": "about 56 MB of entries (9,940 x 5.6 kB) serialised as RegistryEntryView",
+   "registry_cost": "whole-table list in the owner; 207 MB Python peak / +462 MiB RSS measured for the unpaged list on the Postgres owner; matches the 10:06:45Z memcg kill (anon-rss 258,924 kB) and discovery_unavailable:RemoteDisconnected at 10:06:42Z"
+  },
+  "after": {
+   "reads_per_cycle": "at most 1 bounded read per tenant per 600 s (shared by all open demands and personas of that tenant); a failed read is retried by the next demand",
+   "pages_per_read": "<= 40 requests of <= 50 rows (<= 2,000 specs), <= 30 s",
+   "bytes_per_read": "<= about 10 MB (measured 9686168 bytes for 40 pages), <= about 250 kB per page (measured max 233480)",
+   "registry_cost": "per page: 1058018 bytes Python peak (max, in-memory owner); Postgres owner 0.28 s and about 2 MB for 20 pages",
+   "persona_cost": "about 19.9 MB held per tenant read for the reuse window",
+   "coverage": "full hosted visible set (161 pages) covered in 5 consecutive reads via the resume cursor; each partial read is recorded as partial"
+  }
+ },
+ "remaining_unpaged_callers_of_GET_api_registry_strategy_specs": [
+  {
+   "caller": "services/control-plane/bff/ports/research_knowledge_source.py _fetch_canonical_strategy_specs_uncached (sid empty) <- _list_strategy_specs_uncached <- list_strategy_specs",
+   "used_by": "BFF knowledge/strategies/personas/management read surfaces (GET /api/v1/knowledge/strategy-specs, personas/service.py, strategies/service.py, management_read_models)",
+   "cadence": "operator/UI request driven, memoised per tenant+token; no schedule",
+   "bounded": false,
+   "note": "unpaged whole list; the paged sibling list_strategy_specs_page (view=strategy_summary_page, BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125) exists; remaining full-list consumers are outside this task scope."
+  },
+  {
+   "caller": "services/control-plane/bff/ports/research_knowledge_source.py _fetch_canonical_persona_binding_view(view=persona_binding | persona_binding_counts)",
+   "used_by": "get_strategy_labels, get_strategy_persona_bindings, _fetch_canonical_persona_binding_counts",
+   "cadence": "UI request driven, cached_owner_call",
+   "bounded": "partially: not paged, but the owner projects flat binding rows / per-persona counts (no spec bodies)"
+  },
+  {
+   "caller": "services/control-plane/bff/agora/strategy_workshop/operations.py:251",
+   "cadence": "n/a",
+   "bounded": "n/a: POST create, not a list read"
+  },
+  {
+   "caller": "services/research/alpha_replication/replication_controller.py:145",
+   "cadence": "alpha replication tick",
+   "bounded": true,
+   "note": "view=card_admission_drafts keyset pages (CARD-ADMISSION-DRAFT-READ-BOUNDED-20261125)"
+  },
+  {
+   "caller": "services/control-plane/bff/ports/research_knowledge_source.py:3405 list_strategy_specs_page",
+   "cadence": "UI request driven",
+   "bounded": true,
+   "note": "view=strategy_summary_page"
+  },
+  {
+   "caller": "single-entry reads GET /api/registry/strategy-specs/{registry_id} (research/main.py, revalidation_worker.py, admission.py, operations.py, persona_provisioning_coordinator.py) and /api/registry/strategies/{id}/strategy-specs",
+   "bounded": "yes: one entry or one strategy's versions, not the table"
+  },
+  {
+   "caller": "services/persona/pool_autonomy_cycle.py read_strategy_specs",
+   "cadence": "daily persona pool cycle (18:00) per open demand",
+   "bounded": true,
+   "note": "this task"
+  }
+ ]
+}
