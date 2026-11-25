@@ -1,0 +1,37 @@
+{
+  "task_id": "REGISTRY-PAGES-ACCEPTANCE-PROBE-20261125",
+  "title": "Read-only release probe for the seven registry pages",
+  "owner": "Claude2",
+  "reviewer": "Antigravity2",
+  "problem_register_class": "RC6",
+  "delivery_state": "functional_source_verified_pending_review",
+  "hosted_verification_note": "No VM or SSH access of any kind and no operator key read. Functional evidence only (local fixture HTTP server with recorded hosted ids and the real handler envelopes). Hosted verification belongs to the operator acceptance task.",
+  "operator_approval": "2026-11-25, conversation 52a1dacf (照建議 全部處理好), names the seven registry pages; the feature freeze does not apply to this scope.",
+  "acceptance": {
+    "ac1_probe_contract": "acceptance/probes/mgmt-registry-pages-readable: viewer login via /bff/auth/dev-login, GET only (the fixture server fails the test if any other method or a second POST arrives), exit 0 passed / 1 failed / 77 skipped naming the missing variable; failed checks print 'FAILED <check> owner=<task> code=<code> route=<route> values=<json>'; the token and secret are asserted absent from stdout in every test, including a failed login.",
+    "ac2_failures": {
+      "strategy_state_totals": "state_total_differs_from_visible_state_counts (total vs meta.visible_state_counts for no filter, state=draft, state=retired); visible_state_counts_missing when null",
+      "strategy_metrics_vs_pulse": "list_metric_differs_from_trading_pulse (pnl/totalTrades of a running strategy vs its single runtime_rows entry, one re-read of both); fresh_metrics_with_null_values_without_reason",
+      "persona_artifact_scope": "persona_success_rate_zero_without_record; persona_list_scope_missing; artifact_list_scope_missing",
+      "lineage_node_names": "lineage_node_without_name for a running strategy root (display_name empty or name_missing not false); lineage_unavailable_or_empty",
+      "evidence_detail_paging": "evidence_detail_is_list_shaped; deep_page_empty_with_surface_ok (offset total-1 empty while meta.surfaces.evidence_refs is ok)",
+      "cited_sources_visible": "cited_list_hides_failed_source (non-ok source missing from summary.sources_not_ok, incomplete not true or surface ok); cited_source_not_reported",
+      "postmortem_infra_hidden": "infrastructure_draft_in_default_list (owner is_infrastructure_postmortem rule on PostmortemResponse fields, asserted equal to services.incident.incident on four rows); hidden_infrastructure_count_missing"
+    },
+    "ac3_denied_and_owners": "A 401/403 on a check's route is reported as 'DENIED <check> ...' with status denied and does not fail that check (test_viewer_role_denial_is_denied_not_failed, lineage is operator-only). Every check result carries its owner task id (OWNERS map, asserted equal to the check list).",
+    "ac4_tests_readme": "acceptance/test_mgmt_registry_pages_readable.py: 27 tests, one passing world plus 15 failing cases (at least one per check) each run through a local HTTP fixture server and asserting exactly that one check fails; route registration test checks all 8 requested routes are GET routes of the real BFF app. acceptance/README.md lists the probe. The state=draft duration is printed as 'INFO ... (information only)'; test_draft_duration_is_information_only feeds a 3600 s read and the result still passes.",
+    "stage_test": "scripts/test_dev_acceptance_stage.py: the expected discovered probe list gains probe:mgmt-registry-pages-readable (it skips with exit 77 without viewer credentials like its siblings)."
+  },
+  "justified_changed_assertions": [
+    "scripts/test_dev_acceptance_stage.py test_replay_root_44247825979_daily_probe_failure_does_not_fail_release: the exact probe id list gains one new entry, probe:mgmt-registry-pages-readable. Nothing weakened or removed; a new probe directory necessarily changes that list."
+  ],
+  "tests_run": [
+    ".venv-pantheon/bin/python3 -m pytest -q acceptance/test_mgmt_registry_pages_readable.py scripts/test_dev_acceptance_stage.py -> 43 passed",
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py acceptance/ -> 300 passed (before the one added route test)"
+  ],
+  "residual_findings": [
+    "Strategy rows do not expose the runtime binding id, so the metric comparison joins list rows to Trading Pulse by strategy_id and skips (does not fail) a strategy that has more than one pulse row; hosted multi-binding strategies are therefore not compared.",
+    "Strategy default pages are read with exclude_state=draft (at most 10 pages of 200) for metrics and live-strategy discovery; state=draft is only counted with page_size=1 so the draft read time stays the single owner call that the task wants printed.",
+    "BFF-EVO-JOURNAL-POOL-VERSIONS-20261125 is a declared prerequisite but its page already has acceptance/probes/mgmt-evolution-pages-readable; it is not duplicated here."
+  ]
+}

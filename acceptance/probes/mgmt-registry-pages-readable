@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+# acceptance-owner: REGISTRY-PAGES-ACCEPTANCE-PROBE-20261125
+"""Read-only release probe: the seven registry pages tell the truth (RC6).
+
+Logs in as the viewer (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET via /bff/auth/dev-login; the token stays in
+memory and is never printed) and then uses GET only. Each check names the task that owns it:
+
+  strategy_state_totals      REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125
+      GET /bff/strategies (no filter, state=draft, state=retired): page_info.total equals
+      meta.visible_state_counts for the same filter (non-retired sum, draft, retired).
+  strategy_metrics_vs_pulse  BFF-STRATEGY-METRICS-RUNTIME-20261125
+      GET /bff/strategies?exclude_state=draft and GET /bff/management/trading-pulse: a strategy with a
+      running admitted binding shows the same pnl / totalTrades as the one Trading Pulse row of that
+      strategy (one re-read of both on a difference); metricsResolution "fresh" never comes with a null
+      pnl and no metricsReason.
+  persona_artifact_scope     BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125
+      GET /bff/personas: no row has successRate 0 (no recorded value or the filled-in 0.0 is null); every
+      row carries listScope. GET /bff/artifacts: every row carries list_scope.
+  lineage_node_names         REGISTRY-LINEAGE-NODE-NAMES-20261125
+      GET /bff/lineage?root_id=<running strategy>: every node has a display_name and name_missing false.
+  evidence_detail_paging     BFF-EVIDENCE-DETAIL-AND-PAGING-20261125
+      GET /bff/management/evidence/{ref_id} answers one flat object (not a list envelope); a deep page
+      (offset total-1) never answers empty while meta.surfaces.evidence_refs is ok.
+  cited_sources_visible      BFF-EVIDENCE-CITED-LIST-20261125
+      GET /bff/management/evidence?scope=cited: every source is reported in data.sources and
+      meta.surfaces.cited_evidence_sources; a source that is not ok is listed in summary.sources_not_ok,
+      makes summary.incomplete true and the cited_evidence surface not ok.
+  postmortem_infra_hidden    POSTMORTEM-SKIP-INFRA-DRAFTS-20261125
+      GET /api/v1/postmortems: the default list has no infrastructure/monitor-agent draft and
+      meta.hidden_infrastructure_count is a non-negative integer.
+
+A 401/403 on a check's route is reported as "denied" for that check and is not a failure.
+The duration of the state=draft read is printed as information only; no time threshold decides anything.
+Exit 0 passed, 1 failed, 77 skipped (a variable is missing). Failed checks print route and values.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+MAX_PAGES = 10
+MAX_LINEAGE_ROOTS = 5
+STRATEGY_TOTAL_QUERIES = (
+    ("", "non_retired_sum"),
+    ("state=draft", "draft"),
+    ("state=retired", "retired"),
+)
+STRATEGY_ROWS = "/bff/strategies?exclude_state=draft&page_size=200"
+PULSE = "/bff/management/trading-pulse"
+PERSONAS = "/bff/personas?page_size=200"
+ARTIFACTS = "/bff/artifacts?page_size=200"
+EVIDENCE = "/bff/management/evidence"
+CITED = "/bff/management/evidence?scope=cited&page_size=100"
+POSTMORTEMS = "/api/v1/postmortems?page_size=200"
+PERSONA_SCOPES = {"current", "test", "retired", "research"}
+ARTIFACT_SCOPES = {"current", "test", "retired", "unbound", "research", "unknown"}
+CITED_SOURCE_KEYS = ("meeting_proposals", "meeting_positions", "governance_approvals", "evolution_proposals",
+                     "research_demands", "research_tickets", "persona_cycles")
+
+OWNERS = {
+    "strategy_state_totals": "REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125",
+    "strategy_metrics_vs_pulse": "BFF-STRATEGY-METRICS-RUNTIME-20261125",
+    "persona_artifact_scope": "BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125",
+    "lineage_node_names": "REGISTRY-LINEAGE-NODE-NAMES-20261125",
+    "evidence_detail_paging": "BFF-EVIDENCE-DETAIL-AND-PAGING-20261125",
+    "cited_sources_visible": "BFF-EVIDENCE-CITED-LIST-20261125",
+    "postmortem_infra_hidden": "POSTMORTEM-SKIP-INFRA-DRAFTS-20261125",
+}
+
+
+class Denied(Exception):
+    """The viewer's role may not read this route (HTTP 401/403)."""
+
+    def __init__(self, status: int):
+        super().__init__(f"http_{status}")
+        self.status = status
+
+
+class ReadFailed(Exception):
+    """Any other read failure; the message never carries a URL, body or token."""
+
+
+class Context:
+    def __init__(self, fetch, clock=time.monotonic):
+        self.fetch, self.clock = fetch, clock
+        self.cache = {}
+        self.failures = []
+        self.info = {}
+        self.route = None
+
+    def get(self, path, *, fresh=False):
+        self.route = path
+        if fresh or path not in self.cache:
+            self.cache[path] = self.fetch(path)
+        return self.cache[path]
+
+    def fail(self, code, route, **values):
+        self.failures.append({"code": code, "route": route, "values": values})
+
+
+# ---------------------------------------------------------------- helpers
+
+def _rows(body):
+    if not isinstance(body, dict):
+        return []
+    data = body.get("data")
+    for candidate in (body.get("items"), data, data.get("items") if isinstance(data, dict) else None):
+        if isinstance(candidate, list):
+            return [r for r in candidate if isinstance(r, dict)]
+    return []
+
+
+def _page_info(body):
+    if not isinstance(body, dict):
+        return {}
+    page = body.get("page_info")
+    if not isinstance(page, dict) and isinstance(body.get("data"), dict):
+        page = body["data"].get("page_info")
+    return page if isinstance(page, dict) else {}
+
+
+def _meta(body):
+    return body.get("meta") if isinstance(body, dict) and isinstance(body.get("meta"), dict) else {}
+
+
+def _int(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _same(a, b):
+    if a is None or b is None:
+        return a is None and b is None
+    na, nb = _number(a), _number(b)
+    return math.isclose(na, nb, abs_tol=1e-6) if na is not None and nb is not None else a == b
+
+
+def _with(path, extra):
+    return path + ("&" if "?" in path else "?") + extra
+
+
+def _all_pages(ctx, path):
+    rows, current = [], path
+    for _ in range(MAX_PAGES):
+        body = ctx.get(current)
+        rows += _rows(body)
+        token = _page_info(body).get("next_page_token")
+        if not token:
+            break
+        current = _with(path, "page_token=" + urllib.parse.quote(str(token), safe=""))
+    return rows
+
+
+# ---------------------------------------------------------------- checks
+
+def check_strategy_state_totals(ctx):
+    for query, expected_key in STRATEGY_TOTAL_QUERIES:
+        route = "/bff/strategies?" + (query + "&" if query else "") + "page_size=1"
+        if query == "state=draft":  # information only: no threshold decides the result
+            started = ctx.clock()
+            body = ctx.get(route)
+            ctx.info["state_draft_seconds"] = round(ctx.clock() - started, 3)
+        else:
+            body = ctx.get(route)
+        total = _int(_page_info(body).get("total"))
+        counts = _meta(body).get("visible_state_counts")
+        if not isinstance(counts, dict) or not all(_int(v) is not None for v in counts.values()):
+            ctx.fail("visible_state_counts_missing", route, total=total, visible_state_counts=counts)
+            continue
+        if expected_key == "non_retired_sum":
+            expected = sum(v for k, v in counts.items() if k != "retired")
+        else:
+            expected = _int(counts.get(expected_key)) or 0
+        if total != expected:
+            ctx.fail("state_total_differs_from_visible_state_counts", route, total=total,
+                     visible_state_counts=counts, expected=expected)
+
+
+def _pulse_by_strategy(ctx, fresh=False):
+    body = ctx.get(PULSE, fresh=fresh)
+    data = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else {}
+    grouped = {}
+    for row in data.get("runtime_rows") or []:
+        if isinstance(row, dict) and row.get("strategy_id"):
+            grouped.setdefault(str(row["strategy_id"]), []).append(row)
+    return grouped
+
+
+def _pulse_values(row):
+    metrics = ((row.get("telemetry_summary") or {}).get("metrics") or {}) if isinstance(row, dict) else {}
+    trades = row.get("total_trades") if row.get("total_trades") is not None else metrics.get("total_trades")
+    return {"pnl": metrics.get("pnl"), "totalTrades": trades}
+
+
+def _metric_differences(strategies, pulse):
+    out = {}
+    for s in strategies:
+        sid = str(s.get("id") or s.get("strategy_id") or "")
+        if s.get("runtimeStatus") in (None, "none", "unknown") or s.get("metricsResolution") not in ("fresh", "stale"):
+            continue
+        rows = pulse.get(sid) or []
+        if len(rows) != 1:
+            continue
+        expected = _pulse_values(rows[0])
+        listed = {"pnl": s.get("pnl"), "totalTrades": s.get("totalTrades")}
+        if not all(_same(listed[k], expected[k]) for k in listed):
+            out[sid] = {"list": listed, "trading_pulse": expected,
+                        "runtime_binding_id": rows[0].get("runtime_binding_id")}
+    return out
+
+
+def check_strategy_metrics_vs_pulse(ctx):
+    strategies = _all_pages(ctx, STRATEGY_ROWS)
+    ctx.info["strategy_rows"] = len(strategies)
+    for s in strategies:
+        if s.get("metricsResolution") == "fresh" and s.get("pnl") is None and not s.get("metricsReason"):
+            ctx.fail("fresh_metrics_with_null_values_without_reason", STRATEGY_ROWS,
+                     strategy_id=s.get("id"), pnl=s.get("pnl"), metricsReason=s.get("metricsReason"))
+    differences = _metric_differences(strategies, _pulse_by_strategy(ctx))
+    if differences:  # values may move between two reads: re-read both once, report what still differs
+        strategies = _all_pages_fresh(ctx, STRATEGY_ROWS)
+        differences = _metric_differences(strategies, _pulse_by_strategy(ctx, fresh=True))
+    ctx.info["compared_strategies"] = sum(
+        1 for s in strategies if s.get("runtimeStatus") not in (None, "none", "unknown"))
+    for sid, values in sorted(differences.items()):
+        ctx.fail("list_metric_differs_from_trading_pulse", STRATEGY_ROWS + " vs " + PULSE, strategy_id=sid, **values)
+
+
+def _all_pages_fresh(ctx, path):
+    for key in [k for k in ctx.cache if k.startswith(path)]:
+        del ctx.cache[key]
+    return _all_pages(ctx, path)
+
+
+def check_persona_artifact_scope(ctx):
+    personas = _all_pages(ctx, PERSONAS)
+    ctx.info["persona_rows"] = len(personas)
+    zero = [str(p.get("id") or p.get("persona_id")) for p in personas
+            if _number(p.get("successRate")) == 0.0]
+    if zero:
+        ctx.fail("persona_success_rate_zero_without_record", PERSONAS, persona_ids=zero[:5], count=len(zero))
+    unscoped = [str(p.get("id") or p.get("persona_id")) for p in personas if p.get("listScope") not in PERSONA_SCOPES]
+    if unscoped:
+        ctx.fail("persona_list_scope_missing", PERSONAS, persona_ids=unscoped[:5], count=len(unscoped))
+    artifacts = _rows(ctx.get(ARTIFACTS))
+    ctx.info["artifact_rows"] = len(artifacts)
+    unscoped = [str(a.get("id")) for a in artifacts if a.get("list_scope") not in ARTIFACT_SCOPES]
+    if unscoped:
+        ctx.fail("artifact_list_scope_missing", ARTIFACTS, artifact_ids=unscoped[:5], count=len(unscoped))
+
+
+def check_lineage_node_names(ctx):
+    live = []
+    for s in _all_pages(ctx, STRATEGY_ROWS):
+        sid = str(s.get("id") or "")
+        if sid and s.get("runtimeStatus") == "running" and sid not in live:
+            live.append(sid)
+    ctx.info["live_strategies"] = len(live)
+    if not live:
+        ctx.info["not_exercised"] = "no_running_strategy"
+        return
+    for sid in live[:MAX_LINEAGE_ROOTS]:
+        route = "/bff/lineage?root_id=" + urllib.parse.quote(sid, safe="") + "&depth=3"
+        body = ctx.get(route)
+        data = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else {}
+        nodes = [n for n in data.get("nodes") or [] if isinstance(n, dict)]
+        if data.get("status") == "unavailable" or not nodes:
+            ctx.fail("lineage_unavailable_or_empty", route, strategy_id=sid, status=data.get("status"), nodes=len(nodes))
+            continue
+        unnamed = [str(n.get("id")) for n in nodes if not str(n.get("display_name") or "").strip()
+                   or n.get("name_missing") is not False]
+        if unnamed:
+            ctx.fail("lineage_node_without_name", route, strategy_id=sid, node_ids=unnamed[:5], count=len(unnamed),
+                     display_names_status=((_meta(body).get("surfaces") or {}).get("display_names") or {}).get("status"))
+
+
+def check_evidence_detail_paging(ctx):
+    first_route = EVIDENCE + "?page_size=1"
+    first = ctx.get(first_route)
+    items = _rows(first)
+    total = _int(_page_info(first).get("total"))
+    ctx.info["evidence_total"] = total
+    if not items or not total:
+        ctx.info["not_exercised"] = "evidence_list_empty_or_unknown"
+        return
+    ref = str(items[0].get("ref_id") or items[0].get("id") or "")
+    detail_route = EVIDENCE + "/" + urllib.parse.quote(ref, safe="")
+    detail = ctx.get(detail_route)
+    data = detail.get("data") if isinstance(detail, dict) else None
+    if not isinstance(data, dict) or isinstance(data.get("items"), list) or "page_info" in detail:
+        ctx.fail("evidence_detail_is_list_shaped", detail_route, ref_id=ref,
+                 data_type=type(data).__name__, has_items=isinstance(data, dict) and "items" in data,
+                 has_page_info=isinstance(detail, dict) and "page_info" in detail)
+    elif str(data.get("ref_id") or data.get("id") or "") != ref:
+        ctx.fail("evidence_detail_is_another_item", detail_route, ref_id=ref, answered=data.get("ref_id"))
+    if total > 1:
+        deep_route = EVIDENCE + "?page_size=1&page_token=" + str(total - 1)
+        deep = ctx.get(deep_route)
+        surface = ((_meta(deep).get("surfaces") or {}).get("evidence_refs") or {}).get("status")
+        if not _rows(deep) and surface == "ok":
+            ctx.fail("deep_page_empty_with_surface_ok", deep_route, total=total,
+                     page_total=_page_info(deep).get("total"), evidence_refs_status=surface)
+
+
+def check_cited_sources_visible(ctx):
+    body = ctx.get(CITED)
+    data = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else {}
+    sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
+    surfaces = _meta(body).get("surfaces") or {}
+    meta_sources = surfaces.get("cited_evidence_sources") if isinstance(surfaces.get("cited_evidence_sources"), dict) else {}
+    hidden = [k for k in CITED_SOURCE_KEYS if not isinstance(sources.get(k), dict) or not isinstance(meta_sources.get(k), dict)]
+    if hidden:
+        ctx.fail("cited_source_not_reported", CITED, sources=hidden)
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    not_ok = {k: v.get("status") for k, v in sources.items() if isinstance(v, dict) and v.get("status") != "ok"}
+    ctx.info["cited_sources"] = {k: v.get("status") for k, v in sources.items() if isinstance(v, dict)}
+    if not_ok:
+        listed = set(summary.get("sources_not_ok") or [])
+        surface = (surfaces.get("cited_evidence") or {}).get("status")
+        if set(not_ok) - listed or summary.get("incomplete") is not True or surface == "ok":
+            ctx.fail("cited_list_hides_failed_source", CITED, not_ok=not_ok,
+                     sources_not_ok=sorted(listed), incomplete=summary.get("incomplete"), cited_evidence_status=surface)
+
+
+def _is_infrastructure_postmortem(row):
+    """Same predicates as services/incident/incident.py is_infrastructure_postmortem, on the BFF row fields."""
+    incident = str(row.get("incident_id") or "")
+    plan, authority = str(row.get("deployment_plan_id") or ""), str(row.get("persona_capital_binding_id") or "")
+    cluster, artifact = str(row.get("incident_cluster_id") or ""), str(row.get("artifact_id") or "")
+    summary = str(row.get("incident_evidence_summary") or row.get("evidence_summary") or "")
+    monitor_marks = (":monitor-agent:agent-finding-" in cluster or "component_kind=monitor-agent-finding" in summary
+                     or artifact.startswith("infra-component-agent-finding-"))
+    if incident.startswith("agent-"):
+        return (plan == "infra-plan-monitor-agent" and authority == "infra-authority-monitor-agent" and monitor_marks)
+    if monitor_marks or cluster.startswith(("drift:", "deployment:", "runtime:")):
+        return False
+    if not (str(row.get("binding_id") or "").startswith("infra-subject-") and plan.startswith("infra-plan-")
+            and authority.startswith("infra-authority-")):
+        return False
+    return (cluster.startswith("infrastructure:") or "non_trading_infrastructure_incident=true" in summary
+            or artifact.startswith("infra-component-") or str(row.get("runtime_id") or "").startswith("infra-endpoint-"))
+
+
+def check_postmortem_infra_hidden(ctx):
+    body = ctx.get(POSTMORTEMS)
+    rows = _all_pages(ctx, POSTMORTEMS)
+    ctx.info["postmortem_rows"] = len(rows)
+    hidden = _meta(body).get("hidden_infrastructure_count")
+    if _int(hidden) is None or hidden < 0:
+        ctx.fail("hidden_infrastructure_count_missing", POSTMORTEMS, hidden_infrastructure_count=hidden,
+                 surface=((_meta(body).get("surfaces") or {}).get("postmortems") or {}).get("status"))
+    leaked = [str(r.get("postmortem_id")) for r in rows
+              if str(r.get("status") or "").lower() == "draft" and _is_infrastructure_postmortem(r)]
+    if leaked:
+        ctx.fail("infrastructure_draft_in_default_list", POSTMORTEMS, postmortem_ids=leaked[:5], count=len(leaked))
+
+
+CHECKS = (
+    ("strategy_state_totals", check_strategy_state_totals),
+    ("strategy_metrics_vs_pulse", check_strategy_metrics_vs_pulse),
+    ("persona_artifact_scope", check_persona_artifact_scope),
+    ("lineage_node_names", check_lineage_node_names),
+    ("evidence_detail_paging", check_evidence_detail_paging),
+    ("cited_sources_visible", check_cited_sources_visible),
+    ("postmortem_infra_hidden", check_postmortem_infra_hidden),
+)
+
+
+def check(fetch, clock=time.monotonic) -> dict:
+    """Run every check; ``fetch(path)`` returns a decoded body or raises Denied / ReadFailed."""
+    shared = {}
+    results = []
+    for name, fn in CHECKS:
+        ctx = Context(fetch, clock)
+        ctx.cache = shared  # one read per route across checks
+        status = "passed"
+        try:
+            fn(ctx)
+            status = "failed" if ctx.failures else "passed"
+        except Denied as exc:
+            status = "denied"
+            ctx.info["denied"] = {"route": ctx.route, "status": exc.status}
+        except ReadFailed as exc:
+            ctx.fail("read_failed", ctx.route, reason=str(exc))
+            status = "failed"
+        if status == "passed" and ctx.info.get("not_exercised"):
+            status = "not_exercised"
+        results.append({"check": name, "owner": OWNERS[name], "status": status,
+                        "failures": ctx.failures, "info": ctx.info})
+    failed = [r for r in results if r["status"] == "failed"]
+    return {"checks": results, "failed": [r["check"] for r in failed], "passed": not failed}
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise Denied(exc.code) from None
+        raise ReadFailed(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise ReadFailed(f"request_failed:{type(exc).__name__}") from None
+
+
+def _print_report(report):
+    for result in report["checks"]:
+        if result["status"] == "denied":
+            print(f"DENIED {result['check']} owner={result['owner']} route={result['info']['denied']['route']} "
+                  f"http_{result['info']['denied']['status']}")
+        for failure in result["failures"]:
+            print(f"FAILED {result['check']} owner={result['owner']} code={failure['code']} "
+                  f"route={failure['route']} values={json.dumps(failure['values'], sort_keys=True, default=str)}")
+        if "state_draft_seconds" in result["info"]:
+            print(f"INFO state=draft read took {result['info']['state_draft_seconds']}s (information only)")
+    print(json.dumps(report, sort_keys=True, default=str))
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise ReadFailed("no_access_token")
+    except (Denied, ReadFailed) as exc:
+        print(f"failed: login {exc}")
+        return 1
+    report = check(lambda path: _request(urllib.request.Request(
+        base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    _print_report(report)
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

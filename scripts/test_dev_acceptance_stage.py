@@ -155,6 +155,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:meeting-action-followthrough",
         "probe:meeting-review-disposition",
         "probe:mgmt-evolution-pages-readable",
+        "probe:mgmt-registry-pages-readable",
         "probe:mgmt-strategy-meeting-research-readable",
         "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
