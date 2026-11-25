@@ -1,0 +1,56 @@
+{
+  "task_id": "DISCOVERY-SEED-READ-BOUNDED-20261125",
+  "category": "RC2",
+  "evidence_kind": "functional_only_no_hosted_access",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27T10:03Z; reviewer Claude2 is from the owner family.",
+  "fixture": {
+    "description": "Synthetic JSONL of hosted-shaped seeds (about 4.2 KB each, large execution_recipe the scorer never reads), half carrying metadata.tenant_id, written at the 33.6 MB size of /data/source-ingest/distill_seeds.jsonl",
+    "seeds": 8000, "bytes": 33854730, "tenant_seeds": 2000,
+    "host": "single local process, python 3.12; relative magnitudes matter, hosted absolute times are for the operator acceptance task"
+  },
+  "measured_before_whole_store_request": {
+    "store_load_cold_s": 2.884,
+    "parse_all_seeds_s": 0.492,
+    "tenant_filter_s": 0.011,
+    "to_dict_s": 0.236,
+    "json_serialise_s": 0.135,
+    "client_json_decode_s": 0.194,
+    "response_bytes": 8491665,
+    "reading": "Cold store load (index of the whole file) and parsing/serialising every seed exceed the 2.0 s interactive limit together; transfer size is 8.5 MB per read. A tenant without metadata.tenant_id adds three tenant-wide evidence listings per request."
+  },
+  "measured_after_paged_match_projection": {
+    "cold_first_window_s": 1.45,
+    "warm_window_s": 0.0007,
+    "page_filter_project_s": 0.0012,
+    "page_bytes_match_100_rows": 24811,
+    "pages_to_cover_store_at_100": 80,
+    "all_pages_server_s_warm": 0.153,
+    "all_pages_bytes": 1988534,
+    "reading": "Per-page work is a slice of the cached order plus point reads for that slice; no seed object is built and no tenant-wide listing runs. The one-time cold index load (1.45 s) is not removed by paging; it now happens once inside a 10 s background page budget instead of the 2 s interactive limit, and is shared across pages."
+  },
+  "runtime_budget_per_persona_cycle": {
+    "before": "1 request per open demand; server parses every stored seed, lists tenant evidence, returns about 8.5 MB (full fixture, tenant slice of 2000 seeds); client limit 2 s",
+    "after": "at most PERSONA_DISCOVERY_SEED_MAX_PAGES=50 requests per open demand, page_size 100, about 25 KB each (about 1.2 MB cap, 2 MB for the full 2000-seed tenant slice); per-page timeout 10 s; total read budget 60 s; server scan cap 1000 records per request",
+    "stop_rule": "stops when next_page_token is empty; otherwise a page cap or the 60 s budget ends the read as partial"
+  },
+  "design": {
+    "endpoint": "GET /api/source-ingest/management/strategy-seeds accepts page_size (max 200), page_token, fields=match|full. Without them the response is unchanged.",
+    "stability": "Token is an ordinal plus a digest of the last scanned seed id (no seed id leaks across tenants); order is store insertion order so appended seeds arrive after the cursor; if the cursor seed was pruned the ordinal is used.",
+    "event_loop": "The route is a sync def and runs in the server threadpool; a test asserts it is not a coroutine function.",
+    "match_projection": "Only fields and metadata keys read by persona_strategy_discovery._candidate_from_seed and _score_candidate; a test proves scoring on the projection equals scoring on full rows.",
+    "partial": "Discovery records partial, seeds_seen, seed_pages and partial_reason on the demand last_run; with no match the reason is partial_seed_read:<n>_seeds_seen_no_match_yet and no data backfill action is raised. A page that fails raises, so discovery_unavailable:<error> is still recorded.",
+    "no_writer_added": true,
+    "tenant_and_credential_rules": "Same _require_seed_caller and per-seed ownership rule (metadata/lineage tenant, else source record, bundle, evidence item point reads). Wrong tenant gets nothing."
+  },
+  "tests": {
+    "new": [
+      "services/source_ingestion/tests/test_management_strategy_seeds.py (8 tests: default shape, coverage once each, wrong tenant, append stability, parse and evidence read counts, scan budget, projection scoring parity, invalid input and sync route)",
+      "services/source_ingestion/tests/test_strategy_seed_store.py (2 read_window tests)",
+      "services/control-plane/bff/test_datastrat_seed_review_bff.py (3 background read tests: own timeout, partial caps, failure raises)",
+      "services/persona/test_pool_autonomy_cycle.py (partial recorded, never no match)"
+    ],
+    "result": "109 passed in the five touched modules plus test_persona_demand_discovery.py; test_srcm_p1_contracts.py and test_strategy_seed_store.py 50 passed",
+    "weakened_or_deleted_tests": "none; no existing assertion changed. The lifespan tests that patch SourceManagementClient.list_all still pass because the persona reader keeps calling list_all, which pages when the client is built with background_seed_read."
+  },
+  "not_done": ["hosted verification (operator acceptance task)", "POST /api/source-ingest/candidate-pool-market was not called", "no VM or SSH access"]
+}
