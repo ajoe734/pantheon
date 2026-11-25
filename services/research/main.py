@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import copy
 import asyncio
 import hashlib
+import heapq
 import json
 import json as _json
 import logging
@@ -3113,19 +3115,22 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
-def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any = None) -> Dict[str, Any]:
-    """Governed price dataset for template search, from the stored daily bars (read-only), or fail closed.
+def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Governed market dataset for template search, from the stored daily bars (read-only), or fail closed.
 
-    DISCOVERY-GOVERNED-MARKET-DATASET-20261125: it no longer reads a DatasetVersion that only exists after
-    a persona candidate was evaluated. ``universe`` is the mandate's own symbol list; a symbol outside the
-    governed market boundary fails closed with its exclusion reason. The reason is the readable
-    ``<code>: <detail>`` of ``GovernedMarketDatasetError``. This runs in the run's worker thread."""
+    TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125: the symbol boundary is the governed market boundary
+    (``governed_market_dataset.build_market_boundary``), not a persona list. The result carries
+    ``market_boundary`` (counts and exclusion reasons) and ``boundary_exclusions`` (symbol -> reason).
+    Readable ``<code>: <detail>`` reasons of ``GovernedMarketDatasetError`` are re-raised as ValueError.
+    This runs in the run's worker thread, never on an API event loop."""
     if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
         from services.research import governed_market_dataset as _governed
 
         try:
-            return _governed.resolve_governed_dataset(
-                symbols=list(universe) if universe else None, strategy_id=str(demand["demand_id"]))
+            boundary = _governed.build_market_boundary()
+            dataset = _governed.dataset_for(boundary, strategy_id=str(demand["demand_id"]))
+            dataset["boundary_exclusions"] = dict(boundary.exclusions)
+            return dataset
         except _governed.GovernedMarketDatasetError as exc:
             raise ValueError(str(exc)) from exc
     dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
@@ -3135,7 +3140,10 @@ def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any
 
 
 def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
-    """Read the mandate universe and registered templates from their owners."""
+    """Read the persona identity, the governed market boundary and the registered templates from their owners.
+
+    The persona owner read only proves the tenant and persona identity; ``market_scope`` and
+    ``traits.instruments`` are never read as a boundary (SD_STRATEGY_SCREEN_ENTRY_EXIT 2026-11-12 section 2)."""
     tenant_id = demand["tenant_id"]
     persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
     persona = _retrain_call(
@@ -3144,11 +3152,8 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
         url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
     if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
         raise ValueError("template_mandate_owner_mismatch")
-    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
-    universe = scope.get("symbols")
-    if not universe:
-        raise ValueError("mandate_universe_missing")
-    dataset = _load_template_search_governed_dataset(demand, universe)
+    dataset = _load_template_search_governed_dataset(demand)
+    universe = sorted({str(r["instrument"]) for r in dataset.get("records") or []})
     registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
     templates = _retrain_call(
         step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
@@ -3503,13 +3508,67 @@ def repair_retrain_tasks_left_running() -> None:
             _set_task_terminal(task_id, str(run["status"]).lower(), utc_now())
 
 
+RUN_PAGE_MAX = 200
+
+
+def _run_page_key(run: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(run.get("created_at") or ""), str(run.get("run_id") or run.get("id") or ""))
+
+
+def _encode_run_cursor(key: Tuple[str, str]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(list(key)).encode("utf-8")).decode("ascii")
+
+
+def _decode_run_cursor(cursor: str) -> Tuple[str, str]:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+        if isinstance(value, list) and len(value) == 2 and all(isinstance(v, str) for v in value):
+            return value[0], value[1]
+    except (ValueError, UnicodeError):
+        pass
+    raise HTTPException(status_code=422, detail="invalid cursor")
+
+
 @app.get("/api/research-orchestrator/runs")
-def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [
+def list_runs(
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=RUN_PAGE_MAX),
+    cursor: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Any:
+    """Run list. Without ``limit``/``cursor``: the unscoped list for existing callers.
+
+    With ``limit`` (1..``RUN_PAGE_MAX``) or ``cursor``: the caller tenant's runs only
+    (verified bearer bound to ``X-Tenant-Id``), newest first by (created_at, run_id), as
+    ``{items, count, limit, order, next_cursor}``; only runs stamped with the tenant.
+    """
+    matches = (
         r for r in store.list_runs()
         if (not task_id or r.get("task_id") == task_id)
         and (not status or str(r.get("status") or "").lower() == status.lower())
-    ]
+    )
+    if limit is None and not cursor:
+        return list(matches)
+    tenant_id = _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+    page_size = limit or 50
+    after = _decode_run_cursor(cursor) if cursor else None
+    mine = (
+        r for r in matches
+        if str(r.get("tenant_id") or "").strip() == tenant_id
+        and (after is None or _run_page_key(r) < after)
+    )
+    window = heapq.nlargest(page_size + 1, mine, key=_run_page_key)
+    items = window[:page_size]
+    return {
+        "tenant_id": tenant_id,
+        "items": items,
+        "count": len(items),
+        "limit": page_size,
+        "order": "created_at_desc",
+        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > page_size else None,
+    }
 
 
 @app.get("/api/research-orchestrator/runs/{run_id}")

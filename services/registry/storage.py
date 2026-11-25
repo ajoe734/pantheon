@@ -11,7 +11,10 @@ needs no changes to select between them.
 from __future__ import annotations
 
 import base64
+import copy
 import dataclasses
+import hashlib
+import heapq
 import json
 from functools import lru_cache
 import os
@@ -22,6 +25,7 @@ from typing import Any, Callable, Collection, Mapping, Optional, Sequence
 from .models import (
     DeploymentStage,
     DeploymentSummary,
+    Lineage,
     RegistryEntry,
     RegistryEntryCreate,
     utc_now_iso,
@@ -47,6 +51,66 @@ PERSONA_BINDING_ROW_KEYS = (
     "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
     "owner_tenant", "created_at", "updated_at",
 )
+
+
+# REGISTRY-DISCOVERY-SPEC-PAGE-20261125: ``view=discovery_candidates`` keyset page.
+DISCOVERY_CANDIDATES_VIEW = "discovery_candidates"
+DISCOVERY_EXCLUDED_STATES = ("retired", "rejected")
+DISCOVERY_MAX_PAGE_SIZE = 50
+DISCOVERY_ENTRY_KEYS = ("registry_id", "strategy_id", "artifact_state", "lineage", "metadata")
+
+
+def discovery_candidate_from_payload(payload: Mapping[str, Any]) -> dict:
+    """The five discovery fields, shaped exactly as the unpaged list serialises them."""
+    return {
+        "registry_id": payload["registry_id"],
+        "strategy_id": payload["strategy_id"],
+        "artifact_state": payload["artifact_state"],
+        "lineage": dataclasses.asdict(Lineage.from_dict(payload.get("lineage"))),
+        "metadata": payload.get("metadata"),
+    }
+
+
+def discovery_candidate_projection(entry: RegistryEntry) -> dict:
+    """Copy only the discovery fields of one in-page entry (never the whole entry)."""
+    return discovery_candidate_from_payload({
+        "registry_id": entry.registry_id,
+        "strategy_id": entry.strategy_id,
+        "artifact_state": getattr(entry.artifact_state, "value", entry.artifact_state),
+        "lineage": entry.lineage.to_dict() if entry.lineage is not None else None,
+        "metadata": copy.deepcopy(entry.metadata),
+    })
+
+
+def _discovery_scope_digest(tenant_id: str) -> str:
+    return hashlib.sha256(f"{DISCOVERY_CANDIDATES_VIEW}\x00{tenant_id}".encode()).hexdigest()[:24]
+
+
+def encode_discovery_page_token(tenant_id: str, after_registry_id: str) -> str:
+    """Opaque keyset token bound to view and tenant by digest; carries no tenant identifier."""
+    raw = json.dumps(
+        {"v": DISCOVERY_CANDIDATES_VIEW, "s": _discovery_scope_digest(tenant_id), "k": after_registry_id},
+        separators=(",", ":"), sort_keys=True,
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_discovery_page_token(token: str, tenant_id: str) -> str:
+    """The keyset ``registry_id`` of a token minted for this view and tenant; ``ValueError`` otherwise."""
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+    except Exception as exc:
+        raise ValueError("Invalid page_token for view=discovery_candidates") from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("v") != DISCOVERY_CANDIDATES_VIEW
+        or data.get("s") != _discovery_scope_digest(tenant_id)
+        or not isinstance(data.get("k"), str)
+        or not data["k"]
+    ):
+        raise ValueError("Invalid page_token for view=discovery_candidates")
+    return data["k"]
 
 
 def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
@@ -1477,6 +1541,60 @@ class RegistryStore:
                 for entry in self._entries.values()
                 if getattr(entry.artifact_type, "value", entry.artifact_type) == wanted
             ]
+
+    def list_card_admission_drafts(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[RegistryEntry]:
+        """At most ``limit`` gate-ready card drafts of one tenant; only matches are copied."""
+        with self._lock:
+            matches = []
+            for entry in self._entries.values():
+                if getattr(entry.artifact_type, "value", entry.artifact_type) != "strategy_spec":
+                    continue
+                if getattr(entry.artifact_state, "value", entry.artifact_state) != "draft":
+                    continue
+                if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
+                    continue
+                meta = entry.metadata or {}
+                if meta.get("tenant_id") != tenant_id:
+                    continue
+                wiring = (((meta.get("strategy_spec") or {}).get("metadata") or {}).get("card_wiring") or {})
+                if wiring.get("status") != "gate_ready":
+                    continue
+                if after_registry_id and not entry.registry_id > after_registry_id:
+                    continue
+                matches.append(entry)
+            matches.sort(key=lambda e: e.registry_id)
+            return [RegistryEntry.from_dict(e.to_dict()) for e in matches[: int(limit)]]
+
+    def list_discovery_candidates(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[dict]:
+        """At most ``limit`` discovery rows (non-retired/rejected StrategySpecs), keyset by registry_id.
+
+        Same keyset contract as :meth:`list_card_admission_drafts`; only the
+        page's rows are projected (``discovery_candidate_projection``), every
+        other entry is compared but never copied.
+        """
+        with self._lock:
+            matches = [
+                entry for entry in self._entries.values()
+                if getattr(entry.artifact_type, "value", entry.artifact_type) == "strategy_spec"
+                and getattr(entry.artifact_state, "value", entry.artifact_state) not in DISCOVERY_EXCLUDED_STATES
+                and (visible_tenants is None or entry.owner_tenant in visible_tenants)
+                and (not after_registry_id or entry.registry_id > after_registry_id)
+            ]
+            page = heapq.nsmallest(int(limit), matches, key=lambda e: e.registry_id)
+            return [discovery_candidate_projection(e) for e in page]
 
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,

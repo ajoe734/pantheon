@@ -47,6 +47,7 @@ from services.source_ingestion.semantic_extraction import (
     StrategySeedExtractionPayload,
     TradeLessonExtractionPayload,
     CANONICAL_FIELD_PATHS,
+    hypothesis_card_deadline_seconds,
     is_claim_grounded,
     compute_schema_id,
     get_semantic_extraction_json_schema,
@@ -73,6 +74,26 @@ _VERIFIED_MODEL_RATES: dict[str, dict[str, float]] = {
 }
 
 _CANONICAL_FIELD_PATHS: frozenset[str] = CANONICAL_FIELD_PATHS
+
+_ADAPTER_DEADLINE_MARGIN_SECONDS = 2.0
+
+# Markers of a gateway answer where every provider was skipped for billing or
+# quota. Skips followed by an answer from a later key are a normal success.
+_BILLING_FAILURE_MARKERS: tuple[str, ...] = (
+    "billing",
+    "insufficient_quota",
+    "credit balance",
+    "payment required",
+    "quota exceeded",
+    "exceeded your current quota",
+)
+
+
+def is_provider_billing_failure(message: Any) -> bool:
+    """True when an error says the provider chain failed on billing/quota."""
+    text = str(message or "").lower()
+    return any(marker in text for marker in _BILLING_FAILURE_MARKERS)
+
 
 _DEFAULT_TOKEN_LIMITS: dict[str, int] = {
     "max_input_tokens": 8000,
@@ -256,6 +277,7 @@ class SemanticExtractionClient:
         token_bucket_limits: Optional[dict[str, int]] = None,
         official_rates: Optional[dict[str, float]] = None,
         fallback_to_baseline: bool = False,
+        hypothesis_deadline_seconds: Optional[float] = None,
     ) -> None:
         self._adapter_url = (
             adapter_url
@@ -276,6 +298,12 @@ class SemanticExtractionClient:
         self._official_rates = dict(official_rates) if official_rates is not None else None
         self._rate_provenance = "official_catalog_2026" if official_rates is None else "custom_override"
         self._fallback_to_baseline = fallback_to_baseline
+        self._hypothesis_deadline_seconds = hypothesis_card_deadline_seconds(hypothesis_deadline_seconds)
+
+    @property
+    def hypothesis_deadline_seconds(self) -> float:
+        """Deadline of one HYPOTHESIS_CARD call (client, adapter and gateway)."""
+        return self._hypothesis_deadline_seconds
 
     def calculate_cost(
         self,
@@ -399,13 +427,20 @@ class SemanticExtractionClient:
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
             )
 
-        # 2. Configure overall turn budget and retry limit (hard-capped at 15s)
-        total_deadline = min(
-            request.timeout_seconds if request.timeout_seconds is not None else self._target_timeout_seconds,
-            self._max_deadline_seconds,
-        )
-        max_retries = min(max(0, request.max_retries), 1)  # at most 1 bounded retry
-        max_attempts = 1 + max_retries
+        # 2. Configure overall turn budget and retry limit. Interactive turns
+        # stay hard-capped at 15 s; HYPOTHESIS_CARD has its own bounded
+        # deadline and exactly one model call per extract() (retries are
+        # separate, budget-counted calls owned by the distillation worker).
+        if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+            total_deadline = self.hypothesis_deadline_seconds
+            max_attempts = 1
+        else:
+            total_deadline = min(
+                request.timeout_seconds if request.timeout_seconds is not None else self._target_timeout_seconds,
+                self._max_deadline_seconds,
+            )
+            max_retries = min(max(0, request.max_retries), 1)  # at most 1 bounded retry
+            max_attempts = 1 + max_retries
 
         prompt = self._build_prompt(request)
         attempt = 0
@@ -441,7 +476,7 @@ class SemanticExtractionClient:
             except SemanticExtractionClientError as exc:
                 last_error_code = exc.failure_code
                 last_error_msg = exc.message
-                if exc.failure_code == ExtractionFailureCode.TIMEOUT:
+                if exc.failure_code in (ExtractionFailureCode.TIMEOUT, ExtractionFailureCode.PROVIDER_BILLING):
                     break
                 # Non-retryable failures: invalid schema, wrong tool, refusal, budget breach, admission denied
                 if exc.failure_code in (
@@ -454,6 +489,10 @@ class SemanticExtractionClient:
                     break
             except Exception as exc:
                 err_str = str(exc)
+                if is_provider_billing_failure(err_str):
+                    last_error_code = ExtractionFailureCode.PROVIDER_BILLING
+                    last_error_msg = err_str
+                    break
                 if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in err_str.lower() or "deadline" in err_str.lower():
                     last_error_code = ExtractionFailureCode.TIMEOUT
                     last_error_msg = err_str
@@ -575,6 +614,8 @@ class SemanticExtractionClient:
                 raise
             except Exception as exc:
                 err_str = str(exc)
+                if is_provider_billing_failure(err_str):
+                    raise SemanticExtractionClientError(err_str, ExtractionFailureCode.PROVIDER_BILLING, 402) from exc
                 if isinstance(exc, (TimeoutError, socket.timeout)) or "TIMEOUT" in err_str or "timed out" in err_str.lower():
                     raise SemanticExtractionClientError(err_str, ExtractionFailureCode.TIMEOUT, 504) from exc
                 if "INVALID_JSON" in err_str or "SCHEMA" in err_str:
@@ -592,6 +633,10 @@ class SemanticExtractionClient:
                 "extraction_schema": schema,
                 "mode": "user",
                 "agent_id": "structured-extraction",
+                # The adapter bounds its own call and the gateway call by this
+                # value, slightly inside ours, so it answers 504 before our
+                # socket deadline instead of finishing after we hung up.
+                "timeout_seconds": round(max(0.5, timeout_seconds - _ADAPTER_DEADLINE_MARGIN_SECONDS), 3),
             }
             headers = {
                 "Content-Type": "application/json",
@@ -615,6 +660,8 @@ class SemanticExtractionClient:
                     data_obj = raw_data.get("data") or {}
                     return data_obj
                 err_body = body_bytes.decode("utf-8", errors="replace")
+                if is_provider_billing_failure(err_body) or status == 402:
+                    raise SemanticExtractionClientError(err_body, ExtractionFailureCode.PROVIDER_BILLING, status)
                 if status == 422:
                     raise SemanticExtractionClientError(err_body, ExtractionFailureCode.INVALID_SCHEMA, 422)
                 if status == 504:

@@ -231,6 +231,7 @@ def _owner_router(
     seeds: Optional[List[Dict[str, Any]]] = None,
     records: Optional[List[Dict[str, Any]]] = None,
     templates: Optional[List[Dict[str, Any]]] = None,
+    summary: Optional[Dict[str, Any]] = None,
     fail: Tuple[str, ...] = (),
     gate_all_completed: bool = False,
     calls: Optional[List[str]] = None,
@@ -243,7 +244,7 @@ def _owner_router(
                 for rid in entry.get("experiment_run_ids") or []:
                     eff_runs.append(_gate_run(rid, tenant=entry.get("tenant_id") or "tenant-dev"))
 
-    def fake(url: str, **_kw: Any) -> Tuple[int, Any]:
+    def fake(url: str, **kw: Any) -> Tuple[int, Any]:
         if calls is not None:
             calls.append(url)
         for marker in fail:
@@ -256,7 +257,15 @@ def _owner_router(
         if "/persona-demands" in url:
             return 200, {"demands": demands or [], "count": len(demands or [])}
         if "/research-orchestrator/runs" in url:
-            return 200, eff_runs
+            tenant = kw.get("tenant_id") or "tenant-dev"
+            mine = sorted(
+                (r for r in eff_runs if r.get("tenant_id") == tenant),
+                key=lambda r: (str(r.get("created_at") or ""), str(r.get("run_id") or "")),
+                reverse=True,
+            )
+            return 200, {"tenant_id": tenant, "items": mine[:200], "next_cursor": "c" if len(mine) > 200 else None}
+        if "/discovery-summary" in url:
+            return (200, summary) if summary is not None else (404, None)
         if "/strategy-seeds" in url:
             return 200, {"items": seeds or [], "count": len(seeds or [])}
         if "/source-records" in url:
@@ -301,8 +310,10 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
     )
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
-    # entries, templates, demands and runs: four owner reads; never source-records or strategy-seeds
-    assert len(calls) == 4
+    # entries, templates, demands, run page and discovery summary; never source-records or strategy-seeds
+    assert len(calls) == 5
+    assert any(c.endswith("/api/source-ingest/management/discovery-summary") for c in calls)
+    assert any(c.endswith("/api/research-orchestrator/runs?limit=200") for c in calls)
     assert not any("/source-records" in c or "/strategy-seeds" in c for c in calls)
     assert calls[0] == (
         "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
@@ -839,44 +850,108 @@ def _get(client: TestClient, path: str = "/bff/alpha-factory?page_size=100") -> 
     return resp.json()
 
 
+def _summary(tenant: str = "tenant-dev", **sections: Any) -> Dict[str, Any]:
+    """Owner discovery-summary shape (services/source_ingestion/discovery_summary.py)."""
+    body: Dict[str, Any] = {
+        "tenant_id": tenant,
+        "generated_at": FIXED_NOW,
+        "window": {"since": "2026-11-20T00:00:00Z", "until": FIXED_NOW},
+        "collected_text_records": {
+            "status": "ok", "source": "source_ingestion.distillation_queue",
+            "last_24h": {"total": 120, "by_source_family": {"news": 100, "paper": 20}},
+            "rows_examined": 130, "truncated": False,
+        },
+        "closed_text_records": {
+            "status": "ok", "source": "source_ingestion.distillation_queue",
+            "last_24h": {"total": 90, "by_reason": {"l2_irrelevant": 70, "no_hypothesis": 20},
+                         "by_source_family": {"news": {"l2_irrelevant": 70, "no_hypothesis": 20}}, "truncated": False},
+            "total": {"total": 9000, "by_reason": {"l2_irrelevant": 8000, "no_hypothesis": 1000},
+                      "by_source_family": {}},
+            "unattributed_terminal_rows": 0,
+        },
+        "llm_calls": {"status": "ok", "source": "source_ingestion.l2_extraction_ledger", "scope": "service",
+                      "utc_day": "2026-11-21", "calls": 37, "daily_cap": 400, "cap_source": "ledger"},
+        "hypothesis_cards": {
+            "status": "ok", "source": "source_ingestion.distillation_queue", "today": 2, "total": 41,
+            "newest": [
+                {"source_id": "src-cna-1", "source_digest": "d1", "source_family": "news", "seed_id": "seed-1",
+                 "title": "TSMC monthly revenue", "title_status": "ok", "carded_at": "2026-11-21T00:00:00Z",
+                 "claim": "Earnings surprise drifts for 60 days", "claim_status": "ok"},
+            ],
+        },
+        "bounds": {"window_row_cap": 100000, "newest_card_limit": 50, "max_response_bytes": 262144},
+    }
+    body.update(sections)
+    return body
+
+
 def test_discovered_lane_lists_open_demands_and_hypothesis_cards(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
-    seeds = [
-        {
-            "seed_id": "seed-1",
-            "source_id": "src-cna-1",
-            "created_at": "2026-11-21T00:00:00Z",
-            "status": "pending_review",
-            "metadata": {
-                "hypothesis_card": {"claim": "Earnings surprise drifts for 60 days", "cited_spans": []},
-            },
-        },
-        {"seed_id": "seed-nocard", "source_id": "src-2", "metadata": {}},
-    ]
     demands = [_demand("dem-1", "persona-a", discovery={"template_search": {"reason": "mandate_universe_missing: no tickers"}})]
     demands.append({**_demand("dem-closed", "persona-b"), "status": "closed"})
     client = _make_bff_client(
         monkeypatch,
-        http_get=_owner_router([], demands=demands, seeds=seeds),
+        http_get=_owner_router([], demands=demands, summary=_summary()),
         read_strategy_state=None,
     )
     body = _get(client)
     discovered = body["data"]["discovered"]
-    assert [d["id"] for d in discovered] == ["dem-1"]
+    assert [d["id"] for d in discovered] == ["dem-1", "card:src-cna-1:d1"]
     demand = discovered[0]
     assert demand["kind"] == "research_demand"
     assert demand["lacking"]["short_measure"] == "return_per_risk"
     assert demand["lacking"]["missing_datasets"] == ["tw_price_daily"]
     assert demand["since"] == "2026-11-20T01:00:00Z"
     assert demand["latest_outcome"]["reason_code"] == "mandate_universe_missing"
-    # no bounded owner read for seeds yet: cards unavailable, never a scan, never 0
-    assert body["data"]["counts"]["hypothesis_cards"] == {
-        "value": None,
-        "status": "unavailable",
-        "reason": "no_bounded_owner_read",
-    }
-    assert body["data"]["counts"]["collected_text_records"]["reason"] == "no_bounded_owner_read"
-    assert body["data"]["counts"]["dropped_irrelevant"]["reason"] == "no_bounded_owner_read"
+    card = discovered[1]
+    assert card["kind"] == "hypothesis_card" and card["source_id"] == "src-cna-1"
+    assert card["display_name"] == "TSMC monthly revenue"
+    assert card["claim"] == "Earnings surprise drifts for 60 days"
+    assert card["since"] == "2026-11-21T00:00:00Z"
+    counts = body["data"]["counts"]
+    assert counts["hypothesis_cards"] == {"value": 41, "status": "ok"}
+    assert counts["hypothesis_cards_today"] == {"value": 2, "status": "ok"}
+    assert counts["collected_text_records"] == {"value": 120, "status": "ok"}
+    assert counts["closed_text_records"] == {"value": 90, "status": "ok"}
+    assert counts["dropped_irrelevant"] == {"value": 70, "status": "ok"}
+    assert counts["llm_calls_today"] == {"value": 37, "status": "ok", "cap": 400, "scope": "service"}
+    summary = body["data"]["discovery_summary"]
+    assert summary["closed_total"]["by_reason"]["l2_irrelevant"] == 8000
+    assert summary["collected_by_source_family"] == {"news": 100, "paper": 20}
+    assert body["meta"]["surfaces"]["alpha_factory_hypothesis_cards"]["status"] == "ok"
+
+
+def test_failed_owner_summary_sections_keep_their_reason(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    missing = {"status": "unavailable", "source": "source_ingestion.distillation_queue",
+               "reason": "distillation_queue_missing"}
+    summary = _summary(
+        collected_text_records=missing, closed_text_records=missing,
+        hypothesis_cards=dict(missing, newest=[]),
+        llm_calls={"status": "unavailable", "source": "x", "reason": "extraction_ledger_missing"},
+    )
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=summary)))
+    counts = body["data"]["counts"]
+    for key in ("collected_text_records", "closed_text_records", "dropped_irrelevant",
+                "hypothesis_cards", "hypothesis_cards_today"):
+        assert counts[key] == {"value": None, "status": "unavailable", "reason": "distillation_queue_missing"}, key
+    assert counts["llm_calls_today"]["reason"] == "extraction_ledger_missing"
+    assert body["data"]["discovered"] == []
+
+
+def test_summary_of_another_tenant_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary("tenant-other"))))
+    assert body["data"]["counts"]["hypothesis_cards"]["reason"] == "summary_scope_mismatch"
+    assert not any(d["kind"] == "hypothesis_card" for d in body["data"]["discovered"])
+
+
+def test_failed_summary_read_is_unavailable_not_zero(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary(), fail=("discovery-summary",))))
+    counts = body["data"]["counts"]
+    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "summary_read_failed"}
+    assert counts["llm_calls_today"]["value"] is None
 
 
 def test_board_never_requests_unbounded_owner_routes(monkeypatch) -> None:
@@ -900,7 +975,18 @@ def test_run_list_is_capped_and_marks_truncation(monkeypatch) -> None:
     client = _make_bff_client(monkeypatch, http_get=_owner_router([], runs=runs))
     body = _get(client)
     surface = body["meta"]["surfaces"]["alpha_factory_runs"]
-    assert surface["truncated"] is True and surface["runs_seen"] == 260
+    assert surface["truncated"] is True and surface["runs_used"] == 200
+
+
+def test_run_of_another_tenant_on_the_owner_page_is_unavailable(monkeypatch) -> None:
+    def fake(url: str, **kw: Any) -> Tuple[int, Any]:
+        if "/research-orchestrator/runs" in url:
+            return 200, {"items": [{"run_id": "x", "tenant_id": "tenant-other"}], "next_cursor": None}
+        return _owner_router([])(url, **kw)
+
+    body = _get(_make_bff_client(monkeypatch, http_get=fake))
+    assert body["meta"]["surfaces"]["alpha_factory_runs"]["reason"] == "run_scope_mismatch"
+    assert body["data"]["counts"]["searches"]["status"] == "unavailable"
 
 
 def test_persona_display_name_comes_from_the_persona_directory(monkeypatch) -> None:
@@ -927,7 +1013,7 @@ def test_empty_discovered_lane_means_owners_answered_none(monkeypatch) -> None:
     assert body["data"]["discovered"] == []
     surfaces = body["meta"]["surfaces"]
     assert surfaces["alpha_factory_demands"]["status"] == "ok"
-    assert surfaces["alpha_factory_hypothesis_cards"]["reason"] == "no_bounded_owner_read"
+    assert surfaces["alpha_factory_hypothesis_cards"]["reason"] == "summary_read_failed"
     assert "no_candidate_source" not in json.dumps(body)
 
 
@@ -1027,7 +1113,7 @@ def test_counts_are_unavailable_with_reason_never_zero(monkeypatch) -> None:
     monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
     body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], fail=("alpha-templates",))))
     counts = body["data"]["counts"]
-    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "no_bounded_owner_read"}
+    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "source_ingest_unconfigured"}
     assert counts["hypothesis_cards"]["status"] == "unavailable"
     assert counts["templates_registered"] == {"value": None, "status": "unavailable", "reason": "templates_read_failed"}
     assert counts["dropped_irrelevant"]["status"] == "unavailable"

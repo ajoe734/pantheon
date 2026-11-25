@@ -11,6 +11,9 @@ Inputs
   * feature probes    executable files directly inside ``acceptance/probes/``
     (contract: ``acceptance/README.md``)
   * one built-in read-only check, ``deployed-pair-identity``
+  * after the probes, the existing execute-plans management page crawl
+    (``scripts/accept-management-hosted-production.mjs`` at the deployed
+    frontend commit) as ``check:management-crawl``, read-only, as the viewer
 
 Growth bound: the verdict is ONE small JSON document that the caller replaces
 (latest result per release).  Per-check output is truncated and the number of
@@ -23,9 +26,12 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +46,23 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
 OWNER_HEADER_RE = re.compile(r"^\s*(?:#|//)\s*acceptance-owner:\s*(\S+)\s*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEADER_LINES = 20
+
+# Post-switch management page crawl (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126).
+CRAWL_ID = "check:management-crawl"
+CRAWL_OWNER = "ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126"
+CRAWL_SCRIPT = "scripts/accept-management-hosted-production.mjs"
+CRAWL_SCHEMA = "pantheon.dev-acceptance-crawl.v1"
+# The pre-switch crawl step (execute-plans Pantheon FE-BFF Integration Gate, "Management hosted
+# production acceptance") took 328-421 s in the six gate runs of 2026-11-24 that minted a credential
+# (45364275324 421 s, 45401183199 361 s, 45428583657 373 s, 45453849299 328 s, 45472712064 334 s,
+# 45500113085 374 s). Limit: the longest plus about 70 % margin.
+CRAWL_DEADLINE_SECONDS = 720
+CRAWL_ROUTE_TIMEOUT_MS = "45000"   # same per-route limits as the pre-switch gate step
+CRAWL_SETTLE_TIMEOUT_MS = "20000"
+MAX_CRAWL_ROUTES = 300
+MAX_FAILED_ROUTES = 50
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+FAILING_MOCK_FINDINGS = {"seed_fallback_armed", "mock_write_success"}
 
 
 def _now() -> str:
@@ -196,11 +219,206 @@ def run_stage(*, checks: list[dict], probes: list[dict], identity: dict, base_en
     return results
 
 
+# --- post-switch management page crawl -------------------------------------------------------------
+
+def _crawl_result(status: str, *, detail: str = "", seconds: float = 0.0, reason: str = "",
+                  failed_routes: list | None = None, exit_code: int | None = None) -> dict:
+    result = _result({"id": CRAWL_ID, "kind": "check", "owner": CRAWL_OWNER}, status, exit_code=exit_code,
+                     detail=detail or reason, seconds=seconds)
+    result["required"] = True  # skipped keeps the verdict pending; it is never a pass
+    if reason:
+        result["reason"] = reason
+    if failed_routes is not None:
+        result["failedRoutes"] = failed_routes[:MAX_FAILED_ROUTES]
+    return result
+
+
+def mint_viewer_token(bff_url: str, client_id: str, client_secret: str) -> str:
+    """Exchange the existing read-only viewer identity at /bff/auth/dev-login; the token stays in memory."""
+    body = json.dumps({"grant_type": "client_credentials", "client_id": client_id,
+                       "client_secret": client_secret}).encode()
+    request = urllib.request.Request(f"{bff_url.rstrip('/')}/bff/auth/dev-login", data=body, method="POST",
+                                     headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - pinned dev BFF URL
+            token = str(json.loads(response.read().decode("utf-8")).get("access_token") or "").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo the body or the secret
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+    if token.count(".") != 2:
+        raise RuntimeError("no_access_token")
+    return token
+
+
+def run_crawl_process(argv: list[str], *, env: dict, cwd: Path, deadline: int) -> tuple[int | None, str]:
+    """Run the crawl in its own process group; on the deadline kill the group (node and Chromium).
+
+    Returns (exit code, output); exit code None means the deadline expired.
+    """
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, start_new_session=True)
+    except OSError as exc:
+        return 126, f"could not execute: {exc}"
+    try:
+        output, _ = process.communicate(timeout=deadline)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        output, _ = process.communicate()
+        return None, output or ""
+    return process.returncode, output or ""
+
+
+def _route_problems(route: dict) -> list[str]:
+    problems = []
+    status = route.get("status")
+    if status != "ok":
+        problems.append(str(status))
+    counts = route.get("consoleErrorCounts") or {}
+    if counts.get("render_crash"):
+        problems.append("render_crash_console")
+    if counts.get("cors"):
+        problems.append("cors_console")
+    if (route.get("alias") or {}).get("directRenderFail"):
+        problems.append("alias_direct_render")
+    if route.get("detailHonestyViolations"):
+        problems.append("detail_honesty")
+    if any(isinstance(m, dict) and m.get("id") in FAILING_MOCK_FINDINGS for m in route.get("mockFindings") or []):
+        problems.append("mock_finding")
+    return problems
+
+
+def _route_error(route: dict) -> str:
+    """The render error that names the failure: first render-crash console line, else nav error or data reasons."""
+    for entry in route.get("consoleErrors") or []:
+        if isinstance(entry, dict) and entry.get("kind") == "render_crash":
+            return str(entry.get("text") or "")[:240]
+    if route.get("navError"):
+        return str(route["navError"])[:240]
+    reasons = (route.get("dataCheck") or {}).get("reasons") or []
+    return ", ".join(str(r) for r in reasons)[:240]
+
+
+def summarize_crawl(manifest: dict) -> dict:
+    """Routes and statuses only: no token, no response body, no request URL query."""
+    routes, failed, non_get = [], [], set()
+    for route in (manifest.get("routes") or [])[:MAX_CRAWL_ROUTES]:
+        if not isinstance(route, dict):
+            continue
+        problems = _route_problems(route)
+        entry = {"path": str(route.get("path") or ""), "kind": str(route.get("kind") or ""),
+                 "status": str(route.get("status") or ""),
+                 "dataPass": bool((route.get("dataCheck") or {}).get("pass"))}
+        if problems:
+            entry["problems"] = problems
+            failed.append({"path": entry["path"], "status": entry["status"], "problems": problems,
+                           "error": _route_error(route)})
+        routes.append(entry)
+        for request in route.get("bffRequests") or []:
+            method = str((request or {}).get("method") or "GET").upper()
+            if method not in SAFE_METHODS:
+                url = str((request or {}).get("url") or "")
+                non_get.add(f"{method} {urllib.parse.urlsplit(url).path if '://' in url else url.split('?', 1)[0]}")
+    result = manifest.get("result") or {}
+    return {"pass": result.get("pass") is True, "overall": str(result.get("overall") or ""),
+            "failures": [str(f)[:200] for f in (result.get("failures") or [])][:20],
+            "routeCount": len(routes), "routes": routes, "failedRoutes": failed,
+            "nonGetRequests": sorted(non_get)[:50]}
+
+
+def _find_manifest(out_dir: Path) -> dict | None:
+    candidates = sorted(out_dir.glob("management-hosted-acceptance-*.json"), key=lambda p: p.stat().st_mtime)
+    if not candidates:
+        return None
+    try:
+        document = json.loads(candidates[-1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def crawl_check(*, frontend_dir: Path | None, prepared: str, identity: dict, identity_passed: bool,
+                base_env: dict, work_dir: Path, deadline: int = CRAWL_DEADLINE_SECONDS,
+                minter=mint_viewer_token, runner=run_crawl_process, clock=time.monotonic) -> tuple[dict, dict]:
+    """Run the existing management crawl against the served pair. Returns (verdict check, crawl artifact).
+
+    Never raises for an expected condition: every way the crawl cannot run is ``skipped`` with a reason.
+    """
+    artifact = {"schemaVersion": CRAWL_SCHEMA, "generatedAt": _now(), "deadlineSeconds": deadline,
+                "frontendSha": identity["frontend_sha"], "backendSha": identity["backend_sha"],
+                "feUrl": identity["fe_url"], "bffUrl": identity["bff_url"], "script": CRAWL_SCRIPT,
+                "identity": "viewer", "readOnly": True}
+
+    def skipped(reason: str, seconds: float = 0.0, detail: str = "") -> tuple[dict, dict]:
+        artifact.update({"status": "skipped", "reason": reason, "seconds": round(seconds, 2)})
+        return _crawl_result("skipped", reason=reason, detail=detail or f"skipped: {reason}", seconds=seconds), artifact
+
+    if not identity_passed:
+        return skipped("stack_not_verified")  # starts only once the served pair is the deployed pair
+    if prepared != "success":
+        return skipped("frontend_not_prepared", detail=f"skipped: frontend_not_prepared ({prepared or 'not run'})")
+    if frontend_dir is None or not (frontend_dir / CRAWL_SCRIPT).is_file():
+        return skipped("crawl_script_missing")
+    client_id = base_env.get("ACCEPTANCE_VIEWER_CLIENT_ID", "").strip()
+    client_secret = base_env.get("ACCEPTANCE_VIEWER_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return skipped("viewer_credential_missing")
+    try:
+        token = minter(identity["bff_url"], client_id, client_secret)
+    except Exception as exc:
+        return skipped("viewer_login_failed", detail=f"skipped: viewer_login_failed ({redact(str(exc), base_env)})")
+    out_dir = work_dir / "crawl-output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    env = {"PATH": base_env.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": base_env.get("HOME", "/tmp"),
+           "LANG": "C.UTF-8", "CI": "1",
+           "PANTHEON_FE_BASE_URL": identity["fe_url"], "PANTHEON_BFF_BASE_URL": identity["bff_url"],
+           "PANTHEON_AUDIT_OUT_DIR": str(out_dir), "PANTHEON_LOAD_BASELINE_OUT_DIR": str(out_dir),
+           "PANTHEON_ACCEPT_ROUTE_TIMEOUT_MS": CRAWL_ROUTE_TIMEOUT_MS,
+           "PANTHEON_ACCEPT_SETTLE_TIMEOUT_MS": CRAWL_SETTLE_TIMEOUT_MS,
+           "PANTHEON_ACCEPT_CLICK_WRITE_CTAS": "0", "BFF_AUTH_TOKEN": token}
+    if base_env.get("PLAYWRIGHT_BROWSERS_PATH"):
+        env["PLAYWRIGHT_BROWSERS_PATH"] = base_env["PLAYWRIGHT_BROWSERS_PATH"]
+    redact_env = {**base_env, "CRAWL_BEARER_TOKEN": token}
+    started = clock()
+    code, output = runner(["node", CRAWL_SCRIPT, "--out-dir", str(out_dir)], env=env, cwd=frontend_dir,
+                          deadline=deadline)
+    seconds = clock() - started
+    tail = _clip(redact(output, redact_env))
+    if code is None:
+        return skipped("crawl_deadline", seconds, detail=f"skipped: crawl_deadline (limit {deadline}s)")
+    manifest = _find_manifest(out_dir)
+    if manifest is None:
+        artifact["outputTail"] = tail[-500:]
+        return skipped("crawl_no_report", seconds, detail=f"skipped: crawl_no_report (exit {code}); {tail[-400:]}")
+    summary = json.loads(redact(json.dumps(summarize_crawl(manifest)), redact_env))
+    artifact.update({"seconds": round(seconds, 2), "exitCode": code, "crawlOverall": summary["overall"],
+                     "crawlFailures": summary["failures"], "routeCount": summary["routeCount"],
+                     "routes": summary["routes"], "failedRoutes": summary["failedRoutes"],
+                     "nonGetRequests": summary["nonGetRequests"]})
+    note = f"; non-GET BFF requests seen: {', '.join(summary['nonGetRequests'])}" if summary["nonGetRequests"] else ""
+    if summary["pass"]:
+        artifact["status"] = "passed"
+        return _crawl_result("passed", exit_code=code, seconds=seconds, failed_routes=[],
+                             detail=f"{summary['routeCount']} routes crawled; overall {summary['overall']}{note}"), artifact
+    artifact["status"] = "failed"
+    named = "; ".join(f"{r['path']} ({r['status']}: {r['error']})" for r in summary["failedRoutes"][:10])
+    detail = (f"failed routes: {named}" if named else "no failing route") + \
+        f"; crawl failures: {', '.join(summary['failures']) or 'none'}{note}"
+    return _crawl_result("failed", exit_code=code, seconds=seconds, detail=detail,
+                         failed_routes=summary["failedRoutes"]), artifact
+
+
 def verdict_status(results: list[dict]) -> str:
     if any(item["status"] == "failed" for item in results):
         return "failed"
     if any(item.get("lease_required") for item in results):
         return "pending"  # a required mutating check did not run: not a pass
+    if any(item.get("required") and item["status"] == "skipped" for item in results):
+        return "pending"  # a required check (the management crawl) could not run: not a pass
     return "passed"
 
 
@@ -253,8 +471,36 @@ def summary_markdown(verdict: dict, deployed: str) -> str:
     skipped = [item["id"] for item in verdict["checks"] if item["status"] == "skipped"]
     if skipped:
         lines.append(f"- skipped: {', '.join(f'`{name}`' for name in skipped)}")
+    crawl = next((item for item in verdict["checks"] if item["id"] == CRAWL_ID), None)
+    if crawl:
+        routes = ", ".join(f"`{r['path']}`" for r in crawl.get("failedRoutes") or [])
+        lines.append(f"- management crawl: `{crawl['status']}`"
+                     + (f" ({crawl['reason']})" if crawl.get("reason") else "")
+                     + (f" failed routes: {routes}" if routes else ""))
     lines.append("- a release is `accepted` only when acceptance is `passed`; acceptance never rolls back a deploy")
     return "\n".join(lines) + "\n"
+
+
+def _run_crawl(args, identity: dict, results: list[dict]) -> dict:
+    """The crawl after the probes; any internal error is a skipped crawl (pending), never a pass or a crash."""
+    import tempfile
+    identity_passed = any(item["id"] == "check:deployed-pair-identity" and item["status"] == "passed"
+                          for item in results)
+    try:
+        with tempfile.TemporaryDirectory(prefix="acceptance-crawl-") as work:
+            check, artifact = crawl_check(frontend_dir=args.crawl_frontend_dir, prepared=args.crawl_prepared,
+                                          identity=identity, identity_passed=identity_passed,
+                                          base_env=dict(os.environ), work_dir=Path(work),
+                                          deadline=args.crawl_deadline_seconds)
+    except Exception as exc:
+        check = _crawl_result("skipped", reason="crawl_internal_error",
+                              detail=f"skipped: crawl_internal_error ({redact(str(exc), dict(os.environ))})")
+        artifact = {"schemaVersion": CRAWL_SCHEMA, "status": "skipped", "reason": "crawl_internal_error"}
+    try:
+        _write(args.crawl_out, artifact)
+    except OSError:
+        pass
+    return check
 
 
 def main(argv=None) -> int:
@@ -269,6 +515,11 @@ def main(argv=None) -> int:
     parser.add_argument("--verdict-out", type=Path, default=Path("acceptance-verdict.json"))
     parser.add_argument("--lease-held", action="store_true")
     parser.add_argument("--deployed", default="success")
+    parser.add_argument("--crawl-frontend-dir", type=Path, default=None,
+                        help="deployed execute-plans checkout; when given, the management crawl runs after the probes")
+    parser.add_argument("--crawl-prepared", default="", help="outcome of the credential-free dependency install")
+    parser.add_argument("--crawl-deadline-seconds", type=int, default=CRAWL_DEADLINE_SECONDS)
+    parser.add_argument("--crawl-out", type=Path, default=Path("acceptance-crawl.json"))
     args = parser.parse_args(argv)
     try:
         checks, probes = load_checks(args.checks), discover_probes(args.probes_dir)
@@ -294,6 +545,8 @@ def main(argv=None) -> int:
     except Exception as exc:
         results = [_result({"id": "check:stage-internal", "kind": "check", "owner": SELF_OWNER}, "failed",
                            detail=f"acceptance stage error: {exc}")]
+    if args.crawl_frontend_dir is not None:
+        results.append(_run_crawl(args, identity, results))
     verdict = build_verdict(status=verdict_status(results), results=results, identity=identity, run=_run_info())
     _write(args.verdict_out, verdict)
     _output("acceptance", verdict["acceptance"])
