@@ -6412,6 +6412,60 @@ class ManagementService:
             "meta": meta,
         }
 
+    def get_cited_evidence(
+        self,
+        *,
+        identity: Optional[Any] = None,
+        tenant_id: str,
+        is_operator: bool = False,
+        caller_user_id: str = "",
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        """``scope=cited``: references that decisions, meetings, approvals and research cite.
+
+        Composed per request from existing owner reads (see
+        ``management_read_models/cited_evidence.py``); nothing is stored.
+        """
+        from . import cited_evidence
+        from ..core.display_names import current_resolver
+
+        store = self._resolve_store()
+        ctx = cited_evidence.CitedReadContext(
+            identity=identity,
+            tenant_id=tenant_id,
+            is_operator=is_operator,
+            caller_user_id=caller_user_id,
+            read_store=store,
+            snapshot_at=self._utc_now(),
+        )
+        try:
+            capabilities = _capabilities_for_identity(identity)
+        except Exception:
+            capabilities = None
+
+        def _redact(refs: List[Dict[str, Any]]) -> Tuple[List[Any], int]:
+            if redact_evidence_refs is None:
+                return fail_closed_redacted_refs(refs, default_kind="artifact")
+            try:
+                return redact_evidence_refs(identity, refs, capabilities=capabilities, default_kind="artifact")
+            except Exception:
+                return fail_closed_redacted_refs(refs, default_kind="artifact")
+
+        item_reader = getattr(store, "read_evidence_ref_item", None) if store is not None else None
+        try:
+            names = current_resolver(store)
+        except Exception:
+            names = None
+        return cited_evidence.compose_cited_evidence(
+            ctx,
+            item_reader=item_reader if callable(item_reader) else None,
+            names=names,
+            redact=_redact,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
     def get_evidence(
         self,
         ref_id: Optional[str] = None,
