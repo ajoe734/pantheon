@@ -419,9 +419,14 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     registry_var = "RESEARCH_REGISTRY_SERVICE_TOKEN"
     training_var = "RESEARCH_TRAINING_SERVICE_TOKEN"
     bff_var = "RESEARCH_BFF_SERVICE_TOKEN"
+    # The original five are unchanged and in order; RC2 appends exactly the five read-only case-file principals
+    # (asserted in test_research_case_file_principals_are_read_only_file_delivered_and_mounted_to_research_only).
     assert CONSUMER_FILES["research-orchestrator-svc"] == (
         registry_var, training_var, bff_var,
         "RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_CAPITAL_SERVICE_TOKEN",
+        "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN", "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN", "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
+        "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
     )
     values = issue_environment(configured(), now=NOW)
 
@@ -1036,3 +1041,78 @@ def test_consultation_research_principal_is_admitted_by_research_owner_checks_an
     assert not any("JWT_SECRET" in key for key in compose)  # no signing secret distributed
     assert issuer.revoked_environment(
         {**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""
+
+
+CASE_FILE_READERS = {
+    "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": ("pantheon-dev-research-case-file-memory-reader", ["consultation_session"]),
+    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ["viewer", "reviewer"]),
+    "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", ["registry-reader"]),
+    "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", ["persona_pool_reader"]),
+    "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN": ("pantheon-dev-research-case-file-search-reader", ["researcher", "persona_session"]),
+}
+CASE_FILE_FORBIDDEN_ROLES = {
+    "service", "operator", "admin", "automated_gate", "approval_decider", "approval_proposer", "registry-writer",
+    "consultation-svc", "persona-svc", "training-service", "capital-reader", "risk_owner", "runtime", "system",
+}
+
+
+def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_to_research_only():
+    import time
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    now = int(time.time())
+    values = issue_environment(configured(), now=now)
+    jtis = set()
+    for variable, (subject, roles) in CASE_FILE_READERS.items():
+        assert variable in READERS and variable not in WRITERS
+        claims = verify(values[variable], now=now + 1)
+        assert claims["sub"] == subject and claims["roles"] == roles
+        assert claims["scope"] == "pantheon:dev-owner-read"  # never an owner-write scope
+        assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+        assert not CASE_FILE_FORBIDDEN_ROLES & set(claims["roles"])
+        assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+        # Mounted to research-orchestrator-svc only.
+        assert variable in CONSUMER_FILES["research-orchestrator-svc"]
+        assert all(variable not in names for c, names in CONSUMER_FILES.items() if c != "research-orchestrator-svc")
+        assert issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""
+        jtis.add(claims["jti"])
+    assert len(jtis) == len(CASE_FILE_READERS)  # no credential shared between owners
+    assert verify(values["RESEARCH_CASE_FILE_SEARCH_READ_TOKEN"], now=now + 1)["access_scopes"] == ["operator", "research", "public"]
+    # Actor id equals the memory credential subject; roles are exactly the memory read role.
+    memory = verify(values["RESEARCH_CASE_FILE_MEMORY_READ_TOKEN"], now=now + 1)
+    assert values["RESEARCH_CASE_FILE_ACTOR_ID"] == memory["sub"]
+    assert values["RESEARCH_CASE_FILE_ACTOR_ROLES"] == ",".join(memory["roles"])
+    revoked = issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert revoked["RESEARCH_CASE_FILE_ACTOR_ID"] == "" and revoked["RESEARCH_CASE_FILE_ACTOR_ROLES"] == ""
+
+    # The existing write-capable research principals are not what case files read with.
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]
+    env = compose["research-orchestrator-svc"]["environment"]
+    mapping = {
+        "PANTHEON_MEMORY_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN",
+        "PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
+        "PANTHEON_REGISTRY_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN",
+        "PANTHEON_PERSONA_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
+        "PANTHEON_SEARCH_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
+    }
+    for owner_var, variable in mapping.items():
+        assert env[owner_var].endswith("/run/pantheon-principals/" + variable + "}")
+        assert env[variable + "_FILE"] == env[owner_var]
+        # Case-file owner tokens are never plain env values (files only) and never a write-capable RESEARCH_* file.
+        assert owner_var.removesuffix("_FILE") not in env
+        assert "WRITE" not in env[owner_var] and "RESEARCH_REGISTRY_SERVICE_TOKEN" not in env[owner_var]
+    for owner in ("REGISTRY", "PERSONA", "TELEMETRY", "MEMORY", "SEARCH"):
+        assert env[f"PANTHEON_{owner}_API_URL"].startswith("http://")
+    assert env["RESEARCH_CASE_FILE_ACTOR_ID"] == "${RESEARCH_CASE_FILE_ACTOR_ID:-}"
+    assert env["RESEARCH_CASE_FILE_ACTOR_ROLES"] == "${RESEARCH_CASE_FILE_ACTOR_ROLES:-}"
+    assert "dev-paper-research-tokens:/run/pantheon-principals:ro" in compose["research-orchestrator-svc"]["volumes"]
+    # No other service references a case-file principal, and no other compose file carries a default for one.
+    for name, service in compose.items():
+        if name != "research-orchestrator-svc":
+            assert "RESEARCH_CASE_FILE" not in str(service), name
+    for other in root.glob("docker-compose.*.yml"):
+        assert "RESEARCH_CASE_FILE_" not in other.read_text(), other.name
+    for path in (root / "deploy").rglob("*"):
+        if path.is_file() and path.suffix in {".yml", ".yaml", ".env", ""}:
+            assert "RESEARCH_CASE_FILE_" not in path.read_text(errors="ignore"), str(path)
