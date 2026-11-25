@@ -1,0 +1,27 @@
+{
+  "task": "DISTILLATION-DEAD-LETTER-RECOVERY-R2-20261125",
+  "owner": "Claude2",
+  "class": "RC2",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "acceptance": {
+    "1_lease_expired_redrive": "DistillationJobQueue.redrive_lease_expired_dead_letters; controller gate _NORMAL_WORK_SEEN; <=10/tick, <=2/job; test_139_lease_expired_dead_letters_redrive_bounded_without_starving_new_work (139 rows, new work processed in tick 1, 14 ticks); test_lease_expired_job_that_exhausts_again_stays_dead_lettered_with_count",
+    "2_lineage_conflicts": {
+      "covered_by_7763": "replay of an existing Registry draft tolerates the retained creation timestamp so checksum no longer differs",
+      "not_covered_by_7763": "existing conflict dead-letter rows were not redriven and a genuine content conflict had no terminal state",
+      "this_task": "settle_lineage_conflict_dead_letters: replay once, then close skipped with registry_lineage_conflict_unresolved; no Registry read-for-overwrite/write, no checksum"
+    },
+    "3_retired_runtime": "close_retired_tenant_pending: explicit tenant env + window; refuses the active tenant or a tenant enqueued after the window; hosted tenant identity/retirement of the 1268 rows is NOT proven from the repo and nothing was run on hosted - an operator must set DISTILLATION_RETIRED_TENANT_IDS/WINDOW after proving it; residual",
+    "4_status": "controller_status working|working_with_unresolved_dead_letters|working_delivery_degraded|not_working; dead letter alone records success; alive marker line 2 carries status; stale marker after repeated hard failures unchanged",
+    "5_hosted": "nothing run by hand; first natural tick after deploy must show controller_status=working_with_unresolved_dead_letters, lease_expired_redriven<=10, lineage_replayed then lineage_closed (3), retired_closed only once configured"
+  },
+  "tests": {
+    "command": "pytest services/source_ingestion/tests/{test_distillation_controller,test_distillation_worker,test_distillation_queue_lifetime,test_l12_dist_001_transactional_distillation}.py",
+    "result": "169 passed in 93.30s (4 files, exit 0); 5 pre-existing assertions updated from dead-letter=failed to working_with_unresolved_dead_letters",
+    "runtime_budget_seconds": "~100 focused suite; 139-row replay test ~10"
+  },
+  "residual_findings": [
+    "Retired-runtime closure needs operator-proven tenant and window before env is set",
+    "Container healthcheck remains mtime based; status is readable in the marker second line only",
+    "Hosted proof pending"
+  ]
+}
