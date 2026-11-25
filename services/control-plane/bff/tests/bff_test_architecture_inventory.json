@@ -2899,7 +2899,7 @@
       "layer": "router",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "BFF-STRATEGY-ATTRIBUTION-HIDE-TEST-PERSONAS-20261120 regression coverage for GET /bff/strategies hiding test-scoped personas by default with meta count, include_test_personas, single directory read, and the attribution hiding helper; never imports main"
+      "rationale": "BFF-STRATEGY-ATTRIBUTION-HIDE-TEST-PERSONAS-20261120 regression coverage for GET /bff/strategies hiding test-scoped personas by default with meta count, include_test_personas, single directory read, the attribution hiding helper, and REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125 hosted-shape owner-side hide (one bounded owner read per filter, exact visible counts); never imports main"
     },
     {
       "file": "tests/test_strategy_synthetic_stubs.py",
