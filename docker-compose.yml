@@ -538,6 +538,10 @@ services:
       PANTHEON_L2_EXTRACTION_ENABLED: ${PANTHEON_L2_EXTRACTION_ENABLED:-0}
       PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP: ${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}
       PANTHEON_L2_EXTRACTION_LEDGER_PATH: /data/source-ingest/l2_extraction_ledger.sqlite
+      # One HYPOTHESIS_CARD call: client, adapter and gateway share this deadline (bounded 5-180 s).
+      # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
+      PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
+      PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
       DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
       DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104

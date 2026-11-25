@@ -1,0 +1,26 @@
+{
+  "task": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125",
+  "class": "RC2",
+  "hosted_facts_from_task_brief": "read-only 2026-11-25 15:24Z-15:26Z: 12 of 12 structured calls timed out 10.0 s apart; gateway finished the same calls in ~9-10 s on the second OpenAI key after Anthropic and the first OpenAI key were skipped for billing; one record denied REDACTION_VIOLATION. Not re-measured by this worker (no hosted access).",
+  "tests": {
+    "focused": "services/source_ingestion/tests/test_l2_extraction_deadline_and_budget.py 14 passed; test_hypothesis_extraction.py (2 tests rewritten for per-call counting)",
+    "negative_control": "with the worker lease reverted to lease_seconds the lease test fails (second claimer recovers the job mid-call)",
+    "regression": "test_distillation_worker, test_distillation_queue_lifetime, test_distillation_controller, test_demand_priority, test_semantic_extraction, test_semantic_extraction_admission, test_l2_relevance, scripts/test_l2_extraction_deploy_switch_contract + test_current_l12_compose_wiring: 226 + 17 passed; adapter test_structured_data_tool_contract 64 passed; related source_ingestion files (hypothesis_compiler, ids_002 redaction guard, l12_dist_001, seed builder/store, agora, e2e acceptance, ...) passed; scripts/check_storage_manifest.py passed",
+    "not_run": "test_collector_market_provenance_bound, test_scheduled_connector, test_source_evidence_lookup_plans, test_ingest_receipt_snapshot_refs_bounded exceeded the bounded batch; they only matched the file filter loosely and do not import the changed symbols"
+  },
+  "acceptance": {
+    "2": "PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS (default 90, clamp 5-180) via semantic_extraction.hypothesis_card_deadline_seconds; client turn, adapter body timeout_seconds (deadline - 2 s) and adapter provider/gateway call share it; interactive clamp 15 s unchanged (test); adapter answering after 40 s -> one card, after 95 s -> unavailable (fake monotonic clock); adapter route honours caller deadline, never extends it (test_structured_data_tool_contract)",
+    "3": "DistillationWorker._job_lease_seconds = max(lease, call deadline + 60 s) used by begin_job; test holds a 60 s call under a 30 s lease while a second claimer runs recovery: job not recovered, done, attempts 1, no lease_lost. Per-tick extraction budget (default 120 s) keeps a tick inside the 300 s alive-marker window; controller truth lease follows",
+    "4": "ExtractionLedger.reserve_attempt counts every call; 3 per record version per UTC day (attempts_deferred -> next day, no attempt burned), 6 in total (attempts_exhausted -> skipped l2_extraction_attempts_exhausted: <last reason>); calls table carries timeouts/billing/unavailable counts; DistillationRunResult.extraction summary; failing provider cannot pass the cap (test: cap 5, 4 records, 5 calls)",
+    "5": "Admission explanations (rule, offset, length, masked preview, secret_class) recorded on the ledger event; capital-amount rule no longer applies to HYPOTHESIS_CARD over public news/paper/book/social text; real secret (sk-... key) still refused and not echoed (test); internal/interactive text still refuses amounts",
+    "6": "billing-only failure -> failure_code provider_billing -> unavailable -> job retry_wait on the long backoff, ledger billing_failed_calls, never no_hypothesis; skips followed by an answer yield a card; HTTP 502 billing body maps to provider_billing (tests)",
+    "register": "docs/operations/problem-register.md RC2 row added; storage manifest: table:reservations replaced by bounded table:record_attempts (30-day prune)"
+  },
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residuals": [
+    "The hosted record denied with REDACTION_VIOLATION was not re-read (no hosted access from this worker) and the stored ledger event only had the denial code, so which rule matched is unconfirmed; the capital-amount exemption is the most likely cause (published figures in news). The next denial records rule, offset, masked preview and secret class.",
+    "Hosted proof pending after deploy: ledger summary shows calls with timeout_calls near zero and at least one hypothesis card at the next natural cycle.",
+    "Gateway-side fallback order and billing of the Anthropic/OpenAI keys is operator-owned; this task only stops treating the skips as an answer or as a closure.",
+    "The pre-existing alive-marker only refreshes at tick end; a tick is now bounded to tick budget + one call deadline, but other tick work (registry sync) is unchanged."
+  ]
+}

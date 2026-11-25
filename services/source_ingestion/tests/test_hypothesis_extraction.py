@@ -420,8 +420,10 @@ class _Flaky:
                            "usage": {"input_tokens": 100, "output_tokens": 100}}}
 
 
-def test_adapter_503_then_200_retries_to_one_card_and_one_budget_use(tmp_path):
-    transport = _Flaky(failures=2)  # the client's own bounded retry also sees 503
+def test_adapter_503_then_200_retries_to_one_card_and_counts_every_call(tmp_path):
+    # L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125: each job attempt is one
+    # model call and every call counts against the cap, retries included.
+    transport = _Flaky(failures=2)
     clock = [1_800_000_000.0]
     queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
     store = StrategySpecSeedStore(tmp_path / "s.jsonl")
@@ -434,18 +436,22 @@ def test_adapter_503_then_200_retries_to_one_card_and_one_budget_use(tmp_path):
     assert (first.failed, first.retried, first.skipped, first.created) == (1, 1, 0, 0)
     job = queue.get("src-1")
     assert job.status == "retry_wait" and "hypothesis_extraction_unavailable" in (job.error or "")
-    assert ledger.calls_today() == 1
+    assert transport.calls == 1 and ledger.calls_today() == 1
     assert not [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
     clock[0] += 120
-    second = worker.run_pending()
-    assert second.created == 1
+    assert worker.run_pending().failed == 1
+    clock[0] += 240
+    third = worker.run_pending()
+    assert third.created == 1
     assert queue.get("src-1").status == "done"
-    assert ledger.calls_today() == 1  # the retry did not consume the day's budget again
+    assert transport.calls == 3 and ledger.calls_today() == 3
+    assert ledger.summary()["unavailable_calls"] == 2
+    assert third.extraction["calls"] == 3 and third.extraction["unavailable_calls"] == 2
     assert len(list(store.list_all())) == 1
     assert [e["outcome"] for e in ledger.events("src-1")].count("card") == 1
 
 
-def test_unavailable_model_is_retried_on_the_long_schedule_never_dead_lettered_in_seconds(tmp_path):
+def test_unavailable_model_is_retried_with_backoff_then_waits_for_next_day(tmp_path):
     transport = _Flaky(failures=10**6)
     clock = [1_800_000_000.0]
     queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
@@ -457,8 +463,11 @@ def test_unavailable_model_is_retried_on_the_long_schedule_never_dead_lettered_i
     for _ in range(5):
         worker.run_pending()
         clock[0] += 700
-    assert queue.get("src-1").status == "retry_wait"  # three attempts would have dead-lettered it
-    assert ledger.calls_today() == 1
+    job = queue.get("src-1")
+    assert job.status == "retry_wait"  # never dead-lettered in seconds
+    assert ledger.calls_today() == 3 == transport.calls  # at most 3 calls a day per record
+    assert "attempts_deferred" in (job.error or "")
+    assert job.next_attempt_at.endswith("T00:00:00Z")
     assert not list(StrategySpecSeedStore(tmp_path / "s.jsonl").list_all())
 
 
