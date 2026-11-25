@@ -354,3 +354,119 @@ def test_prediction_contract_rejects_invalid_values(field, value):
     card["predictions"][0][field] = value
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(card, hypothesis_card_contract_schema())
+
+
+# ---------------------------------------------------------------------------
+# L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125 (RC2)
+# ---------------------------------------------------------------------------
+
+LOTTERY = "大樂透頭獎槓龜，獎金累積至三億，下期開獎日期不變。"
+
+
+def _skip_reason(queue: DistillationJobQueue, sid: str) -> str:
+    return queue.get(sid).skip_reason or ""
+
+
+@pytest.mark.parametrize("stype", ["paper", "news", "social", "filing", "macro"])
+def test_extraction_off_external_text_creates_no_draft_and_counts_by_source_and_reason(tmp_path, stype):
+    queue = DistillationJobQueue(tmp_path / "q.jsonl")
+    store = StrategySpecSeedStore(tmp_path / "s.jsonl")
+    worker = DistillationWorker(queue, store)  # no extractor: extraction disabled
+    relevant, other = _source("rel", stype), _source("lot", stype, body=LOTTERY)
+    result = _run(worker, relevant, other)
+    assert (result.created, result.skipped) == (0, 2)
+    assert store.list_by_bundle("bundle-rel") == [] and not list(store.list_all())
+    assert _skip_reason(queue, "rel").startswith("l2_extraction_disabled")
+    assert _skip_reason(queue, "lot").startswith(
+        "l2_irrelevant: " + ("paper_not_finance" if stype == "paper" else "no_finance_signal"))
+    assert queue.external_text_closure_counts()[stype] == {
+        "l2_extraction_disabled": 1, "l2_irrelevant": 1,
+    }
+
+
+def test_seed_builder_has_no_evidence_suggests_fallback_for_external_text():
+    from services.source_ingestion.distillation_worker import _synthesize_evidence_bundle, _synthesize_evidence_item
+    from services.source_ingestion.strategy_seed_builder import StrategySpecSeedError, build_strategy_spec_seed
+
+    source = _source("raw", "news")
+    item = _synthesize_evidence_item(source)
+    bundle = _synthesize_evidence_bundle(source, item)
+    with pytest.raises(StrategySpecSeedError, match="hypothesis_card_required"):
+        build_strategy_spec_seed(bundle, source_records=[source], evidence_items=[item])
+
+
+def test_irrelevant_record_costs_no_budget_and_no_model_call(tmp_path):
+    transport = _Transport()
+    worker, queue, store, ledger = _worker(tmp_path, transport)
+    result = _run(worker, _source("lot", "news", body=LOTTERY))
+    assert result.skipped == 1 and not transport.calls
+    assert ledger.calls_today() == 0
+    assert _skip_reason(queue, "lot").startswith("l2_irrelevant")
+    assert not list(store.list_all())
+
+
+class _Flaky:
+    """Adapter answering 503 for the first ``failures`` calls, then a valid card."""
+
+    def __init__(self, failures: int) -> None:
+        self.failures, self.calls = failures, 0
+
+    def __call__(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError("HTTP Error 503: Service Unavailable")
+        return {"output": {"structured_data": {"is_abstained": False, "abstention_reason": None,
+                                               "hypothesis_card": _card()},
+                           "usage": {"input_tokens": 100, "output_tokens": 100}}}
+
+
+def test_adapter_503_then_200_retries_to_one_card_and_one_budget_use(tmp_path):
+    transport = _Flaky(failures=2)  # the client's own bounded retry also sees 503
+    clock = [1_800_000_000.0]
+    queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
+    store = StrategySpecSeedStore(tmp_path / "s.jsonl")
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=5)
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    worker = DistillationWorker(queue, store, hypothesis_extractor=extractor, retry_base_seconds=1.0)
+    source = _source("src-1", "news")
+    worker.enqueue_from_source_record(source)
+    first = worker.run_pending()
+    assert (first.failed, first.retried, first.skipped, first.created) == (1, 1, 0, 0)
+    job = queue.get("src-1")
+    assert job.status == "retry_wait" and "hypothesis_extraction_unavailable" in (job.error or "")
+    assert ledger.calls_today() == 1
+    assert not [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
+    clock[0] += 120
+    second = worker.run_pending()
+    assert second.created == 1
+    assert queue.get("src-1").status == "done"
+    assert ledger.calls_today() == 1  # the retry did not consume the day's budget again
+    assert len(list(store.list_all())) == 1
+    assert [e["outcome"] for e in ledger.events("src-1")].count("card") == 1
+
+
+def test_unavailable_model_is_retried_on_the_long_schedule_never_dead_lettered_in_seconds(tmp_path):
+    transport = _Flaky(failures=10**6)
+    clock = [1_800_000_000.0]
+    queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=5)
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    worker = DistillationWorker(queue, StrategySpecSeedStore(tmp_path / "s.jsonl"),
+                                hypothesis_extractor=extractor, retry_base_seconds=5.0)
+    worker.enqueue_from_source_record(_source("src-1", "news"))
+    for _ in range(5):
+        worker.run_pending()
+        clock[0] += 700
+    assert queue.get("src-1").status == "retry_wait"  # three attempts would have dead-lettered it
+    assert ledger.calls_today() == 1
+    assert not list(StrategySpecSeedStore(tmp_path / "s.jsonl").list_all())
+
+
+def test_failed_extraction_is_not_recorded_as_no_hypothesis(tmp_path):
+    class Refusing(_Transport):
+        def __call__(self, payload):
+            raise ValueError("bad")
+    worker, queue, store, ledger = _worker(tmp_path, Refusing())
+    _run(worker, _source("src-1", "news"))
+    assert queue.get("src-1").status in {"retry_wait", "dead_letter"}
+    assert _skip_reason(queue, "src-1") == ""

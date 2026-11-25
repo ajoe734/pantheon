@@ -1,0 +1,321 @@
+{
+ "period": "2026-11-12..2026-11-25",
+ "provenance": "composed to match the title shapes of the Taiwan news, paper and social feeds in that period; the repository holds no stored real titles, so these are NOT a fetch from the hosted store",
+ "records": [
+  {
+   "source_type": "news",
+   "title": "台積電法說會釋出樂觀展望 外資連三買 股價創高",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "央行理監事會議維持利率不變 新台幣匯率走升",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "聯發科第三季財報 EPS 優於預期 營收年增兩成",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "AI伺服器供應鏈10月營收出爐 廣達緯穎同創高",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "美國11月CPI高於預期 聯準會降息預期降溫 美股收跌",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "加權指數收盤上漲180點 成交量放大 三大法人買超",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "鴻海(2317)宣布庫藏股 買回2000張",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "長榮海運運價指數反彈 航運股漲停",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "金管會宣布新制 證券商申請期貨交易人",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "台灣10月出口年增 半導體訂單帶動景氣燈號轉黃紅",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Taiwan stocks close higher as TSMC leads semiconductor rally",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Fed holds interest rates steady, Powell signals cautious path",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Nvidia earnings beat estimates; Taiwan supply chain shares jump",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "ETF 0050 除息日 殖利率 配息公布",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "升息預期升溫 債券殖利率走高 壽險股承壓",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Foxconn October revenue rises on AI server demand (2317.TW)",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "The TAIEX gained 1.2% as foreign investors bought electronics shares",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "外資看好 台股明年EPS成長 調高目標價",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "晶圓代工 聯電 世界先進 12月起漲價 供應鏈傳報價調升",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "併購案 日月光宣布收購廠房 股東會通過",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Predicting Cross-Sectional Stock Returns with Machine Learning",
+   "relevant": true,
+   "category": "q-fin.PM",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Monetary Policy Transmission in Emerging Asian Markets",
+   "relevant": true,
+   "category": "econ.GN",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Volatility Clustering in High-Frequency Futures Data",
+   "relevant": true,
+   "category": "q-fin.ST",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Order Flow Imbalance and Short-Horizon Price Impact",
+   "relevant": true,
+   "category": "q-fin.TR",
+   "metadata": {}
+  },
+  {
+   "source_type": "social",
+   "title": "台股今天盤後心得：外資賣超但投信作帳 11月底怎麼看",
+   "relevant": true,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "大樂透第114000123期開獎 頭獎槓龜 獎金累積至3億",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "詐騙集團車手落網 警方起出贓款",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "颱風外圍環流影響 北部今明兩天有雨 低溫下探16度",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "立委質詢內政部長 朝野槓上預算案",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "市長出席社區運動會 與民眾同樂",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "明星夫妻宣布婚訊 粉絲祝福",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "國道追撞事故 三車連環撞造成回堵",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "新北動物園新生小貓熊亮相 開放預約參觀",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "名廚推出聖誕大餐 預約秒殺",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "酒駕釀死亡車禍 被告獲判刑三年",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "世界盃資格賽 中華隊0比2落敗",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Celebrity chef opens new restaurant in Taipei",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Typhoon warning issued as storm approaches the east coast",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Senate committee debates new immigration bill",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "Local man wins lottery jackpot after buying ticket at convenience store",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "A Convolutional Network for Protein Folding Intermediates",
+   "relevant": false,
+   "category": "q-bio.BM",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Gravitational Lensing by Dark Matter Subhalos",
+   "relevant": false,
+   "category": "astro-ph.CO",
+   "metadata": {}
+  },
+  {
+   "source_type": "paper",
+   "title": "Quantum Error Correction Thresholds for Surface Codes",
+   "relevant": false,
+   "category": "quant-ph",
+   "metadata": {}
+  },
+  {
+   "source_type": "social",
+   "title": "今天天氣好好 週末去哪玩",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  },
+  {
+   "source_type": "news",
+   "title": "2024年第3季度全台降雨量統計 水庫蓄水率回升",
+   "relevant": false,
+   "category": "",
+   "metadata": {}
+  }
+ ]
+}
