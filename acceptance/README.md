@@ -212,3 +212,19 @@ or either missing, a prior action silently dropped at M2, and a submitted item M
 two meeting reads plus at most 24 ticket reads, 8 MiB per response; no writer or storage. Pure checker and
 falsification tests: `acceptance/test_meeting_action_followthrough.py`. Real-owner regression (needs an isolated
 `RESEARCH_MEETING_TEST_DSN`, skipped otherwise): `services/consultation/tests/test_persona_meeting_action_loop.py`.
+
+### trading-pulse-operator consistent read
+
+Heartbeats move `latest_report_at` and `pnl_at` every ~15 s, so comparing the
+pulse with raw telemetry read many seconds later was unverifiable on three
+releases. The probe now reads the pulse and then every raw telemetry summary
+back to back (nothing else in between) and repeats that pair at most 6 times
+until `latest_report_at` and `pnl_at` agree for every operator runtime. Every
+existing comparison runs on the accepted pair; no tolerance is added. A pair
+that never agrees exits 77 with `source_changed_during_read:attempts=6`. If the
+raw summaries are identical between two consecutive attempts yet the pulse still
+disagrees, the pulse is stale and the probe fails
+(`pulse_stale_against_unchanged_source`). The roster bookend check is unchanged.
+Budget (unchanged contract): read-only GETs, at most 200 runtimes, 5 MiB and
+30 s per request, retries stop after 240 s inside the stage's 300 s timeout;
+stdout only, no files, no new writer.

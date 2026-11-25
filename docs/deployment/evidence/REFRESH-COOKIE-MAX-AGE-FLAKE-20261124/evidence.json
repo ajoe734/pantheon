@@ -1,0 +1,11 @@
+{
+  "task": "REFRESH-COOKIE-MAX-AGE-FLAKE-20261124",
+  "class": "RC1",
+  "change": "test_dev_login_sets_access_and_refresh_cookies freezes time.time and asserts Max-Age=2592000 exactly",
+  "production_change": false,
+  "verification": {
+    "file_tests": "22 passed",
+    "loop": "50 in-process runs with time.time drifting 2 s per read: 0 failures"
+  },
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be owner's family"
+}

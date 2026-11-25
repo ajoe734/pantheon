@@ -1742,12 +1742,15 @@ class CapitalOwnerApprovalReader:
         tenant_id: str | None = None,
         decision_state: str | None = "decided",
         max_items: int = 16,
+        history: bool = False,
+        now: datetime | None = None,
     ) -> list[Any]:
         from services.governance.approval_authority import (
             ApprovalEvidence,
             ApprovalInvalid,
             ApprovalUnavailable,
             BoundedApprovalList,
+            bound_candidate_history,
         )
 
         effective_pool_id = _optional_text(pool_id) or self.pool_id or _optional_text(target_id)
@@ -1787,11 +1790,10 @@ class CapitalOwnerApprovalReader:
                 continue
             if decision_state and ev.decision_state != decision_state:
                 continue
-            if len(results) >= bound:
-                overflow = True
-                break
             results.append(ev)
-        return BoundedApprovalList(results, overflow=overflow)
+        out = bound_candidate_history(results, bound=bound, now=now, history=history)
+        out.overflow = out.overflow or overflow
+        return out
 
     def verify(
         self,
@@ -1901,6 +1903,13 @@ def _capital_owner_approval_reader_from_pool_reader(
 
 
 MAX_POLICY_CATALOG_FILES = 64
+
+
+def split_candidate_decisions(items: Any, now: datetime | None = None) -> tuple[list[Any], list[Any]]:
+    from services.governance.approval_authority import split_candidate_decisions as _split
+
+    return _split(items, now)
+
 MAX_BOUNDED_APPROVAL_CANDIDATES = 16
 
 _ABSENCE_SOURCE_PRIORITY: dict[str, int] = {
@@ -2239,6 +2248,23 @@ def _verify_policy_owner_approval_decisions(
 
     explicit_candidate_ids = frozenset([*caller_explicit_ids, *container_candidate_ids])
     diagnostic_source: str | None = None
+    verified_info: dict[str, tuple[str, bool, str]] = {}
+
+    def _collapse_renewal_overlap(ids: list[str]) -> list[str]:
+        """Renewals of one policy digest overlap while the previous decision is still valid: keep the
+        pool-bound one, else the most recently created. Different digests stay distinct (ambiguous)."""
+        by_digest: dict[str, list[str]] = {}
+        for vid in ids:
+            by_digest.setdefault(verified_info.get(vid, ("", False, ""))[0] or vid, []).append(vid)
+        picked: list[str] = []
+        for group in by_digest.values():
+            if len(group) == 1:
+                picked.append(group[0])
+                continue
+            pool_bound = [g for g in group if verified_info.get(g, ("", False, ""))[1]]
+            pool = pool_bound or group
+            picked.append(max(pool, key=lambda g: (verified_info.get(g, ("", False, ""))[2], g)))
+        return picked
 
     def _validate_loaded_evidence(loaded_ev: Any, expected_decision_id: str | None = None) -> str | None:
         nonlocal diagnostic_source
@@ -2367,6 +2393,11 @@ def _verify_policy_owner_approval_decisions(
         elif not subj_risk:
             return None
 
+        verified_info[evidence.decision_id] = (
+            _optional_text(subject.get("risk_policy_digest")) or "",
+            ev_target_id == resolved_pool_id,
+            _first_text_or_none(d, "created_at", "recorded_at", "decided_at") or "",
+        )
         return evidence.decision_id
 
     def _fetch_by_id(cand_id: str) -> Any:
@@ -2451,9 +2482,10 @@ def _verify_policy_owner_approval_decisions(
                         items = []
                 except Exception:
                     items = []
-                if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+                current_items, past_items = split_candidate_decisions(items, now_dt)
+                if len(current_items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
                     target_lookup_overflow = True
-                for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+                for item in [*current_items[:MAX_BOUNDED_APPROVAL_CANDIDATES], *past_items]:
                     item_id = _extract_decision_id_reference(item)
                     if item_id:
                         checked_ids.add(item_id)
@@ -2468,6 +2500,8 @@ def _verify_policy_owner_approval_decisions(
         if matched_default and matched_default not in discovered_verified:
             discovered_verified.append(matched_default)
 
+    if len(discovered_verified) > 1 and not target_lookup_overflow:
+        discovered_verified = _collapse_renewal_overlap(discovered_verified)
     if len(discovered_verified) > 1 or target_lookup_overflow:
         return None, discovered_verified, "policy_candidates_ambiguous"
     if len(discovered_verified) == 1:
@@ -2869,9 +2903,10 @@ def discover_approved_profile_risk_policy(
                     items = []
             except Exception:
                 items = []
-            if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+            current_items, past_items = split_candidate_decisions(items, effective_now)
+            if len(current_items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
                 pool_decision_lookup_overflow = True
-            for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+            for item in [*current_items[:MAX_BOUNDED_APPROVAL_CANDIDATES], *past_items]:
                 _collect_decision_obj(item)
         default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
         if not pool_decisions and not pool_decision_lookup_overflow and default_apv_id not in seen_dec_ids:
@@ -3012,6 +3047,23 @@ def discover_approved_profile_risk_policy(
             except Exception:
                 pass
 
+        if is_def_id:
+            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
+            # embedded in the decision subject, bound to the approved digest.
+            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
+            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+            if (
+                draft_policy is not None
+                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
+                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
+                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
+            ):
+                raw_draft = dict(draft_policy)
+                decision_policy_candidates.append(
+                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
+                )
+                continue
+
         if isinstance(base_meta.get("risk_policy"), Mapping):
             base_pol_dict = dict(base_meta["risk_policy"])
             if str(base_pol_dict.get("risk_policy_id") or "") == subj_pol_id:
@@ -3045,22 +3097,6 @@ def discover_approved_profile_risk_policy(
                     continue
                 except Exception:
                     pass
-
-        if is_def_id:
-            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
-            # embedded in the decision subject, bound to the approved digest.
-            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
-            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
-            if (
-                draft_policy is not None
-                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
-                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
-                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
-            ):
-                raw_draft = dict(draft_policy)
-                decision_policy_candidates.append(
-                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
-                )
 
     # Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
     # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.

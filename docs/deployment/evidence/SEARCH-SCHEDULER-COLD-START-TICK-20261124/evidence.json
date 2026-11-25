@@ -1,0 +1,29 @@
+{
+  "task": "SEARCH-SCHEDULER-COLD-START-TICK-20261124",
+  "root_cause_class": "RC1",
+  "root": "45484699774",
+  "defect": "First scheduler tick after the switch hit a fixed 30 s timeout while search-svc loaded its embedding model; a failed tick waited the full 300 s interval and the 600 s health window counted from the previous container's last alive touch, so the deploy rolled back.",
+  "fix": [
+    "services/search/scheduler_worker.py: SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS (default 120) and SEARCH_INDEX_SCHEDULER_MATERIALIZE_TIMEOUT_SECONDS (defaults to the tick timeout); failed tick retried after 15 s doubling, capped at the interval; success returns to the interval; a client timeout is logged as refresh_in_progress_timeout and the next call gets the server's in_progress answer (search/main.py), so no parallel refresh; alive file touched only after a successful progressing tick and removed at container start",
+    "docker-compose.yml search-index-scheduler: tick timeout env, start_period 60s -> 300s (healthcheck command and window unchanged); the window is effectively measured from the container's own first successful touch because the stale file is gone"
+  ],
+  "default_justification": "Measured cold start: the refresh that loads the embedding model took 26.4 s in the run after the rollback (the failed run exceeded 30 s). 120 s is about 4.5x that measurement and still below the 300 s interval, so a cold load plus a bounded refresh fits and a real outage still fails the tick.",
+  "health_honesty": "Permanent outage: no touch, file absent, healthcheck fails once start_period (300 s) ends, within 3 x 30 s retries; stalled in_progress ticks keep the existing max-stalled rule. Cold start: first call times out, retry after 15 s succeeds, alive touched.",
+  "tests": [
+    "services/search/test_index_scheduler_worker.py: cold start slow first call then healthy (retry 15 s, then 300 s, default timeout 120); configurable timeouts (refresh 200, materialize 40); permanent outage backoff 15,30,60,120,240,300,300 and no alive file; stale alive file removed at start; compose start_period and env contract. No wall-clock assertions (time.sleep mocked)."
+  ],
+  "regression": "scheduler tests 12 passed; scripts/test_paper_runtime_topology_contract.py, services/search/tests/test_service_activation_contract.py, scripts/test_dev_environment_lease_deploy_contract.py pass",
+  "preexisting_failures": [
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py: 4 failures (search_worker_failure_retained x2, taifex preflight x2) fail identically without this change"
+  ],
+  "runtime_budget": {
+    "new_writer_or_job": "none; one extra unlink at start and short retries (at most 15, 30, 60, 120, 240 s) against the existing refresh endpoint; the server rejects overlapping runs with in_progress"
+  },
+  "deploy_path": "no new blocking gate; start_period only delays when failures start to count",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; the reviewer may be from the owner's family (Claude owner, Claude2 reviewer)",
+  "hosted_acceptance": "pending: next RC1 exact release with a cold search-svc; scheduler container healthy before the window ends",
+  "residual_findings": [
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py has 4 failures independent of this change",
+    "Search refresh materializes nothing on the client timeout path; a refresh that never finishes server-side is only visible through the stalled-tick counter"
+  ]
+}

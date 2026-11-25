@@ -439,3 +439,11 @@ def test_persona_cycle_and_quarterly_paper_allocation_owner_ports_are_wired() ->
     )
 
 
+
+
+def test_hindsight_recall_reranker_is_model_free() -> None:
+    """Observe/consult recalls must not pay a 5-10 s neural rerank on two CPU threads."""
+
+    assert _env("hindsight")["HINDSIGHT_API_RERANKER_PROVIDER"] == "rrf"
+    memory = _env("memory")
+    assert _default(memory["PANTHEON_MEMORY_HINDSIGHT_RECALL_CONCURRENCY"]) == "1"
