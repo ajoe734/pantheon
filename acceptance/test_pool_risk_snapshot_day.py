@@ -151,3 +151,44 @@ def test_every_route_the_check_reads_is_registered_in_the_bff_application():
     for template in check.READ_ROUTES:
         assert re.search(re.escape(template.split("{")[0]), source), template
         assert ("GET", template) in registered, f"{template} is not registered"
+
+
+def test_never_filled_runtime_with_heartbeats_and_one_state_snapshot_passes_check(tmp_path):
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+    from services.telemetry.test_runtime_summary_projection import _event
+
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "summary.json"))
+    snap = _event("runtime_state_snapshot", created_at="2026-11-24T01:00:00Z")
+    snap.update(runtime_id="rt-0", event_id="rss-0")
+    snap["metadata"].update({
+        "account_facts": {"initial_cash": 100000.0, "cash": 100000.0, "fill_count": 0},
+        "risk_policy_facts": {
+            "risk_policy_id": "rp-low-v2",
+            "risk_policy_version": "2.0",
+            "risk_policy_digest": "d" * 64,
+            "gross_limit": 0.10,
+            "max_leverage": 1.0,
+            "drawdown_risk_off": 0.10,
+            "drawdown_warn": 0.05,
+        },
+    })
+    hb = _event("heartbeat", created_at="2026-11-24T06:00:00Z")
+    hb.update(runtime_id="rt-0", event_id="hb-0")
+    store.project_event(snap)
+    store.project_event(hb)
+
+    served = store.get("rt-0")
+    rows = served["pool_risk_snapshots"]
+    assert len(rows) == 1
+    assert rows[0]["as_of"] == SESSION
+    assert rows[0]["equity"] == 100000.0
+    assert rows[0]["gross_exposure"] == 0.0
+    assert rows[0]["gross_limit"] == 0.10
+
+    report = check.run(
+        fetcher(rows, count=served["pool_risk_snapshot_retained_days"], known=False),
+        NOW,
+    )
+    assert report["verdict"] == "pending"
+    assert pool(report)["passed"] is True
+    assert pool(report)["failures"] == []
