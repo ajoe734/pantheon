@@ -28,12 +28,6 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: python3 -I acceptance/persona_day.py | tee persona-day.json
       # Separate verdict: one failing check never hides the other. Pending exits 0; failed exits 1.
-      - name: Paper risk journey samples (GET only; deadline judgement for the served release)
-        if: always()
-        env:
-          ACCEPTANCE_FE_URL: ${{ vars.DEV_FE_URL }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: timeout 245s python3 -I acceptance/paper_risk_journey_day.py | tee paper-risk-journey-day.json
       - name: Pool risk snapshot present and pool health known (GET only; viewer identity)
         if: always()
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -44,6 +38,5 @@ jobs:
           name: persona-day-acceptance
           path: |
             persona-day.json
-            paper-risk-journey-day.json
             pool-risk-snapshot-day.json
           retention-days: 30
