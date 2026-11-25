@@ -115,6 +115,8 @@ def _sync_canonical_dataset_pointer(dataset_loader):
             os.getenv("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT", "/data/bff/persona-pool-dataset-authority")
         )
         record = dataset_loader(*args, **kwargs)
+        if isinstance(record, Mapping) and record.get("market_boundary"):
+            return record  # a governed market dataset is read from the daily bars; it is no DatasetVersion pointer
         if not _sync_existing_dataset_version_to_pointer(output_root):
             if isinstance(record, Mapping) and (
                 record.get("parquet_path")

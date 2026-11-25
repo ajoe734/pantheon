@@ -1301,7 +1301,11 @@ class AlphaRevalidationWorker:
             resolved = None
             if self._dataset_resolver is not None:
                 try:
-                    resolved = self._dataset_resolver(dict(dataset))
+                    artifact = raw.get("strategy_artifact")
+                    params = artifact.get("parameters") if isinstance(artifact, Mapping) else None
+                    symbols = params.get("symbols") if isinstance(params, Mapping) else None
+                    # the rule's own symbols tell the resolver which bars the gate needs
+                    resolved = self._dataset_resolver({**dataset, **({"symbols": list(symbols)} if symbols else {})})
                 except Exception:  # noqa: BLE001 - unavailable governed data fails closed
                     resolved = None
             if (

@@ -9,7 +9,9 @@ builds them from the deployed environment so the compose service entry point run
   and Registry addresses, the research proposer principal and the distinct paper gate principal);
 * ``matcher`` - the existing persona discovery scorer ``discover_for_demand`` (no second scorer);
 * ``demands_provider`` - the research owner's open persona demand read (HTTP, service credential);
-* ``dataset_resolver`` - the governed dataset authority (``evaluation_authority``), never synthesised.
+* ``dataset_resolver`` - the governed whole-market dataset read from the stored daily bars
+  (``services.research.governed_market_dataset``), never synthesised and never waiting for a persona
+  candidate evaluation (DISCOVERY-GOVERNED-MARKET-DATASET-20261125).
 
 Nothing here falls back: a missing address, credential or dataset pointer disables the card path with a
 readable reason that the worker publishes on its health file; the rest of the worker is unaffected.
@@ -49,8 +51,11 @@ REQUIRED_CREDENTIALS: tuple[str, ...] = (
     "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN",
     "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN",
 )
-DATASET_POINTER = "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"
-DATASET_POLICY = "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"
+# A card binding names the dataset either by a pinned snapshot id (``gmd-...``, reproduced exactly) or by one
+# of these logical ids (the newest snapshot; the resolved dataset keeps the binding's id and carries the
+# snapshot id in ``snapshot_id`` and ``source_dataset_refs``).
+GOVERNED_MARKET_DATASET_ID = "governed-market:tw-daily"
+LOGICAL_DATASET_IDS = (GOVERNED_MARKET_DATASET_ID, "tw_price_daily")
 
 
 class OwnerCallError(RuntimeError):
@@ -90,12 +95,10 @@ def missing_configuration(env: Mapping[str, str]) -> list[str]:
     """Every required environment name that is unset, empty or unreadable (a readable list)."""
     missing = [n for n in REQUIRED_ADDRESSES + REQUIRED_IDENTITIES if not str(env.get(n, "") or "").strip()]
     missing += [n for n in REQUIRED_CREDENTIALS if not _present(env, n)]
-    for name in (DATASET_POINTER, DATASET_POLICY):
-        value = str(env.get(name, "") or "").strip()
-        if not value:
-            missing.append(name)
-        elif not Path(value).is_file():
-            missing.append(f"{name}(file not found)")
+    from services.research.governed_market_dataset import STORE_ROOT_ENV, store_root
+
+    if not (store_root(env) / "daily_bars" / "_manifest").is_dir():
+        missing.append(f"{STORE_ROOT_ENV}(daily bars store not found)")
     return missing
 
 
@@ -217,28 +220,28 @@ def build_demands_provider(env: Mapping[str, str]) -> Callable[[str], list[dict[
 
 def build_dataset_resolver(env: Mapping[str, str],
                            now: Callable[[], datetime] | None = None) -> Callable[[Mapping[str, Any]], Mapping[str, Any] | None]:
-    """The governed dataset authority: the canonical dataset version pointer plus the threshold policy.
+    """The governed whole-market dataset, read from the stored daily bars only.
 
-    Returns the governed dataset version (``snapshot.vectorbt_dataset``) or raises; the worker drops the
-    binding (fail closed) on any exception or on a ``dataset_id`` that is not the one the spec pins.
-    It supplies exactly what the authority holds: no ``candidate_pool_market`` attestation is added here.
+    ``binding`` carries ``dataset_id`` and, for the symbols the rule trades, ``symbols``. A pinned ``gmd-``
+    id is reproduced exactly (or refused); a logical id resolves the newest snapshot. Anything else, a
+    missing or stale store, or a symbol outside the market boundary raises a readable reason; the worker
+    drops the binding (fail closed). No ``candidate_pool_market`` attestation is added here.
     """
-    dataset_path, policy_path = env[DATASET_POINTER], env[DATASET_POLICY]
-    clock = now or (lambda: datetime.now(timezone.utc))
+    from services.research import governed_market_dataset as governed
 
     def resolve(binding: Mapping[str, Any]) -> Mapping[str, Any] | None:
-        training_dir = str(Path(__file__).resolve().parents[2] / "training-session")
-        sys.path.insert(0, training_dir)
-        try:
-            import evaluation_authority as authority  # type: ignore
-
-            snapshot = authority.load_evaluation_authority(
-                dataset_path, policy_path, trusted_now=clock(),
-                strategy_id=str(binding.get("dataset_id") or "card-dataset"))
-            return dict(snapshot.vectorbt_dataset)
-        finally:
-            if training_dir in sys.path:
-                sys.path.remove(training_dir)
+        dataset_id = str(binding.get("dataset_id") or "")
+        pinned = dataset_id if dataset_id.startswith("gmd-") else None
+        if not pinned and dataset_id not in LOGICAL_DATASET_IDS:
+            raise governed.GovernedMarketDatasetError(
+                "dataset_id_not_governed_market", f"{dataset_id!r} is neither a gmd- snapshot nor {LOGICAL_DATASET_IDS}")
+        symbols = binding.get("symbols")
+        dataset = governed.resolve_governed_dataset(
+            symbols=list(symbols) if symbols else None, snapshot_id=pinned, strategy_id=dataset_id,
+            now=now, env=env)
+        snapshot = dataset["dataset_id"]
+        return {**dataset, "dataset_id": dataset_id, "snapshot_id": snapshot,
+                "source_dataset_refs": [f"daily_bars:{snapshot}"]}
 
     return resolve
 
