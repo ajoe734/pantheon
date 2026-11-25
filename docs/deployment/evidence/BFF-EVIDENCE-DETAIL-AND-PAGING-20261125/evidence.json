@@ -1,0 +1,54 @@
+{
+  "task_id": "BFF-EVIDENCE-DETAIL-AND-PAGING-20261125",
+  "title": "Evidence detail answers one item and deep pages and failed reads are told apart from empty",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "problem_register_class": "RC6",
+  "delivery_state": "implemented_pending_review",
+  "hosted_verification_note": "No VM or SSH access performed; functional evidence only (local Postgres 43000-row table with the hosted by_source_type mix, recorded row shapes). Hosted verification belongs to the operator acceptance task.",
+  "acceptance": {
+    "ac1_flat_detail": "management_read_models/service.py get_evidence_item + router.py: data is one flat object with ref_id,title,source_document,credibility,resolved_link,linked_decisions; meta.surfaces.evidence_ref_detail ok|unavailable(+reason); degraded branch uses evidence_detail_unavailable_payload (no list envelope); redaction unchanged (KW-03 redact_evidence_refs, fail closed). Tests: test_evidence_owner_list_bounded.py::test_detail_is_one_flat_object_the_frontend_adapter_reads, test_redacted_detail_leaks_no_title_excerpt_or_link; test_evidence_source_backend.py degraded fallback.",
+    "ac2_404_vs_unavailable": "research_knowledge_source.py _owner_item_get: absent only on owner HTTP 404; timeout/401/403/5xx/transport/malformed 200 are unavailable (the old page_size=1 probe is removed). pg_store._read_one: tenant read falls back to the bare record id (payload tenant claim still enforced). Tests: test_detail_is_unavailable_not_404_unless_the_owner_answered_404[500,502,503,401,403,timeout,None], test_detail_is_404_when_the_owner_answered_404, test_real_pg_tenant_item_under_bare_record_id_is_readable_by_detail_as_the_list_shows_it (evi-607b5b55229e8f72 shape).",
+    "ac3_paging_cost": {
+      "change": "pg_store.list_evidence_items_page selects append_id page first (index-only on new source_evidence_page_idx) and joins payloads only for the page.",
+      "measurements_local_pg_43000_rows_limit_200": {
+        "0": 0.014997369988122955,
+        "20000": 0.021316769008990377,
+        "41000": 0.02414746899739839
+      },
+      "index_bytes_and_table_total_bytes": [
+        3162112,
+        43065344
+      ],
+      "index_build_seconds": 0.08393154601799324,
+      "count_and_summary": "COUNT(*) is an index-only scan of the same partial index; summary is one GROUP BY over source_evidence_summary_idx (~3 ms for 9000 rows, test_real_pg_summary_exact_fast...) and is skipped with include_summary=false; neither reads payloads. Honest limit: the id walk is index-only so the offset still costs index entries (about 7 ms at offset 41000), payload/TOAST reads are page-sized.",
+      "plan_offset_41000": "Nested Loop  (cost=2238.30..3530.43 rows=200 width=435) (actual time=8.645..9.145 rows=200 loops=1)\n  Buffers: shared hit=968\n  ->  Limit  (cost=2238.01..2248.93 rows=200 width=8) (actual time=8.550..8.606 rows=200 loops=1)\n        Buffers: shared hit=368\n        ->  Index Only Scan using source_evidence_page_idx on evidence  (cost=0.41..2347.16 rows=43000 width=8) (actual time=0.021..6.813 rows=41200 loops=1)\n              Index Cond: (evidence_tenant_id = 'pantheon-dev'::text)\n              Heap Fetches: 0\n              Buffers: shared hit=368\n  ->  Index Scan using evidence_pkey on evidence t  (cost=0.29..6.41 rows=1 width=435) (actual time=0.001..0.001 rows=1 loops=200)\n        Index Cond: (append_id = evidence.append_id)\n        Buffers: shared hit=600\nPlanning:\n  Buffers: shared hit=7\nPlanning Time: 0.285 ms\nExecution Time: 9.188 ms",
+      "test": "services/source_ingestion/tests/test_evidence_read_cost.py::test_real_pg_deep_page_cost_is_flat_with_the_offset_and_plan_is_id_first"
+    },
+    "ac4_failed_read": "get_evidence: unavailable read -> total None (was 0); degraded payload page_info.total None. Tests: test_failed_page_read_is_unavailable_with_null_total_never_empty_zero, test_management_evidence_ignores_malformed_current_run_verifier (assertion changed 0 -> None, see justified changes).",
+    "ac5_credibility_links": "normalize_source_ingest_evidence_item: source_class from metadata.source_class; resolved_link external only for http/https public URL; credibility.verified None unless metadata.verification has method + time; confidence number|None. SQL columns evidence_verified/evidence_credibility_tier regenerated from the verification record (one-time DROP/ADD guarded by column comment 'verification-record-v2', idempotent); verified_count/verified_evidence removed in owner summary and null in BFF. models.summarize_evidence_items_collection agrees with SQL. Tests: test_normalizer_maps_real_row_without_inventing_time, test_real_pg_summary_exact_fast_and_updated_by_independent_writes.",
+    "ac6_one_mapping_and_contract": "personas/service.py _management_evidence_public_item delegates to management_read_models/service.py (test_personas_service_uses_the_one_public_item_mapping); BFF_API_CONTRACT.md evidence section (lines 988-996 area) states the detail shape."
+  },
+  "justified_changed_assertions": [
+    "tests/test_bff_b3_management_evidence.py malformed verifier: page_info.total 0 -> None (surface is unavailable; AC4 forbids total 0 for a failed read).",
+    "tests/test_evidence_owner_list_bounded.py: normalizer credibility {verified,tier} now {tier:unverified, verified:None, confidence}; verified=true/false filter test swapped to match 'confidence is not verification' (verified=false -> 614, verified=true -> 0); population test seeds 418 rows with real verification records so the 418/100 tier split is preserved while verified_count is None; sql-mock test updated to the new GROUP BY columns and corrected to the stored evidence_tenant_id projection (that assertion was already stale on dev); FakeOwner absent item now answers its 404; four-surface and ref_id-down tests read the flat detail.",
+    "tests/test_evidence_source_backend.py: verified_count 518 -> None, tier verified 518 -> unverified 518 (confidence 1.0, no record); detail asserts flat object; degraded test splits list and detail; owner call count 14 -> 13 because the page_size=1 404 probe is gone.",
+    "test_mgmt_load_005_read_concurrency.py, tests/test_management_read_models_router.py, services/source_ingestion/test_service.py: verified_count removed/None; tier distribution unverified.",
+    "No test deleted or skipped."
+  ],
+  "residual_findings": [
+    "test_kw03_evidence_refs_contract.py::test_kw03_list_and_detail_return_contract_shape_with_degraded_fallback fails on unmodified dev (surfaces evidence_refs_list ok vs degraded) - not touched here.",
+    "test_mgmt_load_005_read_concurrency.py jobs / evidence_timeout and test_bff_management_cockpit.py timing tests are load-sensitive: they failed once when run concurrently with the whole suite and pass alone (33/33 cockpit, evidence_timeout 2/2).",
+    "pg_store._list_evidence_items_window (captured window path) still pages by OFFSET with payload select; outside this scope.",
+    "ai-status 'start' returned 'illegal transition in_progress --start' (task already in_progress)."
+  ],
+  "tests_run": "pytest with local Postgres 55432: source_ingestion test_evidence_read_cost/quarter_evidence_owner_read/source_evidence_lookup_plans/test_pg_store/test_service(summary) pass; BFF evidence suites (owner_list_bounded, source_backend, management_read_models_router, b3_management_evidence, redaction_fail_closed, quarter_evidence_linked_filter, mgmt_load_005) 165 pass, only the pre-existing kw03 degraded test fails; scripts/check_storage_manifest.py passed.",
+  "bootstrap_column_rewrite": {
+    "change": "pg_store._bootstrap: the one-time rewrite of evidence_verified/evidence_credibility_tier is now ONE atomic ALTER TABLE (DROP COLUMN x, ADD COLUMN x ... STORED per column, plus the other ADD IF NOT EXISTS) under SET lock_timeout='15s' (RESET afterwards). Guarded by column comment 'verification-record-v2', so later starts are a no-op.",
+    "measurement": "local Postgres (pgserver), table m.ev shaped like hosted 2026-11-25: 128135 rows (evidence_item 43409, knowledge_object 43409, source_record 36619, evidence_bundle 8162), 137 MB table before. Full _bootstrap (rewrite + page index + summary index + GIN) 5.75 s; table 147 MB, indexes 24 MB after; second start 0.03 s. Hosted host load 6 -> allow roughly 3-5x, i.e. under ~30 s.",
+    "start_budget": "source-ingest (docker-compose.yml) healthcheck start_period 120s with interval 10s retries 10; source-ingest-controller start_period 90s interval 30s retries 3. Measured rewrite fits each with margin; the advisory lock serialises concurrent bootstrappers.",
+    "lock_timeout": "With an old container holding a read transaction (ACCESS SHARE), bootstrap fails after 15.0 s with LockNotAvailable, leaves old columns intact (old reader still reads evidence_verified=True) and no marker; retry after the reader ends succeeded in 0.13 s and set the marker.",
+    "old_reader_and_rollback": "Atomic single statement: a reader sees old or new column, never none. After the switch the old image's ADD COLUMN IF NOT EXISTS evidence_verified is a no-op and old queries on evidence_verified/evidence_credibility_tier return (False,'unverified') for all 43409 evidence_item rows (stricter than old, no errors). Old image's summary query still works; only the verified numbers differ.",
+    "not_measured": "No hosted/VM access; hosted time is an estimate from the local measurement and load factor."
+  }
+}

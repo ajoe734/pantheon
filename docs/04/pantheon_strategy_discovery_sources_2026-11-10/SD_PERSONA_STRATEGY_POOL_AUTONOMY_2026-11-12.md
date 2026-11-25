@@ -195,6 +195,8 @@ remain authoritative.
 * The persona may propose widening P inside the governed Taiwan list (symbols with governed daily bars and
   the point-in-time history the gate needs). Within paper this needs no approval; the change is recorded as
   a pool-level decision with its reason.
+* **2026-11-25 operator decision (paper only):** admission now uses the governed Taiwan boundary as its symbol
+  limit and records it as `decision.universe_rule`; see §5.1b "Universe".
 
 The **2026-11-13 approved direction** implements the existing P-5 requirement
 with daily picks outside the pinned envelope: an envelope does not enumerate
@@ -260,11 +262,18 @@ leaves the pool; capital stays idle and the persona opens its own demand. An emp
   needs are known and zero (`idle_pool_observations`), so health reads `no_live_members` and low utilisation, not unknown.
 * **Cycle.** The daily cycle answers `no_live_members`: it opens one research demand and does not open a second while
   one is open, or admits a fresh candidate.
-* **Universe (stopgap, reading of §4.3).** Until the persona declares its permitted universe P, the approved universe of
-  a pool with no live member is the universe approved at its last version that had live members, and never wider
-  (recorded as `decision.approved_universe`; older versions are read from their live members' artifacts). A candidate
-  inside it is not refused for universe, a candidate outside it still is, and with no such version the admission is
-  refused with `empty_pool_approved_universe_unknown`. This is the coordinator's reading, not an operator decision.
+* **Universe (operator decision 2026-11-25, paper only; replaces the stopgap reading of §4.3).** The operator chose
+  "open it, paper only" (conversation 5724fc3b): in the paper context the symbol limit of admission is the governed Taiwan
+  market boundary of `services.research.governed_market_dataset` (symbols with governed data, minus suspended, too-short
+  and illiquid ones), no longer the symbols of the current members or of the last version that had live members. A
+  candidate whose validated universe is inside the boundary is not refused for universe, one outside it is refused with
+  `candidate_outside_governed_market_boundary`, and an unreadable, stale or empty boundary refuses with
+  `governed_market_boundary_unavailable` and never falls back to a wider set. The widening is recorded on the pool decision
+  as `decision.universe_rule` (rule name, operator approval, boundary snapshot id, symbol count, the previous member
+  symbols and the candidate's symbols); the boundary's symbol list is not copied into pool versions, and versions already
+  stored with `approved_universe` still read. The former `empty_pool_approved_universe_unknown` refusal no longer exists in
+  paper; any non-paper context keeps the previous rule unchanged. Only the symbol limit changes: every other criterion
+  below is as before, and a whole-market candidate is tested against each of them.
 * **Criteria for the first member.** Every other criterion of §5.1 applies unchanged: its own approved next-open
   baseline, the virtual-book drawdown rule, the consultation memo rule for persona-initiated admission, the admission
   backtest and the deflated threshold. "Combined is better than the pool alone" against an idle pool: the pool's

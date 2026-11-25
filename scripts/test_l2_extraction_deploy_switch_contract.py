@@ -72,3 +72,13 @@ def test_validation_snippet_behaviour() -> None:
     assert run("false", "1") == 0
     for en, cap in [("yes", "400"), ("", "400"), ("true", "0"), ("true", "-5"), ("true", "abc"), ("true", "1.5"), ("true", "")]:
         assert run(en, cap) != 0, (en, cap)
+
+
+def test_deadline_and_tick_budget_are_compose_settings_inside_the_health_window() -> None:
+    # L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125
+    env = COMPOSE["services"]["strategy-distillation-worker"]["environment"]
+    assert env["PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS"] == "${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}"
+    assert env["PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS"] == "${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}"
+    health = int(re.search(r":-(\d+)\}", env["DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS"]).group(1))
+    # budget + one call must stay below the alive-marker max age, or a normal tick reads unhealthy.
+    assert 120 + 90 < health

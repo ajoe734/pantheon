@@ -2074,11 +2074,7 @@ def create_management_router(
                 else:
                     reason = "read_error"
                     logging.getLogger(__name__).warning("bff.management_evidence_detail read failed: %s", exc_name)
-                return svc.get_evidence_degraded_payload(
-                    page_size=1,
-                    snapshot_at=snap,
-                    reason=reason,
-                )
+                return svc.evidence_detail_unavailable_payload(ref_id, snapshot_at=snap, reason=reason)
         else:
             result = _do_read()
         if result is None:

@@ -1440,7 +1440,7 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
-   "growth_driver": "SQLite database written by the owner service",
+   "growth_driver": "SQLite database written by the owner service; one `calls` row per day, one `record_attempts` row per record version attempted (pruned after 30 days), `events` and `cards` per extracted record",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "sqlite",
    "name": "l2_extraction_ledger.sqlite",
@@ -3048,21 +3048,21 @@
   },
   {
    "bound_proof": {
-    "contains": "DELETE FROM reservations WHERE day < ?",
+    "contains": "DELETE FROM record_attempts WHERE day < ?",
     "file": "services/source_ingestion/hypothesis_card.py"
    },
    "bound_status": "bounded",
-   "cap": "at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) rows per UTC day (one per record version that reserved a call that day); rows of earlier days are deleted on every reserve_call",
-   "cleanup": "DELETE FROM reservations WHERE day < today on each reserve_call write",
-   "growth_driver": "one row per record version that reserved a model call that day, so a retry of the same record is not charged twice",
-   "growth_per_day": "at most 400 rows (about 150 bytes each, about 60 KB), none carried past the next UTC day",
+   "cap": "one row per record version that reached a model call; at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) new rows per UTC day and rows untouched for 30 days are deleted on every reserve_attempt write, so at most 400 x 30 = 12,000 rows",
+   "cleanup": "DELETE FROM record_attempts WHERE day < today - 30 days on each reserve_attempt write",
+   "growth_driver": "one row per record version that reserved a model call (total calls, calls today, last failure reason); replaces the former per-day reservations table",
+   "growth_per_day": "at most 400 rows (about 200 bytes each, about 80 KB), steady state at most 12,000 rows (about 2.4 MB)",
    "kind": "table",
-   "name": "reservations",
+   "name": "record_attempts",
    "owner": "source_ingestion",
    "readers": [
     "services/source_ingestion/hypothesis_card.py"
    ],
-   "task": "L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125"
+   "task": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125"
   },
   {
    "bound_status": "unreviewed",
@@ -5702,7 +5702,7 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
+   "growth_driver": "owner-store or SQL table rows written by the owner service; BFF-EVIDENCE-DETAIL-AND-PAGING-20261125 adds partial index source_evidence_page_idx (evidence_tenant_id, append_id DESC) WHERE record_type='evidence_item': ~3.0 MB for 43000 rows (table total ~41 MB in the local measurement), built in ~0.08 s, one extra index entry per evidence write",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "schema_table",
    "name": "source_ingest.source_evidence",
