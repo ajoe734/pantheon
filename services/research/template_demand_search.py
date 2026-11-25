@@ -28,6 +28,14 @@ from services.source_ingestion.hypothesis_compiler import attach_default_market_
 
 FAMILY_TRIAL_BUDGET = 500
 RUN_BUDGET = 50
+# Hard guard on one template evaluation, in symbols x trading days (TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125).
+# The registry replays the screen once per trading day over the whole market and the gate replays it several
+# times, so cost grows with both. Measured (dev VM, one process, recorded TWSE series under synthetic codes,
+# cost only): the per-day screen replay took 43.6 s for 2x520, 161.6 s for 5x520 and 286.6 s for 10x520
+# symbols x days at about 90 MiB, and one whole evaluation of 2x680 took 294 s at a 364 MiB peak. 10x520 = 5200
+# is the largest point measured that stays under the 384 MiB of research-orchestrator-svc, so it is the limit.
+# A boundary above it is refused, never truncated; see docs/deployment/evidence/<task>/evidence.json.
+MAX_EVALUATION_SYMBOL_DAYS = 5200
 
 
 def _digest(value: Any) -> str:
@@ -183,6 +191,13 @@ def usable_symbols(template: Mapping, universe: list[str], dataset: Mapping) -> 
     return usable, excluded
 
 
+def evaluation_cost(usable: list[str], dataset: Mapping) -> tuple[int, int]:
+    """(symbols, trading days) of one evaluation over the usable symbols; nothing is sampled or trimmed."""
+    wanted = set(usable)
+    days = {r["date"] for r in dataset.get("records") or [] if _symbols([r["instrument"]])[0] in wanted}
+    return len(wanted), len(days)
+
+
 def inputs_available(template: Mapping, universe: list[str], dataset: Mapping) -> bool:
     return bool(usable_symbols(template, universe, dataset)[0])
 
@@ -191,13 +206,17 @@ class TemplateDemandSearch:
     """One bounded search, using the same durable gate counters as replication."""
 
     def __init__(self, *, store, gate, context_loader, lock_path: Path,
-                 registrar=None, family_budget=FAMILY_TRIAL_BUDGET, run_budget=RUN_BUDGET):
+                 registrar=None, family_budget=FAMILY_TRIAL_BUDGET, run_budget=RUN_BUDGET,
+                 max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS):
         if not 0 < family_budget <= FAMILY_TRIAL_BUDGET or not 0 < run_budget <= RUN_BUDGET:
             raise ValueError("invalid_template_search_budget")
         self.store, self.gate, self.context_loader = store, gate, context_loader
         self.registrar = registrar
         self.lock_path = Path(lock_path)
         self.family_budget, self.run_budget = family_budget, run_budget
+        if not 0 < max_symbol_days <= MAX_EVALUATION_SYMBOL_DAYS:
+            raise ValueError("invalid_template_search_evaluation_limit")
+        self.max_symbol_days = max_symbol_days
 
     def run(self, demand):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,6 +301,11 @@ class TemplateDemandSearch:
                 if not usable:
                     record["excluded"].append({"template_id": tid, "reason": "template_inputs_missing"})
                     continue
+                n_symbols, n_days = evaluation_cost(usable, dataset)
+                if n_symbols * n_days > self.max_symbol_days:
+                    # Fail closed before compiling or spending a trial: the whole boundary is never truncated.
+                    record["reason"] = f"market_evaluation_over_limit:{n_symbols}x{n_days}:{self.max_symbol_days}"
+                    break
                 artifact = compile_template(template, universe=usable, demand=demand,
                                             source_ref="registry:" + entry["registry_id"], dataset=dataset)
                 aid = artifact["artifact_id"]

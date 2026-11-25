@@ -1,48 +1,146 @@
 {
-  "task_id": "TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125",
-  "class": "RC2",
-  "date": "2026-11-25",
-  "owner": "Claude2",
-  "reviewer": "Claude",
-  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer is from the owner family (as the task brief records).",
-  "design": "SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12 sections 0 to 2; SD_PERSONA_STRATEGY_POOL_AUTONOMY section 4.3",
-  "functional_evidence_only": "No VM or SSH access, no operator key read, no hosted read. Tests use the recorded real TWSE rows (2330, 0050, 2883) and the recorded hosted persona shape; hosted verification belongs to the operator acceptance task.",
-  "first_visible_hosted_result": "Not a successful search. One of two correct refusals: market_boundary_empty (hosted daily_bars traded_value is null on 481 of 484 days until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125) or, once the boundary is non-empty, survivorship_limited (the governed dataset carries no survivorship attestation; the gate refuses before any backtest). Listed stocks also have 406 to 411 bars against the gate's 480. None of these is bypassed here.",
-  "acceptance": {
-    "1_boundary": "main.py _template_search_context reads the persona only for tenant and persona identity; the symbol boundary is governed_market_dataset.build_market_boundary + dataset_for (via _load_template_search_governed_dataset). market_scope and traits.instruments are not read. test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate runs the real run entry (HttpPoolCyclePorts -> research route -> worker thread) with the recorded hosted persona shape (marketScope {} and traits.instruments [0050.TWSE]) and a daily_bars store written from recorded TWSE bars; it reaches the real gate (receipt real_backtest_validation status survivorship_limited, dataset_id gmd-...).",
-    "2_compile": "services/source_ingestion/hypothesis_compiler.py now exposes attach_default_market_screen and DEFAULT_SCREEN_ID; _pair_defaults calls it (test_hypothesis_compiler*.py unchanged and passing) and compile_template calls the same function, so the whole_governed_tw_boundary.v1 screen (min_size, history, liquidity window, median traded value, eligibility) is shared, not copied. The template signal, parameters and controls are unchanged (test_compiler_preserves_every_registered_time_series_signal_on_recorded_inputs unchanged, over 100 templates) and validate_strategy_artifact passes (test_compiled_artifact_carries_the_shared_default_screen_and_the_unchanged_signal). The screen needs candidate_pool_market.v1: template_demand_search.market_from_dataset builds it from the dataset's own bars with includes_delisted and includes_suspended false (no survivorship claim is made). A market the dataset owner supplies with its own attestation is used as supplied.",
-    "3_inputs": "usable_symbols/inputs_available judge a template by the fields present over the eligible boundary; a symbol with a missing or non-finite field is excluded with its reason (field_incomplete:<field>, no_bars) and the rest are evaluated; nothing is imputed; a template whose input dataset is not served stays excluded with template_inputs_missing. Receipts record boundary_symbols and symbols_without_inputs. Tests: test_partial_boundary_evaluates_on_complete_symbols_and_names_the_rest_without_imputation, test_missing_universe_fields_and_vwap_are_excluded_without_imputation.",
-    "4_reevaluation": "A template with a recorded attempt in the demand is never evaluated again because a new daily snapshot changes the artifact id (template_demand_search._run, by template_id). Test test_a_new_daily_snapshot_never_reevaluates_a_template_and_the_trial_count_rises_once evaluates two templates, switches to a second snapshot id and shows attempts and family trial counts unchanged. One screened evaluation spends two family trials in the gate (screen variant + entry variant, replication/gate.py trial_accounting), not one; this is the gate's existing rule (thresholds and counters unchanged) and is why three assertions changed (see changed_assertions).",
-    "5_budgets_and_cost": {
-      "thresholds_budgets": "FAMILY_TRIAL_BUDGET 500, RUN_BUDGET 50 and the worker's run_budget=1 are unchanged; gate thresholds unchanged.",
-      "templates_per_demand_life": "run budget 1 new template per run; at most one run per demand per persona cycle; a demand lives 30 days: with the daily cycle at most about 30 templates per demand life (171 registered time-series templates; the family budget 500 allows 250 screened evaluations per family).",
-      "measured_one_template": "Measured here, one template (KMID) through the real gate and screened backtest with a test-only attested market, 2 symbols (2330, 0050) x 1,361 bars (about 680 trading days each), one process, 12 vCPU dev VM, Python 3.12: wall 502.7 s, peak RSS 401 MiB (118 MiB before). It is the registry's per-trading-day screen replay (services/registry/candidate_pool.py evaluate_screened_views, called per day by vectorbt_adapter._screened_artifact_view_sequence) plus the whole-boundary control backtest; both scale with symbols x days.",
-      "whole_market_not_measured": "A 60 symbol boundary (MAX_DATASET_SYMBOLS) was NOT measured; by linear scaling in symbols it would be about 4 hours and well over 512 MiB, which does not fit a single run in research-orchestrator-svc (384m) or alpha-replication-worker (512m). This is stated as an open limit, not claimed to fit: either the screen replay is made incremental (services/registry/candidate_pool.py recomputes features from the full history for every day) or the boundary used per template is bounded, and the limit needed must be measured at 60 symbols. The work runs in the run's retrain-executor worker thread, never on an API event loop (governed_market_dataset raises governed_dataset_must_run_in_worker on a running loop).",
-      "recommendation_for_operator": "Before enabling hosted whole-market evaluation, measure peak RSS and wall time at 60 symbols in the worker that runs it; the first hosted results will be the refusals above, which cost about 0.1 s."
-    },
-    "6_end_states": "Every end state is on the demand and the run: search_completed, run_budget_exhausted, or template_search_unavailable:<exception>:<detail> (for example market_boundary_empty, daily_bars_store_stale, survivorship_limited receipts). test_failed_or_partial_runs_record_a_reason_and_never_satisfy_the_demand covers run_budget_exhausted and a failed run; the demand stays open and satisfied_by is empty. The end of test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial shows a refused outcome leaves the demand open.",
-    "7_pool_unchanged": "Pool admission code is untouched. ResearchDemandStore.record_pool_refusal and POST /api/research/persona-demands/{demand_id}/pool-refusal (same writer authentication as /actions) record a refusal such as candidate_outside_pool_approved_universe on the attempt (pool_admission) so it is visible on the demand; the demand is not satisfied by it. Tests: test_pool_refusal_is_recorded_on_the_attempt_and_visible_on_the_demand, test_pool_refusal_route_records_for_the_writer_and_refuses_unknown_attempts. The persona pool cycle does not call this route yet (services/control-plane/persona and services/persona are outside this task's artifacts): a follow-up must call it when it refuses a template candidate. Registration and approval of a passing candidate keep their owner path and stay paper only.",
-    "8_runtime_budget": "docs/operations/storage-manifest.json runtime_budgets gains research_demands.json: about 17 KB per recorded attempt (measured 16,960 B), at most 171 attempts per demand (2.9 MB), 30 day demand life, the excluded list replaced per run; new cleanup: a closed demand drops gate and artifact bodies of its attempts 60 days after expires_at (research_demand.CLOSED_COMPACT_AFTER, test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their_receipts). scripts/check_storage_manifest.py passes."
+ "task_id": "TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125",
+ "class": "RC2",
+ "date": "2026-11-25",
+ "owner": "Claude2",
+ "reviewer": "Claude",
+ "review_independence_exception": "The other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer is from the owner family (as the task brief records).",
+ "design": "SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12 sections 0 to 2; SD_PERSONA_STRATEGY_POOL_AUTONOMY section 4.3",
+ "functional_evidence_only": "No VM or SSH access, no operator key read, no hosted read. Tests use the recorded real TWSE rows (2330, 0050, 2883) and the recorded hosted persona shape; hosted verification belongs to the operator acceptance task.",
+ "first_visible_hosted_result": "Not a successful search. One of two correct refusals: market_boundary_empty (hosted daily_bars traded_value is null on 481 of 484 days until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125) or, once the boundary is non-empty, survivorship_limited (the governed dataset carries no survivorship attestation; the gate refuses before any backtest). Listed stocks also have 406 to 411 bars against the gate's 480. None of these is bypassed here.",
+ "acceptance": {
+  "1_boundary": "main.py _template_search_context reads the persona only for tenant and persona identity; the symbol boundary is governed_market_dataset.build_market_boundary + dataset_for (via _load_template_search_governed_dataset). market_scope and traits.instruments are not read. test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate runs the real run entry (HttpPoolCyclePorts -> research route -> worker thread) with the recorded hosted persona shape (marketScope {} and traits.instruments [0050.TWSE]) and a daily_bars store written from recorded TWSE bars; it reaches the real gate (receipt real_backtest_validation status survivorship_limited, dataset_id gmd-...).",
+  "2_compile": "services/source_ingestion/hypothesis_compiler.py now exposes attach_default_market_screen and DEFAULT_SCREEN_ID; _pair_defaults calls it (test_hypothesis_compiler*.py unchanged and passing) and compile_template calls the same function, so the whole_governed_tw_boundary.v1 screen (min_size, history, liquidity window, median traded value, eligibility) is shared, not copied. The template signal, parameters and controls are unchanged (test_compiler_preserves_every_registered_time_series_signal_on_recorded_inputs unchanged, over 100 templates) and validate_strategy_artifact passes (test_compiled_artifact_carries_the_shared_default_screen_and_the_unchanged_signal). The screen needs candidate_pool_market.v1: template_demand_search.market_from_dataset builds it from the dataset's own bars with includes_delisted and includes_suspended false (no survivorship claim is made). A market the dataset owner supplies with its own attestation is used as supplied.",
+  "3_inputs": "usable_symbols/inputs_available judge a template by the fields present over the eligible boundary; a symbol with a missing or non-finite field is excluded with its reason (field_incomplete:<field>, no_bars) and the rest are evaluated; nothing is imputed; a template whose input dataset is not served stays excluded with template_inputs_missing. Receipts record boundary_symbols and symbols_without_inputs. Tests: test_partial_boundary_evaluates_on_complete_symbols_and_names_the_rest_without_imputation, test_missing_universe_fields_and_vwap_are_excluded_without_imputation.",
+  "4_reevaluation": "A template with a recorded attempt in the demand is never evaluated again because a new daily snapshot changes the artifact id (template_demand_search._run, by template_id). Test test_a_new_daily_snapshot_never_reevaluates_a_template_and_the_trial_count_rises_once evaluates two templates, switches to a second snapshot id and shows attempts and family trial counts unchanged. One screened evaluation spends two family trials in the gate (screen variant + entry variant, replication/gate.py trial_accounting), not one; this is the gate's existing rule (thresholds and counters unchanged) and is why three assertions changed (see changed_assertions).",
+  "5_budgets_and_cost": {
+   "thresholds_budgets": "FAMILY_TRIAL_BUDGET 500, RUN_BUDGET 50 and the worker's run_budget=1 are unchanged; gate thresholds unchanged.",
+   "templates_per_demand_life": "run budget 1 new template per run; at most one run per demand per persona cycle; a demand lives 30 days: with the daily cycle at most about 30 templates per demand life (171 registered time-series templates; the family budget 500 allows 250 screened evaluations per family).",
+   "measured_one_template": "Measured here, one template (KMID) through the real gate and screened backtest with a test-only attested market, 2 symbols (2330, 0050) x 1,361 bars (about 680 trading days each), one process, 12 vCPU dev VM, Python 3.12: wall 502.7 s, peak RSS 401 MiB (118 MiB before). It is the registry's per-trading-day screen replay (services/registry/candidate_pool.py evaluate_screened_views, called per day by vectorbt_adapter._screened_artifact_view_sequence) plus the whole-boundary control backtest; both scale with symbols x days.",
+   "whole_market_not_measured": "A 60 symbol boundary was NOT run to completion and is not claimed to fit. It is made impossible to start instead: TemplateDemandSearch refuses, before compiling or spending any family trial, an evaluation whose usable symbols x trading days exceed MAX_EVALUATION_SYMBOL_DAYS = 5200 and records market_evaluation_over_limit:<symbols>x<days>:5200 as the reason of the template_search record on the demand (and so on the run); the demand stays open; the symbol set is never truncated (test_evaluation_over_the_cost_limit_is_refused_before_any_trial_and_never_truncated). The work runs in the run's worker thread, never on an API event loop.",
+   "recommendation_for_operator": "Before enabling hosted whole-market evaluation, measure peak RSS and wall time at 60 symbols in the worker that runs it; the first hosted results will be the refusals above, which cost about 0.1 s.",
+   "limit_measurements": {
+    "method": "Dev VM (12 vCPU, Python 3.12), one process per point, points run concurrently. Recorded TWSE series (2330, 0050) replicated under synthetic codes with a small price scale: a COST measurement only, no result claim. Scripts were run from the scratchpad, not committed.",
+    "per_day_screen_replay (registry candidate_pool.evaluate_screened_views, one pass over every trading day)": [
+     {
+      "symbols": 2,
+      "days": 520,
+      "wall_s": 43.6,
+      "peak_rss_mib": 85
+     },
+     {
+      "symbols": 5,
+      "days": 260,
+      "wall_s": 48.6,
+      "peak_rss_mib": 85
+     },
+     {
+      "symbols": 5,
+      "days": 520,
+      "wall_s": 161.6,
+      "peak_rss_mib": 86
+     },
+     {
+      "symbols": 10,
+      "days": 260,
+      "wall_s": 87.2,
+      "peak_rss_mib": 87
+     },
+     {
+      "symbols": 10,
+      "days": 520,
+      "wall_s": 286.6,
+      "peak_rss_mib": 91
+     }
+    ],
+    "whole_gate_evaluation (evaluate_template_candidate, KMID, stops at the first rejecting stage)": [
+     {
+      "symbols": 2,
+      "days": 520,
+      "wall_s": 135.8,
+      "peak_rss_mib": 360,
+      "status": "rejected"
+     },
+     {
+      "symbols": 4,
+      "days": 520,
+      "wall_s": 50.3,
+      "peak_rss_mib": 302,
+      "status": "rejected"
+     },
+     {
+      "symbols": 6,
+      "days": 520,
+      "wall_s": 80.1,
+      "peak_rss_mib": 308,
+      "status": "rejected"
+     },
+     {
+      "symbols": 10,
+      "days": 520,
+      "wall_s": 115.1,
+      "peak_rss_mib": 316,
+      "status": "rejected"
+     },
+     {
+      "symbols": 2,
+      "days": 680,
+      "wall_s": 294.6,
+      "peak_rss_mib": 364,
+      "status": "rejected"
+     }
+    ],
+    "reading": "The replay alone is memory-flat (about 90 MiB) and costs about 0.055 s per symbol-day (10x520 = 5200 symbol-days: 287 s per pass); the gate runs several passes, and its peak (300 to 364 MiB) comes from the backtest, not the replay. Whole-evaluation wall time depends on which stage rejects, so it is not monotonic in symbols; the replay series is the one that is. 5200 symbol-days is the largest point measured with the replay and the whole gate both under the 384 MiB of research-orchestrator-svc; it is the limit. 60 symbols x 520 days = 31,200 symbol-days is 6x over it, so a whole hosted market is refused today with the readable reason, not run.",
+    "incremental_replay": "Not done. services/registry/candidate_pool.py recomputes features and the boundary from each day's full visible history (build_candidate_pool_snapshot); making it incremental changes the screen's point-in-time evaluator, needs its own equality test over the whole replay and was not attempted in this change. The guard stays; incremental replay is the follow-up that would raise the limit.",
+    "consequence": "With the hosted market (60 or more symbols over 480 or more days) the search ends market_evaluation_over_limit:... until the replay is incremental or the operator accepts a higher limit measured at that size. This is an honest fail-closed result, not a search."
+   }
   },
-  "changed_assertions": [
-    {"test": "test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate", "change": "The persona and dataset inputs are the recorded hosted shape and a daily_bars store of recorded TWSE bars (was a fabricated market_scope list and a stub loader). The assertions on history_check calendar_days >= 730, out_of_sample_round_trips >= 20 and a stored backtest run are replaced by status survivorship_limited with the dataset id and search_completed.", "why": "A template now carries the mandatory screen, whose market has no survivorship attestation, so the real gate refuses before any backtest (the brief states this refusal is correct and must not be bypassed). No assertion about a result the gate can no longer produce was kept."},
-    {"test": "test_template_demand_search.py::test_missing_universe_fields_and_vwap_are_excluded_without_imputation", "change": "context universe set to ['2330'] for the incomplete-field case.", "why": "Acceptance 3: a template is judged over the eligible boundary; with the two-symbol universe the complete symbol (0050) is correctly evaluated. The excluded-without-imputation intent is kept for the single-symbol boundary."},
-    {"test": "test_candidate_registration.py (4 tests)", "change": "Dataset presents traded_value and available_time (fixture-store conventions) and a test-only coverage attestation; the screen contribution measure is fixed to the recorded outcome 'contributes' (autouse fixture); trial count assertions 1 -> SCREENED_EVALUATION_TRIALS (2).", "why": "Registration is the subject; the screen contribution has real-data tests in replication/tests/test_gate_screen_contribution.py and takes minutes per call. A screened evaluation is two family trials in the gate."},
-    {"test": "test_persona_cycle_demand_integration.py::test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial", "change": "Dataset augmented and attested as above; executor join 60 s -> 900 s; family_trial_count 1 -> 2; the final steps (admitted trial member, demand satisfied) are replaced by the pool's own recorded refusal insufficient_or_constant_returns, the refusal recorded on the attempt and the demand staying open.", "why": "The shared screen needs min_size 3 symbols; the recorded TWSE fixture of this test holds two usable symbols (2330, 2883), so the screened pool is empty and the unchanged pool policy refuses. A recorded market of at least three symbols is needed to restore the admit path."}
-  ],
-  "tests_run": [
-    "services/research/tests/test_template_demand_search.py (26 passed)",
-    "services/research/tests/test_candidate_registration.py (4 passed)",
-    "services/research/tests/test_persona_cycle_demand_integration.py -k open_demand_reconcile_template (1 passed)",
-    "services/research/tests/test_governed_market_dataset.py, test_persona_demand_routes_auth.py, services/source_ingestion/tests/test_hypothesis_compiler.py, test_hypothesis_compiler_wiring.py (passed with the above, 118 in one batch)",
-    "scripts/check_storage_manifest.py (passed)"
-  ],
-  "test_environment_note": "The worker dependency interpreter lacks pyarrow, so modules importing test_governed_market_dataset skip; tests were run with pyarrow 26.0.1 on PYTHONPATH from an existing local venv.",
-  "not_run": ["The other tests of test_persona_cycle_demand_integration.py (not touched by this change)", "any hosted check"],
-  "residual_findings": [
-    "Whole-market evaluation cost and memory are unmeasured at 60 symbols and extrapolate above the container limits (acceptance 5).",
-    "The persona pool cycle does not yet report refusals to the new pool-refusal route.",
-    "Pool admission may widen? Open operator decision; not changed here: a whole-boundary template candidate will normally be refused with candidate_outside_pool_approved_universe by the pool.",
-    "bff test fixtures still use the old reason mandate_universe_missing; the reason is now market_boundary_symbols_missing only if the context has no symbols, and the hosted reason becomes the governed dataset's own."
-  ]
+  "6_end_states": "Every end state is on the demand and the run: search_completed, run_budget_exhausted, or template_search_unavailable:<exception>:<detail> (for example market_boundary_empty, daily_bars_store_stale, survivorship_limited receipts). test_failed_or_partial_runs_record_a_reason_and_never_satisfy_the_demand covers run_budget_exhausted and a failed run; the demand stays open and satisfied_by is empty. The end of test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial shows a refused outcome leaves the demand open.",
+  "7_pool_unchanged": "Pool admission code is untouched. The earlier pool-refusal route and ResearchDemandStore.record_pool_refusal had no caller and are removed (no uncalled write route ships). Visibility today: a passing candidate's receipt (status admitted, registration, registry_id) stays on the demand, and the pool's own refusal is the pool owner's recorded decision (decision.reasons, for example candidate_outside_pool_approved_universe, services/control-plane/persona/persona_strategy_pool.py:702, and the cycle receipt status refused in services/persona/pool_autonomy_cycle.py around line 311-330). Writing that refusal onto the research demand needs a call from the pool cycle to the research owner, which lies outside this task's artifacts, so it is a named follow-up and acceptance 7's 'visible on the demand' is NOT met by this delivery. The demand is never satisfied by a refused candidate (asserted at the end of test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial). Registration and approval keep their owner path and stay paper only.",
+  "8_runtime_budget": "docs/operations/storage-manifest.json runtime_budgets gains research_demands.json: about 17 KB per recorded attempt (measured 16,960 B), at most 171 attempts per demand (2.9 MB), 30 day demand life, the excluded list replaced per run; new cleanup: a closed demand drops gate and artifact bodies of its attempts 60 days after expires_at (research_demand.CLOSED_COMPACT_AFTER, test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their_receipts). scripts/check_storage_manifest.py passes."
+ },
+ "changed_assertions": [
+  {
+   "test": "test_template_demand_search.py::test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate",
+   "change": "The persona and dataset inputs are the recorded hosted shape and a daily_bars store of recorded TWSE bars (was a fabricated market_scope list and a stub loader). The assertions on history_check calendar_days >= 730, out_of_sample_round_trips >= 20 and a stored backtest run are replaced by status survivorship_limited with the dataset id and search_completed.",
+   "why": "A template now carries the mandatory screen, whose market has no survivorship attestation, so the real gate refuses before any backtest (the brief states this refusal is correct and must not be bypassed). No assertion about a result the gate can no longer produce was kept."
+  },
+  {
+   "test": "test_template_demand_search.py::test_missing_universe_fields_and_vwap_are_excluded_without_imputation",
+   "change": "context universe set to ['2330'] for the incomplete-field case.",
+   "why": "Acceptance 3: a template is judged over the eligible boundary; with the two-symbol universe the complete symbol (0050) is correctly evaluated. The excluded-without-imputation intent is kept for the single-symbol boundary."
+  },
+  {
+   "test": "test_candidate_registration.py (4 tests)",
+   "change": "Dataset presents traded_value and available_time (fixture-store conventions) and a test-only coverage attestation; the screen contribution measure is fixed to the recorded outcome 'contributes' (autouse fixture); trial count assertions 1 -> SCREENED_EVALUATION_TRIALS (2).",
+   "why": "Registration is the subject; the screen contribution has real-data tests in replication/tests/test_gate_screen_contribution.py and takes minutes per call. A screened evaluation is two family trials in the gate."
+  },
+  {
+   "test": "test_persona_cycle_demand_integration.py::test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_admit_trial",
+   "change": "Dataset augmented and attested as above; executor join 60 s -> 900 s; family_trial_count 1 -> 2; the final steps (admitted trial member, demand satisfied) are replaced by the pool's own recorded refusal insufficient_or_constant_returns, the refusal recorded on the attempt and the demand staying open.",
+   "why": "The shared screen needs min_size 3 symbols; the recorded TWSE fixture of this test holds two usable symbols (2330, 2883), so the screened pool is empty and the unchanged pool policy refuses. A recorded market of at least three symbols is needed to restore the admit path."
+  },
+  {
+   "test": "test_template_demand_search.py pool refusal tests (2) and the record_pool_refusal lines of two other tests",
+   "change": "Removed together with the uncalled route and store method this task itself had added (never on dev); the compaction test and the persona cycle test keep their other assertions.",
+   "why": "No assertion of an existing dev test was weakened; these covered code that no longer exists."
+  }
+ ],
+ "tests_run": [
+  "services/research/tests/test_template_demand_search.py (25 passed)",
+  "services/research/tests/test_candidate_registration.py, test_persona_demand_routes_auth.py, services/source_ingestion/tests/test_hypothesis_compiler.py (76 passed)",
+  "services/research/tests/test_persona_cycle_demand_integration.py -k open_demand_reconcile_template (1 passed)",
+  "scripts/check_storage_manifest.py (passed)"
+ ],
+ "test_environment_note": "The worker dependency interpreter lacks pyarrow, so modules importing test_governed_market_dataset skip; tests were run with pyarrow 26.0.1 on PYTHONPATH from an existing local venv.",
+ "not_run": [
+  "The other tests of test_persona_cycle_demand_integration.py (not touched by this change)",
+  "any hosted check"
+ ],
+ "residual_findings": [
+  "Whole-market evaluation is refused above 5200 symbol-days (market_evaluation_over_limit); an incremental screen replay is not done, so the hosted whole market cannot be searched until it is.",
+  "The pool cycle does not report its refusal to the research demand (follow-up outside this task's artifacts: services/persona/pool_autonomy_cycle.py admit_trial branch around lines 311-330 would call the research owner); the route that would receive it was removed.",
+  "Pool admission may widen? Open operator decision; not changed here: a whole-boundary template candidate will normally be refused with candidate_outside_pool_approved_universe by the pool.",
+  "bff test fixtures still use the old reason mandate_universe_missing; the reason is now market_boundary_symbols_missing only if the context has no symbols, and the hosted reason becomes the governed dataset's own."
+ ]
 }

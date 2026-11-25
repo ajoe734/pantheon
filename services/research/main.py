@@ -3460,21 +3460,6 @@ def record_persona_research_demand_discovery(
         raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
 
 
-@app.post("/api/research/persona-demands/{demand_id}/pool-refusal")
-def record_persona_research_demand_pool_refusal(
-    demand_id: str,
-    body: Dict[str, Any] = Body(...),
-    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
-) -> Dict[str, Any]:
-    """The pool owner reports a refusal of a passing candidate; it is recorded, never overridden."""
-    try:
-        return research_demand_store.record_pool_refusal(
-            tenant_id, demand_id, str(body.get("artifact_ref") or ""), str(body.get("reason") or ""))
-    except DemandError as exc:
-        raise HTTPException(status_code=404 if "not found" in str(exc) or "no template attempt" in str(exc) else 409,
-                            detail=str(exc)) from exc
-
-
 @app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.

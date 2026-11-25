@@ -719,10 +719,6 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
     decision = pool.current(PID, TENANT)["decision"]
     assert decision["reasons"] == ["insufficient_or_constant_returns"], decision
     assert artifact_id not in {m["artifact_ref"] for m in pool.current(PID, TENANT)["members"]}
-    row = env.research.research_demand_store.record_pool_refusal(
-        TENANT, demand_id, artifact_id, decision["reasons"][0])
-    assert row["discovery"]["template_search"]["attempts"][artifact_id]["pool_admission"]["reason"] == \
-        "insufficient_or_constant_returns"
     # A refused or partial outcome never satisfies the demand.
     day(4)
     final_demand = env.research.research_demand_store.list(TENANT, PID)[0]

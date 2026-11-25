@@ -593,26 +593,11 @@ def test_failed_or_partial_runs_record_a_reason_and_never_satisfy_the_demand(tmp
     assert len(row['discovery']['template_search']['attempts']) == 1  # the earlier receipt is kept
 
 
-def test_pool_refusal_is_recorded_on_the_attempt_and_visible_on_the_demand(tmp_path):
-    search, store, demand, context = setup_search(tmp_path)
-    receipts = search.run(demand)['discovery']['template_search']['attempts']
-    aid = next(iter(receipts))
-    row = store.record_pool_refusal('tenant-a', demand['demand_id'], aid, 'candidate_outside_pool_approved_universe')
-    refused = row['discovery']['template_search']['attempts'][aid]['pool_admission']
-    assert refused['status'] == 'refused' and refused['reason'] == 'candidate_outside_pool_approved_universe'
-    assert row['status'] == 'open'
-    again = store.list('tenant-a')[0]
-    assert again['discovery']['template_search']['attempts'][aid]['pool_admission']['status'] == 'refused'
-    with pytest.raises(Exception):
-        store.record_pool_refusal('tenant-a', demand['demand_id'], 'nope', 'x')
-
-
 def test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their_receipts(tmp_path):
     from datetime import datetime, timedelta, timezone
     search, store, demand, context = setup_search(tmp_path)
     receipts = search.run(demand)['discovery']['template_search']['attempts']
     aid = next(iter(receipts))
-    store.record_pool_refusal('tenant-a', demand['demand_id'], aid, 'candidate_outside_pool_approved_universe')
     full = len(json.dumps(store.list('tenant-a')))
     assert 'gate' in store.list('tenant-a')[0]['discovery']['template_search']['attempts'][aid]
     later = ResearchDemandStore(store.path, now=lambda: datetime.now(timezone.utc) + timedelta(days=30 + 61))
@@ -620,28 +605,21 @@ def test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their
     attempt = row['discovery']['template_search']['attempts'][aid]
     assert row['status'] == 'expired' and attempt['compacted'] and 'gate' not in attempt and 'artifact' not in attempt
     assert attempt['status'] == receipts[aid]['status'] and attempt['family_trial_count'] == receipts[aid]['family_trial_count']
-    assert attempt['pool_admission']['reason'] == 'candidate_outside_pool_approved_universe'
     assert len(json.dumps(later.list('tenant-a'))) < full / 4
 
 
-def test_pool_refusal_route_records_for_the_writer_and_refuses_unknown_attempts(tmp_path, monkeypatch):
-    from services.research.tests.test_persona_demand_routes_auth import (
-        SECRET, ISSUER, AUDIENCE, TENANT, BASE, _cycle_headers, _headers,
-    )
-    for key, value in {'AUTH_MODE': 'strict', 'JWT_SECRET': SECRET, 'JWT_ISSUER': ISSUER,
-                       'JWT_AUDIENCE': AUDIENCE, 'MFA_REQUIRED': 'false'}.items():
-        monkeypatch.setenv('PANTHEON_RESEARCH_' + key, value)
-    module = _load_service_module(data_dir=str(tmp_path))
-    client = TestClient(module.app)
-    demand = client.post(BASE, headers=_cycle_headers(), json=BODY).json()
-    url = BASE + '/' + demand['demand_id'] + '/pool-refusal'
-    body = {'artifact_ref': 'template-demand-x', 'reason': 'candidate_outside_pool_approved_universe'}
-    assert client.post(url, headers=_headers(), json=body).status_code in (401, 403)  # unrelated viewer
-    assert client.post(url, headers=_cycle_headers(), json=body).status_code == 404  # no such attempt
-    module.research_demand_store.record_template_search(
-        TENANT, demand['demand_id'], {'run_at': '2026-11-25T00:00:00Z', 'paper_only': True,
-                                      'attempts': {'template-demand-x': {'template_id': 't', 'status': 'admitted'}}})
-    done = client.post(url, headers=_cycle_headers(), json=body)
-    assert done.status_code == 200, done.text
-    assert done.json()['discovery']['template_search']['attempts']['template-demand-x']['pool_admission']['status'] == 'refused'
-    assert done.json()['status'] == 'open'
+def test_evaluation_over_the_cost_limit_is_refused_before_any_trial_and_never_truncated(tmp_path):
+    from services.research.template_demand_search import MAX_EVALUATION_SYMBOL_DAYS, evaluation_cost
+    search, store, demand, context = setup_search(tmp_path)
+    symbols, days = evaluation_cost(['2330.TW', '0050.TW'], context['dataset'])
+    assert symbols == 2 and days > 0
+    search.max_symbol_days = symbols * days - 1
+    row = search.run(demand)
+    reason = f'market_evaluation_over_limit:{symbols}x{days}:{symbols * days - 1}'
+    assert row['discovery']['template_search']['reason'] == reason
+    assert row['discovery']['template_search']['attempts'] == {}  # no evaluation, no family trial spent
+    assert search.gate.get_family_total_trial_count('template:qlib_alpha158:' + 'KMID') == 0
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+    with pytest.raises(ValueError, match='invalid_template_search_evaluation_limit'):
+        TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
+                             lock_path=tmp_path / 'l', max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS + 1)
