@@ -135,26 +135,39 @@ def test_the_call_stops_on_seconds_and_memory_and_the_state_resumes(tmp_path):
     assert DailyBarsCompleter(store).run()["completed_days"] == [DAY]
 
 
-def test_the_controller_runs_the_completion_and_a_failure_never_fails_the_tick(monkeypatch):
-    calls = []
-    monkeypatch.setattr(cw, "_request_json", lambda url, **kw: calls.append(url) or {"completed_days": [DAY], "filled_rows": 3})
-    ok = cw.run_daily_bars_completion(api_url="http://x/", controller_token="t")
-    assert ok["ok"] and ok["filled_rows"] == 3 and calls == ["http://x/api/source-ingest/daily-bars/complete"]
+def test_health_reports_days_over_five_percent_and_the_writer_completes_in_the_background(tmp_path, monkeypatch):
+    import time
 
-    def boom(url, **kw):
-        raise cw.ControllerTickError("controller", "HTTPError: 503")
-    monkeypatch.setattr(cw, "_request_json", boom)
-    bad = cw.run_daily_bars_completion(api_url="http://x", controller_token="t")
-    assert bad["ok"] is False and "503" in bad["reason"]
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
 
-
-def test_volume_report_counts_days_over_five_percent_and_separates_days_newer_than_the_fix(tmp_path):
     store = DailyBarsStore(tmp_path)
-    store_day_without_values(store, OLD)  # defective stored day
-    store.write_records([collector("2330", DAY, 2010.0, 1000, 2_010_000)], ingest_run_id="ok", default_market="TW")
-    report = DailyBarsCompleter(store).volume_report(since="2026-11-19")
-    assert report["days_over_threshold"] == 1 and report["days_over_threshold_newer_than_fix"] == 0
-    store_day_without_values(store, "2026-11-23")
-    report = DailyBarsCompleter(store).volume_report(since="2026-11-19")
-    assert report["days_over_threshold"] == 2 and report["days_over_threshold_newer_than_fix"] == 1
+    store_day_without_values(store, OLD)
+    write_run(tmp_path, OLD, "run-a", [run_line(collector("2330", OLD, 2010.0, 1000, 2_010_000)),
+                                       run_line(collector("6488", OLD, 2010.0, 1000, 2_010_000))])
+    assert store.volume_health()["unexamined_days"] == 1
+    DailyBarsCompleter(store).run(max_days=0)  # examine nothing yet: state exists only after a day is looked at
+    writer = MarketDataStorageWriter.__new__(MarketDataStorageWriter)
+    import threading
+    writer.root, writer.daily_bars_store = tmp_path, store
+    writer._completion_guard, writer._completion_running, writer._completion_last = threading.Lock(), False, -1e9
+    writer.last_daily_bars_completion = None
+    monkeypatch.setenv("SOURCE_INGEST_DAILY_BARS_COMPLETION", "on")
+    writer._start_daily_bars_completion()
+    writer._start_daily_bars_completion()  # throttled and single flight: the second call starts nothing
+    for _ in range(100):
+        if writer.last_daily_bars_completion is not None:
+            break
+        time.sleep(0.05)
+    assert writer.last_daily_bars_completion["completed_days"] == [OLD]
+    assert values(store, OLD) == {"2330": (1000.0, 2_010_000.0), "6488": (1000.0, 2_010_000.0)}
+    health = store.health()["volume"]
+    assert health["days_over_threshold"] == 0 and health["examined_days"] == 1
 
+
+def test_health_lists_a_stored_day_that_is_still_over_five_percent(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store_day_without_values(store, OLD)  # no run files: unretained, values stay null
+    DailyBarsCompleter(store).run()
+    health = store.volume_health()
+    assert health["days_over_threshold"] == 1 and health["unretained_days"] == 1
+    assert health["days"][0]["trade_date"] == OLD and health["days"][0]["status"] == "unretained"

@@ -260,7 +260,8 @@ stdout only, no files, no new writer.
 
 ## daily-bars-volume probe (`acceptance/probes/daily-bars-volume`)
 
-Owner DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Read-only: `GET $ACCEPTANCE_SOURCE_INGEST_URL/api/source-ingest/daily-bars/volume?since=<fix date>`
-(optional `ACCEPTANCE_SOURCE_INGEST_TOKEN`, `ACCEPTANCE_DAILY_BARS_FIX_DATE`, default 2026-11-26). It reports the number of
-stored days (newest 60) whose traded value is null on more than 5 % of their traded rows and fails when any such day is newer
-than the fix date. Older days are reported while the completion tick fills them. Exit 77 when the URL is unset.
+Owner DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Read-only: `GET $ACCEPTANCE_SOURCE_INGEST_URL/api/source-ingest/health`, field
+`daily_bars.volume` (optional `ACCEPTANCE_SOURCE_INGEST_TOKEN`, `ACCEPTANCE_DAILY_BARS_FIX_DATE`, default 2026-11-26). It reports the
+number of stored days whose traded value is null on more than 5 % of their traded rows (days the completion has examined; the
+payload also counts `unexamined_days` and `unretained_days`) and fails when any such day is newer than the fix date. Older days
+are reported while the completion fills them. Exit 77 when the URL is unset.

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import gzip
+import os
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -297,6 +300,10 @@ class MarketDataStorageWriter:
         self.root = Path(root)
         # Dual write (SD_MARKET_DATA_ONE_WRITE_PER_DAY T1): nothing reads it yet except tests.
         self.daily_bars_store = daily_bars_store if daily_bars_store is not None else DailyBarsStore(self.root)
+        self._completion_guard = threading.Lock()
+        self._completion_running = False
+        self._completion_last = -1e9
+        self.last_daily_bars_completion: dict[str, Any] | None = None
         self.keyed_errors: dict[str, str] = {}
         self.keyed_counters: dict[str, int] = {"partitions_written": 0, "partitions_unchanged": 0, "rejected_no_key": 0}
 
@@ -337,6 +344,40 @@ class MarketDataStorageWriter:
             )
         except Exception as exc:  # noqa: BLE001 - dual write must not fail the run; health reports it
             self.daily_bars_store.record_dual_write_error(exc)
+        self._start_daily_bars_completion()
+
+    COMPLETION_MIN_INTERVAL_SECONDS = 30.0
+
+    def _start_daily_bars_completion(self) -> None:
+        """DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125: the source-ingest owner completes stored days from the retained
+        run files. One bounded call (days, seconds, memory, partitions; see daily_bars_completion) on a daemon thread,
+        single flight, at most once per ``COMPLETION_MIN_INTERVAL_SECONDS``; it never delays or fails the ingest run.
+        ``SOURCE_INGEST_DAILY_BARS_COMPLETION=off`` disables it (``on`` forces it under pytest)."""
+        from .daily_bars_store import DailyBarsStore
+
+        setting = os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION", "").strip().lower()
+        if setting in {"off", "0", "false"} or (not setting and os.getenv("PYTEST_CURRENT_TEST")):
+            return  # unset means on, except under pytest: a background writer would race tests that list the root
+        if not isinstance(self.daily_bars_store, DailyBarsStore):
+            return
+        now = time.monotonic()
+        with self._completion_guard:
+            if self._completion_running or now - self._completion_last < self.COMPLETION_MIN_INTERVAL_SECONDS:
+                return
+            self._completion_running = True
+            self._completion_last = now
+        threading.Thread(target=self._run_daily_bars_completion, name="daily-bars-completion", daemon=True).start()
+
+    def _run_daily_bars_completion(self) -> None:
+        try:
+            from .daily_bars_completion import DailyBarsCompleter
+
+            self.last_daily_bars_completion = DailyBarsCompleter(self.daily_bars_store, self.root).run()
+        except Exception as exc:  # noqa: BLE001 - completion is a repair path: counted, never raised into ingest
+            self.daily_bars_store.record_dual_write_error(exc)
+        finally:
+            with self._completion_guard:
+                self._completion_running = False
 
     def write_run(
         self,

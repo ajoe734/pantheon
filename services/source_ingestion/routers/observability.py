@@ -67,25 +67,6 @@ def create_observability_router(runtime: SourceIngestionRuntime) -> APIRouter:
         runtime._require_controller_authorization(authorization, operation="retention sweep")
         return _retention_sweeper(runtime).run_if_due()
 
-    @router.post("/api/source-ingest/daily-bars/complete")
-    def complete_daily_bars(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-        """Controller cadence entry (DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125): one bounded, resumable call that fills
-        null volume and traded value of stored days from the retained normalized run files."""
-        runtime._require_controller_authorization(authorization, operation="daily bars completion")
-        from ..daily_bars_completion import DailyBarsCompleter
-
-        store = runtime.market_data_storage_writer.daily_bars_store
-        return DailyBarsCompleter(store, runtime.MARKET_DATA_STORAGE_ROOT).run()
-
-    @router.get("/api/source-ingest/daily-bars/volume")
-    def daily_bars_volume(since: str, limit_days: int = 60) -> dict[str, Any]:
-        """Read-only: stored days with traded value null on more than 5 % of their traded rows."""
-        from ..daily_bars_completion import DailyBarsCompleter
-
-        store = runtime.market_data_storage_writer.daily_bars_store
-        return DailyBarsCompleter(store, runtime.MARKET_DATA_STORAGE_ROOT).volume_report(
-            since=since, limit_days=max(1, min(limit_days, 500)))
-
     @router.get("/api/source-ingest/retention")
     def retention_health() -> dict[str, Any]:
         return _retention_sweeper(runtime).health()

@@ -1025,7 +1025,29 @@ class DailyBarsStore:
         return {
             "schema_version": "daily_bars_health.v1", "counters": dict(self.counters),
             "last_error": self.last_error, "alarms": report["alarms"], "budget": report,
+            "volume": self.volume_health(),
         }
+
+    VOLUME_NULL_SHARE = 0.05
+
+    def volume_health(self) -> dict[str, Any]:
+        """Read-only: stored days whose traded rows lack a traded value on more than 5 % of them, from the completion
+        state (no parquet is read here); ``unexamined_days`` have not been looked at by the completion yet.
+        DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125."""
+        try:
+            state = json.loads((self.root / "daily_bars_completion_state.json").read_text(encoding="utf-8"))
+            days = state.get("days") or {}
+        except (OSError, ValueError):
+            days = {}
+        stored = self.read_manifest_dates()
+        over = [
+            {"trade_date": d, "traded_rows": v.get("traded_rows"), "no_value": v.get("no_value"), "status": v.get("status")}
+            for d, v in sorted(days.items(), reverse=True)
+            if d in set(stored) and v.get("traded_rows") and (v.get("no_value") or 0) / v["traded_rows"] > self.VOLUME_NULL_SHARE]
+        return {"stored_days": len(stored), "examined_days": sum(1 for d in stored if d in days),
+                "unexamined_days": sum(1 for d in stored if d not in days), "days_over_threshold": len(over),
+                "unretained_days": sum(1 for d in stored if (days.get(d) or {}).get("status") == "unretained"),
+                "days": over[:500]}
 
     def record_dual_write_error(self, exc: BaseException) -> None:
         self.counters["dual_write_errors"] += 1

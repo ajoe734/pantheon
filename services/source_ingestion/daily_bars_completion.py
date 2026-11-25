@@ -3,8 +3,8 @@
 DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Until this task the store read ``volume`` and ``value`` while the collector
 rows carry ``volume_shares`` and ``turnover_twd``, so almost every stored row has no volume and no traded value. The
 mapping is fixed in ``DailyBarsStore.extract_rows``; this module repairs the days that were already stored, with no
-manual hosted write: the controller tick calls it (``/api/source-ingest/daily-bars/complete``), and every call is
-bounded and resumable.
+manual hosted write: the market data writer starts it after a daily bars batch (single flight, daemon thread, at most once per 30 s),
+and every call is bounded and resumable.
 
 How a tick works
 * Index (newest write-date partition first): a partition of ``normalized/tw_price_daily/date=<write date>/`` is read
@@ -160,20 +160,6 @@ class DailyBarsCompleter:
                 no_value += value is None
         return {"traded_rows": traded, "no_volume": no_volume, "no_value": no_value,
                 "digest": manifest.get("content_digest")}
-
-    def volume_report(self, *, since: str, limit_days: int = 60, threshold: float = 0.05) -> dict[str, Any]:
-        """Read-only (acceptance check): stored days, newest ``limit_days`` of them, whose traded rows lack a traded
-        value for more than ``threshold`` of the rows. ``newer_than_fix`` are those dated after ``since``."""
-        dates = sorted(self.store.read_manifest_dates(), reverse=True)[:limit_days]
-        bad: list[dict[str, Any]] = []
-        for day in dates:
-            m = self.missing_values(day)
-            if m and m["traded_rows"] and m["no_value"] / m["traded_rows"] > threshold:
-                bad.append({"trade_date": day, "traded_rows": m["traded_rows"], "no_value": m["no_value"],
-                            "no_volume": m["no_volume"]})
-        return {"stored_days": len(self.store.read_manifest_dates()), "checked_days": len(dates), "since": since,
-                "days_over_threshold": len(bad), "days_over_threshold_newer_than_fix": sum(1 for b in bad if b["trade_date"] > since),
-                "days": bad[:UNRETAINED_LIST_LIMIT]}
 
     # -- one bounded call ----------------------------------------------------------------------
     def run(self, *, max_days: int = MAX_DAYS, max_seconds: float = MAX_SECONDS, max_rss_mb: float = MAX_RSS_MB,

@@ -85,7 +85,7 @@
   "unretained": "a day with no retained source row is listed (unretained_days), not guessed",
   "eligibility": "a stored day is processed once every run-file partition with write date >= the trade date is indexed (a run file cannot hold a later trade date than its write date)"
  },
- "acceptance_probe": "acceptance/probes/daily-bars-volume, GET /api/source-ingest/daily-bars/volume; fails above zero for days newer than the fix date; the stage does not pass ACCEPTANCE_SOURCE_INGEST_URL yet so it skips (77) until it does",
+ "acceptance_probe": "acceptance/probes/daily-bars-volume reads daily_bars.volume of GET /api/source-ingest/health (from the completion state, no parquet read); fails above zero for days newer than the fix date; the stage does not pass ACCEPTANCE_SOURCE_INGEST_URL yet so it skips (77) until it does",
  "tests": [
   "services/source_ingestion/tests/test_daily_bars_completion.py",
   "acceptance/test_daily_bars_volume.py",
@@ -94,6 +94,8 @@
  "residual_findings": [
   "The acceptance stage needs ACCEPTANCE_SOURCE_INGEST_URL (and a token if required) to run the probe.",
   "Existing store tests used traded values unrelated to close x volume; the unit check now rejects such rows.",
-  "Hosted 14 GB read speed and the real tick time are not measured; the bounds make them safe, not fast."
- ]
+  "Hosted 14 GB read speed and the real tick time are not measured; the bounds make them safe, not fast.",
+  "A controller-tick or route trigger needs routers/observability.py in the artifact contract (Human/Ops only)."
+ ],
+ "trigger": "MarketDataStorageWriter starts DailyBarsCompleter.run on a daemon thread after a daily bars dual write (single flight, at most once per 30 s, SOURCE_INGEST_DAILY_BARS_COMPLETION=off disables); no new route and no controller change because routers/observability.py and main.py are outside the task artifact contract (residual: a controller-tick trigger would need the contract widened)"
 }
