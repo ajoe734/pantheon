@@ -32,6 +32,23 @@ TAG_POISON_EVENT = "poison_event"
 TAG_WRITER_ERROR = "writer_error"
 
 
+# Trading event families whose loss must be visible (a dead letter here is a
+# lost signal / decision / order / fill / position / risk / reconciliation).
+TRADING_EVENT_TOKENS = (
+    "signal", "decision", "order", "fill", "position", "risk", "reconciliation",
+)
+_MAX_TRADING_EVENT_TYPES = 64
+
+
+def is_trading_event_type(event_type: Any) -> bool:
+    if not isinstance(event_type, str) or not event_type:
+        return False
+    tokens = event_type.lower().replace(".", "_").replace("-", "_").split("_")
+    return any(
+        token.startswith(prefix) for token in tokens for prefix in TRADING_EVENT_TOKENS
+    )
+
+
 class DeadLetterEntry:
     """A single dead-letter entry with diagnostic metadata."""
 
@@ -108,6 +125,9 @@ class DeadLetterQueue:
         self._incident_threshold = incident_threshold
         self._total_rejected = 0
         self._incident_fired = False
+        # event_type -> {count, newest_reason, newest_at, newest_event_id};
+        # bounded by distinct trading event types, no store of its own.
+        self._trading_dead_letters: dict[str, dict[str, Any]] = {}
 
         if self._spill_path:
             self._spill_path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,6 +165,7 @@ class DeadLetterQueue:
         )
         self._entries.append(entry)
         self._total_rejected += 1
+        self._note_trading(entry)
 
         # Evict old entries from memory if over limit
         if len(self._entries) > self._max_memory_entries:
@@ -179,6 +200,22 @@ class DeadLetterQueue:
             f"tags={tags}, reason={reason}, total_rejected={self._total_rejected}"
         )
         return persisted
+
+    def _note_trading(self, entry: DeadLetterEntry) -> None:
+        event = entry.event if isinstance(entry.event, dict) else {}
+        event_type = event.get("event_type")
+        if not is_trading_event_type(event_type):
+            return
+        slot = self._trading_dead_letters.get(event_type)
+        if slot is None:
+            if len(self._trading_dead_letters) >= _MAX_TRADING_EVENT_TYPES:
+                return
+            slot = {"count": 0}
+            self._trading_dead_letters[event_type] = slot
+        slot["count"] += 1
+        slot["newest_reason"] = entry.reason
+        slot["newest_at"] = entry.rejected_at
+        slot["newest_event_id"] = event.get("event_id")
 
     def get_entries(
         self,
@@ -256,6 +293,7 @@ class DeadLetterQueue:
                 )
                 entry.rejected_at = data.get("rejected_at", entry.rejected_at)
                 self._entries.append(entry)
+                self._note_trading(entry)
                 retained_count += 1
             except json.JSONDecodeError:
                 invalid_retained_count += 1
@@ -290,6 +328,9 @@ class DeadLetterQueue:
             "incident_fired": self._incident_fired,
             "spill_path": str(self._spill_path) if self._spill_path else None,
             "tag_counts": tag_counts,
+            "trading_dead_letters": {
+                k: dict(v) for k, v in self._trading_dead_letters.items()
+            },
         }
 
     def reset_incident_flag(self) -> None:
