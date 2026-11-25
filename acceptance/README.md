@@ -306,3 +306,19 @@ Owner DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Read-only: `GET $ACCEPTANCE_SO
 number of stored days whose traded value is null on more than 5 % of their traded rows (days the completion has examined; the
 payload also counts `unexamined_days` and `unretained_days`) and fails when any such day is newer than the fix date. Older days
 are reported while the completion fills them. Exit 77 when the URL is unset.
+
+## Tests that import the BFF app (`acceptance/conftest.py`)
+
+`services.control_plane.bff.main` opens durable state under `BFF_DATA_DIR` when it is
+imported (`downstream_health.sqlite3` in SQLite WAL mode, among others); the default is the
+fixed `/tmp/pantheon/bff`. The CI Test sweep runs several pytest processes per runner, so two
+processes importing the app shared one SQLite file and one failed with
+`database is locked` at `PRAGMA journal_mode = WAL` (Branch CI run 45715715898, shard 5).
+
+`acceptance/conftest.py` therefore gives each test process its own data directory: when
+`BFF_DATA_DIR` is unset it creates a new temporary directory (prefix
+`pantheon-acceptance-bff-`), sets the variable before any test module is imported, and
+removes the directory at process exit. An explicitly set `BFF_DATA_DIR` is kept and never
+removed. `acceptance/test_acceptance_bff_data_dir.py` proves both cases and runs two
+concurrent real imports with the conftest (both pass) and two on one shared directory while
+its SQLite file is held locked past the 10 s busy timeout (both fail with `database is locked`).
