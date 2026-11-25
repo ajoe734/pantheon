@@ -1,0 +1,63 @@
+{
+  "task_id": "BFF-EVIDENCE-CITED-LIST-20261125",
+  "title": "Evidence list can answer which references decisions and meetings and approvals really cite",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC6",
+  "delivery_state": "implemented_pending_review",
+  "hosted_verification_note": "No VM or SSH access performed; functional evidence only, using recorded owner shapes and the hosted reference ids the coordinator measured on 2026-11-25. Hosted verification belongs to the operator acceptance task.",
+  "coordinator_decisions_applied": {
+    "research_ticket_fields": "Acceptance 2 'research tickets results' means the recorded submission evidence_refs and human_input.evidence_refs (services/research/write_owner.py); the ticket page projection returns both.",
+    "meeting_positions": "Option (a): positions are read from meeting detail, capped at the 30 newest meetings, details read in overlap through the owner-read executor pattern (submit_owner_read, a 4-worker pool so at most 4 in flight), caller identity and tenant kept (MeetingsOwnerClient(tenant, actor)), read/truncated/failed counts reported, one failed detail marks the source partial. The one-call-per-source rule is relaxed for this source only.",
+    "reference_shapes": "artifact-persona-paper-*, facts:registry_entry:*, facts:strategy_pool:<persona>@<v>, facts:member_virtual_book:*, facts:meeting_topic:* (the meeting itself, not listed), evidence:search_excerpt:ko-evi-* (knowledge object; resolved to evi-<x> only when sha256('evi-<x>')[:12] equals the ko suffix, through the existing owner item read, for the visible page only). Verified: sha256('evi-1217cd1c8ccc7274')[:12] == '94a73ebc0814'.",
+    "supplied_only": "Case-file items that were only supplied are never listed: only citations fields are read."
+  },
+  "acceptance_as_delivered": [
+    "1. GET /bff/management/evidence?scope=cited returns one row per cited reference with ref_id, ref_kind, source_owner, label (+name_missing), source_class, resolved_link and cited_by entries {entity_type, entity_ref, label, route_href, time}. Without scope (or scope=ingested) the answer is the unchanged ingested list; a ref_id lookup resolves an ingested item in every scope (scope=cited + ref_id uses the existing path).",
+    "2. Citations come only from recorded fields through existing owner reads: meeting proposals citations; meeting positions citations (rounds[].positions[].citations from meeting detail, 30 newest meetings); governance approvals evidence_refs; evolution proposals evidence_refs; research demands retrieval_influence.metadata.cited_item_ids; research tickets submission evidence_refs and human_input.evidence_refs; persona daily cycle decisions cited_case_file_item_ids. A reference only supplied in a case file is not listed; a facts:meeting_topic reference is the meeting itself and is not listed.",
+    "3. Each source has status (ok|partial|failed|denied), reason, read_count, truncated, failed_count, citation_count, withheld_count, calls and response_bytes; a failed or denied source is shown and the total is marked incomplete; a viewer denied approvals still gets the other sources; when every source fails the answer is unavailable with total null, never an empty ok list.",
+    "4. Private persona memory and trader items and other-tenant rows are never returned (meetings withholding rule in its strictest form, project_case_file with no private persona, reference kind memory_persona_private); redact_evidence_refs is reused fail-closed. Tests prove a private memory reference is dropped from meetings, demands and cycle decisions.",
+    "5. Reads are bounded: one owner call per source except meeting positions (1 list + at most 30 details, 4 in flight, per coordinator decision); at most 500 references; at most 20 item reads for the visible page; no new store, writer, index or cross-request cache. Cost per request is in meta.cost and below.",
+    "6. Labels come from the existing DisplayNameResolver (strategy labels for registry artifacts and virtual books, persona names for strategy pools and cycle decisions, meeting topics with persona ids replaced via present_title); an unnamed id keeps label=ref_id and name_missing=true; registry artifact, virtual book, strategy pool, memory, research note and evidence references link to their pages.",
+    "7. Tests use recorded shapes from meetings (Consultation detail and proposals), approvals (Governance evidence_refs {ref_type, ref_id}), research tickets and demands, and OODA cycle packets (persona_cycle.case_files + decisions); BFF_API_CONTRACT.md documents the scope; no existing test was weakened or deleted."
+  ],
+  "implementation": {
+    "new_module": "services/control-plane/bff/management_read_models/cited_evidence.py (readers per source, reference parsing, composition, bounds)",
+    "service": "ManagementService.get_cited_evidence (management_read_models/service.py): builds the read context, reuses redact_evidence_refs / fail_closed_redacted_refs, the store's read_evidence_ref_item and current_resolver.",
+    "router": "management_read_models/router.py: scope query (ingested|cited, else 400), tenant via _extract_tenant_id (X-Tenant-Id honoured), runs through run_management_read with PANTHEON_BFF_CITED_EVIDENCE_READ_TIMEOUT_SECONDS (default 8.0 s), off the event loop also when no runner is wired.",
+    "not_changed": "owner services, meetings/client.py, cycle_views.py, owner_reads.py, read_surface_ports.py, app_factory.py (existing functions are imported and reused as they are)."
+  },
+  "cost_per_request": {
+    "formula": "owner_calls = 6 (one per non-position source) + 1 (meeting list) + min(meetings, 30) detail reads + at most 20 item reads for the visible page",
+    "measured_local_recorded_shapes": {
+      "one_meeting": {
+        "owner_calls": 8,
+        "response_bytes": 5447,
+        "item_reads": 1
+      },
+      "twenty_meetings": {
+        "owner_calls": 27,
+        "response_bytes": 41200,
+        "item_reads": 1
+      }
+    },
+    "hosted_projection_from_coordinator_measurement_2026-11-25": "20 meetings: 20 details = 495 KB and 6.2 s sequential (~0.31 s each). With 4 in flight that is about 5 waves x 0.31 s = ~1.6 s and ~0.5 MB for the positions source; at the cap of 30 meetings about 8 waves = ~2.5 s and ~0.75 MB. Other sources are single list reads in parallel. Route budget 8.0 s; a source not done 0.25 s before the deadline is reported failed(read_timeout) and the rest is still returned."
+  },
+  "tests_run": {
+    "new": "services/control-plane/bff/tests/test_cited_evidence_list.py: 14 passed",
+    "event_loop_guard": "tests/test_event_loop_owner_reads_guard.py: 5 passed (cited path added to RUNTIME_GET_PATHS so it is driven through the composed app with owner transports guarded)",
+    "existing_evidence_suites": "test_bff_b3_management_evidence + all tests/test_*evidence*.py + event-loop guard: 211 passed, 6 failed; the identical 6 fail on an unmodified dev snapshot (50d908467) in the same batch (2 control_loops OODA redaction count 32 vs 33; 4 ranking_evidence_surfaces order-dependent, pass alone).",
+    "management_router_suites": "test_bff_session_auth_me_contract, test_mgmt_load_005_read_concurrency, test_management_session_harness, test_management_read_models_router + new: 144 passed, 5 failed; on unmodified dev the same batch has 6 failures including these 5 (persona fleet registry contract; load-sensitive ranking/evolution-journal timing).",
+    "architecture": "tests/test_bff_test_architecture.py: 39 passed"
+  },
+  "justified_changed_assertions": [],
+  "added_assertions": [
+    "tests/test_event_loop_owner_reads_guard.py: RUNTIME_GET_PATHS gains /bff/management/evidence?scope=cited (additive)."
+  ],
+  "residual_findings": [
+    "tests/bff_test_architecture_inventory.json was not updated: it already omits ~98 newer test files and its test does not require registration; registering only this file would be inconsistent.",
+    "Meeting details share one 4-worker pool per process, so concurrent cited requests queue their detail reads; per request at most 4 are in flight.",
+    "Memory, telemetry-summary and other non-directory references have no name directory; they answer name_missing=true until an owner exposes names.",
+    "Pre-existing failures noted above (control_loops OODA redaction count, ranking surfaces ordering, mgmt_load_005 timing, persona fleet registry contract) are untouched."
+  ]
+}
