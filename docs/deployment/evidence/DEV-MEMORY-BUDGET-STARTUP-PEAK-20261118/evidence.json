@@ -69,7 +69,7 @@
     "max_growth": "one finding per restarted service",
     "replay_2026-11-18T05:40Z": "produces the finding (test_restarted_service_reported_without_previous_report)"
   },
-  "sum_limits_mib": 84224,
+  "sum_limits_mib": 84352,
   "rollback": "revert the commit or set DEV_MEM_LIMIT_INCIDENTS; dev compose only, staging and production untouched",
   "residual_findings": [
     "scheduled GitHub workflows on this repository start hours late or not at all; the daily measurement had never run by schedule before the manual run 44245690990"

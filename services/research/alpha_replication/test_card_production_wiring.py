@@ -33,10 +33,9 @@ def _env(tmp_path: Path) -> dict[str, str]:
         path.write_text("tok-" + name)
         path.chmod(0o600)
         env[name + "_FILE"] = str(path)
-    for name in (wiring.DATASET_POINTER, wiring.DATASET_POLICY):
-        path = tmp_path / (name + ".json")
-        path.write_text("{}")
-        env[name] = str(path)
+    # The governed market store: only its manifest directory matters at wiring time; no persona authority file.
+    (tmp_path / "market_data_store" / "daily_bars" / "_manifest").mkdir(parents=True, exist_ok=True)
+    env["GOVERNED_MARKET_STORE_ROOT"] = str(tmp_path / "market_data_store")
     return env
 
 
@@ -54,7 +53,7 @@ def test_complete_environment_builds_all_four_collaborators(tmp_path):
 
 
 @pytest.mark.parametrize("name", list(wiring.REQUIRED_ADDRESSES + wiring.REQUIRED_IDENTITIES
-                                      + wiring.REQUIRED_CREDENTIALS + (wiring.DATASET_POINTER, wiring.DATASET_POLICY)))
+                                      + wiring.REQUIRED_CREDENTIALS))
 def test_any_missing_name_disables_the_path_with_a_readable_reason(tmp_path, name):
     env = _env(tmp_path)
     for key in [k for k in env if k == name or k == name + "_FILE"]:
@@ -65,12 +64,19 @@ def test_any_missing_name_disables_the_path_with_a_readable_reason(tmp_path, nam
     assert (result.registrar, result.matcher, result.demands_provider, result.dataset_resolver) == (None,) * 4
 
 
-def test_unreadable_credential_and_missing_dataset_file_are_named(tmp_path):
+def test_unreadable_credential_and_missing_store_are_named(tmp_path):
     env = _env(tmp_path)
     Path(env["RESEARCH_GOVERNANCE_GATE_TOKEN_FILE"]).chmod(0o644)  # unsafe mode is never read
-    Path(env[wiring.DATASET_POINTER]).unlink()
+    env["GOVERNED_MARKET_STORE_ROOT"] = str(tmp_path / "absent")
     missing = missing_configuration(env)
-    assert "RESEARCH_GOVERNANCE_GATE_TOKEN" in missing and wiring.DATASET_POINTER + "(file not found)" in missing
+    assert "RESEARCH_GOVERNANCE_GATE_TOKEN" in missing and "GOVERNED_MARKET_STORE_ROOT(daily bars store not found)" in missing
+
+
+def test_wiring_needs_no_persona_authority_file(tmp_path):
+    env = _env(tmp_path)
+    for name in ("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"):
+        assert name not in env
+    assert _build(tmp_path, env).enabled
 
 
 def test_one_identity_for_proposer_and_gate_is_refused(tmp_path):
@@ -174,23 +180,26 @@ def test_matcher_fails_closed_without_the_persona_or_its_route_policy(tmp_path, 
         build_matcher(_env(tmp_path))(ENTRY, DEMAND)
 
 
-def test_dataset_resolver_returns_only_what_the_governed_authority_holds(tmp_path, monkeypatch):
+def test_dataset_resolver_serves_the_governed_market_and_fails_closed(tmp_path):
+    from datetime import datetime, timezone
+    from services.research import governed_market_dataset as gmd
+    from services.research.tests.test_governed_market_dataset import NOW, build_store
+
+    build_store(tmp_path / "market_data_store", days=70)  # default policy: 60 bars minimum
     env = _env(tmp_path)
-    seen = {}
-
-    def load(dataset_path, policy_path, *, trusted_now, strategy_id):
-        seen.update(dataset_path=dataset_path, policy_path=policy_path, strategy_id=strategy_id)
-        return types.SimpleNamespace(vectorbt_dataset={"dataset_id": "ds-1", "records": [1]})
-
-    monkeypatch.setitem(sys.modules, "evaluation_authority", types.SimpleNamespace(load_evaluation_authority=load))
-    resolved = build_dataset_resolver(env)({"dataset_id": "ds-1"})
-    assert resolved == {"dataset_id": "ds-1", "records": [1]} and "candidate_pool_market" not in resolved
-    assert seen["dataset_path"] == env[wiring.DATASET_POINTER] and seen["strategy_id"] == "ds-1"
-
-    def boom(*a, **k):
-        raise ValueError("governed_policy_authority_unavailable")
-
-    monkeypatch.setitem(sys.modules, "evaluation_authority", types.SimpleNamespace(load_evaluation_authority=boom))
-    with pytest.raises(ValueError):
-        build_dataset_resolver(env)({"dataset_id": "ds-1"})
-    assert str(Path(wiring.__file__).resolve().parents[2] / "training-session") not in sys.path
+    resolve = build_dataset_resolver(env, now=lambda: NOW)
+    resolved = resolve({"dataset_id": wiring.GOVERNED_MARKET_DATASET_ID, "symbols": ["2330.TW"]})
+    assert resolved["dataset_id"] == wiring.GOVERNED_MARKET_DATASET_ID and resolved["records"]
+    assert resolved["snapshot_id"].startswith("gmd-") and "candidate_pool_market" not in resolved
+    assert resolved["source_dataset_refs"] == ["daily_bars:" + resolved["snapshot_id"]]
+    # a pinned snapshot id is reproduced and keeps its own id
+    pinned = resolve({"dataset_id": resolved["snapshot_id"], "symbols": ["2330.TW"]})
+    assert pinned["dataset_id"] == resolved["snapshot_id"]
+    # not a governed market id, a symbol outside the boundary, a stale store: each raises a readable reason
+    with pytest.raises(gmd.GovernedMarketDatasetError, match="dataset_id_not_governed_market"):
+        resolve({"dataset_id": "persona-candidate-ds", "symbols": ["2330.TW"]})
+    with pytest.raises(gmd.GovernedMarketDatasetError, match="symbols_not_in_store"):
+        resolve({"dataset_id": wiring.GOVERNED_MARKET_DATASET_ID, "symbols": ["0000"]})
+    late = build_dataset_resolver(env, now=lambda: datetime(2026, 12, 25, tzinfo=timezone.utc))
+    with pytest.raises(gmd.GovernedMarketDatasetError, match="daily_bars_store_stale"):
+        late({"dataset_id": wiring.GOVERNED_MARKET_DATASET_ID, "symbols": ["2330.TW"]})
