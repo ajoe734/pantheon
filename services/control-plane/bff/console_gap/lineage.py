@@ -1,12 +1,58 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, Query
 
-from ..core import owner_reads
-from ..core.display_names import current_resolver
+from ..core import display_names, owner_reads
+from ..core.display_names import DisplayNameResolver
 from .contracts import LineageEnvelope
+
+
+def _strategy_labels_configured(store: Any) -> bool:
+    """True when ``store.get_strategy_labels`` is backed by a configured or injected source."""
+    if store is None or not hasattr(store, "get_strategy_labels"):
+        return False
+    if not hasattr(store, "research_knowledge_source"):
+        return True
+    if "get_strategy_labels" in getattr(store, "__dict__", {}):
+        return True
+    rks = getattr(store, "research_knowledge_source", None)
+    if getattr(rks, "_has_injected_strategy_specs", False):
+        return True
+    return bool(os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+
+
+def _lineage_display_name_resolver(store: Any) -> DisplayNameResolver:
+    """Resolver for GET /bff/lineage bound to the lineage route's read surface."""
+    if display_names._source is not None:
+        return DisplayNameResolver(store)
+
+    def _load_personas() -> Any:
+        rows = owner_reads.shared_persona_directory_list(store, store.list_personas)
+        p_port = getattr(getattr(store, "persona_capital_runtime", None), "persona", None)
+        if p_port is not None and callable(getattr(p_port, "get_surface_status", None)):
+            if p_port.get_surface_status().get("source") == "unavailable":
+                raise RuntimeError("persona_store_unavailable")
+        return rows
+
+    persona_loader = _load_personas if store is not None and hasattr(store, "list_personas") else None
+    strategy_loader: Optional[Callable[[], Any]] = (
+        (
+            lambda: owner_reads.cached_owner_call(
+                ("display_names_strategy_labels", id(store), owner_reads.selected_tenant.get()),
+                store.get_strategy_labels,
+            )
+        )
+        if _strategy_labels_configured(store)
+        else (lambda: {})
+    )
+    return DisplayNameResolver(
+        store,
+        persona_loader=persona_loader,
+        strategy_loader=strategy_loader,
+    )
 
 
 def create_lineage_router(
@@ -75,7 +121,7 @@ def create_lineage_router(
                         "source": "display_name_resolver",
                     }
                 else:
-                    resolver = current_resolver(store)
+                    resolver = _lineage_display_name_resolver(store)
                     nodes = resolver.annotate_lineage_nodes(nodes, edges)
                     names_surface = resolver.surface()
                     # A real empty graph from a reachable owner is ok with zero nodes;

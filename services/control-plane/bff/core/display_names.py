@@ -13,7 +13,6 @@ ids and strategy ids to display names for one request:
 from __future__ import annotations
 
 import logging
-import os
 import re
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
@@ -63,20 +62,6 @@ def _persona_label(record: Mapping[str, Any]) -> str:
     return ""
 
 
-def _strategy_labels_configured(store: Any) -> bool:
-    """True when ``store.get_strategy_labels`` is backed by a configured or injected source."""
-    if store is None or not hasattr(store, "get_strategy_labels"):
-        return False
-    if not hasattr(store, "research_knowledge_source"):
-        return True
-    if "get_strategy_labels" in getattr(store, "__dict__", {}):
-        return True
-    rks = getattr(store, "research_knowledge_source", None)
-    if getattr(rks, "_has_injected_strategy_specs", False):
-        return True
-    return bool(os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
-
-
 class DisplayNameResolver:
     """Resolve persona and strategy display names with one read per directory."""
 
@@ -88,37 +73,19 @@ class DisplayNameResolver:
         strategy_loader: Optional[Callable[[], Mapping[str, Any]]] = None,
         binding_loader: Optional[Callable[[], Iterable[Mapping[str, Any]]]] = None,
     ) -> None:
-        composed = _composed_read_store()
-        if _source is not None:
-            p_store = s_store = b_store = _source
-        else:
-            p_store = (
-                read_store
-                if read_store is not None and hasattr(read_store, "list_personas")
-                else (composed or read_store)
-            )
-            s_store = (
-                read_store
-                if read_store is not None and _strategy_labels_configured(read_store)
-                else (composed if _strategy_labels_configured(composed) else None)
-            )
-            b_store = (
-                read_store
-                if read_store is not None and hasattr(read_store, "list_runtime_bindings")
-                else (composed or read_store)
-            )
-        self._store = p_store
-        if persona_loader is None and p_store is not None and hasattr(p_store, "list_personas"):
-            persona_loader = lambda: shared_persona_directory_list(p_store, p_store.list_personas)  # noqa: E731
-        if strategy_loader is None and s_store is not None and hasattr(s_store, "get_strategy_labels"):
+        store = _source if _source is not None else (_composed_read_store() or read_store)  # configured, then composed, then explicit
+        self._store = store
+        if persona_loader is None and store is not None and hasattr(store, "list_personas"):
+            persona_loader = lambda: shared_persona_directory_list(store, store.list_personas)  # noqa: E731
+        if strategy_loader is None and store is not None and hasattr(store, "get_strategy_labels"):
             strategy_loader = lambda: cached_owner_call(  # noqa: E731
-                ("display_names_strategy_labels", id(s_store), selected_tenant.get()),
-                s_store.get_strategy_labels,
+                ("display_names_strategy_labels", id(store), selected_tenant.get()),
+                store.get_strategy_labels,
             )
-        if binding_loader is None and b_store is not None and hasattr(b_store, "list_runtime_bindings"):
+        if binding_loader is None and store is not None and hasattr(store, "list_runtime_bindings"):
             binding_loader = lambda: cached_owner_call(  # noqa: E731
-                ("display_names_runtime_bindings", id(b_store), selected_tenant.get()),
-                b_store.list_runtime_bindings,
+                ("display_names_runtime_bindings", id(store), selected_tenant.get()),
+                store.list_runtime_bindings,
             )
         self._binding_loader = binding_loader
         self._bindings: Optional[Dict[str, Tuple[str, str]]] = None
@@ -140,12 +107,8 @@ class DisplayNameResolver:
                             continue
                         pid = _text(record.get("persona_id") or record.get("id"))
                         label = _persona_label(record)
-                        if pid and label and label != pid:
+                        if pid and label:
                             names[pid] = label
-                    p_port = getattr(getattr(self._store, "persona_capital_runtime", None), "persona", None)
-                    if p_port is not None and callable(getattr(p_port, "get_surface_status", None)):
-                        if p_port.get_surface_status().get("source") == "unavailable":
-                            self._persona_error = "persona_store_unavailable"
                 except Exception as exc:  # noqa: BLE001 - names degrade to ids, rows stay visible
                     self._persona_error = f"{type(exc).__name__}: {exc}"
                     log.warning("persona display-name read failed: %s", exc)
@@ -164,7 +127,7 @@ class DisplayNameResolver:
                             if isinstance(label, Mapping)
                             else label
                         )
-                        if clean_sid and text and text != clean_sid:
+                        if clean_sid and text:
                             names[clean_sid] = text
                 except Exception as exc:  # noqa: BLE001
                     self._strategy_error = f"{type(exc).__name__}: {exc}"
@@ -359,14 +322,14 @@ class DisplayNameResolver:
                 pid = _text(node.get("persona_id") or nid)
                 if pid:
                     resolved, missing = self.persona(pid)
-                    if not missing and resolved:
+                    if not missing and resolved and resolved != pid:
                         display_name = resolved
                         name_missing = False
             elif kind in ("strategy", "strategy_spec", "artifact", "execution_bundle", "strategy_bundle"):
                 sid = _text(node.get("strategy_id") or nid)
                 if sid:
                     resolved, missing = self.strategy(sid)
-                    if not missing and resolved:
+                    if not missing and resolved and resolved != sid:
                         display_name = resolved
                         name_missing = False
             elif kind in ("capitalpool", "capital_pool", "experiment", "run", "source_run"):
@@ -374,7 +337,7 @@ class DisplayNameResolver:
                 if len(owners) == 1:
                     sid = next(iter(owners))
                     resolved, missing = self.strategy(sid)
-                    if not missing and resolved:
+                    if not missing and resolved and resolved != sid:
                         kind_label = raw_type or ("CapitalPool" if "pool" in kind else "Experiment")
                         display_name = f"{resolved} ({kind_label})"
                         name_missing = False

@@ -4,7 +4,7 @@
   "register_class": "RC6",
   "owner": "Antigravity2",
   "reviewer": "Claude2",
-  "recorded_at": "2026-11-25T07:56:00Z",
+  "recorded_at": "2026-11-25T08:23:00Z",
   "delivery_state": "functional_source_verified_pending_review",
   "acceptance_evidence": {
     "1_registry_lineage_node_strategy_id_and_version": {
@@ -21,7 +21,7 @@
         "services/control-plane/bff/tests/test_management_display_names.py",
         "services/control-plane/bff/tests/test_bff_lineage_contract.py"
       ],
-      "summary": "GET /bff/lineage enriches nodes via DisplayNameResolver.annotate_lineage_nodes: Persona, Strategy, and Artifact nodes resolve display_name from the persona/strategy directories; CapitalPool and Experiment (run) nodes with exactly one owning strategy get '{strategy_name} ({type})'; nodes the resolver cannot name get display_name=null and name_missing=true; label remains the node id."
+      "summary": "GET /bff/lineage enriches nodes via DisplayNameResolver.annotate_lineage_nodes with lineage-specific loaders in console_gap/lineage.py while preserving the configured > composed > explicit source order and label behavior in DisplayNameResolver for all other callers (runtimes, deployments, meetings, human inbox). Persona, Strategy, and Artifact nodes resolve display_name from the persona/strategy directories; CapitalPool and Experiment (run) nodes with one owning strategy (including pools linked to both baseline and forward artifacts of the same strategy) get '{strategy_name} ({type})'; nodes the resolver cannot name get display_name=null and name_missing=true; label remains the node id."
     },
     "3_one_bounded_read_per_request_and_degraded_surface_on_failure": {
       "files": [
