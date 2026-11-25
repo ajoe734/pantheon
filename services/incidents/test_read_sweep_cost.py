@@ -970,8 +970,12 @@ def test_json_stale_temp_files_swept_and_at_most_one_temp_left(tmp_path):
         tmp_path / ".incidents.json.deadbeef.tmp",
         tmp_path / ".incidents.json.tmp",
     ]
+    real_ns = path.stat().st_mtime_ns
     for item in stale:
         item.write_text("{partial")
+        # Killed-write leftovers are older than the real file; a newer temp is
+        # kept by design (JSON-STORE-STALE-TEMP-SWEEP-20261125).
+        os.utime(item, ns=(real_ns - 10**9, real_ns - 10**9))
     unrelated = tmp_path / ".incidents_outbox.json.cafe.tmp"
     unrelated.write_text("keep")
 
