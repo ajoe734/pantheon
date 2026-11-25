@@ -7933,6 +7933,10 @@ class PaperRuntimeService:
                 "capital_scale_pct": 0,
             }
             metadata.update(dict(row))
+            # Deterministic event content: a row's time is its grading session, so any carrier
+            # emits the identical event (an exact duplicate at ingest, never a conflict).
+            session = _clean_text(row.get("graded_session"))
+            row_created_at = f"{session}T00:00:00+00:00" if session else created_at
             try:
                 payload = builder(
                     "persona_instrument_counterfactual",
@@ -7944,7 +7948,7 @@ class PaperRuntimeService:
                             f"persona_instrument_counterfactual:{decision_id}:{instrument_id}",
                         )
                     ),
-                    created_at=created_at,
+                    created_at=row_created_at,
                 )
                 if payload is not None and sender(payload):
                     delivered += 1
