@@ -225,17 +225,17 @@ def _passing_2yr_klen_artifact(dataset: dict) -> dict:
     tpl = next(t for t in load_library_templates() if t["template_id"] == "qlib_alpha158:KLEN")
     demand = {"demand_id": "dem-legacy-klen-1", "tenant_id": "default", "persona_id": "p1"}
     art = compile_template(tpl, universe=["2330"], demand=demand, source_ref="registry:tpl-klen", dataset=dataset)
+    # Strip the default screen to build the legacy pre-screen single-symbol member (real screened members need >= 3 symbols).
+    art["strategy_logic"].pop("screen", None)
+    art["strategy_logic"]["inputs"] = [i for i in art["strategy_logic"]["inputs"] if i["name"] != "hc_default_close"]
+    art["parameters"] = {k: v for k, v in art["parameters"].items() if not k.startswith("hc_default_")}
+    art["mutation_surface"]["controls"] = [c for c in art["mutation_surface"]["controls"] if not c["parameter_key"].startswith("hc_default_")]
     thresh = 0.0101
     art["parameters"]["demand_zero"] = thresh
-    art["strategy_logic"]["strength"] = {
-        "op": "clip01",
-        "args": [{"op": "div", "args": [{"ref": "signal"}, {"const_param": "demand_zero"}]}],
-    }
+    art["strategy_logic"]["strength"] = {"op": "clip01", "args": [{"op": "div", "args": [{"ref": "signal"}, {"const_param": "demand_zero"}]}]}
     for ctrl in art["mutation_surface"]["controls"]:
         if ctrl["parameter_key"] == "demand_zero":
-            ctrl["current_value"] = thresh
-            ctrl["allowed_range"] = {"min": 0.0001, "max": 0.05}
-            ctrl["step"] = 0.0001
+            ctrl.update(current_value=thresh, allowed_range={"min": 0.0001, "max": 0.05}, step=0.0001)
     validate_strategy_artifact(art)
     return art
 
