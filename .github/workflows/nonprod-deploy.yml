@@ -4151,6 +4151,7 @@ jobs:
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
       VERDICT_FILE: ${{ github.workspace }}/acceptance-verdict.json
+      CRAWL_FILE: ${{ github.workspace }}/acceptance-crawl.json
     steps:
       - name: Checkout exact deployed backend release
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -4225,6 +4226,35 @@ jobs:
           scripts/dev_vm_ssh.sh exec "mkdir -p ${dir_q} && cat > ${dir_q}/latest.json.tmp && mv ${dir_q}/latest.json.tmp ${dir_q}/latest.json" \
             < "${VERDICT_FILE}"
           echo "- verdict published to \`${target_dir}/latest.json\` on the dev VM" >> "${GITHUB_STEP_SUMMARY}"
+
+      # Post-switch management page crawl (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126): the existing
+      # execute-plans crawl at the deployed frontend commit. Checkout and install see no credential;
+      # the crawl itself runs inside the stage step after the probes, as the read-only viewer, under
+      # a stated deadline. Any failure here leaves the crawl check skipped (verdict pending), never
+      # a failed deploy job and never a rollback.
+      - name: Checkout deployed frontend for the management crawl
+        id: crawl_frontend
+        if: ${{ env.RELEASE_OUTCOME != 'deployed_not_accepted' }}
+        continue-on-error: true
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: ${{ needs.coordinate-dev-release.outputs.frontend_sha }}
+          path: .acceptance-crawl-frontend
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare management crawl dependencies (no credentials)
+        id: crawl_prepare
+        if: ${{ steps.crawl_frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: .acceptance-crawl-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "${FRONTEND_SHA}" ]]
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
 
       - name: Acquire qualification lease and start identity-bound heartbeat
         id: lease
@@ -4345,6 +4375,7 @@ jobs:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           DEPLOYED_RESULT: ${{ needs.coordinate-dev-release.result }}
           LEASE_HELD: ${{ steps.lease.outcome == 'success' && 'true' || 'false' }}
+          CRAWL_PREPARED: ${{ steps.crawl_prepare.outcome }}
           # Read-only viewer identity for release probes; only when the checked-out stage redacts output.
           ACCEPTANCE_VIEWER_CLIENT_ID: ${{ steps.plan.outputs.redacts_output == 'true' && (vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1') || '' }}
           ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ steps.plan.outputs.redacts_output == 'true' && secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET || '' }}
@@ -4359,7 +4390,9 @@ jobs:
           python3 scripts/dev_acceptance_stage.py run \
             --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
             --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
-            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" || true
+            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" \
+            --crawl-frontend-dir "${GITHUB_WORKSPACE}/.acceptance-crawl-frontend" \
+            --crawl-prepared "${CRAWL_PREPARED}" --crawl-out "${CRAWL_FILE}" || true
           exit 0
 
       - name: Record frontend gate failure for the unchanged served frontend
@@ -4544,7 +4577,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dev-acceptance-verdict-${{ github.run_id }}-${{ github.run_attempt }}
-          path: acceptance-verdict.json
+          # acceptance-crawl.json: routes and statuses of the management crawl only (no token, no body).
+          path: |
+            acceptance-verdict.json
+            acceptance-crawl.json
           if-no-files-found: warn
           retention-days: 30
 
