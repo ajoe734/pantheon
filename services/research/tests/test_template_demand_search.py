@@ -407,26 +407,11 @@ def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeyp
     assert result['attempts'] == {}
 
 
-def _recorded_store(root):
-    """A daily_bars store written from the recorded official TWSE bars (fixture only: traded_value is
-    close*volume and available_time is the session close, neither is read by anything but the boundary)."""
-    from datetime import datetime, timezone
-    from services.research.tests.test_governed_market_dataset import row
-    from services.source_ingestion.daily_bars_store import DailyBarsStore
+from services.research.tests.test_governed_market_dataset import store_from_records  # noqa: E402
 
-    by_day = {}
-    for r in recorded()['records']:
-        by_day.setdefault(r['date'], []).append(r)
-    store = DailyBarsStore(root)
-    for day, rows in sorted(by_day.items()):
-        out = []
-        for r in rows:
-            built = row(r['instrument'], day, r['close'], traded_value=r['close'] * r['volume'],
-                        available=datetime.fromisoformat(day + 'T08:00:00+00:00'))
-            built.update(open=r['open'], high=r['high'], low=r['low'], volume=r['volume'])
-            out.append(built)
-        store.write_day(day, out, ingest_run_id='fixture-' + day)
-    return root
+
+def _recorded_store(root):
+    return store_from_records(root, recorded()['records'])
 
 
 @pytest.mark.parametrize('case,expected_reason', [('missing', 'daily_bars_store_missing'),

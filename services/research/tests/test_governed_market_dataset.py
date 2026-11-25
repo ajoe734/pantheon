@@ -58,6 +58,24 @@ def build_store(root: Path, days: int = 30, *, symbols=("2330.TW", "2317.TW"), s
     return ds
 
 
+def store_from_records(root: Path, records: list[dict]) -> Path:
+    """A daily_bars store written from recorded official OHLCV records (fixture only: traded_value is
+    close*volume and available_time is 08:00Z of the day; the boundary reads both, nothing else does)."""
+    by_day: dict[str, list[dict]] = {}
+    for r in records:
+        by_day.setdefault(r["date"], []).append(r)
+    store = DailyBarsStore(root)
+    for day, rows in sorted(by_day.items()):
+        out = []
+        for r in rows:
+            built = row(r["instrument"], day, r["close"], traded_value=r["close"] * r["volume"],
+                        available=datetime.fromisoformat(day + "T08:00:00+00:00"))
+            built.update(open=r["open"], high=r["high"], low=r["low"], volume=r["volume"])
+            out.append(built)
+        store.write_day(day, out, ingest_run_id="fixture-" + day)
+    return root
+
+
 def test_boundary_includes_market_and_names_every_exclusion(tmp_path):
     build_store(tmp_path, symbols=("2330.TW", "2317.TW", "2412.TW"), skip={"2412.TW": trading_days(30)[-3]},
                 short=("9999.TW",), low_tv=("1101.TW",))
