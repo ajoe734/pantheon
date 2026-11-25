@@ -377,10 +377,10 @@ The Postgres owner projects flat lineage rows inside the store (no `RegistryEntr
   (`source_strategy_spec`), `lineage.source_dataset_refs` (`source_dataset`), `lineage.source_run_ids`
   (`source_run`), `metadata.persona_id` (`persona`) and `metadata.capital_pool_id` (`capital_pool`).
   An absent or JSON-null lineage field produces no edge. Edges are `{from, to, label}`.
-- Nodes are `{id, label, type, state?, risk?}`: `strategy_spec`→`Strategy`, `execution_bundle`→`Artifact`,
+- Nodes are `{id, label, type, state?, strategy_id?, version?, risk?}`: `strategy_spec`→`Strategy`, `execution_bundle`→`Artifact`,
   persona→`Persona`, capital pool→`CapitalPool`, source run→`Experiment`, dataset ref→`Dataset`.
-  `state` is the entry `artifact_state`; `risk` is `metadata.risk_level` only when the owner holds it.
-- `root_id` may be a registry id, a strategy id or a persona id; traversal honors `depth` (1..20).
+  `state` is the entry `artifact_state`; `strategy_id` and `version` are the entry `strategy_id` and `version`; `risk` is `metadata.risk_level` only when the owner holds it.
+- `root_id` may be a registry id, a strategy id, a persona id or a capital pool id; traversal honors `depth` (1..20).
   Without `root_id` the graph starts from the most recent `execution_bundle` entries and is capped by
   `limit` (1..1000); `has_more` reports truncation.
 
