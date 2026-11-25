@@ -165,6 +165,30 @@ halted binding. Signals are left on the queue so they can replay on resume.
 """
 
 
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def position_facts_from(positions: Sequence[Mapping[str, Any]], marks: Mapping[str, float]) -> list[dict[str, Any]]:
+    """Owner-side helper: the closing positions at their marks, as stamped on the valuation event."""
+    rows = []
+    for pos in positions:
+        symbol = str(pos.get("symbol") or pos.get("instrument_id") or "").strip()
+        quantity = _finite_number(pos.get("quantity"))
+        if not symbol or quantity is None or abs(quantity) <= 1e-12:
+            continue
+        multiplier = _finite_number(pos.get("multiplier"))
+        multiplier = multiplier if multiplier and multiplier > 0 else 1.0
+        price = _finite_number(marks.get(symbol))
+        rows.append({"symbol": symbol, "quantity": quantity, "multiplier": multiplier,
+                     "mark_price": price,
+                     "notional": None if price is None else round(quantity * multiplier * price, 6)})
+    return rows
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -8460,6 +8484,27 @@ class PaperRuntimeService:
             self._last_state_structural_digest = structural
             self._last_state_snapshot_monotonic = mono_now
 
+    def _performance_risk_policy_facts(self) -> dict[str, Any]:
+        """Bound-policy ids and limits in force at this valuation (measurement only).
+
+        Read-only: a policy that cannot be resolved is reported as unavailable, never
+        defaulted, and nothing here can change a gate, a size or an admission.
+        """
+        try:
+            policy = self._resolve_active_risk_policy()
+            actions = policy.drawdown_actions if isinstance(policy.drawdown_actions, Mapping) else {}
+            return {
+                "risk_policy_id": policy.risk_policy_id,
+                "risk_policy_version": str(policy.version),
+                "risk_policy_digest": risk_policy_digest(policy),
+                "gross_limit": policy.gross_limit,
+                "max_leverage": policy.max_leverage,
+                "drawdown_risk_off": actions.get("risk_off"),
+                "drawdown_warn": actions.get("warn"),
+            }
+        except Exception as exc:  # noqa: BLE001 - measurement must not break valuation
+            return {"unavailable_reason": type(exc).__name__}
+
     def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:
             return
@@ -8590,6 +8635,10 @@ class PaperRuntimeService:
             "valuation_method": "fill_cash_ledger_mark_to_market",
             "valuation_as_of": sample.as_of,
             "mark_refs": mark_refs,
+            "risk_policy_facts": self._performance_risk_policy_facts(),
+            "position_facts": position_facts_from(
+                ledger["positions"], {symbol: mark.price for symbol, mark in provider_marks.items()}
+            ),
         }
         common_metrics = {
             "portfolio_value": sample.portfolio_value,
