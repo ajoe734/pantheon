@@ -3912,3 +3912,57 @@ def test_hosted_registry_entry_read_uses_caller_bearer_and_registry_api_url(monk
     assert entry["registry_id"] == "artifact-a"
     assert seen == {"url": "http://registry.internal:9/api/registry/entries/artifact-a",
                     "token": "caller-token", "tenant": PV_TENANT}
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-JOURNAL-VERSION-STRING-20261126: the frontend lower-cases
+# target.type / target.id / target.version, so each must be text or null on
+# every entry_type. Pool rows are the hosted PV_VERSIONS shapes above; the
+# other entry types come from the committed fixture pack.
+# --------------------------------------------------------------------------- #
+JOURNAL_ENTRY_TYPES = {"evolution_decision", "pool_version", "freeze_order", "postmortem", "rollback"}
+
+
+def _assert_target_text_or_null(item: Dict[str, Any]) -> None:
+    target = item["target"]
+    for key in ("type", "id", "version"):
+        assert key in target, (item["id"], key)
+        value = target[key]
+        assert value is None or isinstance(value, str), (item["entry_type"], item["id"], key, value)
+
+
+def test_journal_target_fields_are_text_or_null_for_every_entry_type() -> None:
+    seen: Dict[str, int] = {}
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        body = client.get("/bff/management/evolution-journal?view=all&page_size=200", headers=OPERATOR_HEADERS).json()
+    for item in body["data"]["items"]:
+        _assert_target_text_or_null(item)
+        seen[item["entry_type"]] = seen.get(item["entry_type"], 0) + 1
+
+    pool_client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                                pool_reader=lambda pid, tid: {"versions": PV_VERSIONS, "refusals": []})
+    pool_items = [i for i in pool_client.get("/bff/management/evolution-journal?view=history&page_size=50",
+                                             headers=PV_HEADERS).json()["data"]["items"]
+                  if i["entry_type"] == "pool_version"]
+    for item in pool_items:
+        _assert_target_text_or_null(item)
+        seen["pool_version"] = seen.get("pool_version", 0) + 1
+        # target.version is the text of the version; the pool_version field stays an integer
+        assert type(item["pool_version"]) is int
+        assert item["target"] == {"type": "persona", "id": PV_PERSONA, "version": str(item["pool_version"])}
+    assert JOURNAL_ENTRY_TYPES <= set(seen), seen
+    assert sorted(i["pool_version"] for i in pool_items) == [1, 2, 3, 4, 5, 6]
+
+
+def test_journal_numeric_owner_versions_are_returned_as_text() -> None:
+    from services.control_plane.bff.evolution import service as evo_service
+
+    rollback = evo_service.evolution_journal_rollback_item(
+        {"rollback_id": "rb-1", "runtime_id": "rt-1", "to_version": 3, "status": "completed"})
+    decision = evo_service.evolution_journal_decision_item(
+        {"decision_id": "d-1", "target_id": "a-1", "target_version": 2, "status": "proposed"})
+    freeze = evo_service.evolution_journal_freeze_order_item({"freeze_order_id": "f-1", "status": "active"})
+    assert rollback["target"]["version"] == "3"
+    assert decision["target"]["version"] == "2"
+    assert freeze["target"]["version"] is None
