@@ -628,3 +628,21 @@ def test_ac7_read_role_authorization_and_no_invented_tenant_field(
         detail_row = detail_resp.json()["data"]
         assert "tenant_id" not in detail_row
         assert "tenantId" not in detail_row
+
+
+def test_port_passes_include_infrastructure_and_carries_hidden_count() -> None:
+    """POSTMORTEM-SKIP-INFRA-DRAFTS-20261125 AC5: port forwards the flag only when true."""
+    paths: list = []
+    port = DomainIncidentPort(postmortems_api_url="http://owner.invalid")
+
+    def fake(path: str):
+        paths.append(path)
+        return {"items": [], "total": 7, "page_size": 50, "next_page_token": None,
+                "hidden_infrastructure_count": 5355}
+
+    port._postmortems_http_json = fake  # type: ignore[method-assign]
+    page = port.list_postmortems_page(page_size=50)
+    assert "include_infrastructure" not in paths[-1]
+    assert page["hidden_infrastructure_count"] == 5355 and page["total"] == 7
+    port.list_postmortems_page(page_size=50, include_infrastructure=True)
+    assert "include_infrastructure=true" in paths[-1]

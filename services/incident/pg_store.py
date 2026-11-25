@@ -133,6 +133,22 @@ class PostgresIncidentStore(IncidentStore):
         rows.reverse()
         return [Postmortem.from_dict(r) for r in rows]
 
+    @_serialized_store_read
+    def list_all_postmortems(self) -> list[Postmortem]:
+        """Every stored postmortem, uncapped (HISTORY_READ_ROW_CAP not applied).
+
+        Used by list endpoints whose ``total`` must be exact; the capped
+        ``list_postmortems`` must never be the source of a reported total.
+        """
+        rows = self._select_payloads(
+            self._postmortem_records,
+            "TRUE",
+            (),
+            tail="ORDER BY updated_at DESC",
+        )
+        rows.reverse()
+        return [Postmortem.from_dict(r) for r in rows]
+
     @staticmethod
     def _count(owner: PostgresJsonOwnerStore, where: str, params: tuple) -> int:
         return owner.count_where(where, params)

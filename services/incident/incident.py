@@ -554,6 +554,30 @@ def is_monitor_agent_finding_incident(inc: IncidentCase) -> bool:
     )
 
 
+def is_infrastructure_postmortem(pm: Any) -> bool:
+    """Apply the incident predicates to a stored postmortem row.
+
+    A postmortem stores ``incident_evidence_summary`` where the predicates read
+    ``evidence_summary``; map it so real stored rows are classified correctly.
+    ``pm`` may be a Postmortem or a dict.
+    """
+    def attr(name: str) -> Any:
+        return pm.get(name) if isinstance(pm, dict) else getattr(pm, name, None)
+
+    shim = IncidentCase.__new__(IncidentCase)
+    for name in (
+        "incident_id", "binding_id", "deployment_plan_id",
+        "persona_capital_binding_id", "incident_cluster_id", "artifact_id",
+        "runtime_id",
+    ):
+        object.__setattr__(shim, name, attr(name))
+    object.__setattr__(
+        shim, "evidence_summary",
+        attr("incident_evidence_summary") or attr("evidence_summary"),
+    )
+    return is_infrastructure_health_incident(shim) or is_monitor_agent_finding_incident(shim)
+
+
 def normalize_infrastructure_component(value: str) -> str:
     """Normalize a downstream infrastructure component/service name."""
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
@@ -1794,6 +1818,12 @@ class IncidentStore:
 
     @_serialized_store_read
     def list_postmortems(self) -> List[Postmortem]:
+        self._refresh_from_disk()
+        return list(self._postmortems.values())
+
+    @_serialized_store_read
+    def list_all_postmortems(self) -> List[Postmortem]:
+        """Every stored postmortem, never capped (exact-total read path)."""
         self._refresh_from_disk()
         return list(self._postmortems.values())
 

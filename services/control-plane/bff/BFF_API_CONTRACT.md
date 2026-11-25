@@ -415,9 +415,11 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 |---|---|---|---|---|
 | `/api/v1/incidents` | GET | IN-01 | `{ data: [IncidentCase], meta }` | `status`, `severity`, `affected_pool_id` |
 | `/api/v1/incidents/{incident_id}` | GET | IN-02 | `{ data: IncidentCase, meta }` | — |
-| `/api/v1/postmortems` | GET | IN-03 | `{ data: [PostmortemReport], meta }` | `time_range` |
+| `/api/v1/postmortems` | GET | IN-03 | `{ data: [PostmortemReport], page_info, meta }` (`meta.hidden_infrastructure_count`) | `time_range`, `status`, `q`, `include_infrastructure` |
 | `/api/v1/postmortems/{report_id}` | GET | IN-04 | `{ data: PostmortemReport, meta }` | — |
 | `/api/v1/kill-switch/status` | GET | IN-05 | `{ data: { active_freeze_orders: [FreezeOrder], affected_runtime_bindings: [RuntimeBinding] }, meta }` | — |
+
+**IN-03 infrastructure drafts (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125)**: draft postmortems of infrastructure-health and monitor-agent incidents are hidden by default; `include_infrastructure=true` passes through to the owner and shows them. `meta.hidden_infrastructure_count` reports how many were hidden (0 when the surface is `unavailable`, which stays distinct from an empty `ok` list). `total` and `page_info.total` count visible rows only and are exact. Reviewed, approved and published infrastructure postmortems are never hidden. The row shape is unchanged. Wrong tenant or role is refused as before.
 
 ### 9.8 Evolution Surfaces (EV-01–EV-04)
 

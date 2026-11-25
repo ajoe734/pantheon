@@ -417,7 +417,10 @@ class DomainIncidentPort:
         page_token: Optional[str] = None,
         incident_id: Optional[str] = None,
         binding_id: Optional[str] = None,
+        include_infrastructure: bool = False,
     ) -> Dict[str, Any]:
+        # include_infrastructure is accepted for signature parity; hiding is
+        # owned by the postmortems service, not re-derived from BFF rows.
         filtered = cls._filter_and_sort_postmortems(
             rows,
             time_range=time_range,
@@ -605,6 +608,7 @@ class DomainIncidentPort:
         page_token: Optional[str] = None,
         incident_id: Optional[str] = None,
         binding_id: Optional[str] = None,
+        include_infrastructure: bool = False,
     ) -> Dict[str, Any]:
         effective_page_size = max(1, min(int(page_size), 200)) if page_size is not None else 50
         base_url = self._get_postmortems_api_url()
@@ -631,6 +635,8 @@ class DomainIncidentPort:
             params.append(("status", status.strip()))
         if q and q.strip():
             params.append(("q", q.strip()))
+        if include_infrastructure:
+            params.append(("include_infrastructure", "true"))
         params.append(("page_size", str(effective_page_size)))
         if page_token is not None and str(page_token).strip() != "":
             params.append(("page_token", str(page_token).strip()))
@@ -666,9 +672,14 @@ class DomainIncidentPort:
             total = int(fetched.get("total", page_info.get("total", len(items))))
             next_page_token = fetched.get("next_page_token", page_info.get("next_page_token"))
             returned_page_size = int(fetched.get("page_size", page_info.get("page_size", effective_page_size)))
+            try:
+                hidden_infrastructure_count = max(0, int(fetched.get("hidden_infrastructure_count") or 0))
+            except (TypeError, ValueError):
+                hidden_infrastructure_count = 0
             return {
                 "items": items,
                 "total": total,
+                "hidden_infrastructure_count": hidden_infrastructure_count,
                 "page_size": returned_page_size,
                 "next_page_token": next_page_token,
                 "page_info": {

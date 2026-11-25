@@ -1,0 +1,39 @@
+{
+  "task_id": "POSTMORTEM-SKIP-INFRA-DRAFTS-20261125",
+  "register_instance": "RC6",
+  "verification_scope": "functional evidence only; hosted verification is left to the operator acceptance task. No VM or SSH access used.",
+  "operator_approval": "2026-11-25, conversation 52a1dacf (照建議 全部處理好), names the seven registry pages; feature freeze does not apply.",
+  "behaviour": {
+    "consume": "consume-resolved-incident skips incidents accepted by is_infrastructure_health_incident / is_monitor_agent_finding_incident (imported from services.incident.incident) before any inbox reserve or draft: HTTP 200 {skipped:true, reason:infrastructure_incident}; redelivery gives the same answer; existing postmortem untouched; producer (services/incidents/main.py ~1104) accepts 200/201 as delivered, no producer change.",
+    "list": "GET /api/postmortems hides draft + infrastructure rows (is_infrastructure_postmortem maps stored incident_evidence_summary onto the predicate's evidence_summary) unless include_infrastructure=true or incident_id; returns hidden_infrastructure_count; total and paging over visible rows; reviewed/approved/published never hidden. Header X-Hidden-Infrastructure-Count on unpaged reads.",
+    "bff": "/api/v1/postmortems forwards include_infrastructure (only when true), returns meta.hidden_infrastructure_count; unavailable gives 0 and stays status unavailable; row shape unchanged; auth unchanged."
+  },
+  "callers_of_owner_list": {
+    "services/control-plane/bff/ports/lifecycle_telemetry_governance.py get_postmortem_by_incident": "incident_id lookup: unchanged (incident_id filter disables hiding)",
+    "services/persona/learning_feedback_bridge.py": "status=published unpaged: unchanged (published never hidden); test_unpaged_published_caller_learning_feedback_bridge_unchanged still passes",
+    "services/control-plane/bff/evolution/service.py evolution_journal_read_postmortems": "status=draft reads and draft_total follow the new default: journal draft count and postmortem_draft auto_proposal_counts now exclude infrastructure drafts, consistent with the owner list",
+    "services/control-plane/bff postmortems/router.py": "IN-03, new include_infrastructure param",
+    "agora/management_read_models store.list_postmortems()": "BFF read-store lists, owner default applies (hidden); no code change"
+  },
+  "total_exactness": {
+    "backend": "hosted uses POSTMORTEM_STORE_BACKEND=postgres (deploy/production/docker-compose.prod-control.yml:395, deploy/staging/docker-compose.staging.yml:433); PostgresIncidentStore.list_postmortems is capped at HISTORY_READ_ROW_CAP=1000.",
+    "fix": "list route reads store.list_all_postmortems() (PostgresIncidentStore: ORDER BY updated_at DESC without LIMIT; json store: all rows), so total is never a capped number.",
+    "result_at_6000_rows": "test_total_exact_at_6000_rows_on_capped_postgres_store: store whose list_postmortems returns 1000 and list_all_postmortems 6000 -> total 6000 with include_infrastructure; default total 300, hidden_infrastructure_count 5700."
+  },
+  "tests": {
+    "services/postmortems/test_skip_infrastructure.py": "10 tests: infra-bff, summary-only infra, monitor-agent incidents skipped (twice, same answer); event path reserves no inbox row; existing postmortem unchanged; drift still 201 draft; list hides/counts/pages; include_infrastructure and incident_id show all; unpaged header; 6000 rows.",
+    "services/control-plane/bff/tests/test_postmortem_router.py": "2 new (pass-through, unavailable) ",
+    "services/control-plane/bff/tests/test_postmortem_owner_read.py": "1 new (port forwards flag, carries hidden count)"
+  },
+  "changed_assertions": {
+    "test_postmortem_router.py::test_list_postmortems_preserves_time_range_data_and_meta_contract": "meta gains additive key hidden_infrastructure_count: 0; no existing key removed or relaxed."
+  },
+  "preexisting_failure": "test_postmortem_owner_read.py::test_ac3_owner_paging_filtering_and_learning_feedback_bridge_compat asserts errors==[] while the bridge is given the unreachable evolution_api_url 127.0.0.1:1, which appends 'Evolution source unavailable'; learning_feedback_bridge.py is not touched by this task. Could not run the base commit to confirm (git worktree add is read-only here), so this is by code inspection.",
+  "storage_manifest": "incident.postmortems: growth_driver, growth_per_day (0 new infra drafts/day expected; was ~228 incidents/day), cap, cleanup (nothing deleted) updated.",
+  "residual_findings": [
+    "POST /api/postmortems/{id}/status has no authentication or order check and is not exposed by the BFF; not exposed here (per brief).",
+    "Stored field incident_evidence_summary vs predicate field evidence_summary: handled by mapping in is_infrastructure_postmortem; other consumers reading evidence_summary on postmortem rows would miss it.",
+    "Existing 5479 drafts remain stored; age/cap cleanup still open (RC3).",
+    "Bare unpaged GET /api/postmortems returns a list, so the hidden count is only in X-Hidden-Infrastructure-Count there."
+  ]
+}

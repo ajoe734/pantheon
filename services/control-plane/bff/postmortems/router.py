@@ -82,6 +82,7 @@ def create_postmortem_router(
         q: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),
         page_token: Optional[str] = Query(default=None),
+        include_infrastructure: bool = Query(default=False),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """IN-03: Postmortem List."""
@@ -96,16 +97,22 @@ def create_postmortem_router(
             q=q,
             page_size=page_size,
             page_token=page_token,
+            include_infrastructure=include_infrastructure,
         )
         surface = svc.get_surface_status()
         if surface.get("status") == "unavailable":
             postmortems = []
             total = 0
+            hidden_infrastructure_count = 0
             next_page_token = None
         else:
             postmortems = list(page.get("items") or [])
             total = int(page.get("total", len(postmortems)))
             next_page_token = page.get("next_page_token")
+            try:
+                hidden_infrastructure_count = max(0, int(page.get("hidden_infrastructure_count") or 0))
+            except (TypeError, ValueError):
+                hidden_infrastructure_count = 0
 
         return {
             "data": postmortems,
@@ -116,6 +123,7 @@ def create_postmortem_router(
             },
             "meta": {
                 "total": total,
+                "hidden_infrastructure_count": hidden_infrastructure_count,
                 "staleness": _meta_staleness(),
                 "surfaces": {
                     "postmortems": surface,
