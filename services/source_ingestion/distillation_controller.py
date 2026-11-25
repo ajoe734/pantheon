@@ -430,13 +430,27 @@ def card_dataset_binding_from_env(env: Mapping[str, str] | None = None, *,
     return {k: resolved[k] for k in ("dataset_id", "source_dataset_refs", "symbols", "scope", "bar_frequency")}
 
 
+def _binding_now() -> datetime:
+    """The controller's clock for the tick-level binding status."""
+    return datetime.now(timezone.utc)
+
+
 def _job_time(job: DistillationJob) -> datetime:
     """When the job was enqueued (the binding's as-of time); unparseable falls back to now."""
     try:
         value = datetime.fromisoformat(str(job.enqueued_at).replace("Z", "+00:00"))
     except ValueError:
-        return datetime.now(timezone.utc)
+        return _binding_now()
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _card_binding_scalars(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """The binding as the scalar ``reconcile.summary`` the persisted controller state keeps (status, id, reason)."""
+    boundary = binding.get("market_boundary") if isinstance(binding.get("market_boundary"), Mapping) else {}
+    return {"card_binding_status": binding.get("status"), "card_binding_dataset_id": binding.get("dataset_id"),
+            "card_binding_reason": binding.get("reason"),
+            "card_binding_bound_symbols": boundary.get("bound_symbols"),
+            "card_binding_boundary_symbols": boundary.get("boundary_symbols")}
 
 
 def _card_binding_summary(resolved: Mapping[str, Any]) -> dict[str, Any]:
@@ -707,11 +721,11 @@ def run_controller_tick(
     desired_meta: dict[str, Any] = {}
     # The card path's binding is reported on every tick (success or failure) so an unconfigured binding is
     # readable in the controller state; with L2 extraction off no card is produced and nothing is bound.
-    card_binding = (_card_binding_summary(resolve_card_dataset_binding(as_of=datetime.now(timezone.utc)))
+    card_binding = (_card_binding_summary(resolve_card_dataset_binding(as_of=_binding_now()))
                     if compiler_enabled() else
                     {"status": "extraction_disabled", "dataset_id": None,
                      "reason": f"card_path_off:{ENABLED_ENV} is not enabled"})
-    reconcile_meta: dict[str, Any] = {"card_binding": card_binding}
+    reconcile_meta: dict[str, Any] = {"card_binding": card_binding, "summary": _card_binding_scalars(card_binding)}
     actual_meta: dict[str, Any] = {}
     hard_failure = False
     alive_status = STATUS_NOT_WORKING
@@ -836,6 +850,7 @@ def run_controller_tick(
                 )
             reconcile_meta = {
                 "card_binding": card_binding,
+                "summary": _card_binding_scalars(card_binding),
                 "lease_expired_redriven": len(lease_redriven),
                 "lineage_replayed": len(lineage_recovery["replayed"]),
                 "lineage_closed": len(lineage_recovery["closed"]),
