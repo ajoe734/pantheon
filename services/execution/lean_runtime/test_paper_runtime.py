@@ -2553,6 +2553,58 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             t.join()
         self.assertEqual(self._count(telemetry, "heartbeat"), 1)
 
+    def test_runtime_state_snapshot_carries_account_and_policy_facts_under_change_digest(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=service._on_order_event,
+            deployment_stage="paper",
+            capital_pool_id="pool-paper-001",
+            binding_resolver=service._binding_resolver,
+            risk_policy={
+                "risk_policy_id": "rp-low-v2",
+                "version": "2.0",
+                "status": "active",
+                "gross_limit": 0.10,
+                "net_limit": 0.10,
+                "max_leverage": 1.0,
+                "max_single_name_weight": 0.10,
+                "min_cash_reserve_pct": 0.25,
+                "drawdown_actions": {"warn": 0.05, "risk_off": 0.10},
+            },
+        )
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry), ["heartbeat", "runtime_state_snapshot"])
+        first_meta = telemetry.events[-1]["metadata"]
+        self.assertEqual(
+            first_meta["account_facts"],
+            {"initial_cash": 100_000.0, "cash": 100_000.0, "fill_count": 0},
+        )
+        self.assertEqual(first_meta["risk_policy_facts"]["risk_policy_id"], "rp-low-v2")
+        self.assertEqual(first_meta["risk_policy_facts"]["risk_policy_version"], "2.0")
+        self.assertEqual(first_meta["risk_policy_facts"]["gross_limit"], 0.10)
+        self.assertEqual(first_meta["risk_policy_facts"]["drawdown_risk_off"], 0.10)
+        self.assertTrue(first_meta["risk_policy_facts"]["risk_policy_digest"])
+        first_digest = first_meta["state_digest"]
+
+        # Unchanged account and policy: digest does not change and no second snapshot is emitted.
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+
+        # Unresolvable policy is reported with its exception type, never defaulted, and triggers a new snapshot.
+        service._algo.SetRiskPolicy(None)
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 2)
+        second_meta = telemetry.events[-1]["metadata"]
+        self.assertEqual(
+            second_meta["risk_policy_facts"],
+            {"unavailable_reason": "RiskPolicyError"},
+        )
+        self.assertNotEqual(second_meta["state_digest"], first_digest)
+
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):
