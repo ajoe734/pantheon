@@ -528,6 +528,10 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
         AtomicJsonRecordStore(tmp_path / "pools.json"),
         registry_reader=registry_reader,
         owner_lister=lambda pid, tenant: [],
+        # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (MarketBoundary row shape)
+        market_boundary_provider=lambda: __import__("types").SimpleNamespace(
+            snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00",
+            symbols=("2330.TW", "2317.TW", "0050.TW", "2412.TW", "2883.TW")),
     )
     pool.append(
         PID,

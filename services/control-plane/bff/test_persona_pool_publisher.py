@@ -151,6 +151,11 @@ def test_empty_pool_end_to_end_remove_publish_demand_admit_publish(world, monkey
     for entry in (member_entry, candidate_entry, weak_entry):
         _install_entry(world, entry)
     client = _client(world, monkeypatch, tmp_path)
+    # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (row shape of MarketBoundary)
+    from types import SimpleNamespace
+    world.pool._market_boundary = lambda: SimpleNamespace(
+        snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00",
+        symbols=("2330.TW", "2317.TW", "0050.TW"))
     ref, cand, weak = member_entry["registry_id"], candidate_entry["registry_id"], weak_entry["registry_id"]
 
     # 1. one live member, published
@@ -190,13 +195,15 @@ def test_empty_pool_end_to_end_remove_publish_demand_admit_publish(world, monkey
     assert refused["decision"]["status"] == "refused", refused["decision"]
     assert "candidate_oos_sharpe_below_persona_trial_threshold" in "; ".join(refused["decision"]["reasons"])
     assert refused["decision"]["backtest"]["pool_idle"] is True
-    # 6. a gate-passing candidate inside the recorded universe is admitted as trial and published
+    # 6. a gate-passing candidate inside the governed boundary is admitted as trial and published
     admitted = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(expected_version=3, execution_context="paper",
         action="admit", candidate={"artifact_ref": cand, "checksum": candidate_entry["checksum"]}, **common), actor_id="op-1")
     assert admitted["decision"]["status"] == "applied", admitted["decision"]["reasons"]
     trial = [m for m in admitted["members"] if m["stage"] != "removed"]
     assert len(trial) == 1 and trial[0]["artifact_ref"] == cand and trial[0]["stage"] == "trial"
-    assert admitted["decision"]["approved_universe"] == ["2330"]
+    rule = admitted["decision"]["universe_rule"]  # replaces the empty-pool stopgap's recorded symbol list
+    assert rule["previous_member_symbols"] == ["2330"] and rule["boundary_symbol_count"] == 3
+    assert rule["boundary_snapshot_id"] == "gmd-2026-11-24-0123456789abcdef" and "approved_universe" not in admitted["decision"]
     published = client.post(PATH, json={}, headers=H)
     assert published.status_code == 200 and published.json()["data"]["pool_version"] == 4, published.text
     assert _live(world)[0]["artifact_id"] == published.json()["data"]["envelope_artifact_id"]

@@ -1,0 +1,38 @@
+{
+  "task_id": "POOL-ADMISSION-GOVERNED-UNIVERSE-20261125",
+  "class": "RC2",
+  "date": "2026-11-25",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer is from the owner family (operator-noted in the task)",
+  "operator_decision": "2026-11-25 conversation 5724fc3b: open it, paper only",
+  "changed": [
+    "services/control-plane/persona/persona_strategy_pool.py: paper decide uses governed boundary (market_boundary_provider, default governed_market_dataset.build_market_boundary); decision.universe_rule; non-paper path byte-identical",
+    "services/control-plane/persona/test_persona_strategy_pool.py, services/control-plane/bff/test_persona_pool_publisher.py, services/research/tests/test_persona_cycle_demand_integration.py: boundary provider injected; new tests",
+    "SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md section 4.3 and 5.1b amended"
+  ],
+  "not_changed": [
+    "gate, baseline, drawdown, consultation memo, risk budget, safety ceiling, backtest and deflated threshold criteria",
+    "any order, capital or live path",
+    "services/research/pool_admission.py and services/persona/pool_dataset_authority.py (no change needed)"
+  ],
+  "bytes_per_version_decision_universe_field": {
+    "sample_boundary_symbols": 902,
+    "before_approved_universe_json": 7239,
+    "after_universe_rule_json": 328,
+    "note": "before = the list a boundary-wide approved_universe would have copied into every version; after = the recorded rule"
+  },
+  "tests": {
+    "control_plane_persona_strategy_pool": "49 passed",
+    "bff_publisher_publish_route_pool_dataset_authority": "46 passed 7 skipped",
+    "persona_cycle_demand_integration_open_demand_reconcile": "passed after boundary injection"
+  },
+  "changed_assertions": [
+    "test_empty_pool_keeps_its_last_approved_universe...: outside reason now candidate_outside_governed_market_boundary (paper rule changed by operator decision); approved_universe assertion replaced by universe_rule assertions",
+    "test_empty_pool_end_to_end...: approved_universe == ['2330'] replaced by universe_rule assertions",
+    "test_persona_cycle_demand_integration open_demand_reconcile: only a boundary provider added (candidate trades 2883)"
+  ],
+  "preexisting_failures_not_caused_by_this_task": "6 tests in test_persona_cycle_demand_integration.py/test_pool_evolution_integration.py fail identically on dev without this change; test_persona_pool_views needs yaml and test_meeting_outputs needs flask (absent in the local venv)",
+  "ac5_gap": "The admitted member in the publisher end-to-end test is a gate-minted always-long entry published through the real publisher/client; a screened (factor_rule screen) member was not admitted through the gate here (existing test_publisher_pins_screen_rules_without_enumerating_picks covers envelope build of a screen member). Stated, not claimed.",
+  "hosted_expectation": "First hosted result is one of two refusals, not a successful search: governed_market_boundary_unavailable (market_boundary_empty: traded_value null on 481 of 484 days until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 repairs it; listed stocks 406-411 bars of the 480 needed). Current momentum members have no approved baseline until the 2026-11-16 requalification runs. No VM/SSH access used; hosted verification belongs to the operator acceptance task."
+}
