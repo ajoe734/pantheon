@@ -1746,7 +1746,8 @@ def read_lineage_graph(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
+    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page", "card_admission_drafts"]] = None,
+    tenant_id: Optional[str] = None,
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -1773,6 +1774,18 @@ def list_all_strategy_spec_entries(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(counts)
+    if view == "card_admission_drafts":
+        # Bounded owner read for the card admission path: Postgres-side filter, keyset page.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        if not tenant_id or not tenant_id.strip():
+            raise HTTPException(status_code=400, detail="tenant_id is required for view=card_admission_drafts")
+        try:
+            return JSONResponse(get_registry_service().card_admission_draft_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                tenant_id=tenant_id.strip(), page_size=min(page_size, 50), after_registry_id=page_token,
+            ))
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     if view == "strategy_summary_page":
         ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
         wanted_artifact_state = artifact_state.value if artifact_state is not None else None

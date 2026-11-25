@@ -228,6 +228,7 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("alpha-replication-worker", "card_admission_path", "services/research/governed_market_dataset.py", "GOVERNED_MARKET_STORE_ROOT"),
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/replication_controller.py", "ALPHA_REPLICATION_CARD_ADMISSION_ENABLED"),
 )
 
 
