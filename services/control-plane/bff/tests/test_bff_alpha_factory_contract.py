@@ -256,7 +256,7 @@ def _owner_router(
             return 200, {"items": templates or []}
         if "/persona-demands" in url:
             return 200, {"demands": demands or [], "count": len(demands or [])}
-        if "/research-orchestrator/run-page" in url:
+        if "/research-orchestrator/runs" in url:
             tenant = kw.get("tenant_id") or "tenant-dev"
             mine = sorted(
                 (r for r in eff_runs if r.get("tenant_id") == tenant),
@@ -313,7 +313,7 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
     # entries, templates, demands, run page and discovery summary; never source-records or strategy-seeds
     assert len(calls) == 5
     assert any(c.endswith("/api/source-ingest/management/discovery-summary") for c in calls)
-    assert any("/api/research-orchestrator/run-page?limit=200" in c for c in calls)
+    assert any(c.endswith("/api/research-orchestrator/runs?limit=200") for c in calls)
     assert not any("/source-records" in c or "/strategy-seeds" in c for c in calls)
     assert calls[0] == (
         "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
@@ -980,7 +980,7 @@ def test_run_list_is_capped_and_marks_truncation(monkeypatch) -> None:
 
 def test_run_of_another_tenant_on_the_owner_page_is_unavailable(monkeypatch) -> None:
     def fake(url: str, **kw: Any) -> Tuple[int, Any]:
-        if "/run-page" in url:
+        if "/research-orchestrator/runs" in url:
             return 200, {"items": [{"run_id": "x", "tenant_id": "tenant-other"}], "next_cursor": None}
         return _owner_router([])(url, **kw)
 
@@ -1095,7 +1095,7 @@ def test_passing_gate_run_recorded_by_owner_makes_a_replicated_card(monkeypatch)
 
 def test_failed_run_read_never_promotes_to_replicated(monkeypatch) -> None:
     client = _make_bff_client(
-        monkeypatch, http_get=_owner_router(_hosted_four_entries(), fail=("research-orchestrator/run-page",))
+        monkeypatch, http_get=_owner_router(_hosted_four_entries(), fail=("research-orchestrator/runs",))
     )
     body = _get(client)
     assert body["data"]["replicated"] == []

@@ -45,8 +45,9 @@ _ORCHESTRATOR_ENTRIES_PATH = "/api/research-orchestrator/alpha-replication/entri
 _ORCHESTRATOR_TEMPLATES_PATH = "/api/research/alpha-templates/evaluations"
 _TEMPLATES_SURFACE_KEY = "alpha_factory_templates"
 _DEMANDS_PATH = "/api/research/persona-demands"
-# Tenant-scoped, newest-first owner page (DISCOVERY-OWNER-SUMMARY-READ-20261125).
-_RUN_PAGE_PATH = "/api/research-orchestrator/run-page"
+# Tenant-scoped, newest-first owner page of the run list (DISCOVERY-OWNER-SUMMARY-READ-20261125);
+# the same route without ``limit`` is the unscoped whole list and is never requested.
+_RUNS_PATH = "/api/research-orchestrator/runs"
 _SUMMARY_PATH = "/api/source-ingest/management/discovery-summary"
 _SUMMARY_SOURCE = "source_ingestion"
 # The unbounded owner routes below must never be requested by the board:
@@ -55,8 +56,6 @@ _SUMMARY_SOURCE = "source_ingestion"
 FORBIDDEN_UNBOUNDED_PATHS = (
     "/api/source-ingest/source-records",
     "/api/source-ingest/management/strategy-seeds",
-    # Unscoped full run list; the board reads the tenant run page instead.
-    "/api/research-orchestrator/runs",
 )
 # Owner run page size: the newest runs of the tenant (owner cap 200).
 _MAX_RUNS_USED = 200
@@ -348,18 +347,19 @@ def _read_runs(
     tenant: str,
 ) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
     """Newest runs of the caller tenant from the owner's tenant-scoped page (one bounded page)."""
-    url = f"{base_url.rstrip('/')}{_RUN_PAGE_PATH}?limit={_MAX_RUNS_USED}"
+    url = f"{base_url.rstrip('/')}{_RUNS_PATH}?limit={_MAX_RUNS_USED}"
     ok, payload = _owner_get(http_get, url, auth, tenant)
-    rows = payload.get("items") if ok and isinstance(payload, dict) else None
-    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
+    rows = _extract_entries(payload) if ok else None
+    if rows is None:
         return None, _unavailable(_OWNER_SOURCE, "runs_read_failed")
     if any(str(r.get("tenant_id") or "").strip() != tenant for r in rows):
         return None, _unavailable(_OWNER_SOURCE, "run_scope_mismatch")
-    mine = sorted(rows, key=_run_sort_key, reverse=True)[:_MAX_RUNS_USED]
-    surface: Dict[str, Any] = {"status": "ok", "source": _OWNER_SOURCE, "runs_used": len(mine)}
-    if payload.get("next_cursor"):
+    # An owner that predates the page form ignores ``limit``; the cap still applies.
+    mine = sorted(rows, key=_run_sort_key, reverse=True)
+    surface: Dict[str, Any] = {"status": "ok", "source": _OWNER_SOURCE, "runs_used": min(len(mine), _MAX_RUNS_USED)}
+    if len(mine) > _MAX_RUNS_USED or (isinstance(payload, dict) and payload.get("next_cursor")):
         surface["truncated"] = True
-    return mine, surface
+    return mine[:_MAX_RUNS_USED], surface
 
 
 def _read_discovery_summary(

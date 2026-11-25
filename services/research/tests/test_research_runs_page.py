@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from services.research.tests.test_persona_demand_routes_auth import AUDIENCE, ISSUER, SECRET, TENANT, _headers
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
-PAGE = "/api/research-orchestrator/run-page"
+PAGE = "/api/research-orchestrator/runs"
 
 
 @pytest.fixture
@@ -56,12 +56,14 @@ def test_page_limit_is_capped_and_cursor_validated(research):
 
 def test_page_requires_auth_and_rejects_cross_tenant(research):
     _, client = research
-    assert client.get(PAGE).status_code in (401, 403)
+    assert client.get(PAGE, params={"limit": 5}).status_code in (401, 403)
     other = _headers(tenant="tenant-other")  # token for another tenant, header for TENANT
-    assert client.get(PAGE, headers=other).status_code == 403
+    assert client.get(PAGE, params={"limit": 5}, headers=other).status_code == 403
 
 
 def test_old_unscoped_list_is_unchanged(research):
     _, client = research
-    rows = client.get("/api/research-orchestrator/runs").json()
-    assert len(rows) == 261
+    rows = client.get(PAGE).json()  # no limit/cursor: the unscoped list, no auth change
+    assert isinstance(rows, list) and len(rows) == 261
+    filtered = client.get(PAGE, params={"status": "completed", "task_id": "none"}).json()
+    assert filtered == []

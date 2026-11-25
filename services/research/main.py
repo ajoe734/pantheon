@@ -3508,15 +3508,6 @@ def repair_retrain_tasks_left_running() -> None:
             _set_task_terminal(task_id, str(run["status"]).lower(), utc_now())
 
 
-@app.get("/api/research-orchestrator/runs")
-def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [
-        r for r in store.list_runs()
-        if (not task_id or r.get("task_id") == task_id)
-        and (not status or str(r.get("status") or "").lower() == status.lower())
-    ]
-
-
 RUN_PAGE_MAX = 200
 
 
@@ -3538,32 +3529,45 @@ def _decode_run_cursor(cursor: str) -> Tuple[str, str]:
     raise HTTPException(status_code=422, detail="invalid cursor")
 
 
-@app.get("/api/research-orchestrator/run-page")
-def list_tenant_run_page(
-    limit: int = Query(default=50, ge=1, le=RUN_PAGE_MAX),
+@app.get("/api/research-orchestrator/runs")
+def list_runs(
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=RUN_PAGE_MAX),
     cursor: Optional[str] = None,
-    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
-) -> Dict[str, Any]:
-    """Runs of the caller's tenant, newest first (created_at, run_id), at most ``RUN_PAGE_MAX``.
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Any:
+    """Run list. Without ``limit``/``cursor``: the unscoped list for existing callers.
 
-    Only runs stamped with this tenant are returned. ``GET .../runs`` keeps its
-    unscoped list for its existing callers.
+    With ``limit`` (1..``RUN_PAGE_MAX``) or ``cursor``: the caller tenant's runs only
+    (verified bearer bound to ``X-Tenant-Id``), newest first by (created_at, run_id), as
+    ``{items, count, limit, order, next_cursor}``; only runs stamped with the tenant.
     """
+    matches = (
+        r for r in store.list_runs()
+        if (not task_id or r.get("task_id") == task_id)
+        and (not status or str(r.get("status") or "").lower() == status.lower())
+    )
+    if limit is None and not cursor:
+        return list(matches)
+    tenant_id = _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+    page_size = limit or 50
     after = _decode_run_cursor(cursor) if cursor else None
     mine = (
-        r for r in store.list_runs()
+        r for r in matches
         if str(r.get("tenant_id") or "").strip() == tenant_id
         and (after is None or _run_page_key(r) < after)
     )
-    window = heapq.nlargest(limit + 1, mine, key=_run_page_key)
-    items = window[:limit]
+    window = heapq.nlargest(page_size + 1, mine, key=_run_page_key)
+    items = window[:page_size]
     return {
         "tenant_id": tenant_id,
         "items": items,
         "count": len(items),
-        "limit": limit,
+        "limit": page_size,
         "order": "created_at_desc",
-        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > limit else None,
+        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > page_size else None,
     }
 
 
