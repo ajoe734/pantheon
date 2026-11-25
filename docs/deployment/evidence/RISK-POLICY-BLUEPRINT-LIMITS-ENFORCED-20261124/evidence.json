@@ -31,7 +31,7 @@
   },
   "runtime_budget": {
     "new_persistent_writers": 0,
-    "storage_manifest_check": "passed (0 failures, 374 entries)",
+    "storage_manifest_check": "passed (0 failures, 375 entries)",
     "in_memory_caches": [
       {
         "name": "_MARKET_FACT_CACHE",

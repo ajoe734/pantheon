@@ -46,6 +46,7 @@ from services.source_ingestion.seed_materializer import (
 )
 from services.source_ingestion.hypothesis_card import (
     HypothesisExtractor,
+    assess_source_relevance,
     card_to_strategy_seed_metadata,
     extraction_origin,
     extractor_from_env,
@@ -74,6 +75,7 @@ LEASE_BACKOFF_BASE_SECONDS = 30.0
 LEASE_BACKOFF_CAP_SECONDS = 3600.0
 LEASE_RECOVER_BATCH = 200
 DEFERRED_CANDIDATE_WINDOW = 500
+NEW_CANDIDATE_WINDOW = 500
 PRUNED_PAYLOAD_JSON = '{"_pruned":true}'
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400
 DEFAULT_DEAD_LETTER_RETENTION_SECONDS = 30 * 86400
@@ -1218,6 +1220,9 @@ class DistillationJobQueue:
                     """
                     tenant_params = (tenant,)
                 selected: dict[str, sqlite3.Row] = {}
+                # With demand ordering on, read a wider arrival window so that
+                # papers and demand-relevant rows behind older news can be seen.
+                new_window = max(take, NEW_CANDIDATE_WINDOW) if priority_by_tenant else take
                 for status in ("pending", "retry_wait"):
                     # Index (status, available_at, enqueued_at) yields this
                     # order directly; LIMIT bounds rows read and parsed.
@@ -1230,9 +1235,28 @@ class DistillationJobQueue:
                          ORDER BY available_at, enqueued_at
                          LIMIT ?
                         """,
-                        (status, effective_now, *tenant_params, take),
+                        (status, effective_now, *tenant_params, new_window),
                     ).fetchall():
                         selected[str(row["job_id"])] = row
+                    if priority_by_tenant:
+                        # Papers (about 11 a day) are never starved by news volume.
+                        for row in connection.execute(
+                            f"""
+                            SELECT job_id, available_at, enqueued_at, deferred_since
+                              FROM distillation_outbox
+                             WHERE status = ? AND available_at <= ?
+                               AND EXISTS (
+                                   SELECT 1 FROM distillation_source_versions AS paper_version
+                                    WHERE paper_version.source_id = distillation_outbox.source_id
+                                      AND paper_version.source_digest = distillation_outbox.source_digest
+                                      AND json_extract(paper_version.payload_json, '$.source_type') = 'paper')
+                               {tenant_clause}
+                             ORDER BY available_at, enqueued_at
+                             LIMIT ?
+                            """,
+                            (status, effective_now, *tenant_params, take),
+                        ).fetchall():
+                            selected[str(row["job_id"])] = row
                     # Budget-deferred backlog precedes new work: take a bounded
                     # window of it through its partial index.
                     for row in connection.execute(
@@ -1267,10 +1291,13 @@ class DistillationJobQueue:
                         reason="demand_read_missing_tenant" if not scope else "demand_reader_not_configured",
                     ))
                     deferred = candidate["deferred_since"] is not None
-                    score = priority.score(payload) if deferred else 0
-                    # Deferred backlog precedes new work. Stable arrival ties;
-                    # hints never reorder new records or change tenant scope.
-                    key = (0 if deferred else 1, -score,
+                    score = priority.score(payload)
+                    is_paper = isinstance(payload, dict) and payload.get("source_type") == "paper"
+                    # Deferred backlog precedes new work; within each group papers
+                    # first, then demand score. Stable arrival ties. A hint only
+                    # orders: it never admits, drops or changes tenant scope, and a
+                    # record that does not fit the cap is deferred, not dropped.
+                    key = (0 if deferred else 1, 0 if is_paper else 1, -score,
                            candidate["enqueued_at"] if deferred else candidate["available_at"],
                            candidate["enqueued_at"], candidate["job_id"])
                     ranked.append((key, candidate, priority.reason, score))
@@ -1633,7 +1660,10 @@ class DistillationJobQueue:
                 ):
                     raise DistillationLeaseError(f"stale distillation lease failure: {job.job_id}")
                 attempts = int(row["attempts"])
-                auth_failure = is_auth_registry_failure(error)
+                # Unavailable model/adapter uses the long schedule of auth outages.
+                auth_failure = is_auth_registry_failure(error) or error.startswith(
+                    EXTRACTION_UNAVAILABLE_MARKER
+                )
                 attempt_limit = int(row["max_attempts"])
                 if auth_failure:
                     attempt_limit = max(attempt_limit, AUTH_RETRY_MAX_ATTEMPTS)
@@ -2079,6 +2109,33 @@ class DistillationJobQueue:
             metrics[str(row["status"])] = int(row["count"])
         return metrics
 
+    def external_text_closure_counts(self) -> dict[str, dict[str, int]]:
+        """Skipped jobs by source type then typed reason (text before the first colon).
+
+        Reads the committed source snapshot of each skipped job; used for the
+        per-source/per-reason accounting of RC2 closures.
+        """
+        counts: dict[str, dict[str, int]] = {}
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT json_extract(source.payload_json, '$.source_type') AS source_type,
+                       CASE WHEN instr(outbox.skip_reason, ':') > 0
+                            THEN substr(outbox.skip_reason, 1, instr(outbox.skip_reason, ':') - 1)
+                            ELSE outbox.skip_reason END AS reason,
+                       COUNT(*) AS count
+                  FROM distillation_outbox AS outbox
+                  LEFT JOIN distillation_source_versions AS source
+                    ON source.source_id = outbox.source_id AND source.source_digest = outbox.source_digest
+                 WHERE outbox.status = 'skipped' AND outbox.skip_reason IS NOT NULL
+                 GROUP BY 1, 2
+                """
+            ).fetchall()
+        for row in rows:
+            by_reason = counts.setdefault(str(row["source_type"] or "unknown"), {})
+            by_reason[str(row["reason"])] = int(row["count"])
+        return counts
+
     def list_dead_letters(
         self, *, include_payload: bool = True, limit: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -2296,8 +2353,12 @@ def _synthesize_evidence_bundle(
 
 
 _EXTERNAL_TEXT_TYPES: frozenset[SourceType] = frozenset(
-    {SourceType.PAPER, SourceType.NEWS, SourceType.SOCIAL}
+    {SourceType.PAPER, SourceType.NEWS, SourceType.SOCIAL, SourceType.FILING, SourceType.MACRO}
 )
+
+IRRELEVANT_REASON = "l2_irrelevant"
+EXTRACTION_DISABLED_REASON = "l2_extraction_disabled"
+EXTRACTION_UNAVAILABLE_MARKER = "hypothesis_extraction_unavailable"
 
 
 def _with_hypothesis_card(source: SourceRecord, card: Mapping[str, Any]) -> SourceRecord:
@@ -2652,9 +2713,21 @@ class DistillationWorker:
         # see the source as admitted, not with the extracted card merged in.
         admitted_source = source
 
-        if self._hypothesis_extractor is not None and source.source_type != SourceType.MARKET:
+        if source.source_type != SourceType.MARKET:
             origin = extraction_origin(source.source_type.value, source.metadata)
             if origin is not None or source.source_type in _EXTERNAL_TEXT_TYPES:
+                # External text never becomes a draft without a verified card
+                # (RC2): no extractor, no relevance, no card -> typed closure.
+                if self._hypothesis_extractor is None:
+                    relevance = assess_source_relevance(source)
+                    reason = (
+                        EXTRACTION_DISABLED_REASON if relevance.relevant
+                        else f"{IRRELEVANT_REASON}: {relevance.reason}"
+                    )
+                    self._queue.mark_skipped(
+                        job.job_id, reason=reason, processed_at=now, claim_token=job.lease_token,
+                    )
+                    return "skipped", reason.split(":")[0]
                 outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 if outcome.card is None:
                     if outcome.status == "budget_exhausted":
@@ -2662,8 +2735,21 @@ class DistillationWorker:
                             job, now=_timestamp(now) if now is not None else self._queue._now(),
                         )
                         return "deferred", "budget_exhausted"
+                    if outcome.status == "unavailable":
+                        # The model or adapter did not answer: not a delivered
+                        # outcome. Retry with backoff; never store no_hypothesis.
+                        failure_status = self._queue.mark_retry_or_dead_letter(
+                            job,
+                            error=f"{EXTRACTION_UNAVAILABLE_MARKER}: {outcome.detail}",
+                            base_delay_seconds=self._retry_base_seconds,
+                            now=now,
+                        )
+                        return "failed", failure_status.value
                     reason = {
                         "rejected": "hypothesis_rejected",
+                        "irrelevant": IRRELEVANT_REASON,
+                        "admission_denied": "l2_admission_denied",
+                        "failed": "hypothesis_extraction_failed",
                     }.get(outcome.status, "no_hypothesis")
                     self._queue.mark_skipped(
                         job.job_id,

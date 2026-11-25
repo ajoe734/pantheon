@@ -224,8 +224,9 @@ def strategy_stub_reason(
         return STUB_TEST_PERSONA_PROBE
     sid = _row_text(row, "strategy_id", "id")
     title = _row_text(row, "title", "name")
-    # Pre-2026-11-03 deploy probes lack data_scope=test; recognise them by name.
-    if title.startswith("Pantheon Dev Paper Release ") and " Attempt " in title:
+    # Pre-2026-11-03 deploy probes lack data_scope=test; recognise them by name
+    # only when the row declares no data_scope at all (fallback, not a rule).
+    if not scope and title.startswith("Pantheon Dev Paper Release ") and " Attempt " in title:
         return STUB_TEST_PERSONA_PROBE
     if ids:
         return None

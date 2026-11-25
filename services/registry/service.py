@@ -1754,6 +1754,8 @@ def list_all_strategy_spec_entries(
     q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
+    hide_stubs: bool = False,
+    hide_persona_ids: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
@@ -1786,6 +1788,16 @@ def list_all_strategy_spec_entries(
                 page_token=page_token,
                 page_size=page_size,
                 **({"query": effective_query} if effective_query is not None else {}),
+                **(
+                    {
+                        "hide_stubs": True,
+                        "hide_persona_ids": [
+                            p.strip() for p in (hide_persona_ids or "").split(",") if p.strip()
+                        ],
+                    }
+                    if hide_stubs
+                    else {}
+                ),
             )
         except ValueError as exc:
             msg = str(exc)
