@@ -1,0 +1,35 @@
+{
+  "task": "BFF-EVO-JOURNAL-POOL-VERSIONS-20261125",
+  "root_cause_class": "RC6",
+  "register_instance": "RC6",
+  "defect": "evolution journal showed no strategy pool change (450 history rows, 407 from system/deployment/test events, 448 decisions counted as decisions and as mutation reviews); evolution direction said 0 qualified without saying live members lack a baseline",
+  "fix": {
+    "journal_pool_versions": "entry_type pool_version per owner pool version of each paper_owner persona in the caller tenant; action, decision_status, reasons, members_before/after from consecutive versions; refused versions labelled refused, membership_changed=false; v1 initial",
+    "surfaces": "meta.surfaces.strategy_pools ok|degraded|unavailable; owner failure leaves the other sources rendering",
+    "subject_class": "strategy|infrastructure|deployment|test from decision runtime_binding_id prefix, linked incident record fields and target persona data_scope; no name pattern; view=history hides infrastructure/test unless include_system=true, summary.hidden_system_counts; explicit decision/persona links bypass",
+    "counts": "auto_proposal_counts {threshold, incident_followup, incident_severity, other, infrastructure, postmortem_draft(separate), total}; parts add up; mutation_review_count only decisions with approval_decision_id; decision_count once; postmortem draft total stays the owner total from list_postmortems_page, no filter or recount",
+    "qualification": "data.member_baselines per live member via approved_baselines.resolve_member_baseline on the Registry owner entry; reason passed through; unreadable entry unavailable; no number defaulted or written",
+    "probe": "mgmt-evolution-pages-readable"
+  },
+  "no_new_route": "no BFF route, no writer, no cache; added optional readers on the existing persona-capital-runtime port",
+  "runtime_budget": "journal: at most 20 persona-owner GET /strategy-pool/versions reads per request (persona and incident lists already read once, reused); qualification: 1 persona list + at most 20 pool-version reads + at most 50 Registry entry reads; each owner GET bounded by the management read budget (default 2.0 s)",
+  "tests": {
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py": "recorded persona-ee7112a829d38b9135ac versions v1 initial, v2/v3 refused virtual_book_source_missing, v4/v5 refused virtual_book_history_missing, v6 refused virtual_book_high_water_history_missing; owner failure; 20-read bound and tenant scoping; subject classes incl. name-only decision stays strategy; parts add up; review count",
+    "services/control-plane/bff/tests/test_evolution_qualification_read.py": "member baselines: resolver reason pass-through, missing entry, unreadable entry, pool owner failure, removed member and other tenant never read",
+    "acceptance/test_mgmt_evolution_pages_readable.py": "probe passes on recorded shapes and fails on parts mismatch, refused-as-applied, strategy_pools unavailable, system entries by default, double-counted reviews, missing baselines",
+    "scripts/test_dev_acceptance_stage.py": "expected probe list gains probe:mgmt-evolution-pages-readable (outside the artifact list, required by the new probe)"
+  },
+  "changed_assertions": [
+    "test_bff_b3_evolution_journal.py exact auto_proposal_counts dicts gained threshold/other/infrastructure keys; where a proposed threshold decision exists threshold=1 and total is +1 (acceptance item 4 requires threshold as a part of total)",
+    "auto_proposals page totals in the same file subtract counts.threshold because threshold proposals are history rows and not auto_proposals rows",
+    "test_journal_viewer_reads_history_when_governance_owner_forbids_approvals...: mutation_review_count 5 -> 4 because only 4 of 5 decisions have their own review record (acceptance item 4)",
+    "no test deleted or skipped"
+  ],
+  "functional_evidence_only": "no VM/SSH access; hosted verification belongs to the operator acceptance task",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer Claude2 is from the owner family",
+  "residuals": [
+    "subject_class depends on recorded incident fields; a decision linked to an incident the BFF cannot read stays strategy",
+    "more than 20 paper_owner personas in one tenant: surfaces.strategy_pools is degraded and names the count not read",
+    "member baselines are limited to 50 Registry reads; the rest are reported unavailable member_read_limit_reached"
+  ]
+}

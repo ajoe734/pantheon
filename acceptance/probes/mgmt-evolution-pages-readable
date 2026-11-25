@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+# acceptance-owner: BFF-EVO-JOURNAL-POOL-VERSIONS-20261125
+"""Read-only release probe: evolution journal and evolution qualification pages are readable.
+
+Logs in as the viewer (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET via /bff/auth/dev-login; the token stays in
+memory and is never printed) and checks, with GET only:
+  * GET /bff/management/evolution-journal?view=history (all pages, at most 30): meta.surfaces.strategy_pools
+    is not unavailable; no pool_version entry that is refused is presented as applied (status, refused flag,
+    summary wording); every decision carries a subject_class and no infrastructure/test entry is listed
+    unless include_system=true; summary.hidden_system_counts is present; the auto_proposal_counts parts
+    (threshold, incident_followup, incident_severity, other, infrastructure) add up to total and
+    postmortem_draft is a separate integer; summary.mutation_review_count equals the decisions that
+    really carry an approval_decision_id.
+  * GET /bff/management/evolution-qualification: member_baselines is a list whose rows carry
+    persona_name, artifact_ref, status and reason, and member_baselines_surface is not unavailable.
+Exit 0 passed, 1 failed, 77 skipped (a variable is missing).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+JOURNAL = "/bff/management/evolution-journal?view=history&page_size=200"
+QUALIFICATION = "/bff/management/evolution-qualification?page_size=1"
+MAX_PAGES = 30
+PARTS = ("threshold", "incident_followup", "incident_severity", "other", "infrastructure")
+SYSTEM_CLASSES = {"infrastructure", "test"}
+
+
+def _data(body):
+    return body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else {}
+
+
+def _journal(fetch):
+    items, first, path = [], None, JOURNAL
+    for _ in range(MAX_PAGES):
+        body = fetch(path)
+        if first is None:
+            first = body if isinstance(body, dict) else {}
+        items += [i for i in (_data(body).get("items") or []) if isinstance(i, dict)]
+        token = (body.get("page_info") or {}).get("next_page_token") if isinstance(body, dict) else None
+        if not token:
+            break
+        path = JOURNAL + "&page_token=" + str(token)
+    return first or {}, items
+
+
+def _journal_failures(first, items):
+    failures = []
+    surface = ((first.get("meta") or {}).get("surfaces") or {}).get("strategy_pools")
+    if not isinstance(surface, dict) or surface.get("status") not in ("ok", "degraded"):
+        failures.append("strategy_pools_unavailable:" + str(surface.get("reason") if isinstance(surface, dict) else "missing"))
+    pool = [i for i in items if i.get("entry_type") == "pool_version"]
+    bad = []
+    for i in pool:
+        refused = i.get("decision_status") == "refused" or i.get("status") == "refused" or i.get("refused") is True
+        if refused and (i.get("status") != "refused" or i.get("refused") is not True
+                        or i.get("membership_changed") is True
+                        or str(i.get("summary") or "").lower().startswith("applied")):
+            bad.append(str(i.get("id")))
+    if bad:
+        failures.append("refused_pool_version_presented_as_applied:" + ",".join(bad[:5]))
+    decisions = [i for i in items if i.get("entry_type") == "evolution_decision"]
+    if any(not i.get("subject_class") for i in decisions):
+        failures.append("decision_subject_class_missing")
+    listed = [str(i.get("id")) for i in items if i.get("subject_class") in SYSTEM_CLASSES]
+    if listed:
+        failures.append("system_entries_listed_by_default:" + ",".join(listed[:5]))
+    data = _data(first)
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    if not isinstance(summary.get("hidden_system_counts"), dict):
+        failures.append("summary_hidden_system_counts_missing")
+    counts = data.get("auto_proposal_counts") if isinstance(data.get("auto_proposal_counts"), dict) else {}
+    values = [counts.get(k) for k in PARTS]
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in values) or not isinstance(counts.get("total"), int) \
+            or sum(v for v in values if isinstance(v, int)) != counts.get("total"):
+        failures.append("auto_proposal_parts_do_not_add_up")
+    if not isinstance(counts.get("postmortem_draft"), int) or isinstance(counts.get("postmortem_draft"), bool):
+        failures.append("postmortem_draft_count_missing")
+    reviews = len([d for d in decisions if str((d.get("decision") or {}).get("approval_decision_id") or "").strip()])
+    if summary.get("mutation_review_count") != reviews:
+        failures.append(f"mutation_review_count_not_distinct:{summary.get('mutation_review_count')}!={reviews}")
+    return failures, len(pool)
+
+
+def _qualification_failures(body):
+    data = _data(body)
+    rows, surface = data.get("member_baselines"), data.get("member_baselines_surface")
+    if not isinstance(rows, list) or not isinstance(surface, dict):
+        return ["member_baselines_missing"]
+    failures = []
+    if surface.get("status") == "unavailable":
+        failures.append("member_baselines_unavailable:" + str(surface.get("reason")))
+    if any(not all(r.get(k) for k in ("persona_name", "artifact_ref", "status")) for r in rows if isinstance(r, dict)):
+        failures.append("member_baseline_row_incomplete")
+    return failures
+
+
+def check(fetch) -> dict:
+    first, items = _journal(fetch)
+    failures, pool_rows = _journal_failures(first, items)
+    failures += _qualification_failures(fetch(QUALIFICATION))
+    return {"journal_rows": len(items), "pool_version_rows": pool_rows, "failed": failures, "passed": not failures}
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = check(lambda path: _request(urllib.request.Request(
+            base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

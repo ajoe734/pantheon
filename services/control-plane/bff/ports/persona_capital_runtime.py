@@ -1257,6 +1257,8 @@ def create_in_memory_persona_capital_runtime_port(
     evolution_programs: Optional[List[Dict[str, Any]]] = None,
     evolution_decisions: Optional[List[Dict[str, Any]]] = None,
     evolution_qualification_reader: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+    persona_pool_versions_reader: Optional[Callable[[str, str], Any]] = None,
+    registry_entry_reader: Optional[Callable[[str, str], Any]] = None,
     **kwargs: Any,
 ) -> PersonaCapitalRuntimeDomainPort:
     """Create an in-memory PersonaCapitalRuntimeDomainPort for testing."""
@@ -1279,6 +1281,8 @@ def create_in_memory_persona_capital_runtime_port(
         evolution_programs_reader=lambda: list(evolution_programs or []),
         evolution_decisions_reader=lambda: list(evolution_decisions or []),
         evolution_qualification_reader=evolution_qualification_reader,
+        persona_pool_versions_reader=persona_pool_versions_reader,
+        registry_entry_reader=registry_entry_reader,
     )
     return PersonaCapitalRuntimeDomainPort(
         persona_port=persona_p,

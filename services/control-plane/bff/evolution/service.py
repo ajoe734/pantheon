@@ -1012,7 +1012,11 @@ def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) 
         item for item in items
         if item.get("entry_type") == "evolution_decision"
         and isinstance(item.get("mutation_review"), dict)
-        and str(item["mutation_review"].get("approval_decision_id") or "").strip()
+        and str(
+            (item.get("decision") or {}).get("approval_decision_id")
+            or item["mutation_review"].get("approval_decision_id")
+            or ""
+        ).strip()
     ]
     by_risk_level = _management_count_by(items, "risk_level")
     latest_at = max(

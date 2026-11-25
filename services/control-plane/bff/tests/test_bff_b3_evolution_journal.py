@@ -3654,3 +3654,207 @@ def test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors
     )
     assert resp_unrelated_500.status_code == 500
 
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-JOURNAL-POOL-VERSIONS-20261125: strategy pool versions, subject class,
+# single-counted summary. Row shapes are the hosted ones recorded in the task.
+# --------------------------------------------------------------------------- #
+import base64 as _b64
+
+PV_TENANT = "tenant-dev"
+PV_PERSONA = "persona-ee7112a829d38b9135ac"
+PV_OTHER_PERSONA = "persona-6507750312870d03a241"
+PV_MEMBER = "artifact-persona-paper-a81b4fd15944698341aa"
+PV_CHECKSUM = "sha256:" + "a" * 64
+
+
+def _pv_jwt(tenant: str = PV_TENANT) -> str:
+    def part(v: Dict[str, Any]) -> str:
+        return _b64.urlsafe_b64encode(json.dumps(v).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'none'})}.{part({'sub': 'op-1', 'tenant_id': tenant})}.sig"
+
+
+def _pv_member(weight: float = 1.0) -> Dict[str, Any]:
+    return {"artifact_ref": PV_MEMBER, "checksum": PV_CHECKSUM, "stage": "active",
+            "risk_weight": weight, "baseline_ref": None}
+
+
+def _pv_version(number: int, action: str | None, status: str | None, reasons: List[str]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {
+        "persona_id": PV_PERSONA, "tenant_id": PV_TENANT, "pool_version": number,
+        "members": [_pv_member()], "change_reason": f"paper pool {action}: {status}",
+        "created_at": f"2026-11-2{number}T00:00:00Z", "digest": f"sha256:{number:064d}",
+    }
+    if action:
+        body["decision"] = {"action": action, "status": status, "reasons": reasons}
+    return body
+
+
+# v1 initial; v2,v3 refused virtual_book_source_missing; v4,v5 refused history_missing; v6 high water.
+PV_VERSIONS = [
+    {**_pv_version(1, None, None, []), "change_reason": "initial pool"},
+    _pv_version(2, "reweight", "refused", ["virtual_book_source_missing"]),
+    _pv_version(3, "reweight", "refused", ["virtual_book_source_missing"]),
+    _pv_version(4, "reweight", "refused", ["virtual_book_history_missing"]),
+    _pv_version(5, "reweight", "refused", ["virtual_book_history_missing"]),
+    _pv_version(6, "reweight", "refused", ["virtual_book_high_water_history_missing"]),
+]
+
+
+def _pv_persona(persona_id: str, tenant: str = PV_TENANT, **extra: Any) -> Dict[str, Any]:
+    return {"persona_id": persona_id, "name": f"Name {persona_id[-4:]}", "lifecycle_state": "paper_owner",
+            "tenant_id": tenant, **extra}
+
+
+def _pv_client(*, personas, decisions=None, incidents=None, pool_reader=None, registry_reader=None):
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": personas, "evolution_decisions": decisions or [],
+            "persona_pool_versions_reader": pool_reader, "registry_entry_reader": registry_reader,
+        },
+        lifecycle_telemetry_governance_kwargs={"incidents": {i["incident_id"]: i for i in incidents or []}},
+    )
+    app = FastAPI()
+    app.include_router(create_evolution_router(
+        read_surface=ports,
+        extract_identity=lambda authorization=None: type(
+            "I", (), {"operator_id": "op-1", "roles": {"viewer"}, "claims": {"tenant_id": PV_TENANT}})(),
+    ))
+    return TestClient(app), ports
+
+
+PV_HEADERS = {"Authorization": "Bearer x"}
+
+
+def _pv_decision(decision_id: str, **extra: Any) -> Dict[str, Any]:
+    return {"decision_id": decision_id, "status": "proposed", "action_type": "flag_for_review",
+            "risk_level": "low", "created_at": "2026-11-20T00:00:00Z", **extra}
+
+
+def test_pool_versions_are_listed_and_refused_versions_are_not_applied_changes() -> None:
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                           pool_reader=lambda pid, tid: {"versions": PV_VERSIONS, "refusals": []})
+    body = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    pool = sorted((i for i in body["data"]["items"] if i["entry_type"] == "pool_version"),
+                  key=lambda i: i["pool_version"])
+    assert [i["pool_version"] for i in pool] == [1, 2, 3, 4, 5, 6]
+    assert pool[0]["action"] == "initial" and pool[0]["members_before"] == []
+    assert pool[0]["members_after"] == [{"artifact_ref": PV_MEMBER, "stage": "active", "risk_weight": 1.0}]
+    for item in pool[1:]:
+        assert item["refused"] is True and item["status"] == "refused" and item["decision_status"] == "refused"
+        assert item["membership_changed"] is False
+        assert item["members_before"] == item["members_after"]
+        assert item["summary"].startswith("Refused") and "Applied" not in item["summary"]
+        assert item["persona_name"] == f"Name {PV_PERSONA[-4:]}"
+    assert pool[1]["reasons"] == ["virtual_book_source_missing"]
+    assert pool[5]["reasons"] == ["virtual_book_high_water_history_missing"]
+    assert body["data"]["summary"]["pool_version_count"] == 6
+    assert body["data"]["summary"]["refused_pool_version_count"] == 5
+    assert body["meta"]["surfaces"]["strategy_pools"]["status"] == "ok"
+
+
+def test_applied_reweight_shows_before_and_after_members() -> None:
+    changed = {**_pv_version(2, "reweight", "applied", ["ok"]), "members": [_pv_member(0.5)]}
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                           pool_reader=lambda pid, tid: {"versions": [PV_VERSIONS[0], changed]})
+    items = client.get("/bff/management/evolution-journal?view=history", headers=PV_HEADERS).json()["data"]["items"]
+    v2 = next(i for i in items if i["entry_type"] == "pool_version" and i["pool_version"] == 2)
+    assert v2["status"] == "applied" and v2["membership_changed"] is True and not v2["refused"]
+    assert v2["members_before"][0]["risk_weight"] == 1.0 and v2["members_after"][0]["risk_weight"] == 0.5
+
+
+def test_owner_failure_makes_strategy_pools_unavailable_and_other_sources_render() -> None:
+    def failing(pid: str, tid: str) -> Any:
+        raise RuntimeError("owner down")
+
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)], decisions=[_pv_decision("d-1")], pool_reader=failing)
+    resp = client.get("/bff/management/evolution-journal?view=all", headers=PV_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    pools = body["meta"]["surfaces"]["strategy_pools"]
+    assert pools["status"] == "unavailable" and "RuntimeError" in pools["reason"]
+    assert [i["id"] for i in body["data"]["items"]] == ["evolution_decision:d-1"]
+
+
+def test_pool_reads_are_bounded_and_tenant_scoped() -> None:
+    calls: List[str] = []
+
+    def reader(pid: str, tid: str) -> Any:
+        calls.append(pid)
+        assert tid == PV_TENANT
+        return {"versions": [PV_VERSIONS[0]]}
+
+    personas = [_pv_persona(f"persona-{n:04d}") for n in range(30)]
+    personas.append(_pv_persona("persona-foreign", tenant="tenant-other"))
+    personas.append({**_pv_persona("persona-research"), "lifecycle_state": "research_only"})
+    client, _ = _pv_client(personas=personas, pool_reader=reader)
+    body = client.get("/bff/management/evolution-journal?view=history&page_size=200", headers=PV_HEADERS).json()
+    assert len(calls) == 20 and "persona-foreign" not in calls and "persona-research" not in calls
+    assert body["meta"]["pool_reads"]["pool_version_reads"] == 20
+    assert body["meta"]["surfaces"]["strategy_pools"]["status"] == "degraded"
+    assert "persona_limit_exceeded:10" in body["meta"]["surfaces"]["strategy_pools"]["reason"]
+
+
+def test_subject_class_from_recorded_fields_and_include_system() -> None:
+    infra_incident = {"incident_id": "agent-000b205c0ef9", "incident_cluster_id": "x:monitor-agent:agent-finding-a",
+                      "deployment_plan_id": "monitor-agent-plan"}
+    drift_incident = {"incident_id": "inc-drift-1", "incident_cluster_id": "drift:btc"}
+    deploy_incident = {"incident_id": "inc-deployment-comp-1", "incident_cluster_id": "deployment:plan-1"}
+    decisions = [
+        _pv_decision("d-infra-binding", status="completed", metadata={"runtime_binding_id": "infra-subject-x"}),
+        _pv_decision("d-infra-incident", status="completed", linked_incident_id="agent-000b205c0ef9"),
+        _pv_decision("d-strategy", status="completed", linked_incident_id="inc-drift-1"),
+        _pv_decision("d-deploy", status="completed", linked_incident_id="inc-deployment-comp-1"),
+        _pv_decision("d-test", status="completed", target_type="persona", target_id="persona-test"),
+        # an infrastructure-looking name without any recorded infrastructure field stays strategy
+        _pv_decision("d-name-only", status="completed", linked_incident_id="infra-bff-name-only"),
+    ]
+    personas = [_pv_persona("persona-test", metadata={"data_scope": "test"})]
+    client, _ = _pv_client(personas=personas, decisions=decisions,
+                           incidents=[infra_incident, drift_incident, deploy_incident])
+    default = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    ids = {i["source_id"]: i["subject_class"] for i in default["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert ids == {"d-strategy": "strategy", "d-deploy": "deployment", "d-name-only": "strategy"}
+    summary = default["data"]["summary"]
+    assert summary["hidden_system_counts"] == {"infrastructure": 2, "test": 1}
+    assert default["page_info"]["total"] == 3
+    shown = client.get("/bff/management/evolution-journal?view=history&include_system=true&page_size=50",
+                       headers=PV_HEADERS).json()
+    classes = {i["source_id"]: i["subject_class"] for i in shown["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert classes["d-infra-binding"] == classes["d-infra-incident"] == "infrastructure"
+    assert classes["d-test"] == "test" and shown["data"]["summary"]["hidden_system_counts"] == {"infrastructure": 0, "test": 0}
+    # a link that names one decision still opens it even when it is a system entry
+    one = client.get("/bff/management/evolution-journal?view=history&decision=d-infra-binding", headers=PV_HEADERS).json()
+    assert [i["source_id"] for i in one["data"]["items"]] == ["d-infra-binding"]
+
+
+def test_auto_proposal_parts_add_up_and_each_decision_counts_once() -> None:
+    def snap(metric: str) -> Dict[str, Any]:
+        return {"metric_name": metric, "breached": True}
+
+    decisions = [
+        _pv_decision("p-follow", threshold_snapshots=[snap("incident_followup_required")]),
+        _pv_decision("p-sev", threshold_snapshots=[snap("severity1_incident_count")]),
+        _pv_decision("p-thr", threshold_snapshots=[{"signal_type": "execution_drift", "breached": True}]),
+        _pv_decision("p-other", threshold_snapshots=[snap("runtime_state")]),
+        _pv_decision("p-infra", metadata={"runtime_binding_id": "infra-subject-y"},
+                     threshold_snapshots=[snap("incident_followup_required")]),
+        _pv_decision("done", status="completed", approval_decision_id="ad-1", proposed_changes={"x": 1}),
+        _pv_decision("done-2", status="completed", proposed_changes={"x": 1}),
+    ]
+    client, _ = _pv_client(personas=[], decisions=decisions)
+    data = client.get("/bff/management/evolution-journal?view=all&page_size=50", headers=PV_HEADERS).json()["data"]
+    counts = data["auto_proposal_counts"]
+    parts = ("threshold", "incident_followup", "incident_severity", "other", "infrastructure")
+    assert sum(counts[k] for k in parts) == counts["total"] == 5
+    assert (counts["threshold"], counts["incident_followup"], counts["incident_severity"],
+            counts["other"], counts["infrastructure"]) == (1, 1, 1, 1, 1)
+    assert "postmortem_draft" in counts and counts["postmortem_draft"] not in (None,)
+    summary = data["summary"]
+    assert summary["decision_count"] == 7
+    # only the decision with its own review record counts as a mutation review
+    assert summary["mutation_review_count"] == 1

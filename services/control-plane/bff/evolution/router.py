@@ -1386,11 +1386,11 @@ def create_evolution_router(
                 if dec_item is not None:
                     dec_item["mutation_review"] = proj
 
-        for persona in pools["personas"]:
-            persona_id = str(persona.get("persona_id") or persona.get("id")).strip()
-            versions = pools["versions"].get(persona_id)
-            if versions:
-                items.extend(evolution_journal_pool_version_items(persona, versions))
+        for pool_persona in pools["personas"]:
+            pool_persona_id = str(pool_persona.get("persona_id") or pool_persona.get("id")).strip()
+            pool_versions = pools["versions"].get(pool_persona_id)
+            if pool_versions:
+                items.extend(evolution_journal_pool_version_items(pool_persona, pool_versions))
 
         for pm in postmortems:
             pm_item = evolution_journal_postmortem_item(pm)
