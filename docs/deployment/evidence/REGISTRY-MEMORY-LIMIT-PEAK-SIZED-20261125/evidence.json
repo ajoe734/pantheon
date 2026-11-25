@@ -2,7 +2,7 @@
   "task": "REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125",
   "class": "RC3 WP3.4",
   "owner": "Claude",
-  "reviewer": "Claude2",
+  "reviewer": "Antigravity",
   "hosted_observation_from_task": {
     "oom_kill_utc": "2026-11-25T10:06:46Z (inside the 10:00Z persona daily cycle, old release)",
     "old_limit": "256m",
