@@ -46,8 +46,16 @@ _ORCHESTRATOR_TEMPLATES_PATH = "/api/research/alpha-templates/evaluations"
 _TEMPLATES_SURFACE_KEY = "alpha_factory_templates"
 _DEMANDS_PATH = "/api/research/persona-demands"
 _RUNS_PATH = "/api/research-orchestrator/runs"
-_SEEDS_PATH = "/api/source-ingest/management/strategy-seeds"
-_SOURCE_RECORDS_PATH = "/api/source-ingest/source-records"
+# The unbounded owner routes below must never be requested by the board:
+# source-ingest source-records and management/strategy-seeds return every row
+# of the tenant (hosted: 36,619 records / 148 MB, 13,514 seeds / 34 MB).
+FORBIDDEN_UNBOUNDED_PATHS = (
+    "/api/source-ingest/source-records",
+    "/api/source-ingest/management/strategy-seeds",
+)
+_NO_BOUNDED_READ = "no_bounded_owner_read"
+# Owner run list has no limit parameter; only the newest rows are used.
+_MAX_RUNS_USED = 200
 _SOURCE_INGEST_URL_ENVS = (
     "PANTHEON_SOURCE_INGEST_API_URL",
     "PANTHEON_SOURCE_INGEST_URL",
@@ -339,42 +347,13 @@ def _read_runs(
     rows = _extract_entries(payload) if ok else None
     if rows is None:
         return None, _unavailable(_OWNER_SOURCE, "runs_read_failed")
-    return [r for r in rows if str(r.get("tenant_id") or "").strip() == tenant], {
-        "status": "ok",
-        "source": _OWNER_SOURCE,
-    }
-
-
-def _read_seeds(
-    http_get: Callable[..., Tuple[Any, Any]],
-    auth: Optional[str],
-    tenant: str,
-) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
-    source = "source_ingestion"
-    base = _resolve_source_ingest_url()
-    if not base:
-        return None, _unavailable(source, "unconfigured")
-    ok, payload = _owner_get(http_get, f"{base}{_SEEDS_PATH}", auth, tenant)
-    rows = _extract_entries(payload) if ok else None
-    if rows is None:
-        return None, _unavailable(source, "seeds_read_failed")
-    return rows, {"status": "ok", "source": source}
-
-
-def _read_source_record_count(
-    http_get: Callable[..., Tuple[Any, Any]],
-    auth: Optional[str],
-    tenant: str,
-) -> Tuple[Optional[int], Dict[str, Any]]:
-    source = "source_ingestion"
-    base = _resolve_source_ingest_url()
-    if not base:
-        return None, _unavailable(source, "unconfigured")
-    ok, payload = _owner_get(http_get, f"{base}{_SOURCE_RECORDS_PATH}", auth, tenant)
-    rows = payload.get("source_records") if isinstance(payload, dict) else None
-    if not ok or not isinstance(rows, list):
-        return None, _unavailable(source, "source_records_read_failed")
-    return len(rows), {"status": "ok", "source": source}
+    mine = [r for r in rows if str(r.get("tenant_id") or "").strip() == tenant]
+    mine.sort(key=_run_sort_key, reverse=True)
+    surface: Dict[str, Any] = {"status": "ok", "source": _OWNER_SOURCE, "runs_seen": len(mine)}
+    if len(mine) > _MAX_RUNS_USED:
+        mine = mine[:_MAX_RUNS_USED]
+        surface["truncated"] = True
+    return mine, surface
 
 
 def reason_code(raw: Any) -> str:
@@ -739,8 +718,12 @@ def create_alpha_factory_router(
         )
         demands, demands_surface = _read_demands(eff_http_get, base_url, eff_auth, verified_tenant)
         runs, runs_surface = _read_runs(eff_http_get, base_url, eff_auth, verified_tenant)
-        seeds, cards_surface = _read_seeds(eff_http_get, eff_auth, verified_tenant)
-        record_count, records_surface = _read_source_record_count(eff_http_get, eff_auth, verified_tenant)
+        # No bounded owner read exists yet for hypothesis cards or collected/dropped
+        # text records; never fall back to a scan (see FORBIDDEN_UNBOUNDED_PATHS).
+        seeds = None
+        record_count = None
+        cards_surface = _unavailable("source_ingestion", _NO_BOUNDED_READ)
+        records_surface = _unavailable("source_ingestion", _NO_BOUNDED_READ)
 
         names: Dict[str, str] = {}
         persona_surface: Dict[str, Any] = {"status": "ok", "source": "persona_directory"}
@@ -768,7 +751,7 @@ def create_alpha_factory_router(
         counts = {
             "collected_text_records": _count(record_count, records_surface),
             "dropped_irrelevant": _count(
-                None, _unavailable("source_ingestion", "owner_route_not_exposed")
+                None, _unavailable("source_ingestion", _NO_BOUNDED_READ)
             ),
             "hypothesis_cards": _count(len(card_items) if seeds is not None else None, cards_surface),
             "templates_registered": _count(len(templates), templates_surface),

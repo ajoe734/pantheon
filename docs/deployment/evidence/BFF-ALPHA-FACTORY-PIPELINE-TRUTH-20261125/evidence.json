@@ -24,9 +24,10 @@
   "functional_evidence_only": "no VM/SSH access; hosted verification belongs to the operator acceptance task",
   "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner family",
   "residuals": [
-    "dropped_irrelevant has no owner read (distillation queue skipped l2_irrelevant count is not exposed by source-ingest routes): count stays unavailable owner_route_not_exposed",
-    "GET /api/research-orchestrator/entries does not return the replication gate; the BFF reads it from the experiment runs (GET /api/research-orchestrator/runs, unfiltered list, tenant-filtered in the BFF): the owner should expose a tenant-scoped runs read or put replication_gate on the entry",
-    "hypothesis cards are read from the management strategy-seeds list (full list per request); a paged owner read would bound it",
+    "dropped_irrelevant and collected_text_records have no bounded owner read: counts unavailable no_bounded_owner_read (GET source-records returns 36,619 rows / 148 MB hosted; not called)",
+    "research run list has no limit/tenant parameter (about 570 KB hosted, grows with every run): the BFF keeps the newest 200 tenant rows and flags truncated; owner should expose a paged tenant-scoped runs read or put replication_gate on the entry",
+    "hypothesis cards: strategy-seeds is unbounded (13,514 seeds / 34 MB hosted; not called); cards stay unavailable no_bounded_owner_read until DISCOVERY-SEED-READ-BOUNDED-20261125 merges, then reuse its read",
     "frontend (FE-ALPHA-FACTORY-PIPELINE-TRUTH-20261125) must read data.document_checked, data.counts and the item kinds"
-  ]
+  ],
+  "review_fix_20261125": "PR 7850 follow-up: board requests four owner reads (entries, templates, demands, runs); tests assert source-records and strategy-seeds are never requested and the run list is capped"
 }

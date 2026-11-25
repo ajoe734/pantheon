@@ -301,8 +301,9 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
     )
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
-    # entries, templates, demands, runs, seeds and source records: six bounded owner reads
-    assert len(calls) == 6
+    # entries, templates, demands and runs: four owner reads; never source-records or strategy-seeds
+    assert len(calls) == 4
+    assert not any("/source-records" in c or "/strategy-seeds" in c for c in calls)
     assert calls[0] == (
         "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
     )
@@ -861,19 +862,45 @@ def test_discovered_lane_lists_open_demands_and_hypothesis_cards(monkeypatch) ->
     )
     body = _get(client)
     discovered = body["data"]["discovered"]
-    assert [d["id"] for d in discovered] == ["dem-1", "seed-1"]
+    assert [d["id"] for d in discovered] == ["dem-1"]
     demand = discovered[0]
     assert demand["kind"] == "research_demand"
     assert demand["lacking"]["short_measure"] == "return_per_risk"
     assert demand["lacking"]["missing_datasets"] == ["tw_price_daily"]
     assert demand["since"] == "2026-11-20T01:00:00Z"
     assert demand["latest_outcome"]["reason_code"] == "mandate_universe_missing"
-    card = discovered[1]
-    assert card["kind"] == "hypothesis_card"
-    assert card["claim"] == "Earnings surprise drifts for 60 days"
-    assert card["source_id"] == "src-cna-1"
-    assert card["since"] == "2026-11-21T00:00:00Z"
-    assert body["data"]["counts"]["hypothesis_cards"] == {"value": 1, "status": "ok"}
+    # no bounded owner read for seeds yet: cards unavailable, never a scan, never 0
+    assert body["data"]["counts"]["hypothesis_cards"] == {
+        "value": None,
+        "status": "unavailable",
+        "reason": "no_bounded_owner_read",
+    }
+    assert body["data"]["counts"]["collected_text_records"]["reason"] == "no_bounded_owner_read"
+    assert body["data"]["counts"]["dropped_irrelevant"]["reason"] == "no_bounded_owner_read"
+
+
+def test_board_never_requests_unbounded_owner_routes(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    calls: List[str] = []
+    client = _make_bff_client(
+        monkeypatch, http_get=_owner_router([], demands=[_demand("dem-1", "persona-a")], calls=calls)
+    )
+    _get(client)
+    from services.control_plane.bff.console_gap import alpha_factory as af
+
+    for url in calls:
+        assert not any(p in url for p in af.FORBIDDEN_UNBOUNDED_PATHS), url
+
+
+def test_run_list_is_capped_and_marks_truncation(monkeypatch) -> None:
+    runs = [
+        {"run_id": f"r{i}", "tenant_id": "tenant-dev", "created_at": f"2026-11-{1 + i % 28:02d}T00:00:00Z"}
+        for i in range(260)
+    ]
+    client = _make_bff_client(monkeypatch, http_get=_owner_router([], runs=runs))
+    body = _get(client)
+    surface = body["meta"]["surfaces"]["alpha_factory_runs"]
+    assert surface["truncated"] is True and surface["runs_seen"] == 260
 
 
 def test_persona_display_name_comes_from_the_persona_directory(monkeypatch) -> None:
@@ -900,7 +927,7 @@ def test_empty_discovered_lane_means_owners_answered_none(monkeypatch) -> None:
     assert body["data"]["discovered"] == []
     surfaces = body["meta"]["surfaces"]
     assert surfaces["alpha_factory_demands"]["status"] == "ok"
-    assert surfaces["alpha_factory_hypothesis_cards"]["status"] == "ok"
+    assert surfaces["alpha_factory_hypothesis_cards"]["reason"] == "no_bounded_owner_read"
     assert "no_candidate_source" not in json.dumps(body)
 
 
@@ -1000,7 +1027,7 @@ def test_counts_are_unavailable_with_reason_never_zero(monkeypatch) -> None:
     monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
     body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], fail=("alpha-templates",))))
     counts = body["data"]["counts"]
-    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "unconfigured"}
+    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "no_bounded_owner_read"}
     assert counts["hypothesis_cards"]["status"] == "unavailable"
     assert counts["templates_registered"] == {"value": None, "status": "unavailable", "reason": "templates_read_failed"}
     assert counts["dropped_irrelevant"]["status"] == "unavailable"
@@ -1017,7 +1044,7 @@ def test_counts_from_owner_reads(monkeypatch) -> None:
     records = [{"source_id": f"s{i}"} for i in range(7)]
     body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], templates=templates, records=records)))
     counts = body["data"]["counts"]
-    assert counts["collected_text_records"] == {"value": 7, "status": "ok"}
+    assert counts["collected_text_records"]["status"] == "unavailable"
     assert counts["templates_registered"] == {"value": 3, "status": "ok"}
     assert counts["templates_evaluated"] == {"value": 1, "status": "ok"}
     assert counts["searches"] == {"value": 0, "status": "ok"}
