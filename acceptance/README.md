@@ -71,30 +71,6 @@ A check with `"mutates": true` runs only while the job holds the qualification
 lease; otherwise it is `skipped` with `lease_required` and the verdict stays
 `pending` (a required check that did not run is not a pass).
 
-## Management page crawl after the switch (`check:management-crawl`)
-
-Task: ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126 (RC1 WP1.2). After the identity check and the
-release probes, the stage runs the existing execute-plans crawl
-`scripts/accept-management-hosted-production.mjs`, checked out at the deployed frontend commit,
-against the served pair. The checkout and `npm ci` / Chromium install run in their own steps with
-no credential. The crawl runs as the read-only viewer: the stage exchanges
-`ACCEPTANCE_VIEWER_CLIENT_ID/SECRET` at `/bff/auth/dev-login` and passes only the short-lived token,
-never the secret, to the crawl. The browser issues GET requests; write CTAs are not clicked.
-
-| Result | Verdict effect |
-|---|---|
-| `passed` (the crawl's own `result.pass`) | none |
-| `failed`, with `failedRoutes` (path, status, render error) | `failed` |
-| `skipped` with a `reason`: `stack_not_verified` (identity check did not pass), `frontend_not_prepared`, `crawl_script_missing`, `viewer_credential_missing`, `viewer_login_failed`, `crawl_deadline`, `crawl_no_report`, `crawl_internal_error` | `pending`, never `passed` |
-
-- Limit: 720 s (the pre-switch crawl took 328 to 421 s in six gate runs on 2026-11-24, plus about
-  70 % margin). When the limit expires, the whole process group is killed and the result is `skipped: crawl_deadline`.
-- A crawl result never fails the deploy job and never rolls back. The stage still exits 0.
-- `acceptance-crawl.json` (uploaded in the verdict artifact, 30-day retention, tens of KB) holds
-  routes, statuses, problems and any non-GET BFF request (method and path) only. It holds no token,
-  no response body and no request query.
-- The pre-switch crawl in the frontend gate is unchanged and stays advisory.
-
 ## Verdict
 
 `acceptance-verdict.json` (schema `pantheon.dev-acceptance-verdict.v1`):
