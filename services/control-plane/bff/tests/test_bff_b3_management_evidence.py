@@ -553,7 +553,8 @@ def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Pa
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["items"] == []
-    assert payload["page_info"]["total"] == 0
+    # An unreadable surface is "unknown" (null), never an empty list with total 0.
+    assert payload["page_info"]["total"] is None
     assert payload["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
 
 

@@ -559,10 +559,15 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def _read_one(self, r_type: str, r_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> Any | None:
         if tenant_id is not _UNSCOPED:
-            # A tenant item may be stored under its scoped id or (as the list shows
-            # it) under the bare id; the payload tenant claim is re-checked below.
-            sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = ANY(%s) ORDER BY append_id DESC LIMIT 2"
-            params = (r_type, list({_scoped_record_id(tenant_id, r_id), r_id}))
+            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, _scoped_record_id(tenant_id, r_id))
+            records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+            if not records and _scoped_record_id(tenant_id, r_id) != r_id:
+                # A tenant item the list shows may be stored under the bare id; the
+                # payload tenant claim is still re-checked by _fetch_records.
+                sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, r_id)
+                records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+            k = "source_id" if r_type == "source_record" else f"{r_type}_id"
+            return next((r for r in records if getattr(r, k, None) == r_id), records[0] if records else None)
         else:
             sql = (
                 "SELECT payload FROM ("

@@ -6490,7 +6490,9 @@ class ManagementService:
             evidence_refs = [
                 item
                 for item in evidence_refs
-                if (
+                # Unknown (null) counts as not verified: only a recorded
+                # verification matches verified=true.
+                if bool(
                     (item.get("credibility") or {}).get("verified")
                     if (item.get("credibility") or {}).get("verified") is not None
                     else item.get("verified")
