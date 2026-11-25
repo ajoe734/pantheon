@@ -438,7 +438,7 @@ def test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_340
     )
     assert resp_page2.status_code == 200, resp_page2.text
     page2_body = resp_page2.json()
-    assert len(owner_summary_calls) <= 2  # reads may be served by the owner read cache
+    assert len(owner_summary_calls) == 2
     assert len(page2_body["items"]) == 20
     assert page2_body["page_info"] == {"next_page_token": "40", "total": 3245}
 
