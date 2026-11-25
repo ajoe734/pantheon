@@ -46,6 +46,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             detail=detail or summary,
             include_spec=True,
             persona_lookup=persona_lookup,
+            runtime_truth=ctx.read_strategy_runtime_truth(snapshot_at, persona_lookup),
         )
         stub_reason = strategy_stub_reason(
             {
