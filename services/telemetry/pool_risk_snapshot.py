@@ -296,7 +296,9 @@ def attach_risk_budget_factor(rows: list[dict[str, Any]], *, budget_full: Option
         window = rows[max(0, index - OBSERVATION_ROWS + 1):index + 1]
         values = [r.get("gross_utilisation") for r in window]
         known = len(window) == OBSERVATION_ROWS and all(v is not None for v in values)
-        inputs = {"window_rows": len(window), "budget_full": budget_full, "applied": False}
+        # Owner-valued rows only: a placeholder row (no valuation) is heartbeat-derived and does not survive
+        # heartbeat retention, so it must not shape the recorded inputs of a row that does.
+        inputs = {"window_rows": sum(1 for r in window if r.get("equity") is not None), "budget_full": budget_full, "applied": False}
         if known and budget_full and budget_full > 0:
             mean = sum(values) / len(values)
             inputs["mean_gross_utilisation"] = round(mean, 10)
@@ -482,6 +484,10 @@ def served_view(summary: Mapping[str, Any]) -> dict[str, Any]:
         return summary
     pool = summary.get("capital_pool_id")
     rows = [r for r in rows if not pool or r.get("pool_id") == str(pool)]
+    # A no-valuation placeholder is heartbeat-derived: once a later owner-valued close exists it is
+    # superseded and not served, so the served view is identical after heartbeat retention and cold rebuild.
+    last_valued = max((r["as_of"] for r in rows if r.get("equity") is not None), default=None)
+    rows = [r for r in rows if r.get("equity") is not None or last_valued is None or r["as_of"] > last_valued]
     out = {k: v for k, v in summary.items() if k != ROWS_KEY}
     tail = list(rows)[-OBSERVATION_ROWS:]
     out["pool_risk_snapshots"] = [{k: v for k, v in r.items() if not k.startswith("_")} for r in tail]

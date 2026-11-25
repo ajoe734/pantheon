@@ -304,23 +304,6 @@ def _build_hosted_event(
 def _strip_volatile_summary_fields(summary: dict[str, Any]) -> dict[str, Any]:
     cleaned = copy.deepcopy(summary)
     cleaned.pop("projection_updated_at", None)
-    # PoolRiskSnapshot placeholder rows for a close with no owner valuation are
-    # derived from heartbeats only, and retention deletes those heartbeats by
-    # design. Compare only rows backed by an owner valuation (equity known).
-    if "pool_risk_snapshots" in cleaned:
-        rows = [r for r in cleaned["pool_risk_snapshots"] if r.get("equity") is not None]
-        keep = {r["as_of"] for r in rows}
-        rows = [
-            {**r, "risk_budget_factor_inputs": {
-                k: v for k, v in (r.get("risk_budget_factor_inputs") or {}).items()
-                if k != "window_rows"}}
-            for r in rows
-        ]
-        cleaned["pool_risk_snapshots"] = rows
-        cleaned["pool_observations"] = [
-            o for o in cleaned.get("pool_observations") or [] if o.get("date") in keep
-        ]
-        cleaned["pool_risk_snapshot_retained_days"] = len(rows)
     return cleaned
 
 
