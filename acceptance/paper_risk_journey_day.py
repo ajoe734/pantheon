@@ -105,12 +105,15 @@ def evaluate(fetch, manifest_fetch, source_read, *, expected, pool_policy_reader
 
 def main():
     def runner(fetch, expected, pool_reader, public_read, owner_read):
-        return evaluate(fetch, public_read, lambda eid, tenant: owner_read("telemetry", eid, tenant),
-                        expected=expected, pool_policy_reader=pool_reader)
+        captured["report"] = evaluate(fetch, public_read, lambda eid, tenant: owner_read("telemetry", eid, tenant),
+                                      expected=expected, pool_policy_reader=pool_reader)
+        return captured["report"]
+    captured = {}
     if not os.environ.get("ACCEPTANCE_FE_URL"):
         print("skipped: missing ACCEPTANCE_FE_URL")
         return 77
-    return binding.main(runner)
+    code = binding.main(runner)
+    return captured["report"]["exit_code"] if "report" in captured else code
 
 
 if __name__ == "__main__":

@@ -226,9 +226,12 @@ def main():
     def runner(fetch, expected, pool_reader, public_read, owner_read):
         def source_read(eid, tenant):
             return owner_read("telemetry", eid, tenant)
-        return check(fetch, public_read, source_read, expected=expected, pool_policy_reader=pool_reader,
-                     backend_sha=os.environ[required[1]], frontend_sha=os.environ[required[2]])
-    return binding.main(runner)
+        captured["report"] = check(fetch, public_read, source_read, expected=expected, pool_policy_reader=pool_reader,
+                                   backend_sha=os.environ[required[1]], frontend_sha=os.environ[required[2]])
+        return captured["report"]
+    captured = {}
+    code = binding.main(runner)
+    return captured["report"]["exit_code"] if "report" in captured else code
 
 
 if __name__ == "__main__":

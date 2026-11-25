@@ -139,3 +139,38 @@ def test_sample_checks_are_unchanged_by_the_day_wrapper():
 def test_missing_configuration_is_skip(monkeypatch, capsys):
     monkeypatch.delenv("ACCEPTANCE_FE_URL", raising=False)
     assert day.main() == 77
+
+
+@pytest.mark.parametrize("module,verdict_code", [("probe", 77), ("day", 0)])
+def test_main_exit_code_follows_the_verdict_for_pending(monkeypatch, module, verdict_code):
+    from urllib.parse import urlsplit
+    payload, manifest, history, rows, details, sources = state = rj.fixture()
+    rows.clear()
+    target = rj.probe if module == "probe" else day
+    for key, value in {"ACCEPTANCE_FE_URL": "https://fe", "ACCEPTANCE_BFF_URL": "https://bff",
+                       "ACCEPTANCE_VIEWER_CLIENT_ID": "i", "ACCEPTANCE_VIEWER_CLIENT_SECRET": "s",
+                       "ACCEPTANCE_BACKEND_SHA": rj.SHA, "ACCEPTANCE_FRONTEND_SHA": rj.FE}.items():
+        monkeypatch.setenv(key, value)
+
+    def fetch(path):
+        parsed = urlsplit(path)
+        if path == "/bff/version":
+            return {"source_commit_sha": rj.SHA}
+        if parsed.path == rj.probe.BASE:
+            return {"data": {"items": rows}}
+        if parsed.path.startswith(rj.probe.BASE + "/"):
+            return {"data": (history | details)[parsed.path.rsplit("/", 1)[1]]}
+        if path == day.CALENDAR_PATH:
+            return CALENDAR
+        return payload[path]
+
+    def fake_main(runner):
+        report = runner(fetch, ("fixture-persona",), None, lambda: manifest, lambda *a: None)
+        return 0 if report["passed"] else 1  # what the shared main returns: never 77
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return at("2026-11-22T18:00:00")
+    monkeypatch.setattr(day, "datetime", Clock)
+    monkeypatch.setattr(target.binding, "main", fake_main)
+    assert target.main() == verdict_code
