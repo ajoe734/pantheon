@@ -124,7 +124,11 @@ class SourceManagementClient:
         base_url: Optional[str] = None,
         service_token: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        background_seed_read: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        # Set by background callers (the persona cycle): ``list_all`` then reads bounded match pages
+        # under this budget instead of one interactive whole-store request.
+        self._background_seed_read = dict(background_seed_read) if background_seed_read is not None else None
         raw_url = base_url if base_url is not None else _base_url_from_env(_SOURCE_INGEST_URL_ENVS)
         self._base_url = raw_url.rstrip("/") if raw_url else ""
         self._service_token = service_token if service_token is not None else _service_token_from_env()
@@ -355,6 +359,8 @@ class SourceManagementClient:
             raise
 
     def list_all(self) -> List[StrategySpecSeed]:
+        if self._background_seed_read is not None:
+            return self.read_match_pages(**self._background_seed_read)  # type: ignore[return-value]
         resp = self._seed_request("GET", "/api/source-ingest/management/strategy-seeds")
         return [StrategySpecSeed.from_dict(item) for item in (resp.get("items") or []) if isinstance(item, Mapping)]
 

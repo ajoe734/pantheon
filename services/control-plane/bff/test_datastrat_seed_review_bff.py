@@ -1013,3 +1013,44 @@ def test_strategy_seed_owner_boundary_unconfigured_or_unreachable_fails_closed_5
     assert owner_404_err["details"]["upstream_status"] == 404
 
 
+
+
+def _page_client(pages, *, fail_on=None, clock=None):
+    from services.control_plane.bff.source_management_client import SourceManagementClient
+    client = SourceManagementClient(base_url="http://seed-owner.invalid", background_seed_read=None)
+    calls = []
+
+    def fake(method, path, *, params=None, timeout_seconds=None, **_):
+        calls.append((params["page_token"], timeout_seconds))
+        if fail_on is not None and len(calls) == fail_on:
+            from services.control_plane.bff.source_management_client import SourceManagementClientError
+            raise SourceManagementClientError("timed out", status_code=503, error_code="CONNECTION_ERROR")
+        index = len(calls) - 1
+        return {"items": pages[index], "next_page_token": f"t{index + 1}" if index + 1 < len(pages) else None}
+    client._seed_request = fake
+    return client, calls
+
+
+def test_background_seed_read_pages_until_end_with_its_own_timeout() -> None:
+    client, calls = _page_client([[{"seed_id": "a"}], [{"seed_id": "b"}], [{"seed_id": "c"}]])
+    read = client.read_match_pages(page_size=1, max_pages=10, page_timeout_seconds=7.5)
+    assert [r["seed_id"] for r in read] == ["a", "b", "c"] and not read.partial and read.pages == 3
+    assert [c[1] for c in calls] == [7.5, 7.5, 7.5], "background budget is not the 2 s interactive limit"
+
+
+def test_background_seed_read_is_partial_at_page_cap_and_time_budget() -> None:
+    client, _ = _page_client([[{"seed_id": "a"}], [{"seed_id": "b"}], [{"seed_id": "c"}]])
+    capped = client.read_match_pages(page_size=1, max_pages=2)
+    assert capped.partial and capped.stop_reason == "page_cap" and len(capped) == 2
+    ticks = iter([0.0, 5.0, 100.0, 100.0])
+    client, _ = _page_client([[{"seed_id": "a"}], [{"seed_id": "b"}], [{"seed_id": "c"}]])
+    timed = client.read_match_pages(page_size=1, max_pages=10, budget_seconds=30, clock=lambda: next(ticks))
+    assert timed.partial and timed.stop_reason == "time_budget" and len(timed) == 2
+
+
+def test_background_seed_read_failure_raises_never_returns_empty() -> None:
+    import pytest
+    from services.control_plane.bff.source_management_client import SourceManagementClientError
+    client, _ = _page_client([[{"seed_id": "a"}], [{"seed_id": "b"}]], fail_on=2)
+    with pytest.raises(SourceManagementClientError):
+        client.read_match_pages(page_size=1)
