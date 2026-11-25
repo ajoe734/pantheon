@@ -587,6 +587,7 @@ def test_bare_config_has_no_card_collaborators_and_production_config_builds_them
     for name in CARD_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
         monkeypatch.delenv(name + "_FILE", raising=False)
+    monkeypatch.setenv("ALPHA_REPLICATION_CARD_ADMISSION_ENABLED", "1")
     config = rc.build_production_config()
     assert config.card_wiring_builder is not None
     status = rc.refresh_card_wiring(config)
@@ -616,8 +617,53 @@ def test_tick_publishes_the_card_path_reason_on_the_health_file_and_card_outage_
     config.card_wiring_builder = lambda: CardWiring(
         registrar=mock.Mock(proposer_id="a", gate_id="b"), matcher=lambda e, d: True, demands_provider=down,
         dataset_resolver=lambda b: None)
-    with mock.patch("services.research.alpha_replication.replication_controller._list_registry_strategy_specs",
+    with mock.patch("services.research.alpha_replication.replication_controller._list_card_admission_drafts",
                     return_value=[]):
         result = run_controller_tick(config=config, state=state, store=state_store, writer=None)
     card = result["reconcile"]["card_path"]
     assert card["enabled"] is True and card["error"].startswith("card_admission_unavailable:RuntimeError")
+
+
+def test_card_switch_unset_means_no_registry_draft_request_from_the_production_entry_point(tmp_path, monkeypatch):
+    """Switch default off: all other wiring present, the production tick makes no draft request."""
+    from services.research.alpha_replication import replication_controller as rc
+    from services.research.alpha_replication.card_production_wiring import CardWiring
+
+    monkeypatch.delenv("ALPHA_REPLICATION_CARD_ADMISSION_ENABLED", raising=False)
+    monkeypatch.setenv("ALPHA_REPLICATION_DATA_DIR", str(tmp_path))
+    config = rc.build_production_config()
+    config.seed_store_path = tmp_path / "none.jsonl"
+    config.authority = FakeAuthority()
+    config.card_wiring_builder = lambda: CardWiring(
+        registrar=mock.Mock(proposer_id="a", gate_id="b"), matcher=lambda e, d: True,
+        demands_provider=lambda t: [], dataset_resolver=lambda b: None)
+    state, state_store = _state(tmp_path / "state.json")
+    requested = []
+    with mock.patch("urllib.request.urlopen", side_effect=lambda req, **k: requested.append(req.full_url)):
+        result = run_controller_tick(config=config, state=state, store=state_store, writer=None)
+    assert not [u for u in requested if "strategy-specs" in u]
+    card = result["reconcile"]["card_path"]
+    assert card["enabled"] is False and card["reason"] == "card_path_disabled"
+
+
+def test_card_read_is_paged_capped_and_never_a_whole_table_list(tmp_path):
+    from services.research.alpha_replication import replication_controller as rc
+
+    config = ReplicationControllerConfig(data_dir=tmp_path, registry_url="http://registry.test")
+    urls, sizes = [], []
+
+    def fake_urlopen(req, timeout=None):
+        urls.append(req.full_url)
+        n = len(urls)
+        body = json.dumps({"items": [{"entry": {"registry_id": f"r{n}-{i}"}} for i in range(20)],
+                           "next_page_token": f"r{n}-19"}).encode()
+        sizes.append(len(body))
+        return mock.MagicMock(__enter__=lambda s: mock.Mock(read=lambda: body), __exit__=lambda *a: False)
+
+    with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        entries = rc._list_card_admission_drafts(config, "tenant-a")
+    assert len(urls) == rc.CARD_ADMISSION_MAX_PAGES_PER_TICK and len(entries) == 60
+    assert all("view=card_admission_drafts" in u and "page_size=20" in u and "tenant_id=tenant-a" in u for u in urls)
+    assert not any(u.endswith("artifact_state=draft") for u in urls)
+    assert sum(sizes) < 100_000
+    assert config.card_draft_cursor == "r3-19"  # next tick resumes where this one stopped

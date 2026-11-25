@@ -359,6 +359,25 @@ class RegistryService:
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
 
+    def card_admission_draft_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        page_size: int,
+        after_registry_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        """One bounded page of admissible card drafts; ``next_page_token`` is the last registry_id."""
+        rows = self.store.list_card_admission_drafts(
+            visible_tenants=visible_tenants, tenant_id=tenant_id,
+            limit=int(page_size) + 1, after_registry_id=after_registry_id,
+        )
+        page = rows[: int(page_size)]
+        return {
+            "items": [{"entry": e.to_dict()} for e in page],
+            "next_page_token": page[-1].registry_id if len(rows) > len(page) and page else None,
+        }
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:

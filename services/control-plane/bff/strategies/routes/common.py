@@ -689,8 +689,22 @@ class StrategyRouteContext:
             f"Strategy {strategy_id} does not exist",
         )
 
+    def read_strategy_runtime_truth_inputs(self) -> Any:
+        """The Telemetry + RuntimeBinding owner reads, independent of the Persona directory."""
+        from services.control_plane.bff.management_read_models.service import (
+            read_strategy_runtime_truth_inputs,
+        )
+
+        try:
+            return read_strategy_runtime_truth_inputs(self.get_read_store_port())
+        except Exception:  # noqa: BLE001 - a failed read is unknown, never idle
+            return None, []
+
     def read_strategy_runtime_truth(
-        self, snapshot_at: str, persona_lookup: Optional[PersonaStateLookup] = None
+        self,
+        snapshot_at: str,
+        persona_lookup: Optional[PersonaStateLookup] = None,
+        prefetched_inputs: Any = None,
     ) -> Dict[str, Any]:
         """One Telemetry + RuntimeBinding read for the whole request (shared with Trading Pulse)."""
         from services.control_plane.bff.management_read_models.service import (
@@ -700,7 +714,10 @@ class StrategyRouteContext:
         try:
             records = persona_lookup.records if persona_lookup is not None and persona_lookup.available else None
             return read_strategy_runtime_truth(
-                self.get_read_store_port(), snapshot_at, persona_directory=records
+                self.get_read_store_port(),
+                snapshot_at,
+                persona_directory=records,
+                prefetched_inputs=prefetched_inputs,
             )
         except Exception:  # noqa: BLE001 - a failed read is unknown, never idle
             return {"status": "unavailable", "reason": "runtime_truth_read_failed", "by_strategy": {}}

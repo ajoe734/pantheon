@@ -1478,6 +1478,36 @@ class RegistryStore:
                 if getattr(entry.artifact_type, "value", entry.artifact_type) == wanted
             ]
 
+    def list_card_admission_drafts(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[RegistryEntry]:
+        """At most ``limit`` gate-ready card drafts of one tenant; only matches are copied."""
+        with self._lock:
+            matches = []
+            for entry in self._entries.values():
+                if getattr(entry.artifact_type, "value", entry.artifact_type) != "strategy_spec":
+                    continue
+                if getattr(entry.artifact_state, "value", entry.artifact_state) != "draft":
+                    continue
+                if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
+                    continue
+                meta = entry.metadata or {}
+                if meta.get("tenant_id") != tenant_id:
+                    continue
+                wiring = (((meta.get("strategy_spec") or {}).get("metadata") or {}).get("card_wiring") or {})
+                if wiring.get("status") != "gate_ready":
+                    continue
+                if after_registry_id and not entry.registry_id > after_registry_id:
+                    continue
+                matches.append(entry)
+            matches.sort(key=lambda e: e.registry_id)
+            return [RegistryEntry.from_dict(e.to_dict()) for e in matches[: int(limit)]]
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:

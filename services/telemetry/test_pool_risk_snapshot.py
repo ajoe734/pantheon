@@ -278,3 +278,242 @@ def test_owner_stamps_closing_positions_at_marks_and_policy_facts_on_the_valuati
                              metadata={"position_facts": facts}, pool_id="p", binding="b",
                              event_created_at="2026-10-27T07:00:00Z")
     assert base["gross_notional"] is None and base["nulls_base"]["gross_notional"] == "position_mark_missing"
+
+
+def _idle_state_snapshot(day, *, runtime="rt-3252fa75", binding="rtb-paper-001", created=None,
+                         initial_cash=100000.0, cash=100000.0, fill_count=0,
+                         limit=0.10, risk_off=0.10, digest="e" * 64, effective_at=None):
+    event = _event("runtime_state_snapshot", created_at=created or f"{day.isoformat()}T01:00:00Z")
+    event.update(runtime_id=runtime, binding_id=binding, event_id=f"rss-{runtime}-{day}")
+    event["metrics"] = {"state_snapshot": 1}
+    event["metadata"].update({
+        "runtime_package": "paper_execution_runtime",
+        "performance_telemetry": {"status": "no_fills" if fill_count == 0 else "unchanged", "fill_count": fill_count},
+        "member_virtual_books": [],
+        "account_facts": {"initial_cash": initial_cash, "cash": cash, "fill_count": fill_count},
+        "risk_policy_facts": {
+            "risk_policy_id": "rp-paper-low-v2",
+            "risk_policy_version": "2.0",
+            "risk_policy_digest": digest,
+            "gross_limit": limit,
+            "max_leverage": 1.0,
+            "drawdown_risk_off": risk_off,
+            "drawdown_warn": 0.05,
+        },
+    })
+    if effective_at:
+        event["metadata"]["runtime_binding_effective_at"] = effective_at
+    return event
+
+
+def test_never_filled_runtime_with_only_heartbeats_and_one_state_snapshot_passes_daily_check(tmp_path):
+    store = make(tmp_path)
+    day = date(2026, 11, 25)
+    # Heartbeat before close, one runtime_state_snapshot, and heartbeats after close.
+    hb_open = _event("heartbeat", created_at=f"{day.isoformat()}T01:00:00Z")
+    hb_open.update(runtime_id="rt-3252fa75", event_id="hb-open")
+    snap = _idle_state_snapshot(day, created=f"{day.isoformat()}T01:00:01Z")
+    hb_close = _event("heartbeat", created_at=f"{day.isoformat()}T06:00:00Z")
+    hb_close.update(runtime_id="rt-3252fa75", event_id="hb-close")
+    for ev in (hb_open, snap, hb_close):
+        store.project_event(ev)
+
+    served = store.get("rt-3252fa75")
+    rows = served["pool_risk_snapshots"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["as_of"] == "2026-11-25"
+    assert row["equity"] == 100000.0
+    assert row["initial_cash"] == 100000.0
+    assert row["cash"] == 100000.0
+    assert row["equity_basis"] == "flat_never_filled_initial_cash"
+    assert row["gross_notional"] == 0.0 and row["net_notional"] == 0.0
+    assert row["gross_exposure"] == 0.0 and row["net_exposure"] == 0.0
+    assert row["gross_limit"] == 0.10 and row["drawdown_limit"] == 0.10
+    assert row["gross_utilisation"] == 0.0 and row["drawdown_utilisation"] == 0.0
+    assert row["policy_ref"] == {
+        "risk_policy_id": "rp-paper-low-v2",
+        "risk_policy_version": "2.0",
+        "risk_policy_digest": "e" * 64,
+        "basis": "runtime_state_snapshot",
+    }
+
+    spec = importlib.util.spec_from_file_location(
+        "pool_risk_snapshot_day",
+        Path(__file__).resolve().parents[2] / "acceptance" / "pool_risk_snapshot_day.py",
+    )
+    daily_check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(daily_check)
+
+    def fetch(path):
+        if path.startswith("/bff/personas?"):
+            return {"data": [{"id": "persona-0", "owner_lifecycle_state": "paper_running", "status": "active", "tenant_id": "t"}]}
+        if path == "/api/v1/runtime-bindings":
+            return {"data": [{"persona_id": "persona-0", "runtime_id": "rt-3252fa75", "deployment_stage": "paper", "status": "active"}]}
+        if path.startswith("/api/v1/telemetry/"):
+            return {"data": served}
+        if path.startswith("/bff/management/trade-journeys?"):
+            return {"data": {"items": [{"stages": {"trade_decision": {"status": "succeeded", "updated_at": "2026-11-25T06:00:00Z"}}}]}}
+        return {"data": {"strategyPool": {"health": {m: {"status": "unknown", "value": None, "reason": "under_20"} for m in daily_check.MEASURES}}}}
+
+    report = daily_check.run(fetch)
+    assert report["verdict"] in ("passed", "pending")
+    assert report["pools"][0]["passed"] is True
+    assert report["pools"][0]["failures"] == []
+
+
+def test_never_filled_backfill_from_binding_start_and_retention_bound(tmp_path):
+    store = make(tmp_path)
+    days = _weekdays(5)
+    start_at = f"{days[0].isoformat()}T00:00:00Z"
+    hb = _event("heartbeat", created_at=f"{days[-1].isoformat()}T06:00:00Z")
+    hb.update(runtime_id="rt-3252fa75", event_id="hb-day5")
+    snap = _idle_state_snapshot(
+        days[-1],
+        created=f"{days[-1].isoformat()}T06:00:01Z",
+        effective_at=start_at,
+    )
+    store.project_event(hb)
+    store.project_event(snap)
+
+    rows = rows_of(store, "rt-3252fa75")
+    assert [r["as_of"] for r in rows] == [d.isoformat() for d in days]
+    for r in rows:
+        assert r["equity"] == 100000.0
+        assert r["equity_basis"] == "flat_never_filled_initial_cash"
+        assert r["gross_exposure"] == 0.0
+        assert r["gross_limit"] == 0.10
+        assert r["policy_ref"]["basis"] == "runtime_state_snapshot"
+
+    # Backfill from >400 trading days ago is bounded by RETENTION_TRADING_DAYS (400).
+    capped_store = RuntimeSummaryProjectionStore(path=str(tmp_path / "capped.json"))
+    capped_snap = _idle_state_snapshot(
+        days[-1],
+        runtime="rt-capped",
+        created=f"{days[-1].isoformat()}T06:00:00Z",
+        effective_at="2023-01-02T00:00:00Z",
+    )
+    summary = capped_store.project_event(capped_snap)
+    assert len(summary[prs.ROWS_KEY]) == prs.RETENTION_TRADING_DAYS
+    assert capped_store.get("rt-capped")["pool_risk_snapshot_retained_days"] == prs.RETENTION_TRADING_DAYS
+
+
+def test_idle_facts_replay_idempotence_and_bounded_replacement(tmp_path):
+    store = make(tmp_path)
+    days = _weekdays(3)
+    events = [
+        _idle_state_snapshot(days[0], created=f"{days[0].isoformat()}T01:00:00Z", effective_at=f"{days[0].isoformat()}T00:00:00Z"),
+        {**_event("heartbeat", created_at=f"{days[0].isoformat()}T06:00:00Z"), "runtime_id": "rt-3252fa75", "event_id": "hb-0"},
+        {**_event("heartbeat", created_at=f"{days[1].isoformat()}T06:00:00Z"), "runtime_id": "rt-3252fa75", "event_id": "hb-1"},
+        {**_event("heartbeat", created_at=f"{days[2].isoformat()}T06:00:00Z"), "runtime_id": "rt-3252fa75", "event_id": "hb-2"},
+    ]
+    for ev in events:
+        raw_before = store.project_event(ev)
+    served_before = store.get("rt-3252fa75")
+
+    # Replay the exact same events (and with a duplicate event_id): summary and rows stay unchanged.
+    for ev in events + [{**events[0], "event_id": "rss-replay"}]:
+        raw_after = store.project_event(ev)
+    served_after = store.get("rt-3252fa75")
+
+    assert raw_before[prs.ACCOUNT_KEY] == raw_after[prs.ACCOUNT_KEY]
+    assert raw_before[prs.POLICY_KEY] == raw_after[prs.POLICY_KEY]
+    assert raw_before[prs.ROWS_KEY] == raw_after[prs.ROWS_KEY]
+    assert served_before["pool_risk_snapshots"] == served_after["pool_risk_snapshots"]
+    assert served_before["pool_observations"] == served_after["pool_observations"]
+
+    # A new snapshot replaces account facts and policy facts in place (never appended).
+    updated = _idle_state_snapshot(
+        days[2],
+        created=f"{days[2].isoformat()}T07:00:00Z",
+        initial_cash=100000.0,
+        cash=99500.0,
+        fill_count=2,
+        limit=0.20,
+        digest="f" * 64,
+    )
+    raw_updated = store.project_event(updated)
+    assert set(raw_updated[prs.ACCOUNT_KEY].keys()) <= {"initial_cash", "cash", "fill_count", "as_of"}
+    assert raw_updated[prs.ACCOUNT_KEY]["cash"] == 99500.0
+    assert raw_updated[prs.ACCOUNT_KEY]["fill_count"] == 2
+    assert set(raw_updated[prs.POLICY_KEY].keys()) <= set(prs._POLICY_FACT_KEYS) | {"_basis"}
+    assert raw_updated[prs.POLICY_KEY]["gross_limit"] == 0.20
+
+
+def test_owner_valuation_wins_over_idle_row_and_filled_pool_writes_no_row_before_account_facts(tmp_path):
+    store = make(tmp_path)
+    days = _weekdays(3)
+    # Day 2: idle row built from runtime_state_snapshot + heartbeat.
+    store.project_event(_idle_state_snapshot(days[2], runtime="rt-paper-001", created=f"{days[2].isoformat()}T06:00:00Z"))
+    idle_row = rows_of(store, "rt-paper-001")[-1]
+    assert idle_row["equity"] == 100000.0 and idle_row["equity_basis"] == "flat_never_filled_initial_cash"
+
+    # Later on Day 2, a known owner valuation arrives and wins over the idle row.
+    val = valuation(days[2], 101250.0, runtime="rt-paper-001", created=f"{days[2].isoformat()}T07:00:00Z")
+    store.project_event(val)
+    valued_row = rows_of(store, "rt-paper-001")[-1]
+    assert valued_row["as_of"] == days[2].isoformat()
+    assert valued_row["equity"] == 101250.0
+    assert valued_row["equity_basis"] == "owner_valuation"
+    assert valued_row["previous_digest"] == idle_row["digest"]
+    assert valued_row["revision"] == 2
+
+    # Flat pool WITH fills: keeps flat_cash_ledger and writes no row for a day before the account facts existed.
+    filled_store = RuntimeSummaryProjectionStore(path=str(tmp_path / "filled.json"))
+    # Heartbeat on days[0] before account facts existed.
+    hb_early = _event("heartbeat", created_at=f"{days[0].isoformat()}T06:00:00Z")
+    hb_early.update(runtime_id="rt-3b65a843", event_id="hb-early")
+    filled_store.project_event(hb_early)
+    # Two fills on days[1] that open and close a position (flat after 2 fills).
+    for idx, (qty, action, cash_after) in enumerate([(10, "buy", 99000.0), (-10, "sell", 99990.01)], start=1):
+        fill = _event("paper_fill_simulated", created_at=f"{days[1].isoformat()}T02:0{idx}:00Z")
+        fill.update(runtime_id="rt-3b65a843", event_id=f"fill-{idx}")
+        fill["metrics"] = {"fill_quantity": qty, "fill_price": 100.0, "action": action, "submitted_to_broker": True}
+        fill["metadata"].update({"symbol": "2330.TW", "ledger_fill_count": idx, "ledger_cash": cash_after})
+        filled_store.project_event(fill)
+    # Account facts arrive on days[2] after close.
+    filled_snap = _idle_state_snapshot(
+        days[2],
+        runtime="rt-3b65a843",
+        created=f"{days[2].isoformat()}T06:00:00Z",
+        initial_cash=100000.0,
+        cash=99990.01,
+        fill_count=2,
+        limit=0.20,
+    )
+    raw_filled = filled_store.project_event(filled_snap)
+    # Replaying an earlier heartbeat from days[1] (before account facts existed on days[2]) writes no row for days[1].
+    hb_before_acc = _event("heartbeat", created_at=f"{days[1].isoformat()}T06:00:00Z")
+    hb_before_acc.update(runtime_id="rt-3b65a843", event_id="hb-before-acc")
+    raw_filled = filled_store.project_event(hb_before_acc)
+
+    filled_rows = filled_store.get("rt-3b65a843")["pool_risk_snapshots"]
+    assert [r["as_of"] for r in filled_rows] == [days[2].isoformat()]
+    assert [r["as_of"] for r in raw_filled[prs.ROWS_KEY]] == [days[2].isoformat()]
+    assert filled_rows[0]["equity"] == 99990.01
+    assert filled_rows[0]["cash"] == 99990.01
+    assert filled_rows[0]["equity_basis"] == "flat_cash_ledger"
+    assert filled_rows[0]["gross_exposure"] == 0.0
+    assert filled_rows[0]["gross_limit"] == 0.20
+    assert filled_rows[0]["policy_ref"]["basis"] == "runtime_state_snapshot"
+
+    # A pool with an open position that has no mark stays null with its existing reason even when account_facts exist.
+    open_store = RuntimeSummaryProjectionStore(path=str(tmp_path / "open.json"))
+    open_fill = _event("paper_fill_simulated", created_at=f"{days[2].isoformat()}T02:00:00Z")
+    open_fill.update(runtime_id="rt-open", event_id="fill-open")
+    open_fill["metrics"] = {"fill_quantity": 10, "fill_price": 100.0, "action": "buy", "submitted_to_broker": True}
+    open_fill["metadata"].update({"symbol": "2330.TW", "ledger_fill_count": 1, "ledger_cash": 99000.0})
+    open_store.project_event(open_fill)
+    open_snap = _idle_state_snapshot(
+        days[2],
+        runtime="rt-open",
+        created=f"{days[2].isoformat()}T06:00:00Z",
+        initial_cash=100000.0,
+        cash=99000.0,
+        fill_count=1,
+        limit=0.20,
+    )
+    open_store.project_event(open_snap)
+    open_row = open_store.get("rt-open")["pool_risk_snapshots"][0]
+    assert open_row["equity"] is None and open_row["gross_exposure"] is None
+    assert open_row["nulls"]["equity"] == "no_known_owner_valuation"
