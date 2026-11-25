@@ -178,3 +178,43 @@ def test_missing_configuration_is_skip(monkeypatch, capsys):
     monkeypatch.delenv("ACCEPTANCE_FE_URL", raising=False)
     assert probe.main() == 77
     assert "skipped: missing" in capsys.readouterr().out
+
+
+NO_SAMPLE = ["no_fresh_governed_decision:fixture-persona", "no_fresh_pre_broker_rejection_with_amounts",
+             "no_fresh_broker_position_cash_reconciled_fill"]
+
+
+def test_only_missing_samples_is_pending_exit_77():
+    state = fixture()
+    state[3].clear()
+    report = run(state)
+    assert report["failed"] == NO_SAMPLE and report["verdict"] == "pending"
+    assert report["pending"] == NO_SAMPLE and report["exit_code"] == 77 and not report["passed"]
+
+
+def test_any_five_no_fresh_subset_is_pending():
+    for subset in ([NO_SAMPLE[0]], NO_SAMPLE[1:], [NO_SAMPLE[1]], NO_SAMPLE):
+        assert probe.verdict(subset) == "pending"
+    assert probe.verdict([]) == "passed"
+
+
+@pytest.mark.parametrize("other", ["served_pair_mismatch", "source_read_failed:e:x", "historical_identity_mismatch:j",
+                                  "served_identity_changed_during_probe", "journey_active_binding_mismatch:j",
+                                  "no_fresh_governed_decision:", "no_fresh_other", "policy_mismatch"])
+def test_mixed_or_foreign_findings_are_failed_even_with_no_sample_findings(other):
+    assert probe.verdict([other]) == "failed"
+    assert probe.verdict(NO_SAMPLE + [other]) == "failed"
+
+
+def test_real_mixed_findings_exit_1():
+    state = fixture()
+    state[3].clear()
+    state[1]["frontendSha"] = "c" * 40
+    report = run(state)
+    assert "served_pair_mismatch" in report["failed"] and set(NO_SAMPLE) <= set(report["failed"])
+    assert report["verdict"] == "failed" and report["exit_code"] == 1 and report["pending"] == []
+
+
+def test_complete_run_exits_0():
+    report = run(fixture())
+    assert report["verdict"] == "passed" and report["exit_code"] == 0
