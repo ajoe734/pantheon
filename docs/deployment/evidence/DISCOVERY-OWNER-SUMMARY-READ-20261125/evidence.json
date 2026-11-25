@@ -1,0 +1,43 @@
+{
+  "task": "DISCOVERY-OWNER-SUMMARY-READ-20261125",
+  "root_cause_class": "RC6 and RC2",
+  "register_instance": "RC6 (docs/operations/problem-register.md, WP6.4 and RC2 Alpha factory board numbers)",
+  "defect": "GET /bff/alpha-factory showed collected, dropped and card counts and the card list as unavailable (no_bounded_owner_read) because the only owner reads were the whole source-records route, the whole seed route and the whole research run list",
+  "fix": {
+    "source_ingest_owner": "GET /api/source-ingest/management/discovery-summary: tenant-scoped, read roles, read-only. Opens the distillation queue and extraction ledger with mode=ro and PRAGMA query_only. Reads only the trigger-kept distillation_terminal_counts table (totals), tenant/status/time index ranges (24 h and today, at most 100,000 rows examined each, truncated flag), and primary-key point reads for the newest 50 cards. Never reads source_evidence, source-records or the seed file.",
+    "one_counter_system": "DistillationJobQueue.external_text_closure_counts now reads the same distillation_terminal_counts table the summary reads (done/skipped per tenant, source type, typed closure code). Triggers on distillation_outbox keep it exact on insert, update and delete; a one-time migration stamps tenant_id/source_type from the committed snapshot and seeds the counter. No second counter system.",
+    "typed_codes": "skip_code generated column: text before the first colon; free-text reasons carrying an id fold into source_rejected, seed_immutable, market_source, untyped_reason so the key space is finite",
+    "missing_inputs": "missing queue, missing tenant, not-yet-migrated queue, missing or unreadable ledger, and an interrupted read each return the section as {status: unavailable, source, reason}; never zero",
+    "llm_calls": "ExtractionLedger.calls row records the cap in force when a call is reserved; the summary reports calls today against that cap (cap_source ledger, else service_env), scope service",
+    "stated_bounds": "response carries bounds: window_row_cap 100000, newest_card_limit 50, newest_card_scan 500, max_reasons 40, read_time_budget_ms 2000, max_response_bytes 262144, elapsed_ms",
+    "research_owner": "GET /api/research-orchestrator/run-page: tenant-authenticated, runs of the caller tenant only, newest first by (created_at, run_id), limit 1..200, opaque next_cursor. GET /api/research-orchestrator/runs is unchanged for its other callers.",
+    "bff": "GET /bff/alpha-factory reads one run page (limit 200) and the discovery summary; collected_text_records, closed_text_records, dropped_irrelevant (l2_irrelevant, 24 h), hypothesis_cards, hypothesis_cards_today, llm_calls_today and the discovered-lane card list come from the summary; owner section reasons are passed through; a run or summary of another tenant makes the read unavailable; the unscoped runs route joins FORBIDDEN_UNBOUNDED_PATHS"
+  },
+  "measured_in_test": {
+    "fixture": "40,000 queue rows (tenant mix, 6 source families, done/skipped/pending, 30 days) and a 13,500-line seed file plus an evidence file that fail the test if opened",
+    "summary_read": "0.0148 s, peak 358,718 bytes (tracemalloc), query plans contain no SCAN of distillation_outbox or distillation_source_versions",
+    "http_route": "0.0760 s, peak 573,369 bytes, response 13,110 bytes, runtime.strategy_seed_store and runtime.evidence_repository raise on any attribute access",
+    "assertions": "elapsed < 2.0 s and peak < 16 MiB (read), < 3.0 s and < 32 MiB (route); response <= 256 KiB with 80 oversize cards and 300 distinct reasons",
+    "not_measured": "no hosted measurement yet; hosted queue size, window volume and read time are unknown until deployment"
+  },
+  "tests": {
+    "services/source_ingestion/tests/test_discovery_summary.py": "13 tests: counter equals outbox through skip/reset/re-skip/delete, migration backfill and idempotent seeding, windows/totals/cards/LLM calls, ledger cap, tenant isolation, missing queue or ledger unavailable, unmigrated queue and missing tenant, read-only and time budget, response size bound, 40,000 row scale read, route with forbidden seed and evidence access, auth required",
+    "services/research/tests/test_research_runs_page.py": "4 tests: tenant scope, newest-first paging over every page, limit cap and invalid cursor, auth and cross-tenant refusal, old list unchanged",
+    "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py": "counts and cards from the summary, owner section reasons kept, other-tenant summary and run page unavailable, failed summary read unavailable, run page truncation, run page and summary URLs requested",
+    "services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py": "composed app wiring answers the run page",
+    "regression": "services/source_ingestion/tests (all files except three snapshot/evidence files that exceed 90 s here) and test_service pass; services/research route tests pass; scripts/check_storage_manifest.py passes"
+  },
+  "known_environment_failures_not_caused_by_this_change": [
+    "services/source_ingestion/tests/test_finmind_broker_backfill.py: 9 fail without pyarrow, identical on a clean tree",
+    "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py::test_alpha_factory_returns_templates_with_evaluation_metrics: fixture setup needs PANTHEON_TAIWAN_EVAL_DATA_DIR"
+  ],
+  "residual_findings": [
+    "Terminal queue rows whose snapshot was pruned before this migration have no tenant; they are in no tenant's totals and are reported as unattributed_terminal_rows.",
+    "hypothesis_cards counts external-text queue rows that reached done (a verified card is required since RC2); done rows created before RC2 without a card are included in the total. The newest-card list labels claim_status when the ledger has no card.",
+    "llm_calls_today is one deployment-wide daily budget, not per tenant (scope: service).",
+    "The research owner page bounds the response, not the in-process read: store.list_runs() still loads the whole run file per request.",
+    "Per-tenant total for collected records in the whole history is not offered; only the 24 h window is (no maintained counter for enqueue).",
+    "FE-ALPHA-FACTORY-PIPELINE-TRUTH-20261125 (frontend) is not in this repository and was not changed.",
+    "Hosted proof pending: deploy, then GET /bff/alpha-factory with a real tenant and record the counts and elapsed_ms."
+  ]
+}

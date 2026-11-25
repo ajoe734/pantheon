@@ -350,15 +350,18 @@ def _hosted_four_entries_for_wiring():
 def _wiring_owner_answer(url: str):
     if "/alpha-replication/entries" in url:
         return _hosted_four_entries_for_wiring()
-    if "/research-orchestrator/runs" in url:
-        return [
-            {
-                "run_id": "run-wire",
-                "tenant_id": "tenant-dev",
-                "status": "completed",
-                "metadata": {"replication_gate": {"passed": True}},
-            }
-        ]
+    if "/research-orchestrator/run-page" in url:
+        return {
+            "items": [
+                {
+                    "run_id": "run-wire",
+                    "tenant_id": "tenant-dev",
+                    "status": "completed",
+                    "metadata": {"replication_gate": {"passed": True}},
+                }
+            ],
+            "next_cursor": None,
+        }
     if "/persona-demands" in url:
         return {"demands": []}
     return []

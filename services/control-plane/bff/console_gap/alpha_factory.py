@@ -45,16 +45,20 @@ _ORCHESTRATOR_ENTRIES_PATH = "/api/research-orchestrator/alpha-replication/entri
 _ORCHESTRATOR_TEMPLATES_PATH = "/api/research/alpha-templates/evaluations"
 _TEMPLATES_SURFACE_KEY = "alpha_factory_templates"
 _DEMANDS_PATH = "/api/research/persona-demands"
-_RUNS_PATH = "/api/research-orchestrator/runs"
+# Tenant-scoped, newest-first owner page (DISCOVERY-OWNER-SUMMARY-READ-20261125).
+_RUN_PAGE_PATH = "/api/research-orchestrator/run-page"
+_SUMMARY_PATH = "/api/source-ingest/management/discovery-summary"
+_SUMMARY_SOURCE = "source_ingestion"
 # The unbounded owner routes below must never be requested by the board:
 # source-ingest source-records and management/strategy-seeds return every row
 # of the tenant (hosted: 36,619 records / 148 MB, 13,514 seeds / 34 MB).
 FORBIDDEN_UNBOUNDED_PATHS = (
     "/api/source-ingest/source-records",
     "/api/source-ingest/management/strategy-seeds",
+    # Unscoped full run list; the board reads the tenant run page instead.
+    "/api/research-orchestrator/runs",
 )
-_NO_BOUNDED_READ = "no_bounded_owner_read"
-# Owner run list has no limit parameter; only the newest rows are used.
+# Owner run page size: the newest runs of the tenant (owner cap 200).
 _MAX_RUNS_USED = 200
 _SOURCE_INGEST_URL_ENVS = (
     "PANTHEON_SOURCE_INGEST_API_URL",
@@ -67,6 +71,7 @@ _RUNS_SURFACE_KEY = "alpha_factory_runs"
 _CARDS_SURFACE_KEY = "alpha_factory_hypothesis_cards"
 _RECORDS_SURFACE_KEY = "alpha_factory_source_records"
 _PERSONA_SURFACE_KEY = "alpha_factory_persona_names"
+_LLM_SURFACE_KEY = "alpha_factory_llm_calls"
 _TEMPLATE_SEARCH_ACTION = "template_search"
 
 _KNOWN_REASON_CODES = (
@@ -342,18 +347,57 @@ def _read_runs(
     auth: Optional[str],
     tenant: str,
 ) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
-    """Runs of the caller tenant; runs the owner does not stamp with this tenant are not used."""
-    ok, payload = _owner_get(http_get, f"{base_url.rstrip('/')}{_RUNS_PATH}", auth, tenant)
-    rows = _extract_entries(payload) if ok else None
-    if rows is None:
+    """Newest runs of the caller tenant from the owner's tenant-scoped page (one bounded page)."""
+    url = f"{base_url.rstrip('/')}{_RUN_PAGE_PATH}?limit={_MAX_RUNS_USED}"
+    ok, payload = _owner_get(http_get, url, auth, tenant)
+    rows = payload.get("items") if ok and isinstance(payload, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
         return None, _unavailable(_OWNER_SOURCE, "runs_read_failed")
-    mine = [r for r in rows if str(r.get("tenant_id") or "").strip() == tenant]
-    mine.sort(key=_run_sort_key, reverse=True)
-    surface: Dict[str, Any] = {"status": "ok", "source": _OWNER_SOURCE, "runs_seen": len(mine)}
-    if len(mine) > _MAX_RUNS_USED:
-        mine = mine[:_MAX_RUNS_USED]
+    if any(str(r.get("tenant_id") or "").strip() != tenant for r in rows):
+        return None, _unavailable(_OWNER_SOURCE, "run_scope_mismatch")
+    mine = sorted(rows, key=_run_sort_key, reverse=True)[:_MAX_RUNS_USED]
+    surface: Dict[str, Any] = {"status": "ok", "source": _OWNER_SOURCE, "runs_used": len(mine)}
+    if payload.get("next_cursor"):
         surface["truncated"] = True
     return mine, surface
+
+
+def _read_discovery_summary(
+    http_get: Callable[..., Tuple[Any, Any]],
+    auth: Optional[str],
+    tenant: str,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """The source-ingest owner's bounded discovery summary for the caller tenant."""
+    base = _resolve_source_ingest_url()
+    if not base:
+        return None, _unavailable(_SUMMARY_SOURCE, "source_ingest_unconfigured")
+    ok, payload = _owner_get(http_get, f"{base}{_SUMMARY_PATH}", auth, tenant)
+    if not ok or not isinstance(payload, dict):
+        return None, _unavailable(_SUMMARY_SOURCE, "summary_read_failed")
+    if str(payload.get("tenant_id") or "").strip() != tenant:
+        return None, _unavailable(_SUMMARY_SOURCE, "summary_scope_mismatch")
+    return payload, {"status": "ok", "source": _SUMMARY_SOURCE}
+
+
+def _summary_section(
+    summary: Optional[Dict[str, Any]], key: str, summary_surface: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """(section, surface): a section the owner marked unavailable keeps its own reason."""
+    if summary is None:
+        return {}, dict(summary_surface)
+    section = summary.get(key)
+    if not isinstance(section, dict):
+        return {}, _unavailable(_SUMMARY_SOURCE, "summary_payload_invalid")
+    if section.get("status") != "ok":
+        return {}, _unavailable(_SUMMARY_SOURCE, str(section.get("reason") or "owner_section_unavailable"))
+    return section, {"status": "ok", "source": _SUMMARY_SOURCE}
+
+
+def _int_at(section: Dict[str, Any], *path: str) -> Optional[int]:
+    value: Any = section
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def reason_code(raw: Any) -> str:
@@ -415,26 +459,27 @@ def _demand_item(
     }
 
 
-def _card_item(seed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    meta = seed.get("metadata") if isinstance(seed.get("metadata"), dict) else {}
-    card = discovery_projection.project_hypothesis_card(meta.get("hypothesis_card") or seed.get("hypothesis_card"))
-    if card is None:
+def _card_item(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One newest card from the owner discovery summary (source, title, claim, time)."""
+    source_id = str(card.get("source_id") or "").strip()
+    if not source_id:
         return None
-    source_ids = [str(x) for x in (seed.get("source_ids") or []) if x]
-    source_id = seed.get("source_id") or (source_ids[0] if source_ids else None)
-    status = seed.get("status")
+    digest = str(card.get("source_digest") or "").strip()
     return {
-        "id": seed.get("seed_id"),
+        "id": f"card:{source_id}:{digest}" if digest else f"card:{source_id}",
         "lane": "discovered",
         "kind": "hypothesis_card",
-        "seed_id": seed.get("seed_id"),
-        "display_name": meta.get("source_title") or meta.get("source_name") or source_id,
+        "seed_id": card.get("seed_id"),
+        "display_name": card.get("title") or source_id,
+        "title": card.get("title"),
+        "title_status": card.get("title_status"),
         "source_id": source_id,
+        "source_family": card.get("source_family"),
         "claim": card.get("claim"),
-        "since": seed.get("created_at"),
-        "status": status,
-        "latest_outcome": {"reason_code": None, "reason": None, "status": status},
-        "hypothesis_card": card,
+        "claim_status": card.get("claim_status"),
+        "since": card.get("carded_at"),
+        "status": None,
+        "latest_outcome": {"reason_code": None, "reason": None, "status": None},
     }
 
 
@@ -561,6 +606,7 @@ def _build_alpha_factory_payload(
     document_checked: Optional[List[Dict[str, Any]]] = None,
     counts: Optional[Dict[str, Any]] = None,
     extra_surfaces: Optional[Dict[str, Any]] = None,
+    discovery_summary: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     is_unavailable = surface.get("status") == "unavailable"
     effective_cards = [] if is_unavailable else list(all_cards)
@@ -605,6 +651,7 @@ def _build_alpha_factory_payload(
         "counts": counts or {},
         "items": page_items,
         "templates": list(templates or []),
+        "discovery_summary": discovery_summary,
     }
     surfaces: Dict[str, Any] = {_SURFACE_KEY: surface}
     if templates_surface is not None:
@@ -718,12 +765,13 @@ def create_alpha_factory_router(
         )
         demands, demands_surface = _read_demands(eff_http_get, base_url, eff_auth, verified_tenant)
         runs, runs_surface = _read_runs(eff_http_get, base_url, eff_auth, verified_tenant)
-        # No bounded owner read exists yet for hypothesis cards or collected/dropped
-        # text records; never fall back to a scan (see FORBIDDEN_UNBOUNDED_PATHS).
-        seeds = None
-        record_count = None
-        cards_surface = _unavailable("source_ingestion", _NO_BOUNDED_READ)
-        records_surface = _unavailable("source_ingestion", _NO_BOUNDED_READ)
+        # Collected/closed/cards come from the owner's bounded discovery summary;
+        # never fall back to a scan (see FORBIDDEN_UNBOUNDED_PATHS).
+        summary, summary_surface = _read_discovery_summary(eff_http_get, eff_auth, verified_tenant)
+        records, records_surface = _summary_section(summary, "collected_text_records", summary_surface)
+        closed, closed_surface = _summary_section(summary, "closed_text_records", summary_surface)
+        card_section, cards_surface = _summary_section(summary, "hypothesis_cards", summary_surface)
+        llm, llm_surface = _summary_section(summary, "llm_calls", summary_surface)
 
         names: Dict[str, str] = {}
         persona_surface: Dict[str, Any] = {"status": "ok", "source": "persona_directory"}
@@ -742,18 +790,28 @@ def create_alpha_factory_router(
         document_checked = _classify_cards(cards, entries_by_id, runs)
         open_demands = [d for d in (demands or []) if d.get("status") == "open"]
         discovered: List[Dict[str, Any]] = [_demand_item(d, names) for d in open_demands]
-        card_items = [c for c in (_card_item(s) for s in (seeds or [])) if c is not None]
+        newest_cards = card_section.get("newest") if isinstance(card_section.get("newest"), list) else []
+        card_items = [c for c in (_card_item(x) for x in newest_cards if isinstance(x, dict)) if c is not None]
         discovered.extend(card_items)
         searches = _search_items(demands or [], runs or [], names) if demands is not None and runs is not None else []
 
         passed_count = sum(1 for c in cards if c.get("lane") == "replicated")
         search_runs = [r for r in (runs or []) if _is_template_search_run(r)]
+        by_reason_24h = (closed.get("last_24h") or {}).get("by_reason") if closed else None
+        llm_count = _count(_int_at(llm, "calls"), llm_surface)
+        if llm_count["status"] == "ok":
+            llm_count["cap"] = _int_at(llm, "daily_cap")
+            llm_count["scope"] = llm.get("scope")
         counts = {
-            "collected_text_records": _count(record_count, records_surface),
+            "collected_text_records": _count(_int_at(records, "last_24h", "total"), records_surface),
+            "closed_text_records": _count(_int_at(closed, "last_24h", "total"), closed_surface),
             "dropped_irrelevant": _count(
-                None, _unavailable("source_ingestion", _NO_BOUNDED_READ)
+                int(by_reason_24h.get("l2_irrelevant", 0)) if isinstance(by_reason_24h, dict) else None,
+                closed_surface,
             ),
-            "hypothesis_cards": _count(len(card_items) if seeds is not None else None, cards_surface),
+            "hypothesis_cards": _count(_int_at(card_section, "total"), cards_surface),
+            "hypothesis_cards_today": _count(_int_at(card_section, "today"), cards_surface),
+            "llm_calls_today": llm_count,
             "templates_registered": _count(len(templates), templates_surface),
             "templates_evaluated": _count(
                 sum(1 for t in templates if t.get("evaluation")), templates_surface
@@ -786,6 +844,15 @@ def create_alpha_factory_router(
                 _CARDS_SURFACE_KEY: cards_surface,
                 _RECORDS_SURFACE_KEY: records_surface,
                 _PERSONA_SURFACE_KEY: persona_surface,
+                _LLM_SURFACE_KEY: llm_surface,
+            },
+            discovery_summary={
+                "window": summary.get("window") if summary else None,
+                "collected_by_source_family": (records.get("last_24h") or {}).get("by_source_family") if records else None,
+                "closed_last_24h": closed.get("last_24h") if closed else None,
+                "closed_total": closed.get("total") if closed else None,
+                "llm_calls": llm or None,
+                "bounds": summary.get("bounds") if summary else None,
             },
         )
 
