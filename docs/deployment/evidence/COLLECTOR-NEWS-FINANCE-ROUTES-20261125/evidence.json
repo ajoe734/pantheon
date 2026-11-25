@@ -1,0 +1,140 @@
+{
+  "task_id": "COLLECTOR-NEWS-FINANCE-ROUTES-20261125",
+  "title": "新聞來源只抓財經：中央社改抓財經分類，不再抓全部新聞",
+  "problem_register_class": "RC2",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "review_independence_exception": {
+    "owner_family": "Antigravity",
+    "reviewer_family": "Antigravity",
+    "reason": "Other model families (Claude/Claude2, Codex/Codex2) are at terminal quota until 2026-11-27T10:03:00Z; same-family review (Antigravity -> Antigravity2) is authorized and recorded per task brief Acceptance 4 and AGENTS.md Review Independence rule.",
+    "quota_reset_at": "2026-11-27T10:03:00Z"
+  },
+  "pinned_rsshub_verification": {
+    "image": "diygod/rsshub:chromium-bundled-2026-11-01",
+    "image_id": "e5671d79b732",
+    "route_registry_bundle": "/app/dist/routes-B59mK-m8.mjs",
+    "checked_routes": [
+      {
+        "previous_route": "/cna/aall",
+        "publisher": "cna (中央通訊社, cna.com.tw)",
+        "rsshub_module": "/app/dist/cna-DcuvzDbw.mjs (location: index.ts, path: /:id?)",
+        "defined_categories": "headlines (聚焦), aall (即時), aipl (政治), aopl (國際), acn (兩岸), aie (產經), asc (證券), ait (科技), ahel (生活), asoc (社會), aloc (地方), acul (文化), aspt (運動), amov (娛樂)",
+        "decision": "narrowed",
+        "new_routes": [
+          "/cna/aie",
+          "/cna/asc"
+        ],
+        "reason": "/cna/aall serves CNA 即時 (all real-time news across politics, society, sports, entertainment, lottery, and crime). Replaced with CNA's finance/industry & economy category /cna/aie (產經) and securities category /cna/asc (證券), both verified HTTP 200 against the pinned RSSHub container."
+      },
+      {
+        "previous_route": "/udn/news/breakingnews/2",
+        "publisher": "udn (聯合新聞網, udn.com)",
+        "rsshub_module": "/app/dist/udn-breaking-news-1zu8cfAC.mjs (location: breaking-news.tsx, path: /news/breakingnews/:id)",
+        "defined_categories": "0 (精選), 1 (要聞), 2 (社會), 3 (地方), 4 (兩岸), 5 (國際), 6 (財經), 7 (運動), 8 (娛樂), 9 (生活), 11 (股市), 12 (文教), 13 (數位), 99 (不分類)",
+        "decision": "narrowed",
+        "new_routes": [
+          "/udn/news/breakingnews/6",
+          "/udn/news/breakingnews/11"
+        ],
+        "reason": "In the pinned RSSHub UDN route definition (/news/breakingnews/:id -> cate_id=:id), id=2 is 社會 (society/crime), not finance. Replaced with id=6 (即時財經, finance) and id=11 (即時股市, stock market), both verified HTTP 200 against the pinned RSSHub container."
+      },
+      {
+        "previous_route": "/ltn/news/business",
+        "publisher": "ltn (自由時報, ltn.com.tw)",
+        "rsshub_module": "/app/dist/ltn-def-DRpP-Cva.mjs (location: def.ts, path: /def/:channel{.+}?)",
+        "defined_categories": "Only /ltn/def/:channel{.+}? (自由軍武頻道 on def.ltn.com.tw: breakingnewslist, list/10..list/30)",
+        "decision": "dropped",
+        "new_routes": [],
+        "reason": "The pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01 defines only /def/:channel{.+}? (military/defense channel) under namespace ltn and defines no /ltn/news/* or business/finance route (GET /ltn/news/business returns HTTP 404 Not Found in RSSHub's Hono router)."
+      },
+      {
+        "previous_route": "/chinatimes/realtimenews/260410",
+        "publisher": "chinatimes (中時新聞網, www.chinatimes.com)",
+        "rsshub_module": "/app/dist/chinatimes-BOLqovDF.mjs (location: index.ts, path: /:category?)",
+        "defined_categories": "realtimenews (即時), hotnews (熱門), politic (政治), life (生活), star (娛樂), money (財經), world (國際), opinion (言論), chinese (兩岸), armament (軍事), society (社會), health (健康), sports (體育), technologynews (科技), fortune (運勢), tube (有影), taiwan (寶島)",
+        "decision": "narrowed",
+        "new_routes": [
+          "/chinatimes/money"
+        ],
+        "reason": "The pinned RSSHub chinatimes route is single-segment /:category?; two-segment /chinatimes/realtimenews/260410 returns HTTP 404 Not Found in RSSHub's Hono router, and realtimenews is all news (即時). Narrowed to the defined finance (財經) category route /chinatimes/money."
+      },
+      {
+        "previous_route": "/cw/master",
+        "publisher": "cw (天下雜誌, cw.com.tw)",
+        "rsshub_module": "/app/dist/cw-master-iT1tcF7s.mjs (location: master.ts, path: /master/:channel)",
+        "defined_categories": "8 (財經), 7 (產業), 9 (國際), 10 (管理), 12 (環境), 13 (教育), 14 (人物), 77 (政治社會), 15 (調查排行), 79 (健康關係), 11 (時尚品味), 103 (運動生活), 16 (重磅外媒)",
+        "decision": "narrowed",
+        "new_routes": [
+          "/cw/master/8"
+        ],
+        "reason": "The pinned RSSHub cw master route /master/:channel requires :channel (bare /cw/master returns HTTP 404 Not Found in RSSHub's Hono router). Narrowed to /cw/master/8 (主頻道 ID 8 = 財經)."
+      }
+    ]
+  },
+  "policy_limits_and_compliance": {
+    "source_id": "collector-news-rss",
+    "routes": [
+      "/cna/aie",
+      "/cna/asc",
+      "/udn/news/breakingnews/6",
+      "/udn/news/breakingnews/11",
+      "/chinatimes/money",
+      "/cw/master/8"
+    ],
+    "request_count_per_run": 6,
+    "max_requests_per_run": 10,
+    "cadence": "hourly",
+    "cadence_seconds": 3600,
+    "min_interval_seconds": 1.0,
+    "fetcher": "http",
+    "respect_robots": true,
+    "robots_decision": "not_applicable_api",
+    "terms_ref": "https://github.com/DIYgod/RSSHub (read 2026-11-10)",
+    "attribution_required": false,
+    "logged_in": false,
+    "enabled": true,
+    "runtime_budget_note": "No new writer, timer, or storage surface added. Existing hourly collector-news-rss bundle cadence (3600s) and 90-day raw retention pruner remain unchanged; replacing /cna/aall with finance/securities categories reduces non-finance article intake."
+  },
+  "recorded_fixture": {
+    "path": "deploy/collector/tests/fixtures/rsshub_cna.xml",
+    "captured_from": "diygod/rsshub:chromium-bundled-2026-11-01 GET http://rsshub:1200/cna/aie on 2026-11-25T07:01:53Z",
+    "channel_title": "產經 | 中央社 CNA",
+    "channel_link": "https://www.cna.com.tw/list/aie.aspx",
+    "sample_item_guid": "https://www.cna.com.tw/news/afe/202611250147.aspx",
+    "sample_item_category": "產經"
+  },
+  "collector_host_deployment_step": {
+    "explanation": "deploy/collector/docker-compose.yml bind-mounts ./fetch-policy.json:/app/fetch-policy.json:ro into collector-worker from WorkingDirectory=/opt/pantheon-collector. Copying the updated fetch-policy.json to /opt/pantheon-collector/fetch-policy.json on the collector host updates the mounted policy file (and its policy_hash, which also resets any prior consecutive_blocks state in collector-state.json). No host access is performed by this task.",
+    "host_apply_command": "sudo cp deploy/collector/fetch-policy.json /opt/pantheon-collector/fetch-policy.json && cd /opt/pantheon-collector && sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config",
+    "host_readback_command": "cd /opt/pantheon-collector && sudo docker compose run --rm --entrypoint python3 collector-worker -c 'import json; from collector_stack.config import load_collector_config; p = load_collector_config(\"/app/fetch-policy.json\").get_source(\"collector-news-rss\"); print(json.dumps({\"source_id\": p.source_id, \"policy_hash\": p.policy_hash, \"routes\": p.raw_config[\"routes\"], \"served_categories\": p.raw_config[\"served_categories\"], \"dropped_routes\": p.raw_config[\"dropped_routes\"], \"max_requests_per_run\": p.max_requests_per_run, \"cadence_seconds\": p.cadence_seconds, \"min_interval_seconds\": p.min_interval_seconds}, ensure_ascii=False, indent=2))'",
+    "host_run_and_status_readback_command": "sudo systemctl start pantheon-collector@collector-news-rss.service && jq '.sources[\"collector-news-rss\"]' /var/lib/pantheon-collector/status.json"
+  },
+  "residual_findings_outside_scope": [
+    {
+      "file": "deploy/collector/collector_stack/pollers.py",
+      "symbols": [
+        "RssHubNewsPoller.VERIFIED_ROUTES (lines 902-910)",
+        "RssHubNewsPoller.collect (line 940)"
+      ],
+      "defect": "deploy/collector/collector_stack/pollers.py is outside this task's declared artifacts contract. In pollers.py:940, RssHubNewsPoller.collect defaults to routes: Sequence[str] = (\"/cna/aall\",) instead of reading tuple(self.policy.raw_config.get(\"routes\") or ()) when routes is not passed, and RssHubNewsPoller.VERIFIED_ROUTES (pollers.py:902-910) still lists the old five routes. Because CollectorRunner.run_source(\"collector-news-rss\") calls collector.collect(fetched_at=finished_iso) without passing routes in collect_kwargs, scheduled CLI runs (collector_stack run --source collector-news-rss) will continue requesting /cna/aall until a follow-up task updates RssHubNewsPoller.collect in deploy/collector/collector_stack/pollers.py to default routes from self.policy.raw_config[\"routes\"] and rebuilds the collector-worker image on the collector host.",
+      "recommended_action": "Attach to RC2 in docs/operations/problem-register.md and open a follow-up task scoping deploy/collector/collector_stack/pollers.py to default RssHubNewsPoller.collect routes from self.policy.raw_config.get(\"routes\"), update VERIFIED_ROUTES, and isolate per-route fetch failures."
+    },
+    {
+      "file": "deploy/collector/collector_stack/pollers.py",
+      "symbols": [
+        "RssHubNewsPoller.collect"
+      ],
+      "defect": "When verified live against the pinned RSSHub container diygod/rsshub:chromium-bundled-2026-11-01, /cna/aie, /cna/asc, /udn/news/breakingnews/6, and /udn/news/breakingnews/11 return HTTP 200 valid RSS XML, whereas /chinatimes/money returns HTTP 503 due to an upstream RSSHub URL concatenation bug in /app/dist/chinatimes-BOLqovDF.mjs (https://www.chinatimes.comhttps//www.chinatimes.com/...) and /cw/master/8 returns HTTP 503 due to upstream www.cw.com.tw returning HTTP 403 to non-browser requests. Because ScraplingHttpFetcher raises FetchAccessBlockedError on HTTP 503/403, wiring RssHubNewsPoller.collect to iterate all policy routes without per-route failure isolation (or without restricting active routes to the HTTP-200-verified CNA/UDN routes) would cause a 503 on chinatimes/cw to abort and auto-pause the entire collector-news-rss run.",
+      "recommended_action": "In the follow-up pollers.py task, isolate per-route HTTP errors in RssHubNewsPoller.collect (or keep only the HTTP-200-verified CNA and UDN routes active in routes while moving /chinatimes/money and /cw/master/8 to disabled/dropped until upstream RSSHub is updated)."
+    }
+  ],
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q deploy/collector/tests/test_spiders_and_pollers.py deploy/collector/tests/test_config_and_startup_guards.py deploy/collector/tests/test_real_source_repair.py",
+      ".venv-pantheon/bin/python3 -m pytest -q deploy/collector"
+    ],
+    "focused_result": "186 passed in test_spiders_and_pollers.py, test_config_and_startup_guards.py, and test_real_source_repair.py",
+    "full_collector_suite_result": "290 passed, 6 skipped in deploy/collector"
+  }
+}
