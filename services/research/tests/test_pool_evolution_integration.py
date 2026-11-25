@@ -980,9 +980,27 @@ def test_refused_requalified_replacement_defers_to_operator_then_reuses_the_regi
 
     evolution_main.receipt_registry["research"] = ResearchPlaneAdapter(api_url="http://research", http_json=http_json)
 
+    # One clock drives the research orchestrator (deferral stamp and due check) and the dispatch worker's claims.
+    from datetime import timedelta, timezone
+    from services.evolution import dispatch_worker
+
+    clock = {"now": datetime.now(timezone.utc).replace(microsecond=0)}
+    monkeypatch.setattr(research, "utc_now", lambda: clock["now"].isoformat().replace("+00:00", "Z"))
+    cadence = timedelta(seconds=86400)  # EVOLUTION_SCHEDULER_INTERVAL_SECONDS default
+
+    def poll_at(advance):
+        clock["now"] += advance
+        return dispatch_worker.run_poll(api_url="http://evolution.test", outbox=dispatch_world["outbox"],
+                                        registry=evolution_main.receipt_registry,
+                                        compensations=dispatch_world["compensations"],
+                                        timeout_seconds=5.0, now=clock["now"])
+
+    def decides():
+        return len([w for w in owner_writes if w[0] == "decide"])
+
     # Cadence 1: requalification passes the gate, the entry is registered, the pool owner refuses the replacement.
     runtime.run_consumer_tick(env, transport)
-    _poll(dispatch_world)
+    poll_at(timedelta(0))
     run = research.get_store().list_runs()[0]
     assert run["status"] == "queued", run
     assert run["outcome"] == "operator_decision_required"
@@ -1010,16 +1028,45 @@ def test_refused_requalified_replacement_defers_to_operator_then_reuses_the_regi
     assert res["pool_decision_record_version"] == 2 and res["pool_version_before_decision"] == 1
     # The refusal journal version (2) is never published; earlier entries are the tick's own publication of v1.
     assert ("versions", None) not in owner_writes and 2 not in published
-    published_before_retry = list(published)
     assert [w for w in owner_writes if w[0] == "register"] == [("register", pending_id)]
     assert len(gate_evaluations) == 1
+    assert run["deferred_at"] == research.utc_now() and run["retry_not_before_seconds"] == 86400
 
-    # Cadence 2: the fault is cleared; the same registered entry is reused and admitted in one pool version.
-    state["fault"] = None
-    runtime.run_consumer_tick(env, transport)
-    _poll(dispatch_world)
+    # Within the cadence the dispatch worker re-claims after every claim-lease expiry (60s) and re-submits: the
+    # deferred run is returned unchanged -- no new attempt, no pool decision, no pool version (was ~1200/day).
+    decides_after_first = decides()
+    first_deferred_at = run["deferred_at"]
+    for _ in range(5):
+        poll_at(timedelta(seconds=70))
+    poll_at(cadence - timedelta(seconds=70 * 5 + 1))  # one second before the cadence is due
     run = research.get_store().list_runs()[0]
-    assert run["attempt_number"] == 2
+    assert run["attempt_number"] == 1 and run["status"] == "queued" and run["deferred_at"] == first_deferred_at
+    assert decides() == decides_after_first and store.current(pid, tenant)["pool_version"] == 2
+
+    # Due: exactly one re-execution, one refused decision (the owner's refusal journal, membership unchanged).
+    poll_at(timedelta(seconds=70))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 2 and run["status"] == "queued"
+    assert run["outcome_reason"] == "pool_admission_refused" and run["deferred_at"] == research.utc_now()
+    assert run["evolution_result"]["pending_replacement"]["registry_id"] == pending_id
+    assert decides() == decides_after_first + 1
+    assert store.current(pid, tenant)["pool_version"] == 3 and store.current(pid, tenant)["members"] == [seeded_member]
+    for _ in range(5):
+        poll_at(timedelta(seconds=70))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 2 and decides() == decides_after_first + 1
+    assert store.current(pid, tenant)["pool_version"] == 3
+    assert [w for w in owner_writes if w[0] == "register"] == [("register", pending_id)]
+    assert len(gate_evaluations) == 1 and ("versions", None) not in owner_writes and 3 not in published
+    published_before_retry = list(published)
+
+    # Next cadence: the fault is cleared; the same registered entry is reused and admitted in one pool version.
+    state["fault"] = None
+    clock["now"] += cadence
+    runtime.run_consumer_tick(env, transport)
+    poll_at(timedelta(0))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 3
     assert run["status"] == "completed", run
     assert run["outcome"] == "revalidation_passed"
     assert run["outcome_reason"] == "replaced_by_requalified_entry"
@@ -1033,14 +1080,14 @@ def test_refused_requalified_replacement_defers_to_operator_then_reuses_the_regi
     assert len(gate_evaluations) == 1
     assert sorted(entries) == sorted([legacy_id, pending_id])
     final_pool = store.current(pid, tenant)
-    assert final_pool["pool_version"] == 3 and final_pool["decision"]["status"] == "applied"
+    assert final_pool["pool_version"] == 4 and final_pool["decision"]["status"] == "applied"
     assert final_pool["decision"]["replaced_artifact_ref"] == legacy_id
     by_ref = {m["artifact_ref"]: m for m in final_pool["members"]}
     assert by_ref[legacy_id]["stage"] == "removed"
     assert by_ref[legacy_id]["removal_reason"] == "replaced_by_requalified_entry"
     assert by_ref[pending_id]["stage"] == "trial" and by_ref[pending_id]["parent_ref"] == legacy_id
-    # The replacement publishes v3 last (the cadence-2 tick itself republishes the current pool first).
-    assert published[: len(published_before_retry)] == published_before_retry and published[-1] == 3
+    # The replacement publishes v4 last (the cadence tick itself republishes the current pool first).
+    assert published[: len(published_before_retry)] == published_before_retry and published[-1] == 4
     assert json.dumps(legacy_entry, sort_keys=True) == legacy_snapshot
     assert resolve_member_baseline(tenant_id=tenant, persona_id=pid, artifact_ref=pending_id,
                                    checksum=entries[pending_id]["checksum"], entry=entries[pending_id])["status"] == "approved"

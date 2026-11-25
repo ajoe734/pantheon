@@ -1267,6 +1267,30 @@ def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str,
     return task
 
 
+def _deferred_retry_cadence_seconds() -> int:
+    """One evolution cadence (the scheduler interval; default one day)."""
+    try:
+        return max(1, int(os.getenv("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", "86400")))
+    except ValueError:
+        return 86400
+
+
+def _deferred_retry_due(run: Dict[str, Any]) -> bool:
+    """True when an ``operator_decision_required`` run may be re-executed: one cadence after its last deferral.
+
+    Uses the orchestrator's own clock, never a caller-supplied time. A run deferred before ``deferred_at`` was
+    recorded (or with an unreadable stamp) is due, so the gate can never strand an older deferral."""
+    stamp = str(run.get("deferred_at") or "")
+    if not stamp:
+        return True
+    try:
+        deferred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (now - deferred).total_seconds() >= _deferred_retry_cadence_seconds()
+
+
 @app.post("/api/research-orchestrator/tasks/{task_id}/runs", status_code=201)
 def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     task = store.get_task(task_id)
@@ -1275,6 +1299,11 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     existing = _idempotent_match(store.list_runs(), body.idempotency_key)
     if existing:
         if existing.get("outcome") == "operator_decision_required" and existing.get("status") == "queued":
+            if not _deferred_retry_due(existing):
+                # REQUALIFY-REFUSAL-NOT-CRASH-20261125: a deferred run is re-executed at most once per cadence.
+                # The dispatch worker re-submits on every claim-lease expiry; before the cadence is due the run is
+                # returned unchanged so no attempt, owner read or pool decision version is produced.
+                return existing
             existing["attempt_number"] = int(existing.get("attempt_number") or 1) + 1
             existing["updated_at"] = body.requested_at or utc_now()
             store.put_run(existing)
@@ -3173,6 +3202,8 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 outcome="operator_decision_required",
                 outcome_reason=deferred.reason,
                 operator_decision_required=True,
+                deferred_at=utc_now(),
+                retry_not_before_seconds=_deferred_retry_cadence_seconds(),
                 evolution_result={
                     "status": "could_not_evaluate",
                     "operator_decision_required": True,
@@ -3598,6 +3629,8 @@ def resume_retrain_runs() -> None:
             continue
         if record.get("cancellation_fence"):
             continue
+        if record.get("outcome") == "operator_decision_required" and status == "queued" and not _deferred_retry_due(record):
+            continue  # a deferred run waits for its cadence; the dispatch worker re-submits it when due
         _trigger_retrain_execution(str(record["run_id"]), params)
 
 
