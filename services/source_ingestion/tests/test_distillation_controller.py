@@ -1487,8 +1487,7 @@ def test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_clos
         as_of=as_of, env={**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")})
     assert missing["status"] == "unavailable" and "daily_bars_store_missing" in missing["reason"]
     assert controller.card_dataset_binding_from_env(
-        {**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")}, as_of=as_of) == {
-        "unavailable_reason": missing["reason"]}
+        {**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")}, as_of=as_of) is None
     assert len(controller._BINDING_CACHE) <= controller._BINDING_CACHE_ENTRIES
     recovered_root = tmp_path / "absent"
     import shutil

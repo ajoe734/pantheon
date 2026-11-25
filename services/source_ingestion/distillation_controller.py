@@ -421,15 +421,13 @@ def card_dataset_binding_from_env(env: Mapping[str, str] | None = None, *,
     """Governed dataset reference a compiled hypothesis rule made at ``as_of`` is bound to.
 
     Reference only (no records): the pinned governed snapshot id and its dataset's symbols; the alpha
-    replication worker reproduces that snapshot at gate time. ``None`` when unconfigured (the rule stays a
-    research-only draft, reason in ``card_binding_status``); an unavailable governed store yields a binding that
-    carries only ``unavailable_reason`` so the draft records why.
+    replication worker reproduces that snapshot at gate time. ``None`` when unconfigured or the governed store is
+    unavailable: the rule stays a research-only draft (``governed_dataset_binding_unavailable``) and the reason is
+    in the controller state (``reconcile.summary.card_binding_reason``).
     """
     resolved = resolve_card_dataset_binding(as_of=as_of or datetime.now(timezone.utc), env=env)
-    if resolved["status"] == "unconfigured":
-        return None
     if resolved["status"] != "bound":
-        return {"unavailable_reason": resolved["reason"]}
+        return None
     return {k: resolved[k] for k in ("dataset_id", "source_dataset_refs", "symbols", "scope", "bar_frequency")}
 
 

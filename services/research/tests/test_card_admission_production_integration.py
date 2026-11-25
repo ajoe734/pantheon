@@ -338,7 +338,7 @@ def test_paper_record_to_gated_admission_on_the_governed_market_end_to_end(tmp_p
     artifact = spec_meta["strategy_artifact"]
     assert "screen" in artifact["strategy_logic"]
     snapshot = spec_meta["backtest_dataset"]["dataset_id"]
-    assert snapshot.startswith("gmd-2026-10-30-") and spec_meta["backtest_dataset"]["scope"] == "all_governed_tw"
+    assert snapshot.startswith("gmd-2026-10-30-") and spec_meta["backtest_dataset"]["binding"] == "governed_reference"
     assert artifact["parameters"]["symbols"] == ["0050.TW", "2330.TW"]  # the governed boundary, no symbol list
     from services.source_ingestion.controller_state import ControllerStateStore
 

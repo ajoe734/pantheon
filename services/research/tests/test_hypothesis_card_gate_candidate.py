@@ -172,7 +172,7 @@ def test_compiled_card_reaches_registry_spec_with_artifact_and_dataset_binding(t
     snapshot = meta["backtest_dataset"]["dataset_id"]
     assert snapshot.startswith("gmd-2026-10-30-") and artifact["parameters"]["data_source"] == snapshot
     assert meta["backtest_dataset"] == {"dataset_id": snapshot, "source_dataset_refs": [f"daily_bars:{snapshot}"],
-                                        "binding": "governed_reference", "scope": "all_governed_tw"}
+                                        "binding": "governed_reference"}
     assert payload["strategy_spec"]["data_dependencies"][0] == {"ref": snapshot, "kind": "dataset"}
     # The pinned snapshot re-derives from the same store (what the alpha replication worker does at gate time).
     from services.research import governed_market_dataset as gmd
@@ -200,9 +200,7 @@ def test_missing_governed_store_keeps_the_rule_a_draft_with_the_store_reason(tmp
     """Configured binding, absent daily_bars store: fail closed, the store's reason on the draft and the state."""
     (missing,) = _distill(tmp_path, monkeypatch, store=False)
     wiring = missing["strategy_spec"]["metadata"]["card_wiring"]
-    assert wiring["status"] == "research_only_draft"
-    assert wiring["reason"].startswith(
-        "governed_dataset_binding_unavailable:card_binding_unavailable:daily_bars_store_missing"), wiring
+    assert wiring == {"status": "research_only_draft", "reason": "governed_dataset_binding_unavailable"}, wiring
     assert "strategy_artifact" not in missing["strategy_spec"]["metadata"]
     summary = _controller_state(tmp_path)["reconcile"]["summary"]
     assert summary["card_binding_status"] == "unavailable", summary
@@ -341,7 +339,7 @@ def test_stored_text_to_registered_candidate_end_to_end(tmp_path, monkeypatch):
                         lambda self, req: seen_requests.append(req) or real_eval(self, req))
     worker.run_once(tenant_id=TENANT)
     assert resolved and resolved[0]["dataset_id"] == spec["metadata"]["backtest_dataset"]["dataset_id"]
-    assert resolved[0]["scope"] == "all_governed_tw" and resolved[0]["symbols"] == artifact["parameters"]["symbols"]
+    assert resolved[0]["binding"] == "governed_reference" and resolved[0]["symbols"] == artifact["parameters"]["symbols"]
     runs = worker.list_runs(tenant_id=TENANT, strategy_spec_id=registry_id)
     assert len(runs) == 1
     meta = runs[0]["metadata"]

@@ -190,7 +190,7 @@ def test_matcher_runs_the_existing_scorer_on_the_one_spec(tmp_path, monkeypatch)
         calls.append((persona, demand, kw))
         return {"matches": [{"matched_object_id": "x"}]}
 
-    _matcher_world(monkeypatch, {"persona_id": "p1", "metadata": {"capability_snapshot": {"k": 1}}}, discover)
+    _matcher_world(monkeypatch, {"persona_id": "p1", "capability_snapshot": {"k": 1}}, discover)
     assert build_matcher(_env(tmp_path), catalog_factory=_catalog())(ENTRY, DEMAND) is True
     persona, demand, kw = calls[0]
     # no policy referenced: scored with the daily cycle's empty constraint ({}), the inline snapshot wins
@@ -237,18 +237,55 @@ def test_matcher_never_scores_a_referenced_policy_without_its_constraints(tmp_pa
     assert scored == []
 
 
-def test_matcher_and_daily_cycle_share_one_resolution(tmp_path, monkeypatch):
-    """The persona daily cycle's ``_route_policy`` / ``_capability_snapshot`` call the same two functions."""
-    import inspect
+class _DailyCycleSurface:
+    """The owner read surface of the persona daily cycle (BFF read owner), holding the same owner facts."""
 
-    from services.persona import discovery_constraints
+    def __init__(self, policies, snapshot):
+        self.policies, self.snapshot = list(policies), snapshot
 
-    main_source = (Path(__file__).resolve().parents[2] / "control-plane" / "persona" / "main.py").read_text()
-    assert "resolve_route_policy(" in main_source and "resolve_capability_snapshot(" in main_source
-    matcher_source = inspect.getsource(wiring.build_matcher)
-    assert "resolve_route_policy(" in matcher_source and "resolve_capability_snapshot(" in matcher_source
-    assert discovery_constraints.resolve_route_policy(
-        TRADING_PERSONA, lambda: [{"id": "rp-trading-momentum", "k": 1}]) == {"id": "rp-trading-momentum", "k": 1}
+    def list_route_policies(self):
+        return list(self.policies)
+
+    def get_capability_snapshot_for_persona(self, persona_id):
+        return self.snapshot
+
+
+def _outcome(call):
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001 - compare the fail-closed reason
+        return ("raised", str(exc).split(": ")[-1])
+
+
+@pytest.mark.parametrize("persona_extra, policies, snapshot", [
+    ({}, [{"policy_id": "rp-old", "persona_id": "p1"}, {"policy_id": "rp-trading-momentum", "blocked_backends": ["qlib"]}],
+     {"snapshot_id": "cap-1", "persona_id": "p1"}),
+    ({}, [{"id": "rp-trading-momentum", "k": 1}], None),
+    ({}, [], None),  # production today: the catalog holds no policy
+    ({}, [{"policy_id": "rp-other"}], None),
+    ({"capability_snapshot_id": "cap-9"}, [{"policy_id": "rp-trading-momentum"}], None),
+    ({"route_policy": {"policy_id": "inline"}, "capability_snapshot": {"inline": True}}, [], None),
+])
+def test_matcher_resolves_exactly_as_the_persona_daily_cycle(tmp_path, monkeypatch, persona_extra, policies, snapshot):
+    """Acceptance 2 parity: the real persona lifespan's daily discovery loader (services/control-plane/persona/
+    main.py ``_route_policy`` / ``_capability_snapshot``) and the card matcher resolve the same owner facts to the
+    same constraints, or fail closed with the same reason."""
+    from services.control_plane.bff.ports.operations_consultation import DomainWorkflowCatalogPort
+    from services.persona.test_persona_demand_discovery import _boot_lifespan
+
+    persona = {**TRADING_PERSONA, **persona_extra}
+    ports = _boot_lifespan(monkeypatch, tmp_path, _DailyCycleSurface(policies, snapshot))
+    daily = _outcome(lambda: ports.discovery_loader(persona))
+    if isinstance(daily, dict):
+        daily = (daily["route_policy"], daily["capability_snapshot"])
+
+    seen = []
+    _matcher_world(monkeypatch, persona, lambda p, d, **kw: seen.append(kw) or {"matches": []}, snapshot=snapshot)
+    catalog = lambda: DomainWorkflowCatalogPort(datasets={"route_policies": policies})  # noqa: E731
+    card = _outcome(lambda: build_matcher(_env(tmp_path), catalog_factory=catalog)(ENTRY, DEMAND))
+    if card is False:
+        card = (seen[0]["route_policy"], seen[0]["capability_snapshot"])
+    assert card == daily
 
 
 def test_matcher_fails_closed_without_the_persona(tmp_path, monkeypatch):
@@ -300,9 +337,14 @@ def test_whole_market_binding_gets_the_unattested_pool_market_of_the_same_bars(t
     resolve = build_dataset_resolver(_env(tmp_path), now=lambda: NOW)
     plain = resolve({"dataset_id": wiring.GOVERNED_MARKET_DATASET_ID, "symbols": ["2330.TW", "2317.TW"]})
     pinned = plain["snapshot_id"]
-    bound = resolve({"dataset_id": pinned, "symbols": ["2317.TW", "2330.TW"], "scope": "all_governed_tw",
+    # exactly what conversion writes for a card bound by the distillation controller (no scope key)
+    bound = resolve({"dataset_id": pinned, "symbols": ["2317.TW", "2330.TW"],
                      "binding": "governed_reference", "source_dataset_refs": [f"daily_bars:{pinned}"]})
     market = bound["candidate_pool_market"]
     assert bound["dataset_id"] == pinned and sorted(market["symbols"]) == ["2317.TW", "2330.TW"]
     assert market["scope"] == "all_governed_tw" and market["source_refs"] == [f"daily_bars:{pinned}"]
     assert market["includes_delisted"] is False and market["includes_suspended"] is False
+    # a legacy symbol binding by logical id keeps the old shape (no pool market added)
+    legacy = resolve({"dataset_id": wiring.GOVERNED_MARKET_DATASET_ID, "symbols": ["2330.TW"],
+                      "binding": "governed_reference"})
+    assert "candidate_pool_market" not in legacy

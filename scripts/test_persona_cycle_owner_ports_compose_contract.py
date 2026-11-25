@@ -251,14 +251,12 @@ CARD_PATH_MODULES: dict[str, tuple[str, ...]] = {
         "services/source_ingestion/semantic_extraction.py",
         "services/source_ingestion/semantic_extraction_client.py",
         "services/research/governed_market_dataset.py",
-        "services/research/strategy_spec/conversion.py",
         # The controller module also reads its own (non-card) configuration; only its ``*_ENV`` names count here.
         "services/source_ingestion/distillation_controller.py:env_constants",
     ),
     "alpha-replication-worker": (
         "services/research/alpha_replication/card_production_wiring.py",
         "services/research/governed_market_dataset.py",
-        "services/persona/discovery_constraints.py",
     ),
 }
 # Reads that are documented fallbacks of a name compose already passes (the client takes the first set one).

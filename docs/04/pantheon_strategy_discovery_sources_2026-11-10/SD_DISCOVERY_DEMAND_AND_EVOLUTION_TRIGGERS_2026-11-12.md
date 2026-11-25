@@ -360,9 +360,7 @@ is computed from symbol statistics and never materialised as records. It refuses
 `research-orchestrator-svc` (99 MiB steady) needs **384m** instead of 256m (`docs/deployment/dev-container-memory-budget.md`). The research and persona image locks gain `pyarrow`.
 
 **Residuals.** Hosted proof of the three consumers on real stored data and a hosted `memory.peak` reading are owned by the coordinator after deploy; the card
-binding env (`PANTHEON_L2_CARD_DATASET_ID`) must name `governed-market:tw-daily` (or a pinned snapshot) for new cards
-(done by HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: compose default, symbol list retired, the rule pins the `gmd-` snapshot as of the day
-before its job with the governed dataset's symbols, unset or unavailable fails closed in the controller state); `alpha-replication-worker` still mounts `source-ingest-data` read-write
+binding env (`PANTHEON_L2_CARD_DATASET_ID`) must name `governed-market:tw-daily` (or a pinned snapshot) for new cards; `alpha-replication-worker` still mounts `source-ingest-data` read-write
 for its seed store (the builder only reads).
 
 ---

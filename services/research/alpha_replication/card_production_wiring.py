@@ -9,7 +9,8 @@ builds them from the deployed environment so the compose service entry point run
   and Registry addresses, the research proposer principal and the distinct paper gate principal);
 * ``matcher`` - the existing persona discovery scorer ``discover_for_demand`` (no second scorer), with the
   persona's route policy and capability snapshot resolved exactly as the persona daily cycle resolves them
-  (``services.persona.discovery_constraints``; HYPOTHESIS-CARD-GOVERNED-BINDING-20261125);
+  (``services/control-plane/persona/main.py`` ``_route_policy`` / ``_capability_snapshot``;
+  HYPOTHESIS-CARD-GOVERNED-BINDING-20261125);
 * ``demands_provider`` - the research owner's open persona demand read (HTTP, service credential);
 * ``dataset_resolver`` - the governed whole-market dataset read from the stored daily bars
   (``services.research.governed_market_dataset``), never synthesised and never waiting for a persona
@@ -58,7 +59,15 @@ REQUIRED_CREDENTIALS: tuple[str, ...] = (
 # snapshot id in ``snapshot_id`` and ``source_dataset_refs``).
 GOVERNED_MARKET_DATASET_ID = "governed-market:tw-daily"
 LOGICAL_DATASET_IDS = (GOVERNED_MARKET_DATASET_ID, "tw_price_daily")
-WHOLE_MARKET_SCOPE = "all_governed_tw"  # conversion's whole governed Taiwan boundary binding
+WHOLE_MARKET_SCOPE = "all_governed_tw"  # the distillation controller's whole governed Taiwan boundary binding
+
+
+def _whole_market_binding(binding: Mapping[str, Any]) -> bool:
+    """A card rule bound to the whole governed boundary: the conversion's ``governed_reference`` to a pinned
+    ``gmd-`` snapshot (symbols are the governed dataset's own), or an explicit ``scope``."""
+    if binding.get("scope") == WHOLE_MARKET_SCOPE:
+        return True
+    return binding.get("binding") == "governed_reference" and str(binding.get("dataset_id") or "").startswith("gmd-")
 
 
 class OwnerCallError(RuntimeError):
@@ -195,19 +204,50 @@ def _persona_capability_snapshot(env: Mapping[str, str], persona_url: str, tenan
     return snapshot if isinstance(snapshot, Mapping) else None
 
 
+def _resolve_route_policy(persona: Mapping[str, Any], list_route_policies: Callable[[], Any]) -> dict[str, Any]:
+    """The persona daily cycle's ``_route_policy`` (services/control-plane/persona/main.py), line for line:
+    inline wins; a referenced policy is selected from the owner catalog by its own ``policy_id``/``id`` (never a
+    persona-scoped lookup that may return a stale, different policy); unreadable or mismatched -> raise."""
+    inline = persona.get("route_policy")
+    if isinstance(inline, Mapping) and inline:
+        return dict(inline)
+    policy_id = str(persona.get("route_policy_id") or "").strip()
+    if not policy_id:
+        return {}
+    for policy in list_route_policies() or []:
+        if isinstance(policy, Mapping) and policy and policy_id in {
+                str(policy.get("policy_id") or "").strip(), str(policy.get("id") or "").strip()} - {""}:
+            return dict(policy)
+    # referenced policy unreadable/mismatched: never score without (or with other) constraints
+    raise RuntimeError(f"route_policy_unavailable:{policy_id}")
+
+
+def _resolve_capability_snapshot(persona: Mapping[str, Any],
+                                 snapshot_for_persona: Callable[[], Mapping[str, Any] | None]) -> dict[str, Any]:
+    """The persona daily cycle's ``_capability_snapshot``, line for line: inline wins, else the owner's snapshot
+    for the persona; a referenced ``capability_snapshot_id`` the owner does not return raises."""
+    inline = persona.get("capability_snapshot")
+    if isinstance(inline, Mapping) and inline:
+        return dict(inline)
+    snapshot = snapshot_for_persona()
+    snapshot_id = str(persona.get("capability_snapshot_id") or "").strip()
+    if not snapshot and snapshot_id:
+        raise RuntimeError(f"capability_snapshot_unavailable:{snapshot_id}")
+    return dict(snapshot or {})
+
+
 def build_matcher(env: Mapping[str, str], *,
                   catalog_factory: Callable[[], Any] | None = None) -> Callable[[Mapping[str, Any], Mapping[str, Any]], bool]:
     """The existing discovery scorer, asked whether this one spec fits the demand's persona.
 
-    The persona is read from the persona owner. Its route policy and capability snapshot are resolved by the
-    persona daily cycle's own functions (``services.persona.discovery_constraints``): inline wins; a referenced
-    ``route_policy_id`` is selected from the route policy owner catalog by its own id and the capability snapshot
-    is read from the persona owner. A referenced policy or snapshot the owner cannot return fails the match with
+    The persona is read from the persona owner. Its route policy and capability snapshot are resolved as the
+    persona daily cycle resolves them (``_resolve_route_policy`` / ``_resolve_capability_snapshot``, parity-tested
+    against the daily cycle's loader): inline wins; a referenced ``route_policy_id`` is selected from the route
+    policy owner catalog the daily cycle reads by its own id and the capability snapshot is read from the persona
+    owner. A referenced policy or snapshot the owner cannot return fails the match with
     ``route_policy_unavailable:<id>`` / ``capability_snapshot_unavailable:<id>``; it is never scored without its
     constraints.
     """
-    from services.persona.discovery_constraints import resolve_capability_snapshot, resolve_route_policy
-
     persona_url = env["PERSONA_API_URL"].rstrip("/")
     catalogs = catalog_factory or route_policy_catalog
 
@@ -220,17 +260,12 @@ def build_matcher(env: Mapping[str, str], *,
             token_variable="ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN")
         if not isinstance(persona, Mapping) or persona.get("persona_id") != persona_id:
             raise OwnerCallError(f"read_persona: persona owner returned no exact record for {persona_id}")
-        persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
-        # The persona owner keeps inline values either top level or in metadata; the daily cycle's resolver reads
-        # the top-level fields, so carry a metadata-held inline value up (an empty value is not inline).
+        # The daily cycle resolves from the persona owner record as read (top-level inline values only).
         view = dict(persona)
-        for key in ("route_policy", "capability_snapshot"):
-            if not view.get(key) and isinstance(persona_meta.get(key), Mapping):
-                view[key] = persona_meta[key]
         view.setdefault("tenant_id", tenant_id)
         try:
-            route_policy = resolve_route_policy(view, lambda: _catalog_policies(catalogs, tenant_id))
-            snapshot = resolve_capability_snapshot(
+            route_policy = _resolve_route_policy(view, lambda: _catalog_policies(catalogs, tenant_id))
+            snapshot = _resolve_capability_snapshot(
                 view, lambda: _persona_capability_snapshot(env, persona_url, tenant_id, persona_id))
         except RuntimeError as exc:
             if isinstance(exc, OwnerCallError):
@@ -285,7 +320,8 @@ def build_dataset_resolver(env: Mapping[str, str],
     missing or stale store, or a symbol outside the market boundary raises a readable reason; the worker
     drops the binding (fail closed).
 
-    A whole-market binding (``scope: all_governed_tw``, HYPOTHESIS-CARD-GOVERNED-BINDING-20261125) also gets the
+    A whole-market card binding (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: a ``governed_reference`` to a pinned
+    ``gmd-`` snapshot, which the distillation controller writes for every compiled card rule) also gets the
     screen's ``candidate_pool_market`` built from the same stored bars by the template search's own
     ``market_from_dataset`` (no copy). It carries no survivorship attestation (``includes_delisted`` and
     ``includes_suspended`` stay false), so the gate refuses a screened rule as ``survivorship_limited`` until
@@ -306,7 +342,7 @@ def build_dataset_resolver(env: Mapping[str, str],
         snapshot = dataset["dataset_id"]
         resolved = {**dataset, "dataset_id": dataset_id, "snapshot_id": snapshot,
                     "source_dataset_refs": [f"daily_bars:{snapshot}"]}
-        if binding.get("scope") == WHOLE_MARKET_SCOPE:
+        if _whole_market_binding(binding):
             from services.research.template_demand_search import market_from_dataset
 
             resolved["candidate_pool_market"] = market_from_dataset(resolved)

@@ -318,13 +318,8 @@ def build_card_strategy_artifact(
     parameters = copy.deepcopy(dict(rule["parameters"]))
     surface = copy.deepcopy(dict(rule["mutation_surface"]))
     dataset_id = _require_text(dataset_binding.get("dataset_id"), "dataset_id")
-    whole_market = _whole_market_binding(dataset_binding)
-    if whole_market and "screen" not in logic:
-        # The whole governed boundary is traded only through a screen (compiled or the declared default).
-        raise ValueError("whole_market_binding_requires_screen")
     envelope = {
         "market": "TW",
-        # The symbols are the governed dataset's own (whole-market binding: the governed boundary's dataset).
         "symbols": list(dataset_binding.get("symbols") or []),
         "bar_frequency": str(dataset_binding.get("bar_frequency") or "1d"),
         "order_quantity": 10,
@@ -369,15 +364,6 @@ def build_card_strategy_artifact(
     return artifact
 
 
-WHOLE_MARKET_SCOPE = "all_governed_tw"
-
-
-def _whole_market_binding(dataset_binding: Mapping[str, Any]) -> bool:
-    """A binding to the whole governed Taiwan boundary (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125): a pinned
-    governed market snapshot whose symbols are the governed dataset's, never an operator symbol list."""
-    return dataset_binding.get("scope") == WHOLE_MARKET_SCOPE
-
-
 def _apply_hypothesis_card(
     metadata: dict[str, Any],
     *,
@@ -407,8 +393,6 @@ def _apply_hypothesis_card(
 
     if not isinstance(rule, Mapping):
         return draft("no_compiled_rule")
-    if dataset_binding and dataset_binding.get("unavailable_reason"):
-        return draft(f"governed_dataset_binding_unavailable:{str(dataset_binding['unavailable_reason'])[:200]}")
     if not dataset_binding or not dataset_binding.get("dataset_id") or not dataset_binding.get("symbols"):
         return draft("governed_dataset_binding_unavailable")
     try:
@@ -426,8 +410,6 @@ def _apply_hypothesis_card(
         "source_dataset_refs": list(dataset_binding.get("source_dataset_refs") or [dataset_id]),
         "binding": "governed_reference",
     }
-    if _whole_market_binding(dataset_binding):
-        metadata["backtest_dataset"]["scope"] = WHOLE_MARKET_SCOPE
     metadata[CARD_WIRING_KEY] = {"status": CARD_STATUS_GATE_READY, "reason": "compiled_rule_bound"}
     return [{"ref": dataset_id, "kind": "dataset"}]
 
