@@ -1,0 +1,39 @@
+{
+  "task": "TELEMETRY-REPLAY-BROKER-DEDUP-20261125",
+  "root_cause_class": "RC2",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "defect": "On hosted dev c3164945a (2026-11-25 13:38:50Z), POST /api/telemetry/replay?tag=poison_event over 19 poison_event dead letters (4 of 11/23, 15 of 11/24; 17 distinct ids, 2 self-conflicts) answered {\"replayed\": 15}, but public.telemetry_events received only the 3 rows from 11/23 while the 12 from 11/24 were suppressed by JetStream's 24h duplicate window because NatsJetStreamBuffer.put published with the same content-hash Nats-Msg-Id as the original publish, ignored PubAck.duplicate=true, returned True, and incremented _estimated_depth by 12.",
+  "fix": [
+    "services/telemetry/buffer.py: _durable_receipt_id(event, replay_key=...) hashes the canonical payload digest together with replay_key when a replay key is provided; NatsJetStreamBuffer.put inspects PubAck.duplicate, increments total_duplicates without incrementing _estimated_depth or total_enqueued when duplicate=True, and returns a truthy typed PutResult(accepted=True, enqueued=False, duplicate=True, receipt_id=...).",
+    "services/telemetry/buffer.py: NatsJetStreamBuffer.sync_depth() and empty-poll resynchronisation in get() realign _estimated_depth with consumer_info (num_pending + num_ack_pending) whenever _estimated_depth differs from in-flight pending receipts.",
+    "services/telemetry/ingest_svc.py: TelemetryIngestService._ingest_event distinguishes broker-suppressed duplicates (put_result.duplicate=True) from newly enqueued events, incrementing total_duplicates instead of total_ingested while keeping ingest() return True so normal producer retries remain idempotent HTTP 200/202.",
+    "services/telemetry/ingest_svc.py: replay_dlq publishes each candidate DeadLetterEntry with replay_key=entry.rejected_at so JetStream does not suppress it because of the original publish, while replaying the same dead-letter entry twice inside the duplicate window is deduplicated by the broker and Postgres event_id conflict isolation decides the canonical outcome. Returns ReplayResult(int) equal to the count of genuinely enqueued entries and exposes .replayed, .suppressed, .refused, and .to_dict().",
+    "services/telemetry/main.py: POST /api/telemetry/replay returns {\"replayed\": <enqueued>, \"suppressed\": <suppressed>, \"refused\": <refused>}."
+  ],
+  "verification": {
+    "red_before_fix": "Ran services/telemetry/test_replay_broker_dedup.py on unmodified dev head before production edits: all 5 tests failed (PubAck.duplicate incremented depth and total_enqueued; replay inside duplicate window stored 0 victim events and leaked buffer_size).",
+    "green_after_fix": [
+      "PANTHEON_PY -m pytest -q services/telemetry/test_replay_broker_dedup.py (7 passed, 1 skipped without PANTHEON_TEST_NATS_URL)",
+      "PANTHEON_PY -m pytest -q services/telemetry/test_conflict_isolation.py services/telemetry/test_l12_tel_001_durable_ingest.py services/telemetry/test_ingest_shock_absorption.py (94 passed, 1 skipped)",
+      "PANTHEON_PY -m pytest -q services/telemetry/test_main_routes.py -k replay (4 passed)",
+      "PANTHEON_PY services/telemetry/smoke_test_ingest.py (ALL SMOKE TESTS PASSED)"
+    ]
+  },
+  "runtime_budget": "No new writer, stream, job or file. Stream retention (WORK_QUEUE), storage (FILE), max_msgs and duplicate_window (86400s) are unchanged; replay Nats-Msg-Id values are ordinary sha256 message IDs within the existing duplicate window.",
+  "hosted_acceptance_plan": {
+    "owner": "coordinator, after deploy; no hosted write executed by worker",
+    "steps": [
+      "Verify GET /healthz on telemetry-ingest shows buffer_size == 0 when idle after deploy restart resynchronises depth from consumer_info.",
+      "Invoke POST /api/telemetry/replay?tag=poison_event and verify the response reports the genuinely enqueued count with suppressed and refused separated.",
+      "Verify the remaining 9 victim events from 2026-11-24 that were not in public.telemetry_events are now committed once, conflicting entries remain excluded/isolated, and buffer_size returns to 0 when idle."
+    ]
+  },
+  "review_independence": {
+    "owner": "Antigravity",
+    "reviewer": "Claude2",
+    "cross_family": true,
+    "task_recorded_exception": "Other model families at terminal quota until 2026-11-27 10:03Z so same-family review was authorized in the task acceptance; owner was reassigned to Antigravity with reviewer Claude2, providing cross-family review."
+  },
+  "residual_findings": []
+}

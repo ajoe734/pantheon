@@ -1924,20 +1924,14 @@ def _strategy_runtime_status(binding: Dict[str, Any]) -> Tuple[str, Optional[str
     return "unknown", f"binding_status_{status or 'missing'}"
 
 
-def read_strategy_runtime_truth(store: Any, snapshot_at: str, persona_directory: Optional[Any] = None) -> Dict[str, Any]:
-    """Per-strategy cumulative paper result and runtime state, one owner read each.
-
-    Owner calls: list_runtime_bindings, list_telemetry_summaries and the
-    persona directory only when the caller did not pass the request's
-    already-read ``persona_directory`` records - constant per request.
-    Returns {"status": "ok"|"unavailable", "reason", "by_strategy": {sid: {...}}}.
-    """
+def read_strategy_runtime_truth_inputs(store: Any) -> Tuple[Optional[List[Any]], List[Any]]:
+    """The two owner reads behind runtime truth: bindings (None when unavailable) and telemetry."""
     if store is None or not hasattr(store, "list_runtime_bindings"):
-        return {"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}}
+        return None, []
     try:
         bindings = store.list_runtime_bindings() or []
     except Exception:
-        return {"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}}
+        return None, []
     telemetry: List[Any] = []
     if hasattr(store, "list_telemetry_summaries"):
         try:
@@ -1945,6 +1939,31 @@ def read_strategy_runtime_truth(store: Any, snapshot_at: str, persona_directory:
             telemetry = list(res.values()) if isinstance(res, dict) else list(res) if isinstance(res, list) else []
         except Exception:
             telemetry = []
+    return list(bindings), telemetry
+
+
+def read_strategy_runtime_truth(
+    store: Any,
+    snapshot_at: str,
+    persona_directory: Optional[Any] = None,
+    prefetched_inputs: Optional[Tuple[Optional[List[Any]], List[Any]]] = None,
+) -> Dict[str, Any]:
+    """Per-strategy cumulative paper result and runtime state, one owner read each.
+
+    Owner calls: list_runtime_bindings, list_telemetry_summaries and the
+    persona directory only when the caller did not pass the request's
+    already-read ``persona_directory`` records - constant per request.
+    ``prefetched_inputs`` is the (bindings, telemetry) pair a caller already
+    read through ``read_strategy_runtime_truth_inputs``; nothing is re-read.
+    Returns {"status": "ok"|"unavailable", "reason", "by_strategy": {sid: {...}}}.
+    """
+    bindings, telemetry = (
+        prefetched_inputs
+        if prefetched_inputs is not None
+        else read_strategy_runtime_truth_inputs(store)
+    )
+    if bindings is None:
+        return {"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}}
     admitted, _personas, scope = _pulse_operator_scope(
         store, [b for b in bindings if isinstance(b, dict)],
         list(persona_directory) if persona_directory is not None else None)
