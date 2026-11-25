@@ -81,6 +81,87 @@ LEASE_RECOVER_BATCH = 200
 DEFERRED_CANDIDATE_WINDOW = 500
 NEW_CANDIDATE_WINDOW = 500
 PRUNED_PAYLOAD_JSON = '{"_pruned":true}'
+
+
+def _skip_code_sql(column: str = "skip_reason") -> str:
+    """Typed closure code of a skip reason: the text before the first colon.
+
+    Free-text reasons that carry an id are mapped to a fixed code, and any
+    other prefix with a space or over 64 characters becomes
+    ``untyped_reason``, so the set of codes stays small however many records
+    are closed. Used by the ``skip_code`` generated column.
+    """
+    prefix = (
+        f"(CASE WHEN instr({column}, ':') > 0"
+        f" THEN substr({column}, 1, instr({column}, ':') - 1) ELSE {column} END)"
+    )
+    return (
+        "(CASE WHEN status <> 'skipped' THEN NULL"
+        f" WHEN {column} IS NULL OR trim({column}) = '' THEN 'reason_not_recorded'"
+        f" WHEN {column} LIKE 'source_type=market%' THEN 'market_source'"
+        f" WHEN {column} LIKE 'source % is rejected' THEN 'source_rejected'"
+        f" WHEN {column} LIKE 'seed % is in immutable status %' THEN 'seed_immutable'"
+        f" WHEN instr({prefix}, ' ') > 0 OR length({prefix}) > 64 THEN 'untyped_reason'"
+        f" ELSE {prefix} END)"
+    )
+
+
+# Current-state count of terminal (done/skipped) outbox rows per tenant,
+# source type, status and typed closure code. Maintained by triggers on every
+# write path, so per-source/per-reason closure accounting and the discovery
+# summary never scan the outbox. Seeded once from the outbox when created.
+TERMINAL_COUNTS_TABLE = "distillation_terminal_counts"
+_TERMINAL_KEY_SQL = (
+    "COALESCE({r}.tenant_id, ''), COALESCE({r}.source_type, ''), {r}.status,"
+    " CASE WHEN {r}.status = 'done' THEN '' ELSE COALESCE({r}.skip_code, 'reason_not_recorded') END"
+)
+_TERMINAL_COUNT_UPSERT = (
+    f"INSERT INTO {TERMINAL_COUNTS_TABLE} (tenant_id, source_type, status, reason, n)"
+    " SELECT {key}, {delta} WHERE {r}.status IN ('done', 'skipped')"
+    " ON CONFLICT (tenant_id, source_type, status, reason) DO UPDATE SET n = n + excluded.n;"
+)
+
+
+def _terminal_count_upsert(row: str, delta: int) -> str:
+    return _TERMINAL_COUNT_UPSERT.format(key=_TERMINAL_KEY_SQL.format(r=row), delta=delta, r=row)
+
+
+_PAYLOAD_FIELD_SQL = (
+    "(SELECT CASE WHEN json_valid(s.payload_json) THEN json_extract(s.payload_json, '{path}') END"
+    " FROM distillation_source_versions AS s"
+    " WHERE s.source_id = {r}.source_id AND s.source_digest = {r}.source_digest)"
+)
+_TERMINAL_COUNT_DDL = (
+    f"""CREATE TABLE IF NOT EXISTS {TERMINAL_COUNTS_TABLE} (
+        tenant_id   TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        n           INTEGER NOT NULL,
+        PRIMARY KEY (tenant_id, source_type, status, reason)
+    ) WITHOUT ROWID""",
+    # Tenant and source type are stamped from the committed snapshot at insert
+    # time; they survive payload pruning.
+    "CREATE TRIGGER IF NOT EXISTS distillation_outbox_stamp_scope"
+    " AFTER INSERT ON distillation_outbox"
+    " WHEN NEW.tenant_id IS NULL OR NEW.source_type IS NULL BEGIN"
+    " UPDATE distillation_outbox SET"
+    " tenant_id = COALESCE(NEW.tenant_id, "
+    + _PAYLOAD_FIELD_SQL.format(path="$.metadata.tenant_id", r="NEW") + ", ''),"
+    " source_type = COALESCE(NEW.source_type, "
+    + _PAYLOAD_FIELD_SQL.format(path="$.source_type", r="NEW") + ", '')"
+    " WHERE job_id = NEW.job_id; END",
+    "CREATE TRIGGER IF NOT EXISTS distillation_outbox_terminal_count_insert"
+    " AFTER INSERT ON distillation_outbox BEGIN "
+    + _terminal_count_upsert("NEW", 1) + " END",
+    "CREATE TRIGGER IF NOT EXISTS distillation_outbox_terminal_count_update"
+    " AFTER UPDATE OF status, skip_reason, tenant_id, source_type ON distillation_outbox"
+    " WHEN OLD.status IN ('done', 'skipped') OR NEW.status IN ('done', 'skipped') BEGIN "
+    + _terminal_count_upsert("OLD", -1) + " " + _terminal_count_upsert("NEW", 1) + " END",
+    "CREATE TRIGGER IF NOT EXISTS distillation_outbox_terminal_count_delete"
+    " AFTER DELETE ON distillation_outbox BEGIN "
+    + _terminal_count_upsert("OLD", -1) + " END",
+)
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400
 DEFAULT_DEAD_LETTER_RETENTION_SECONDS = 30 * 86400
 LEASE_EXPIRED_REASON = "lease_expired_repeatedly"
@@ -721,10 +802,16 @@ class DistillationJobQueue:
                       AND job_id IN (SELECT job_id FROM distillation_outbox
                                       WHERE status IN ('pending', 'leased', 'retry_wait'))"""
             )
+        self._migrate_terminal_counts(connection)
         # Indexes support the bounded claim, lease recovery, pruning and the
         # per-tick readbacks; none of them may require a sort or a scan that
         # grows with total history.
         for statement in (
+            # Tenant-scoped windows of the discovery summary (bounded reads).
+            """CREATE INDEX IF NOT EXISTS distillation_outbox_tenant_enqueued_idx
+               ON distillation_outbox(tenant_id, enqueued_at, source_type)""",
+            """CREATE INDEX IF NOT EXISTS distillation_outbox_tenant_terminal_idx
+               ON distillation_outbox(tenant_id, status, processed_at)""",
             """CREATE INDEX IF NOT EXISTS distillation_outbox_deferred_idx
                ON distillation_outbox(status, enqueued_at)
                WHERE deferred_since IS NOT NULL""",
@@ -740,6 +827,47 @@ class DistillationJobQueue:
                ON distillation_dead_letters(resolved_at) WHERE resolved_at IS NOT NULL""",
         ):
             connection.execute(statement)
+
+    @staticmethod
+    def _migrate_terminal_counts(connection: sqlite3.Connection) -> None:
+        """Scope columns, typed closure code and the trigger-kept terminal counter.
+
+        Runs inside the bootstrap writer transaction. The one-time backfill
+        reads each existing row's committed snapshot; rows whose payload was
+        already pruned keep an empty tenant and source type.
+        """
+        cols = {row["name"] for row in connection.execute("PRAGMA table_xinfo(distillation_outbox)")}
+        if "tenant_id" not in cols:
+            connection.execute("ALTER TABLE distillation_outbox ADD COLUMN tenant_id TEXT")
+        if "source_type" not in cols:
+            connection.execute("ALTER TABLE distillation_outbox ADD COLUMN source_type TEXT")
+        if "skip_code" not in cols:
+            connection.execute(
+                "ALTER TABLE distillation_outbox ADD COLUMN skip_code TEXT"
+                f" GENERATED ALWAYS AS {_skip_code_sql()} VIRTUAL"
+            )
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TERMINAL_COUNTS_TABLE,),
+        ).fetchone()
+        if exists is not None:
+            for statement in _TERMINAL_COUNT_DDL:
+                connection.execute(statement)
+            return
+        connection.execute(
+            "UPDATE distillation_outbox SET"
+            " tenant_id = COALESCE(tenant_id, "
+            + _PAYLOAD_FIELD_SQL.format(path="$.metadata.tenant_id", r="distillation_outbox") + ", ''),"
+            " source_type = COALESCE(source_type, "
+            + _PAYLOAD_FIELD_SQL.format(path="$.source_type", r="distillation_outbox") + ", '')"
+            " WHERE tenant_id IS NULL OR source_type IS NULL"
+        )
+        for statement in _TERMINAL_COUNT_DDL:
+            connection.execute(statement)
+        connection.execute(
+            f"INSERT INTO {TERMINAL_COUNTS_TABLE} (tenant_id, source_type, status, reason, n)"
+            f" SELECT {_TERMINAL_KEY_SQL.format(r='o')}, COUNT(*) FROM distillation_outbox AS o"
+            " WHERE o.status IN ('done', 'skipped') GROUP BY 1, 2, 3, 4"
+        )
 
     @staticmethod
     def _job_from_row(row: sqlite3.Row) -> DistillationJob:
@@ -2455,25 +2583,20 @@ class DistillationJobQueue:
         return metrics
 
     def external_text_closure_counts(self) -> dict[str, dict[str, int]]:
-        """Skipped jobs by source type then typed reason (text before the first colon).
+        """Skipped jobs by source type then typed closure code (all tenants).
 
-        Reads the committed source snapshot of each skipped job; used for the
-        per-source/per-reason accounting of RC2 closures.
+        Reads the trigger-kept ``distillation_terminal_counts`` table, the
+        single per-source/per-reason accounting of RC2 closures; the
+        tenant-scoped discovery summary reads the same table.
         """
         counts: dict[str, dict[str, int]] = {}
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT json_extract(source.payload_json, '$.source_type') AS source_type,
-                       CASE WHEN instr(outbox.skip_reason, ':') > 0
-                            THEN substr(outbox.skip_reason, 1, instr(outbox.skip_reason, ':') - 1)
-                            ELSE outbox.skip_reason END AS reason,
-                       COUNT(*) AS count
-                  FROM distillation_outbox AS outbox
-                  LEFT JOIN distillation_source_versions AS source
-                    ON source.source_id = outbox.source_id AND source.source_digest = outbox.source_digest
-                 WHERE outbox.status = 'skipped' AND outbox.skip_reason IS NOT NULL
-                 GROUP BY 1, 2
+                f"""
+                SELECT source_type, reason, SUM(n) AS count
+                  FROM {TERMINAL_COUNTS_TABLE}
+                 WHERE status = 'skipped' AND reason <> 'reason_not_recorded'
+                 GROUP BY 1, 2 HAVING SUM(n) > 0
                 """
             ).fetchall()
         for row in rows:

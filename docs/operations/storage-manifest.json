@@ -3200,6 +3200,25 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "untyped_reason",
+    "file": "services/source_ingestion/distillation_worker.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per (tenant, source type, status done|skipped, typed closure code); counters are updated in place by triggers, never appended. Free-text skip reasons are folded into fixed codes (source_rejected, seed_immutable, market_source, untyped_reason) by the skip_code column, so the key space is tenants x about 8 source types x about 30 codes (a few hundred rows, tens of KB)",
+   "cleanup": "none needed: key space is finite; rows are never deleted, the summary lists at most 40 reasons per list",
+   "growth_driver": "first terminal outcome of a new (tenant, source type, status, closure code) combination; every other outcome updates an existing row",
+   "growth_per_day": "about 0 rows (new combinations only); no byte growth from outcomes",
+   "kind": "table",
+   "name": "services/source_ingestion/distillation_worker.py::{TERMINAL_COUNTS_TABLE}",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/discovery_summary.py",
+    "services/source_ingestion/distillation_worker.py"
+   ],
+   "task": "DISCOVERY-OWNER-SUMMARY-READ-20261125"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -5989,6 +6008,11 @@
    "kind": "sqlite",
    "name": ".hex}.sqlite3",
    "reason": "regex fragment of an f-string temp name in downstream_health_monitor.py; the database is downstream_health.sqlite3"
+  },
+  {
+   "kind": "sqlite_connect",
+   "name": "services/source_ingestion/discovery_summary.py",
+   "reason": "read-only reader (mode=ro, PRAGMA query_only) of the distillation queue and extraction ledger; writes nothing, so it adds no writer"
   }
  ],
  "runtime_budgets": [
