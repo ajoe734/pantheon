@@ -198,6 +198,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     fut.cancel()
                     raise
 
+            _join.cancel = fut.cancel  # type: ignore[attr-defined]
             return _join
 
         def _join_prefetched_first_page() -> Any:
@@ -277,6 +278,10 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 page_token=page_token,
                 page_size=page_size,
             )
+        if bounded_hide is not None and page_future is not None:
+            # A prefetched page that the bounded read did not consume (offset
+            # > 0) is dropped; no-op once it has run.
+            page_future.cancel()
         if bounded_hide is not None:
             page_summaries = list(bounded_hide["page_summaries"])
             next_page_token = bounded_hide["next_page_token"]
@@ -459,7 +464,10 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             else:
                 total = len(summaries)
                 page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
-        if hide_test and bounded_hide is None and owner_page is not None:
+        if hide_test and (
+            owner_page is not None
+            or (bounded_hide is not None and not bounded_hide.get("stubs_applied"))
+        ):
             # Bounded owner page: hide stubs on the returned page and subtract
             # the stubs found in the candidate set when it was read (exact),
             # else on the page alone. Hidden counts are never silent.

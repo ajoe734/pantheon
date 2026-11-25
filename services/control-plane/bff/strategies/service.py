@@ -506,8 +506,25 @@ class StrategiesService:
         )
 
     def list_strategy_summaries_hide_retired_unfiltered_page(
+        self, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Bounded unfiltered paging (see ``_hide_retired_unfiltered_page_impl``).
+
+        Cancels an overlapped ``exclude_state=draft`` read that was started but
+        never joined (early return, error, or reconciliation not needed).
+        """
+        overlap: Dict[str, Any] = {"join": None}
+        try:
+            return self._hide_retired_unfiltered_page_impl(_overlap=overlap, **kwargs)
+        finally:
+            canceller = getattr(overlap.get("join"), "cancel", None)
+            if callable(canceller):
+                canceller()
+
+    def _hide_retired_unfiltered_page_impl(
         self,
         *,
+        _overlap: Dict[str, Any],
         persona_lookup: Any,
         summary_persona_ids_fn: Callable[[Dict[str, Any]], List[str]],
         operational_counts_fn: Callable[[Any], Dict[str, int]],
@@ -578,10 +595,13 @@ class StrategiesService:
         non_draft_join: Optional[Callable[[], Any]] = None
         first_page: Optional[Dict[str, Any]]
         if first_page_fn is not None and start == 0:
-            first_page = first_page_fn()
-        else:
+            # Start the draft-excluded reconciliation read first so it overlaps
+            # with joining the prefetched first page.
             if submit_overlap_fn is not None:
                 non_draft_join = submit_overlap_fn(_read_non_draft)
+                _overlap["join"] = non_draft_join
+            first_page = first_page_fn()
+        else:
             first_page = self.list_strategy_summaries_page(
                 state=None,
                 exclude_state=None,
@@ -652,12 +672,13 @@ class StrategiesService:
                 "total": len(kept),
                 "hidden_retired_persona_count": retired_n,
                 "hidden_test_persona_strategy_count": test_n,
+                "stubs_applied": stub_reason_fn is not None,
                 "hidden_unbound_stub_strategy_count": other_n,
                 "state_counts": state_counts,
                 "operational_counts": op_counts,
             }
 
-        if not getattr(persona_lookup, "available", True) and stub_reason_fn is None:
+        if not getattr(persona_lookup, "available", True):
             if start + page_size <= len(first_items):
                 page_summaries = list(first_items[start : start + page_size])
             else:
@@ -709,6 +730,7 @@ class StrategiesService:
         next_token: Optional[str] = str(first_next_token)
         if non_draft_join is None and submit_overlap_fn is not None:
             non_draft_join = submit_overlap_fn(_read_non_draft)
+            _overlap["join"] = non_draft_join
         seen_tokens: Set[str] = {next_token}
         page_number = 1
         while len(kept) < start + page_size and next_token:
@@ -770,6 +792,7 @@ class StrategiesService:
         if next_token is not None and (
             non_draft_expected is None or seen_non_draft < non_draft_expected
         ):
+            _overlap["join"] = None
             non_draft_walk = (
                 non_draft_join() if non_draft_join is not None else _read_non_draft()
             )
@@ -802,6 +825,7 @@ class StrategiesService:
             "total": total,
             "hidden_retired_persona_count": hidden_count,
             "hidden_test_persona_strategy_count": test_n,
+            "stubs_applied": stub_reason_fn is not None,
             "hidden_unbound_stub_strategy_count": other_n,
             "state_counts": state_counts,
             "operational_counts": op_counts,
