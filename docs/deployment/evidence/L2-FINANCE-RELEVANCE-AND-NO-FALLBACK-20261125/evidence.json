@@ -1,0 +1,51 @@
+{
+  "task": "L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125",
+  "root_cause_class": "RC2",
+  "status": "source + focused tests; no hosted result claimed",
+  "defect": "Every external text became an 'Evidence suggests' strategy draft (4,204 since 11/12, 0 cards); no finance relevance check; a model/adapter outage was stored as no_hypothesis.",
+  "fix": [
+    "strategy_seed_builder: no inferred hypothesis for paper/news/social/filing/macro (hypothesis_card_required)",
+    "distillation_worker: external text without a verified card is closed with a typed reason (l2_irrelevant, l2_extraction_disabled, hypothesis_rejected, hypothesis_extraction_failed, l2_admission_denied); external_text_closure_counts() groups by source type and reason",
+    "l2_relevance.py + l2_relevance_vocabulary.json: deterministic filter before the budget is reserved",
+    "hypothesis_card: unavailable model/adapter is status 'unavailable' (retry, long schedule, max 10 attempts), one reservation per (record version, day)",
+    "claim_due: deferred first, then papers, then demand score, then arrival; 500-row window plus an explicit paper window"
+  ],
+  "relevance_measurement": {
+    "labelled_titles": 45,
+    "true_positive": 25,
+    "false_positive": 0,
+    "false_negative": 0,
+    "true_negative": 20,
+    "precision": 1.0,
+    "recall": 1.0,
+    "fixture": "services/source_ingestion/tests/fixtures/l2_relevance_labelled_titles.json",
+    "limitation": "The repository holds no stored real titles and this worker has no hosted read access, so the 45 titles are composed to the shapes of the Taiwan news/paper/social feeds of 2026-11-12..25 (lottery, crime, weather, politics, sport, entertainment dropped; earnings, monetary policy, industry, index passed). A re-measurement on real hosted titles is a residual for the coordinator. The vocabulary was tuned against this set, so 1.00 is a floor on the test set, not a hosted estimate.",
+    "security_names": "the listing persists symbols only (no names), so names come from a curated list in the vocabulary; listed codes come from the listing state and count only when written as a code ((2330), 2330.TW, 代號 2330), never as a bare 4-digit number"
+  },
+  "extraction_off_decision": "close, not wait: a relevant record is closed l2_extraction_disabled so nothing queues; switching extraction on later replays 0 old rows (backlog bound 0). Jobs already budget-deferred keep their 14-day TTL.",
+  "runtime_budget_per_day": {
+    "model_calls": "<= 400 (PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP); a retry of the same record version the same day costs 0",
+    "rows_claimed": "<= limit per tick (default 100) from a 500-row new-work window + 500-row deferred window + paper window <= limit",
+    "prompt_bytes": "<= 400 x 20,000 chars = 8,000,000 chars (<= 24 MB UTF-8 worst case, CJK)",
+    "ledger_rows": "reservations <= 400 (pruned daily); events <= about 1,200 x about 550 B (existing table, RC3 unreviewed)",
+    "expected_flow": "about 650 news + 90 social + 11 papers a day; social single posts are not extractable (closed), irrelevant records cost no call"
+  },
+  "tests": {
+    "touched_suites_passed": 269,
+    "new": [
+      "test_l2_relevance.py (4)",
+      "test_hypothesis_extraction.py: closure by source/reason, seed builder no fallback, irrelevant costs no budget, 503 then 200 -> one card and one budget use, long retry schedule, failed is not no_hypothesis",
+      "test_demand_priority.py: papers then demand first behind 650 news"
+    ],
+    "contract_change": "test_demand_priority 'new work always FIFO' now 'papers, then demand score, then FIFO' by task acceptance 3; fixtures of registry/queue tests that used source_type paper as a transport stand-in now use internal_note",
+    "environment_failures_not_caused_by_task": "pyarrow, postgres and psycopg mocks missing in the local venv (test_finmind_broker_backfill, test_evidence_read_cost, test_pg_store); services/research/alpha_replication/test_replication_controller fails on the previous head too"
+  },
+  "residual_findings": [
+    "Real-title re-measurement of the relevance filter on hosted data",
+    "Extraction-unavailable dead letters (after 10 attempts) are not redriven by the controller; the existing redrive handles registry/auth markers only",
+    "Demand-relevant news beyond the 500-row arrival window waits for the front to drain (deferred, never dropped)",
+    "events table of l2_extraction_ledger.sqlite stays unreviewed under RC3",
+    "Existing 4,204 registry drafts are unchanged by design"
+  ],
+  "review_independence": "Other model families are at terminal quota until 2026-11-27 10:03Z; the reviewer may be from the owner's family (exception recorded)."
+}
