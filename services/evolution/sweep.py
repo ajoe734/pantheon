@@ -13,7 +13,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from services.incident.incident import IncidentCase, IncidentStore
+from services.incident.incident import (
+    IncidentCase,
+    IncidentStore,
+    is_infrastructure_health_incident,
+    is_monitor_agent_finding_incident,
+)
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
@@ -32,6 +37,18 @@ from evolution_decision import (  # type: ignore
     ThresholdSignalType,
     ThresholdSnapshot,
 )
+
+
+INFRASTRUCTURE_SKIP_REASON = "infrastructure_incident"
+
+
+def is_infrastructure_incident(incident: IncidentCase) -> bool:
+    """Monitor/service-fault incidents are not strategy signals.
+
+    The health predicate excludes monitor agent findings by design, so both
+    owner predicates are needed.
+    """
+    return is_infrastructure_health_incident(incident) or is_monitor_agent_finding_incident(incident)
 
 
 @dataclass(frozen=True)
@@ -65,6 +82,7 @@ class DailySweepResult:
             "compose_profile": "evolution-daily-sweep-scheduler",
         }
     )
+    infrastructure_skipped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -98,6 +116,17 @@ def run_daily_sweep(
     for incident in incidents:
         target_type = EvolutionTargetType.CANDIDATE_ARTIFACT.value
         target_id = incident.artifact_id
+        if is_infrastructure_incident(incident):
+            items.append(
+                SweepItem(
+                    incident_id=incident.incident_id,
+                    status="skipped",
+                    target_type=target_type,
+                    target_id=target_id,
+                    reason=INFRASTRUCTURE_SKIP_REASON,
+                )
+            )
+            continue
         existing = _decision_for_incident(
             decision_store,
             incident.incident_id,
@@ -177,6 +206,9 @@ def run_daily_sweep(
         cooldown_blocked=sum(1 for item in items if item.status == "cooldown_blocked"),
         skipped_incidents=sum(1 for item in items if item.status == "skipped"),
         items=items,
+        infrastructure_skipped=sum(
+            1 for item in items if item.reason == INFRASTRUCTURE_SKIP_REASON
+        ),
     )
 
 

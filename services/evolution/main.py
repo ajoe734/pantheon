@@ -1802,11 +1802,12 @@ def daily_sweep(body: DailySweepRequest):
         _sweep_state["total_proposals_created"] + result.created_decisions
     )
     log.info(
-        "evolution.daily_sweep sweep_id=%s created=%d blocked=%d scanned=%d",
+        "evolution.daily_sweep sweep_id=%s created=%d blocked=%d scanned=%d infrastructure_skipped=%d",
         body.sweep_id,
         result.created_decisions,
         result.cooldown_blocked,
         result.scanned_incidents,
+        result.infrastructure_skipped,
     )
     _run_program_qualification(tenant_id, body.sweep_id)
     return result.to_dict()
@@ -1865,6 +1866,7 @@ def program_qualification_report(
             "qualified": 0,
             "drafted": 0,
             "counts_by_first_failing_criterion": {},
+            "excluded_infrastructure": 0,
             "failure_reason": "no qualification has run",
             "items": [],
             "total": 0,
