@@ -3,8 +3,7 @@
   "class": "RC2",
   "date": "2026-11-25",
   "owner": "Claude",
-  "reviewer": "Claude2",
-  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; the reviewer may be from the owner's family. Recorded here and in the problem register row.",
+  "reviewer": "Antigravity",
   "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md section 6B",
   "builder": "services/research/governed_market_dataset.py",
   "consumers": [
@@ -44,6 +43,7 @@
   ],
   "image_locks": "pyarrow added to services/research/runtime-requirements.txt (pyarrow==26.0.1, hash locked via uv pip compile) and services/control-plane/persona/requirements.txt (lock regenerated; only pyarrow was added in both locks). The research and persona images did not contain pyarrow, which DailyBarsReader needs.",
   "residual_findings": [
+    "Hosted facts measured read-only after the head (not changed here): (1) hosted daily_bars has traded_value null for every row on 481 of 484 days and volume null on collector rows, because daily_bars_store reads volume and value while collector rows carry volume_shares and turnover_twd; with the liquidity rule the hosted boundary is empty and fails closed as market_boundary_empty until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 lands; (2) available_time is present on all 484 days; (3) TWSE symbols start 2025-03-20 or 2025-03-21 (about 410 bars, 2330 has 411) and TPEx symbols start 2024-11-27 (483 to 484 bars), so the gate's 480 bars and 730 days cannot be met for TWSE symbols yet.",
     "Hosted proof (three consumers on real stored data, hosted memory.peak of research-orchestrator-svc and persona) is for the coordinator after deploy. The hosted store was not read here; thresholds (60 bars, 20 days, TWD 5,000,000 median traded value, 7 days stale) are engineering defaults chosen for the boundary of SD_STRATEGY_SCREEN_ENTRY_EXIT section 2 and are recorded in the amendment; the operator may tune them.",
     "The card distillation env (PANTHEON_L2_CARD_DATASET_ID, defaulting to PERSONA_POOL_SOURCE_DATASET_ID) must name governed-market:tw-daily or tw_price_daily for new cards; the resolver also accepts tw_price_daily, the logical dataset name the old default carried. A card pinned to a persona DatasetVersion id now resolves to nothing (fails closed with dataset_id_not_governed_market; the worker drops the binding). Outside this task's artifact list.",
     "services/research/alpha_replication/revalidation_worker.py (one call site, passes the rule's own symbols to the resolver) and services/control-plane/persona/main.py (does not publish a governed market dataset as a DatasetVersion pointer) were edited although not listed; both are required by the design.",

@@ -281,3 +281,190 @@ def test_scale_prefetched_first_page_is_reused_and_unavailable_persona_never_hid
     )
     assert result["hidden_retired_persona_count"] == 0
     assert result["total"] == 7500
+
+
+# --- REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125: hosted-shape owner hide ------
+
+_HOSTED_REAL_DRAFTS = 4205
+_HOSTED_RAW_SEED_DRAFTS = 1500
+_HOSTED_SIMULATION_DRAFTS = 100
+_HOSTED_TEST_PERSONA_DRAFTS = 1200
+_HOSTED_DATA_SCOPE_DRAFTS = 416
+_HOSTED_HIDDEN_DRAFTS = (
+    _HOSTED_RAW_SEED_DRAFTS
+    + _HOSTED_SIMULATION_DRAFTS
+    + _HOSTED_TEST_PERSONA_DRAFTS
+    + _HOSTED_DATA_SCOPE_DRAFTS
+)  # 3216 hidden drafts
+_HOSTED_DRAFTS = _HOSTED_REAL_DRAFTS + _HOSTED_HIDDEN_DRAFTS  # 7421 = 38 owner pages of 200
+
+
+def _hosted_shape_world() -> _World:
+    """The 141-row world plus 7421 draft families in the hosted proportions:
+    4205 visible and 3216 hidden (raw seeds, simulations, test-persona rows and
+    rows whose data_scope is test)."""
+    import dataclasses
+
+    from services.control_plane.bff.tests.test_strategy_operational_status import (
+        _persona_record,
+        _spec_entry,
+    )
+    from services.registry.models import ArtifactState
+
+    world = _World()
+    world.persona_records["persona-hosted-real"] = _persona_record(
+        "persona-hosted-real", lifecycle_state="paper_running"
+    )
+    world.persona_records["persona-hosted-test"] = {
+        **_persona_record("persona-hosted-test", lifecycle_state="paper_running"),
+        "metadata": {"data_scope": "test"},
+    }
+
+    def _draft(sid: str, title: str, persona_ids: list, n: int, data_scope: str = "") -> None:
+        entry = _spec_entry(
+            strategy_id=sid,
+            title=title,
+            persona_ids=persona_ids,
+            updated_at=f"2026-10-{1 + (n % 28):02d}T{(n // 28) % 24:02d}:{n % 60:02d}:00Z",
+        )
+        entry.metadata["strategy_spec"]["lifecycle_state"] = "draft"
+        if data_scope:
+            entry.metadata["data_scope"] = data_scope
+        world.entries.append(dataclasses.replace(entry, artifact_state=ArtifactState.DRAFT))
+
+    n = 0
+    for _ in range(_HOSTED_REAL_DRAFTS):
+        _draft(f"strat-hosted-real-{n:05d}", f"Real draft {n}", ["persona-hosted-real"], n)
+        n += 1
+    for i in range(_HOSTED_RAW_SEED_DRAFTS):
+        _draft(f"strat-tw-official:{i:05d}", f"TW official seed {i}", [], n)
+        n += 1
+    for i in range(_HOSTED_SIMULATION_DRAFTS):
+        _draft(f"strat-sim-{i:05d}", f"SIMULATION fixture {i}", [], n)
+        n += 1
+    for i in range(_HOSTED_TEST_PERSONA_DRAFTS):
+        _draft(f"strat-testpersona-{i:05d}", f"Probe {i}", ["persona-hosted-test"], n)
+        n += 1
+    for i in range(_HOSTED_DATA_SCOPE_DRAFTS):
+        _draft(f"strat-scope-{i:05d}", f"Scoped {i}", [], n, data_scope="test")
+        n += 1
+    return world
+
+
+def test_hosted_shape_every_filter_is_one_bounded_owner_read_with_exact_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _hosted_shape_world()
+    client = _client(monkeypatch, world)
+    base_non_retired = TOTAL_COUNT  # the 141 base rows are all non-retired specs
+
+    cases = {
+        "page_size=20": base_non_retired + _HOSTED_REAL_DRAFTS,
+        "state=draft&page_size=20": _HOSTED_REAL_DRAFTS,
+        "exclude_state=draft&page_size=20": base_non_retired,
+        "persona_id=persona-hosted-real&page_size=20": _HOSTED_REAL_DRAFTS,
+        "state=approved&page_size=20": base_non_retired,
+    }
+    for query, expected_total in cases.items():
+        world.owner_summary_calls.clear()
+        resp = client.get(f"/bff/strategies?{query}", headers=HEADERS)
+        assert resp.status_code == 200, (query, resp.text)
+        body = resp.json()
+        calls = world.owner_summary_calls
+        # One page read; the only possible second read is the operational-count
+        # candidate set, which exists only when it fits one owner page. Never a walk.
+        assert 1 <= len(calls) <= 2, (query, calls)
+        assert all("hide_stubs=true" in c[0] for c in calls), (query, calls)
+        assert sum(1 for c in calls if "page_size=200" in c[0]) <= 1, (query, calls)
+        assert body["page_info"]["total"] == expected_total, query
+        assert body["meta"]["total"] == expected_total, query
+        meta = body["meta"]
+        # Hidden counts describe the filtered candidate set: only the draft
+        # views and the unfiltered view contain hidden rows.
+        hidden_in_candidates = query.startswith(("page_size=", "state=draft"))
+        assert meta["state_counts"]["draft"] == _HOSTED_DRAFTS  # keeps its present meaning
+        vsc = meta["visible_state_counts"]
+        assert vsc["draft"] == _HOSTED_REAL_DRAFTS
+        if query.startswith("state=draft") or query.startswith("persona_id="):
+            assert body["page_info"]["total"] == vsc["draft"], query
+        if query.startswith("exclude_state=draft") or query.startswith("state=approved"):
+            assert body["page_info"]["total"] == vsc["approved"], query
+        if query.startswith("page_size="):
+            assert body["page_info"]["total"] == sum(
+                v for k, v in vsc.items() if k != "retired"
+            )
+        assert meta["hidden_test_persona_strategy_count"] == (
+            _HOSTED_TEST_PERSONA_DRAFTS + _HOSTED_DATA_SCOPE_DRAFTS
+            if hidden_in_candidates
+            else 0
+        ), query
+        assert meta["hidden_unbound_stub_strategy_count"] == (
+            _HOSTED_RAW_SEED_DRAFTS + _HOSTED_SIMULATION_DRAFTS
+            if hidden_in_candidates
+            else 0
+        ), query
+        assert len(body["items"]) == 20
+
+
+def test_hosted_shape_owner_without_hide_support_falls_back_without_zero_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An owner that does not answer the hide input gives no visible counts:
+    ``meta.visible_state_counts`` is null (never zeros) and the list is still
+    classified exactly by the BFF."""
+    from services.control_plane.bff.command_adapters import base as adapter_base
+
+    world = _World()
+    app, _ = _build_app(monkeypatch, world)
+    owner_http = adapter_base.http_request_json
+
+    def _legacy_owner(url: str, **kwargs: Any) -> Any:
+        out = owner_http(url, **kwargs)
+        if isinstance(out, dict):
+            out = {k: v for k, v in out.items() if k not in ("visible_state_counts", "hidden")}
+        return out
+
+    monkeypatch.setattr(adapter_base, "http_request_json", _legacy_owner)
+    body = TestClient(app).get("/bff/strategies?page_size=20", headers=HEADERS).json()
+    assert body["meta"]["visible_state_counts"] is None
+    assert body["page_info"]["total"] == TOTAL_COUNT
+
+
+def test_include_test_personas_keeps_every_row_and_counts_them_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _hosted_shape_world()
+    client = _client(monkeypatch, world)
+    world.owner_summary_calls.clear()
+    body = client.get(
+        "/bff/strategies?state=draft&page_size=20&include_test_personas=true", headers=HEADERS
+    ).json()
+    assert body["page_info"]["total"] == _HOSTED_DRAFTS
+    assert all("hide_stubs" not in c[0] for c in world.owner_summary_calls)
+    assert body["meta"]["visible_state_counts"] == body["meta"]["state_counts"]
+    assert body["meta"]["hidden_test_persona_strategy_count"] == 0
+
+
+def test_hosted_shape_hide_retired_total_and_stub_counts_are_exact_not_approximate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded hide-retired read no longer estimates the stub total from the
+    pages it happened to read: the owner excludes and counts the stubs over the
+    whole candidate set."""
+    world = _hosted_shape_world()
+    client = _client(monkeypatch, world)
+    world.owner_summary_calls.clear()
+    resp = client.get("/bff/strategies?hide_retired_personas=true&page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    retired_personas = len(world.retired_strategy_ids)
+    expected_total = TOTAL_COUNT + _HOSTED_REAL_DRAFTS - retired_personas
+    assert body["page_info"]["total"] == expected_total
+    meta = body["meta"]
+    assert meta["hidden_retired_persona_count"] == retired_personas
+    assert meta["hidden_test_persona_strategy_count"] == _HOSTED_TEST_PERSONA_DRAFTS + _HOSTED_DATA_SCOPE_DRAFTS
+    assert meta["hidden_unbound_stub_strategy_count"] == _HOSTED_RAW_SEED_DRAFTS + _HOSTED_SIMULATION_DRAFTS
+    assert meta["visible_state_counts"]["draft"] == _HOSTED_REAL_DRAFTS
+    assert all("hide_stubs=true" in c[0] for c in world.owner_summary_calls)
+    # first page of 200 + the draft-excluded reconciliation read; never 38 pages
+    assert len(world.owner_summary_calls) <= 3, world.owner_summary_calls

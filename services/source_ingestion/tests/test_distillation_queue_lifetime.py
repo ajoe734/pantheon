@@ -134,7 +134,7 @@ def _concurrent_writer(path: str, prefix: str, barrier, count: int) -> None:
                 queue = storage.DistillationJobQueue(path)
             source = SourceRecord(
                 source_id=f"{prefix}-{index}", connector_id="local-regression",
-                source_type="paper", status="normalized", title=f"{prefix}-{index}",
+                source_type="internal_note", status="normalized", title=f"{prefix}-{index}",
                 content_ref=f"file:///synthetic/{prefix}/{index}",
                 metadata={"body": prefix * 8192},
             )
@@ -229,7 +229,7 @@ def test_two_process_cold_start_initializes_fresh_queue(tmp_path):
     for path in paths:
         queue = storage.DistillationJobQueue(path)
         source = SourceRecord(
-            source_id="cold", connector_id="local-regression", source_type="paper",
+            source_id="cold", connector_id="local-regression", source_type="internal_note",
             status="normalized", title="cold", content_ref="file:///synthetic/cold",
             metadata={},
         )
@@ -363,7 +363,7 @@ from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore 
 
 def _src(source_id: str) -> SourceRecord:
     return SourceRecord(
-        source_id=source_id, connector_id="conn-papers", source_type="paper",
+        source_id=source_id, connector_id="conn-papers", source_type="internal_note",
         title=f"title {source_id}", content_ref=f"https://doi.org/{source_id}",
         status="normalized",
         metadata={"trust_score": 0.8, "access_scope": ["research"], "license_scope": "internal"},

@@ -73,8 +73,11 @@ class PostmortemService:
         q: Optional[str] = None,
         page_size: Optional[int] = 50,
         page_token: Optional[str] = None,
+        include_infrastructure: bool = False,
     ) -> Dict[str, Any]:
         """List a bounded page of postmortems from the canonical owner."""
+        # Forwarded only when true so stores that predate the flag keep working.
+        extra: Dict[str, Any] = {"include_infrastructure": True} if include_infrastructure else {}
         if hasattr(self.read_store, "list_postmortems_page"):
             return getattr(self.read_store, "list_postmortems_page")(
                 time_range=time_range,
@@ -82,6 +85,7 @@ class PostmortemService:
                 q=q,
                 page_size=page_size,
                 page_token=page_token,
+                **extra,
             )
         rows = list(self.read_store.list_postmortems(time_range=time_range) or [])
         return DomainIncidentPort._paginate_postmortem_rows(

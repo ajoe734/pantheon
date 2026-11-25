@@ -1,0 +1,14 @@
+{
+  "task_id": "PAPER-IMAGES-CANNOT-READ-APPROVALS-20261125",
+  "root_cause": "pydantic absent from execution-lean_runtime and paper_fleet_reconciler locks; approval_authority import failed and was swallowed",
+  "pins": {"pydantic": "2.13.5", "pydantic-core": "2.46.5", "annotated-types": "0.8.0", "typing-inspection": "0.4.4"},
+  "tests": {
+    "scripts/test_paper_image_dependencies.py": "5 passed; 4 failed on dev head before the change",
+    "services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py": "expression inputs provider and order-time active risk policy resolve v2.0 through real Capital and Governance apps",
+    "services/capital": "487 passed, 1 failed (test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer_and_reconciler_envs: No module named yaml, fails identically on dev head)"
+  },
+  "memory_rss_mb": {"python_baseline": 8.9, "import_pydantic": 16.7, "import_approval_authority": 30.3, "reconciler_peak_before": 1061, "limit": 1280, "expected_peak_after": "about 1125 (88 percent); worst case 1229 (96 percent)", "limit_changed": false},
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer from owner's family",
+  "hosted_acceptance": "pending deployment: next daily decisions of three trading personas carry pre_trade_sizing with risk policy v2.0 or strategy HOLD, none budget_unavailable",
+  "residual_findings": ["test_risk_policy compose-env test needs PyYAML in the test environment"]
+}

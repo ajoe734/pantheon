@@ -24,6 +24,7 @@ from .config import (DISABLED_BY_BUILD_TOKENS, GDELT_BASE_URL, GDELT_INDEX_URL,
 from .fetchers import (
     DoclingBookAdapter,
     FetchAccessBlockedError,
+    FetchBackendUnavailableError,
     FetchResponse,
     FetchTransport,
     PolicyEnforcedFetcher,
@@ -896,16 +897,15 @@ class RssHubPaperPoller:
 
 
 class RssHubNewsPoller:
-    """Taiwan news RSSHub poller (cna, udn, ltn, chinatimes, cw); Yahoo and Anue/cnyes DISABLED_BY_BUILD (SD §5.5)."""
+    """Taiwan news RSSHub poller (cna, udn); Yahoo and Anue/cnyes DISABLED_BY_BUILD (SD §5.5)."""
 
     source_id = "collector-news-rss"
     VERIFIED_ROUTES = frozenset(
         {
-            "/cna/aall",
-            "/udn/news/breakingnews/2",
-            "/ltn/news/business",
-            "/chinatimes/realtimenews/260410",
-            "/cw/master",
+            "/cna/aie",
+            "/cna/asc",
+            "/udn/news/breakingnews/6",
+            "/udn/news/breakingnews/11",
         }
     )
 
@@ -920,10 +920,16 @@ class RssHubNewsPoller:
         self.fetcher = ScraplingHttpFetcher(
             policy, transport=transport, contact_user_agent=contact_user_agent
         )
+        self.skipped_count = 0
+        self.route_errors: dict[str, str] = {}
+        self.all_routes_failed = False
 
     @classmethod
     def validate_route(cls, route: str) -> str:
-        norm = "/" + str(route or "").strip().lstrip("/")
+        raw = str(route or "").strip()
+        if not raw or not raw.strip("/"):
+            raise CollectorConfigError("RSSHub news route must be a non-empty path")
+        norm = "/" + raw.lstrip("/")
         lowered = norm.lower()
         for forbidden in DISABLED_BY_BUILD_TOKENS:
             if forbidden in lowered:
@@ -934,23 +940,68 @@ class RssHubNewsPoller:
             raise CollectorConfigError("RSSHub has no ptt route (SD §5.5); use PttStockSpider instead")
         return norm
 
+    def _resolve_routes(self, routes: Sequence[str] | None) -> tuple[str, ...]:
+        raw_routes = self.policy.raw_config.get("routes") if routes is None else routes
+        if (
+            not isinstance(raw_routes, Sequence)
+            or isinstance(raw_routes, (str, bytes))
+            or not raw_routes
+        ):
+            raise CollectorConfigError(
+                "collector-news-rss requires a non-empty routes list in fetch-policy.json"
+            )
+        resolved = tuple(self.validate_route(r) for r in raw_routes)
+        if len(resolved) > self.policy.max_requests_per_run:
+            raise CollectorConfigError(
+                f"collector-news-rss routes count ({len(resolved)}) exceeds max_requests_per_run={self.policy.max_requests_per_run}"
+            )
+        return resolved
+
     def collect(
         self,
         *,
-        routes: Sequence[str] = ("/cna/aall",),
+        routes: Sequence[str] | None = None,
         fetched_at: datetime | str | None = None,
     ) -> list[CollectedItem]:
+        target_routes = self._resolve_routes(routes)
         fetched_iso = fetched_at if isinstance(fetched_at, str) else utc_iso(fetched_at)
         base = self.policy.base_urls[0].rstrip("/")
         items: list[CollectedItem] = []
+        seen_keys: set[str] = set()
+        self.route_errors = {}
+        self.all_routes_failed = False
+        succeeded_routes = 0
 
-        for route in routes:
-            norm_route = self.validate_route(route)
+        for norm_route in target_routes:
             publisher = norm_route.strip("/").split("/", 1)[0]
             url = f"{base}{norm_route}"
-            response = self.fetcher.fetch(url)
-            root = ET.fromstring(response.text)
+            try:
+                response = self.fetcher.fetch(url)
+            except FetchAccessBlockedError as blocked:
+                self.route_errors[norm_route] = blocked.block_reason
+                continue
+            except (CollectorConfigError, FetchBackendUnavailableError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - isolate per-route transport failure
+                self.route_errors[norm_route] = f"fetch_error:{type(exc).__name__}"
+                continue
 
+            if response.http_status != 200:
+                self.route_errors[norm_route] = f"http_{response.http_status}"
+                continue
+
+            try:
+                root = ET.fromstring(response.text)
+            except ET.ParseError as exc:
+                self.route_errors[norm_route] = f"invalid_xml:{exc}"
+                continue
+
+            root_tag = root.tag.rsplit("}", 1)[-1].lower()
+            if root_tag not in {"rss", "feed", "rdf"}:
+                self.route_errors[norm_route] = f"invalid_xml:unexpected_root_{root_tag}"
+                continue
+
+            succeeded_routes += 1
             for item_el in root.findall(".//item"):
                 guid = (item_el.findtext("guid") or item_el.findtext("link") or "").strip()
                 slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", guid.rsplit("/", 1)[-1]).strip("-") or "news"
@@ -959,11 +1010,21 @@ class RssHubNewsPoller:
                 desc = (item_el.findtext("description") or "").strip()
                 pub_date = _rss_pub_iso((item_el.findtext("pubDate") or fetched_iso).strip())
                 combined = f"{title} — {desc}".strip()
+                item_id = f"news-{publisher}-{slug}"
+
+                dedupe_keys = {f"id:{item_id}"}
+                if guid:
+                    dedupe_keys.add(f"guid:{guid}")
+                if link and link != url:
+                    dedupe_keys.add(f"link:{link}")
+                if seen_keys & dedupe_keys:
+                    continue
+                seen_keys.update(dedupe_keys)
 
                 raw_xml = ET.tostring(item_el, encoding="utf-8")
                 items.append(
                     CollectedItem(
-                        item_id=f"news-{publisher}-{slug}",
+                        item_id=item_id,
                         url=link,
                         fetched_at=fetched_iso,
                         published_at=pub_date,
@@ -981,6 +1042,9 @@ class RssHubNewsPoller:
                         },
                     )
                 )
+
+        if succeeded_routes == 0 and self.route_errors:
+            self.all_routes_failed = True
         return items
 
 

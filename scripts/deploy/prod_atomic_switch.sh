@@ -39,6 +39,14 @@ BASELINE_FILE="${STATE}/baseline.json"
 ACTIVE_MANIFEST_FILE="${STATE}/active_manifest.json"
 RUNTIME_CONFIG_FILE="${PROD_ROOT}/config/runtime-config.js"
 BUDGET="${PROD_ROLLBACK_BUDGET_SECONDS:-120}"
+if [[ -n "${PROD_DATA_MOUNT:-}" && -d "${PROD_DATA_MOUNT}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT"
+  for _d in secrets manifests state fe proxy config; do
+    if [[ ! -e "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+      ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+    fi
+  done
+fi
 mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/fe/artifacts" "${PROD_ROOT}/manifests" "${PROD_ROOT}/proxy" "${PROD_ROOT}/config"
 
 PREFLIGHT_ARGS=(all --manifest "$RELEASE_MANIFEST_PATH" --expected-sha256 "$EXPECTED_MANIFEST_SHA256"
@@ -146,6 +154,19 @@ PREFLIGHT_OUT="$(python3 "${SCRIPT_DIR}/prod_preflight.py" "${PREFLIGHT_ARGS[@]}
   printf '%s\n' "$PREFLIGHT_OUT" >&2
   die_json "PREFLIGHT_FAILED" "production preflight failed closed; no state mutated"
 }
+if [[ -n "${PROD_DATA_MOUNT:-}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT" "${PROD_DATA_MOUNT}"/{secrets,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config}
+  for _d in secrets manifests state fe proxy config; do
+    if [[ -d "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" ]]; then
+      tar -C "${PROD_ROOT}/${_d}" -cf - . | tar -C "${PROD_DATA_MOUNT}/${_d}" -xpf - \
+        && rm -rf "${PROD_ROOT}/${_d}" \
+        || die_json "DATA_MIGRATE_FAILED" "cannot migrate ${PROD_ROOT}/${_d} onto ${PROD_DATA_MOUNT}/${_d}"
+    fi
+    ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}" \
+      || die_json "DATA_LINK_FAILED" "cannot symlink ${PROD_ROOT}/${_d} -> ${PROD_DATA_MOUNT}/${_d}"
+  done
+  mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/fe/artifacts" "${PROD_ROOT}/manifests" "${PROD_ROOT}/proxy" "${PROD_ROOT}/config"
+fi
 FE_SHA="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["frontend_artifact_sha256"])' "$PREFLIGHT_OUT")"
 BFF_IMAGE="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["operator_bff_image"])' "$PREFLIGHT_OUT")"
 FE_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["frontend"]["commit"])' "$RELEASE_MANIFEST_PATH")"

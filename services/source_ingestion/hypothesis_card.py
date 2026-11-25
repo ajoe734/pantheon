@@ -327,6 +327,12 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS cards (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " card TEXT NOT NULL, PRIMARY KEY(source_id, digest))"
             )
+            # One reservation per record version per day: a retry after an
+            # unavailable model/adapter must not consume the budget again.
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS reservations (day TEXT NOT NULL, source_id TEXT NOT NULL,"
+                " digest TEXT NOT NULL, PRIMARY KEY(day, source_id, digest))"
+            )
 
     @property
     def daily_cap(self) -> int:
@@ -345,13 +351,24 @@ class ExtractionLedger:
         finally:
             conn.close()
 
-    def reserve_call(self) -> bool:
-        """Atomically consume one call; False once the daily cap is reached."""
+    def reserve_call(self, source_id: str = "", digest: str = "") -> bool:
+        """Atomically consume one call; False once the daily cap is reached.
+
+        With a ``source_id`` the reservation is per record version and day: a
+        second reservation of the same record the same day is free.
+        """
         with self._lock, self._conn() as c:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
             day = _today()
+            # Bound: only today's reservations matter; older ones are deleted on write.
+            c.execute("DELETE FROM reservations WHERE day < ?", (day,))
+            if source_id and c.execute(
+                "SELECT 1 FROM reservations WHERE day=? AND source_id=? AND digest=?",
+                (day, source_id, digest),
+            ).fetchone():
+                return True
             row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             used = row[0] if row else 0
             if used >= self._daily_cap:
@@ -360,6 +377,11 @@ class ExtractionLedger:
                 "INSERT INTO calls(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1",
                 (day,),
             )
+            if source_id:
+                c.execute(
+                    "INSERT OR IGNORE INTO reservations(day, source_id, digest) VALUES(?,?,?)",
+                    (day, source_id, digest),
+                )
             return True
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:
@@ -401,6 +423,9 @@ class ExtractionLedger:
 # Eligibility
 # ---------------------------------------------------------------------------
 
+# Failure codes that mean the model or adapter could not answer: retry them.
+UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error"})
+
 _TEXT_KEYS = ("body", "text", "abstract", "excerpt", "summary")
 
 
@@ -410,6 +435,15 @@ def stored_text(metadata: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value
     return ""
+
+
+def assess_source_relevance(source: Any) -> Any:
+    """Deterministic finance relevance of one record (no model call)."""
+    from services.source_ingestion.l2_relevance import assess_relevance, hosted_listed_codes
+
+    return assess_relevance(
+        source.source_type.value, source.title, source.metadata, listed_codes=hosted_listed_codes,
+    )
 
 
 def extraction_origin(source_type: str, metadata: Mapping[str, Any]) -> Optional[str]:
@@ -435,7 +469,9 @@ def extraction_origin(source_type: str, metadata: Mapping[str, Any]) -> Optional
 
 @dataclass(frozen=True)
 class ExtractionOutcome:
-    status: str  # card | no_hypothesis | budget_exhausted | rejected | admission_denied | failed
+    # card | no_hypothesis | budget_exhausted | rejected | admission_denied | irrelevant
+    # | unavailable (model/adapter down: retry) | failed (model answered unusably)
+    status: str
     card: Optional[dict[str, Any]] = None
     detail: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -458,12 +494,12 @@ class HypothesisExtractor:
             cached = self._ledger.get_card(source.source_id, digest)
             if cached is not None:
                 return ExtractionOutcome("card", card=cached, detail="cached")
-        outcome = self._extract(source)
+        outcome = self._extract(source, digest)
         if digest and outcome.card is not None:
             self._ledger.put_card(source.source_id, digest, outcome.card)
         return outcome
 
-    def _extract(self, source: Any) -> ExtractionOutcome:
+    def _extract(self, source: Any, digest: str = "") -> ExtractionOutcome:
         from services.source_ingestion.semantic_extraction import (
             ExtractionTaskType,
             SemanticExtractionAdmission,
@@ -478,6 +514,10 @@ class HypothesisExtractor:
         text = stored_text(meta)
         if not text:
             return self._done(sid, "no_hypothesis", "no_text")
+        # Deterministic finance relevance comes before admission and budget.
+        relevance = assess_source_relevance(source)
+        if not relevance.relevant:
+            return self._done(sid, "irrelevant", relevance.reason)
         prompt_text = text[:MAX_PROMPT_TEXT_CHARS]
         request = SemanticExtractionRequest(
             source_id=sid,
@@ -496,11 +536,17 @@ class HypothesisExtractor:
         admission = SemanticExtractionAdmission.check(request)
         if not admission.admitted:
             return self._done(sid, "admission_denied", admission.denial_code or "denied", {"reason": admission.denial_reason})
-        if not self._ledger.reserve_call():
+        if not self._ledger.reserve_call(sid, digest):
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
-        result = self._client.extract(request)
+        try:
+            result = self._client.extract(request)
+        except Exception as exc:  # noqa: BLE001 - an unreachable adapter is not "no hypothesis"
+            return self._done(sid, "unavailable", f"{type(exc).__name__}: {exc}")
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
-            return self._done(sid, "failed", f"{result.failure_code}: {result.failure_message}")
+            detail = f"{result.failure_code}: {result.failure_message}"
+            if result.failure_code in UNAVAILABLE_FAILURE_CODES:
+                return self._done(sid, "unavailable", detail)
+            return self._done(sid, "failed", detail)
         if result.is_abstained or result.hypothesis_card is None:
             return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained")
         try:
