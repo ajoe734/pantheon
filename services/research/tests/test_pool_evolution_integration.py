@@ -560,6 +560,10 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
         AtomicJsonRecordStore(tmp_path / "pool_pass.json"),
         registry_reader=lambda ref, _: entries.get(ref, {}),
         now=lambda: "2026-11-16T00:00:00Z",
+        # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (MarketBoundary row shape)
+        market_boundary_provider=lambda: __import__("types").SimpleNamespace(
+            snapshot_id="gmd-2026-11-15-0123456789abcdef", as_of="2026-11-16T00:00:00+00:00",
+            symbols=("2330.TW", "2317.TW", "0050.TW")),
     )
     store.append(
         pid,
