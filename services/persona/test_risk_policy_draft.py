@@ -22,6 +22,9 @@ INPUTS = DraftInputs(
 
 GOOD = {"gross_limit": 0.8, "net_limit": 0.8, "max_leverage": 1.0, "max_single_name_weight": 0.15,
         "min_cash_reserve_pct": 0.12,
+        "max_sector_exposure": 0.35,
+        "turnover_limit": 1.2,
+        "liquidity_constraints": {"min_avg_daily_volume": 500000, "max_order_pct_adv": 0.05},
         "rationale": "low profile on a 100000 TWD pool trading 2317.TW; the 452-share cash rejection shows a full position is unsafe"}
 
 
@@ -273,3 +276,66 @@ def test_malformed_first_answer_is_retried_and_failed_turn_is_not() -> None:
     failed = draft_pool_risk_policy(INPUTS, turn_runner=_sequence_runner(
         [{}], calls) if False else (lambda pid, prompt, **k: calls.append(prompt) or _runner(GOOD, status="error")(pid, prompt)))
     assert not failed.ok and len(calls) == 1
+
+
+def test_blueprint_limits_draft_values_explicit_omission_with_reason_and_outer_bounds() -> None:
+    # 1. Explicit values are carried into the validated policy.
+    res_val = draft_pool_risk_policy(INPUTS, turn_runner=_runner(GOOD))
+    assert res_val.ok and res_val.policy is not None
+    assert res_val.policy["max_sector_exposure"] == 0.35
+    assert res_val.policy["turnover_limit"] == 1.2
+    assert res_val.policy["liquidity_constraints"] == {
+        "min_avg_daily_volume": 500000.0,
+        "max_order_pct_adv": 0.05,
+    }
+
+    # 2. Explicit null with reason records omission reason and omits the limit from policy.
+    with_omitted = {
+        **GOOD,
+        "max_sector_exposure": {"24": 0.30, "*": 0.25},
+        "turnover_limit": None,
+        "liquidity_constraints": {"none": True, "reason": "single liquid large-cap mandate on 2317.TW"},
+        "omitted_limits": {
+            "turnover_limit": "daily rebalance cadence bounded by single-name cap on 100000 TWD pool",
+        },
+    }
+    res_omit = draft_pool_risk_policy(INPUTS, turn_runner=_runner(with_omitted))
+    assert res_omit.ok and res_omit.policy is not None
+    assert res_omit.policy["max_sector_exposure"] == {"24": 0.30, "*": 0.25}
+    assert "turnover_limit" not in res_omit.policy
+    assert "liquidity_constraints" not in res_omit.policy
+    omitted_meta = res_omit.policy["metadata"]["risk_officer_draft"]["omitted_limits"]
+    assert "100000 TWD" in omitted_meta["turnover_limit"]
+    assert "2317.TW" in omitted_meta["liquidity_constraints"]
+
+    # 3. Missing blueprint limit key or null without reason is rejected.
+    no_sector_key = {k: v for k, v in GOOD.items() if k != "max_sector_exposure"}
+    res_no_key = draft_pool_risk_policy(INPUTS, turn_runner=_runner(no_sector_key))
+    assert not res_no_key.ok and "missing_blueprint_limit:max_sector_exposure" in res_no_key.reason
+
+    null_no_reason = {**GOOD, "turnover_limit": None}
+    res_no_reason = draft_pool_risk_policy(INPUTS, turn_runner=_runner(null_no_reason))
+    assert not res_no_reason.ok and "missing_omission_reason:turnover_limit" in res_no_reason.reason
+
+    # 4. Configured operator outer bounds for sector, turnover, and liquidity are enforced.
+    bounded_inputs = DraftInputs(
+        **{
+            **INPUTS.__dict__,
+            "bounds": {
+                **INPUTS.bounds,
+                "max_sector_exposure": 0.30,
+                "turnover_limit": 1.0,
+                "max_order_pct_adv": 0.03,
+                "min_avg_daily_volume": 600000.0,
+            },
+        }
+    )
+    prompt = build_prompt(bounded_inputs)
+    assert "max_sector_exposure at most 0.3 of equity" in prompt
+    assert "turnover_limit at most 1.0 x equity" in prompt
+    assert "max_order_pct_adv at most 0.03 of 20d ADV" in prompt
+    assert "min_avg_daily_volume at least 600000.0 20d ADV" in prompt
+
+    res_exceeds_sector = draft_pool_risk_policy(bounded_inputs, turn_runner=_runner(GOOD))
+    assert not res_exceeds_sector.ok and "outside_bounds:max_sector_exposure" in res_exceeds_sector.reason
+

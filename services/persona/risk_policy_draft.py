@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from services.capital.risk_policy import (
+    DRAFT_BLUEPRINT_LIMITS,
     DRAFT_REQUIRED_LIMITS,
     profile_outer_bounds,
     risk_policy_digest,
@@ -78,10 +79,12 @@ class DraftResult:
 
 
 UNIT_TEXT = (
-    "Units (all limits are RATIOS, never currency amounts): gross_limit, net_limit and max_leverage are multiples "
-    "of the pool's equity (1.0 = 100% of equity, 2.0 = 200%); max_single_name_weight and min_cash_reserve_pct are "
-    "fractions of equity (0.20 = 20%). The pool budget and currency are context for sizing only and must never "
-    "appear as a limit value (a gross_limit of 10000 is wrong)."
+    "Units (all limits are RATIOS, never currency amounts): gross_limit, net_limit, max_leverage and turnover_limit "
+    "are multiples of the pool's equity (1.0 = 100% of equity, 2.0 = 200%); max_single_name_weight, "
+    "min_cash_reserve_pct and max_sector_exposure are fractions of equity (0.20 = 20%); liquidity_constraints uses "
+    "max_order_pct_adv as a fraction of recent 20-day average daily volume in (0,1] and/or min_avg_daily_volume as "
+    "a positive 20-day average daily volume floor. The pool budget and currency are context for sizing only and must "
+    "never appear as a limit value (a gross_limit of 10000 is wrong)."
 )
 
 
@@ -96,8 +99,15 @@ def _bounds_text(inputs: DraftInputs) -> str:
         return " (none configured for this profile)"
     parts = []
     for name, value in bounds.items():
-        kind = "at least" if name == "min_cash_reserve_pct" else "at most"
-        unit = "x equity" if name in ("gross_limit", "max_leverage") else "of equity"
+        kind = "at least" if name in ("min_cash_reserve_pct", "min_avg_daily_volume") else "at most"
+        if name in ("gross_limit", "max_leverage", "turnover_limit"):
+            unit = "x equity"
+        elif name == "max_order_pct_adv":
+            unit = "of 20d ADV"
+        elif name == "min_avg_daily_volume":
+            unit = "20d ADV"
+        else:
+            unit = "of equity"
         parts.append(f"{name} {kind} {value} {unit}")
     return ": " + "; ".join(parts) + " | " + json.dumps(bounds)
 
@@ -111,6 +121,10 @@ def build_prompt(inputs: DraftInputs, refusal: str = "") -> str:
         "and a draft outside them is rejected" + _bounds_text(inputs)
         + ". Return only JSON: {\"gross_limit\": number>0, \"net_limit\": number>0, \"max_leverage\": number>0, "
         "\"max_single_name_weight\": number in (0,1), \"min_cash_reserve_pct\": number in (0,1), "
+        "\"max_sector_exposure\": number in (0,1] or {\"<sector>\": number in (0,1]} or null, "
+        "\"turnover_limit\": number>0 or null, "
+        "\"liquidity_constraints\": {\"max_order_pct_adv\": number in (0,1], \"min_avg_daily_volume\": number>0} or null, "
+        "\"omitted_limits\": {\"<limit_name>\": \"<non-empty reason whenever max_sector_exposure, turnover_limit or liquidity_constraints is null>\"}, "
         "\"rationale\": \"<short text that cites the profile, budget/currency, instruments and evidence you used>\"}."
         "\nInputs:\n" + json.dumps(inputs.as_prompt_data(), ensure_ascii=False, allow_nan=False, default=str)
     )
@@ -186,12 +200,72 @@ def _evaluate(inputs: DraftInputs, turn: Any, base_prov: dict[str, Any], now: Ca
         value = data.get(name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             return _fail(f"risk_officer_draft_missing_or_non_numeric:{name}", **turn_prov)
+    raw_omitted = data.get("omitted_limits")
+    if raw_omitted is not None and not isinstance(raw_omitted, Mapping):
+        return _fail("risk_officer_draft_invalid_omitted_limits", **turn_prov)
+    omitted_map = dict(raw_omitted) if isinstance(raw_omitted, Mapping) else {}
+    blueprint_fields: dict[str, Any] = {}
+    omitted_limits: dict[str, str] = {}
+    for name in DRAFT_BLUEPRINT_LIMITS:
+        if name not in data:
+            return _fail(f"risk_officer_draft_missing_blueprint_limit:{name}", **turn_prov)
+        raw_val = data.get(name)
+        inline_none = isinstance(raw_val, Mapping) and raw_val.get("none") is True
+        if raw_val is None or inline_none:
+            reason_val = (
+                (raw_val.get("reason") if isinstance(raw_val, Mapping) else None)
+                or omitted_map.get(name)
+                or data.get(f"{name}_reason")
+                or data.get(f"{name}_omitted_reason")
+            )
+            if not isinstance(reason_val, str) or not reason_val.strip():
+                return _fail(f"risk_officer_draft_missing_omission_reason:{name}", **turn_prov)
+            omitted_limits[name] = reason_val.strip()[:MAX_TEXT]
+            continue
+        if name == "turnover_limit":
+            if isinstance(raw_val, bool) or not isinstance(raw_val, (int, float)) or not math.isfinite(float(raw_val)):
+                return _fail("risk_officer_draft_missing_or_non_numeric:turnover_limit", **turn_prov)
+            blueprint_fields["turnover_limit"] = float(raw_val)
+        elif name == "max_sector_exposure":
+            if isinstance(raw_val, Mapping):
+                if not raw_val:
+                    return _fail("risk_officer_draft_empty_limit:max_sector_exposure", **turn_prov)
+                sec_map: dict[str, float] = {}
+                for sec_k, sec_v in raw_val.items():
+                    if (
+                        isinstance(sec_v, bool)
+                        or not isinstance(sec_v, (int, float))
+                        or not math.isfinite(float(sec_v))
+                    ):
+                        return _fail("risk_officer_draft_missing_or_non_numeric:max_sector_exposure", **turn_prov)
+                    sec_map[str(sec_k)] = float(sec_v)
+                blueprint_fields["max_sector_exposure"] = sec_map
+            elif not isinstance(raw_val, bool) and isinstance(raw_val, (int, float)) and math.isfinite(float(raw_val)):
+                blueprint_fields["max_sector_exposure"] = float(raw_val)
+            else:
+                return _fail("risk_officer_draft_missing_or_non_numeric:max_sector_exposure", **turn_prov)
+        elif name == "liquidity_constraints":
+            if not isinstance(raw_val, Mapping) or not raw_val:
+                return _fail("risk_officer_draft_empty_limit:liquidity_constraints", **turn_prov)
+            liq_map: dict[str, float] = {}
+            for liq_k, liq_v in raw_val.items():
+                if (
+                    isinstance(liq_v, bool)
+                    or not isinstance(liq_v, (int, float))
+                    or not math.isfinite(float(liq_v))
+                ):
+                    return _fail(f"risk_officer_draft_missing_or_non_numeric:{liq_k}", **turn_prov)
+                liq_map[str(liq_k)] = float(liq_v)
+            blueprint_fields["liquidity_constraints"] = liq_map
     rationale = data.get("rationale")
     if not isinstance(rationale, str) or len(rationale.strip()) < 20:
         return _fail("risk_officer_draft_rationale_missing", **turn_prov)
     cited = (inputs.profile, inputs.currency, *inputs.instruments, str(inputs.budget))
     if not any(c and str(c).lower() in rationale.lower() for c in cited):
         return _fail("risk_officer_draft_rationale_cites_no_input", **turn_prov)
+    draft_meta: dict[str, Any] = {**turn_prov, "rationale": rationale.strip()[:MAX_RATIONALE]}
+    if omitted_limits:
+        draft_meta["omitted_limits"] = omitted_limits
     policy: dict[str, Any] = {
         "risk_policy_id": inputs.policy_id or f"rp-{inputs.pool_id}",
         "version": inputs.version,
@@ -199,8 +273,9 @@ def _evaluate(inputs: DraftInputs, turn: Any, base_prov: dict[str, Any], now: Ca
         "allowed_stages": ["paper"],
         "allowed_asset_classes": ["equity", "future"],
         **{name: float(data[name]) for name in DRAFT_REQUIRED_LIMITS},
+        **blueprint_fields,
         "metadata": {
-            "risk_officer_draft": {**turn_prov, "rationale": rationale.strip()[:MAX_RATIONALE]},
+            "risk_officer_draft": draft_meta,
         },
     }
     model, reason = validate_drafted_pool_risk_policy(policy, profile=inputs.profile, bounds=profile_outer_bounds()
