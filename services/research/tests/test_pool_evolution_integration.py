@@ -692,6 +692,16 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     evolution_main.receipt_registry["research"] = ResearchPlaneAdapter(api_url="http://research", http_json=http_json)
 
+    # Each "next cadence" is one scheduler interval later on the research orchestrator's clock: a deferred run is
+    # re-executed at most once per cadence (REQUALIFY-REFUSAL-NOT-CRASH-20261125).
+    from datetime import timedelta, timezone
+
+    clock = {"now": datetime.now(timezone.utc).replace(microsecond=0)}
+    monkeypatch.setattr(research, "utc_now", lambda: clock["now"].isoformat().replace("+00:00", "Z"))
+
+    def next_cadence():
+        clock["now"] += timedelta(seconds=86400)
+
     # 1. Synthetic dataset is refused as input -> operator_decision_required, member NOT removed (AC 2, AC 5).
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
@@ -705,6 +715,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     # 2. Short (< 2 years) dataset on next cadence -> insufficient_point_in_time_history, member NOT removed (AC 5).
     state["dataset"] = recorded_dataset()
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
@@ -718,6 +729,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
     # 3. Owner read failure on next cadence -> owner_read_failed:strategy_spec, member NOT removed (AC 5).
     state["dataset"] = dataset_2yr
     state["spec_down"] = True
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
@@ -730,6 +742,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     # 4. Next cadence with governed 2-year TWSE exchange dataset succeeds and replaces legacy member in one pool version (AC 3, AC 8).
     state["spec_down"] = False
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
