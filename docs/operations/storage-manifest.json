@@ -4644,13 +4644,17 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unbounded",
-   "cap": "heartbeat rows: deleted after hourly summary by HeartbeatRetentionJob (raw 3 days); runtime_state_snapshot rows: at most 1 start snapshot + structural changes (fill, position, member book) + 4 mark-to-market-only snapshots per runtime per hour (PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR), measured shape after change: <= 1 per runtime in a pre-open hour (was 286-304 per hour, about 7,000 per runtime per day, about 610 bytes each, about 17 MB/day for 4 runtimes on 2026-11-18); paper decision/order/fill/rejection sizing evidence (PAPER-SIZING-BOUND-RISK-POLICY-20261121, RC2) is bounded per event to compact metadata.pre_trade_sizing <= 384 B (PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384, measured 266 B on 2317 baseline) and metadata.submission_sizing_evidence <= 320 B (SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320, measured 215 B on 2317 baseline, down from 1068 B) with 0 extra rows and 0 duplicate embedded decision or constraint_unit_caps dicts; infrastructure_health and other event types have no table-level cap",
+   "bound_proof": {
+    "contains": "PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS",
+    "file": "services/telemetry/heartbeat_retention.py"
+   },
+   "bound_status": "bounded",
+   "cap": "5 GB / <= 100 MB/day steady-state table budget (scripts/measure_hosted_storage.py BUDGETS): heartbeat rows deleted after hourly summary (raw 3 days, PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS); runtime_state_snapshot rows deleted after 3 days except newest/oldest per runtime and unknown-valuation history (PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS, emitted at <= 1 start + structural changes + 4 MTM/hour via PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR); unreferenced infrastructure_health rows deleted after 7 days (PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS); all other unreferenced non-permanent telemetry_events rows deleted after 14 days (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 per 2026-11-25 operator decision) while preserving ingested_seq consumer watermarks, incident/postmortem references, latest per-runtime snapshot/valuation anchors, and permanent canonical fill/governance/deploy/decision/episode rows (< 15 KB/day = < 0.5 MB/month); paper sizing evidence bounded per event to metadata.pre_trade_sizing <= 384 B and metadata.submission_sizing_evidence <= 320 B (PAPER-SIZING-BOUND-RISK-POLICY-20261121)",
    "changed_fields": {
-    "cadence": "0 extra rows emitted; compact pre_trade_sizing and submission_sizing_evidence are attached only to existing paper trade_decision, paper_fill_simulated, paper_order_simulated (no_trade_at_submission), and order_rejection events (1 daily cycle/persona/day across 3 enrolled dev paper personas, ~3-15 decision events/day and ~0-9 order/fill/rejection events/day; staged transiently in paper_performance_ledger.v1 pending_fill_publications and LifecycleTelemetryOutbox until telemetry admission ack clears pending_fill_publications to [] and in RedisPendingSignalStore pantheon:paper:decisions:v1:{decision_id} with 30-day EX TTL)",
-    "cap": "metadata.pre_trade_sizing <= 384 UTF-8 bytes (PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 in services/execution/lean_runtime/expression_policy.py) and metadata.submission_sizing_evidence <= 320 UTF-8 bytes (SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320 in services/execution/lean_runtime/paper_runtime.py); transient paper_performance_ledger.v1 pending_fill_publications drains to 0 entries on ack_fill_publication; Redis decision records expire after DECISION_RECORD_TTL_SECONDS = 30 * 86400; whole-table retention for non-heartbeat/non-snapshot telemetry_events rows remains tracked under RC3",
-    "cleanup": "heartbeat and runtime_state_snapshot rows pruned by HeartbeatRetentionJob; paper_performance_ledger.v1 pending_fill_publications cleared on ack_fill_publication; LifecycleTelemetryOutbox pruned on delivery ack (MAX_CHAINS = 64); Redis pending signal queue cleared on ack() and decision records expire via 30-day Redis EX TTL; telemetry_events order/fill/decision row retention tracked under RC3 WP3.1",
-    "count_at_hosted_scale": "3 enrolled dev paper personas (~3-15 decision events/day and ~0-9 order/fill/rejection events/day across the fleet; 0 extra rows)",
+    "cadence": "HeartbeatRetentionJob runs every 300s (<= 20 batches x 5000 rows per event class per run, 15s statement timeout, no second background scheduler); 0 extra rows emitted by sizing evidence (attached only to existing paper trade_decision, paper_fill_simulated, paper_order_simulated, and order_rejection events across 3 enrolled dev paper personas)",
+    "cap": "14-day retention window (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS = 14.0 in services/telemetry/heartbeat_retention.py) for unreferenced non-permanent rows alongside 3d heartbeat, 3d runtime_state_snapshot, and 7d infrastructure_health windows; steady-state public.telemetry_events bounded within 5 GB and <= 100 MB/day (exempt permanent audit/fill/decision/episode rows grow at < 15 KB/day = < 0.5 MB/month); metadata.pre_trade_sizing <= 384 UTF-8 bytes and metadata.submission_sizing_evidence <= 320 UTF-8 bytes",
+    "cleanup": "services/telemetry/heartbeat_retention.py HeartbeatRetentionJob and scripts/telemetry_heartbeat_reclaim.py prune >3d heartbeat, >3d runtime_state_snapshot, >7d unreferenced infrastructure_health, and >14d unreferenced non-permanent telemetry_events rows in bounded 5000-row batches under safe_ingested_seq watermark and incident/postmortem/anchor/canonical-fill protection",
+    "count_at_hosted_scale": "4 dev paper runtimes / 3 enrolled dev paper personas (~20-40 MB/day total raw telemetry after heartbeat & snapshot cadence bounds; <= 0.5 GB steady-state across the 3d/7d/14d windows; permanent canonical fill/governance/deploy/decision/episode rows ~5-25 rows/day = < 15 KB/day)",
     "fields": [
      "metadata.pre_trade_sizing",
      "metadata.submission_sizing_evidence",
@@ -4658,28 +4662,29 @@
      "metadata.risk_policy_version",
      "metadata.risk_policy_digest"
     ],
-    "growth_per_day": "about 1.5-12 KB/day of incremental telemetry_events JSON payload across 3 enrolled dev paper personas (< 0.4 MB/month); 0 B/day steady-state in paper_performance_ledger.v1 after ack_fill_publication; ~0.8-4.0 KB/day in Redis decision records capped by 30-day TTL (~24-120 KB steady-state window)",
-    "size": "266 B measured (<= 384 B cap) for compact metadata.pre_trade_sizing and 215 B measured (<= 320 B cap, reduced from 1068 B) for compact metadata.submission_sizing_evidence plus ~162 B for risk_policy_id/version/digest (~643 B total incremental metadata on a fill/order/rejection event)",
-    "task": "PAPER-SIZING-BOUND-RISK-POLICY-20261121"
+    "growth_per_day": "<= 100 MB/day gross (~20-40 MB/day measured after heartbeat and runtime_state_snapshot cadence fixes, bounded at steady state by 3d/7d/14d retention); permanent exempt canonical audit/fill/decision/episode rows < 15 KB/day (< 0.5 MB/month)",
+    "size": "steady-state <= 0.5 GB (cap 5 GB in scripts/measure_hosted_storage.py); 266 B measured (<= 384 B cap) for compact metadata.pre_trade_sizing and 215 B measured (<= 320 B cap) for compact metadata.submission_sizing_evidence",
+    "task": "TELEMETRY-EVENTS-RETENTION-14D-20261125"
    },
-   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); runtime_state_snapshot: same job, bounded batches, rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS (default 3) are deleted except the newest and oldest snapshot per runtime and snapshots whose performance_telemetry.status is marks_unavailable, invalid_ledger or invalid_drawdown_series (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); transient paper_performance_ledger.v1 pending_fill_publications cleared on ack_fill_publication; other types: none",
-   "growth_driver": "rows inserted by the owner service (CREATE TABLE); PAPER-SIZING-BOUND-RISK-POLICY-20261121 adds bounded compact sizing evidence metadata to existing paper decision/order/fill/rejection events with 0 extra rows",
-   "growth_per_day": "about 0.75 GB/day measured on 2026-11-17 (before the heartbeat cadence fix); incremental paper sizing evidence metadata (PAPER-SIZING-BOUND-RISK-POLICY-20261121) adds ~1.5-12 KB/day across 3 enrolled dev paper personas",
+   "cleanup": "services/telemetry/heartbeat_retention.py HeartbeatRetentionJob (every 300s, <= 20 batches x 5000 rows per run, 15s statement_timeout) and scripts/telemetry_heartbeat_reclaim.py: heartbeat rows > 3d summarized into telemetry_heartbeat_hourly_summaries and deleted (TELEMETRY-HEARTBEAT-RETENTION-20261117); runtime_state_snapshot rows > 3d deleted except newest/oldest per runtime and unknown-valuation history (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); unreferenced infrastructure_health rows > 7d deleted (TELEMETRY-INFRA-HEALTH-RETENTION-20261117); unreferenced non-permanent telemetry_events rows > 14d (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14) deleted while preserving consumer watermarks, incident/postmortem references, latest per-runtime snapshot/valuation anchors, and canonical fill/governance/deploy/decision/episode rows (TELEMETRY-EVENTS-RETENTION-14D-20261125)",
+   "growth_driver": "rows inserted by the owner service (CREATE TABLE); high-volume transient rows bounded by 3d/7d/14d retention windows while exempt canonical audit/fill/decision/episode rows grow at < 15 KB/day (< 0.5 MB/month)",
+   "growth_per_day": "<= 100 MB/day gross (~20-40 MB/day after heartbeat/snapshot cadence fixes, capped at steady state by 3d/7d/14d retention; permanent exempt canonical audit/fill/decision/episode rows < 15 KB/day = < 0.5 MB/month; was ~0.75 GB/day on 2026-11-17 before heartbeat cadence fix)",
    "kind": "table",
    "measured": {
-    "growth": "about 0.75 GB/day before the heartbeat fix",
-    "size": "29 GB, 13.7M rows (9.7M heartbeat, 2.75M infrastructure_health)",
-    "source": "2026-11-17 audit (docs/operations/remediation-plan-20261117.md section 2)"
+    "growth": "about 0.75 GB/day before the heartbeat fix; ~20-40 MB/day after cadence fixes (< 15 KB/day permanent canonical rows)",
+    "size": "29 GB, 13.7M rows (9.7M heartbeat, 2.75M infrastructure_health) on 2026-11-17; 5.55 GB, 1.58M rows on 2026-11-21 before 14-day non-permanent row pruning",
+    "source": "2026-11-17 audit (docs/operations/remediation-plan-20261117.md section 2) and 2026-11-21 reclaim measurement"
    },
    "name": "telemetry_events",
-   "note": "partial bound only; the entry stays unbounded until infrastructure_health is bounded",
+   "note": "bounded by 3d heartbeat, 3d runtime_state_snapshot, 7d infrastructure_health, and 14d PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS retention in services/telemetry/heartbeat_retention.py (2026-11-25 operator decision)",
    "owner": "telemetry",
    "readers": [
     "scripts/db_migrate.sh",
+    "services/telemetry/heartbeat_retention.py",
     "services/telemetry/ingest_svc.py"
    ],
    "register_class": "RC3",
-   "task": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117"
+   "task": "TELEMETRY-EVENTS-RETENTION-14D-20261125"
   },
   {
    "bound_status": "unreviewed",
@@ -5415,13 +5420,17 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
-   "bound_status": "unbounded",
-   "cap": "heartbeat rows: deleted after hourly summary by HeartbeatRetentionJob (raw 3 days); runtime_state_snapshot rows: at most 1 start snapshot + structural changes (fill, position, member book) + 4 mark-to-market-only snapshots per runtime per hour (PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR), measured shape after change: <= 1 per runtime in a pre-open hour (was 286-304 per hour, about 7,000 per runtime per day, about 610 bytes each, about 17 MB/day for 4 runtimes on 2026-11-18); paper decision/order/fill/rejection sizing evidence (PAPER-SIZING-BOUND-RISK-POLICY-20261121, RC2) is bounded per event to compact metadata.pre_trade_sizing <= 384 B (PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384, measured 266 B on 2317 baseline) and metadata.submission_sizing_evidence <= 320 B (SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320, measured 215 B on 2317 baseline, down from 1068 B) with 0 extra rows and 0 duplicate embedded decision or constraint_unit_caps dicts; infrastructure_health and other event types have no table-level cap",
+   "bound_proof": {
+    "contains": "PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS",
+    "file": "services/telemetry/heartbeat_retention.py"
+   },
+   "bound_status": "bounded",
+   "cap": "5 GB / <= 100 MB/day steady-state table budget (scripts/measure_hosted_storage.py BUDGETS): heartbeat rows deleted after hourly summary (raw 3 days, PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS); runtime_state_snapshot rows deleted after 3 days except newest/oldest per runtime and unknown-valuation history (PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS, emitted at <= 1 start + structural changes + 4 MTM/hour via PANTHEON_RUNTIME_STATE_SNAPSHOT_MTM_MAX_PER_HOUR); unreferenced infrastructure_health rows deleted after 7 days (PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS); all other unreferenced non-permanent public.telemetry_events rows deleted after 14 days (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 per 2026-11-25 operator decision) while preserving ingested_seq consumer watermarks, incident/postmortem references, latest per-runtime snapshot/valuation anchors, and permanent canonical fill/governance/deploy/decision/episode rows (< 15 KB/day = < 0.5 MB/month); paper sizing evidence bounded per event to metadata.pre_trade_sizing <= 384 B and metadata.submission_sizing_evidence <= 320 B (PAPER-SIZING-BOUND-RISK-POLICY-20261121)",
    "changed_fields": {
-    "cadence": "0 extra rows emitted; compact pre_trade_sizing and submission_sizing_evidence are attached only to existing paper trade_decision, paper_fill_simulated, paper_order_simulated (no_trade_at_submission), and order_rejection events (1 daily cycle/persona/day across 3 enrolled dev paper personas, ~3-15 decision events/day and ~0-9 order/fill/rejection events/day; staged transiently in paper_performance_ledger.v1 pending_fill_publications and LifecycleTelemetryOutbox until telemetry admission ack clears pending_fill_publications to [] and in RedisPendingSignalStore pantheon:paper:decisions:v1:{decision_id} with 30-day EX TTL)",
-    "cap": "metadata.pre_trade_sizing <= 384 UTF-8 bytes (PRE_TRADE_SIZING_EVIDENCE_MAX_BYTES = 384 in services/execution/lean_runtime/expression_policy.py) and metadata.submission_sizing_evidence <= 320 UTF-8 bytes (SUBMISSION_SIZING_EVIDENCE_MAX_BYTES = 320 in services/execution/lean_runtime/paper_runtime.py); transient paper_performance_ledger.v1 pending_fill_publications drains to 0 entries on ack_fill_publication; Redis decision records expire after DECISION_RECORD_TTL_SECONDS = 30 * 86400; whole-table retention for non-heartbeat/non-snapshot public.telemetry_events rows remains tracked under RC3",
-    "cleanup": "heartbeat and runtime_state_snapshot rows pruned by HeartbeatRetentionJob; paper_performance_ledger.v1 pending_fill_publications cleared on ack_fill_publication; LifecycleTelemetryOutbox pruned on delivery ack (MAX_CHAINS = 64); Redis pending signal queue cleared on ack() and decision records expire via 30-day Redis EX TTL; public.telemetry_events order/fill/decision row retention tracked under RC3 WP3.1",
-    "count_at_hosted_scale": "3 enrolled dev paper personas (~3-15 decision events/day and ~0-9 order/fill/rejection events/day across the fleet; 0 extra rows)",
+    "cadence": "HeartbeatRetentionJob runs every 300s (<= 20 batches x 5000 rows per event class per run, 15s statement timeout, no second background scheduler); 0 extra rows emitted by sizing evidence (attached only to existing paper trade_decision, paper_fill_simulated, paper_order_simulated, and order_rejection events across 3 enrolled dev paper personas)",
+    "cap": "14-day retention window (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS = 14.0 in services/telemetry/heartbeat_retention.py) for unreferenced non-permanent rows alongside 3d heartbeat, 3d runtime_state_snapshot, and 7d infrastructure_health windows; steady-state public.telemetry_events bounded within 5 GB and <= 100 MB/day (exempt permanent audit/fill/decision/episode rows grow at < 15 KB/day = < 0.5 MB/month); metadata.pre_trade_sizing <= 384 UTF-8 bytes and metadata.submission_sizing_evidence <= 320 UTF-8 bytes",
+    "cleanup": "services/telemetry/heartbeat_retention.py HeartbeatRetentionJob and scripts/telemetry_heartbeat_reclaim.py prune >3d heartbeat, >3d runtime_state_snapshot, >7d unreferenced infrastructure_health, and >14d unreferenced non-permanent public.telemetry_events rows in bounded 5000-row batches under safe_ingested_seq watermark and incident/postmortem/anchor/canonical-fill protection",
+    "count_at_hosted_scale": "4 dev paper runtimes / 3 enrolled dev paper personas (~20-40 MB/day total raw telemetry after heartbeat & snapshot cadence bounds; <= 0.5 GB steady-state across the 3d/7d/14d windows; permanent canonical fill/governance/deploy/decision/episode rows ~5-25 rows/day = < 15 KB/day)",
     "fields": [
      "metadata.pre_trade_sizing",
      "metadata.submission_sizing_evidence",
@@ -5429,27 +5438,28 @@
      "metadata.risk_policy_version",
      "metadata.risk_policy_digest"
     ],
-    "growth_per_day": "about 1.5-12 KB/day of incremental public.telemetry_events JSON payload across 3 enrolled dev paper personas (< 0.4 MB/month); 0 B/day steady-state in paper_performance_ledger.v1 after ack_fill_publication; ~0.8-4.0 KB/day in Redis decision records capped by 30-day TTL (~24-120 KB steady-state window)",
-    "size": "266 B measured (<= 384 B cap) for compact metadata.pre_trade_sizing and 215 B measured (<= 320 B cap, reduced from 1068 B) for compact metadata.submission_sizing_evidence plus ~162 B for risk_policy_id/version/digest (~643 B total incremental metadata on a fill/order/rejection event)",
-    "task": "PAPER-SIZING-BOUND-RISK-POLICY-20261121"
+    "growth_per_day": "<= 100 MB/day gross (~20-40 MB/day measured after heartbeat and runtime_state_snapshot cadence fixes, bounded at steady state by 3d/7d/14d retention); permanent exempt canonical audit/fill/decision/episode rows < 15 KB/day (< 0.5 MB/month)",
+    "size": "steady-state <= 0.5 GB (cap 5 GB in scripts/measure_hosted_storage.py); 266 B measured (<= 384 B cap) for compact metadata.pre_trade_sizing and 215 B measured (<= 320 B cap) for compact metadata.submission_sizing_evidence",
+    "task": "TELEMETRY-EVENTS-RETENTION-14D-20261125"
    },
-   "cleanup": "heartbeat: services/telemetry/heartbeat_retention.py bounded batches (TELEMETRY-HEARTBEAT-RETENTION-20261117, merged); runtime_state_snapshot: same job, bounded batches, rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS (default 3) are deleted except the newest and oldest snapshot per runtime and snapshots whose performance_telemetry.status is marks_unavailable, invalid_ledger or invalid_drawdown_series (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); transient paper_performance_ledger.v1 pending_fill_publications cleared on ack_fill_publication; other types: none",
-   "growth_driver": "owner-store or SQL table rows written by the owner service; PAPER-SIZING-BOUND-RISK-POLICY-20261121 adds bounded compact sizing evidence metadata to existing paper decision/order/fill/rejection events with 0 extra rows",
-   "growth_per_day": "about 0.75 GB/day measured on 2026-11-17 (before the heartbeat cadence fix); incremental paper sizing evidence metadata (PAPER-SIZING-BOUND-RISK-POLICY-20261121) adds ~1.5-12 KB/day across 3 enrolled dev paper personas",
+   "cleanup": "services/telemetry/heartbeat_retention.py HeartbeatRetentionJob (every 300s, <= 20 batches x 5000 rows per run, 15s statement_timeout) and scripts/telemetry_heartbeat_reclaim.py: heartbeat rows > 3d summarized into telemetry_heartbeat_hourly_summaries and deleted (TELEMETRY-HEARTBEAT-RETENTION-20261117); runtime_state_snapshot rows > 3d deleted except newest/oldest per runtime and unknown-valuation history (PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118); unreferenced infrastructure_health rows > 7d deleted (TELEMETRY-INFRA-HEALTH-RETENTION-20261117); unreferenced non-permanent public.telemetry_events rows > 14d (PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14) deleted while preserving consumer watermarks, incident/postmortem references, latest per-runtime snapshot/valuation anchors, and canonical fill/governance/deploy/decision/episode rows (TELEMETRY-EVENTS-RETENTION-14D-20261125)",
+   "growth_driver": "owner-store or SQL table rows written by the owner service; high-volume transient rows bounded by 3d/7d/14d retention windows while exempt canonical audit/fill/decision/episode rows grow at < 15 KB/day (< 0.5 MB/month)",
+   "growth_per_day": "<= 100 MB/day gross (~20-40 MB/day after heartbeat/snapshot cadence fixes, capped at steady state by 3d/7d/14d retention; permanent exempt canonical audit/fill/decision/episode rows < 15 KB/day = < 0.5 MB/month; was ~0.75 GB/day on 2026-11-17 before heartbeat cadence fix)",
    "kind": "schema_table",
    "measured": {
-    "growth": "about 0.75 GB/day before the heartbeat fix",
-    "size": "29 GB, 13.7M rows (9.7M heartbeat, 2.75M infrastructure_health)",
-    "source": "2026-11-17 audit (docs/operations/remediation-plan-20261117.md section 2)"
+    "growth": "about 0.75 GB/day before the heartbeat fix; ~20-40 MB/day after cadence fixes (< 15 KB/day permanent canonical rows)",
+    "size": "29 GB, 13.7M rows (9.7M heartbeat, 2.75M infrastructure_health) on 2026-11-17; 5.55 GB, 1.58M rows on 2026-11-21 before 14-day non-permanent row pruning",
+    "source": "2026-11-17 audit (docs/operations/remediation-plan-20261117.md section 2) and 2026-11-21 reclaim measurement"
    },
    "name": "public.telemetry_events",
-   "note": "partial bound only; the entry stays unbounded until infrastructure_health is bounded",
+   "note": "bounded by 3d heartbeat, 3d runtime_state_snapshot, 7d infrastructure_health, and 14d PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS retention in services/telemetry/heartbeat_retention.py (2026-11-25 operator decision)",
    "owner": "schema:public",
    "readers": [
-    "services/telemetry/heartbeat_retention.py"
+    "services/telemetry/heartbeat_retention.py",
+    "services/telemetry/ingest_svc.py"
    ],
    "register_class": "RC3",
-   "task": "TELEMETRY-INFRA-HEALTH-RETENTION-20261117"
+   "task": "TELEMETRY-EVENTS-RETENTION-14D-20261125"
   },
   {
    "bound_status": "unreviewed",

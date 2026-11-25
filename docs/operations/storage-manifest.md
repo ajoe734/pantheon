@@ -68,6 +68,17 @@ budget to `BUDGETS` (keyed by manifest name) in the same change.
 
 Run: `python3 -m unittest scripts.test_measure_hosted_storage scripts.test_dev_storage_budget_workflow`.
 
+## Canonical telemetry table retention (`public.telemetry_events`, `TELEMETRY-EVENTS-RETENTION-14D-20261125`)
+
+`services/telemetry/heartbeat_retention.py` (`HeartbeatRetentionJob`, running every 300 s in `services/telemetry/main.py` with `<= 20` batches x `5000` rows per event class per run and a 15 s statement timeout, plus `scripts/telemetry_heartbeat_reclaim.py`) bounds `public.telemetry_events` within the 5 GB / `<= 100 MB/day` `BUDGETS` cap in `scripts/measure_hosted_storage.py`:
+
+| Event class | Retention window | Env var (default) | Safety invariants & preserved rows |
+|---|---|---|---|
+| `heartbeat` | 3 days | `PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS=3` | Summarized per `(runtime_id, hour_bucket)` into `public.telemetry_heartbeat_hourly_summaries` before deletion; never deletes rows above `safe_ingested_seq`. |
+| `runtime_state_snapshot` | 3 days | `PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS=3` | Keeps newest and oldest snapshot per runtime plus quarter-equity unknown-valuation status rows (`marks_unavailable`, `invalid_ledger`, `invalid_drawdown_series`); never deletes rows above `safe_ingested_seq`. |
+| `infrastructure_health` | 7 days | `PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS=7` | Protects any `event_id` referenced by `incident.incident_cases`, `incident.postmortems`, `incidents.json`, or BFF `downstream_health.sqlite3`; never deletes rows above `safe_ingested_seq`. |
+| All other non-permanent `public.telemetry_events` rows | 14 days (2026-11-25 operator decision) | `PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14` | Never deletes rows above `safe_ingested_seq`; protects all incident/postmortem-referenced `event_id`s; preserves per-runtime snapshot/valuation anchors (`pnl_snapshot`, `drawdown_snapshot`, `position_snapshot`, `reconciliation_completed`/`reconciliation_failed`, distinct `quarter_equity.v1` valuation observations, binding oldest/newest/lifecycle anchors) and permanent canonical deploy/governance/fill/order/decision/episode rows (`< 15 KB/day` = `< 0.5 MB/month`). |
+
 ## Bounded in-memory runtime caches (0 persistent writers)
 
 | cache | owner | cadence | hosted size & count | growth/day | cap & cleanup |

@@ -783,3 +783,113 @@ def test_reclaim_table_allow_list_validation_and_event_receipts_reclaim(
         er_res["reclaim"]["mechanism_sql"]
         == "VACUUM (FULL, ANALYZE) trade_journey_projection.event_receipts"
     )
+
+
+def test_reclaim_reports_and_applies_14d_telemetry_events_retention(
+    pg_cluster: str,
+    tmp_path: Path,
+) -> None:
+    """TELEMETRY-EVENTS-RETENTION-14D-20261125 AC 3: scripts/telemetry_heartbeat_reclaim.py reports and applies the 14-day retention window consistently."""
+    import asyncpg  # type: ignore[import]
+
+    db_dsn = asyncio.run(_create_migrated_db(pg_cluster, "test_reclaim_14d_telemetry_events"))
+    now = datetime(2026, 11, 25, 0, 0, 0, tzinfo=timezone.utc)
+    old_20d = datetime(2026, 11, 5, 0, 0, 0, tzinfo=timezone.utc)
+    recent_5d = datetime(2026, 11, 20, 0, 0, 0, tzinfo=timezone.utc)
+
+    write_fn = build_postgres_write_fn(db_dsn)
+    seed_events: list[dict[str, Any]] = [
+        _make_event(
+            "deploy_started",
+            runtime_id="rt-49c1c3d1",
+            created_at=old_20d,
+            event_id="evt-reclaim-14d-deploy-keep",
+        ),
+        _make_event(
+            "pnl_snapshot",
+            runtime_id="rt-49c1c3d1",
+            created_at=old_20d + timedelta(minutes=1),
+            event_id="evt-reclaim-14d-pnl-anchor-keep",
+        ),
+        _make_event(
+            "signal_generation",
+            runtime_id="rt-49c1c3d1",
+            created_at=recent_5d,
+            event_id="evt-reclaim-14d-sig-5d-keep",
+        ),
+    ]
+    for i in range(40):
+        seed_events.append(
+            _make_event(
+                "signal_generation",
+                runtime_id="rt-49c1c3d1",
+                created_at=old_20d + timedelta(minutes=10 + i),
+                event_id=f"evt-reclaim-14d-sig-old-del-{i}",
+                padding_kb=2,
+            )
+        )
+    assert asyncio.run(write_fn(seed_events)).success
+
+    dry_plan = asyncio.run(
+        run_reclaim(
+            db_dsn,
+            tables=[CANONICAL_TELEMETRY_TABLE],
+            apply=False,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            telemetry_events_retention_days=14,
+            free_disk_bytes_override=50_000_000,
+        )
+    )
+    assert dry_plan["mode"] == "dry_run"
+    assert dry_plan["telemetry_events_retention_days"] == 14.0
+    assert dry_plan["telemetry_events_rows_to_delete"] == 40
+    assert dry_plan["rows_to_delete"] == 40
+    assert dry_plan["rows_to_retain"] == 3
+
+    out_apply = tmp_path / "reclaim_14d_apply.json"
+    rc = reclaim_main(
+        [
+            "--apply",
+            "--dsn",
+            db_dsn,
+            "--tables",
+            CANONICAL_TELEMETRY_TABLE,
+            "--now",
+            "2026-11-25T00:00:00Z",
+            "--retention-days",
+            "3",
+            "--infra-health-retention-days",
+            "7",
+            "--telemetry-events-retention-days",
+            "14",
+            "--batch-size",
+            "15",
+            "--free-disk-bytes",
+            "50000000",
+            "--output",
+            str(out_apply),
+        ]
+    )
+    assert rc == 0
+    apply_report = json.loads(out_apply.read_text(encoding="utf-8"))
+    assert apply_report["mode"] == "apply"
+    assert apply_report["telemetry_events_rows_deleted_actual"] == 40
+    assert apply_report["rows_deleted_actual"] == 40
+    assert apply_report["rows_after"] == 3
+    assert apply_report["table_bytes_after"] < apply_report["table_bytes_before"]
+
+    async def _fetch_surviving() -> set[str]:
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            rows = await conn.fetch("SELECT event_id FROM public.telemetry_events")
+            return {str(r["event_id"]) for r in rows}
+        finally:
+            await conn.close()
+
+    assert asyncio.run(_fetch_surviving()) == {
+        "evt-reclaim-14d-deploy-keep",
+        "evt-reclaim-14d-pnl-anchor-keep",
+        "evt-reclaim-14d-sig-5d-keep",
+    }
