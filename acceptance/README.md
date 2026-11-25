@@ -198,8 +198,10 @@ Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at
 when either (or `ACCEPTANCE_BFF_URL`) is absent. GET only. Fails when `GET /bff/strategies?exclude_state=draft` (all pages)
 lists a `SIMULATION paper-only`, `TW official` / `strat-tw-official` row or a retired/unbound `Pantheon Dev Paper Release`
 row, or lacks `meta.hidden_unbound_stub_strategy_count` / `meta.hidden_test_persona_strategy_count`; when
-`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks` lists an `is_non_real`
-row or lacks `meta.hidden_non_real_count`. Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
+`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks?view=research` lists an `is_non_real`
+row, lacks `meta.hidden_non_real_count`, reports `meta.surfaces.research_demands` other than `ok` (BFF-RESEARCH-DEMAND-READ-20261125:
+open persona demands unreadable from the Research owner), or lists a row whose `persona_ids` are all test-scope personas
+(`GET /bff/management/persona-fleet?data_scope=test`). Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
 `fixtures/hosted_mgmt_strategy_meeting_research_20261120.json`.
 
 ## meeting-action-followthrough probe (`acceptance/probes/meeting-action-followthrough`)

@@ -338,6 +338,8 @@ def _project_task_item(
                 and all(_persona_is_test(persona_lookup, pid) for pid in ids):
             non_real_reason = "acceptance_test"
     demand = _demand_join(ordered_runs, runs_by_demand or {}, demands_by_id)
+    persona_ids = sorted({*_lineage_persona_ids(task, latest_raw),
+                          *([str(demand["persona_id"])] if demand and demand.get("persona_id") else [])})
     summary = _build_display_summary(task, latest_raw)
     if demand is not None:
         summary["task_kind"] = summary["task_kind"] or _TEMPLATE_SEARCH_ACTION
@@ -348,6 +350,7 @@ def _project_task_item(
         "name_is_fallback_id": _is_blank_name(task),
         "display_summary": summary,
         "demand": demand,
+        "persona_ids": persona_ids,
         "id": item_id,
         "task_id": task_id,
         "name": _resolve_task_name(task, task_id),

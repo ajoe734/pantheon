@@ -1,0 +1,31 @@
+{
+  "task": "BFF-RESEARCH-DEMAND-READ-20261125",
+  "root_cause_class": "RC6",
+  "register_instance": "RC6",
+  "defect": "hosted BFF has only PANTHEON_RESEARCH_ORCHESTRATOR_API_URL, so persona pool openDemands failed with owner_read_failed:RuntimeError; research items showed tasks only and acceptance-chain rapid_eval rows as real",
+  "fix": {
+    "persona_pool_port": "RESEARCH owner resolves PANTHEON_RESEARCH_ORCHESTRATOR_API_URL first, then the existing names as fallbacks",
+    "research_tasks_view_research": "open_demands from owner GET /api/research/persona-demands?status=open (caller bearer+tenant forwarded); meta.surfaces.research_demands ok|unavailable",
+    "demand_join": "template-search rows/detail carry demand{demand_id,persona_id,attempt_count,last_reason_code,short_measure,status}; persona_ids on every row",
+    "non_real": "rapid_eval whose lineage personas are all owner data_scope test or match existing strategy_stub_reason release-probe predicate (no second name pattern); unreadable owner leaves row visible",
+    "probe": "mgmt-strategy-meeting-research-readable fails on research_demands unavailable or a listed task whose persona_ids are all test-scope"
+  },
+  "no_new_route": "no BFF route, ticket store, writer or recurring job added; /api/v1/research/tickets untouched",
+  "runtime_budget": "view=research: 3 owner GETs (tasks, runs, demands) + at most 1 in-process persona directory read per request, each owner GET bounded by PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS (default 2.0 s); other views: 2 owner GETs + at most 1 directory read only when a rapid_eval row exists; persona lookups are distinct ids against that single read, no per-row owner call",
+  "tests": {
+    "services/control-plane/bff/tests/test_persona_pool_views.py": "compose env of operator-bff-blue (deploy/production/docker-compose.prod-control.yml) starts the read; openDemands ok, bearer+tenant forwarded; 401/403 stay unavailable (existing wrong-tenant test unchanged)",
+    "services/control-plane/bff/tests/test_research_tasks_read.py": "real rows: demands rd-975bb89106f1c696a680 / rd-796e24e24bf2055d3c42 (personas persona-ee7112a829d38b9135ac / persona-6507750312870d03a241), the three acceptance rapid_eval shapes, owner failures, one directory read",
+    "acceptance/test_mgmt_strategy_meeting_research_readable.py": "probe against local fixture HTTP server plus pure checks"
+  },
+  "changed_assertions": [
+    "acceptance/test_mgmt_strategy_meeting_research_readable.py test_fails_on_recorded_pre_fix_hosted_shapes: expected failure set gains research_demands_unavailable because the recorded 2026-11-20 pre-fix page has no research_demands surface; no existing check removed",
+    "recorded research_after_fix fixture is overlaid with an ok research_demands surface in the test helper (fixture file unchanged)",
+    "test_research_tasks_read.py _install_owner_urllib_stub gained optional demands kwargs and a persona-demands branch; prior behaviour and assertions unchanged"
+  ],
+  "functional_evidence_only": "no VM/SSH access; hosted verification belongs to the operator acceptance task",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer Claude2 is from the owner family",
+  "residuals": [
+    "persona display name is null when the persona directory is unavailable; rapid_eval persona scope depends on the directory read"
+  ],
+  "preexisting_failures": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py: 3 failures (identity attribution, binding precedence, slim ledger once) reproduce on base 3adc59863 without this change"
+}
