@@ -144,6 +144,23 @@ def quarter_equity_observation(
     return result
 
 
+def position_facts_from(positions: Sequence[Mapping[str, Any]], marks: Mapping[str, float]) -> list[dict[str, Any]]:
+    """Owner-side helper: the closing positions at their marks, as stamped on the valuation event."""
+    rows = []
+    for pos in positions:
+        symbol = str(pos.get("symbol") or pos.get("instrument_id") or "").strip()
+        quantity = _finite(pos.get("quantity"))
+        if not symbol or quantity is None or abs(quantity) <= 1e-12:
+            continue
+        multiplier = _finite(pos.get("multiplier"))
+        multiplier = multiplier if multiplier and multiplier > 0 else 1.0
+        price = _finite(marks.get(symbol))
+        rows.append({"symbol": symbol, "quantity": quantity, "multiplier": multiplier,
+                     "mark_price": price,
+                     "notional": None if price is None else round(quantity * multiplier * price, 6)})
+    return rows
+
+
 _VENUE_SUFFIXES = frozenset(
     {
         "US",
