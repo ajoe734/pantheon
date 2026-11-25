@@ -3563,6 +3563,31 @@ class TestPaperFleetReconcilerDynamicBearerAuth(unittest.TestCase):
                 self.assertIsNotNone(recon._fetch_fleet_state())
                 self.assertEqual(captured_actors, ["reconciler-file-v1", "reconciler-file-v2"])
 
+    def test_reconciler_token_property_setter_supports_uninitialized_new_instances(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        recon = PaperFleetReconciler.__new__(PaperFleetReconciler)
+        recon._extra_env = {}
+        recon._reconciler_id = "rec-test"
+        recon._fence_token = 1
+        recon._url = None
+        recon._token = None
+        recon._source_ingest_url = None
+        recon._performance_mark_max_age_seconds = 60
+        recon._performance_state_root = Path("/tmp")
+
+        self.assertEqual(recon._token, "")
+        self.assertEqual(recon._runtime_manager_headers(), {})
+        env = recon._build_worker_env({"binding_id": "b-test"})
+        self.assertEqual(env["PANTHEON_RUNTIME_BINDING_ID"], "b-test")
+
+        recon._token = "custom-static-token"
+        self.assertEqual(recon._token, "custom-static-token")
+        self.assertEqual(
+            recon._runtime_manager_headers(),
+            {"Authorization": "Bearer custom-static-token"},
+        )
+
 
 if __name__ == "__main__":
     import sys

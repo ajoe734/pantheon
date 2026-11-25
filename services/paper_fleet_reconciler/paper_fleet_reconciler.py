@@ -1403,21 +1403,25 @@ class PaperFleetReconciler:
                 env.pop(key, None)
         if self._url:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
-        if self._explicit_runtime_manager_token:
-            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = self._explicit_runtime_manager_token
+        explicit_rm_token = getattr(self, "_explicit_runtime_manager_token", None)
+        rm_auth = getattr(self, "_runtime_manager_auth", None)
+        if explicit_rm_token:
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = explicit_rm_token
         elif (
-            self._runtime_manager_auth.source == "token_file"
-            and self._runtime_manager_auth.token_file_path
+            rm_auth is not None
+            and rm_auth.source == "token_file"
+            and rm_auth.token_file_path
         ):
             env["PANTHEON_RUNTIME_MANAGER_TOKEN_FILE"] = (
-                self._runtime_manager_auth.token_file_path
+                rm_auth.token_file_path
             )
         elif (
-            self._runtime_manager_auth.source in ("env", "default")
-            and self._runtime_manager_auth.token
+            rm_auth is not None
+            and rm_auth.source in ("env", "default")
+            and rm_auth.token
         ):
             env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = str(
-                self._runtime_manager_auth.token
+                rm_auth.token
             )
         if self._source_ingest_url:
             env["PANTHEON_SOURCE_INGEST_URL"] = self._source_ingest_url
@@ -1886,18 +1890,46 @@ class PaperFleetReconciler:
 
     @property
     def _token(self) -> str:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            return str(getattr(self, "_explicit_runtime_manager_token", None) or "")
         try:
-            return self._runtime_manager_auth.token
+            return auth.token
         except OSError:
             return ""
 
+    @_token.setter
+    def _token(self, value: Optional[str | RuntimeManagerAuthConfig]) -> None:
+        if isinstance(value, RuntimeManagerAuthConfig):
+            self._explicit_runtime_manager_token = None
+            self._runtime_manager_auth = value
+            return
+        cleaned = (
+            str(value).strip()
+            if value is not None and str(value).strip()
+            else None
+        )
+        self._explicit_runtime_manager_token = cleaned
+        if cleaned is not None:
+            self._runtime_manager_auth = resolve_runtime_manager_auth(token=cleaned)
+        else:
+            self._runtime_manager_auth = RuntimeManagerAuthConfig(
+                token="",
+                source="argument",
+                used_default=False,
+            )
+
     def _runtime_manager_headers(self) -> Dict[str, str]:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            tok = getattr(self, "_explicit_runtime_manager_token", None)
+            return {"Authorization": f"Bearer {tok}"} if tok else {}
         if (
-            not self._runtime_manager_auth.configured
-            and self._runtime_manager_auth.source != "token_file"
+            not auth.configured
+            and auth.source != "token_file"
         ):
             return {}
-        return self._runtime_manager_auth.headers()
+        return auth.headers()
 
     def _fetch_fleet_state(
         self,

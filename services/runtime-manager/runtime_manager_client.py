@@ -96,7 +96,21 @@ class RuntimeManagerClient:
 
     @property
     def _bearer_token(self) -> str:
-        return self._auth.token
+        auth = getattr(self, "_auth", None)
+        return auth.token if auth is not None else ""
+
+    @_bearer_token.setter
+    def _bearer_token(self, value: Optional[str | RuntimeManagerAuthConfig]) -> None:
+        if isinstance(value, RuntimeManagerAuthConfig):
+            self._auth = value
+        elif value is None or not str(value).strip():
+            self._auth = RuntimeManagerAuthConfig(
+                token="",
+                source="argument",
+                used_default=False,
+            )
+        else:
+            self._auth = resolve_runtime_manager_auth(token=value)
 
     # ------------------------------------------------------------------
     # Public API
