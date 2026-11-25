@@ -10,6 +10,7 @@ so exact retries are harmless and divergent replays fail closed.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -58,7 +59,7 @@ def _parse_time(value: str | datetime | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-_STALE_TEMP_HEX = re.compile(r"^[0-9a-f]{32}$")
+_STALE_TEMP_HEX = re.compile(r"^[0-9a-f]{8,32}$")
 
 
 def atomic_temp_path(target: str | Path) -> Path:
@@ -68,13 +69,30 @@ def atomic_temp_path(target: str | Path) -> Path:
     return target.with_name(f"{target.name}.tmp")
 
 
-def sweep_stale_temp_siblings(target: str | Path) -> list[Path]:
+_KEPT_TEMP_REPORTED: set[tuple[str, int, int]] = set()
+_LOG = logging.getLogger(__name__)
+
+
+def sweep_stale_temp_siblings(
+    target: str | Path,
+    *,
+    keep_newer: bool = False,
+    kept: list[Path] | None = None,
+    legacy_names: tuple[str, ...] = (),
+) -> list[Path]:
     """Remove leftover temp siblings of ``target``; never touch ``target`` itself.
 
-    Matches the deterministic name plus the legacy random names
-    (``<name>.<32 hex>.tmp``, ``.<name>.<32 hex>.tmp`` and the reconciler's
-    ``.<name>.<pid>.<32 hex>.tmp``) written by earlier releases.  Only siblings of
-    this exact target name match, so other targets in the directory are safe.
+    Matches the deterministic names (``<name>.tmp``, ``.<name>.tmp``) plus the
+    legacy random names (``<name>.<32 hex>.tmp``, ``.<name>.<32 hex>.tmp`` and the
+    reconciler's ``.<name>.<pid>.<32 hex>.tmp``) written by earlier releases.  Only
+    regular files (symlinks are never followed or removed) that are siblings of
+    this exact target name match, so other targets and foreign files are safe.
+
+    Callers must hold the store's exclusive write lock so no in-flight write can
+    be removed.  With ``keep_newer`` a temp file whose mtime is newer than the
+    real file (or any temp when the real file is absent) is kept, appended to
+    ``kept`` and reported once with its path and size, because it may hold data
+    the real file does not.
     """
 
     target = Path(target)
@@ -84,13 +102,19 @@ def sweep_stale_temp_siblings(target: str | Path) -> list[Path]:
     except OSError:
         return removed
     name = target.name
-    deterministic = f"{name}.tmp"
+    deterministic = (f"{name}.tmp", f".{name}.tmp", *legacy_names)
+    target_mtime_ns: int | None = None
+    if keep_newer:
+        try:
+            target_mtime_ns = os.stat(target, follow_symlinks=False).st_mtime_ns
+        except OSError:
+            target_mtime_ns = None
     for entry in entries:
         candidate = entry.name
-        if candidate == name or not candidate.endswith(".tmp"):
+        if candidate == name or not (candidate.endswith(".tmp") or candidate in legacy_names):
             continue
-        stem = candidate[: -len(".tmp")]
-        match = candidate == deterministic
+        stem = candidate[: -len(".tmp")] if candidate.endswith(".tmp") else candidate
+        match = candidate in deterministic
         if not match:
             for base in (name, f".{name}"):
                 prefix = f"{base}."
@@ -105,6 +129,25 @@ def sweep_stale_temp_siblings(target: str | Path) -> list[Path]:
                     break
         if not match or not entry.is_file(follow_symlinks=False):
             continue
+        if keep_newer:
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if target_mtime_ns is None or info.st_mtime_ns > target_mtime_ns:
+                path = Path(entry.path)
+                if kept is not None:
+                    kept.append(path)
+                key = (entry.path, info.st_mtime_ns, info.st_size)
+                if key not in _KEPT_TEMP_REPORTED:
+                    _KEPT_TEMP_REPORTED.add(key)
+                    _LOG.warning(
+                        "kept temp file newer than %s: %s (%d bytes)",
+                        target,
+                        entry.path,
+                        info.st_size,
+                    )
+                continue
         try:
             os.unlink(entry.path)
             removed.append(Path(entry.path))

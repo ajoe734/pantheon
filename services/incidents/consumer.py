@@ -6,14 +6,18 @@ writes through the IncidentStore owned by the incident service.
 """
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import uuid
+from contextlib import contextmanager
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 from services.incident.evidence_collector import (
     EvidenceCollectionError,
     PostmortemEvidenceCollector,
@@ -83,12 +87,45 @@ class InfrastructureHealthIncidentResult:
     created: bool
 
 
+def _write_json_under_lock(file_path: Path, payload: Any, *, indent: int | None, swept: set) -> None:
+    """Replace ``file_path`` through its one deterministic temp under an exclusive flock.
+
+    The first write per store sweeps this file's legacy temp siblings (and the old
+    ``with_suffix('.tmp')`` name); a temp newer than the real file is kept.
+    """
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(
+        str(file_path.with_name(f".{file_path.name}.lock")), os.O_CREAT | os.O_RDWR, 0o644
+    )
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        if file_path not in swept:
+            swept.add(file_path)
+            sweep_stale_temp_siblings(
+                file_path,
+                keep_newer=True,
+                legacy_names=(file_path.with_suffix(".tmp").name,),
+            )
+        temp_path = atomic_temp_path(file_path)
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=indent)
+            temp_path.replace(file_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
 class DurableDeliveredIncidentsStore:
     """Persistent on-disk set for delivered incident IDs."""
 
     def __init__(self, file_path: Path | str) -> None:
         self.file_path = Path(file_path)
         self._ids: set[str] = set()
+        self._swept: set = set()
         self.reload()
 
     def reload(self) -> None:
@@ -103,11 +140,9 @@ class DurableDeliveredIncidentsStore:
 
     def _save(self) -> None:
         try:
-            self.file_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.file_path.with_suffix(".tmp")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(sorted(list(self._ids)), f, indent=2)
-            temp_path.replace(self.file_path)
+            _write_json_under_lock(
+                self.file_path, sorted(list(self._ids)), indent=2, swept=self._swept
+            )
         except Exception:
             pass
 
@@ -147,6 +182,7 @@ class DurableDownstreamWorkStore:
 
     def __init__(self, file_path: Path | str) -> None:
         self.file_path = Path(file_path)
+        self._swept: set = set()
 
     def get_pending_work(self) -> List[Dict[str, Any]]:
         if not self.file_path.exists():
@@ -176,11 +212,7 @@ class DurableDownstreamWorkStore:
 
     def _save(self, items: List[Dict[str, Any]]) -> None:
         try:
-            self.file_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.file_path.with_suffix(".tmp")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=2)
-            temp_path.replace(self.file_path)
+            _write_json_under_lock(self.file_path, items, indent=2, swept=self._swept)
         except Exception:
             pass
 

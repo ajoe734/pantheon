@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 
 
 _JSON_WHITESPACE = " \t\r\n"
@@ -229,17 +230,16 @@ class ReconciliationDriftStore:
 
     def _write_map_locked(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Caller holds the exclusive store lock: one deterministic temp name per
+        # store file, and legacy random-name leftovers are swept once per path.
+        swept = self.__dict__.setdefault("_swept_temp_paths", set())
+        if path not in swept:
+            swept.add(path)
+            sweep_stale_temp_siblings(path, keep_newer=True)
         tmp_name = ""
         try:
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=path.parent,
-                prefix=f".{path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                tmp_name = handle.name
+            tmp_name = str(atomic_temp_path(path))
+            with open(tmp_name, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2, ensure_ascii=True, allow_nan=False)
                 handle.write("\n")
                 handle.flush()
