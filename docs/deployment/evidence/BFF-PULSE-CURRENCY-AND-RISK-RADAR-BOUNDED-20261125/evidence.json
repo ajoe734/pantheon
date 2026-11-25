@@ -1,0 +1,86 @@
+{
+  "task_id": "BFF-PULSE-CURRENCY-AND-RISK-RADAR-BOUNDED-20261125",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "status": "ready_for_independent_review",
+  "base_commit": "a617c8a66",
+  "work_package": {
+    "class": "RC3 and RC6",
+    "problem_register_ref": "docs/operations/problem-register.md",
+    "prerequisites": [
+      "BFF-STRATEGY-METRICS-RUNTIME-20261125",
+      "BFF-EVIDENCE-CITED-LIST-20261125"
+    ],
+    "composes_with": [
+      "BFF-STRATEGY-SEARCH-BOUNDED-OWNER-READ-20261122",
+      "BFF-TRADING-PULSE-BOUNDED-STRATEGY-READ-20261122",
+      "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122"
+    ]
+  },
+  "change": {
+    "risk_radar_bounded_strategy_reads": {
+      "entry_point": "ManagementService.get_risk_radar",
+      "bounded_page_method": "list_strategy_summaries_page / list_strategy_specs_page (GET /api/registry/strategy-specs?view=strategy_summary_page&exclude_state=draft&page_size=<bounded>)",
+      "targeted_detail_fallback": "get_strategy_spec_detail(strategy_id, version_selector='current') / get_strategy_spec(strategy_id) only for referenced strategy IDs not present in the bounded summary page",
+      "unpaged_calls_removed": "Removed unpaged store.list_strategies(), store.list_strategy_summaries(), and store.list_strategy_specs() from get_risk_radar so the full historical/draft strategy table is never pulled into BFF memory."
+    },
+    "trading_pulse_pnl_currency": {
+      "entry_points": [
+        "_resolve_ledger_pnl_currency",
+        "_pulse_portfolio_pnl_currency",
+        "_pulse_performance",
+        "_pulse_pnl_groups",
+        "ManagementService.get_trading_pulse",
+        "ManagementService.get_trading_pulse_rankings"
+      ],
+      "single_currency_semantics": "When a runtime ledger or constituent positions/marks/fills report a single unambiguous ISO currency (e.g. TWD), populate pnl_currency='TWD' and pnl_currency_status='single_currency' (pnl_currency_reason=null) on row.performance_context, row.telemetry_summary, row, data.summary, cards[card_id='pnl'].details, and rankings.data.summary.",
+      "mixed_currency_semantics": "When constituent positions within a ledger or constituent ledgers across the portfolio report multiple distinct currencies without FX conversion (e.g. TWD and USD), keep pnl_currency=null with pnl_currency_status='mixed' and pnl_currency_reason='mixed_currency_without_fx' (and metric_reasons.pnl_comparison='mixed_currency_without_fx').",
+      "empty_or_unknown_semantics": "When a ledger has 0 fills, no active positions, and no currency facts, keep pnl_currency=null with pnl_currency_status='unknown' and pnl_currency_reason='empty_ledger' (or 'no_currency_fact' / 'ambiguous_position_currency' when non-empty observations lack unambiguous currency facts)."
+    },
+    "changed_files": [
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/tests/test_management_read_models_router.py",
+      "services/control-plane/bff/tests/test_bff_b3_trading_pulse.py",
+      "docs/deployment/evidence/BFF-PULSE-CURRENCY-AND-RISK-RADAR-BOUNDED-20261125/evidence.json"
+    ]
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned from supervisor dependency interpreter and verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py acceptance/test_trading_pulse_operator.py",
+      "exit_code": 0,
+      "passed": 107,
+      "failed": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_models_router.py",
+      "exit_code": 0,
+      "passed": 43,
+      "failed": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -k \"not slow\"",
+      "exit_code": 0,
+      "passed": 150,
+      "failed": 0
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "Read-only on-demand BFF request aggregation only.",
+    "owner_call_cap": "get_risk_radar issues at most 1 bounded view=strategy_summary_page request (page_size <= 200, exclude_state=draft) plus at most U targeted get_strategy_spec_detail lookups for any referenced active strategy IDs absent from that page; 0 unpaged full-catalog strategy reads.",
+    "recurring_jobs_added_or_changed": 0,
+    "emitters_added_or_changed": 0,
+    "persistent_writers_added_or_changed": 0,
+    "persistent_growth_bytes_per_day": 0
+  },
+  "residual_findings": [
+    {
+      "finding": "Upstream telemetry summary projection (services/telemetry/runtime_summary.py) and the read-only release QA witness / stage probe (scripts/run_dev_trading_pulse_readonly_qa.py, acceptance/probes/trading-pulse-operator) inspect raw.get('pnl_currency') on GET /api/v1/telemetry/{runtime_id}/summary directly when paper_runtime emits pnl_snapshot without metrics.pnl_currency.",
+      "disposition": "Recorded under RC6 WP6.5 (TRADING-PULSE-HOSTED-ACCEPTANCE-20261122 / telemetry summary owner); outside this task's BFF management read-model artifact contract."
+    }
+  ]
+}

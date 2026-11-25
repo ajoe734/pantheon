@@ -1829,6 +1829,226 @@ def _pulse_matching_record(record: Dict[str, Any], binding: Dict[str, Any], snap
     return not (at and (_parse_time(at) > _parse_time(snap) or (start and _parse_time(at) < _parse_time(start))))
 
 
+_ISO_CURRENCY_PLACEHOLDERS = frozenset(
+    {"NULL", "NONE", "UNKNOWN", "MIXED", "NA", "N/A", "UNAVAILABLE", "UNSET"}
+)
+
+
+def _normalize_iso_currency(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    code = value.strip().upper()
+    if not code or not code.isalpha() or not (3 <= len(code) <= 5):
+        return None
+    if code in _ISO_CURRENCY_PLACEHOLDERS:
+        return None
+    return code
+
+
+def _resolve_ledger_pnl_currency(
+    raw: Optional[Dict[str, Any]],
+    binding_id: Optional[str] = None,
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Resolve unambiguous ISO currency for a single runtime ledger summary.
+
+    Returns (pnl_currency, status, reason) where status is one of
+    'single_currency', 'mixed', or 'unknown'.
+    """
+    if not isinstance(raw, dict) or not raw:
+        return None, "unknown", "source_unavailable"
+
+    explicit_status = str(raw.get("pnl_currency_status") or "").strip().lower()
+    metrics_obj = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {}
+    account_facts = raw.get("account_facts") if isinstance(raw.get("account_facts"), dict) else {}
+    explicit_currency = _normalize_iso_currency(
+        raw.get("pnl_currency")
+        or metrics_obj.get("pnl_currency")
+        or raw.get("currency")
+        or raw.get("ledger_currency")
+        or account_facts.get("currency")
+    )
+
+    symbol_currencies: Dict[str, str] = {}
+    constituent_currencies: set[str] = set()
+
+    raw_sym_map = raw.get("_currency_by_symbol")
+    if isinstance(raw_sym_map, dict):
+        for sym_key, sym_curr in raw_sym_map.items():
+            norm_curr = _normalize_iso_currency(sym_curr)
+            if norm_curr:
+                constituent_currencies.add(norm_curr)
+                if isinstance(sym_key, str) and sym_key.strip():
+                    symbol_currencies[sym_key.strip()] = norm_curr
+
+    raw_marks_map = raw.get("_marks_by_symbol")
+    if isinstance(raw_marks_map, dict):
+        for sym_key, mark in raw_marks_map.items():
+            if not isinstance(mark, dict):
+                continue
+            mark_bid = str(mark.get("binding_id") or "").strip()
+            if binding_id and mark_bid and mark_bid != str(binding_id):
+                continue
+            norm_curr = _normalize_iso_currency(mark.get("quote_currency") or mark.get("currency"))
+            if norm_curr:
+                constituent_currencies.add(norm_curr)
+                if isinstance(sym_key, str) and sym_key.strip():
+                    symbol_currencies.setdefault(sym_key.strip(), norm_curr)
+
+    missing_active_position_currency = False
+    raw_positions = raw.get("positions")
+    has_active_positions = False
+    if isinstance(raw_positions, list):
+        for pos in raw_positions:
+            if not isinstance(pos, dict):
+                continue
+            qty = _pulse_number(pos.get("quantity"))
+            is_active = qty is None or abs(qty) > 1e-12
+            if is_active:
+                has_active_positions = True
+            pos_curr = _normalize_iso_currency(
+                pos.get("currency") or pos.get("pnl_currency") or pos.get("quote_currency")
+            )
+            if pos_curr is None:
+                pos_sym = str(pos.get("instrument_id") or pos.get("symbol") or "").strip()
+                pos_curr = symbol_currencies.get(pos_sym) or symbol_currencies.get(
+                    str(pos.get("symbol") or "").strip()
+                )
+            if pos_curr:
+                constituent_currencies.add(pos_curr)
+            elif is_active:
+                missing_active_position_currency = True
+
+    by_underlying = raw.get("positions_by_underlying")
+    if isinstance(by_underlying, dict):
+        for group in by_underlying.values():
+            if not isinstance(group, dict):
+                continue
+            for inst in group.get("instruments") or []:
+                if isinstance(inst, dict):
+                    norm_curr = _normalize_iso_currency(
+                        inst.get("currency") or inst.get("quote_currency")
+                    )
+                    if norm_curr:
+                        constituent_currencies.add(norm_curr)
+
+    for collection_key in ("ledgers", "constituent_ledgers", "member_virtual_books"):
+        items = raw.get(collection_key)
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("pnl_currency_status") or "").strip().lower() == "mixed":
+                    return None, "mixed", "mixed_currency_without_fx"
+                norm_curr = _normalize_iso_currency(
+                    item.get("pnl_currency") or item.get("currency") or item.get("quote_currency")
+                )
+                if norm_curr:
+                    constituent_currencies.add(norm_curr)
+
+    for ref in raw.get("mark_refs") or []:
+        if isinstance(ref, dict):
+            norm_curr = _normalize_iso_currency(ref.get("quote_currency") or ref.get("currency"))
+            if norm_curr:
+                constituent_currencies.add(norm_curr)
+
+    for observation in raw.get("quarter_equity_observations") or []:
+        if not isinstance(observation, dict) or observation.get("status") != "known":
+            continue
+        obs_bid = str(observation.get("binding_id") or "").strip()
+        if binding_id and obs_bid and obs_bid != str(binding_id):
+            continue
+        if raw.get("pnl_at") and observation.get("as_of") and observation.get("as_of") != raw.get("pnl_at"):
+            continue
+        obs_curr = _normalize_iso_currency(
+            observation.get("currency") or observation.get("pnl_currency")
+        )
+        if obs_curr:
+            constituent_currencies.add(obs_curr)
+        for ref in observation.get("mark_refs") or []:
+            if isinstance(ref, dict):
+                norm_curr = _normalize_iso_currency(ref.get("quote_currency") or ref.get("currency"))
+                if norm_curr:
+                    constituent_currencies.add(norm_curr)
+
+    last_fill = raw.get("last_fill")
+    if isinstance(last_fill, dict):
+        norm_curr = _normalize_iso_currency(last_fill.get("currency"))
+        if norm_curr:
+            constituent_currencies.add(norm_curr)
+
+    all_currencies = set(constituent_currencies)
+    if explicit_currency is not None:
+        all_currencies.add(explicit_currency)
+
+    if explicit_status == "mixed" or len(all_currencies) > 1:
+        return None, "mixed", "mixed_currency_without_fx"
+
+    if missing_active_position_currency and explicit_currency is None:
+        reason = "ambiguous_position_currency" if constituent_currencies else "no_currency_fact"
+        return None, "unknown", reason
+
+    if len(all_currencies) == 1:
+        return next(iter(all_currencies)), "single_currency", None
+
+    ledger_count = _pulse_number(raw.get("ledger_fill_count"))
+    if ledger_count is None:
+        ledger_count = _pulse_number(raw.get("total_trades"))
+    has_pnl = _pulse_number(raw.get("pnl")) is not None or _pulse_number(metrics_obj.get("pnl")) is not None
+    if (ledger_count == 0 or ledger_count is None) and not has_active_positions and not has_pnl:
+        return None, "unknown", "empty_ledger"
+    return None, "unknown", "no_currency_fact"
+
+
+def _pulse_portfolio_pnl_currency(
+    rows: List[Dict[str, Any]],
+    pnl_groups: List[Dict[str, Any]],
+) -> Tuple[Optional[str], str, Optional[str]]:
+    """Resolve portfolio-level pnl_currency across admitted Trading Pulse runtime rows."""
+    if not rows:
+        return None, "unknown", "empty_ledger"
+
+    observed_currencies: set[str] = set()
+    has_mixed_row = False
+    has_unlabelled_pnl = False
+    has_any_activity = False
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ctx = row.get("performance_context") if isinstance(row.get("performance_context"), dict) else {}
+        row_status = str(ctx.get("pnl_currency_status") or row.get("pnl_currency_status") or "").strip().lower()
+        row_currency = _normalize_iso_currency(ctx.get("pnl_currency") or row.get("pnl_currency"))
+        row_pnl = _pulse_number(_trading_pulse_metric_map(row).get("pnl"))
+        row_trades = _pulse_number(ctx.get("ledger_fill_count"))
+        if row_trades is None:
+            row_trades = _pulse_number(row.get("total_trades"))
+        row_positions = row.get("positions") if isinstance(row.get("positions"), list) else []
+        if (row_trades is not None and row_trades > 0) or bool(row_positions) or row_pnl is not None:
+            has_any_activity = True
+        if row_status == "mixed":
+            has_mixed_row = True
+        if row_currency is not None:
+            observed_currencies.add(row_currency)
+        elif row_pnl is not None:
+            has_unlabelled_pnl = True
+
+    for group in pnl_groups:
+        if isinstance(group, dict):
+            group_currency = _normalize_iso_currency(group.get("currency"))
+            if group_currency:
+                observed_currencies.add(group_currency)
+
+    if has_mixed_row or len(observed_currencies) > 1:
+        return None, "mixed", "mixed_currency_without_fx"
+    if has_unlabelled_pnl:
+        return None, "unknown", "no_currency_fact"
+    if len(observed_currencies) == 1:
+        return next(iter(observed_currencies)), "single_currency", None
+    if not has_any_activity:
+        return None, "unknown", "empty_ledger"
+    return None, "unknown", "no_currency_fact"
+
+
 def _pulse_performance(row: Dict[str, Any], raw: Optional[Dict[str, Any]], snap: str) -> None:
     raw = raw or {}
     metrics = _trading_pulse_metric_map(row)
@@ -1860,14 +2080,30 @@ def _pulse_performance(row: Dict[str, Any], raw: Optional[Dict[str, Any]], snap:
         if _pulse_number(metrics.get(metric)) is None:
             metrics[metric] = None
             reasons[metric] = reason or reasons.get(metric) or ("no_fills" if ledger_count == 0 and metric in {"pnl", "drawdown", "sharpe_ratio"} else "source_unavailable" if not raw else "not_observed")
+    resolved_currency, currency_status, currency_reason = _resolve_ledger_pnl_currency(
+        raw,
+        binding_id=str(row.get("runtime_binding_id") or "") or None,
+    )
+    if resolved_currency is None and currency_reason:
+        reasons["pnl_currency"] = currency_reason
     stale = raw.get("staleness") or {}
     row["performance_context"] = {
         **{key: raw.get(key) for key in ("ledger_fill_count", "pnl_currency", "pnl_period_start_at", "pnl_at", "pnl_definition", "fill_rate_details", "sharpe_ratio_status", "sharpe_ratio_reason", "staleness")},
+        "pnl_currency": resolved_currency,
+        "pnl_currency_status": currency_status,
+        "pnl_currency_reason": currency_reason,
         "metric_reasons": reasons, "latest_report_at": raw.get("last_event_at") or raw.get("collected_at"),
         "last_fill_at": (raw.get("last_fill") or {}).get("at") or (raw.get("last_fill") or {}).get("occurred_at") or (raw.get("last_fill") or {}).get("created_at"),
         "snapshot_at": snap, "source_status": "unavailable" if not raw else "stale" if isinstance(stale, dict) and (stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))) else "available",
     }
     ctx = row["performance_context"]
+    row["pnl_currency"] = resolved_currency
+    row["pnl_currency_status"] = currency_status
+    row["pnl_currency_reason"] = currency_reason
+    if isinstance(row.get("telemetry_summary"), dict):
+        row["telemetry_summary"]["pnl_currency"] = resolved_currency
+        row["telemetry_summary"]["pnl_currency_status"] = currency_status
+        row["telemetry_summary"]["pnl_currency_reason"] = currency_reason
     valuation_failure = raw.get("_valuation_failure")
     if isinstance(valuation_failure, dict) and valuation_failure:
         ctx["source_status"] = "stale"
@@ -2050,7 +2286,12 @@ def _pulse_pnl_groups(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         key = (row.get("deployment_stage"), ctx.get("pnl_currency"), ctx.get("pnl_period_start_at"), ctx.get("pnl_at"), ctx.get("pnl_definition"))
         if (not all(key) or _parse_time(key[2]) == _parse_time(None)
                 or _parse_time(key[3]) < _parse_time(key[2])):
-            ctx["metric_reasons"].setdefault("pnl_comparison", "comparison_scope_unverified")
+            reason = (
+                "mixed_currency_without_fx"
+                if ctx.get("pnl_currency_status") == "mixed"
+                else "comparison_scope_unverified"
+            )
+            ctx["metric_reasons"].setdefault("pnl_comparison", reason)
             continue
         group = groups.setdefault(key, {"stage": key[0], "currency": key[1], "period_start_at": key[2],
             "period_end_at": key[3], "as_of": key[3], "pnl_definition": key[4], "value": None,
@@ -4280,7 +4521,7 @@ class ManagementService:
             baseline_comparison = baseline_by_binding_id.get(str(row.get("runtime_binding_id") or "")) or {}
             rankings.append(
                 {
-                    **{key: row.get(key) for key in ("persona_id", "persona_name", "strategy_id", "strategy_name", "underlying_symbol", "tenant_id", "links", "performance_context", "latest_outcome")},
+                    **{key: row.get(key) for key in ("persona_id", "persona_name", "strategy_id", "strategy_name", "underlying_symbol", "tenant_id", "links", "performance_context", "latest_outcome", "pnl_currency", "pnl_currency_status", "pnl_currency_reason")},
                     "runtime_id": row.get("runtime_id"),
                     "runtime_binding_id": row.get("runtime_binding_id"),
                     "deployment_stage": row.get("deployment_stage"),
@@ -4439,9 +4680,15 @@ class ManagementService:
         )
 
         pnl_groups = _pulse_pnl_groups(runtime_rows)
+        portfolio_pnl_currency, portfolio_currency_status, portfolio_currency_reason = (
+            _pulse_portfolio_pnl_currency(runtime_rows, pnl_groups)
+        )
         summary = {
             "operator_scope": operator_scope,
             "pnl_groups": pnl_groups,
+            "pnl_currency": portfolio_pnl_currency,
+            "pnl_currency_status": portfolio_currency_status,
+            "pnl_currency_reason": portfolio_currency_reason,
             "fill_rate_aggregation": "arithmetic_mean_of_observed_runtime_rates",
             "snapshot_at": snap,
             "runtime_count": operator_scope["runtime_count"],
@@ -4493,6 +4740,9 @@ class ManagementService:
                 "label": "P&L",
                 "value": summary["total_pnl"],
                 "details": {
+                    "pnl_currency": portfolio_pnl_currency,
+                    "pnl_currency_status": portfolio_currency_status,
+                    "pnl_currency_reason": portfolio_currency_reason,
                     "telemetry_coverage_count": len(telemetry_rows),
                     "metric_coverage": (coverage["metric_coverage"] or {}).get("pnl"),
                 },
@@ -4605,10 +4855,14 @@ class ManagementService:
             surfaces["management_trading_pulse_rankings"]["message"] = (
                 "Trading pulse rankings are degraded because one or more ranking metrics are missing."
             )
+        pulse_summary = trading_pulse_payload.get("summary") or {}
         summary = {
-            "operator_scope": (trading_pulse_payload.get("summary") or {}).get("operator_scope"),
-            "pnl_groups": (trading_pulse_payload.get("summary") or {}).get("pnl_groups"),
-            "runtime_count": (trading_pulse_payload.get("summary") or {}).get("runtime_count"),
+            "operator_scope": pulse_summary.get("operator_scope"),
+            "pnl_groups": pulse_summary.get("pnl_groups"),
+            "pnl_currency": pulse_summary.get("pnl_currency"),
+            "pnl_currency_status": pulse_summary.get("pnl_currency_status"),
+            "pnl_currency_reason": pulse_summary.get("pnl_currency_reason"),
+            "runtime_count": pulse_summary.get("runtime_count"),
             "ranking_block_count": len(blocks),
             "ranked_item_count": ranked_item_count,
             "eligible_item_count": eligible_item_count,
@@ -5714,7 +5968,10 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_runtime_bindings"):
-                    runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+                    try:
+                        runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+                    except TypeError:
+                        runtime_bindings = list(store.list_runtime_bindings() or [])
                 elif hasattr(store, "list_runtimes"):
                     runtime_bindings = list(store.list_runtimes() or [])
             except Exception:
@@ -5730,7 +5987,10 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_bindings"):
-                    bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
+                    try:
+                        bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
+                    except TypeError:
+                        bindings = list(store.list_bindings() or [])
                 elif hasattr(store, "list_persona_capital_bindings"):
                     bindings = list(store.list_persona_capital_bindings() or [])
             except Exception:
@@ -5738,27 +5998,26 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_capital_pools"):
-                    capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
+                    try:
+                        capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
+                    except TypeError:
+                        capital_pools = list(store.list_capital_pools() or [])
             except Exception:
                 capital_pools = []
 
             try:
                 if hasattr(store, "list_personas"):
-                    personas = list(store.list_personas(clean_tenant or None) or [])
+                    try:
+                        personas = list(store.list_personas(clean_tenant or None) or [])
+                    except TypeError:
+                        personas = list(store.list_personas() or [])
                 elif hasattr(store, "list_persona_records"):
-                    personas = list(store.list_persona_records(clean_tenant or None) or [])
+                    try:
+                        personas = list(store.list_persona_records(clean_tenant or None) or [])
+                    except TypeError:
+                        personas = list(store.list_persona_records() or [])
             except Exception:
                 personas = []
-
-            try:
-                if hasattr(store, "list_strategies"):
-                    strategies = list(store.list_strategies() or [])
-                elif hasattr(store, "list_strategy_summaries"):
-                    strategies = list(store.list_strategy_summaries() or [])
-                elif hasattr(store, "list_strategy_specs"):
-                    strategies = list(store.list_strategy_specs() or [])
-            except Exception:
-                strategies = []
 
             try:
                 if hasattr(store, "list_telemetry_summaries"):
@@ -5802,18 +6061,126 @@ class ManagementService:
             for per in personas
             if isinstance(per, dict) and _management_record_id(per, "persona_id", "id")
         }
-        strategies_by_id = {
-            _management_record_id(st, "strategy_id", "id"): st
-            for st in strategies
-            if isinstance(st, dict) and _management_record_id(st, "strategy_id", "id")
-        }
 
+        def _strategy_display_label(strategy: Optional[Dict[str, Any]], fallback: str) -> str:
+            if not isinstance(strategy, dict):
+                return fallback
+            spec = strategy.get("strategy_spec") if isinstance(strategy.get("strategy_spec"), dict) else {}
+            meta = strategy.get("metadata") if isinstance(strategy.get("metadata"), dict) else {}
+            meta_spec = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            for candidate in (
+                strategy.get("name"),
+                strategy.get("title"),
+                spec.get("name"),
+                spec.get("title"),
+                meta_spec.get("name"),
+                meta_spec.get("title"),
+                meta.get("name"),
+                meta.get("title"),
+            ):
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return fallback
+
+        def _resolve_bounded_strategies(needed_ids: set[str]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+            by_id: Dict[str, Dict[str, Any]] = {}
+            surface_ok = False
+            if store is None:
+                return by_id, surface_ok
+            bounded_page_size = min(max(int(page_size or 50), len(needed_ids), 50), 200)
+            page_reader = (
+                getattr(store, "list_strategy_summaries_page", None)
+                or getattr(store, "list_strategy_specs_page", None)
+            )
+            if callable(page_reader):
+                page_kwargs: Dict[str, Any] = {
+                    "exclude_state": "draft",
+                    "page_size": bounded_page_size,
+                }
+                if persona_id:
+                    page_kwargs["persona_id"] = persona_id
+                if strategy_id:
+                    page_kwargs["query"] = strategy_id
+                try:
+                    try:
+                        page_payload = page_reader(**page_kwargs)
+                    except TypeError:
+                        try:
+                            page_payload = page_reader(page_size=bounded_page_size)
+                        except TypeError:
+                            page_payload = page_reader()
+                    page_rows: Optional[List[Any]] = None
+                    if isinstance(page_payload, dict) and isinstance(page_payload.get("items"), list):
+                        page_rows = page_payload["items"]
+                    elif isinstance(page_payload, list):
+                        page_rows = page_payload
+                    if page_rows is not None:
+                        surface_ok = True
+                        for st in page_rows:
+                            if not isinstance(st, dict):
+                                continue
+                            st_tenant = str(st.get("tenant_id") or st.get("owner_tenant") or "").strip()
+                            if clean_tenant and st_tenant and st_tenant not in {clean_tenant, "*", "__builtin__"}:
+                                continue
+                            sid = _management_record_id(st, "strategy_id", "id")
+                            if sid:
+                                by_id[sid] = st
+                except Exception:
+                    pass
+
+            detail_reader = (
+                getattr(store, "get_strategy_spec_detail", None)
+                or getattr(store, "get_strategy_spec", None)
+            )
+            if callable(detail_reader):
+                for sid in sorted(needed_ids):
+                    if sid in by_id:
+                        continue
+                    try:
+                        try:
+                            detail = detail_reader(sid, version_selector="current")
+                        except TypeError:
+                            detail = detail_reader(sid)
+                        if isinstance(detail, dict):
+                            detail_sid = _management_record_id(detail, "strategy_id", "id") or sid
+                            detail_tenant = str(detail.get("tenant_id") or detail.get("owner_tenant") or "").strip()
+                            if detail_sid != sid:
+                                continue
+                            if clean_tenant and detail_tenant and detail_tenant not in {clean_tenant, "*", "__builtin__"}:
+                                continue
+                            by_id[sid] = detail
+                            surface_ok = True
+                    except Exception:
+                        pass
+            return by_id, surface_ok
+
+        strategies_by_id: Dict[str, Dict[str, Any]] = {}
+        strategy_surface_ok = False
         rows: List[Dict[str, Any]] = []
 
         if direct_rows:
+            filtered_direct_rows: List[Dict[str, Any]] = []
+            needed_strategy_ids: set[str] = set()
             for r in direct_rows:
                 if not isinstance(r, dict):
                     continue
+                pkey = str(r.get("persona_id") or "unassigned").strip() or "unassigned"
+                skey = str(r.get("strategy_id") or "unassigned").strip() or "unassigned"
+                cpkey = str(r.get("capital_pool_id") or "unassigned").strip() or "unassigned"
+                if persona_id and pkey != persona_id:
+                    continue
+                if strategy_id and skey != strategy_id:
+                    continue
+                if capital_pool_id and cpkey != capital_pool_id:
+                    continue
+                filtered_direct_rows.append(r)
+                if skey != "unassigned":
+                    needed_strategy_ids.add(skey)
+
+            strategies_by_id, strategy_surface_ok = _resolve_bounded_strategies(needed_strategy_ids)
+            strategies = list(strategies_by_id.values())
+
+            for r in filtered_direct_rows:
                 pkey = str(r.get("persona_id") or "unassigned").strip() or "unassigned"
                 skey = str(r.get("strategy_id") or "unassigned").strip() or "unassigned"
                 cpkey = str(r.get("capital_pool_id") or "unassigned").strip() or "unassigned"
@@ -5824,19 +6191,12 @@ class ManagementService:
                 budget_val = _as_float(r.get("risk_budget"))
                 score = r.get("risk_score") or ({"critical": 100.0, "watch": 65.0, "elevated": 65.0, "unknown": 40.0, "normal": 20.0, "ok": 20.0}.get(r_state, 20.0))
 
-                if persona_id and pkey != persona_id:
-                    continue
-                if strategy_id and skey != strategy_id:
-                    continue
-                if capital_pool_id and cpkey != capital_pool_id:
-                    continue
-
                 rows.append({
                     "id": r.get("id") or f"risk-radar-{pkey}-{skey}-{cpkey}",
                     "persona_id": pkey,
                     "persona_label": (personas_by_id.get(pkey) or {}).get("name") or pkey,
                     "strategy_id": skey,
-                    "strategy_label": (strategies_by_id.get(skey) or {}).get("name") or skey,
+                    "strategy_label": _strategy_display_label(strategies_by_id.get(skey), skey),
                     "capital_pool_id": cpkey,
                     "capital_pool_name": (pools_by_id.get(cpkey) or {}).get("name") or cpkey,
                     "risk_state": r_state,
@@ -5948,6 +6308,13 @@ class ManagementService:
             if capital_pool_id:
                 facts = [f for f in facts if f.get("capital_pool_id") == capital_pool_id]
 
+            needed_strategy_ids = {
+                str(f.get("strategy_id") or "unassigned").strip() or "unassigned"
+                for f in facts
+            } - {"unassigned"}
+            strategies_by_id, strategy_surface_ok = _resolve_bounded_strategies(needed_strategy_ids)
+            strategies = list(strategies_by_id.values())
+
             grouped: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
             for fact in facts:
                 pkey = str(fact.get("persona_id") or "unassigned").strip() or "unassigned"
@@ -6026,7 +6393,7 @@ class ManagementService:
                 statuses = sorted({f["status"] for f in group_facts if f.get("status")})
 
                 persona_label = (personas_by_id.get(pkey) or {}).get("name") or pkey
-                strategy_label = (strategies_by_id.get(skey) or {}).get("name") or skey
+                strategy_label = _strategy_display_label(strategies_by_id.get(skey), skey)
                 pool_label = (pools_by_id.get(cpkey) or {}).get("name") or cpkey
 
                 indicators = [
@@ -6157,7 +6524,7 @@ class ManagementService:
             "deployment_plans": {"status": "ok" if (deployment_plans or direct_rows) else "unavailable", "source": "store" if store else "missing"},
             "persona_bindings": {"status": "ok" if (bindings or direct_rows) else "unavailable", "source": "store" if store else "missing"},
             "capital_pools": {"status": "ok" if (capital_pools or direct_rows) else "unavailable", "source": "store" if store else "missing"},
-            "strategies": {"status": "ok" if (strategies or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "strategies": {"status": "ok" if (strategies or strategy_surface_ok or direct_rows) else "unavailable", "source": "store" if store else "missing"},
             "telemetry_summaries": {
                 "status": "ok" if (telemetry_by_runtime_id or direct_rows) else ("unavailable" if runtime_bindings else "ok"),
                 "source": "store" if store else "missing",
