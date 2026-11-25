@@ -747,3 +747,41 @@ def test_readers_match_legacy_full_scan(tmp_path: Path) -> None:
     }
     assert len(store.list_negative_memory_records()) == 1
     assert {s.seed_id for s in store.list_by_status("draft")} == {"seed-r-0", "seed-r-2"}
+
+
+def _seed_with(seed_id: str) -> StrategySpecSeed:
+    return StrategySpecSeed(
+        seed_id=seed_id, source_id=f"src-{seed_id}", evidence_bundle_id=f"evb-{seed_id}", hypothesis="h",
+        asset_class=["equity"], market_scope=["TWSE"], holding_period="swing", required_data=["ohlcv"],
+        backend_hint="qlib", feature_hints=["f"], label_hints=["l"], risk_notes=["r"], confidence=0.5,
+        citation_refs=["c"], created_at="2026-10-18T00:00:00Z")
+
+
+def test_read_window_pages_in_order_without_building_seed_objects(tmp_path: Path, monkeypatch) -> None:
+    store = _make_store(tmp_path)
+    for i in range(10):
+        store.save(_seed_with(f"seed-{i}"))
+    built = []
+    real = StrategySpecSeed.from_dict.__func__
+    monkeypatch.setattr(StrategySpecSeed, "from_dict", classmethod(lambda cls, d: (built.append(1), real(cls, d))[1]))
+    seen, token, windows = [], None, 0
+    while True:
+        window, token = store.read_window(page_token=token, max_scan=4)
+        windows += 1
+        seen += [r["seed_id"] for r in window]
+        if token is None:
+            break
+    assert seen == [f"seed-{i}" for i in range(10)] and windows == 3
+    assert not built, "a window reads raw records only"
+    with pytest.raises(StrategySpecSeedStoreError):
+        store.read_window(page_token="garbage", max_scan=4)
+
+
+def test_read_window_cursor_survives_appends_and_pruned_cursor_seed(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    for i in range(6):
+        store.save(_seed_with(f"seed-{i}"))
+    first, token = store.read_window(page_token=None, max_scan=3)
+    store.save(_seed_with("seed-appended"))
+    rest, end = store.read_window(page_token=token, max_scan=10)
+    assert [r["seed_id"] for r in first + rest] == [f"seed-{i}" for i in range(6)] + ["seed-appended"] and end is None

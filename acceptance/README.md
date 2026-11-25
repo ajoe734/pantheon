@@ -271,3 +271,11 @@ disagrees, the pulse is stale and the probe fails
 Budget (unchanged contract): read-only GETs, at most 200 runtimes, 5 MiB and
 30 s per request, retries stop after 240 s inside the stage's 300 s timeout;
 stdout only, no files, no new writer.
+
+## daily-bars-volume probe (`acceptance/probes/daily-bars-volume`)
+
+Owner DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Read-only: `GET $ACCEPTANCE_SOURCE_INGEST_URL/api/source-ingest/health`, field
+`daily_bars.volume` (optional `ACCEPTANCE_SOURCE_INGEST_TOKEN`, `ACCEPTANCE_DAILY_BARS_FIX_DATE`, default 2026-11-26). It reports the
+number of stored days whose traded value is null on more than 5 % of their traded rows (days the completion has examined; the
+payload also counts `unexamined_days` and `unretained_days`) and fails when any such day is newer than the fix date. Older days
+are reported while the completion fills them. Exit 77 when the URL is unset.
