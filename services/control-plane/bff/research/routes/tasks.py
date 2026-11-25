@@ -194,6 +194,15 @@ def _build_display_summary(
     }
 
 
+def _default_persona_directory_snapshot(tenant_id: str, *, snapshot_at: Optional[str] = None) -> Any:
+    """The existing persona owner read the Persona and Strategy routes use (lazy: avoids an import cycle)."""
+    try:
+        from services.control_plane.bff.personas.service import _get_persona_directory_snapshot
+    except (ImportError, ValueError):
+        from ...personas.service import _get_persona_directory_snapshot  # type: ignore[no-redef]
+    return _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+
+
 _TEMPLATE_SEARCH_ACTION = "template_search"
 _RAPID_EVAL = "rapid_eval"
 _DEMANDS_PATH = "/api/research/persona-demands?status=open"
@@ -440,7 +449,7 @@ def create_research_tasks_router(
     def _persona_lookup(tenant_id: str, snapshot_at: str) -> PersonaStateLookup:
         """One persona directory read per request; the owner record is the only truth."""
         return read_persona_state_lookup(
-            directory_snapshot=persona_directory_snapshot,
+            directory_snapshot=persona_directory_snapshot or _default_persona_directory_snapshot,
             projected_state=lambda _record: "unknown",
             operational_states=(),
             tenant_id=tenant_id,

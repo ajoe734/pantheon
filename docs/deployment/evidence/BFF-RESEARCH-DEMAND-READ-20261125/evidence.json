@@ -4,6 +4,7 @@
   "register_instance": "RC6",
   "defect": "hosted BFF has only PANTHEON_RESEARCH_ORCHESTRATOR_API_URL, so persona pool openDemands failed with owner_read_failed:RuntimeError; research items showed tasks only and acceptance-chain rapid_eval rows as real",
   "fix": {
+    "persona_directory": "tasks.py resolves the existing persona directory read lazily; router.py and app_factory.py are untouched (outside the artifact contract)",
     "persona_pool_port": "RESEARCH owner resolves PANTHEON_RESEARCH_ORCHESTRATOR_API_URL first, then the existing names as fallbacks",
     "research_tasks_view_research": "open_demands from owner GET /api/research/persona-demands?status=open (caller bearer+tenant forwarded); meta.surfaces.research_demands ok|unavailable",
     "demand_join": "template-search rows/detail carry demand{demand_id,persona_id,attempt_count,last_reason_code,short_measure,status}; persona_ids on every row",

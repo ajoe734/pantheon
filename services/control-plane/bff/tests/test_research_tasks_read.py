@@ -926,7 +926,7 @@ def _persona_records() -> Dict[str, Dict[str, Any]]:
     }
 
 
-def _build_demand_client(directory: Any) -> Tuple[TestClient, List[Any]]:
+def _build_demand_client(directory: Any, monkeypatch: Any) -> Tuple[TestClient, List[Any]]:
     snapshots: List[Any] = []
 
     def snapshot(tenant_id: str, *, snapshot_at: Optional[str] = None) -> Any:
@@ -940,7 +940,8 @@ def _build_demand_client(directory: Any) -> Tuple[TestClient, List[Any]]:
         get_read_store=lambda: _FakeExperimentReadStore(),
         extract_identity=auth_policy.extract_identity, require_read_role=auth_policy.require_read_role,
         require_operator_role=auth_policy.require_operator_role, bff_error=auth_policy.bff_error,
-        utc_now=lambda: "2026-11-25T06:30:00Z", persona_directory_snapshot=snapshot))
+        utc_now=lambda: "2026-11-25T06:30:00Z"))
+    monkeypatch.setattr(tasks_route_module, "_default_persona_directory_snapshot", snapshot)
     return TestClient(app), snapshots
 
 
@@ -959,7 +960,7 @@ def _demand_world(monkeypatch, *, demands=None, **kw):
 
 def test_research_view_lists_open_demands_from_owner_with_forwarded_caller(monkeypatch) -> None:
     calls = _demand_world(monkeypatch)
-    client, snapshots = _build_demand_client(_persona_records())
+    client, snapshots = _build_demand_client(_persona_records(), monkeypatch)
     resp = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -985,7 +986,7 @@ def test_research_view_lists_open_demands_from_owner_with_forwarded_caller(monke
 
 def test_non_research_views_do_not_read_demands(monkeypatch) -> None:
     calls = _demand_world(monkeypatch)
-    client, _ = _build_demand_client(_persona_records())
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
     body = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers()).json()
     assert "open_demands" not in body and "research_demands" not in body["meta"]["surfaces"]
     assert not [c for c in calls if "persona-demands" in c["url"]]
@@ -996,7 +997,7 @@ def test_non_research_views_do_not_read_demands(monkeypatch) -> None:
                                      {"demands": {"demands": [dict(HOSTED_DEMANDS[0], tenant_id="tenant-b")]}}])
 def test_demand_owner_failure_is_visible_and_task_list_still_renders(monkeypatch, failure) -> None:
     _demand_world(monkeypatch, **failure)
-    client, _ = _build_demand_client(_persona_records())
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
     body = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers()).json()
     assert body["open_demands"] == []
     surface = body["meta"]["surfaces"]["research_demands"]
@@ -1007,7 +1008,7 @@ def test_demand_owner_failure_is_visible_and_task_list_still_renders(monkeypatch
 
 def test_template_search_task_carries_demand_joined_from_recorded_run(monkeypatch) -> None:
     _demand_world(monkeypatch)
-    client, _ = _build_demand_client(_persona_records())
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
     body = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers()).json()
     row = next(i for i in body["items"] if i["task_id"] == "rtask-tmpl-1")
     assert row["title"] == SEARCH_TASK["title"] and row["name"] == SEARCH_TASK["title"]
@@ -1026,7 +1027,7 @@ def test_template_search_task_carries_demand_joined_from_recorded_run(monkeypatc
 
 def test_rapid_eval_on_test_or_probe_personas_is_non_real_from_owner_records(monkeypatch) -> None:
     _demand_world(monkeypatch)
-    client, snapshots = _build_demand_client(_persona_records())
+    client, snapshots = _build_demand_client(_persona_records(), monkeypatch)
     body = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers()).json()
     reasons = {i["task_id"]: i["non_real_reason"] for i in body["items"]}
     assert [reasons[t] for t in RAPID_TASKS[:3]] == ["acceptance_test"] * 3
@@ -1042,7 +1043,7 @@ def test_rapid_eval_on_test_or_probe_personas_is_non_real_from_owner_records(mon
 @pytest.mark.parametrize("directory", [RuntimeError("persona owner down"), {}])
 def test_unreadable_persona_owner_leaves_rapid_eval_visible(monkeypatch, directory) -> None:
     _demand_world(monkeypatch)
-    client, _ = _build_demand_client(directory)
+    client, _ = _build_demand_client(directory, monkeypatch)
     body = client.get("/bff/research-tasks", headers=_auth_headers()).json()
     rows = {i["task_id"]: i for i in body["items"]}
     assert all(rows[t]["non_real_reason"] is None and not rows[t]["is_non_real"] for t in RAPID_TASKS)
@@ -1050,13 +1051,15 @@ def test_unreadable_persona_owner_leaves_rapid_eval_visible(monkeypatch, directo
 
 def test_unwired_persona_directory_leaves_rapid_eval_visible(monkeypatch) -> None:
     _demand_world(monkeypatch)
+    monkeypatch.setattr(tasks_route_module, "_default_persona_directory_snapshot",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no persona owner")))
     body = _build_client().get("/bff/research-tasks", headers=_auth_headers()).json()
     assert all(i["non_real_reason"] is None for i in body["items"] if i["task_id"] in RAPID_TASKS)
 
 
 def test_demand_read_denied_for_wrong_tenant_header(monkeypatch) -> None:
     calls = _demand_world(monkeypatch)
-    client, _ = _build_demand_client(_persona_records())
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
     resp = client.get("/bff/research-tasks", params={"view": "research"},
                       headers=_auth_headers("tenant-dev", header_tenant_id="tenant-b"))
     assert resp.status_code >= 400

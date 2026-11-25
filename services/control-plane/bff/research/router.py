@@ -104,7 +104,6 @@ def create_research_router(
     list_synthesis_conflict_logs: Optional[ConflictLogList] = None,
     get_synthesis_conflict_log: Optional[ConflictLogGet] = None,
     persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None,
-    persona_directory_snapshot: Optional[Callable[..., Any]] = None,
     service: Optional[ResearchRouterService] = None,
 ) -> APIRouter:
     """Compose and return the prepared Research API router."""
@@ -169,7 +168,6 @@ def create_research_router(
                 snapshot_meta=snapshot_meta,
                 dataset_surface_status=dataset_surface_status,
                 service=ctx.service,
-                persona_directory_snapshot=persona_directory_snapshot,
             ).routes
         )
         if require_operator_role is not None:
