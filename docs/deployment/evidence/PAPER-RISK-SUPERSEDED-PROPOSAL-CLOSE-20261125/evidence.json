@@ -1,0 +1,25 @@
+{
+  "task": "PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125",
+  "root_cause_class": "RC2",
+  "operator_decision": "2026-11-25",
+  "defect": "Three v1.0 paper pool risk proposals stayed under_review (one with an approve vote) although a gate-approved v2.0 policy was bound; the paper gate is confined to low risk so the existing close was refused 403 for medium risk and a human had to vote on a superseded request.",
+  "fix": [
+    "services/governance/paper_approval_scope.py: require_superseded_risk_policy_close verifies supersession on Governance's own records (dev, capital_pool_activation of a paper pool, tenant, known proposer, open state, newer approved unexpired unrevoked unconditional gate decision with risk-officer provenance, paper scope, different policy digest)",
+    "services/governance/main.py + models.py: POST /api/governance/approvals/{id}/close-superseded (close-only; automated_gate with the risk_policy grant clause; no outcome accepted); state superseded, superseded_by set, rationale names the superseding decision, actor is the gate, votes untouched",
+    "services/governance/pg_store.py + services/control-plane/governance/approval_decision.py: audit event approval_decision_superseded",
+    "services/control-plane/bff/persona_provisioning_coordinator.py: close_superseded_risk_policy_proposals (idempotent, failure reported never raised) used by the existing superseded step and by renew_paper_risk_policy_approval (repair, redraft, renewal, hourly reconcile for pools with a bound approved policy)"
+  ],
+  "tests": [
+    "services/governance/test_paper_approval_scope.py (real Governance app, issued principals): close succeeds with votes and record kept; replay; refusals for no/pending/rejected/older/expired/revoked/conditional/unstamped/other-actor/other-proposer approved decision, other pool, canary/live/broker_sandbox stage markers, widened scope, non-dev, other target type/tenant/proposer, the bound decision, same-policy proposal, non-gate principals, body mismatch, outcome in body, missing grant clause",
+    "services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py: hosted state (three v1.0 under_review with one approve vote, v2.0 bound) closed on repair with one transition each, resolution identical before/after, pending inbox empty, no re-close; renewal/reconcile path; failed close reported and not raised; newer proposal never closed. 3 of the 12 tests fail on the previous head"
+  ],
+  "runtime_budget": "at most one close POST per stale open proposal; closed proposals are no longer listed as open; no new writer, job or emitter",
+  "unchanged": ["limits", "outer bounds", "TTL", "who may approve"],
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z; the reviewer may be from the owner's family (Claude2 reviewing Claude)",
+  "hosted_acceptance": "pending after deploy: the three v1.0 proposals show superseded with the v2.0 decision id, keep their votes, and no longer appear in /management/approvals; pool risk-policy resolution unchanged",
+  "residual_findings": [
+    "Governance test suites that need PostgreSQL (test_*_postgres.py, test_governance_api.py, test_approval_targets.py) cannot run in this worker environment; the PostgreSQL execute_command path only gained the approval_decision_superseded event mapping and a superseded_by field on the audit event and was not executed here",
+    "The in-memory test store used by the real-app tests does not write audit events, so the audit event for the close is covered by construction (command actor = gate) and the mapping edit, not by an executed assertion",
+    "The close route lists pool decisions with store.list_all inside the CAS callback, a separate read from the transaction in the PostgreSQL store; a superseding decision revoked between that read and the commit is a theoretical race bounded by the expected_version CAS on the target only"
+  ]
+}

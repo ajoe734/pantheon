@@ -88,12 +88,14 @@ class PostgresApprovalDecisionStore:
             if not changed:
                 raise ApprovalCommandConflict('Competing approval command changed the base')
             event = {
-                'event_id': decision.event_id, 'event_type': {'propose': 'approval_decision_created', 'review': 'approval_decision_state_changed', 'decide': 'approval_decision_decided', 'revoke': 'approval_decision_revoked'}[command['operation']],
+                'event_id': decision.event_id, 'event_type': {'propose': 'approval_decision_created', 'review': 'approval_decision_state_changed', 'decide': 'approval_decision_decided', 'revoke': 'approval_decision_revoked', 'close_superseded': 'approval_decision_superseded'}[command['operation']],
                 'decision_id': decision.decision_id, 'tenant_id': command['tenant_id'],
                 'actor_id': command['actor_id'], 'actor_role': command['actor_role'],
                 'version': decision.version, 'request_digest': request_digest,
                 'timestamp': datetime.datetime.now(_UTC).isoformat(),
             }
+            if command['operation'] == 'close_superseded':
+                event['superseded_by'] = decision.superseded_by
             inserted, _ = audit_store._records.compare_and_set(
                 decision.event_id, None, event, conn=conn,
             )

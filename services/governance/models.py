@@ -121,6 +121,12 @@ class DecideRequest(ApprovalCommand):
     expires_at: Optional[str] = None
 
 
+class CloseSupersededRequest(ApprovalCommand):
+    """Close-only command: the superseding decision and the reason are derived by Governance, never supplied."""
+    actor_role: ActorRole
+    actor_id: str
+
+
 class RevokeRequest(ApprovalCommand):
     actor_role: ActorRole
     actor_id: str

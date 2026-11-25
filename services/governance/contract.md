@@ -525,5 +525,22 @@ The absent clause means no widening.
 Required subject fields (`approval_targets.SUBJECT_FIELDS`) must still be non-empty strings, so action-bound targets
 are not loosened; stored string-only subjects (v1.0 proposals) read back unchanged. The paper gate is confined to
 `risk_level=low` decisions: the three stored v1.0 proposals (`risk_level=medium`, no draft) answer `403` to the
-gate's review and stay `proposed`. Closing them is an operator action in the Governance inbox
-(`/management/approvals`) by a human with a decider role; no AI or service principal casts that vote.
+gate's review and stay `proposed`; they are closed by the close-only route below (PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125),
+never by a gate decision.
+
+### `POST /api/governance/approvals/{decision_id}/close-superseded` (PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125)
+
+Close-only authority for the paper automated gate (grant clause `risk_policy=paper_pool`). Body: `actor_role`
+(`automated_gate`), `actor_id` (the verified subject), `expected_version`; no outcome, reason or superseding id is
+accepted (`422`). Governance reads its own records and closes only when all hold: dev environment; the target is an
+open (`proposed`/`under_review`) `capital_pool_activation` in the gate's tenant, proposed by the named risk proposer,
+with `target_id == capital_pool_id` and no stage marker other than paper; and a decision on the same tenant and
+pool is `decided` + `approved`, unconditional, unexpired, not revoked or superseded, decided by the gate with the
+dev paper scope, owned by the same proposer, carrying a risk-officer draft with provenance, created after the
+target and binding a different policy digest. Any failure is `403` (`409` when the target is not open); the route can
+never approve, never touches a decided decision (so never the decision bound to the pool), and never changes limits,
+bounds, TTL or who may approve. Result: `decision_state=superseded`, `superseded_by=<superseding decision id>`,
+`rationale` names that id, `actor_id`/`actor_role` are the gate, existing votes (`metadata.approvals`) are kept
+unchanged and nothing is deleted. The audit event is `approval_decision_superseded` (actor = the gate). The
+coordinator calls it on repair/redraft/renewal and in the hourly reconcile pass (`renew_paper_risk_policy_approval`),
+reporting a failed close without raising it.
