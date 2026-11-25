@@ -32,6 +32,8 @@ from .models import (
     utc_now_iso,
 )
 from .storage import (
+    DISCOVERY_ENTRY_KEYS,
+    DISCOVERY_EXCLUDED_STATES,
     LINEAGE_LIST_FIELDS,
     LINEAGE_META_FIELDS,
     LINEAGE_ROW_KEYS,
@@ -58,6 +60,7 @@ from .storage import (
     STRATEGY_SUMMARY_ROW_KEYS,
     STRATEGY_SUMMARY_SPEC_KEYS,
     RegistryConcurrentUpdateError,
+    discovery_candidate_from_payload,
     encode_strategy_artifact_page_token,
     page_strategy_artifact_rows,
     strategy_artifact_sort_key,
@@ -120,6 +123,13 @@ _ARTIFACT_CATALOG_PRED_SQL = (
 )
 _ARTIFACT_CATALOG_CREATED_SQL = "(COALESCE(payload ->> 'created_at', '') COLLATE \"C\")"
 _ARTIFACT_CATALOG_ID_SQL = "(COALESCE(payload ->> 'registry_id', '') COLLATE \"C\")"
+
+
+_DISCOVERY_SELECT_SQL = (
+    "jsonb_build_object("
+    + ", ".join(f"'{k}', payload -> '{k}'" for k in DISCOVERY_ENTRY_KEYS)
+    + ")::text"
+)
 
 
 class PostgresRegistryStore:
@@ -1000,6 +1010,40 @@ class PostgresRegistryStore:
         )
         return items, total, token
 
+    def _strategy_spec_keyset_rows(
+        self,
+        *,
+        select_sql: str,
+        visible_tenants: Optional[frozenset],
+        predicates: Sequence[str],
+        args: Sequence[Any],
+        limit: int,
+        after_registry_id: Optional[str],
+        key_sql: str = "payload ->> 'registry_id'",
+        source_sql: Optional[str] = None,
+    ) -> list[str]:
+        """Shared ``registry_id`` keyset page over StrategySpec rows, cut in SQL.
+
+        ``select_sql``/``predicates``/``key_sql``/``source_sql`` are code-defined
+        (never request input); the visible tenant population, request values and
+        the cursor travel as bound parameters. Only ``limit`` rows leave Postgres.
+        """
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, "strategy_spec")
+        where = ["jsonb_typeof(payload) = 'object'", f"({visible_sql})", *predicates]
+        bound: list[Any] = list(params) + list(args)
+        if after_registry_id:
+            where.append(f"{key_sql} > %s")
+            bound.append(after_registry_id)
+        # The page is cut on the key first; ``select_sql`` is built only for the kept rows.
+        sql = (
+            f"SELECT {select_sql} FROM (SELECT payload FROM {source_sql or self._entries.table} "
+            f"WHERE {' AND '.join(where)} ORDER BY {key_sql} ASC LIMIT {int(limit)}) AS page "
+            f"ORDER BY {key_sql} ASC"
+        )
+        with self._entries._use_conn(None) as conn:
+            rows = conn.execute(sql, tuple(bound)).fetchall()
+        return [r[0] if not isinstance(r, dict) else next(iter(r.values())) for r in rows]
+
     def list_card_admission_drafts(
         self,
         *,
@@ -1015,28 +1059,56 @@ class PostgresRegistryStore:
         cursor. Non-matching drafts are neither fetched nor decoded. Legacy JSON-string payloads
         are not card drafts and are excluded by the object-type guard.
         """
-        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, "strategy_spec")
-        where = [
-            "jsonb_typeof(payload) = 'object'",
-            f"({visible_sql})",
-            "payload ->> 'artifact_state' = 'draft'",
-            "payload #>> '{metadata,strategy_spec,metadata,card_wiring,status}' = 'gate_ready'",
-            "payload #>> '{metadata,tenant_id}' = %s",
-        ]
-        args: list[Any] = list(params) + [tenant_id]
-        if after_registry_id:
-            where.append("payload ->> 'registry_id' > %s")
-            args.append(after_registry_id)
-        sql = (
-            f"SELECT (payload)::text FROM {self._entries.table} WHERE {' AND '.join(where)} "
-            f"ORDER BY payload ->> 'registry_id' ASC LIMIT {int(limit)}"
+        rows = self._strategy_spec_keyset_rows(
+            select_sql="(payload)::text",
+            visible_tenants=visible_tenants,
+            predicates=(
+                "payload ->> 'artifact_state' = 'draft'",
+                "payload #>> '{metadata,strategy_spec,metadata,card_wiring,status}' = 'gate_ready'",
+                "payload #>> '{metadata,tenant_id}' = %s",
+            ),
+            args=(tenant_id,),
+            limit=limit,
+            after_registry_id=after_registry_id,
         )
-        with self._entries._use_conn(None) as conn:
-            rows = conn.execute(sql, tuple(args)).fetchall()
-        return [
-            RegistryEntry.from_dict(json.loads(r[0] if not isinstance(r, dict) else next(iter(r.values()))))
-            for r in rows
-        ]
+        return [RegistryEntry.from_dict(json.loads(r)) for r in rows]
+
+    def list_discovery_candidates(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[dict]:
+        """At most ``limit`` discovery rows (REGISTRY-DISCOVERY-SPEC-PAGE-20261125).
+
+        Same keyset as :meth:`list_card_admission_drafts`; predicate: strategy_spec,
+        ``artifact_state`` not retired/rejected, visible owner tenant. Only the five
+        discovery fields are built in SQL, so storage refs, evidence and audit fields
+        never leave Postgres. Legacy JSON-string payloads are unwrapped first so the
+        row set equals the unpaged list; the key is byte ordered (``COLLATE "C"``) to
+        match the in-memory owner.
+        """
+        excluded = ", ".join(f"'{s}'" for s in DISCOVERY_EXCLUDED_STATES)
+        rows = self._strategy_spec_keyset_rows(
+            select_sql=_DISCOVERY_SELECT_SQL,
+            visible_tenants=visible_tenants,
+            predicates=(f"payload ->> 'artifact_state' NOT IN ({excluded})",),
+            args=(),
+            limit=limit,
+            after_registry_id=after_registry_id,
+            key_sql="(payload ->> 'registry_id') COLLATE \"C\"",
+            # Same unwrap as ``PostgresJsonOwnerStore.list_all_selected``: ``payload || '{}'``
+            # detoasts each wide row once (about 3x faster per page than one detoast per leaf).
+            source_sql=(
+                "(SELECT CASE WHEN jsonb_typeof(u) = 'array' THEN "
+                "(CASE WHEN jsonb_typeof(payload) = 'string' THEN (payload #>> '{}')::jsonb ELSE u END) "
+                "ELSE u END AS payload "
+                f"FROM (SELECT payload, payload || '{{}}'::jsonb AS u FROM {self._entries.table} OFFSET 0) AS raw "
+                "OFFSET 0) AS discovery_rows"
+            ),
+        )
+        return [discovery_candidate_from_payload(json.loads(r)) for r in rows]
 
     def _has_legacy_string_payloads(self) -> bool:
         with self._entries._use_conn(None) as conn:
