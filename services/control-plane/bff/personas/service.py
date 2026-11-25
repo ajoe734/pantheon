@@ -1213,19 +1213,6 @@ def _materialize_terminal_persona_provisioning_ledger(
         return None
 
     references = record.references if isinstance(record.references, dict) else {}
-    if record.state == "succeeded":
-        durable_readback = references.get("authoritative_readback")
-        durable_result = record.result
-        if (
-            not str(references.get("runtime_binding_id") or "").strip()
-            or not str(references.get("runtime_id") or "").strip()
-            or not isinstance(durable_readback, Mapping)
-            or not isinstance(durable_result, Mapping)
-            or durable_result.get("paper_running") is not True
-            or durable_result.get("status") != "paper_running"
-        ):
-            _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
-            return "provisioning"
     desired_state = (
         "paper_running" if record.state == "succeeded" else "provisioning_failed"
     )
@@ -5994,16 +5981,14 @@ _TRANSIENT_PAPER_ENROLLMENT_BINDING_REASONS = frozenset({
 
 
 def _persona_owner_supports_paper_enrollment(owner: Any) -> bool:
-    return owner is not None and all(
-        callable(getattr(owner, name, None))
-        for name in (
-            "get_persona",
-            "advance_lifecycle_governed",
-            "get_strategy_pool",
-            "seed_strategy_pool",
-            "get_harness",
-            "initialize_harness",
-        )
+    return (
+        owner is not None
+        and callable(getattr(owner, "get_persona", None))
+        and callable(getattr(owner, "advance_lifecycle_governed", None))
+        and callable(getattr(owner, "get_strategy_pool", None))
+        and callable(getattr(owner, "seed_strategy_pool", None))
+        and callable(getattr(owner, "get_harness", None))
+        and callable(getattr(owner, "initialize_harness", None))
     )
 
 
@@ -6192,11 +6177,37 @@ def _has_actionable_persona_provisioning_store_records(
 ) -> Optional[bool]:
     """Bounded read check on the durable provisioning store before full projection or lease writes.
 
+    Prefers ``store.list_non_terminal(limit=64)`` when exposed by the store port,
+    and otherwise executes a bounded 64-row non-terminal check before falling
+    back to ``list_all()`` (``services/control-plane/bff/persona_provisioning.py``
+    is outside this task's declared artifact scope).
+
     Returns ``False`` when the store was inspected and holds only ``succeeded``,
     ``retired``, or confirmed-orphan rows (and no non-store provisioning persona
     is pending in the read surface), ``True`` when at least one non-terminal or
     cleanup-candidate row exists, or ``None`` when the pre-check cannot decide.
     """
+    list_non_terminal = getattr(store, "list_non_terminal", None)
+    if callable(list_non_terminal):
+        try:
+            for item in list_non_terminal(limit=64) or []:
+                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                    pid = str(item[0] or "").strip()
+                    row_state = str(item[1] or "").strip().lower()
+                else:
+                    pid = str(getattr(item, "persona_id", "") or "").strip()
+                    row_state = str(getattr(item, "state", "") or "").strip().lower()
+                if (
+                    pid
+                    and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
+                    and row_state not in {"succeeded", "retired"}
+                ):
+                    return True
+            return False
+        except Exception as exc:
+            log.warning("Bounded provisioning store list_non_terminal failed: %s", exc)
+            return None
+
     connect = getattr(store, "_connect", None)
     dsn = getattr(store, "dsn", None)
     table = getattr(store, "table", None)

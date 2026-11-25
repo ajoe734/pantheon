@@ -313,3 +313,24 @@ def test_memory_steady_state_succeeded_and_retired_rows_perform_zero_lease_write
     assert evaluated == []
     assert lease_writes == []
 
+
+def test_store_list_non_terminal_method_is_preferred_when_exposed_by_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits_seen: list[int] = []
+
+    class _BoundedStoreWithMethod:
+        def list_non_terminal(self, *, limit: int = 64) -> list[Any]:
+            limits_seen.append(limit)
+            return []
+
+        def _connect(self, _dsn: str) -> Any:
+            raise AssertionError("list_non_terminal must be preferred over raw _connect")
+
+    monkeypatch.setattr(
+        personas_service, "_PERSONA_PROVISIONING_STORE", _BoundedStoreWithMethod()
+    )
+    assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert limits_seen == [64]
+
+
