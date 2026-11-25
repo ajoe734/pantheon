@@ -82,6 +82,33 @@ def _get_human_inbox_read_timeout() -> float:
     return float(human_inbox_surface_timeout_seconds()) + _HUMAN_INBOX_ROUTE_MARGIN_SECONDS
 
 
+# scope=cited composes seven owner sources plus at most 30 meeting detail reads
+# (4 in flight); hosted 2026-11-25: 20 details = 495 KB, 6.2 s sequential.
+_CITED_EVIDENCE_DEFAULT_READ_TIMEOUT_SECONDS = 8.0
+_CITED_EVIDENCE_SCOPES = frozenset({"ingested", "cited"})
+
+
+def _get_cited_evidence_read_timeout() -> float:
+    raw = os.getenv("PANTHEON_BFF_CITED_EVIDENCE_READ_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    return _CITED_EVIDENCE_DEFAULT_READ_TIMEOUT_SECONDS
+
+
+def _cited_caller(identity: Any) -> Tuple[bool, str]:
+    roles = {str(r).strip().lower() for r in (getattr(identity, "roles", None) or []) if r}
+    claims = getattr(identity, "claims", None)
+    claims = claims if isinstance(claims, dict) else {}
+    caller = str(
+        claims.get("agora_user_id") or claims.get("trader_id") or claims.get("user_id")
+        or claims.get("sub") or getattr(identity, "operator_id", "") or ""
+    ).strip()
+    return bool(roles & {"operator", "approver", "admin"}), caller
+
+
 def _get_management_evidence_read_timeout() -> float:
     raw = os.getenv("PANTHEON_BFF_EVIDENCE_READ_TIMEOUT_SECONDS", "").strip()
     if raw:
@@ -1965,12 +1992,68 @@ def create_management_router(
         verified: Optional[bool] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=20, ge=1, le=100),
+        scope: Optional[str] = Query(default=None),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
+        """BFF: adapt knowledge evidence refs into the Management Evidence Explorer.
+
+        ``scope=cited`` lists only references that decisions, meetings,
+        approvals and research cite; without ``scope`` (or ``ingested``) the
+        answer is the ingested list. A ``ref_id`` lookup resolves an ingested
+        item in every scope.
+        """
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        clean_scope = str(scope or "").strip().lower() or None
+        if clean_scope is not None and clean_scope not in _CITED_EVIDENCE_SCOPES:
+            raise _err(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid scope",
+                f"scope must be one of {sorted(_CITED_EVIDENCE_SCOPES)}",
+                precondition_failed="scope",
+            )
+        if clean_scope == "cited" and not str(ref_id or "").strip():
+            tenant_id = _extract_tenant_id(identity, tenant_payload_fn, requested_tenant=x_tenant_id)
+            is_operator, caller_user_id = _cited_caller(identity)
+
+            def _do_cited():
+                return svc.get_cited_evidence(
+                    identity=identity,
+                    tenant_id=tenant_id,
+                    is_operator=is_operator,
+                    caller_user_id=caller_user_id,
+                    page_token=page_token,
+                    page_size=page_size,
+                )
+
+            timeout = _get_cited_evidence_read_timeout()
+            if run_management_read is not None:
+                try:
+                    return await run_management_read(_do_cited, timeout_seconds=timeout)
+                except Exception as e:
+                    exc_name = type(e).__name__
+                    reason = {
+                        "ManagementReadTimeout": "read_timeout",
+                        "ManagementReadSaturated": "read_capacity_saturated",
+                    }.get(exc_name, "read_error")
+                    if reason == "read_error":
+                        logging.getLogger(__name__).warning("bff.management_evidence cited read failed: %s", exc_name)
+                    return svc.get_evidence_degraded_payload(page_size=page_size, snapshot_at=snap, reason=reason)
+
+            from starlette.concurrency import run_in_threadpool
+
+            def _bounded_cited():
+                token = management_read_deadline.set(time.monotonic() + timeout)
+                try:
+                    return _do_cited()
+                finally:
+                    management_read_deadline.reset(token)
+
+            ctx = contextvars.copy_context()
+            return await run_in_threadpool(ctx.run, _bounded_cited)
 
         def _resolve_evidence_reader():
             # See _resolve_cockpit_composer's comment above: prefer the

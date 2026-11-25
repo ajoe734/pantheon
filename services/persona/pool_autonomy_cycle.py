@@ -32,9 +32,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from services.persona.pool_publish_port import PoolPublishPort
@@ -187,9 +188,12 @@ class PoolAutonomyCycle:
                 record = {"run_at": self.now(), "matched": len(found["matches"]), "excluded": found["excluded"],
                           "candidates_considered": found["candidates_considered"], "reason": found.get("reason"),
                           "actions": actions}
+                if found.get("spec_read"):
+                    record["spec_read"] = found["spec_read"]
                 if found.get("partial"):
-                    record.update(partial=True, seeds_seen=found.get("seeds_seen"), seed_pages=found.get("seed_pages"),
-                                  partial_reason=found.get("partial_reason"))
+                    record.update(partial=True, **{k: found[k] for k in (
+                        "seeds_seen", "seed_pages", "partial_reason", "specs_seen", "spec_pages", "spec_partial_reason")
+                        if k in found})
             except Exception as exc:  # noqa: BLE001 - fail closed, record why
                 record = {"run_at": self.now(), "matched": 0, "excluded": [], "candidates_considered": 0,
                           "reason": f"discovery_unavailable:{type(exc).__name__}: {str(exc)[:160]}", "actions": []}
@@ -462,6 +466,25 @@ def governed_discovery_loader(*, seeds: Callable[[Mapping], list], specs: Callab
     return load
 
 
+class StrategySpecRead(list):
+    """Registry StrategySpecs read for discovery plus how complete and how large the read was."""
+
+    def __init__(self, rows: Any = (), *, resumed: bool = False, limits: Mapping[str, Any] | None = None):
+        super().__init__(rows)
+        self.pages, self.bytes_read, self.seconds = 0, 0, 0.0
+        self.partial, self.stop_reason, self.next_token = False, None, None
+        self.resumed, self.limits = resumed, dict(limits or {})
+
+    def stop(self, reason: str, next_token: str | None) -> None:
+        self.partial, self.stop_reason, self.next_token = True, reason, next_token
+
+    def summary(self) -> dict[str, Any]:
+        return {"specs_seen": len(self), "pages": self.pages, "bytes": self.bytes_read, "seconds": self.seconds,
+                "partial": self.partial, "stop_reason": self.stop_reason, "resumed": self.resumed,
+                "max_pages": self.limits.get("max_pages"), "page_size": self.limits.get("page_size"),
+                "budget_seconds": self.limits.get("budget_seconds")}
+
+
 class HttpPoolCyclePorts(PoolPublishPort):
     """Owner HTTP ports. ``transport(method, service, path, tenant, body)`` is the only I/O."""
 
@@ -481,7 +504,8 @@ class HttpPoolCyclePorts(PoolPublishPort):
     def __init__(self, transport: Callable[..., Any] | None = None, *, pool_store: Any = None,
                  dataset_loader: Callable[[Mapping, Mapping], dict] | None = None, env: Mapping[str, str] | None = None,
                  discovery_loader: Callable[[Mapping], dict] | None = None,
-                 consultation_factory: Callable[..., Any] | None = None):
+                 consultation_factory: Callable[..., Any] | None = None,
+                 spec_clock: Callable[[], float] | None = None):
         self.consultation_factory = consultation_factory or self._consultation
         self.env = os.environ if env is None else env
         self.transport = transport or self._urllib
@@ -489,6 +513,9 @@ class HttpPoolCyclePorts(PoolPublishPort):
         self.dataset_loader = dataset_loader
         self.discovery_loader = discovery_loader
         self._entries: dict[tuple[str, str], Mapping] = {}
+        self.spec_clock = spec_clock or time.monotonic
+        self._spec_reads: dict[str, tuple[float, StrategySpecRead]] = {}
+        self._spec_cursor: dict[str, str] = {}
 
     def _urllib(self, method, service, path, tenant, body=None):
         from services.service_token_file import configured_service_token
@@ -534,45 +561,123 @@ class HttpPoolCyclePorts(PoolPublishPort):
         # Negative memory is the seed store's own verdict (carried on each seed); the persona's
         # own failed families arrive through the demand's tried_families.
         seeds = sources.get("seeds") or []
+        specs = self.read_strategy_specs(persona) if sources.get("specs") is None else sources["specs"]
         found = module.discover_for_demand(
             persona, demand, route_policy=sources.get("route_policy"), capability_snapshot=sources.get("capability_snapshot"),
-            strategy_seeds=seeds,
-            strategy_specs=(self.read_strategy_specs(persona) if sources.get("specs") is None else sources["specs"]),
+            strategy_seeds=seeds, strategy_specs=specs,
             created_at=self.now_iso(), discovery_session_id="psd-demand-" + demand["demand_id"])
+        if isinstance(specs, StrategySpecRead):
+            found = {**found, "spec_read": specs.summary()}
         if getattr(seeds, "partial", False):
             # The seed read stopped at its cap: say so, with how much was seen, and never report "no match".
             found = {**found, "partial": True, "seeds_seen": len(seeds), "seed_pages": getattr(seeds, "pages", None),
                      "partial_reason": getattr(seeds, "stop_reason", None)}
             if not found["matches"]:
                 found["reason"] = f"partial_seed_read:{len(seeds)}_seeds_seen_no_match_yet"
+        if getattr(specs, "partial", False):
+            # The registry spec read stopped at its page cap, time budget or a failed later page: the
+            # candidates beyond it were not seen, so "no match" is never claimed.
+            found = {**found, "partial": True, "specs_seen": len(specs), "spec_pages": specs.pages,
+                     "spec_partial_reason": specs.stop_reason}
+            if not found["matches"]:
+                found["reason"] = (found["reason"] if str(found.get("reason") or "").startswith("partial_seed_read")
+                                   else f"partial_spec_read:{len(specs)}_specs_seen_no_match_yet")
         return found
 
     @staticmethod
     def now_iso():
         return _now()
 
-    def read_strategy_specs(self, persona):
-        """StrategySpec candidates from the registry owner (tenant-scoped service read), not retired."""
-        rows = self._call("GET", "registry", "/api/registry/strategy-specs", persona)
-        specs = []
-        for view in rows or []:
-            entry = view.get("entry") if isinstance(view, Mapping) else None
-            if not isinstance(entry, Mapping) or str(entry.get("artifact_state") or "").lower() in {"retired", "rejected"}:
-                continue
-            metadata = dict(entry.get("metadata") or {})
-            stored = metadata.get("strategy_spec")  # the registry stores the canonical StrategySpec here
-            spec = dict(stored) if isinstance(stored, Mapping) else {}
-            for key in ("mechanism", "mechanism_status", "mechanism_support", "negative_memory_match"):
-                if key in metadata:
-                    spec.setdefault(key, metadata[key])
-            spec.update({"strategy_id": spec.get("strategy_id") or entry.get("strategy_id"),
-                         "strategy_spec_registry_id": entry.get("registry_id"),
-                         "lifecycle_state": entry.get("artifact_state"),
-                         "metadata": {**(spec.get("metadata") if isinstance(spec.get("metadata"), Mapping) else {}),
-                                      **{k: v for k, v in metadata.items() if k != "strategy_spec"}},
-                         "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}})
-            specs.append(spec)
-        return specs
+    def read_strategy_specs(self, persona) -> "StrategySpecRead":
+        """StrategySpec candidates from the registry owner, one bounded page at a time.
+
+        Reads ``view=discovery_candidates`` (retired/rejected excluded by the owner, five entry
+        fields only) for the persona's tenant with the same registry credential and X-Tenant-Id.
+        Stops at ``max_pages`` or ``budget_seconds`` (``partial`` with ``stop_reason``); a capped
+        read resumes from where it stopped on the next read for that tenant, so a large registry
+        is covered across cycles. A failed first page raises (unavailable); a failed later page
+        keeps what was read as partial. A read is reused for ``reuse_seconds`` by every demand
+        and persona of the same tenant, so one cycle never walks the registry once per demand.
+        Each spec keeps only the fields the discovery scorer reads (``SCORER_SPEC_KEYS``).
+        """
+        tenant = persona["tenant_id"]
+        cfg = self.spec_read_limits()
+        now = self.spec_clock()
+        cached = self._spec_reads.get(tenant)
+        if cached is not None and now - cached[0] < cfg["reuse_seconds"]:
+            return cached[1]
+        start_token = self._spec_cursor.pop(tenant, None)
+        read = StrategySpecRead(resumed=start_token is not None, limits=cfg)
+        token, started = start_token, now
+        while True:
+            if read.pages >= cfg["max_pages"]:
+                read.stop("page_cap", token)
+                break
+            if read.pages and self.spec_clock() - started >= cfg["budget_seconds"]:
+                read.stop("time_budget", token)
+                break
+            query = {"view": "discovery_candidates", "tenant_id": tenant, "page_size": cfg["page_size"]}
+            if token:
+                query["page_token"] = token
+            try:
+                page = self._call("GET", "registry", "/api/registry/strategy-specs?" + urlencode(query), persona)
+                items = page["items"]
+                if not isinstance(items, list):
+                    raise TypeError("discovery_candidates items is not a list")
+            except Exception as exc:  # noqa: BLE001 - an unreadable owner is never an empty registry
+                if not read.pages:
+                    raise RuntimeError(f"strategy_spec_read_unavailable:pages=0:specs=0:{type(exc).__name__}: "
+                                       f"{str(exc)[:120]}") from exc
+                read.stop(f"page_failed:{type(exc).__name__}", None)
+                break
+            read.pages += 1
+            read.bytes_read += len(json.dumps(page, default=str))
+            read.extend(spec for spec in (self._spec_from_view(view) for view in items) if spec is not None)
+            token = page.get("next_page_token")
+            if not token:
+                if start_token is not None:
+                    read.stop("resumed_tail", None)  # saw only the tail; the next read starts from the beginning
+                break
+        if read.next_token:
+            self._spec_cursor[tenant] = read.next_token
+        read.seconds = round(self.spec_clock() - started, 3)
+        self._spec_reads[tenant] = (now, read)
+        return read
+
+    # Only what ``persona_strategy_discovery`` reads from a StrategySpec (``_candidate_from_strategy_spec``
+    # and the demand pre-filter), plus the registry id and lineage the cycle has always carried.
+    SCORER_SPEC_KEYS = frozenset({
+        "strategy_id", "id", "spec_version_id", "title", "name", "hypothesis", "strategy_family", "source_kind",
+        "market_scope", "execution_profile", "governance", "provenance", "citation_bundle", "evidence_refs",
+        "derived_from_source_refs", "source_refs", "data_dependencies", "lifecycle_state", "status", "allowed_use",
+        "metadata", "mechanism", "mechanism_status", "mechanism_support", "negative_memory_match",
+        "strategy_spec_registry_id", "lineage"})
+
+    def spec_read_limits(self) -> dict[str, Any]:
+        env = self.env
+        return {"page_size": max(1, min(50, int(env.get("PERSONA_DISCOVERY_SPEC_PAGE_SIZE") or 50))),
+                "max_pages": max(1, int(env.get("PERSONA_DISCOVERY_SPEC_MAX_PAGES") or 40)),
+                "budget_seconds": float(env.get("PERSONA_DISCOVERY_SPEC_BUDGET_SECONDS") or 30),
+                "reuse_seconds": float(env.get("PERSONA_DISCOVERY_SPEC_REUSE_SECONDS") or 600)}
+
+    @classmethod
+    def _spec_from_view(cls, view) -> dict | None:
+        entry = view.get("entry") if isinstance(view, Mapping) else None
+        if not isinstance(entry, Mapping) or str(entry.get("artifact_state") or "").lower() in {"retired", "rejected"}:
+            return None  # the owner already excludes these; kept so a stale owner never leaks one
+        metadata = dict(entry.get("metadata") or {})
+        stored = metadata.get("strategy_spec")  # the registry stores the canonical StrategySpec here
+        spec = dict(stored) if isinstance(stored, Mapping) else {}
+        for key in ("mechanism", "mechanism_status", "mechanism_support", "negative_memory_match"):
+            if key in metadata:
+                spec.setdefault(key, metadata[key])
+        spec.update({"strategy_id": spec.get("strategy_id") or entry.get("strategy_id"),
+                     "strategy_spec_registry_id": entry.get("registry_id"),
+                     "lifecycle_state": entry.get("artifact_state"),
+                     "metadata": {**(spec.get("metadata") if isinstance(spec.get("metadata"), Mapping) else {}),
+                                  **{k: v for k, v in metadata.items() if k != "strategy_spec"}},
+                     "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), Mapping) else {}})
+        return {k: v for k, v in spec.items() if k in cls.SCORER_SPEC_KEYS}
 
     # Each supported action is admitted by the research owner as a durable ticket (its request queue).
     # The persona cycle only asks: seed promotion stays with the seed reviewer, rapid evaluation with
