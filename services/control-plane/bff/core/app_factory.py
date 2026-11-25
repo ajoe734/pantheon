@@ -1168,6 +1168,7 @@ def mount_bff_routers(
                 CommandType.EXPERIMENT_ACTION,
                 **context,
             ),
+            persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),
             include_prepared_subrouters=True,
         )
     )
