@@ -2697,3 +2697,162 @@ def test_require_valid_any_accepts_any_member_of_a_value_set_and_nothing_else():
         require_valid_any(Approval("sideways"), expected=accepted)
     with pytest.raises(ValueError):
         require_valid_any(Approval("reduce"), expected={**accepted, "target_id": "other"})
+
+
+def test_blueprint_limits_evaluator_missing_facts_reduce_only_and_configured_bounds() -> None:
+    import json
+    from services.capital.risk_policy import (
+        DEFAULT_PROFILE_OUTER_BOUNDS,
+        PROFILE_OUTER_BOUNDS_ENV,
+        profile_outer_bounds,
+        validate_drafted_pool_risk_policy,
+    )
+
+    # 1. No invented default outer bounds for sector, turnover, or liquidity (Operator decision Q2).
+    assert set(DEFAULT_PROFILE_OUTER_BOUNDS["low"].keys()) == {
+        "gross_limit",
+        "max_leverage",
+        "max_single_name_weight",
+        "min_cash_reserve_pct",
+    }
+
+    policy = RiskPolicy.from_mapping(
+        {
+            "risk_policy_id": "rp-blueprint-v2",
+            "version": "2.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.6,
+            "net_limit": 1.0,
+            "max_leverage": 1.6,
+            "max_single_name_weight": 0.20,
+            "min_cash_reserve_pct": 0.15,
+            "max_sector_exposure": {"24": 0.35, "01": 0.25, "*": 0.30},
+            "turnover_limit": 1.5,
+            "liquidity_constraints": {
+                "min_avg_daily_volume": 500_000.0,
+                "max_order_pct_adv": 0.05,
+            },
+        }
+    )
+    evaluator = RiskPolicyEvaluator()
+
+    # 2. Order increase with missing facts fails closed naming the missing fact.
+    missing_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-missing-facts",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_increase",
+            "gross_exposure": 0.2,
+            "net_exposure": 0.2,
+            "leverage": 0.2,
+            "target_weights": {"2330": 0.2},
+            "cash_reserve_pct": 0.8,
+        },
+    )
+    assert missing_eval.rejected is True
+    failed_by_code = {c.code: c.reason for c in missing_eval.checks if c.status == "failed"}
+    assert failed_by_code["turnover_unavailable"] == (
+        "Risk policy limit turnover_limit cannot be evaluated: turnover unavailable"
+    )
+    assert failed_by_code["sector_exposures_unavailable"] == (
+        "Risk policy limit max_sector_exposure cannot be evaluated: sector_exposures unavailable"
+    )
+    assert failed_by_code["liquidity_unavailable"] == (
+        "Risk policy limit liquidity_constraints cannot be evaluated: liquidity unavailable"
+    )
+
+    # 3. Reduce-only order is always allowed even when facts are absent or current exposures exceed limits.
+    reduce_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-reduce-only",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_reduce",
+            "gross_exposure": 0.4,
+            "net_exposure": 0.4,
+            "leverage": 0.4,
+            "sector_exposures": {"24": 0.50},
+            "turnover": 2.5,
+            "liquidity": {"avg_daily_volume": 100_000.0, "order_pct_adv": 0.20},
+        },
+    )
+    assert reduce_eval.allowed is True
+
+    # 4. Breaches on sector ("24" and "1" matching "01"), turnover, and liquidity are rejected with reasons.
+    breach_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-breach",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_increase",
+            "gross_exposure": 0.4,
+            "net_exposure": 0.4,
+            "leverage": 0.4,
+            "target_weights": {"2330": 0.2},
+            "cash_reserve_pct": 0.6,
+            "sector_exposures": {"24": 0.40, "1": 0.30},
+            "turnover": 1.75,
+            "liquidity": {"avg_daily_volume": 400_000.0, "order_volume": 30_000.0},
+        },
+    )
+    assert breach_eval.rejected is True
+    breach_codes = {c.code for c in breach_eval.checks if c.status == "failed"}
+    assert {
+        "sector_exposure_limit_exceeded",
+        "turnover_limit_exceeded",
+        "liquidity_min_adv_breach",
+        "liquidity_order_pct_adv_breach",
+    } <= breach_codes
+
+    # 5. Configured outer bounds validate drafted blueprint limits without inventing bounds when unconfigured.
+    custom_env = {
+        PROFILE_OUTER_BOUNDS_ENV: json.dumps(
+            {
+                "low": {
+                    **DEFAULT_PROFILE_OUTER_BOUNDS["low"],
+                    "max_sector_exposure": 0.35,
+                    "turnover_limit": 1.5,
+                    "liquidity_constraints": {
+                        "min_avg_daily_volume": 500_000.0,
+                        "max_order_pct_adv": 0.05,
+                    },
+                }
+            }
+        )
+    }
+    parsed_bounds = profile_outer_bounds(custom_env)
+    model, err = validate_drafted_pool_risk_policy(policy.to_dict(), profile="low", bounds=parsed_bounds)
+    assert err is None and model is not None
+
+    _, sector_err = validate_drafted_pool_risk_policy(
+        {**policy.to_dict(), "max_sector_exposure": 0.45},
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert sector_err is not None and "max_sector_exposure" in sector_err
+
+    _, turnover_err = validate_drafted_pool_risk_policy(
+        {**policy.to_dict(), "turnover_limit": 2.0},
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert turnover_err is not None and "turnover_limit" in turnover_err
+
+    _, liq_err = validate_drafted_pool_risk_policy(
+        {
+            **policy.to_dict(),
+            "liquidity_constraints": {"min_avg_daily_volume": 500_000.0, "max_order_pct_adv": 0.10},
+        },
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert liq_err is not None and "max_order_pct_adv" in liq_err
+
