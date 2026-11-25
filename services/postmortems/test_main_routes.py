@@ -589,3 +589,236 @@ def test_unpaged_published_caller_learning_feedback_bridge_unchanged(monkeypatch
     assert report["written_postmortems"] == ["pm-pub-1"]
     assert report["errors"] == []
 
+
+
+# ---------------------------------------------------------------------------
+# POSTMORTEM-SKIP-INFRA-DRAFTS-20261125: infra incidents produce no draft;
+# old drafts hidden with a count. Rows use real hosted shapes.
+# ---------------------------------------------------------------------------
+
+from services.incident.incident import Postmortem  # noqa: E402
+from services.postmortems.consumer import build_postmortem_draft_from_incident  # noqa: E402
+
+_SI_CONSUME = "/api/postmortems/consume-resolved-incident"
+
+
+def _si_inc(incident_id, **kw) -> IncidentCase:
+    base = dict(
+        incident_id=incident_id, title="t", status=IncidentStatus.RESOLVED.value,
+        severity="high", created_at="2026-11-25T06:00:00Z", resolved_at="2026-11-25T06:30:00Z",
+        deployment_stage="paper", capital_pool_id="infra-tenant-tenant-dev",
+        artifact_id="a", artifact_version="1", runtime_id="r", trace_id="tr",
+    )
+    base.update(kw)
+    return IncidentCase(**base)
+
+
+def _si_infra_bff(incident_id="inc-infra-bff"):
+    return _si_inc(
+        incident_id,
+        binding_id="infra-subject-tenant-dev-control-plane-bff-reconciliation-_si_drift",
+        deployment_plan_id="infra-plan-control-plane-bff",
+        persona_capital_binding_id="infra-authority-control-plane-bff",
+        incident_cluster_id="infrastructure:tenant-dev:control-plane-bff:downstream_degradation",
+        evidence_summary="non_trading_infrastructure_incident=true downstream degradation",
+        title="downstream degradation",
+    )
+
+
+def _si_infra_summary_only(incident_id="inc-infra-sum"):
+    # classified only through evidence_summary: proves the stored
+    # incident_evidence_summary field name is mapped onto the predicate.
+    return _si_inc(
+        incident_id,
+        binding_id="infra-subject-tenant-dev-x",
+        deployment_plan_id="infra-plan-x",
+        persona_capital_binding_id="infra-authority-x",
+        incident_cluster_id="other",
+        evidence_summary="non_trading_infrastructure_incident=true",
+    )
+
+
+def _si_monitor_agent(incident_id="agent-finding-1"):
+    return _si_inc(
+        incident_id,
+        binding_id="infra-binding-monitor-agent",
+        deployment_plan_id="infra-plan-monitor-agent",
+        persona_capital_binding_id="infra-authority-monitor-agent",
+        incident_cluster_id="infra-cluster:monitor-agent:agent-finding-1",
+        artifact_id="infra-component-agent-finding-1",
+        evidence_summary="component_kind=monitor-agent-finding",
+    )
+
+
+def _si_drift(incident_id="inc-_si_drift-1"):
+    return _si_inc(
+        incident_id, binding_id="binding-1", deployment_plan_id="plan-1",
+        persona_capital_binding_id="pcb-1", capital_pool_id="pool-1",
+        incident_cluster_id="_si_drift:rolling_drawdown_multiple",
+        evidence_summary="Drift threshold breached",
+    )
+
+
+def _si_seed_pm(inc: IncidentCase, status="draft"):
+    store._incidents[inc.incident_id] = inc
+    pm = build_postmortem_draft_from_incident(inc)
+    d = pm.to_dict(); d["status"] = status
+    pm = Postmortem.from_dict(d)
+    store._postmortems[pm.postmortem_id] = pm
+    return pm
+
+
+@pytest.mark.parametrize("maker", [_si_infra_bff, _si_infra_summary_only, _si_monitor_agent])
+def test_infra_incident_skipped_no_draft_and_redelivery_same(maker):
+    inc = maker()
+    store._incidents[inc.incident_id] = inc
+    for _ in range(2):
+        r = client.post(_SI_CONSUME, json={"incident_id": inc.incident_id})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["skipped"] is True and body["reason"] == "infrastructure_incident"
+    assert store.list_postmortems() == []
+
+
+def _si_event(incident_id):
+    from services.postmortems.test_evochain_003_delivery import _resolved_incident_event
+    return _resolved_incident_event(incident_id)
+
+
+def test_infra_event_delivery_reserves_no_inbox_row_and_redelivery_same(monkeypatch):
+    from services.postmortems import main as m
+    inc = _si_infra_bff(); store._incidents[inc.incident_id] = inc
+    reserved = []
+    real = m.inbox_store.reserve
+    monkeypatch.setattr(m.inbox_store, "reserve", lambda *a, **k: reserved.append(1) or real(*a, **k))
+    ev = _si_event(inc.incident_id)
+    for _ in range(2):
+        r = client.post(_SI_CONSUME, json={"incident_id": inc.incident_id, "event": ev.to_dict()})
+        assert r.status_code == 200, r.text
+        assert r.json()["skipped"] is True
+    assert reserved == []
+    assert store.list_postmortems() == []
+
+
+def test_existing_postmortem_of_infra_incident_left_unchanged():
+    inc = _si_infra_bff(); pm = _si_seed_pm(inc, status="draft")
+    before = store.get_postmortem(pm.postmortem_id).to_dict()
+    r = client.post(_SI_CONSUME, json={"incident_id": inc.incident_id})
+    assert r.status_code == 200 and r.json()["skipped"] is True
+    assert store.get_postmortem(pm.postmortem_id).to_dict() == before
+
+
+def test_drift_incident_still_creates_draft():
+    inc = _si_drift(); store._incidents[inc.incident_id] = inc
+    r = client.post(_SI_CONSUME, json={"incident_id": inc.incident_id})
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "draft"
+
+
+def _si_seed_mixed():
+    _si_seed_pm(_si_infra_bff("i1")); _si_seed_pm(_si_infra_summary_only("i2")); _si_seed_pm(_si_monitor_agent("agent-2"))
+    _si_seed_pm(_si_infra_bff("i-rev"), status="review")
+    _si_seed_pm(_si_infra_bff("i-pub"), status="published")
+    _si_seed_pm(_si_drift("d1")); _si_seed_pm(_si_drift("d2"))
+
+
+def test_list_hides_infra_drafts_with_count_and_paging():
+    _si_seed_mixed()
+    r = client.get("/api/postmortems", params={"page_size": 2})
+    b = r.json()
+    assert b["total"] == 4 and b["hidden_infrastructure_count"] == 3
+    assert len(b["items"]) == 2 and b["next_page_token"] == "2"
+    ids = {p["incident_id"] for p in client.get("/api/postmortems", params={"page_size": 50}).json()["items"]}
+    assert ids == {"i-rev", "i-pub", "d1", "d2"}  # reviewed/published infra never hidden
+
+
+def test_list_include_infrastructure_and_incident_filter_show_all():
+    _si_seed_mixed()
+    b = client.get("/api/postmortems", params={"page_size": 50, "include_infrastructure": "true"}).json()
+    assert b["total"] == 7 and b["hidden_infrastructure_count"] == 0
+    b = client.get("/api/postmortems", params={"page_size": 50, "incident_id": "i1"}).json()
+    assert b["total"] == 1 and b["hidden_infrastructure_count"] == 0
+
+
+def test_unpaged_list_hides_and_reports_header():
+    _si_seed_mixed()
+    r = client.get("/api/postmortems")
+    assert len(r.json()) == 4 and r.headers["X-Hidden-Infrastructure-Count"] == "3"
+
+
+
+class _FakePmOwner:
+    """Row-backed owner table: serves the three reads the page query uses."""
+
+    def __init__(self, payloads, stats):
+        self.rows = {p["postmortem_id"]: p for p in payloads}
+        self.stats = stats
+        self.table = "incident.postmortems"
+
+    def list_all_selected(self, columns_sql, **_):
+        from services.incident.pg_store import PostgresIncidentStore as S
+        self.stats["index_rows"] = len(self.rows)
+        return [
+            tuple(
+                (p.get(f) if f != "incident_evidence_summary" else p.get(f))
+                for f in S._PM_INDEX_FIELDS
+            )
+            for p in self.rows.values()
+        ]
+
+    def get(self, record_id):
+        self.stats["payload_loads"] = self.stats.get("payload_loads", 0) + 1
+        return dict(self.rows[record_id]) if record_id in self.rows else None
+
+    def select_where(self, where, params=(), *, tail_sql=""):
+        self.stats["payload_loads"] = self.stats.get("payload_loads", 0) + len(self.rows)
+        needle = params[0].strip("%").lower()
+        return [dict(p) for p in self.rows.values() if needle in str(p).lower()]
+
+
+def _six_thousand_payloads():
+    out = []
+    for n in range(6000):
+        inc = _si_infra_bff(f"x{n}") if n % 20 else _si_drift(f"x{n}")
+        out.append(build_postmortem_draft_from_incident(inc).to_dict())
+    return out
+
+
+def test_total_exact_at_6000_rows_postgres_backend_without_loading_all_payloads():
+    """Hosted dev/staging/production use the Postgres store backend (see evidence.json)."""
+    from services.incident.pg_store import PostgresIncidentStore
+    from services.postmortems import main as m
+    stats = {}
+    pg = PostgresIncidentStore.__new__(PostgresIncidentStore)
+    pg._postmortem_records = _FakePmOwner(_six_thousand_payloads(), stats)
+    pg._postmortems = {}
+    pg._incidents = {}
+    pg._refresh_from_disk = lambda: None
+    pg._thread_lock = __import__("threading").RLock()
+    original = m.store
+    m.store = pg
+    try:
+        b = client.get("/api/postmortems", params={"page_size": 200, "include_infrastructure": "true"}).json()
+        assert b["total"] == 6000 and len(b["items"]) == 200
+        assert b["total"] > PostgresIncidentStore.HISTORY_READ_ROW_CAP
+        assert stats["payload_loads"] == 200  # only the page's payloads, never the 6000
+        stats.clear()
+        b = client.get("/api/postmortems", params={"page_size": 200}).json()
+        assert b["total"] == 300 and b["hidden_infrastructure_count"] == 5700
+        assert stats["payload_loads"] == 200
+        stats.clear()
+        b = client.get("/api/postmortems", params={"page_size": 5, "q": "x7"}).json()
+        assert b["total"] >= 1
+    finally:
+        m.store = original
+
+
+def test_total_exact_at_6000_rows_json_backend():
+    """Local/hosted-dev default backend is json (docker-compose.yml POSTMORTEM_STORE_BACKEND default)."""
+    for pm in _six_thousand_payloads():
+        from services.incident.incident import Postmortem
+        store._postmortems[pm["postmortem_id"]] = Postmortem.from_dict(pm)
+    b = client.get("/api/postmortems", params={"page_size": 200, "include_infrastructure": "true"}).json()
+    assert b["total"] == 6000
+    b = client.get("/api/postmortems", params={"page_size": 200}).json()
+    assert b["total"] == 300 and b["hidden_infrastructure_count"] == 5700

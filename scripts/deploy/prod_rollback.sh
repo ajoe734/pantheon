@@ -34,6 +34,15 @@ for v in PROD_ROOT PROD_OPS_CMD RELEASE_ID PROD_BLUE_PORT PROD_GREEN_PORT; do
 done
 [[ "$RELEASE_ID" =~ ^[A-Za-z0-9._-]+$ ]] || refuse 1 MISSING_INPUT "release_id has invalid characters"
 
+if [[ -n "${PROD_DATA_MOUNT:-}" && -d "${PROD_DATA_MOUNT}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT"
+  for _d in secrets manifests state fe proxy config; do
+    if [[ ! -e "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+      ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+    fi
+  done
+fi
+
 STATE="${PROD_ROOT}/state"
 JOURNAL="${STATE}/journal/${RELEASE_ID}"
 BUDGET="${PROD_ROLLBACK_BUDGET_SECONDS:-120}"
@@ -93,6 +102,14 @@ fi
 RELEASE_ID="${1:?release_id required}"
 PROD_ROOT="${PROD_ROOT:?PROD_ROOT required}"
 PROD_OPS_CMD="${PROD_OPS_CMD:?PROD_OPS_CMD required}"
+if [[ -n "${PROD_DATA_MOUNT:-}" && -d "${PROD_DATA_MOUNT}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT"
+  for _d in secrets manifests state fe proxy config; do
+    if [[ ! -e "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+      ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+    fi
+  done
+fi
 JOURNAL="${PROD_ROOT}/state/journal/${RELEASE_ID}"
 FE_CURRENT="${PROD_ROOT}/fe/current"
 UPSTREAM_FILE="${PROD_ROOT}/proxy/bff_upstream.caddy"

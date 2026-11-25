@@ -544,6 +544,10 @@ class ResearchKnowledgeSourcePort:
         """``{strategy_id: {"title", "name"}}`` of bound strategies' current versions, without spec bodies."""
         raise NotImplementedError
 
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        """``{strategy_id: [persona_id, ...]}`` of bound strategies' current versions, without spec bodies."""
+        raise NotImplementedError
+
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
         """Per-persona count of non-retired strategies whose current version binds it."""
         counts: Dict[str, int] = {}
@@ -3051,6 +3055,89 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 labels[strategy_id] = {"title": str(title), "name": str(title)}
         return labels
 
+    def _persona_bindings_from_persona_binding_rows(self, raw: Any) -> Dict[str, List[str]]:
+        """Current-version persona_ids per family from flat registry ``persona_binding`` rows."""
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry binding payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, List[str]]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            raw_ids = (
+                inner.get("persona_ids")
+                or meta.get("personaIds")
+                or meta.get("persona_ids")
+                or ([meta["persona_id"]] if meta.get("persona_id") else (
+                    [inner_meta["persona_id"]] if inner_meta.get("persona_id") else []
+                ))
+                or entry.get("persona_ids")
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, list(dict.fromkeys(persona_ids)))
+        return {sid: pids for sid, (_key, pids) in best.items()}
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._persona_bindings_from_persona_binding_rows(
+                self._fetch_canonical_persona_binding_view("persona_binding")
+            )
+        bindings: Dict[str, List[str]] = {}
+        for strategy_spec in list(self._strategy_specs.values()):
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, _index, raw_current, _candidates, _versions = selected
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+            raw_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            bindings[str(strategy_id)] = list(dict.fromkeys(persona_ids))
+        return bindings
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -3087,14 +3174,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
-        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
 
         auth = authorization.get()
         if not auth:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-            raw = http_request_json(registry_url(f"/api/registry/strategy-specs?view={view}"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+            target_url = registry_url(f"/api/registry/strategy-specs?view={view}")
+            token = auth.removeprefix("Bearer ").strip()
+            raw = cached_owner_call(
+                ("registry_persona_binding_view", id(self), view, target_url, caller_tenant, token),
+                lambda: http_request_json(target_url, auth_token=token, tenant_id=caller_tenant),
+            )
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc

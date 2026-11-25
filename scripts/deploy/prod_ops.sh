@@ -11,7 +11,7 @@
 # Utility subcommands (no release id): snapshot_schedule ensure|check; restore_drill (see runbook section 5).
 # Steps: verify_rollback migrate snapshot_preflight prepull_images baseline_health start_green stop_green
 #        gate <name> <port> drain_singletons reload_proxy activate_singletons
-#        resume_baseline_singletons verify_runtime_config post_identity
+#        resume_baseline_singletons verify_runtime_config post_identity restore_active_release
 #
 # Required env: PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST
 #   PROD_FE_HOST RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
@@ -996,6 +996,9 @@ PY
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start baseline singleton owners"
     fi
+    if b_color="$(color_for_port "${PROD_ACTIVE_PORT:-}" 2>/dev/null)"; then
+      compose --profile "$b_color" up -d --no-build "operator-bff-${b_color}" || fail ACTIVATE "could not restore baseline operator-bff-${b_color}"
+    fi
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "baseline singleton container not found"
@@ -1029,6 +1032,63 @@ PY
     # Compose interpolation requires the candidate release keys (':?'); the bootstrap compose.env holds none of them.
     release_env
     verify_public_fe_bff_pair "${PROD_TARGET_PORT:-}" "" "" "" "" "" ""
+    ;;
+
+  restore_active_release)
+    # Fresh-boot VM recovery: restore the retained active release from PROD_DATA_MOUNT without re-running a release switch.
+    run_priv "$MOUNTPOINT" -q "$PROD_DATA_MOUNT" || fail DATA_DISK_NOT_MOUNTED "${PROD_DATA_MOUNT} is not a mounted data disk"
+    for _d in secrets manifests state fe proxy config; do
+      if [[ ! -L "${PROD_ROOT}/${_d}" && ! -e "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+        run_priv mkdir -p "$PROD_ROOT"
+        run_priv ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+      fi
+    done
+    [[ -s "${PROD_ROOT}/state/active_manifest.json" && -s "${PROD_ROOT}/state/baseline.json" ]] \
+      || fail RESTORE_STATE_MISSING "active_manifest.json or baseline.json missing on data disk"
+    active_port="$(python3 - "${PROD_ROOT}/state/baseline.json" "${PROD_ROOT}/state/active_manifest.json" "$RELEASE_ID" <<'PY'
+import json, sys
+base = json.load(open(sys.argv[1], encoding="utf-8"))
+man = json.load(open(sys.argv[2], encoding="utf-8"))
+want = sys.argv[3]
+if base.get("release_id") != want or man.get("release_id") != want:
+    raise SystemExit(1)
+print(int(base["active_port"]))
+PY
+    )" || fail RESTORE_RELEASE_MISMATCH "retained baseline/active_manifest release_id does not match ${RELEASE_ID}"
+    color="$(color_for_port "$active_port")" || fail BAD_PORT "active_port ${active_port} is neither blue nor green"
+    RELEASE_MANIFEST_PATH="${PROD_ROOT}/state/active_manifest.json"
+    if [[ -f "${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json" ]] && [[ ! -f "${PROD_ROOT}/state/journal/${RELEASE_ID}/bootstrap" ]]; then
+      baseline_env
+      for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
+                 "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
+                 "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
+        run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 \
+          || run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 \
+          || fail IMAGE_PULL_FAILED "failed to pull baseline image ${img}"
+      done
+    fi
+    release_env
+    for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
+               "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
+               "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
+      run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 \
+        || run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 \
+        || fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img}"
+    done
+    compose --profile stateful up -d --no-build || fail RESTORE_STATEFUL "compose failed to start stateful profile"
+    compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail RESTORE_OWNERS "could not start core/product owner closure"
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail RESTORE_SINGLETONS "could not start singleton owners"
+    compose --profile "$color" up -d --no-build "operator-bff-${color}" || fail RESTORE_BFF "compose failed to start operator-bff-${color}"
+    run_priv "$DOCKER" exec "$CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+    [[ "$(singleton_count)" == "1" ]] || fail RESTORE_SINGLETONS "singleton owner count is $(singleton_count), expected 1"
+    verify_product_owner_images || fail RESTORE_OWNERS "${OWNER_REASON}"
+    sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail RESTORE_SINGLETONS "singleton container not found"
+    simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail RESTORE_SINGLETONS "singleton inspect failed"
+    [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail RESTORE_SINGLETONS "singleton image '${simg}' != '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    wait_until "${PROD_BASELINE_READY_TRIES:-30}" "${PROD_BASELINE_READY_INTERVAL:-2}" require_ready "$active_port" || fail RESTORE_UNHEALTHY "restored release not ready on ${active_port}"
+    verify_runtime_config_internal "$RELEASE_ID"
+    verify_public_fe_bff_pair "$active_port" "" "$PANTHEON_OPERATOR_BFF_IMAGE" "$RELEASE_ID" "$PANTHEON_FRONTEND_COMMIT" "$PANTHEON_BACKEND_COMMIT" "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"
     ;;
 
   *) fail UNKNOWN_STEP "unknown step '${STEP}'" ;;
