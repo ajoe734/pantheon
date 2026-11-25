@@ -658,3 +658,188 @@ def test_strategy_alpha_comes_only_from_market_scope_alpha_and_agrees_between_li
     assert by_id["strat-zero-pnl-03"]["pnl"] == 0.0
     assert detail_03.json()["data"]["pnl"] == 0.0
 
+
+
+# ---------------------------------------------------------------------------
+# BFF-STRATEGY-METRICS-RUNTIME-20261125: list/detail read the Telemetry runtime
+# summary of the admitted binding through the helper Trading Pulse uses.
+# Real hosted row shapes recorded 2026-11-25 (BFF adc027da9).
+# ---------------------------------------------------------------------------
+import pytest  # noqa: E402
+
+from services.control_plane.bff.core.owner_reads import selected_tenant  # noqa: E402
+from services.control_plane.bff.management_read_models.service import (  # noqa: E402
+    ManagementService,
+    read_strategy_runtime_truth,
+)
+
+_SNAP = "2026-11-25T07:16:00Z"
+_REAL = [
+    # (persona, strategy, binding, pnl, drawdown, fills)
+    ("persona-ee7112a829d38b9135ac", "strategy-persona-a81b4fd15944698341aa",
+     "rb-2b0df30559154a93902c209b0318d95c", -9.988691250022384, 9.988691250022385e-05, 2),
+    ("persona-2448c7053e33ea48da47", "strategy-persona-06d4775a9b6a8f63b311",
+     "rb-eb74118dd3ca4b169496b1c239087512", -186.89087499999732, 0.0018689087499999732, 2),
+    ("persona-6507750312870d03a241", "strategy-persona-039ad01f8bcd2b4aa466",
+     "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4", None, None, 0),
+]
+
+
+class _TruthStore:
+    def __init__(self, bindings, telemetry, *, tenant="tenant-test", fail_bindings=False):
+        self.bindings, self.telemetry, self.fail_bindings = bindings, telemetry, fail_bindings
+        self.calls = {"bindings": 0, "telemetry": 0, "personas": 0}
+        self.tenant = tenant
+
+    def list_personas(self):
+        self.calls["personas"] += 1
+        return [{"id": b["persona_id"], "name": b["persona_id"], "tenant_id": self.tenant} for b in self.bindings]
+
+    def list_runtime_bindings(self):
+        self.calls["bindings"] += 1
+        if self.fail_bindings:
+            raise RuntimeError("owner down")
+        return list(self.bindings)
+
+    def list_telemetry_summaries(self):
+        self.calls["telemetry"] += 1
+        return list(self.telemetry)
+
+    def list_paper_runtime_monitoring_sessions(self):
+        return []
+
+
+def _real_store(status="paused", metadata=None, **kw):
+    bindings, telemetry = [], []
+    for persona, strategy, binding, pnl, dd, fills in _REAL:
+        bindings.append({
+            "id": binding, "binding_id": binding, "runtime_binding_id": binding,
+            "runtime_id": "rt-" + binding, "persona_id": persona, "strategy_id": strategy,
+            "tenant_id": "tenant-test", "deployment_stage": "paper", "status": status,
+            "activated_at": "2026-11-23T00:00:00Z", "metadata": dict(metadata or {}),
+        })
+        telemetry.append({
+            "runtime_id": "rt-" + binding, "runtime_binding_id": binding, "binding_id": binding,
+            "tenant_id": "tenant-test", "deployment_stage": "paper", "window": "1h",
+            "collected_at": "2026-11-23T23:34:52Z", "pnl": pnl, "drawdown": dd,
+            "ledger_fill_count": fills, "total_trades": fills,
+            **({"pnl_at": "2026-11-23T23:34:52Z"} if pnl is not None else {"pnl_status": "no_fills"}),
+        })
+    return _TruthStore(bindings, telemetry, **kw)
+
+
+@pytest.fixture()
+def _tenant():
+    token = selected_tenant.set("tenant-test")
+    yield
+    selected_tenant.reset(token)
+
+
+def test_runtime_truth_replays_the_three_recorded_rows(_tenant) -> None:
+    store = _real_store()
+    truth = read_strategy_runtime_truth(store, _SNAP)["by_strategy"]
+    a, b, c = (truth[s] for _, s, *_ in _REAL)
+    assert (a["pnl"], a["totalTrades"], a["drawdown"]) == (-9.988691250022384, 2, 9.988691250022385e-05)
+    assert (b["pnl"], b["totalTrades"]) == (-186.89087499999732, 2)
+    assert c["pnl"] is None and c["metricsReason"] == "no_fills" and c["totalTrades"] == 0
+    assert a["metricsAsOf"] == "2026-11-23T23:34:52Z"
+    # never "fresh" for null values; carries the recorded reason
+    assert c["metricsResolution"] != "fresh" and a["metricsResolution"] == "fresh"
+    # constant owner calls regardless of strategy count
+    assert store.calls == {"bindings": 1, "telemetry": 1, "personas": 1}
+
+
+def test_list_value_equals_trading_pulse_for_same_binding(_tenant) -> None:
+    store = _real_store()
+    pulse = ManagementService(read_store=store).get_trading_pulse(snapshot_at=_SNAP)["data"]["runtime_rows"]
+    truth = read_strategy_runtime_truth(store, _SNAP)["by_strategy"]
+    by_binding = {r["runtime_binding_id"]: r for r in pulse}
+    for _, strategy, binding, *_ in _REAL:
+        row = by_binding[binding]
+        assert truth[strategy]["pnl"] == row["telemetry_summary"]["metrics"]["pnl"]
+        assert truth[strategy]["drawdown"] == row["telemetry_summary"]["metrics"]["drawdown"]
+        assert truth[strategy]["totalTrades"] == row["total_trades"]
+
+
+def test_runtime_status_values_and_failed_read_is_unknown(_tenant) -> None:
+    paused_input = _real_store(metadata={"session_admission": {"reason_code": "market_input_stale"}})
+    assert {v["runtimeStatus"] for v in read_strategy_runtime_truth(paused_input, _SNAP)["by_strategy"].values()} == {"paused_market_input"}
+    operator = _real_store()
+    assert {v["runtimeStatus"] for v in read_strategy_runtime_truth(operator, _SNAP)["by_strategy"].values()} == {"paused_operator"}
+    running = _real_store(status="active")
+    assert {v["runtimeStatus"] for v in read_strategy_runtime_truth(running, _SNAP)["by_strategy"].values()} == {"running"}
+    failed = read_strategy_runtime_truth(_real_store(fail_bindings=True), _SNAP)
+    assert failed["status"] == "unavailable" and failed["by_strategy"] == {}
+
+
+def test_retired_failed_and_foreign_tenant_bindings_are_never_joined(_tenant) -> None:
+    store = _real_store(status="active")
+    strategy = _REAL[0][1]
+    old = {**store.bindings[0], "id": "rb-old", "binding_id": "rb-old", "runtime_binding_id": "rb-old",
+           "runtime_id": "rt-old", "status": "retired", "activated_at": "2026-11-20T00:00:00Z"}
+    foreign = {**store.bindings[0], "id": "rb-x", "binding_id": "rb-x", "runtime_binding_id": "rb-x",
+               "runtime_id": "rt-x", "tenant_id": "tenant-other", "activated_at": "2026-11-24T00:00:00Z"}
+    failed = {**store.bindings[0], "id": "rb-fail", "binding_id": "rb-fail", "runtime_binding_id": "rb-fail",
+              "runtime_id": "rt-fail", "status": "failed", "activated_at": "2026-11-24T12:00:00Z"}
+    store.bindings += [old, foreign, failed]
+    store.telemetry.append({**store.telemetry[0], "runtime_id": "rt-fail", "runtime_binding_id": "rb-fail",
+                            "binding_id": "rb-fail", "pnl": 555.0})
+    store.telemetry.append({**store.telemetry[0], "runtime_id": "rt-old", "runtime_binding_id": "rb-old",
+                            "binding_id": "rb-old", "pnl": 999.0})
+    truth = read_strategy_runtime_truth(store, _SNAP)["by_strategy"]
+    assert truth[strategy]["pnl"] == -9.988691250022384
+    assert "quarter_equity_observations" not in str(truth)
+
+
+def test_strategy_dto_applies_runtime_truth_and_keeps_pnl30d_sharpe_null(_tenant) -> None:
+    from services.control_plane.bff.strategies.routes.common import StrategyRouteContext
+
+    store = _real_store()
+    ctx = StrategyRouteContext(get_read_store=lambda: store)
+    truth = ctx.read_strategy_runtime_truth(_SNAP)
+    dtos = {
+        sid: ctx.project_strategy_dto({"strategy_id": sid}, ranking_snapshot=None, runtime_truth=truth)
+        for _, sid, *_ in _REAL + [("p", "strategy-without-binding", "", 0, 0, 0)]
+    }
+    first, second, third, none = (dtos[s] for s in [r[1] for r in _REAL] + ["strategy-without-binding"])
+    assert (first["pnl"], first["totalTrades"], first["metricsResolution"]) == (-9.988691250022384, 2, "fresh")
+    assert second["pnl"] == -186.89087499999732
+    assert third["pnl"] is None and third["metricsReason"] == "no_fills" and third["metricsResolution"] != "fresh"
+    for dto in (first, second, third):
+        assert dto["pnl30d"] is None and dto["sharpe"] is None
+        assert dto["runtimeStatus"] == "paused_operator"
+    assert none["runtimeStatus"] == "none"
+    # failed owner read: unknown, never idle/none
+    stale_fresh_null = {"items": [{
+        "persona_id": "p-x", "strategy_ids": [_REAL[0][1]],
+        "metrics": {"telemetry_resolution": "fresh", "pnl": None, "drawdown": None},
+    }]}
+    broken = ctx.project_strategy_dto(
+        {"strategy_id": _REAL[0][1]}, ranking_snapshot=stale_fresh_null,
+        runtime_truth={"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}},
+    )
+    assert broken["runtimeStatus"] == "unknown"
+
+    assert broken["metricsResolution"] == "unavailable"
+    assert broken["metricsReason"] == "runtime_bindings_unavailable"
+    assert broken["pnl"] is None
+
+
+def test_strategy_without_admitted_binding_is_missing_with_reason(_tenant) -> None:
+    from services.control_plane.bff.strategies.routes.common import StrategyRouteContext
+
+    ctx = StrategyRouteContext(get_read_store=lambda: _real_store())
+    dto = ctx.project_strategy_dto(
+        {"strategy_id": "strategy-without-binding"}, ranking_snapshot=None,
+        runtime_truth=ctx.read_strategy_runtime_truth(_SNAP),
+    )
+    assert dto["pnl"] is None and dto["metricsResolution"] == "missing"
+    assert dto["metricsReason"] == "no_admitted_binding"
+
+
+def test_runtime_truth_reuses_request_persona_directory_without_second_read(_tenant) -> None:
+    store = _real_store()
+    records = tuple({"id": b["persona_id"], "tenant_id": "tenant-test"} for b in store.bindings)
+    truth = read_strategy_runtime_truth(store, _SNAP, persona_directory=records)
+    assert truth["by_strategy"][_REAL[0][1]]["pnl"] == -9.988691250022384
+    assert store.calls["personas"] == 0
