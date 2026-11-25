@@ -2426,7 +2426,7 @@ services:
 
   registry:
     profiles: ["core", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_REGISTRY:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_REGISTRY:-768m}
     build:
       context: .
       dockerfile: services/registry/Dockerfile

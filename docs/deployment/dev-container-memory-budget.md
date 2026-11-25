@@ -25,6 +25,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 - `search-svc` 13g: kept above the earlier 11.5 GiB peak so a leak restarts search-svc only (1.5x of the current 4578 MiB peak would be lower, 13g is not reduced).
 - `loop-run-projector-scheduler`: keeps its pre-existing 16g limit (`LIFECYCLE_PROJECTOR_MEMORY_LIMIT`).
 - `research-orchestrator-svc` 384m (steady peak 99): raised from 256m by DISCOVERY-GOVERNED-MARKET-DATASET-20261125 because template search builds the governed market boundary in this service (measured on a 1,950 symbol x 483 day store: about +50 MiB pyarrow import, +75 MiB boundary, +45 MiB for a 60 symbol dataset, 237 MiB peak for the process alone); 99 MiB steady + that exceeds 256m.
+- `registry` 768m (steady peak 129): raised from 256m by REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125. Eight concurrent `strategy_summary_page` reads (page_size 200, owner hide) peak at 294 MiB process RSS at hosted row count (9148 strategy_spec + 4000 other rows), so 1.5x is 441 MiB; 768m (2.6x) also holds one unpaged full-catalog `GET /api/registry/strategy-specs` (667 MiB, pool autonomy) while that read is fixed by its owner. Evidence: `evidence/REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125/evidence.json`; `scripts/test_compose_memory_limits.py` fails if the limit drops below 1.5x the recorded peak.
 - `persona` 512m (peak 230) and `postmortems` 512m (peak 280) are not exceptions: they follow the 1.5x rule and were raised from 256m and 384m.
 
 ## Table
@@ -69,7 +70,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 | feedback | 64 | 256 | 256m | `DEV_MEM_LIMIT_FEEDBACK` | 4.0x |
 | learning-feedback-bridge | 25 | 256 | 256m | `DEV_MEM_LIMIT_LEARNING_FEEDBACK_BRIDGE` | 10.2x |
 | memory | 63 | 256 | 256m | `DEV_MEM_LIMIT_MEMORY` | 4.1x |
-| registry | 129 | 256 | 256m | `DEV_MEM_LIMIT_REGISTRY` | 2.0x |
+| registry | 129 | 256 | 768m | `DEV_MEM_LIMIT_REGISTRY` | 6.0x |
 | optimizer-svc | 58 | 256 | 256m | `DEV_MEM_LIMIT_OPTIMIZER_SVC` | 4.4x |
 | promotion | 61 | 256 | 256m | `DEV_MEM_LIMIT_PROMOTION` | 4.2x |
 | capital | 66 | 256 | 256m | `DEV_MEM_LIMIT_CAPITAL` | 3.9x |
@@ -92,7 +93,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 ## Overcommit vs the 32 GiB host
 
-- Sum of all limits: 84352 MiB (82.4 GiB) = 2.63x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
+- Sum of all limits: 84864 MiB (82.9 GiB) = 2.64x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
 - Sum of recorded peaks: 24740 MiB (24.2 GiB), of which search-svc is 4578 MiB.
 - Limits that mostly bound reclaimable page cache rather than process memory: postgres (8g; anon 22 MiB), paper-fleet-reconciler (file 382 of 640 MiB), hindsight and search-svc (large cached data). A page cache ceiling is reclaimed under pressure and does not OOM-kill, but a ceiling that is too low causes IO thrash, which is what happened to postgres.
 - Limits that bound process memory: openclaw-gateway-adapter (3g, six concurrent node pairs), operator-bff, source-ingest, telemetry, loop-run-projector-scheduler (16g).

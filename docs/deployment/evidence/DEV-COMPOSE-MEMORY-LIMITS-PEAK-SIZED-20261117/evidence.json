@@ -7,7 +7,7 @@
   "metric": "cgroup memory.peak (anonymous + page cache + kernel memory of every process in the container)",
   "min_ratio": 1.5,
   "host_total_mib": 32086,
-  "sum_limits_mib": 84352,
+  "sum_limits_mib": 84864,
   "sum_peaks_mib": 24740,
   "floor_exceptions": {
     "postgres": "peak is capped by the old 2g limit (reached 1127463 times); true demand is higher. 8g bounds the database page cache, not process memory (anon 22 MiB, file cache 1984 MiB at the limit)",
@@ -61,7 +61,7 @@
     {"service": "feedback", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 64, "limit_reached_count": 0},
     {"service": "learning-feedback-bridge", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 25, "limit_reached_count": 0},
     {"service": "memory", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 63, "limit_reached_count": 0},
-    {"service": "registry", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 129, "limit_reached_count": 0},
+    {"service": "registry", "limit": "768m", "limit_mib": 768, "old_limit_mib": 256, "peak_mib": 129, "limit_reached_count": 0, "raised_by": "REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125: eight concurrent strategy_summary_page reads peak at 294 MiB at hosted row count (evidence/REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125); 129 is the 11/17 steady peak"},
     {"service": "optimizer-svc", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 58, "limit_reached_count": 0},
     {"service": "promotion", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 61, "limit_reached_count": 0},
     {"service": "capital", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 66, "limit_reached_count": 0},

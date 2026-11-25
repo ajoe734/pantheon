@@ -1,0 +1,126 @@
+{
+  "task": "REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125",
+  "class": "RC3 WP3.4",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "hosted_observation_from_task": {
+    "oom_kill_utc": "2026-11-25T10:06:46Z (inside the 10:00Z persona daily cycle, old release)",
+    "old_limit": "256m",
+    "hosted_eight_concurrent_summary_pages_mib": 222,
+    "host_free_memory_on_2026_11_25": "about 15 GB"
+  },
+  "limit": {
+    "service": "registry",
+    "env": "DEV_MEM_LIMIT_REGISTRY",
+    "old_default": "256m",
+    "new_default": "768m",
+    "limit_mib": 768,
+    "min_ratio": 1.5,
+    "measured_legitimate_peak_mib": 294,
+    "ratio_to_legitimate_peak": 2.61,
+    "why_not_512m": "512m is 1.74x the legitimate peak but below the 667 MiB single unpaged pool-autonomy read measured here, which the hosted daily cycle still sends until its owner fixes it (residual 1); 768m holds one such read plus idle, so the hosted acceptance (no Registry OOM for 24 h including a persona cycle) is reachable while the residuals stay open. Two overlapping unpaged reads (917 MiB) still exceed it.",
+    "added_memory": "+512 MiB ceiling (a limit, not a reservation); sum of dev limits 84352 -> 84864 MiB (2.64x the 32086 MiB host); host free memory about 15 GB on 2026-11-25",
+    "restart_and_rollback": "unchanged: restart: unless-stopped, healthcheck, depends_on and the env override are untouched; rollback is DEV_MEM_LIMIT_REGISTRY=256m or reverting the one compose line",
+    "runtime_budget": "no new writer, job, scheduler, table or runtime file"
+  },
+  "measurement": {
+    "metric": "process peak RSS (VmHWM from /proc/<pid>/status) of a fresh uvicorn Registry process per scenario; a container cgroup memory.peak adds page cache and is somewhat higher (hosted 11/17 steady cgroup peak 129 MiB vs 83 MiB idle process RSS here)",
+    "why_not_container": "starting the Registry container locally was not approved in this worker session, so the same image dependencies (venv built from dependencies/locks/services-registry.txt: uvicorn 0.53.0, fastapi 0.141.1, Python 3.12) ran the same app module as a host process",
+    "registry_command": "PORT=58087 REGISTRY_STORE_BACKEND=postgres DATABASE_URL=<local throwaway postgres:16-alpine> PANTHEON_REGISTRY_AUTH_MODE=strict PANTHEON_REGISTRY_JWT_ISSUER=pantheon-dev-control-plane PANTHEON_REGISTRY_JWT_AUDIENCE=pantheon-dev-owners python -m uvicorn services.registry.main:app --port 58087",
+    "data": {
+      "rows_total": 13148,
+      "strategy_spec_rows": 9148,
+      "strategy_spec_shape": "_realistic_strategy_spec_payload from services/registry/test_strategy_summary_page_bounded.py (about 6.7 KB per entry), hosted state proportions from REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125: 7421 draft, 170 approved, 1 review, 1556 retired; 1200 bound to a test persona",
+      "other_rows": "3000 tenant-dev execution_bundle and 1000 other-tenant model_artifact rows with a 20 KB blob each",
+      "seeded_through": "PostgresRegistryStore.create (the owner write path), 321 s"
+    },
+    "client_command": "one fresh Registry process per scenario; N requests issued at once from a thread pool with an operator JWT for tenant-dev; VmHWM read after the last response",
+    "summary_page_request": "GET /api/registry/strategy-specs?view=strategy_summary_page&page_size=200&hide_stubs=true&hide_persona_ids=p-test (the BFF strategy list call)",
+    "results_mib": {
+      "idle": 83.1,
+      "summary_page_x1": 123.8,
+      "summary_page_x8_runs": [
+        293.8,
+        273.1,
+        268.1
+      ],
+      "summary_page_x8_page_size_20": 258.8,
+      "summary_page_x8_response_bytes_each": 360939,
+      "summary_page_x8_latency_s": "5.5 to 8.8"
+    },
+    "legitimate_peak_mib": 294,
+    "comparison_with_hosted": "hosted reported 222 MiB for the same eight reads; the local payload is a little heavier, so 294 is the conservative figure"
+  },
+  "persona_cycle_reads": {
+    "method": "every Registry read sent by the four persona-cycle callers replayed against the same local Registry, one fresh process each; the regime evaluate Registry read measured in-process because the local run has no governed market store mounted (the route refuses with 409 governed_store_unavailable before its Registry read)",
+    "reads": [
+      {
+        "caller": "persona pool autonomy (services/persona/pool_autonomy_cycle.py:556 read_strategy_specs, from discover_for_demand)",
+        "request": "GET /api/registry/strategy-specs (no view, no page_size)",
+        "server": "_filter_strategy_spec_views -> list_all_entries -> SELECT payload of every row of every artifact type, RegistryEntry.from_dict and view per row, filtered in Python",
+        "paged": false,
+        "peak_rss_mib": 667.1,
+        "delta_mib": 583.9,
+        "response_bytes": 61869363,
+        "two_overlapping_mib": 916.8
+      },
+      {
+        "caller": "regime evaluate (services/persona/persona_cycle_controller.py:371)",
+        "request": "POST /api/registry/regime/evaluate",
+        "server": "list_views_by_artifact_type(strategy_spec) and (model_artifact): every row of the type decoded; tenant and retired filter in Python",
+        "paged": false,
+        "registry_read_delta_mib": 337.8,
+        "estimated_peak_in_server_mib": 421,
+        "note": "strategy_spec part alone is 337.8 MiB; the 1000 synthetic model_artifact rows added nothing measurable"
+      },
+      {
+        "caller": "persona cycle controller lineage lister (persona_strategy_pool.py:242)",
+        "request": "GET /api/registry/lineage?depth=1&limit=200&root_id=<persona>",
+        "paged": "response capped; server loads lineage columns of every visible row",
+        "peak_rss_mib": 105.4,
+        "delta_mib": 22.3
+      },
+      {
+        "caller": "pool autonomy candidates / case file history",
+        "request": "GET /api/registry/strategies/{family}/entries",
+        "paged": "filtered by family in SQL",
+        "peak_rss_mib": 83.4,
+        "delta_mib": 0.2
+      },
+      {
+        "caller": "persona evaluator, pool members, meeting case file, consultation panel",
+        "request": "GET /api/registry/entries/{ref} and GET /api/registry/strategy-artifacts/{ref}",
+        "paged": "single row",
+        "peak_rss_mib": 83.3,
+        "delta_mib": 0.2
+      },
+      {
+        "caller": "regime active state and market state",
+        "request": "GET /api/registry/regime/strategies/{sid}/active (x20), GET /api/registry/regime/market-state/{market}/{session}",
+        "paged": "regime store read in full, small tables",
+        "peak_rss_mib": 83.5,
+        "delta_mib": 1.0
+      }
+    ],
+    "caller_of_10_06_46Z_kill": "persona pool autonomy GET /api/registry/strategy-specs (unpaged full catalog): the only cycle read that alone exceeds 256 MiB in the replay (667 MiB at hosted row count). Regime evaluate (about 421 MiB with a mounted store) also exceeds 256 MiB alone and is the second candidate. The hosted access log at 10:06:46Z was not read (no VM access from the worker), so the attribution is from the replay, not from the hosted log; the hosted acceptance reading of the next cycle confirms or corrects it."
+  },
+  "residual_findings": [
+    {
+      "read": "GET /api/registry/strategy-specs without view (pool autonomy read_strategy_specs)",
+      "peak_mib": 667,
+      "owning_service": "persona (pool autonomy, persona-loop owner); Registry route _filter_strategy_spec_views",
+      "why_not_fixed_here": "unpaged, but the parser at pool_autonomy_cycle.py:557-574 needs entry.metadata.strategy_spec, which the summary view does not carry; the fix is a projected or paged owner read plus caller change, not a few lines"
+    },
+    {
+      "read": "POST /api/registry/regime/evaluate strategy_spec and model_artifact reads",
+      "peak_mib": 421,
+      "owning_service": "registry regime evaluator (REGIME-REGISTRY-EVALUATOR owner)",
+      "why_not_fixed_here": "needs a projected SQL read of strategy_id, version, state, owner_tenant and metadata with tenant and retired filters in SQL; more than a few lines and touches the evaluator input contract"
+    }
+  ],
+  "test": "scripts/test_compose_memory_limits.py::ComposeMemoryLimits::test_registry_limit_covers_measured_concurrent_peak reads this file and fails if the compose default is below min_ratio x measured_legitimate_peak_mib",
+  "hosted_acceptance": {
+    "status": "NOT_MEASURED_BY_WORKER",
+    "required": "no Registry OOM kill in the host kernel log for 24 h after deploy, including one 10:00Z persona cycle"
+  }
+}
