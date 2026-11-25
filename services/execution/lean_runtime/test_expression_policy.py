@@ -743,4 +743,150 @@ def test_integrated_provider_to_candidate_to_decision_deducts_futures_and_cash_r
     assert sizing_raw["binding_limit"] == "cash_reserved"
 
 
+def test_blueprint_limits_sector_reduction_or_refusal_turnover_liquidity_and_reduce_only() -> None:
+    """RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124: sector, turnover, liquidity and reduce-only in expression_policy."""
+    from services.execution.lean_runtime import instrument_candidates as ic
+
+    # Hosted-shaped 100,000 TWD pool holding 20,000 TWD in 2303 (Taiwan semiconductor sector "24").
+    # Sector "24" cap is 0.25 (25,000 TWD), single-name cap is 0.20 (20,000 TWD).
+    # A new buy on 2317 (also placed in sector "24" for sector-cap test) @ 221 TWD has only 5,000 TWD sector room -> 22 shares.
+    book_with_sector_peer = {
+        "positions": [
+            {
+                "instrument_id": "eq:2303",
+                "underlying": "2303",
+                "kind": "cash_share",
+                "direction": "LONG",
+                "units": 200,
+                "multiplier": 1,
+                "notional": 20_000.0,
+            }
+        ],
+        "gross_notional": 20_000.0,
+    }
+    base_budget = {
+        "equity": 100_000.0,
+        "raw_cash": 80_000.0,
+        "available_cash": 70_000.0,
+        "available_buying_power": 70_000.0,
+        "cash_reserve_required": 10_000.0,
+        "gross_limit": 160_000.0,
+        "gross_limit_multiple": 1.6,
+        "gross_used": 20_000.0,
+        "net_limit": 100_000.0,
+        "net_limit_multiple": 1.0,
+        "net_used": 20_000.0,
+        "signed_net_used": 20_000.0,
+        "max_leverage": 1.6,
+        "max_single_name_weight": 0.20,
+        "max_single_name_notional": 20_000.0,
+        "max_sector_exposure": {"24": 0.25},
+        "sector_by_underlying": {"2303": "24", "2317": "24"},
+        "sector_exposures": {"24": 0.20},
+        "turnover_limit": 1.0,
+        "turnover_limit_notional": 100_000.0,
+        "turnover_used": 0.20,
+        "turnover_used_notional": 20_000.0,
+        "liquidity_constraints": {"min_avg_daily_volume": 1000.0, "max_order_pct_adv": 0.05},
+        "avg_daily_volume_by_underlying": {"2317": 10_000.0},
+    }
+    cands_partial = ic.build_candidates(
+        "2317", "2026-11-19", book_with_sector_peer, base_budget, cash_price=221.0
+    )
+    sizing_partial = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_partial, book_with_sector_peer, base_budget, PARAMS
+    )
+    # Single-name cap alone would allow 90 shares (19,890 TWD), but sector "24" has only 5,000 TWD left -> 22 shares (4,862 TWD).
+    assert sizing_partial["permitted_units"] == 22
+    assert sizing_partial["binding_limit"] == "max_sector_exposure"
+
+    # 2. Sector already at/over the cap (25,000 TWD used in sector "24") -> refused with max_sector_exposure.
+    full_sector_book = {
+        "positions": [
+            {
+                "instrument_id": "eq:2303",
+                "underlying": "2303",
+                "kind": "cash_share",
+                "direction": "LONG",
+                "units": 250,
+                "multiplier": 1,
+                "notional": 25_000.0,
+            }
+        ],
+        "gross_notional": 25_000.0,
+    }
+    full_sector_budget = {
+        **base_budget,
+        "gross_used": 25_000.0,
+        "sector_exposures": {"24": 0.25},
+    }
+    cands_full = ic.build_candidates("2317", "2026-11-19", full_sector_book, full_sector_budget, cash_price=221.0)
+    sizing_full = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_full, full_sector_book, full_sector_budget, PARAMS
+    )
+    assert sizing_full["permitted_units"] == 0
+    assert sizing_full["decision"]["reason_code"] == "no_feasible_instrument"
+    assert sizing_full["decision"]["detail"] == "max_sector_exposure"
+    assert sizing_full["binding_limit"] == "max_sector_exposure"
+
+    # 3. Turnover breach (98,000 TWD already traded against 100,000 TWD turnover limit; order wants 22 shares = 4,862 TWD) -> refused with turnover_limit.
+    turnover_breach_budget = {
+        **base_budget,
+        "turnover_used": 0.98,
+        "turnover_used_notional": 98_000.0,
+    }
+    sizing_turnover = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_partial, book_with_sector_peer, turnover_breach_budget, PARAMS
+    )
+    assert sizing_turnover["permitted_units"] == 0
+    assert sizing_turnover["decision"]["detail"] == "turnover_limit"
+    assert sizing_turnover["binding_limit"] == "turnover_limit"
+
+    # 4. Illiquid order (> configured share of ADV: 22 shares vs ADV 200 -> 11% > 5% max_order_pct_adv) -> refused with liquidity_order_pct_adv_breach.
+    illiquid_budget = {
+        **base_budget,
+        "liquidity_constraints": {"max_order_pct_adv": 0.05},
+        "avg_daily_volume_by_underlying": {"2317": 200.0},
+    }
+    cands_illiquid = ic.build_candidates("2317", "2026-11-19", book_with_sector_peer, illiquid_budget, cash_price=221.0)
+    sizing_illiquid = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_illiquid, book_with_sector_peer, illiquid_budget, PARAMS
+    )
+    assert sizing_illiquid["permitted_units"] == 0
+    assert sizing_illiquid["decision"]["detail"] == "liquidity_order_pct_adv_breach"
+    assert sizing_illiquid["binding_limit"] == "liquidity_order_pct_adv_breach"
+
+    # 5. Missing fact on order increase fails closed naming the missing fact.
+    missing_sec_budget = {**base_budget, "sector_by_underlying": {"2303": "24"}}
+    sizing_missing_sec = ep.evaluate_pre_trade_sizing(
+        TJ_2317_VIEW, cands_partial, book_with_sector_peer, missing_sec_budget, PARAMS
+    )
+    assert sizing_missing_sec["permitted_units"] == 0
+    assert sizing_missing_sec["decision"]["detail"] == "sector_exposures_unavailable"
+
+    # 6. Reduce-only (FLAT view closing held 2317 position) passes even when sector, turnover, and liquidity are breached or missing.
+    held_2317_book = {
+        "positions": [
+            {
+                "instrument_id": "eq:2317",
+                "underlying": "2317",
+                "kind": "cash_share",
+                "direction": "LONG",
+                "units": 100,
+                "multiplier": 1,
+                "notional": 22_100.0,
+            }
+        ],
+        "gross_notional": 22_100.0,
+    }
+    flat_view = {**TJ_2317_VIEW, "direction": "FLAT", "strength": 0.0}
+    reduce_sizing = ep.evaluate_pre_trade_sizing(
+        flat_view, cands_full, held_2317_book, missing_sec_budget, PARAMS
+    )
+    assert reduce_sizing["decision"]["reason_code"] == "close_leg"
+    assert reduce_sizing["decision"]["side"] == "sell"
+    assert reduce_sizing["permitted_units"] == 100
+
+
+
 
