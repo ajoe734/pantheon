@@ -1213,6 +1213,19 @@ def _materialize_terminal_persona_provisioning_ledger(
         return None
 
     references = record.references if isinstance(record.references, dict) else {}
+    if record.state == "succeeded":
+        durable_readback = references.get("authoritative_readback")
+        durable_result = record.result
+        if (
+            not str(references.get("runtime_binding_id") or "").strip()
+            or not str(references.get("runtime_id") or "").strip()
+            or not isinstance(durable_readback, Mapping)
+            or not isinstance(durable_result, Mapping)
+            or durable_result.get("paper_running") is not True
+            or durable_result.get("status") != "paper_running"
+        ):
+            _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+            return "provisioning"
     desired_state = (
         "paper_running" if record.state == "succeeded" else "provisioning_failed"
     )
@@ -2873,6 +2886,9 @@ def _list_persona_records(
         )
     )
     return result
+
+
+_DEFAULT_LIST_PERSONA_RECORDS = _list_persona_records
 
 
 # --- _get_persona_record_for_detail ---
@@ -5968,6 +5984,77 @@ def _persona_readback_snapshot() -> Tuple[
 
 
 # --- _reconcile_paper_enrollment_once ---
+_PERSONA_PROVISIONING_ORPHAN_SKIP: Set[str] = set()
+_PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT: Dict[Tuple[str, str], str] = {}
+_TRANSIENT_PAPER_ENROLLMENT_BINDING_REASONS = frozenset({
+    "paper_runtime_binding_not_active",
+    "paper_capital_binding_not_active",
+    "runtime_binding_reader_failed",
+})
+
+
+def _persona_owner_supports_paper_enrollment(owner: Any) -> bool:
+    return owner is not None and all(
+        callable(getattr(owner, name, None))
+        for name in (
+            "get_persona",
+            "advance_lifecycle_governed",
+            "get_strategy_pool",
+            "seed_strategy_pool",
+            "get_harness",
+            "initialize_harness",
+        )
+    )
+
+
+def _is_paper_enrollment_record_actionable(
+    record: ProvisioningRecord,
+    now: datetime,
+    retry_seconds: int,
+) -> bool:
+    if record.state not in {"provisioning", "succeeded"}:
+        return False
+    existing = (record.references or {}).get("paper_enrollment")
+    if enrollment_settled(existing):
+        return False
+    if not isinstance(existing, Mapping):
+        return True
+    status = str(existing.get("status") or "").strip().lower()
+    reason = str(existing.get("reason") or "").strip()
+    attempted_at = (
+        str(existing.get("attempted_at") or "").strip()
+        or str(record.updated_at or "").strip()
+    )
+    if status == "not_eligible":
+        if reason not in _TRANSIENT_PAPER_ENROLLMENT_BINDING_REASONS:
+            return False
+        throttled = {"status": "unavailable", "attempted_at": attempted_at}
+        if record.state == "provisioning":
+            return retry_due(throttled, now, retry_seconds)
+        key = (record.tenant_id, record.idempotency_key)
+        if _PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT.get(key) == attempted_at:
+            return retry_due(throttled, now, retry_seconds)
+        readback = (record.references or {}).get("authoritative_readback")
+        readback_at = (
+            str(readback.get("observed_at") or "").strip()
+            if isinstance(readback, Mapping)
+            else ""
+        )
+        recorded_at = (
+            str((record.result or {}).get("recorded_at") or "").strip()
+            if isinstance(record.result, Mapping)
+            else ""
+        )
+        succeeded_dt = _parse_rfc3339(readback_at or recorded_at)
+        attempt_dt = _parse_rfc3339(attempted_at)
+        if attempt_dt is not None and (succeeded_dt is None or attempt_dt > succeeded_dt):
+            return retry_due(throttled, now, retry_seconds)
+        return True
+    if status in {"refused", "unavailable", "enrolled"}:
+        return retry_due({**existing, "attempted_at": attempted_at}, now, retry_seconds)
+    return True
+
+
 def _reconcile_paper_enrollment_once() -> int:
     """Enrol already paper-provisioned personas through the provisioning ledger.
 
@@ -5975,23 +6062,20 @@ def _reconcile_paper_enrollment_once() -> int:
     and concurrent replicas.  Failures stay a readable readback on the record.
     """
 
+    if not _persona_owner_supports_paper_enrollment(_get_active_write_owner()):
+        return 0
     enrolled = 0
     try:
         records = _persona_provisioning_store().list_all()
     except Exception as exc:
         log.warning("Paper enrollment could not list provisioning ledger: %s", exc)
         return 0
+    now = datetime.now(timezone.utc)
+    retry_seconds = max(
+        0, int(os.getenv("PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS", "600"))
+    )
     for record in records:
-        if record.state not in {"provisioning", "succeeded"}:
-            continue
-        existing = (record.references or {}).get("paper_enrollment")
-        if enrollment_settled(existing):
-            continue
-        if not retry_due(
-            existing,
-            datetime.now(timezone.utc),
-            max(0, int(os.getenv("PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS", "600"))),
-        ):
+        if not _is_paper_enrollment_record_actionable(record, now, retry_seconds):
             continue
         try:
             coordinator = PersonaProvisioningCoordinator(
@@ -6010,7 +6094,18 @@ def _reconcile_paper_enrollment_once() -> int:
                     "pantheon-dev-paper-provisioner",
                 ),
             )
-            coordinator.reconcile_paper_enrollment(record)
+            updated = coordinator.reconcile_paper_enrollment(record)
+            if record.state == "succeeded":
+                post_enrollment = (updated.references or {}).get("paper_enrollment")
+                if isinstance(post_enrollment, Mapping):
+                    post_attempt = (
+                        str(post_enrollment.get("attempted_at") or "").strip()
+                        or str(updated.updated_at or "").strip()
+                    )
+                    if post_attempt:
+                        _PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT[
+                            (record.tenant_id, record.idempotency_key)
+                        ] = post_attempt
             enrolled += 1
         except Exception as exc:
             log.warning(
@@ -6048,9 +6143,154 @@ def _reconcile_paper_risk_policy_renewal_once() -> int:
     return renewed
 
 
+def _is_persona_provisioning_record_actionable(
+    raw: Mapping[str, Any],
+    *,
+    now_mono: Optional[float] = None,
+) -> bool:
+    """True when a Persona record requires non-terminal evaluation or terminal cleanup."""
+    persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
+    if not persona_id or persona_id in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+        return False
+    state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
+    if state not in {"provisioning", "provisioning_failed"}:
+        return False
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    prov_state = str(metadata.get("provisioning_state") or "").strip().lower()
+    if prov_state in {"succeeded", "retired"}:
+        return False
+    if state == "provisioning_failed":
+        existing_cleanup = metadata.get("first_evaluation_schedule_cleanup")
+        cleanup_settled = (
+            isinstance(existing_cleanup, Mapping)
+            and existing_cleanup.get("registered") is False
+        )
+        if not cleanup_settled:
+            backoff_key = (id(_get_active_write_owner()), persona_id)
+            _, retry_at = _PERSONA_CLEANUP_BACKOFF.get(backoff_key, (0, 0.0))
+            current_mono = time.monotonic() if now_mono is None else now_mono
+            cleanup_due = not (
+                isinstance(existing_cleanup, Mapping) and current_mono < retry_at
+            )
+        else:
+            cleanup_due = False
+        existing_comp = metadata.get("provisioning_compensation")
+        comp_settled = isinstance(existing_comp, Mapping) and existing_comp.get(
+            "status"
+        ) in {"completed", "not_required"}
+        comp_due = not comp_settled
+        recon_state_due = (
+            metadata.get("provisioning_reconciliation_state") != "provisioning_failed"
+        )
+        return cleanup_due or comp_due or recon_state_due
+    return True
+
+
+def _has_actionable_persona_provisioning_store_records(
+    store: Any,
+) -> Optional[bool]:
+    """Bounded read check on the durable provisioning store before full projection or lease writes.
+
+    Returns ``False`` when the store was inspected and holds only ``succeeded``,
+    ``retired``, or confirmed-orphan rows (and no non-store provisioning persona
+    is pending in the read surface), ``True`` when at least one non-terminal or
+    cleanup-candidate row exists, or ``None`` when the pre-check cannot decide.
+    """
+    connect = getattr(store, "_connect", None)
+    dsn = getattr(store, "dsn", None)
+    table = getattr(store, "table", None)
+    if callable(connect) and dsn and table:
+        try:
+            with connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT persona_id, state
+                        FROM {table}
+                        WHERE state NOT IN ('succeeded', 'retired')
+                        ORDER BY created_at ASC, persona_id ASC
+                        LIMIT 64"""
+                )
+                rows = cur.fetchall() or []
+            for row in rows:
+                if not isinstance(row, (tuple, list)) or len(row) < 2:
+                    return True
+                pid = str(row[0] or "").strip()
+                row_state = str(row[1] or "").strip().lower()
+                if (
+                    pid
+                    and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
+                    and row_state not in {"succeeded", "retired"}
+                ):
+                    return True
+            return False
+        except Exception as exc:
+            log.warning("Bounded provisioning store read check failed: %s", exc)
+            return None
+
+    list_all = getattr(store, "list_all", None)
+    if not callable(list_all):
+        return None
+    try:
+        records = list(list_all() or [])
+    except Exception:
+        return None
+    terminal_or_skipped_ids: Set[str] = set()
+    for record in records:
+        pid = str(getattr(record, "persona_id", "") or "").strip()
+        rec_state = str(getattr(record, "state", "") or "").strip().lower()
+        if not pid or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+            if pid:
+                terminal_or_skipped_ids.add(pid)
+            continue
+        if rec_state in {"succeeded", "retired"}:
+            terminal_or_skipped_ids.add(pid)
+            continue
+        return True
+
+    active_store = _get_active_read_store()
+    list_personas = getattr(active_store, "list_personas", None) if active_store is not None else None
+    if not callable(list_personas):
+        return False
+    if records and isinstance(active_store, ReadSurfacePorts) and "list_personas" not in getattr(active_store, "__dict__", {}):
+        return False
+    try:
+        for item in list_personas() or []:
+            if not isinstance(item, Mapping):
+                continue
+            pid = str(item.get("persona_id") or item.get("id") or "").strip()
+            if not pid or pid in terminal_or_skipped_ids or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+                continue
+            item_state = str(item.get("lifecycle_state") or item.get("state") or "").strip()
+            if item_state in {"provisioning", "provisioning_failed"}:
+                return True
+    except Exception:
+        return None
+    return False
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
+    from .reconciliation import PersonaReconciliationMutationError
+
+    if _list_persona_records is _DEFAULT_LIST_PERSONA_RECORDS:
+        try:
+            store_has_work = _has_actionable_persona_provisioning_store_records(
+                _persona_provisioning_store()
+            )
+        except Exception:
+            store_has_work = None
+        if store_has_work is False:
+            return 0
+
+    now_mono = time.monotonic()
+    actionable_records = [
+        raw
+        for raw in _list_persona_records()
+        if _is_persona_provisioning_record_actionable(raw, now_mono=now_mono)
+    ]
+    if not actionable_records:
+        return 0
 
     snapshot: Optional[
         Tuple[
@@ -6060,12 +6300,10 @@ def _reconcile_persona_provisioning_once() -> int:
         ]
     ] = None
     reconciled = 0
-    for raw in _list_persona_records():
+    for raw in actionable_records:
         state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
-        if state not in {"provisioning", "provisioning_failed"}:
-            continue
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if not persona_id:
+        if not persona_id or persona_id in _PERSONA_PROVISIONING_ORPHAN_SKIP:
             continue
         if state == "provisioning" and snapshot is None:
             snapshot = _persona_readback_snapshot()
@@ -6090,6 +6328,15 @@ def _reconcile_persona_provisioning_once() -> int:
                 )
                 raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = decided
             reconciled += 1
+        except PersonaReconciliationMutationError as exc:
+            _PERSONA_PROVISIONING_ORPHAN_SKIP.add(persona_id)
+            log.warning(
+                "Persona provisioning reconciliation abandoned for %s: the "
+                "mutation owner has no record of this persona, so it can "
+                "never be reconciled; will not retry until process restart: %s",
+                persona_id,
+                exc,
+            )
         except Exception as exc:
             log.warning(
                 "Persona provisioning reconciliation failed for %s: %s",
