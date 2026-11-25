@@ -291,7 +291,10 @@ def issued_identity(monkeypatch, tmp_path, owners):
         "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": TENANT, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
         "PANTHEON_DEV_BFF_JWT_SECRET": secret, "PANTHEON_DEV_BFF_JWT_ISSUER": issuer, "PANTHEON_DEV_BFF_JWT_AUDIENCE": audience})
     files = {"REGISTRY": "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN", "PERSONA": "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
-             "MEMORY": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN", "SEARCH": "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN"}
+             "MEMORY": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN"}
+    assert "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN" not in issued  # no write-free search role exists
+    monkeypatch.delenv("PANTHEON_SEARCH_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_SEARCH_SERVICE_TOKEN_FILE", raising=False)
     for owner, variable in files.items():
         path = tmp_path / variable
         path.write_text(issued[variable])
@@ -318,9 +321,13 @@ def issued_identity(monkeypatch, tmp_path, owners):
 def test_evolution_executor_composes_with_the_issued_read_only_identity(research, world, issued_identity, monkeypatch):
     issued, _, seen = issued_identity
     run, _ = dispatch(research, world, monkeypatch, {"lesson_ids": [LESSON]})
-    assert run["outcome"] == "candidate_created", run
+    # No write-free search role exists, so no search credential is issued: the evidence group is unavailable and the
+    # executor keeps its existing refusal shape instead of fabricating evidence.
+    assert run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"].startswith("case_file_unavailable:evidence:search_gateway:"), run["outcome_reason"]
     assert run["evolution_case_file"]["caller"]["actor_id"] == issued["RESEARCH_CASE_FILE_ACTOR_ID"]
-    assert {owner for owner, *_ in seen} >= {"registry", "personas", "memory", "search"}
+    assert {owner for owner, *_ in seen} >= {"registry", "personas", "memory"}
+    assert "search" not in {owner for owner, *_ in seen}
     for _, subject, roles, scope in seen:
         assert subject.startswith("pantheon-dev-research-case-file-") and scope == "pantheon:dev-owner-read"
         assert not {"service", "operator", "admin", "registry-writer", "consultation-svc"} & set(roles)

@@ -109,7 +109,9 @@ READERS = {
     "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ("viewer", "reviewer")),
     "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", "registry-reader"),
     "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", "persona_pool_reader"),
-    "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN": ("pantheon-dev-research-case-file-search-reader", ("researcher", "persona_session")),
+    # No search reader is issued: every existing search read role can write (researcher is a memory write role;
+    # analyst writes Agora notes/signals), so the search owner stays unset and the case file records its own
+    # unavailable reason for search.
     # Meeting roster resolution -> persona owner directory (GET /api/personas) ONLY. viewer is the existing
     # read-only persona role (no write/admin/decide role); a file, never an env value.
     "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN": ("pantheon-dev-consultation-persona-directory-reader", "viewer"),
@@ -243,7 +245,7 @@ TELEMETRY_PRODUCERS = {
         "control-plane-bff-health-monitor", "service", ["control-plane-bff"]),
 }
 SEARCH_ACCESS_SCOPES = ["operator", "research", "public"]
-SEARCH_SCOPED_VARIABLES = frozenset({"PERSONA_SEARCH_SERVICE_TOKEN", "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN"})
+SEARCH_SCOPED_VARIABLES = frozenset({"PERSONA_SEARCH_SERVICE_TOKEN"})
 CONSUMER_FILES = {
     "deployment": (
         "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
@@ -309,7 +311,6 @@ CONSUMER_FILES = {
         "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
         "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN",
         "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
-        "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
     ),
     "persona-evaluator-agent": (
         "PERSONA_EVALUATOR_BFF_TOKEN",

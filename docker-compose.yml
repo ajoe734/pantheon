@@ -1036,8 +1036,6 @@ services:
       PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
       RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
       PANTHEON_MEMORY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
-      RESEARCH_CASE_FILE_SEARCH_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_SEARCH_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_SEARCH_READ_TOKEN}
-      PANTHEON_SEARCH_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_SEARCH_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_SEARCH_READ_TOKEN}
       # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
       RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
       # Template search dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).

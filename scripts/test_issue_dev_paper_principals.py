@@ -419,15 +419,15 @@ def test_research_retrain_executor_principals_are_exact_and_mounted_read_only():
     registry_var = "RESEARCH_REGISTRY_SERVICE_TOKEN"
     training_var = "RESEARCH_TRAINING_SERVICE_TOKEN"
     bff_var = "RESEARCH_BFF_SERVICE_TOKEN"
-    # The original five are unchanged and in order; RC2 appends exactly the five read-only case-file principals
+    # The original five are unchanged and in order; RC2 appends exactly the four read-only case-file principals
     # (asserted in test_research_case_file_principals_are_read_only_file_delivered_and_mounted_to_research_only).
     assert CONSUMER_FILES["research-orchestrator-svc"] == (
         registry_var, training_var, bff_var,
         "RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_CAPITAL_SERVICE_TOKEN",
         "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN", "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
         "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN", "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
-        "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
     )
+    assert "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN" not in CONSUMER_FILES["research-orchestrator-svc"]
     values = issue_environment(configured(), now=NOW)
 
     registry = verify(values[registry_var])
@@ -1048,12 +1048,31 @@ CASE_FILE_READERS = {
     "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ["viewer", "reviewer"]),
     "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", ["registry-reader"]),
     "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", ["persona_pool_reader"]),
-    "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN": ("pantheon-dev-research-case-file-search-reader", ["researcher", "persona_session"]),
 }
 CASE_FILE_FORBIDDEN_ROLES = {
     "service", "operator", "admin", "automated_gate", "approval_decider", "approval_proposer", "registry-writer",
     "consultation-svc", "persona-svc", "training-service", "capital-reader", "risk_owner", "runtime", "system",
 }
+
+
+def case_file_write_roles(root):
+    """Every role any owner treats as a write role (memory _MEMORY_WRITE_ROLES and the other *_WRITE_ROLES lists)."""
+    import ast
+
+    roles = set()
+    for path in (root / "services").glob("*/main.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id.endswith("_WRITE_ROLES") for t in node.targets
+            ):
+                try:
+                    value = ast.literal_eval(node.value)
+                except ValueError:
+                    continue
+                if isinstance(value, (tuple, list, set, frozenset)):
+                    roles |= {r for r in value if isinstance(r, str)}
+    assert "researcher" in roles  # guard: the memory write role list was actually found
+    return roles
 
 
 def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_to_research_only():
@@ -1071,6 +1090,7 @@ def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_
         assert claims["scope"] == "pantheon:dev-owner-read"  # never an owner-write scope
         assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
         assert not CASE_FILE_FORBIDDEN_ROLES & set(claims["roles"])
+        assert not set(claims["roles"]) & case_file_write_roles(root), claims["roles"]
         assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
         # Mounted to research-orchestrator-svc only.
         assert variable in CONSUMER_FILES["research-orchestrator-svc"]
@@ -1078,7 +1098,8 @@ def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_
         assert issuer.revoked_environment({**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""
         jtis.add(claims["jti"])
     assert len(jtis) == len(CASE_FILE_READERS)  # no credential shared between owners
-    assert verify(values["RESEARCH_CASE_FILE_SEARCH_READ_TOKEN"], now=now + 1)["access_scopes"] == ["operator", "research", "public"]
+    # No search credential: every existing search read role can write, so none is issued, mounted or referenced.
+    assert "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN" not in values and "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN" not in READERS
     # Actor id equals the memory credential subject; roles are exactly the memory read role.
     memory = verify(values["RESEARCH_CASE_FILE_MEMORY_READ_TOKEN"], now=now + 1)
     assert values["RESEARCH_CASE_FILE_ACTOR_ID"] == memory["sub"]
@@ -1094,7 +1115,6 @@ def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_
         "PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
         "PANTHEON_REGISTRY_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN",
         "PANTHEON_PERSONA_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
-        "PANTHEON_SEARCH_SERVICE_TOKEN_FILE": "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
     }
     for owner_var, variable in mapping.items():
         assert env[owner_var].endswith("/run/pantheon-principals/" + variable + "}")
@@ -1102,8 +1122,9 @@ def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_
         # Case-file owner tokens are never plain env values (files only) and never a write-capable RESEARCH_* file.
         assert owner_var.removesuffix("_FILE") not in env
         assert "WRITE" not in env[owner_var] and "RESEARCH_REGISTRY_SERVICE_TOKEN" not in env[owner_var]
-    for owner in ("REGISTRY", "PERSONA", "TELEMETRY", "MEMORY", "SEARCH"):
+    for owner in ("REGISTRY", "PERSONA", "TELEMETRY", "MEMORY"):
         assert env[f"PANTHEON_{owner}_API_URL"].startswith("http://")
+    assert "PANTHEON_SEARCH_SERVICE_TOKEN_FILE" not in env and "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN_FILE" not in env
     assert env["RESEARCH_CASE_FILE_ACTOR_ID"] == "${RESEARCH_CASE_FILE_ACTOR_ID:-}"
     assert env["RESEARCH_CASE_FILE_ACTOR_ROLES"] == "${RESEARCH_CASE_FILE_ACTOR_ROLES:-}"
     assert "dev-paper-research-tokens:/run/pantheon-principals:ro" in compose["research-orchestrator-svc"]["volumes"]
