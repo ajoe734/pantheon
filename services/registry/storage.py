@@ -17,7 +17,7 @@ from functools import lru_cache
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Collection, Mapping, Optional, Sequence
 
 from .models import (
     DeploymentStage,
@@ -540,6 +540,69 @@ STRATEGY_SUMMARY_INDEX_INNER_META_KEYS = (
 )
 STRATEGY_SUMMARY_INDEX_PROV_KEYS = ("created_at",)
 STRATEGY_SUMMARY_INDEX_TITLE_KEYS = ("title", "name")
+# Projected only when an owner-side hide input is present (``include_scope``).
+STRATEGY_SUMMARY_INDEX_SCOPE_KEYS = ("data_scope", "dataScope")
+
+# Owner-side hide rule: the one strategy_stub_reason rule the BFF applies,
+# evaluated here over the candidate-index row so a hidden row is excluded and
+# counted in the same pass. Kept identical to
+# ``services/control-plane/bff/strategies/routes/common.py::strategy_stub_reason``
+# (shared vectors in test_strategy_summary_page_bounded.py).
+STRATEGY_STUB_RAW_MARKET_SEED = "raw_market_seed_without_rules"
+STRATEGY_STUB_SIMULATION_FIXTURE = "simulation_fixture"
+STRATEGY_STUB_TEST_PERSONA_PROBE = "test_persona_probe"
+STRATEGY_STUB_REASONS = (
+    STRATEGY_STUB_TEST_PERSONA_PROBE,
+    STRATEGY_STUB_RAW_MARKET_SEED,
+    STRATEGY_STUB_SIMULATION_FIXTURE,
+)
+_STRATEGY_TEST_DATA_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+
+
+def strategy_stub_reason_for_fields(
+    *,
+    strategy_id: str,
+    title: str,
+    persona_ids: Sequence[str],
+    data_scope: str,
+    test_persona_ids: Collection[str],
+) -> Optional[str]:
+    """Why a strategy is a synthetic or raw-seed stub, or None for a real one."""
+    scope = str(data_scope or "").strip().lower()
+    if scope in _STRATEGY_TEST_DATA_SCOPES:
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    ids = [str(p) for p in persona_ids if str(p).strip()]
+    if ids and test_persona_ids and all(pid in test_persona_ids for pid in ids):
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    sid = str(strategy_id or "").strip()
+    name = str(title or "").strip()
+    # Title text is a fallback for pre-2026-11-03 release probes that carry no
+    # data_scope; a row that declares a scope is classified by the scope alone.
+    if not scope and name.startswith("Pantheon Dev Paper Release ") and " Attempt " in name:
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    if ids:
+        return None
+    if sid.startswith("strat-tw-official") or name.startswith("TW official "):
+        return STRATEGY_STUB_RAW_MARKET_SEED
+    if name.startswith("SIMULATION "):
+        return STRATEGY_STUB_SIMULATION_FIXTURE
+    return None
+
+
+def _extract_strategy_summary_data_scope(row: dict) -> str:
+    meta = _binding_dict(row.get("metadata"))
+    for key in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS:
+        value = row.get(key)
+        if value is None:
+            value = meta.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    inner_meta = _binding_dict(_binding_dict(meta.get("strategy_spec")).get("metadata"))
+    for key in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS:
+        value = inner_meta.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP: dict[str, str] = {
     "draft": "draft",
@@ -694,6 +757,7 @@ def strategy_spec_summary_index_row(
     entry: RegistryEntry,
     *,
     include_title: bool = False,
+    include_scope: bool = False,
 ) -> dict:
     """Minimal candidate-index row for StrategySpec summary selection, counts, filtering, and sorting.
 
@@ -722,11 +786,11 @@ def strategy_spec_summary_index_row(
     }
     meta = entry.metadata
     if isinstance(meta, dict):
-        meta_keys = (
-            STRATEGY_SUMMARY_INDEX_META_KEYS + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
-            if include_title
-            else STRATEGY_SUMMARY_INDEX_META_KEYS
-        )
+        meta_keys = STRATEGY_SUMMARY_INDEX_META_KEYS
+        if include_title:
+            meta_keys = meta_keys + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+        if include_scope:
+            meta_keys = meta_keys + STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
         light_meta: dict[str, Any] = {
             k: meta[k] for k in meta_keys if k in meta
         }
@@ -754,7 +818,10 @@ def strategy_spec_summary_index_row(
             if isinstance(inner_meta, dict):
                 light_inner["metadata"] = {
                     k: inner_meta[k]
-                    for k in STRATEGY_SUMMARY_INDEX_INNER_META_KEYS
+                    for k in (
+                        STRATEGY_SUMMARY_INDEX_INNER_META_KEYS
+                        + (STRATEGY_SUMMARY_INDEX_SCOPE_KEYS if include_scope else ())
+                    )
                     if k in inner_meta
                 }
             light_meta["strategy_spec"] = light_inner
@@ -970,8 +1037,17 @@ def project_strategy_spec_summary_page(
     page_token: Optional[str] = None,
     page_size: int = 20,
     full_row_loader: Optional[Callable[[list[str]], Mapping[str, dict]]] = None,
+    hide_stubs: bool = False,
+    hide_persona_ids: Optional[Collection[str]] = None,
 ) -> dict[str, Any]:
-    """Owner-side current-version selection, filtering, sorting, and pagination over summary rows."""
+    """Owner-side current-version selection, filtering, sorting, and pagination over summary rows.
+
+    ``hide_stubs`` applies the strategy stub rule (unbound stubs plus rows whose
+    personas are all in ``hide_persona_ids``) to the same candidate pass: hidden
+    rows are excluded from ``items``/``total`` and counted by reason, and
+    ``visible_state_counts`` counts every current version that is not hidden.
+    Without it the answer is unchanged.
+    """
     (
         has_state_filter,
         has_exclude_state_filter,
@@ -1049,6 +1125,10 @@ def project_strategy_spec_summary_page(
         else None
     )
 
+    hide_ids: frozenset = frozenset(str(p) for p in (hide_persona_ids or ()) if str(p).strip())
+    visible_state_counts: dict[str, int] = {k: 0 for k in STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS}
+    hidden_by_reason: dict[str, int] = {k: 0 for k in STRATEGY_STUB_REASONS}
+
     matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
     for sid, row in winning_row.items():
         current_state = _extract_strategy_summary_raw_lifecycle(row)
@@ -1056,6 +1136,17 @@ def project_strategy_spec_summary_page(
         is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
         dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
         state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+        stub_reason: Optional[str] = None
+        if hide_stubs:
+            stub_reason = strategy_stub_reason_for_fields(
+                strategy_id=sid,
+                title=_extract_strategy_summary_title(sid, row),
+                persona_ids=_extract_strategy_summary_persona_ids(row),
+                data_scope=_extract_strategy_summary_data_scope(row),
+                test_persona_ids=hide_ids,
+            )
+            if stub_reason is None:
+                visible_state_counts[dto_state] = visible_state_counts.get(dto_state, 0) + 1
         is_true_draft = (not raw_clean) or (raw_clean == "draft")
 
         if has_state_filter and wanted_dto_state == "retired":
@@ -1086,6 +1177,9 @@ def project_strategy_spec_summary_page(
                 and wanted_query not in _extract_strategy_summary_title(sid, row).lower()
             ):
                 continue
+        if stub_reason is not None:
+            hidden_by_reason[stub_reason] += 1
+            continue
         last_mod = _strategy_summary_last_modified_at(row)
         matched.append(
             (_binding_utc(last_mod), sid, row, version_counts[sid], current_state, persona_list, last_mod)
@@ -1127,7 +1221,7 @@ def project_strategy_spec_summary_page(
         )
         for (_dt, sid, row, vcount, current_state, persona_list, last_mod) in page_rows
     ]
-    return {
+    result: dict[str, Any] = {
         "items": items,
         "total": total,
         "page_size": effective_page_size,
@@ -1139,6 +1233,13 @@ def project_strategy_spec_summary_page(
             "next_page_token": next_page_token,
         },
     }
+    if hide_stubs:
+        result["visible_state_counts"] = visible_state_counts
+        result["hidden"] = {
+            "total": sum(hidden_by_reason.values()),
+            "by_reason": hidden_by_reason,
+        }
+    return result
 
 
 class RegistryUniqueViolationError(ValueError):
@@ -1436,6 +1537,7 @@ class RegistryStore:
         visible_tenants: Optional[frozenset] = None,
         artifact_type: Optional[str] = "strategy_spec",
         include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Return lightweight candidate-index rows for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -1449,7 +1551,11 @@ class RegistryStore:
                 continue
             if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
                 continue
-            rows.append(strategy_spec_summary_index_row(entry, include_title=include_title))
+            rows.append(
+                strategy_spec_summary_index_row(
+                    entry, include_title=include_title, include_scope=include_scope
+                )
+            )
         return rows
 
     def get_strategy_spec_summary_rows_by_ids(
