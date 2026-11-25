@@ -261,3 +261,63 @@ def test_cycle_directories_beyond_keep_are_removed(tmp_path):
     kept = sorted(p.name for p in (scheduler.config.data_dir / "cycles").iterdir())
     assert len(kept) == 2 and kept[-1].startswith("2026-")
     assert scheduler.load_state()["last_completed"]["cycle_id"] == kept[-1]
+
+
+# -- bounded registry read: hosted registry.entries holds ~9.9k rows, 9.4k of them strategy_spec -----------------
+UNRELATED = 9_000
+
+
+def _registry_with_unrelated_entries(count=UNRELATED):
+    from services.registry.alpha_template import ensure_builtin_alpha_templates
+    from services.registry.models import RegistryEntry
+
+    registry = RegistryService(get_store())
+    seed = ensure_builtin_alpha_templates(registry)[0].entry.to_dict()
+    for i in range(count):
+        raw = dict(seed)
+        raw.update(registry_id=f"reg-unrelated-{i:05d}", artifact_type=ArtifactType.STRATEGY_SPEC.value,
+                   strategy_id=f"strat-{i}", metadata={"padding": "x" * 64})
+        registry.store._entries[raw["registry_id"]] = RegistryEntry.from_dict(raw)
+    return registry
+
+
+def _forbid_whole_table_reads(registry, monkeypatch):
+    store = registry.store
+    reads = []
+    real = store.list_by_artifact_type
+
+    def whole(*a, **k):
+        raise AssertionError("whole-registry list_all_entries() called")
+
+    def typed(artifact_type):
+        out = real(artifact_type)
+        reads.append((str(getattr(artifact_type, "value", artifact_type)), len(out)))
+        return out
+
+    monkeypatch.setattr(store, "list_all_entries", whole)
+    monkeypatch.setattr(RegistryService, "list_all_entries", lambda self: whole())
+    monkeypatch.setattr(store, "list_by_artifact_type", typed)
+    return reads
+
+
+def test_template_reads_never_list_the_whole_registry(tmp_path, monkeypatch):
+    registry = _registry_with_unrelated_entries()
+    assert len(registry.store._entries) >= UNRELATED
+    reads = _forbid_whole_table_reads(registry, monkeypatch)
+    fake, now = FakeStore(), [datetime(2026, 5, 20, tzinfo=timezone.utc)]
+    scheduler, _ = make(tmp_path, fake, now=now, registry=registry)
+    actions = drive(scheduler)
+    assert actions[-1]["action"] == "cycle_completed" and actions[-1]["evaluated"] == 171
+    assert reads and all(t == "alpha_template" and n == 182 for t, n in reads)
+
+
+def test_list_endpoint_reads_only_templates_from_a_large_registry(monkeypatch):
+    from services.research import main as research_main
+
+    registry = _registry_with_unrelated_entries()
+    reads = _forbid_whole_table_reads(registry, monkeypatch)
+    monkeypatch.setattr(research_main, "get_registry_store", lambda: registry.store)
+    with TestClient(research_main.app) as client:
+        body = client.get("/api/research/alpha-templates/evaluations").json()
+    assert body["count"] == 182
+    assert reads and all(t == "alpha_template" for t, _ in reads)

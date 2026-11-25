@@ -180,16 +180,14 @@ class TemplateEvaluationScheduler:
     # -- cycle -----------------------------------------------------------------------------------------
     def _templates(self) -> list[dict[str, Any]]:
         from services.registry.alpha_template import ALPHA_TEMPLATE_METADATA_KEY, ensure_builtin_alpha_templates
-        from services.registry.models import ArtifactType
-
+        from services.research.alpha_templates.evaluator import list_alpha_template_views
         service = self._registry_service_factory()
         ensure_builtin_alpha_templates(service)
         out = []
-        for view in service.list_all_entries():
-            if view.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE:
-                tmpl = (view.entry.metadata or {}).get(ALPHA_TEMPLATE_METADATA_KEY)
-                if isinstance(tmpl, Mapping):
-                    out.append(dict(tmpl))
+        for view in list_alpha_template_views(service):
+            tmpl = (view.entry.metadata or {}).get(ALPHA_TEMPLATE_METADATA_KEY)
+            if isinstance(tmpl, Mapping):
+                out.append(dict(tmpl))
         return sorted(out, key=lambda t: str(t["template_id"]))
 
     def _due(self, state: dict[str, Any], now: datetime) -> tuple[bool, str, Any]:
