@@ -103,7 +103,7 @@ transitioning to `resolved` or `closed`.
 > `{"skipped": true, "reason": "infrastructure_incident"}` and reserves no inbox row; the producer treats 200 as delivered.
 > An already stored Postmortem is left unchanged. `GET /api/postmortems` hides `draft` rows that match the same
 > predicates (applied to the stored `incident_evidence_summary`) unless `include_infrastructure=true` or `incident_id`
-> is given, and returns `hidden_infrastructure_count`; `total` is exact (uncapped `list_all_postmortems`).
+> is given, and returns `hidden_infrastructure_count`; `total` is exact: `list_postmortem_page` filters, counts and pages in the store (Postgres: a narrow column projection, only the page's payloads loaded; no `HISTORY_READ_ROW_CAP`).
 
 ### 5.1 Required fields
 

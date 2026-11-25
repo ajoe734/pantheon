@@ -1,6 +1,8 @@
 """Focused contract tests for the dedicated Postmortem router and service."""
 from __future__ import annotations
 
+import pytest
+
 import os
 import sys
 from typing import Any, Dict, List, Optional
@@ -147,9 +149,9 @@ def test_list_postmortems_preserves_time_range_data_and_meta_contract() -> None:
         },
         "meta": {
             "total": 2,
-            # additive key (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125); 0 here because
-            # this store reports no hidden infrastructure drafts. Row shape unchanged.
-            "hidden_infrastructure_count": 0,
+            # additive key (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125); None (unknown) here
+            # because this store does not report the field. Row shape unchanged.
+            "hidden_infrastructure_count": None,
             "staleness": {
                 "served_from": "cache",
                 "last_known_at": "2026-08-30T00:00:00Z",
@@ -275,4 +277,23 @@ def test_unavailable_surface_is_not_reported_as_hidden_or_empty_ok() -> None:
         postmortem_service=svc, extract_identity=lambda a: {}, require_read_role=lambda i: None, bff_error=_error))
     body = TestClient(app).get("/api/v1/postmortems").json()
     assert body["meta"]["surfaces"]["postmortems"]["status"] == "unavailable"
-    assert body["meta"]["hidden_infrastructure_count"] == 0
+    assert body["meta"]["hidden_infrastructure_count"] is None  # unknown, not 0
+
+
+@pytest.mark.parametrize("bad", [None, "abc", -4, True, 1.5, {}])
+def test_absent_or_malformed_hidden_count_is_null_not_zero(bad) -> None:
+    store = _PagedStore()
+    store.postmortems["pm-1"] = _real_postmortem_record("pm-1", incident_id="inc-1")
+    orig = store.list_postmortems_page
+
+    def page(**kw):
+        out = orig(**kw)
+        if bad is None:
+            out.pop("hidden_infrastructure_count")
+        else:
+            out["hidden_infrastructure_count"] = bad
+        return out
+
+    store.list_postmortems_page = page  # type: ignore[method-assign]
+    body = _client(store).get("/api/v1/postmortems").json()
+    assert body["meta"]["hidden_infrastructure_count"] is None

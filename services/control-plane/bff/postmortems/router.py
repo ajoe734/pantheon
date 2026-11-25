@@ -103,16 +103,17 @@ def create_postmortem_router(
         if surface.get("status") == "unavailable":
             postmortems = []
             total = 0
-            hidden_infrastructure_count = 0
+            hidden_infrastructure_count = None
             next_page_token = None
         else:
             postmortems = list(page.get("items") or [])
             total = int(page.get("total", len(postmortems)))
             next_page_token = page.get("next_page_token")
-            try:
-                hidden_infrastructure_count = max(0, int(page.get("hidden_infrastructure_count") or 0))
-            except (TypeError, ValueError):
-                hidden_infrastructure_count = 0
+            # Absent or malformed means unknown (None), never 0 ("nothing hidden").
+            raw_hidden = page.get("hidden_infrastructure_count")
+            hidden_infrastructure_count = (
+                raw_hidden if isinstance(raw_hidden, int) and not isinstance(raw_hidden, bool) and raw_hidden >= 0 else None
+            )
 
         return {
             "data": postmortems,

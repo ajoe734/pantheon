@@ -672,10 +672,11 @@ class DomainIncidentPort:
             total = int(fetched.get("total", page_info.get("total", len(items))))
             next_page_token = fetched.get("next_page_token", page_info.get("next_page_token"))
             returned_page_size = int(fetched.get("page_size", page_info.get("page_size", effective_page_size)))
-            try:
-                hidden_infrastructure_count = max(0, int(fetched.get("hidden_infrastructure_count") or 0))
-            except (TypeError, ValueError):
-                hidden_infrastructure_count = 0
+            raw_hidden = fetched.get("hidden_infrastructure_count")
+            # Absent or malformed means unknown (None), never 0.
+            hidden_infrastructure_count = (
+                raw_hidden if isinstance(raw_hidden, int) and not isinstance(raw_hidden, bool) and raw_hidden >= 0 else None
+            )
             return {
                 "items": items,
                 "total": total,

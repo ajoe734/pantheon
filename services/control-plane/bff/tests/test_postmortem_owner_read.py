@@ -646,3 +646,13 @@ def test_port_passes_include_infrastructure_and_carries_hidden_count() -> None:
     assert page["hidden_infrastructure_count"] == 5355 and page["total"] == 7
     port.list_postmortems_page(page_size=50, include_infrastructure=True)
     assert "include_infrastructure=true" in paths[-1]
+
+
+@pytest.mark.parametrize("bad", [None, "abc", -1, True])
+def test_port_hidden_count_absent_or_malformed_is_none(bad) -> None:
+    port = DomainIncidentPort(postmortems_api_url="http://owner.invalid")
+    payload = {"items": [], "total": 0, "page_size": 50, "next_page_token": None}
+    if bad is not None:
+        payload["hidden_infrastructure_count"] = bad
+    port._postmortems_http_json = lambda path: payload  # type: ignore[method-assign]
+    assert port.list_postmortems_page(page_size=50)["hidden_infrastructure_count"] is None
