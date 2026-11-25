@@ -194,6 +194,7 @@ class World:
             "RESEARCH_GOVERNANCE_PROPOSER_ID": self.issued["RESEARCH_GOVERNANCE_PROPOSER_ID"],
             "RESEARCH_GOVERNANCE_GATE_ID": self.issued["RESEARCH_GOVERNANCE_GATE_ID"],
             "GOVERNED_MARKET_STORE_ROOT": str(store_root),
+            "ALPHA_REPLICATION_CARD_ADMISSION_ENABLED": "1",
         }
         for variable in issuer.CONSUMER_FILES[WORKER]:
             env[variable + "_FILE"] = str(principals / WORKER / variable)

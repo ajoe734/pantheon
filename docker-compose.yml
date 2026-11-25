@@ -593,6 +593,8 @@ services:
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
       ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      # Card admission reads Registry drafts; off until the coordinator has seen one hosted tick of the bounded read.
+      ALPHA_REPLICATION_CARD_ADMISSION_ENABLED: ${ALPHA_REPLICATION_CARD_ADMISSION_ENABLED:-0}
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
