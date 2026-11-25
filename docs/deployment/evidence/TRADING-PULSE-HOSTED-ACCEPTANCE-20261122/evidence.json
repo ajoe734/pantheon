@@ -3,7 +3,7 @@
   "task_id": "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
   "owner": "Codex",
   "reviewer": "Claude2",
-  "recorded_at": "2026-11-22T16:59:49.313644+00:00",
+  "recorded_at": "2026-11-25T14:03:08.516523+00:00",
   "problem_register": {
     "root_cause_class": "RC6",
     "work_package": "WP6.5",
@@ -44,8 +44,8 @@
       "delivery_state": "merged"
     }
   ],
-  "hosted_accepted": false,
-  "verdict": "pending_exact_repaired_pair_deployment",
+  "hosted_accepted": true,
+  "verdict": "accepted_on_exact_pair_45603700953",
   "candidate": {
     "bff": "eedf523a5d23e90742e427d2e055e70884664805",
     "fe": "b5d91e038a2490a616d5d5edf0f1817996fe45be",
@@ -199,8 +199,12 @@
   "probes": {
     "api": {
       "path": "acceptance/probes/trading-pulse-operator",
-      "repaired_pair_exit_code": null,
-      "status": "not_run_until_candidate_served"
+      "artifact": "dev-acceptance-verdict-45603700953-1",
+      "exit_code": 0,
+      "status": "passed",
+      "persona_count": 3,
+      "runtime_count": 3,
+      "failed": []
     },
     "browser": {
       "repository": "ajoe734/execute-plans",
@@ -220,6 +224,27 @@
         "keyboard Persona detail and visible return",
         "historical rejection scoped detail, matching event/time/cause, and visible return"
       ]
+    },
+    "browser_result": {
+      "artifact": "pantheon-cross-repo-release-45603700953-1",
+      "outcome": "pass",
+      "failures": [],
+      "identity_before_equals_after": true,
+      "contexts": [
+        "zh-TW 1440 (sidebar entry)",
+        "zh-TW 390 (command palette entry)",
+        "en-US 1440"
+      ],
+      "checks_each": "current operator content, wire roster and rankings vs API, diagnostics expand/collapse, keyboard persona round trip, historical rejection detail round trip and return; masked screenshots for zh-TW desktop/narrow",
+      "witness": {
+        "persona_count": 3,
+        "runtime_count": 3,
+        "excluded_validation_personas": 1,
+        "captured_at": "2026-11-25T13:20:35Z",
+        "within_15_min": true
+      },
+      "blocked_writes": [],
+      "probe_business_writes": "blocked"
     }
   },
   "residual_findings": [
@@ -244,24 +269,24 @@
     "cadence": "On demand per release only",
     "routine_daily_growth_bytes": 0,
     "summary_count": 1,
-    "screenshot_count": 0,
+    "screenshot_count": 2,
     "max_screenshots_per_pair": 2,
     "max_bundle_bytes": 5242880,
     "cleanup": "No raw API bodies, credentials, tokens, cookie state, traces or browser profiles committed. Temporary rehearsal witness is removed after deidentification. Replace duplicate summaries/images per SHA pair.",
-    "measured_bundle_bytes": 15222,
-    "cleanup_completed": "Task-generated private rehearsal witness removed after this deidentified record; no browser started and no credential file created."
+    "measured_bundle_bytes": 345580,
+    "cleanup_completed": "Temp downloads removed; no credentials, raw bodies, traces or profiles retained."
   },
   "validation": {
     "git_diff_check": "passed",
     "json_parse": "passed",
     "source_merge_identity_and_probe_hash_checks": "passed",
-    "candidate_hosted_stack": "not_run",
-    "api_acceptance": "not_run",
-    "browser_acceptance": "not_run",
+    "candidate_hosted_stack": "passed",
+    "api_acceptance": "passed",
+    "browser_acceptance": "passed",
     "unfinished_local_command_handles": 0
   },
   "independent_review": {
-    "status": "not_requested_pending_hosted_acceptance",
+    "status": "requested",
     "assigned_reviewer": "Claude2"
   },
   "additional_release_attempts": [
@@ -289,5 +314,34 @@
       "pending": "dev push Branch CI 45360373301 (21503a1c0) and 45361868748 (64e44aa37, includes #7786) not complete; no release containing the in-release browser step has run.",
       "hosted_accepted": false
     }
+  ],
+  "accepted_pair": {
+    "fe": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "bff": "c3164945abe4c08e29c0a2c3e678ca59f1462a7e",
+    "pair_id": "dde6fe84fd5b068f34aa596003a0c5a94aebda3f76da64faee8a8e83f511312f",
+    "root_run": "https://github.com/ajoe734/pantheon/actions/runs/45603700953",
+    "release_controller_outcome": "accepted",
+    "frontend_deploy_run": "https://github.com/ajoe734/execute-plans/actions/runs/45618217048",
+    "switched_at": "2026-11-25T13:22Z",
+    "live_recheck_2026-11-25": "deployment.json frontendSha/bffCommit/pairId and /bff/version commit equal the pair; manifest deploymentState=accepted acceptedAt 2026-11-25T13:13:39Z",
+    "includes": "pantheon #7742, #7786 and execute-plans #1062/#1063/#1066"
+  },
+  "unrelated_release_verdict": {
+    "acceptance": "failed",
+    "failed_not_pulse": [
+      "probe:paper-risk-journey",
+      "probe:paper-risk-policy-binding (approval overlap; PAPER-RISK-PROBE-OVERLAPPING-RENEWAL-20261125)",
+      "probe:meeting-review-disposition (transient; passed on rerun 13:40Z per task record)"
+    ],
+    "skipped_77": [
+      "meeting-action-followthrough",
+      "persona-risk-profile-change"
+    ],
+    "note": "These do not exercise Trading Pulse; Pulse accepted on its own probe and browser evidence for this exact pair."
+  },
+  "residual_gaps": [
+    "Release-level verdict failed for the unrelated probes above; their owners hold them.",
+    "pnl_group_count 0: no cross-persona PnL subtotal asserted (currency/period not comparable).",
+    "en-US run has no screenshot by design (max two)."
   ]
 }

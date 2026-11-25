@@ -1,0 +1,477 @@
+{
+  "schema": "trading-pulse-browser-readonly.v1",
+  "started_at": "2026-11-25T13:20:37.173Z",
+  "expected": {
+    "fe": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "bff": "c3164945abe4c08e29c0a2c3e678ca59f1462a7e"
+  },
+  "mode": "acceptance",
+  "witness": {
+    "digest": "e986d73df2c254213596ef3335fade13ae7764bedc7e187e17d84c20222e453f",
+    "captured_at": "2026-11-25T13:20:35.222038+00:00",
+    "provenance": [
+      {
+        "source": "registry:/api/v1/personas+/api/v1/runtime-bindings",
+        "sha256": "f1e974cbf617da7ff05e54fbdd4e10e333b424f3f529f5a2e6d0f4a0fbc34312"
+      },
+      {
+        "source": "ledger:/api/v1/telemetry/{runtime}/summary",
+        "sha256": "9925fe416f7451339f9f105c96961b26082d8081cd1118ab338ba3661cadc075"
+      },
+      {
+        "source": "strategy:/api/v1/knowledge/strategy-specs/{strategy_id}",
+        "sha256": "22096a8a4b72e4fc46bcda87a88ba0801d6f1ca2953a567f5e2494a92e25afbe"
+      }
+    ],
+    "persona_count": 3,
+    "runtime_count": 3
+  },
+  "history_witness_digest": "073ca818ecf6354045c723eda7d4516e0d6e677ef90dc7394c256bd1b86537c2",
+  "failures": [],
+  "runs": [
+    {
+      "locale": "zh-TW",
+      "width": 1440,
+      "checks": [
+        "current_operator_content",
+        "current_wire_roster_and_rankings",
+        "masked_screenshot",
+        "diagnostics_expand_source_and_collapse",
+        "persona_detail_roundtrip_keyboard",
+        "historical_rejection_roundtrip"
+      ],
+      "failures": [],
+      "reads": [
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/auth/dev-login",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/events/stream",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/shell-summary",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/agora/capabilities",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/audit",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/strategies",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/personas/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "entry": "sidebar",
+      "overview_digest": "e2d7b0672a001431cab3cb33d159fe77febabc50048d79f4b567405bdefeb2d1"
+    },
+    {
+      "locale": "zh-TW",
+      "width": 390,
+      "checks": [
+        "current_operator_content",
+        "current_wire_roster_and_rankings",
+        "masked_screenshot",
+        "diagnostics_expand_source_and_collapse",
+        "persona_detail_roundtrip_keyboard",
+        "historical_rejection_roundtrip"
+      ],
+      "failures": [],
+      "reads": [
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/auth/dev-login",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/events/stream",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/shell-summary",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/search",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/agora/capabilities",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/audit",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/strategies",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/personas/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "entry": "command_palette",
+      "overview_digest": "5eab0dad8d1c2cd0ea3d4b33a7766924933376b4c292e127989cef2302ddcaf7"
+    },
+    {
+      "locale": "en-US",
+      "width": 1440,
+      "checks": [
+        "current_operator_content",
+        "current_wire_roster_and_rankings",
+        "diagnostics_expand_source_and_collapse",
+        "persona_detail_roundtrip_keyboard",
+        "historical_rejection_roundtrip"
+      ],
+      "failures": [],
+      "reads": [
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/bff/auth/dev-login",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "path": "/bff/auth/readiness",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/events/stream",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/shell-summary",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trading-pulse/rankings",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/me",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/agora/capabilities",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/audit",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/strategies",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/personas/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/events",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "entry": "sidebar",
+      "overview_digest": "8d32f9363b486d21c38439f645724eb943bc80584f3020fd0c058d857541b963"
+    }
+  ],
+  "blocked_writes": [],
+  "pass": true,
+  "pair_before": {
+    "fe": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "bff": "c3164945abe4c08e29c0a2c3e678ca59f1462a7e",
+    "pair": "dde6fe84fd5b068f34aa596003a0c5a94aebda3f76da64faee8a8e83f511312f",
+    "deployment_state": "accepted",
+    "hosted_write_flag": "true",
+    "probe_business_writes": "blocked"
+  },
+  "pair_after": {
+    "fe": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "bff": "c3164945abe4c08e29c0a2c3e678ca59f1462a7e",
+    "pair": "dde6fe84fd5b068f34aa596003a0c5a94aebda3f76da64faee8a8e83f511312f",
+    "deployment_state": "accepted",
+    "hosted_write_flag": "true",
+    "probe_business_writes": "blocked"
+  },
+  "finished_at": "2026-11-25T13:22:22.215Z",
+  "evidence": {
+    "files": [
+      "summary.json",
+      "desktop.png",
+      "narrow.png"
+    ],
+    "bytes": 345580,
+    "max_bytes": 5242880,
+    "routine_daily_growth_bytes": 0
+  }
+}
