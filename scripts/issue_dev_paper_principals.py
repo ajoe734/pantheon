@@ -44,6 +44,9 @@ GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-rea
 GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"
 TTL_SECONDS = 24 * 60 * 60
 READERS = {
+    # Paper runtimes (via the fleet reconciler) -> registry owner entry GET ONLY, for the report-only
+    # member baseline comparison. registry-reader is the existing read-only role; dev tenant only.
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN": ("pantheon-dev-paper-runtime-registry-reader", "registry-reader"),
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
     "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-deployment-approval-reader", "approval_reader"),
     "REGISTRY_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-registry-approval-reader", "approval_reader"),
@@ -310,8 +313,19 @@ CONSUMER_FILES = {
     # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
     # reader principal, never the deployment volume's governance/registry files.
     "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),
+    # Fleet reconciler only (inherited by persona-scoped paper workers): registry entry read, nothing else.
+    "paper-registry-reader": ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
+
+
+# A consumer directory is normally mounted at /run/pantheon-principals; the paper registry reader is
+# mounted beside it so the services sharing the capital reader volume never see it.
+MOUNT_ROOT_OVERRIDES = {"paper-registry-reader": "/run/pantheon-registry-read"}
+
+
+def _mount_root(consumer: str) -> str:
+    return MOUNT_ROOT_OVERRIDES.get(consumer, "/run/pantheon-principals")
 
 
 def _roles(role: str | tuple[str, ...]) -> list[str]:
@@ -416,9 +430,9 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "CONSULTATION_SERVICE_TOKEN": consultation_service_token,
         "CONSULTATION_API_TOKEN": consultation_api_token,
     })
-    for variables in CONSUMER_FILES.values():
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 
@@ -442,10 +456,10 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
         "CONSULTATION_SERVICE_TOKEN": "",
         "CONSULTATION_API_TOKEN": "",
     }
-    for variables in CONSUMER_FILES.values():
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
             values[variable] = ""
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 
