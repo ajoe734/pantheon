@@ -146,3 +146,138 @@ def test_attribution_hiding_helper_noop_without_test_personas() -> None:
         facts, {"p": {"persona_id": "p", "metadata": {"data_scope": "regular"}}}
     )
     assert kept is facts and (hp, hs) == (0, 0)
+
+
+# --- BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125: 7,500-row scale ---------
+
+def _scale_service(draft_count: int = 7329, non_draft_count: int = 171):
+    """Bare StrategiesService over a fake owner registry (7,500 rows)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from services.control_plane.bff.strategies.routes.common import (
+        PersonaStateLookup,
+        STUB_TEST_PERSONA_PROBE,
+        operational_counts,
+        strategy_stub_reason,
+        summary_persona_ids,
+    )
+    from services.control_plane.bff.strategies.service import StrategiesService
+
+    rows = []
+    for i in range(non_draft_count + draft_count):
+        non_draft = i % 44 == 0 and (i // 44) < non_draft_count
+        row = {
+            "strategy_id": f"s-{i:05d}",
+            "lifecycle_state": "approved" if non_draft else "draft",
+            "persona_ids": [f"p-{i:05d}"] if non_draft else [],
+        }
+        rows.append(row)
+    # first two rows are test-probe strategies bound to a test persona
+    rows[0]["persona_ids"] = ["p-test"]
+    rows[1]["persona_ids"] = ["p-test"]
+    calls: list = []
+
+    class _Store:
+        def list_strategy_summaries_page(self, *, state=None, persona_id=None, page_token=None, page_size=20, exclude_state=None):
+            calls.append((exclude_state, page_token, page_size))
+            pool = [r for r in rows if exclude_state != "draft" or r["lifecycle_state"] != "draft"]
+            start = int(page_token or 0)
+            chunk = pool[start : start + page_size]
+            nxt = start + len(chunk)
+            return {
+                "items": chunk,
+                "total": len(pool),
+                "next_page_token": str(nxt) if nxt < len(pool) else None,
+                "state_counts": {"draft": draft_count, "approved": non_draft_count},
+            }
+
+    svc = object.__new__(StrategiesService)
+    svc._read_surface = _Store()
+    svc._get_read_store = None
+    svc._bff_error = None
+    svc._invoke_read_owner = lambda fn: fn()
+    lookup = PersonaStateLookup(
+        available=True,
+        states_by_id={r["persona_ids"][0]: "active" for r in rows if r["persona_ids"] and r["persona_ids"][0] != "p-test"} | {"p-test": "active"},
+        test_persona_ids=frozenset({"p-test"}),
+    )
+    executor = ThreadPoolExecutor(max_workers=2)
+
+    def _overlap(fn):
+        fut = executor.submit(fn)
+        return fut.result
+
+    kwargs = dict(
+        persona_lookup=lookup,
+        summary_persona_ids_fn=summary_persona_ids,
+        operational_counts_fn=operational_counts,
+        status_retired="retired",
+        page_slice_fn=lambda items, token, size: (
+            items[int(token or 0) : int(token or 0) + size],
+            None,
+        ),
+        stub_reason_fn=lambda row: strategy_stub_reason(row, lookup),
+        test_probe_reason=STUB_TEST_PERSONA_PROBE,
+        submit_overlap_fn=_overlap,
+    )
+    return svc, kwargs, calls, rows
+
+
+def test_scale_7500_default_first_page_uses_at_most_two_owner_calls() -> None:
+    svc, kwargs, calls, _rows = _scale_service()
+    result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+        page_size=20, hide_retired=False, **kwargs
+    )
+    assert len(calls) <= 2, calls
+    assert calls and any(c[0] == "draft" for c in calls)
+    assert result["hidden_test_persona_strategy_count"] == 2
+    assert result["total"] == 7500 - 2
+    assert len(result["page_summaries"]) == 20
+    assert all("p-test" not in r["persona_ids"] for r in result["page_summaries"])
+    assert result["next_page_token"] == "20"
+    assert result["state_counts"]["draft"] == 7329
+
+
+def test_scale_7500_hide_retired_true_and_cursor_advance_without_duplicates() -> None:
+    svc, kwargs, calls, _rows = _scale_service()
+    seen: list = []
+    token = None
+    for _ in range(3):
+        calls.clear()
+        result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+            page_token=token, page_size=20, hide_retired=True, **kwargs
+        )
+        assert len(calls) <= 3, calls  # bounded, never the 38-page walk
+        seen.extend(r["strategy_id"] for r in result["page_summaries"])
+        token = result["next_page_token"]
+        assert token is not None
+    assert len(seen) == len(set(seen)) == 60
+    assert seen == sorted(seen)
+    assert "s-00000" not in seen and "s-00001" not in seen
+
+
+def test_scale_prefetched_first_page_is_reused_and_unavailable_persona_never_hides_rows() -> None:
+    from dataclasses import replace
+
+    svc, kwargs, calls, rows = _scale_service()
+    prefetched = svc.list_strategy_summaries_page(page_size=20)
+    calls.clear()
+    result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+        page_size=20, hide_retired=False, first_page_fn=lambda: prefetched, **kwargs
+    )
+    # two test probes sit in the prefetched 20 rows, so one 200-row continuation
+    # page overlaps the non-draft read: 2 owner calls beyond the prefetched page
+    assert sorted(str(c[0]) for c in calls) == ["None", "draft"]
+    assert len(result["page_summaries"]) == 20
+    assert result["hidden_test_persona_strategy_count"] == 2
+
+    lookup = kwargs["persona_lookup"]
+    unavailable = replace(lookup, available=False, failure="down")
+    kwargs["persona_lookup"] = unavailable
+    kwargs["stub_reason_fn"] = lambda row: None
+    calls.clear()
+    result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+        page_size=20, hide_retired=True, **kwargs
+    )
+    assert result["hidden_retired_persona_count"] == 0
+    assert result["total"] == 7500
