@@ -448,7 +448,8 @@ def read_meeting_positions(ctx: CitedReadContext) -> SourceResult:
         mid: submit_owner_read(_MEETING_DETAIL_EXECUTOR, (lambda m=mid: client.get_meeting(m)))
         for mid in ids
     }
-    budget = remaining_management_read_budget(None, reserve_seconds=SOURCE_RESERVE_SECONDS)
+    # Finish before the outer source wait (which keeps SOURCE_RESERVE_SECONDS).
+    budget = remaining_management_read_budget(None, reserve_seconds=2 * SOURCE_RESERVE_SECONDS)
     futures_wait(list(futures.values()), timeout=budget)
     denied = 0
     for mid, fut in futures.items():
