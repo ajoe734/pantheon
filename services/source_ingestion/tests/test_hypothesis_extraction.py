@@ -55,7 +55,7 @@ def _source(sid: str = "src-1", stype: str = "news", body: str = BODY, **meta: A
         source_id=sid,
         connector_id="conn-collector",
         source_type=stype,
-        title="t",
+        title="大樂透開獎" if body == LOTTERY else "台積電月營收創高 外資調升目標價",
         content_ref=f"https://example.test/{sid}",
         status="normalized",
         metadata={"license_scope": "collector_public_web", "access_scope": ["research"], "body": body, **meta},

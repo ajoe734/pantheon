@@ -141,7 +141,7 @@ def replay_worker(tmp_path, clock, monkeypatch, *, cap=2):
     return worker, queue, ledger, model_calls, recording["stored_text"]
 
 
-def source(sid, text, title="unrelated", tenant=TENANT):
+def source(sid, text, title="台股 stock 財報", tenant=TENANT):
     return SourceRecord(source_id=sid, connector_id="test-replay", source_type="paper", title=title,
                         content_ref="https://example.test/" + sid, status="normalized",
                         metadata={"tenant_id": tenant, "license_scope": "collector_public_web",
@@ -160,7 +160,7 @@ def test_cap_two_five_records_across_windows_real_worker_queue_and_extractor(tmp
     monkeypatch.setattr(httpx, "get", read)
     clock = [START]
     worker, queue, ledger, calls, text = replay_worker(tmp_path, clock, monkeypatch)
-    titles = ["first", "second", "third", "momentum", "momentum equity"]
+    titles = ["first 股票", "second 股票", "third 股票", "momentum 股票", "momentum equity 股票"]
     for i, title in enumerate(titles):
         queue.enqueue_source_record(source(str(i), text, title), enqueued_at=START.timestamp() + i)
     clock[0] += timedelta(seconds=10)
@@ -302,7 +302,7 @@ def test_environment_controller_tick_drives_demand_deferral_across_two_windows(t
     monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
     queue_path = tmp_path / "queue.sqlite"
     records = [source(str(i), recording["stored_text"], title) for i, title in enumerate(
-        ["first", "second", "third", "momentum", "momentum equity"])]
+        ["first 股票", "second 股票", "third 股票", "momentum 股票", "momentum equity 股票"])]
     queue = DistillationJobQueue(queue_path, now=lambda: clock[0].timestamp())
     for i, record in enumerate(records):
         queue.enqueue_source_record(record, enqueued_at=START.timestamp() + i)
