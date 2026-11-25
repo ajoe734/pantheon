@@ -1,0 +1,32 @@
+{
+  "task": "BFF-ALPHA-FACTORY-PIPELINE-TRUTH-20261125",
+  "root_cause_class": "RC6",
+  "register_instance": "RC6 (docs/operations/problem-register.md, WP6.4 and RC2 Alpha factory board)",
+  "defect": "GET /bff/alpha-factory hardcoded an empty discovered lane (no_candidate_source) and put every completed queue admission into replicated, so document-check-only records read as passed strategies",
+  "fix": {
+    "discovered": "open demands from GET /api/research/persona-demands (same read as research tasks) plus hypothesis cards from source-ingest strategy-seeds; persona display name from the persona directory; empty means owners answered none",
+    "scaffolded": "template-search runs of the caller tenant joined to its demands (attempt_count, latest outcome, typed reason_code) plus unfinished gate attempts with reason_code from last_error",
+    "replicated": "only admissions with an owner-recorded completed run whose metadata.replication_gate.passed is true",
+    "document_checked": "other completed admissions, document_check_reason from owner facts: retired | test_scope | simulation_or_raw_market_seed | no_passing_gate_result | gate_result_unavailable; no name patterns",
+    "counts": "collected_text_records, dropped_irrelevant, hypothesis_cards, templates_registered/evaluated, searches, passes; failed read = unavailable with reason, never 0",
+    "reads": "at most six owner GETs per request, caller credentials and verified tenant, route stays a plain def and writes nothing"
+  },
+  "tests": {
+    "services/control-plane/bff/tests/test_bff_alpha_factory_contract.py": "13 new tests: discovered lane, persona names, empty = owners none, demand read failure and tenant mismatch, scaffolded searches and typed reasons, four hosted records land in document_checked (retired / raw market / simulation / no passing gate), passing gate promotes, failed run read never promotes, counts unavailable not 0, plain def read-only, reason normalisation; existing tests updated so replicated cards carry an owner gate run",
+    "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py": "routers updated to the new owner reads",
+    "services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py": "composed app wiring answers gate run for the wiring entries"
+  },
+  "changed_assertions": [
+    "completed admissions without an owner gate run are no longer in replicated (now data.document_checked); data.reason, discovered_reason and meta.discovered removed",
+    "two-tenant isolation test: tenant-dev admission is a document check on the real owner app, not replicated"
+  ],
+  "known_test_environment_error": "test_alpha_factory_returns_templates_with_evaluation_metrics errors in its real_template_list fixture (422 no governed Taiwan evaluation data source: PANTHEON_TAIWAN_EVAL_DATA_DIR unset locally); fixture only, not touched",
+  "functional_evidence_only": "no VM/SSH access; hosted verification belongs to the operator acceptance task",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner family",
+  "residuals": [
+    "dropped_irrelevant has no owner read (distillation queue skipped l2_irrelevant count is not exposed by source-ingest routes): count stays unavailable owner_route_not_exposed",
+    "GET /api/research-orchestrator/entries does not return the replication gate; the BFF reads it from the experiment runs (GET /api/research-orchestrator/runs, unfiltered list, tenant-filtered in the BFF): the owner should expose a tenant-scoped runs read or put replication_gate on the entry",
+    "hypothesis cards are read from the management strategy-seeds list (full list per request); a paged owner read would bound it",
+    "frontend (FE-ALPHA-FACTORY-PIPELINE-TRUTH-20261125) must read data.document_checked, data.counts and the item kinds"
+  ]
+}
