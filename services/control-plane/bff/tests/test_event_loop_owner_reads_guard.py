@@ -96,6 +96,8 @@ RUNTIME_GET_PATHS = [
     "/bff/management/shell-summary",
     "/bff/management/cockpit",
     "/bff/management/trading-pulse",
+    # scope=cited fans out to seven owner sources and meeting detail reads.
+    "/bff/management/evidence?scope=cited",
     "/bff/ranking-formulas",
     "/bff/search?q=a",
     "/api/v1/knowledge/notes",
