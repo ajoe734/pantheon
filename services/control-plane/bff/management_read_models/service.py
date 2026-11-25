@@ -727,8 +727,17 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "source_ref": source_ref,
         "captured_at": captured_at,
         "link_type": link_type,
+        "source_class": item.get("source_class") or source_document.get("source_class"),
+        "source_document": {
+            "title": title,
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "captured_at": captured_at,
+            "excerpt": source_document.get("excerpt"),
+        },
         "credibility": json.loads(json.dumps(credibility)),
         "linked_object_summary": json.loads(json.dumps(linked_summary)),
+        "linked_decisions": json.loads(json.dumps(item.get("linked_decisions") or [])),
         "resolved_link": json.loads(json.dumps(resolved_link)),
         "route_href": route_href,
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
@@ -795,16 +804,10 @@ def _management_evidence_summary(
         }
     if population_summary is not None:
         if page_items and not visible_page_items:
-            verified_count = 0
             by_source_type: Dict[str, int] = {}
             by_link_type: Dict[str, int] = {}
             by_credibility_tier: Dict[str, int] = {}
         else:
-            verified_count = int(
-                population_summary.get("verified_count")
-                if population_summary.get("verified_count") is not None
-                else (population_summary.get("verified_evidence") or 0)
-            )
             by_source_type = {
                 str(k): int(v) for k, v in (population_summary.get("by_source_type") or {}).items()
             }
@@ -820,8 +823,8 @@ def _management_evidence_summary(
             "returned_evidence": len(page_items),
             "visible_evidence": len(visible_page_items),
             "redacted_evidence": redacted_count,
-            "verified_evidence": verified_count,
-            "verified_count": verified_count,
+            "verified_evidence": None,
+            "verified_count": None,
             "by_source_type": by_source_type,
             "by_link_type": by_link_type,
             "by_credibility_tier": by_credibility_tier,
@@ -829,13 +832,6 @@ def _management_evidence_summary(
 
     source_items = population_items if population_items is not None else page_items
     visible_items = [item for item in source_items if not item.get("redacted")]
-    verified_count = len(
-        [
-            item
-            for item in visible_items
-            if bool((item.get("credibility") or {}).get("verified") if (item.get("credibility") or {}).get("verified") is not None else item.get("verified"))
-        ]
-    )
     by_source_type = {}
     for item in visible_items:
         source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
@@ -865,8 +861,8 @@ def _management_evidence_summary(
         "returned_evidence": len(page_items),
         "visible_evidence": len(visible_page_items),
         "redacted_evidence": redacted_count,
-        "verified_evidence": verified_count,
-        "verified_count": verified_count,
+        "verified_evidence": None,
+        "verified_count": None,
         "by_source_type": by_source_type,
         "by_link_type": by_link_type,
         "by_credibility_tier": by_credibility_tier,
@@ -937,7 +933,7 @@ def _management_evidence_degraded_payload(
             "summary": summary,
             "facets": facets,
         },
-        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "page_info": {"next_page_token": None, "total": None, "page_size": page_size},
         "meta": meta,
     }
 
@@ -1739,7 +1735,7 @@ def _pulse_number(value: Any) -> Optional[float]:
     return number if number is not None and math.isfinite(number) else None
 
 
-def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]], directory: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     """Read one owner directory and admit identities before any aggregate/fanout."""
     tenant = selected_tenant.get()
     if authorization.get():
@@ -1760,7 +1756,8 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[L
             if port is not None and _is_unpatched_port_method(store, method):
                 if port.get_surface_status().get("status") != "ok":
                     raise RuntimeError("operator roster owner unavailable")
-        directory = shared_persona_directory_list(store, lambda: store.list_personas())
+        if directory is None:
+            directory = shared_persona_directory_list(store, lambda: store.list_personas())
         if not isinstance(directory, list):
             raise ValueError("invalid persona directory")
     except Exception:
@@ -1883,6 +1880,115 @@ def _pulse_performance(row: Dict[str, Any], raw: Optional[Dict[str, Any]], snap:
     ctx["fill_rate_basis"] = details.get("basis") if isinstance(details, dict) else "legacy_source_scalar"
     ctx["metric_units"] = {"pnl": ctx.get("pnl_currency"), "fill_rate": "fraction", "drawdown": "fraction", "sharpe_ratio": "ratio", "avg_slippage_bps": "bps", "total_trades": "fills"}
     ctx["metric_periods"] = {metric: {"start_at": raw.get(f"{metric}_period_start_at") or (raw.get("pnl_period_start_at") if metric in {"pnl", "drawdown"} else None), "as_of": raw.get(f"{metric}_at"), "window": raw.get("window")} for metric in _TRADING_PULSE_METRICS}
+
+
+def _pulse_telemetry_index(telemetry_summaries: List[Any]) -> Dict[Tuple[str, str, Any], Dict[str, Any]]:
+    """Latest Telemetry runtime summary per (runtime, binding, tenant)."""
+    index: Dict[Tuple[str, str, Any], Dict[str, Any]] = {}
+    for record in telemetry_summaries:
+        if isinstance(record, dict):
+            key = (_trading_pulse_runtime_id(record), _trading_pulse_binding_id(record), record.get("tenant_id"))
+            prior = index.get(key)
+            if prior is None or str(record.get("collected_at") or "") > str(prior.get("collected_at") or ""):
+                index[key] = record
+    return index
+
+
+def _pulse_binding_telemetry(
+    binding: Dict[str, Any], index: Dict[Tuple[str, str, Any], Dict[str, Any]], snap: str
+) -> Optional[Dict[str, Any]]:
+    """The one binding/staleness join Trading Pulse and the strategy list share."""
+    runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+    binding_id = str(binding.get("runtime_binding_id") or binding.get("binding_id") or binding.get("id") or "")
+    raw = index.get((runtime_id, binding_id, binding.get("tenant_id")))
+    if raw is not None and not _pulse_matching_record(raw, binding, snap):
+        return None
+    return raw
+
+
+def _strategy_runtime_status(binding: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    status = str(binding.get("status") or "").strip().lower()
+    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    admission = metadata.get("session_admission") if isinstance(metadata.get("session_admission"), dict) else {}
+    if status == "active":
+        return "running", None
+    if status in {"paused", "pending_pause"}:
+        reason = str(admission.get("reason_code") or "").strip()
+        if reason.startswith("market_input_") and not admission.get("resumed_at"):
+            return "paused_market_input", reason
+        return "paused_operator", reason or None
+    return "unknown", f"binding_status_{status or 'missing'}"
+
+
+def read_strategy_runtime_truth_inputs(store: Any) -> Tuple[Optional[List[Any]], List[Any]]:
+    """The two owner reads behind runtime truth: bindings (None when unavailable) and telemetry."""
+    if store is None or not hasattr(store, "list_runtime_bindings"):
+        return None, []
+    try:
+        bindings = store.list_runtime_bindings() or []
+    except Exception:
+        return None, []
+    telemetry: List[Any] = []
+    if hasattr(store, "list_telemetry_summaries"):
+        try:
+            res = store.list_telemetry_summaries() or []
+            telemetry = list(res.values()) if isinstance(res, dict) else list(res) if isinstance(res, list) else []
+        except Exception:
+            telemetry = []
+    return list(bindings), telemetry
+
+
+def read_strategy_runtime_truth(
+    store: Any,
+    snapshot_at: str,
+    persona_directory: Optional[Any] = None,
+    prefetched_inputs: Optional[Tuple[Optional[List[Any]], List[Any]]] = None,
+) -> Dict[str, Any]:
+    """Per-strategy cumulative paper result and runtime state, one owner read each.
+
+    Owner calls: list_runtime_bindings, list_telemetry_summaries and the
+    persona directory only when the caller did not pass the request's
+    already-read ``persona_directory`` records - constant per request.
+    ``prefetched_inputs`` is the (bindings, telemetry) pair a caller already
+    read through ``read_strategy_runtime_truth_inputs``; nothing is re-read.
+    Returns {"status": "ok"|"unavailable", "reason", "by_strategy": {sid: {...}}}.
+    """
+    bindings, telemetry = (
+        prefetched_inputs
+        if prefetched_inputs is not None
+        else read_strategy_runtime_truth_inputs(store)
+    )
+    if bindings is None:
+        return {"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}}
+    admitted, _personas, scope = _pulse_operator_scope(
+        store, [b for b in bindings if isinstance(b, dict)],
+        list(persona_directory) if persona_directory is not None else None)
+    if scope.get("status") == "unavailable":
+        return {"status": "unavailable", "reason": scope.get("reason") or "scope_unavailable", "by_strategy": {}}
+    index = _pulse_telemetry_index(telemetry)
+    by_strategy: Dict[str, Dict[str, Any]] = {}
+    for binding in sorted(admitted, key=lambda b: str(b.get("activated_at") or b.get("created_at") or "")):
+        sid = binding.get("strategy_id")
+        if not isinstance(sid, str) or not sid.strip():
+            continue
+        raw = _pulse_binding_telemetry(binding, index, snapshot_at)
+        row: Dict[str, Any] = {"runtime_binding_id": _trading_pulse_binding_id(binding) or str(binding.get("id") or ""),
+                               "telemetry_summary": _project_runtime_state_telemetry_summary(raw)}
+        _pulse_performance(row, raw, snapshot_at)
+        metrics, ctx = _trading_pulse_metric_map(row), row["performance_context"]
+        reasons = ctx.get("metric_reasons") or {}
+        pnl = metrics.get("pnl")
+        stale = ctx.get("source_status") == "stale"
+        runtime_status, runtime_reason = _strategy_runtime_status(binding)
+        by_strategy[sid] = {  # latest admitted binding wins; retired/failed never reach here
+            "pnl": pnl, "drawdown": metrics.get("drawdown"), "totalTrades": row.get("total_trades"),
+            "metricsAsOf": ctx.get("pnl_at") if pnl is not None else None,
+            "metricsResolution": "unavailable" if ctx.get("source_status") == "unavailable"
+            else "missing" if pnl is None else "stale" if stale else "fresh",
+            "metricsReason": None if pnl is not None else reasons.get("pnl") or "not_observed",
+            "runtimeStatus": runtime_status, "runtimeStatusReason": runtime_reason,
+        }
+    return {"status": "ok", "reason": None, "by_strategy": by_strategy}
 
 
 def _pulse_latest_outcome(reader: Any, binding: Dict[str, Any], snap: str) -> Dict[str, Any]:
@@ -4014,13 +4120,7 @@ class ManagementService:
                                   reason="runtime_bindings_unavailable")
         # Excluded identities never contribute even to diagnostic counters.
         retired_runtime_count = 0
-        telemetry_by_binding = {}
-        for record in telemetry_summaries:
-            if isinstance(record, dict):
-                key = (_trading_pulse_runtime_id(record), _trading_pulse_binding_id(record), record.get("tenant_id"))
-                prior = telemetry_by_binding.get(key)
-                if prior is None or str(record.get("collected_at") or "") > str(prior.get("collected_at") or ""):
-                    telemetry_by_binding[key] = record
+        telemetry_by_binding = _pulse_telemetry_index(telemetry_summaries)
         _, monitoring_by_binding_id = _trading_pulse_monitoring_indexes([r for r in monitoring_sessions if r.get("tenant_id") == operator_scope.get("tenant_id")])
         # Only admitted bindings may identify a strategy. Reuse each bounded
         # owner read (including failures) within this snapshot; artifact IDs
@@ -4058,9 +4158,7 @@ class ManagementService:
                 or binding.get("id")
                 or ""
             )
-            raw = telemetry_by_binding.get((runtime_id, binding_id, binding.get("tenant_id")))
-            if raw is not None and not _pulse_matching_record(raw, binding, snap):
-                raw = None
+            raw = _pulse_binding_telemetry(binding, telemetry_by_binding, snap)
             session = monitoring_by_binding_id.get(binding_id)
             if session and not _pulse_matching_record(session, binding, snap):
                 session = None
@@ -6248,21 +6346,71 @@ class ManagementService:
     # 12. Evidence Explorer
     # -----------------------------------------------------------------------
     def get_evidence_item(self, ref_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        """Management detail of one evidence item, or None when absent.
+        """Flat management detail of ONE evidence item, or None when absent.
 
-        Same read, redaction and mapping as the list with ``ref_id`` so the
-        two surfaces cannot disagree.
+        Same read, redaction and mapping as the list (one public-item mapping),
+        answered as one object with ``meta.surfaces.evidence_ref_detail``. An
+        unreadable owner is ``status: unavailable`` with a reason, never a list
+        envelope and never ``None`` (which the route turns into 404).
         """
         payload = self.get_evidence(ref_id=ref_id, page_size=1, identity=identity)
+        snap = (payload.get("meta") or {}).get("snapshot_at") or self._utc_now()
         items = (payload.get("data") or {}).get("items") or []
         wanted = str(ref_id or "").strip()
+        surfaces = (payload.get("meta") or {}).get("surfaces") or {}
+        read_surface = surfaces.get("evidence_refs") if isinstance(surfaces.get("evidence_refs"), dict) else {}
         for item in items:
             if str(item.get("ref_id") or item.get("id") or "") == wanted:
-                return {**payload, "data": {**payload["data"], "items": [item]}}
-        status = ((payload.get("meta") or {}).get("surfaces") or {}).get("management_evidence", {})
-        if isinstance(status, dict) and status.get("status") == "unavailable":
-            return payload
+                return {
+                    "data": dict(item),
+                    "meta": {
+                        **_snapshot_meta(snap),
+                        "surfaces": {
+                            "evidence_ref_detail": {
+                                "status": "ok",
+                                "source": read_surface.get("source"),
+                                "snapshot_at": snap,
+                            }
+                        },
+                        "redacted_evidence_count": (payload.get("meta") or {}).get("redacted_evidence_count", 0),
+                    },
+                }
+        if read_surface.get("status") == "unavailable" or (
+            isinstance(surfaces.get("management_evidence"), dict)
+            and surfaces["management_evidence"].get("status") == "unavailable"
+        ):
+            return self.evidence_detail_unavailable_payload(wanted, snapshot_at=snap, reason="read_error")
         return None
+
+    def evidence_detail_unavailable_payload(
+        self, ref_id: str, *, snapshot_at: Optional[str] = None, reason: str = "read_timeout"
+    ) -> Dict[str, Any]:
+        """Detail-shaped (flat, all fields null) answer for an unreadable owner."""
+        now = snapshot_at or self._utc_now()
+        meta = _snapshot_meta(now)
+        meta["surfaces"] = {
+            "evidence_ref_detail": {
+                "status": "unavailable",
+                "reason": reason,
+                "message": "Evidence item read surface is unavailable.",
+                "snapshot_at": now,
+                "staleness": {"served_from": "unverifiable", "last_known_at": now},
+            }
+        }
+        return {
+            "data": {
+                "id": ref_id,
+                "ref_id": ref_id,
+                "title": None,
+                "source_class": None,
+                "source_document": None,
+                "credibility": None,
+                "resolved_link": None,
+                "linked_decisions": [],
+                "redacted": None,
+            },
+            "meta": meta,
+        }
 
     def get_evidence(
         self,
@@ -6444,6 +6592,8 @@ class ManagementService:
             evidence_refs = [
                 item
                 for item in evidence_refs
+                # Unknown (null) counts as not verified: only a recorded
+                # verification matches verified=true.
                 if bool(
                     (item.get("credibility") or {}).get("verified")
                     if (item.get("credibility") or {}).get("verified") is not None
@@ -6469,10 +6619,12 @@ class ManagementService:
         )
 
         unavailable = evidence_surface.get("status") == "unavailable" and not evidence_refs
-        total: int = len(evidence_refs)
+        total: Optional[int] = len(evidence_refs)
         if unavailable:
+            # A failed read is "unknown", never an empty list with total 0.
             page_items: List[Dict[str, Any]] = []
             next_page_token = None
+            total = None
         elif owner_page_served:
             page_items, next_page_token = evidence_refs, owner_next_token
             total = owner_total if owner_total is not None else len(evidence_refs)

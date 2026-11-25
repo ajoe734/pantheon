@@ -253,11 +253,11 @@ def test_real_owner_518_bounded_reads_and_page2_succeed_across_610ms_latency_win
             "returned_evidence": 20,
             "visible_evidence": 20,
             "redacted_evidence": 0,
-            "verified_evidence": 518,
-            "verified_count": 518,
+            "verified_evidence": None,
+            "verified_count": None,
             "by_source_type": {"official_reference": 510, "source_record": 8},
             "by_link_type": {"supporting": 518},
-            "by_credibility_tier": {"verified": 518},
+            "by_credibility_tier": {"unverified": 518},  # confidence 1.0 is not a verification record
         }
 
         with TestClient(app) as client:
@@ -300,7 +300,8 @@ def test_real_owner_518_bounded_reads_and_page2_succeed_across_610ms_latency_win
             detail_resp = client.get(f"/bff/management/evidence/{target_id}", headers=headers)
             assert detail_resp.status_code == 200, detail_resp.text
             detail_body = detail_resp.json()
-            assert detail_body["data"]["items"][0]["id"] == target_id
+            assert detail_body["data"]["id"] == target_id and "items" not in detail_body["data"]
+            assert detail_body["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "ok"
 
             # Foreign-tenant item must return 404 for tenant-dev caller.
             foreign_resp = client.get("/bff/management/evidence/evi-0000000000000266", headers=headers)
@@ -308,7 +309,9 @@ def test_real_owner_518_bounded_reads_and_page2_succeed_across_610ms_latency_win
 
         page_calls = [c[0] for c in server.calls if "page_size=20" in c[0]]
         assert len(page_calls) == 11
-        assert len(server.calls) == 14
+        # 11 pages + found detail + owner-404 detail; the old page_size=1 probe that
+        # guessed 404 from a failed item read is gone (404 only when the owner said 404).
+        assert len(server.calls) == 13
     finally:
         server.close()
 
@@ -413,11 +416,20 @@ def test_evidence_degraded_fallback_preserves_nofake0_and_distinguishes_failure_
     )
 
     with TestClient(app) as client:
-        for path in ("/bff/management/evidence?page_size=20", "/bff/management/evidence/evi-0000000000000001"):
+        detail = client.get("/bff/management/evidence/evi-0000000000000001", headers=ADMIN_HEADERS)
+        assert detail.status_code == 200, detail.text
+        detail_body = detail.json()
+        # The detail route never answers a list envelope: flat object + surface status.
+        assert "items" not in detail_body["data"] and "summary" not in detail_body["data"]
+        assert detail_body["data"]["ref_id"] == "evi-0000000000000001"
+        assert detail_body["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "unavailable"
+        assert detail_body["meta"]["surfaces"]["evidence_ref_detail"]["reason"] == expected_reason
+        for path in ("/bff/management/evidence?page_size=20",):
             resp = client.get(path, headers=ADMIN_HEADERS)
             assert resp.status_code == 200, (path, resp.text)
             body = resp.json()
             assert body["data"]["items"] == []
+            assert body["page_info"]["total"] is None  # failed read: unknown, never total 0
             summary = body["data"]["summary"]
             for key in (
                 "total_evidence",
@@ -576,7 +588,7 @@ def test_real_owner_answering_after_three_seconds_is_ok_on_list_and_page_two(
             assert len(body["data"]["items"]) == 20
             assert body["page_info"] == {"next_page_token": token, "total": 518, "page_size": 20}
             assert body["data"]["summary"]["total_evidence"] == 518
-            assert body["data"]["summary"]["verified_count"] == 518
+            assert body["data"]["summary"]["verified_count"] is None  # removed: confidence is not verification
             assert body["data"]["summary"]["by_source_type"] == {"official_reference": 510, "source_record": 8}
     finally:
         server.close()

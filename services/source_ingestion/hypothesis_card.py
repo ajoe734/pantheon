@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
 
@@ -298,6 +298,39 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+TICK_BUDGET_ENV = "PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS"
+DEFAULT_TICK_BUDGET_SECONDS = 120.0
+MAX_TICK_BUDGET_SECONDS = 600.0
+
+
+def l2_extraction_tick_budget_seconds() -> float:
+    """Extraction time one distillation tick may spend before deferring the rest.
+
+    A tick then lasts at most this plus one call deadline, which keeps it
+    inside the controller's 300 s health window at the defaults (120 + 90 s).
+    """
+    try:
+        value = float(os.environ.get(TICK_BUDGET_ENV) or DEFAULT_TICK_BUDGET_SECONDS)
+    except (TypeError, ValueError):
+        value = DEFAULT_TICK_BUDGET_SECONDS
+    if value != value:
+        value = DEFAULT_TICK_BUDGET_SECONDS
+    return min(MAX_TICK_BUDGET_SECONDS, max(1.0, value))
+
+
+def l2_extraction_enabled() -> bool:
+    return str(os.environ.get(ENABLED_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def l2_extraction_tick_ceiling_seconds() -> float:
+    """Longest extraction share of one tick (0 when extraction is off)."""
+    if not l2_extraction_enabled():
+        return 0.0
+    from services.source_ingestion.semantic_extraction import hypothesis_card_deadline_seconds
+
+    return l2_extraction_tick_budget_seconds() + hypothesis_card_deadline_seconds()
+
+
 def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
     try:
         return max(0, int(os.environ.get(DAILY_CAP_ENV, default)))
@@ -305,8 +338,28 @@ def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
         return default
 
 
+# Per record version: at most this many model calls a UTC day and in total.
+MAX_RECORD_ATTEMPTS_PER_DAY = 3
+MAX_RECORD_ATTEMPTS_TOTAL = 6
+# Attempt rows of records untouched this long are pruned (the record has long
+# been closed or carded by then: 6 attempts at 3 a day take 2 days).
+RECORD_ATTEMPT_RETENTION_DAYS = 30
+
+RESERVED = "reserved"
+DAILY_CAP_REACHED = "daily_cap"
+RECORD_DAILY_LIMIT = "record_daily_limit"
+RECORD_TOTAL_LIMIT = "record_total_limit"
+
+
 class ExtractionLedger:
-    """SQLite-backed daily call counter and outcome record."""
+    """SQLite-backed daily call counter, per-record attempts and outcome record.
+
+    Every model call is counted against the daily cap, including a retry of the
+    same record on the same day (a failing provider must not spend past the
+    cap). A record version is called at most 3 times a UTC day and 6 times in
+    total; the ledger also counts calls that ended in a timeout or a
+    billing-only provider failure.
+    """
 
     def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
         self._path = str(path) if path else ":memory:"
@@ -319,6 +372,10 @@ class ExtractionLedger:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+            cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
+            for name in ("timeouts", "billing", "unavailable"):
+                if name not in cols:
+                    c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
@@ -327,11 +384,13 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS cards (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " card TEXT NOT NULL, PRIMARY KEY(source_id, digest))"
             )
-            # One reservation per record version per day: a retry after an
-            # unavailable model/adapter must not consume the budget again.
+            # The former "one free reservation per record and day" table let a
+            # failing provider retry the same record without counting it.
+            c.execute("DROP TABLE IF EXISTS reservations")
             c.execute(
-                "CREATE TABLE IF NOT EXISTS reservations (day TEXT NOT NULL, source_id TEXT NOT NULL,"
-                " digest TEXT NOT NULL, PRIMARY KEY(day, source_id, digest))"
+                "CREATE TABLE IF NOT EXISTS record_attempts (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
+                " total INTEGER NOT NULL, day TEXT NOT NULL, day_n INTEGER NOT NULL,"
+                " last_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, digest))"
             )
 
     @property
@@ -351,38 +410,96 @@ class ExtractionLedger:
         finally:
             conn.close()
 
-    def reserve_call(self, source_id: str = "", digest: str = "") -> bool:
-        """Atomically consume one call; False once the daily cap is reached.
+    def reserve_attempt(self, source_id: str = "", digest: str = "") -> str:
+        """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
-        With a ``source_id`` the reservation is per record version and day: a
-        second reservation of the same record the same day is free.
+        Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
+        record version already had 3 calls today) and ``record_total_limit``
+        (6 calls in total). A refusal consumes nothing.
         """
         with self._lock, self._conn() as c:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
             day = _today()
-            # Bound: only today's reservations matter; older ones are deleted on write.
-            c.execute("DELETE FROM reservations WHERE day < ?", (day,))
-            if source_id and c.execute(
-                "SELECT 1 FROM reservations WHERE day=? AND source_id=? AND digest=?",
-                (day, source_id, digest),
-            ).fetchone():
-                return True
-            row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
-            used = row[0] if row else 0
-            if used >= self._daily_cap:
-                return False
+            row = None
+            if source_id:
+                row = c.execute(
+                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
+                    (source_id, digest),
+                ).fetchone()
+                if row is not None:
+                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
+                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                        return RECORD_TOTAL_LIMIT
+                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                        return RECORD_DAILY_LIMIT
+            used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
+            if (used_row[0] if used_row else 0) >= self._daily_cap:
+                return DAILY_CAP_REACHED
             c.execute(
                 "INSERT INTO calls(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1",
                 (day,),
             )
             if source_id:
                 c.execute(
-                    "INSERT OR IGNORE INTO reservations(day, source_id, digest) VALUES(?,?,?)",
-                    (day, source_id, digest),
+                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,?,1,?,1)"
+                    " ON CONFLICT(source_id, digest) DO UPDATE SET total = total + 1,"
+                    " day_n = CASE WHEN day = excluded.day THEN day_n + 1 ELSE 1 END, day = excluded.day",
+                    (source_id, digest, day),
                 )
-            return True
+                cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
+                c.execute("DELETE FROM record_attempts WHERE day < ?", (cutoff,))
+            return RESERVED
+
+    def reserve_call(self, source_id: str = "", digest: str = "") -> bool:
+        """Consume one call; False when the cap or a per-record limit refuses."""
+        return self.reserve_attempt(source_id, digest) == RESERVED
+
+    def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:
+        """Count a spent call that yielded nothing, and keep the record's reason."""
+        column = {"timeout": "timeouts", "provider_billing": "billing"}.get(failure_code, "unavailable")
+        with self._lock, self._conn() as c:
+            c.execute(
+                f"INSERT INTO calls(day, n, {column}) VALUES(?, 0, 1)"
+                f" ON CONFLICT(day) DO UPDATE SET {column} = {column} + 1",
+                (_today(),),
+            )
+            if source_id:
+                c.execute(
+                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=?",
+                    (reason[:500], source_id, digest),
+                )
+
+    def record_attempts(self, source_id: str, digest: str = "") -> dict[str, Any]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT total, day, day_n, last_reason FROM record_attempts WHERE source_id=? AND digest=?",
+                (source_id, digest),
+            ).fetchone()
+        if row is None:
+            return {"total": 0, "today": 0, "last_reason": ""}
+        return {
+            "total": int(row[0]),
+            "today": int(row[2]) if row[1] == _today() else 0,
+            "last_reason": str(row[3] or ""),
+        }
+
+    def summary(self) -> dict[str, Any]:
+        """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT n, timeouts, billing, unavailable FROM calls WHERE day=?", (_today(),)
+            ).fetchone()
+        n, timeouts, billing, unavailable = (int(v or 0) for v in (row or (0, 0, 0, 0)))
+        return {
+            "day": _today(),
+            "calls": n,
+            "daily_cap": self._daily_cap,
+            "timeout_calls": timeouts,
+            "billing_failed_calls": billing,
+            "unavailable_calls": unavailable,
+        }
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:
         with self._conn() as c:
@@ -424,7 +541,9 @@ class ExtractionLedger:
 # ---------------------------------------------------------------------------
 
 # Failure codes that mean the model or adapter could not answer: retry them.
-UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error"})
+# A billing-only failure (every provider key skipped for billing) is retried
+# with backoff, never recorded as "no hypothesis".
+UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
 
 _TEXT_KEYS = ("body", "text", "abstract", "excerpt", "summary")
 
@@ -470,6 +589,7 @@ def extraction_origin(source_type: str, metadata: Mapping[str, Any]) -> Optional
 @dataclass(frozen=True)
 class ExtractionOutcome:
     # card | no_hypothesis | budget_exhausted | rejected | admission_denied | irrelevant
+    # | attempts_deferred (3 calls today: next UTC day) | attempts_exhausted (6 calls: close)
     # | unavailable (model/adapter down: retry) | failed (model answered unusably)
     status: str
     card: Optional[dict[str, Any]] = None
@@ -487,6 +607,14 @@ class HypothesisExtractor:
     @property
     def ledger(self) -> ExtractionLedger:
         return self._ledger
+
+    @property
+    def call_deadline_seconds(self) -> float:
+        """Longest one extraction call can take (the HYPOTHESIS_CARD deadline)."""
+        from services.source_ingestion.semantic_extraction import hypothesis_card_deadline_seconds
+
+        value = getattr(self._client, "hypothesis_deadline_seconds", None)
+        return float(value) if isinstance(value, (int, float)) else hypothesis_card_deadline_seconds()
 
     def extract(self, source: Any, *, digest: str = "") -> ExtractionOutcome:
         """Extract (or replay the cached card for) one source version."""
@@ -535,16 +663,42 @@ class HypothesisExtractor:
         # Admission first: a denied record costs no budget and no model call.
         admission = SemanticExtractionAdmission.check(request)
         if not admission.admitted:
-            return self._done(sid, "admission_denied", admission.denial_code or "denied", {"reason": admission.denial_reason})
-        if not self._ledger.reserve_call(sid, digest):
+            # The recorded detail explains the denial: which rule matched where,
+            # a masked preview, and whether it is a secret class.
+            explanation = {
+                "code": admission.denial_code or "denied",
+                "matches": [dict(item) for item in getattr(admission, "explanations", ())],
+            }
+            if not explanation["matches"]:
+                explanation["reason"] = admission.denial_reason
+            return self._done(
+                sid, "admission_denied", json.dumps(explanation, sort_keys=True, ensure_ascii=False),
+                {"reason": admission.denial_reason, "code": admission.denial_code},
+            )
+        reservation = self._ledger.reserve_attempt(sid, digest)
+        if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
+        if reservation in (RECORD_DAILY_LIMIT, RECORD_TOTAL_LIMIT):
+            attempts = self._ledger.record_attempts(sid, digest)
+            if reservation == RECORD_DAILY_LIMIT:
+                return self._done(
+                    sid, "attempts_deferred",
+                    f"{MAX_RECORD_ATTEMPTS_PER_DAY} calls today; last: {attempts['last_reason'] or 'unknown'}",
+                )
+            return self._done(
+                sid, "attempts_exhausted",
+                f"{attempts['total']} calls; last: {attempts['last_reason'] or 'unknown'}",
+            )
         try:
             result = self._client.extract(request)
         except Exception as exc:  # noqa: BLE001 - an unreachable adapter is not "no hypothesis"
-            return self._done(sid, "unavailable", f"{type(exc).__name__}: {exc}")
+            detail = f"{type(exc).__name__}: {exc}"
+            self._ledger.note_call_failure(sid, digest, "transport_error", detail)
+            return self._done(sid, "unavailable", detail)
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
             detail = f"{result.failure_code}: {result.failure_message}"
             if result.failure_code in UNAVAILABLE_FAILURE_CODES:
+                self._ledger.note_call_failure(sid, digest, str(result.failure_code), detail)
                 return self._done(sid, "unavailable", detail)
             return self._done(sid, "failed", detail)
         if result.is_abstained or result.hypothesis_card is None:
@@ -589,7 +743,7 @@ def card_to_strategy_seed_metadata(card: Mapping[str, Any]) -> dict[str, Any]:
 
 def extractor_from_env(client: Any | None = None, ledger_path: str | Path | None = None) -> Optional[HypothesisExtractor]:
     """Build the extractor when ``PANTHEON_L2_EXTRACTION_ENABLED`` is truthy."""
-    if str(os.environ.get(ENABLED_ENV, "")).strip().lower() not in ("1", "true", "yes", "on"):
+    if not l2_extraction_enabled():
         return None
     if client is None:
         from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
@@ -600,6 +754,8 @@ def extractor_from_env(client: Any | None = None, ledger_path: str | Path | None
 
 
 __all__ = [
+    "MAX_RECORD_ATTEMPTS_PER_DAY",
+    "MAX_RECORD_ATTEMPTS_TOTAL",
     "CardRejected",
     "DEFAULT_DAILY_CALL_CAP",
     "ExtractionLedger",

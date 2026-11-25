@@ -86,6 +86,53 @@ PG_RESTORE_BIN="${PG_RESTORE_BIN:-pg_restore}"
 SUDO_BIN="${SUDO_BIN-sudo}"
 
 STAGING_GCP_PROJECT_ID="${STAGING_GCP_PROJECT_ID:-pantheon-stg-20260902}"
+STAGING_MACHINE_TYPE="${STAGING_MACHINE_TYPE:-e2-standard-8}"
+STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE="${STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE:-${STAGING_MACHINE_TYPE}}"
+if [[ -z "${STAGING_INSTANCE_TEMPLATE_FILE:-}" ]]; then
+  if [[ -f "${BUNDLE_DIR}/instance-template.json" ]]; then
+    STAGING_INSTANCE_TEMPLATE_FILE="${BUNDLE_DIR}/instance-template.json"
+  elif [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/instance-template.json" ]]; then
+    STAGING_INSTANCE_TEMPLATE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/instance-template.json"
+  fi
+fi
+
+if ! vm_gate_err="$(python3 - "${STAGING_MACHINE_TYPE}" "${STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE}" "${STAGING_INSTANCE_TEMPLATE_FILE:-}" "${STAGING_INSTANCE_TEMPLATE_JSON:-}" "${STAGING_OBSERVED_VCPUS:-}" <<'PY' 2>&1
+import json, re, sys
+from pathlib import Path
+
+MT_RE = re.compile(r"^[a-z][a-z0-9]*-(?:standard|highmem|highcpu|custom)-(\d+)(?:-\d+)?$")
+
+def check_mt(raw, label):
+    mt = str(raw or "").strip().rsplit("/", 1)[-1]
+    m = MT_RE.match(mt)
+    if not m:
+        raise SystemExit(f"{label} '{raw}' is not a recognized machine type (minimum e2-standard-8 / 8 vCPUs)")
+    vcpus = int(m.group(1))
+    if vcpus < 8:
+        raise SystemExit(f"{label} '{mt}' has {vcpus} vCPUs, below minimum gate e2-standard-8 (8 vCPUs)")
+
+check_mt(sys.argv[1], "STAGING_MACHINE_TYPE")
+check_mt(sys.argv[2], "STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE")
+
+tpl_file, tpl_json, obs_vcpus = sys.argv[3], sys.argv[4], sys.argv[5]
+for label, raw in (("STAGING_INSTANCE_TEMPLATE_FILE", Path(tpl_file).read_text(encoding="utf-8") if tpl_file else ""),
+                   ("STAGING_INSTANCE_TEMPLATE_JSON", tpl_json)):
+    if not raw.strip():
+        continue
+    doc = json.loads(raw)
+    props = doc.get("properties") if isinstance(doc.get("properties"), dict) else doc
+    check_mt(props.get("machineType"), f"{label}.machineType")
+    sched = props.get("scheduling") or {}
+    if sched.get("preemptible") is True or str(sched.get("provisioningModel") or "STANDARD").upper() != "STANDARD":
+        raise SystemExit(f"{label} must be non-preemptible STANDARD provisioning")
+
+if obs_vcpus.strip():
+    if not obs_vcpus.strip().isdigit() or int(obs_vcpus.strip()) < 8:
+        raise SystemExit(f"STAGING_OBSERVED_VCPUS '{obs_vcpus}' is below minimum 8 vCPUs (e2-standard-8)")
+PY
+)"; then
+  fail "VM_SIZE_BELOW_GATE" "${vm_gate_err}"
+fi
 STAGING_ROOT="${STAGING_ROOT:-/var/lib/pantheon-staging-root}"
 STAGING_DATA_MOUNT="${STAGING_DATA_MOUNT:-/var/lib/pantheon-staging}"
 STAGING_FE_ROOT="${STAGING_FE_ROOT:-/var/www/pantheon-staging-fe}"

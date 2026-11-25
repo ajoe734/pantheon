@@ -322,6 +322,49 @@ Validating a candidate is a step inside adding a strategy within paper and moves
 
 ---
 
+## 6B. Amendment 2026-11-25 — the price dataset comes from the stored daily bars, not from a persona candidate
+
+Task: `DISCOVERY-GOVERNED-MARKET-DATASET-20261125` (RC2). Gate thresholds, the survivorship rule and trial counting are unchanged.
+
+**What the earlier design did (§3.1, §6A).** Template search, the card gate `dataset_resolver` and persona pool admission each resolved
+their price dataset from the same pointer, `canonical-dataset-version.json` (`RESEARCH_RETRAIN_CANONICAL_DATASET_PATH`), plus a threshold policy
+with a `required_instruments` list. That pointer is written by the persona service after it evaluates a candidate
+(`_sync_canonical_dataset_pointer`), from a DatasetVersion the source owner materialises for the policy's two instruments. So the
+three consumers that exist to *find* candidates waited for a file that exists only *after* a candidate was evaluated, and its producer was
+also blocked by dead letters of unrelated connectors and by the two-symbol policy (task brief, 2026-11-25; I did not re-read the hosted
+state). Without the pointer each consumer failed closed with `governed_market_data_missing` or `governed_policy_authority_missing`.
+
+**What changed.** One builder, `services/research/governed_market_dataset.py`, reads the source-owned `daily_bars` store through
+`DailyBarsReader` (read-only mount `/data/source-ingest`, no write, no HTTP, no call to `POST /api/source-ingest/candidate-pool-market`):
+
+| Item | Rule |
+| --- | --- |
+| Market boundary | every symbol with governed data in the newest up to 800 stored trade days (the reader's range limit), minus **suspended** (no bar on the newest stored day), **too short** (fewer than 60 stored bars) and **illiquid** (median traded value of the newest 20 stored days below TWD 5,000,000, or traded value observed on fewer than 10 of them); each exclusion keeps its reason |
+| Not used | persona symbol lists, policy `required_instruments`, any synthetic or imputed bar |
+| Fields | open, high, low, close, volume, traded_value, available_time; a bar counts only when its stored `available_time` is not after the as-of time (a bar without one is left out and counted in `bars_not_point_in_time`) |
+| Snapshot id | `gmd-<last trade date>-<sha256 of the sorted (date, day manifest content_digest) list and the policy>`; `verify_snapshot` recomputes it from the store, a card may pin it, a changed day makes the pinned id fail `snapshot_not_reproducible` |
+| Fail closed | no stored day (`daily_bars_store_missing`), newest day older than 7 calendar days (`daily_bars_store_stale`), a day that is corrupt, incomplete or unverifiable (`daily_bars_day_corrupt`, `_incomplete`, `_unverifiable`: bad JSON, no digest, missing or resized file, row counts that disagree), empty boundary, a requested symbol outside the boundary (named with its exclusion reason) |
+| Dead letters | not read. A pending dead letter of another connector cannot block the dataset (hosted shape 4,742 pending on other connectors, 0 on the price connector); a store day that is corrupt or incomplete does |
+
+Consumers: template search resolves the mandate's symbols (`_load_template_search_governed_dataset`); the card gate resolver
+(`build_dataset_resolver`) accepts a pinned `gmd-` id or the logical ids `governed-market:tw-daily` / `tw_price_daily` and passes the rule's own
+symbols (`AlphaRevalidationWorker._lift_card_inputs`); persona pool admission resolves the candidate rule's symbols, else the mandate's
+(`pool_dataset_authority._load_price`). A rule with one symbol still gets a dataset of two instruments (the backtest backends require two): the most liquid boundary
+symbols are added as `companion_symbols`; the rule trades only its own symbols. A governed market dataset is never written to the DatasetVersion
+pointer. The DatasetVersion path (explicit `*_CANONICAL_DATASET_PATH`, Retrain, Teaching, feature datasets) is untouched.
+
+**Size and where it runs.** The dataset holds at most 60 symbols (about 0.55 MiB per symbol over 483 days); the whole-market boundary
+is computed from symbol statistics and never materialised as records. It refuses to run on an API event loop and runs in the run's worker thread
+(template search), the alpha-replication worker loop and the persona cycle. Measured on a same-shape store (1,950 symbols x 483 days, 12 vCPU dev VM): boundary 2 to 4 s, 60-symbol dataset
+1 to 2 s, snapshot verification 0.05 s, process peak RSS 190 to 237 MiB (77 MiB of that is the interpreter plus pyarrow). persona (512m) and alpha-replication-worker (512m) fit;
+`research-orchestrator-svc` (99 MiB steady) needs **384m** instead of 256m (`docs/deployment/dev-container-memory-budget.md`). The research and persona image locks gain `pyarrow`.
+
+**Residuals.** Hosted proof of the three consumers on real stored data and a hosted `memory.peak` reading are owned by the coordinator after deploy; the card
+binding env (`PANTHEON_L2_CARD_DATASET_ID`) must name `governed-market:tw-daily` (or a pinned snapshot) for new cards; `alpha-replication-worker` still mounts `source-ingest-data` read-write
+for its seed store (the builder only reads).
+
+---
+
 ## 7. Risks
 
 | # | Risk | Control |

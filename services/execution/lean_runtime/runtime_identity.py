@@ -46,7 +46,7 @@ class RuntimeIdentity:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "RuntimeIdentity":
-        env_map = env or os.environ
+        env_map = os.environ if env is None else env
         return cls(
             runtime_role=_clean(env_map.get("PANTHEON_RUNTIME_ROLE")) or "pantheon-lean-paper-runtime",
             runtime_mode=_clean(env_map.get("PANTHEON_RUNTIME_MODE")) or "paper",
@@ -66,8 +66,11 @@ class RuntimeIdentity:
             deployment_stage=_clean(env_map.get("PANTHEON_DEPLOYMENT_STAGE")),
             plan_id=_clean(env_map.get("PANTHEON_DEPLOYMENT_PLAN_ID")),
             persona_capital_binding_id=_clean(env_map.get("PANTHEON_PERSONA_CAPITAL_BINDING_ID")),
-            runtime_manager_auth=resolve_runtime_manager_auth(env=env_map),
+            runtime_manager_auth=resolve_runtime_manager_auth(env=env),
         )
+
+    def runtime_manager_headers(self) -> dict[str, str]:
+        return self.runtime_manager_auth.headers()
 
     @property
     def isolation_ready(self) -> bool:

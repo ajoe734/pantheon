@@ -110,3 +110,10 @@ built against.
   rely on `read_store.create_evolution_program`'s own idempotence (it has
   none today — a second POST with the same `program_id` overwrites the
   first record, in both the current durable block and this router).
+
+## Journal pool versions, subject class and member baselines (BFF-EVO-JOURNAL-POOL-VERSIONS-20261125)
+
+- Behaviour change on the journal: `entry_type=pool_version` rows (one per owner strategy pool version of each paper_owner persona in the caller tenant), `subject_class` on decisions, `include_system` and `summary.hidden_system_counts`, `meta.surfaces.strategy_pools`, `auto_proposal_counts` with parts that add up (`threshold`, `incident_followup`, `incident_severity`, `other`, `infrastructure`; `postmortem_draft` separate), and `mutation_review_count` limited to decisions with their own `approval_decision_id`.
+- Changed existing assertions (all in `tests/test_bff_b3_evolution_journal.py`, none removed or weakened): the exact `auto_proposal_counts` dicts gained the new part keys and, where a proposed threshold decision exists, `threshold: 1` and `total` +1; the `auto_proposals` page totals now subtract `threshold` because threshold proposals are history rows; one `mutation_review_count == 5` became `== 4` because only 4 of the 5 decisions have their own review record.
+- Qualification page: `data.member_baselines` and `data.member_baselines_surface` are added; the owner report fields are untouched.
+- Reads added per request: journal = at most 20 persona-owner pool-version reads (the persona and incident lists were already read once); qualification = one persona list, at most 20 pool-version reads, at most 50 Registry entry reads. All are GETs; no new route, no writer, no cache.

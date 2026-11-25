@@ -117,8 +117,8 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_POOL_CANONICAL_DATASET_PATH"),
     ("persona", "pool_cycle_ports", "services/persona/pool_autonomy_cycle.py", "PERSONA_POOL_THRESHOLD_POLICY_PATH"),
     ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "SOURCE_INGEST_API_URL"),
-    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_CONNECTOR_ID"),
-    ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_DATASET_ID"),
+    # DISCOVERY-GOVERNED-MARKET-DATASET-20261125: the price dataset is read from the stored daily bars.
+    ("persona", "pool_cycle_ports", "services/research/governed_market_dataset.py", "GOVERNED_MARKET_STORE_ROOT"),
     ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_VOLUME_ROOT"),
     ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"),
     ("persona", "pool_cycle_ports", "services/persona/pool_dataset_authority.py", "PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS"),
@@ -172,6 +172,7 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_CANONICAL_DATASET_PATH"),
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"),
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_THRESHOLD_POLICY_PATH"),
+    ("research-orchestrator-svc", "template_demand_search", "services/research/governed_market_dataset.py", "GOVERNED_MARKET_STORE_ROOT"),
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "TRAINING_SESSION_URL"),
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "REGISTRY_URL"),
     ("research-orchestrator-svc", "template_demand_search", "services/research/main.py", "PANTHEON_REGISTRY_URL"),
@@ -224,10 +225,10 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_REGISTRY_SERVICE_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN"),
-    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"),
-    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/card_production_wiring.py", "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/governed_market_dataset.py", "GOVERNED_MARKET_STORE_ROOT"),
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
+    ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/replication_controller.py", "ALPHA_REPLICATION_CARD_ADMISSION_ENABLED"),
 )
 
 

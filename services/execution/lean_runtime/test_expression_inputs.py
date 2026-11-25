@@ -706,6 +706,129 @@ class ProducerComposeEnvironmentTest(unittest.TestCase):
         self.assertGreaterEqual(sizing["remaining_cash"], 0.10 * 100000.0)
         self.assertLessEqual(sizing["after_trade_concentration_of_initial_capital"], 0.20)
 
+    def test_blueprint_limits_sector_turnover_and_liquidity_facts_surface_in_risk_budget(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from services.execution.lean_runtime.instrument_candidates import clear_market_fact_cache
+
+        clear_market_fact_cache()
+        policy = RiskPolicy.from_mapping(
+            {
+                **POLICY,
+                "risk_policy_id": "rp-pool-blueprint",
+                "version": "2.0",
+                "max_single_name_weight": 0.20,
+                "min_cash_reserve_pct": 0.10,
+                "max_sector_exposure": {"24": 0.30, "*": 0.25},
+                "turnover_limit": 1.2,
+                "liquidity_constraints": {
+                    "min_avg_daily_volume": 300_000.0,
+                    "max_order_pct_adv": 0.05,
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ind_dir = root / "normalized" / "tw_industry_classification" / "date=2026-11-24"
+            ind_dir.mkdir(parents=True)
+            with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+                for sym, code in (("2330", "24"), ("2303", "24"), ("2317", "25")):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_official_industry_classification",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": sym,
+                                        "industry_code": int(code),
+                                        "industry_code_raw": code,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+            price_dir = root / "normalized" / "tw_price_daily" / "date=2026-11-24"
+            price_dir.mkdir(parents=True)
+            with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+                for day_idx in range(1, 21):
+                    d_str = f"2026-11-{day_idx:02d}"
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_price_daily",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": "2330",
+                                        "trade_date": d_str,
+                                        "close": 1000.0,
+                                        "volume": 500_000.0,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+            summary = _summary(
+                ledger_fill_count=1,
+                executed_trade_count=1,
+                ledger_cash=80_000.0,
+                positions=[
+                    {
+                        "symbol": "2330.TW",
+                        "quantity": 20.0,
+                        "average_price": 1000.0,
+                        "mark_price": 1000.0,
+                        "market_value": 20_000.0,
+                        "currency": "TWD",
+                    }
+                ],
+                fills=[
+                    {
+                        "symbol": "2330.TW",
+                        "quantity": 20.0,
+                        "fill_price": 1000.0,
+                        "trade_date": "2026-11-24",
+                    }
+                ],
+            )
+            inputs = build_expression_inputs(
+                pool=_pool(budget=100_000.0),
+                policy=policy,
+                summary=summary,
+                normalized_root=root,
+                as_of_trading_day="2026-11-24",
+            )
+            budget = inputs["risk_budget"]
+            self.assertEqual(budget["max_sector_exposure"], {"24": 0.30, "*": 0.25})
+            self.assertEqual(budget["sector_by_underlying"]["2330"], "24")
+            self.assertEqual(budget["sector_exposures"], {"24": 0.20})
+            self.assertEqual(budget["missing_sector_underlyings"], [])
+            self.assertEqual(budget["turnover_limit"], 1.2)
+            self.assertEqual(budget["turnover_limit_notional"], 120_000.0)
+            self.assertEqual(budget["turnover_used_notional"], 20_000.0)
+            self.assertEqual(budget["turnover_used"], 0.20)
+            self.assertFalse(budget["turnover_unavailable"])
+            self.assertEqual(budget["avg_daily_volume_by_underlying"]["2330"], 500_000.0)
+            self.assertEqual(set(inputs["persona_book"].keys()), {"positions", "gross_notional"})
+
+            # When fills exist on the ledger without turnover history, turnover_unavailable is flagged.
+            summary_no_turnover = _summary(
+                ledger_fill_count=2,
+                executed_trade_count=2,
+                ledger_cash=80_000.0,
+                positions=summary["positions"],
+            )
+            inputs_no_turnover = build_expression_inputs(
+                pool=_pool(budget=100_000.0),
+                policy=policy,
+                summary=summary_no_turnover,
+                normalized_root=root,
+                as_of_trading_day="2026-11-24",
+            )
+            self.assertIsNone(inputs_no_turnover["risk_budget"]["turnover_used"])
+            self.assertTrue(inputs_no_turnover["risk_budget"]["turnover_unavailable"])
+
 
 if __name__ == "__main__":
     unittest.main()

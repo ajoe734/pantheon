@@ -194,13 +194,44 @@ def _first(sources: Sequence[Mapping[str, Any]], key: str) -> Any:
     return None
 
 
+# Collector price-history rows name the two quantities ``volume_shares`` (shares) and ``turnover_twd`` (TWD); the
+# official-feed shape names them ``volume`` and ``value``/``value_thousands``. Every name is read, in this order.
+VOLUME_KEYS = ("volume", "volume_shares")
+VALUE_KEYS = ("value", "turnover_twd")
+# A traded value is "far" from close x volume when the ratio leaves [1/RATIO, RATIO]: a day's average price lies
+# between low and high, so a unit slip (thousand shares, 10,000 TWD) misses by 1000x, never by 3x.
+VALUE_PRICE_RATIO = 3.0
+
+
+def _volume(sources: Sequence[Mapping[str, Any]]) -> float | None:
+    """Share volume under its own name or the collector's ``volume_shares``; None when the source gave none."""
+    for key in VOLUME_KEYS:
+        number = _number(_first(sources, key))
+        if number is not None:
+            return number
+    return None
+
+
 def _traded_value(sources: Sequence[Mapping[str, Any]]) -> float | None:
-    """``value`` else ``value_thousands`` x 1000 (the feed's rule); None when the source gave none. Zero is a value."""
-    value = _number(_first(sources, "value"))
-    if value is None:
-        thousands = _number(_first(sources, "value_thousands"))
-        value = thousands * 1000 if thousands is not None else None
-    return value
+    """``value`` / ``turnover_twd`` (TWD) else ``value_thousands`` x 1000; None when the source gave none. Zero is a value."""
+    for key in VALUE_KEYS:
+        value = _number(_first(sources, key))
+        if value is not None:
+            return value
+    thousands = _number(_first(sources, "value_thousands"))
+    return thousands * 1000 if thousands is not None else None
+
+
+def value_unit_problem(close: float | None, volume: float | None, value: float | None) -> str | None:
+    """Reason when close x volume and the traded value cannot both be in shares and TWD, else None."""
+    if close is None or volume is None or value is None:
+        return None
+    if volume < 0 or value < 0:
+        return "negative_volume_or_value"
+    if volume == 0 or value == 0:
+        return None if volume == value else "volume_value_zero_mismatch"
+    ratio = value / (close * volume)
+    return None if 1.0 / VALUE_PRICE_RATIO <= ratio <= VALUE_PRICE_RATIO else "value_unit_mismatch"
 
 
 def _available_time(sources: Sequence[Mapping[str, Any]]) -> datetime | None:
@@ -350,8 +381,12 @@ class DailyBarsStore:
             else:
                 values = {
                     "open": _number(row.get("open")), "high": _number(row.get("high")), "low": _number(row.get("low")),
-                    "close": close, "volume": _number(row.get("volume")), "traded_value": _traded_value(sources),
+                    "close": close, "volume": _volume(sources), "traded_value": _traded_value(sources),
                 }
+                unit = value_unit_problem(close, values["volume"], values["traded_value"])
+                if unit:  # not stored silently: the row is refused with the reason (the price is not lost to a unit slip)
+                    reject(unit)
+                    continue
             ohlcv = {**{k: values[k] for k in ("open", "high", "low", "close", "volume")},
                      "adjusted": bool(row.get("adjusted") or row.get("is_adjusted") or False),
                      "traded_value": values["traded_value"], "available_time": _available_time(sources),
@@ -563,44 +598,106 @@ class DailyBarsStore:
                     old = merged.get(key)
                     if old is None or old["content_hash"] != row["content_hash"]:
                         merged[key] = {k: row.get(k) for k in _RAW_ROW_FIELDS}
-                digest = self.day_digest(merged.values())
-                if manifest and manifest.get("content_digest") == digest:
-                    self.counters["days_unchanged"] += 1
-                    return False
-                generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
-                ordered = sorted(merged.values(), key=lambda r: (r["market"], r["symbol"]))
-                files, new_paths = self._write_parts(pa, pq, trade_date, generation, ordered)
-                schema = _schema(pa)
-                self._write_lineage(
-                    trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values(),
+                return self._publish_day(
+                    pa, pq, trade_date, manifest, merged, ingest_run_id=ingest_run_id,
+                    calendar_evidence=calendar_evidence, connector_id=connector_id, observed_at=observed_at,
                     captures=self._captures_of(rows))
-                self._hit("after_lineage")
-                new_manifest = {
-                    "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
-                    "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
-                    "generation": generation, "columns": [f.name for f in schema], "files": files, "row_count": len(ordered),
-                    "symbol_count": len({r["symbol"] for r in ordered}),
-                    "bytes": sum(f["bytes"] for f in files), "content_digest": digest,
-                }
-                manifest_path = self._manifest_path(trade_date)
-                tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
-                with open(tmp_manifest, "wb") as handle:
-                    handle.write(json.dumps(new_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                self._hit("before_manifest_rename")
-                os.replace(tmp_manifest, manifest_path)  # LAST: this makes the new set visible
-                _fsync_dir(self.manifest_dir)
-                self._hit("after_manifest_rename")
-                keep = {p.resolve() for p in new_paths}
-                for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
-                    if stale.resolve() not in keep:
-                        stale.unlink(missing_ok=True)
-                self.counters["rows_written"] += len(ordered)
-                self.counters["days_written"] += 1
-                return True
             finally:
                 fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def complete_day_values(self, trade_date: str, sources: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        """Fill the null ``volume`` / ``traded_value`` of a stored date from source rows (``extract_rows`` output).
+
+        A non-null stored value is never overwritten; a source whose open, high, low or close differs from the
+        stored row, or whose non-null value differs from the stored non-null one, is refused and counted
+        (``conflicts``); a source for a key the date does not hold is not added (``unknown_keys``). One new
+        generation and digest when anything was filled, none otherwise."""
+        pa, pq = _require_pyarrow()
+        out = {"trade_date": trade_date, "filled_rows": 0, "conflicts": 0, "unknown_keys": 0, "written": False}
+        self.manifest_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock, open(self.manifest_dir / ".lock", "a+") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            try:
+                manifest = self.read_manifest(trade_date)
+                if manifest is None:
+                    out["unknown_keys"] = sum(1 for _ in sources)
+                    return out
+                current = self._read_day_rows(manifest)
+                merged = {key: {k: old.get(k) for k in _RAW_ROW_FIELDS} for key, old in current.items()}
+                for src in sources:
+                    key = (src["market"], src["symbol"], src["trade_date"])
+                    held = merged.get(key)
+                    if held is None:
+                        out["unknown_keys"] += 1
+                        continue
+                    if held["close"] is not None and any(held.get(f) != src.get(f) for f in ("open", "high", "low", "close")):
+                        out["conflicts"] += 1
+                        continue
+                    fills = {}
+                    clash = False
+                    for field in ("volume", "traded_value"):
+                        if src.get(field) is None:
+                            continue
+                        if held.get(field) is None:
+                            fills[field] = src[field]
+                        elif held[field] != src[field]:
+                            clash = True
+                    if clash:
+                        out["conflicts"] += 1
+                        continue
+                    if fills:
+                        held.update(fills)
+                        held["content_hash"] = _row_hash(held)
+                        out["filled_rows"] += 1
+                if out["filled_rows"]:
+                    out["written"] = self._publish_day(
+                        pa, pq, trade_date, manifest, merged, ingest_run_id=None, calendar_evidence=None,
+                        connector_id=None, observed_at=None, captures=())
+                return out
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+    def _publish_day(self, pa, pq, trade_date: str, manifest: Mapping[str, Any] | None,
+                     merged: Mapping[tuple[str, str, str], Mapping[str, Any]], *, ingest_run_id: str | None,
+                     calendar_evidence: Mapping[str, Mapping[str, Any]] | None, connector_id: str | None,
+                     observed_at: str | None, captures: Sequence[Mapping[str, Any]]) -> bool:
+        """New generation of a date from its merged rows (caller holds the lock). False when the digest is unchanged."""
+        digest = self.day_digest(merged.values())
+        if manifest and manifest.get("content_digest") == digest:
+            self.counters["days_unchanged"] += 1
+            return False
+        generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
+        ordered = sorted(merged.values(), key=lambda r: (r["market"], r["symbol"]))
+        files, new_paths = self._write_parts(pa, pq, trade_date, generation, ordered)
+        schema = _schema(pa)
+        self._write_lineage(
+            trade_date, ingest_run_id, calendar_evidence or {}, connector_id, observed_at, merged.values(),
+            captures=captures)
+        self._hit("after_lineage")
+        new_manifest = {
+            "schema_version": DAILY_BARS_SCHEMA_VERSION, "dataset": self.declaration.dataset,
+            "key_fields": list(self.declaration.key_fields), "trade_date": trade_date,
+            "generation": generation, "columns": [f.name for f in schema], "files": files, "row_count": len(ordered),
+            "symbol_count": len({r["symbol"] for r in ordered}),
+            "bytes": sum(f["bytes"] for f in files), "content_digest": digest,
+        }
+        manifest_path = self._manifest_path(trade_date)
+        tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
+        with open(tmp_manifest, "wb") as handle:
+            handle.write(json.dumps(new_manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._hit("before_manifest_rename")
+        os.replace(tmp_manifest, manifest_path)  # LAST: this makes the new set visible
+        _fsync_dir(self.manifest_dir)
+        self._hit("after_manifest_rename")
+        keep = {p.resolve() for p in new_paths}
+        for stale in self.bars_dir.glob(f"market=*/date={trade_date}/*"):
+            if stale.resolve() not in keep:
+                stale.unlink(missing_ok=True)
+        self.counters["rows_written"] += len(ordered)
+        self.counters["days_written"] += 1
+        return True
 
     def _write_lineage(
         self,
@@ -928,7 +1025,31 @@ class DailyBarsStore:
         return {
             "schema_version": "daily_bars_health.v1", "counters": dict(self.counters),
             "last_error": self.last_error, "alarms": report["alarms"], "budget": report,
+            "volume": self.volume_health(),
         }
+
+    VOLUME_NULL_SHARE = 0.05
+
+    def volume_health(self) -> dict[str, Any]:
+        """Read-only: stored days whose traded rows lack a traded value on more than 5 % of them, from the completion
+        state (no parquet is read here); ``unexamined_days`` have not been looked at by the completion yet.
+        DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125."""
+        try:
+            state = json.loads((self.root / "daily_bars_completion_state.json").read_text(encoding="utf-8"))
+            days = state.get("days") or {}
+            last_run = state.get("last_run")
+        except (OSError, ValueError):
+            days, last_run = {}, None
+        stored = self.read_manifest_dates()
+        over = [
+            {"trade_date": d, "traded_rows": v.get("traded_rows"), "no_value": v.get("no_value"), "status": v.get("status")}
+            for d, v in sorted(days.items(), reverse=True)
+            if d in set(stored) and v.get("traded_rows") and (v.get("no_value") or 0) / v["traded_rows"] > self.VOLUME_NULL_SHARE]
+        return {"stored_days": len(stored), "examined_days": sum(1 for d in stored if d in days),
+                "unexamined_days": sum(1 for d in stored if d not in days), "days_over_threshold": len(over),
+                "unretained_days": sum(1 for d in stored if (days.get(d) or {}).get("status") == "unretained"),
+                "last_run": last_run, "completion_failed": bool((last_run or {}).get("failed")),
+                "days": over[:500]}
 
     def record_dual_write_error(self, exc: BaseException) -> None:
         self.counters["dual_write_errors"] += 1

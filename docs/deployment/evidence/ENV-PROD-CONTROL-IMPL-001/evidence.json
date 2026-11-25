@@ -596,5 +596,31 @@
     "hosted_acceptance": "external_wait: coordinator runs snapshot_schedule ensure/check and restore_drill on pantheon-prod-control after the hourly auto-snapshot is available",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_boot_disk_decoupling_and_template_size_gate_20261125": {
+    "task_generation": 77,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, or production/staging workflow dispatch",
+    "changes": [
+      "deploy/production/bootstrap.sh, scripts/deploy/prod_atomic_switch.sh, scripts/deploy/prod_rollback.sh, and scripts/deploy/prod_ops.sh decouple durable control state from the boot disk by storing secrets, state (active_manifest.json, baseline.json, journals, snapshots), manifests, fe (releases, artifacts, current), config (compose.env, runtime-config.js), and proxy (bff_upstream.caddy) on PROD_DATA_MOUNT and symlinking PROD_ROOT/{secrets,state,manifests,fe,config,proxy} -> PROD_DATA_MOUNT/{secrets,state,manifests,fe,config,proxy}, migrating any pre-existing boot-disk directories without data loss",
+      "scripts/deploy/prod_ops.sh adds restore_active_release <release_id> for fresh-boot VM recovery from PROD_DATA_MOUNT and ensures resume_baseline_singletons restores the baseline BFF container on PROD_ACTIVE_PORT when rolling back after a VM replacement",
+      "scripts/deploy/prod_preflight.py adds check_control_vm_machine_type, check_instance_template, check_boot_disk_decoupling, vm-size --machine-type/--instance-template, and boot-disk --prod-root/--data-mount CLI subcommands enforcing >= e2-standard-8 (>= 8 vCPUs, non-preemptible STANDARD scheduling) and data-disk symlinks",
+      "deploy/staging/instance-template.json upgrades properties.machineType from e2-standard-2 to e2-standard-8; .github/workflows/staging-ephemeral-deploy.yml, scripts/deploy/staging_ops.sh, and deploy/staging/bootstrap.sh fail closed with VM_SIZE_BELOW_GATE when machineType or template is below e2-standard-8",
+      ".github/workflows/production-release.yml passes --machine-type to prod_preflight.py vm-size, verifies boot-disk decoupling via prod_preflight.py boot-disk after bootstrap.sh, and points secrets/compose.env/snapshot paths at PROD_DATA_MOUNT"
+    ],
+    "runtime_budget": {
+      "change": "no new recurring job, emitter, or persistent writer added; existing control-plane files (secrets, state/baseline.json, state/active_manifest.json, state/journal/*, manifests/*, config/compose.env, config/runtime-config.js, proxy/bff_upstream.caddy, fe/releases/*, fe/artifacts/*) are relocated from boot disk PROD_ROOT to persistent data disk PROD_DATA_MOUNT with identical per-dispatch cadence, size, and 10-archive journal cap"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh deploy/staging/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/staging_ops.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "134 tests passed in 406.970s, terminal exit 0 (including test_machine_type_and_instance_template_gate, test_boot_disk_decoupling_check_and_cli, test_bootstrap_enforces_e2_standard_8_gate_and_migrates_boot_disk_dirs_to_data_mount, and test_fresh_boot_vm_replacement_retains_all_data_disk_state_restores_active_release_and_rolls_back)",
+      "staging_contract_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_staging_release.WorkflowAndTemplateContractTests",
+      "staging_contract_result": "7 tests passed, terminal exit 0 (including e2-standard-8 instance template and staging_ops.sh / bootstrap.sh VM_SIZE_BELOW_GATE rejection of e2-standard-2 and e2-standard-4)"
+    },
+    "hosted_acceptance": "external_wait: live VM replacement, template recreation in GCP, and production workflow dispatch remain operator-gated",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

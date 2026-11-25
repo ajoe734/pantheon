@@ -2,16 +2,22 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import Future
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-from .common import StrategyRouteContext, strategy_stub_reason
+from .common import StrategyRouteContext, strategy_stub_reason, unavailable_lookup
 
 try:
     from services.control_plane.bff.models import ErrorCode
+    from services.control_plane.bff.core.owner_reads import (
+        remaining_management_read_budget,
+        submit_owner_read,
+    )
 except (ImportError, ValueError):
     from models import ErrorCode
+    from core.owner_reads import remaining_management_read_budget, submit_owner_read
 from services.control_plane.bff.ports.research_knowledge_source import ResearchWriteOwnerUnavailableError
 from services.control_plane.bff.research import discovery_projection
 
@@ -28,24 +34,87 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         snapshot_at = ctx.utc_now()
-        detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
-        summary = (
-            detail
-            if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
-            else (ctx.service.get_strategy(strategy_id) if ctx.service else None)
+        service = ctx.service
+        # The spec read, the Persona directory, the runtime bindings and
+        # telemetry, the ranking snapshot and the rules read do not depend on
+        # each other: all start before the first join. Each runs in a copy of
+        # the request context (caller identity, tenant, deadline). Only the
+        # runtime-truth projection needs the Persona records, so it alone
+        # waits for the Persona result. Each owner is read once per request.
+        from services.control_plane.bff.personas.service import (
+            _PERSONA_FLEET_READ_EXECUTOR as executor,
         )
-        if not summary:
-            raise ctx.bff_error(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Strategy not found",
-                f"Strategy {strategy_id} does not exist",
+
+        futures: List[Future] = []
+
+        def _start(fn: Any) -> Future:
+            try:
+                fut = submit_owner_read(executor, fn)
+            except Exception as exc:  # noqa: BLE001 - a submit failure is an owner failure
+                fut = Future()
+                fut.set_exception(exc)
+            futures.append(fut)
+            return fut
+
+        def _join(fut: Future) -> Any:
+            return fut.result(timeout=remaining_management_read_budget())
+
+        try:
+            detail_f = _start(
+                lambda: service.get_strategy_spec_detail(strategy_id, version_selector="current")
+            ) if service else None
+            persona_f = _start(lambda: ctx.read_persona_state_lookup(identity, snapshot_at))
+            inputs_f = _start(ctx.read_strategy_runtime_truth_inputs)
+            ranking_f = _start(service.get_latest_ranking_snapshot) if service else None
+            rules_f = _start(lambda: service.get_strategy_rules(strategy_id)) if service else None
+
+            detail = service._invoke_read_owner(_join, detail_f) if detail_f else None
+            summary = (
+                detail
+                if isinstance(detail, dict) and (detail.get("strategy_id") or detail.get("id"))
+                else (service.get_strategy(strategy_id) if service else None)
             )
-        persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+            if not summary:
+                raise ctx.bff_error(
+                    404, ErrorCode.RESOURCE_NOT_FOUND,
+                    "Strategy not found",
+                    f"Strategy {strategy_id} does not exist",
+                )
+            # Secondary reads keep today's answer for their part when they
+            # fail or run out of request budget; they never fail the request.
+            try:
+                persona_lookup = _join(persona_f)
+            except Exception as exc:  # noqa: BLE001
+                persona_lookup = unavailable_lookup(
+                    f"persona directory read failed: {type(exc).__name__}"
+                )
+            try:
+                prefetched = _join(inputs_f)
+            except Exception:  # noqa: BLE001
+                prefetched = (None, [])
+            runtime_truth = ctx.read_strategy_runtime_truth(
+                snapshot_at, persona_lookup, prefetched_inputs=prefetched
+            )
+            try:
+                ranking_snapshot, ranking_failed = _join(ranking_f) if ranking_f else (None, False)
+            except Exception:  # noqa: BLE001
+                ranking_snapshot, ranking_failed = None, True
+            try:
+                rules, rules_status = _join(rules_f) if rules_f else (None, "unavailable")
+            except Exception:  # noqa: BLE001
+                rules, rules_status = None, "unavailable"
+        finally:
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
         dto = ctx.project_strategy_dto(
             summary,
             detail=detail or summary,
             include_spec=True,
             persona_lookup=persona_lookup,
+            ranking_snapshot=ranking_snapshot,
+            ranking_read_failed=ranking_failed,
+            runtime_truth=runtime_truth,
         )
         stub_reason = strategy_stub_reason(
             {
@@ -58,9 +127,8 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         )
         dto["is_synthetic_or_stub"] = stub_reason is not None
         dto["stub_reason"] = stub_reason
-        # Rules come from one registry owner read per request. A failed read
+        # Rules come from one registry owner read per request (above). A failed read
         # leaves the detail at 200 with rules null and the surface unavailable.
-        rules, rules_status = ctx.service.get_strategy_rules(strategy_id)
         dto["rules"] = rules
         dto["discovery"] = discovery_projection.project_discovery_block(detail or summary)
         meta = dict(

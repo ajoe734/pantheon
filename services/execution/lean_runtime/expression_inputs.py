@@ -459,19 +459,93 @@ def _ledger_has_fills(summary: Mapping[str, Any]) -> bool:
     return False
 
 
+def _turnover_notional_from_summary(
+    summary: Mapping[str, Any],
+    policy: RiskPolicy,
+    *,
+    as_of_trading_day: Any = None,
+) -> float | None:
+    """Resolve rolling window turnover notional from virtual book / ledger summary."""
+    from services.execution.lean_runtime.instrument_candidates import _optional_date
+
+    for key in ("turnover_notional", "traded_notional", "rolling_turnover_notional", "window_turnover_notional"):
+        val = _finite(summary.get(key))
+        if val is not None and val >= 0.0:
+            return float(val)
+    raw_fills = (
+        summary.get("fills")
+        if isinstance(summary.get("fills"), list)
+        else (
+            summary.get("virtual_book_fills")
+            if isinstance(summary.get("virtual_book_fills"), list)
+            else (summary.get("recent_fills") if isinstance(summary.get("recent_fills"), list) else None)
+        )
+    )
+    if raw_fills is not None:
+        window_days = 1
+        if isinstance(policy.metadata, Mapping) and policy.metadata.get("turnover_window_days") is not None:
+            w = _finite(policy.metadata.get("turnover_window_days"))
+            if w is not None and w >= 1:
+                window_days = int(w)
+        ref_day = _optional_date(as_of_trading_day or summary.get("as_of_trading_day") or summary.get("trading_day"))
+        total = 0.0
+        for item in raw_fills:
+            if not isinstance(item, Mapping):
+                continue
+            if ref_day is not None:
+                raw_ts = item.get("trade_date") or item.get("filled_at") or item.get("timestamp")
+                fill_day = _optional_date(str(raw_ts)[:10]) if raw_ts else None
+                if fill_day is not None and (ref_day - fill_day).days >= window_days:
+                    continue
+            notional = _finite(item.get("notional") if item.get("notional") is not None else item.get("gross_notional"))
+            if notional is None:
+                qty = abs(_finite(item.get("quantity") if item.get("quantity") is not None else item.get("units")) or 0.0)
+                mult = _finite(item.get("multiplier") if item.get("multiplier") is not None else item.get("unit")) or 1.0
+                px = _finite(item.get("fill_price") if item.get("fill_price") is not None else item.get("price")) or 0.0
+                notional = qty * mult * px
+            total += max(0.0, float(notional))
+        return round(total, 2)
+    return None
+
+
 def build_expression_inputs(
     *,
     pool: Mapping[str, Any],
     policy: RiskPolicy,
     summary: Mapping[str, Any],
+    normalized_root: Any = None,
+    as_of_trading_day: Any = None,
 ) -> dict[str, Any]:
     """Pure assembly of ``{"persona_book", "risk_budget"}`` from the three truths."""
+    from services.execution.lean_runtime.instrument_candidates import (
+        normalize_underlying_code,
+        read_avg_daily_volume,
+        read_industry_classifications,
+    )
+
     if policy.gross_limit is None or float(policy.gross_limit) <= 0:
         raise ExpressionInputsUnavailable("risk_policy", "gross_limit is not set in the pool policy")
-    for pos_field in ("net_limit", "max_leverage", "max_single_name_weight"):
+    for pos_field in ("net_limit", "max_leverage", "max_single_name_weight", "turnover_limit"):
         val = getattr(policy, pos_field, None)
         if val is not None and (_finite(val) is None or float(val) <= 0):
             raise ExpressionInputsUnavailable("risk_policy", f"{pos_field} must be a positive finite number")
+    if policy.max_sector_exposure not in (None, {}):
+        sec_vals = (
+            list(policy.max_sector_exposure.values())
+            if isinstance(policy.max_sector_exposure, Mapping)
+            else [policy.max_sector_exposure]
+        )
+        if not sec_vals or any(_finite(v) is None or float(v) <= 0.0 or float(v) > 1.0 for v in sec_vals):
+            raise ExpressionInputsUnavailable("risk_policy", "max_sector_exposure must be in (0, 1]")
+    if policy.liquidity_constraints:
+        if "min_avg_daily_volume" in policy.liquidity_constraints:
+            min_adv = _finite(policy.liquidity_constraints.get("min_avg_daily_volume"))
+            if min_adv is None or min_adv <= 0.0:
+                raise ExpressionInputsUnavailable("risk_policy", "min_avg_daily_volume must be positive")
+        if "max_order_pct_adv" in policy.liquidity_constraints:
+            max_pct = _finite(policy.liquidity_constraints.get("max_order_pct_adv"))
+            if max_pct is None or max_pct <= 0.0 or max_pct > 1.0:
+                raise ExpressionInputsUnavailable("risk_policy", "max_order_pct_adv must be in (0, 1]")
     min_reserve_pct = getattr(policy, "min_cash_reserve_pct", None)
     if min_reserve_pct is not None and (_finite(min_reserve_pct) is None or float(min_reserve_pct) < 0 or float(min_reserve_pct) >= 1.0):
         raise ExpressionInputsUnavailable("risk_policy", "min_cash_reserve_pct must be in [0, 1)")
@@ -507,6 +581,107 @@ def build_expression_inputs(
     gross_used = round(book["gross_notional"] + book["reserved_gross_notional"], 2)
     signed_net_used = round(book["signed_net_notional"] + book["reserved_signed_net_notional"], 2)
 
+    effective_root = (
+        normalized_root
+        if normalized_root is not None
+        else (os.getenv("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT") or "").strip() or None
+    )
+    pool_meta = pool.get("metadata") if isinstance(pool.get("metadata"), Mapping) else {}
+
+    # 1. Sector classification & exposures
+    sector_by_underlying: dict[str, str] = {}
+    if effective_root is not None and (policy.max_sector_exposure not in (None, {}) or normalized_root is not None):
+        disk_sectors = read_industry_classifications(effective_root, as_of_trading_day=as_of_trading_day)
+        if isinstance(disk_sectors, Mapping):
+            sector_by_underlying.update({str(k): str(v) for k, v in disk_sectors.items() if v is not None})
+    for source_map in (
+        pool_meta.get("sector_by_underlying"),
+        pool.get("sector_by_underlying"),
+        summary.get("sector_by_underlying"),
+    ):
+        if isinstance(source_map, Mapping):
+            for raw_u, raw_sec in source_map.items():
+                if raw_sec in (None, ""):
+                    continue
+                try:
+                    u_code = normalize_underlying_code(str(raw_u))
+                except Exception:
+                    u_code = str(raw_u).strip()
+                if u_code:
+                    sector_by_underlying[u_code] = str(raw_sec).strip()
+    for row in (summary.get("positions") or []):
+        if isinstance(row, Mapping) and (row.get("sector") or row.get("industry_code")):
+            raw_u = row.get("symbol") or row.get("underlying")
+            if raw_u:
+                try:
+                    u_code = normalize_underlying_code(str(raw_u))
+                except Exception:
+                    u_code = str(raw_u).strip()
+                if u_code and u_code not in sector_by_underlying:
+                    sector_by_underlying[u_code] = str(row.get("sector") or row.get("industry_code")).strip()
+
+    sector_exposures: dict[str, float] = {}
+    missing_sector_underlyings: list[str] = []
+    for u_code, u_notional in sorted(book["underlying_gross_by_code"].items()):
+        if u_notional <= 0:
+            continue
+        sec = sector_by_underlying.get(u_code)
+        if not sec:
+            missing_sector_underlyings.append(u_code)
+        else:
+            sector_exposures[sec] = round(sector_exposures.get(sec, 0.0) + (u_notional / equity), 6)
+
+    # 2. Turnover over policy window
+    turnover_limit_val = float(policy.turnover_limit) if policy.turnover_limit is not None else None
+    turnover_limit_notional = round(turnover_limit_val * equity, 2) if turnover_limit_val is not None else None
+    explicit_turnover_ratio = _finite(
+        summary.get("turnover") if summary.get("turnover") is not None else summary.get("turnover_ratio")
+    )
+    summary_turnover_notional = _turnover_notional_from_summary(
+        summary, policy, as_of_trading_day=as_of_trading_day
+    )
+    if explicit_turnover_ratio is not None and explicit_turnover_ratio >= 0.0:
+        base_turnover_notional: float | None = round(explicit_turnover_ratio * equity, 2)
+    elif summary_turnover_notional is not None:
+        base_turnover_notional = summary_turnover_notional
+    elif not _ledger_has_fills(summary):
+        base_turnover_notional = 0.0
+    else:
+        base_turnover_notional = None
+
+    if base_turnover_notional is not None:
+        turnover_used_notional: float | None = round(base_turnover_notional + book["reserved_gross_notional"], 2)
+        turnover_used: float | None = round(turnover_used_notional / equity, 6)
+        turnover_unavailable = False
+    else:
+        turnover_used_notional = None
+        turnover_used = None
+        turnover_unavailable = bool(turnover_limit_val is not None)
+
+    # 3. Liquidity constraints & ADV
+    avg_daily_volume_by_underlying: dict[str, float] = {}
+    for adv_src in (
+        pool_meta.get("avg_daily_volume_by_underlying"),
+        pool.get("avg_daily_volume_by_underlying"),
+        summary.get("avg_daily_volume_by_underlying"),
+    ):
+        if isinstance(adv_src, Mapping):
+            for raw_u, raw_adv in adv_src.items():
+                adv_num = _finite(raw_adv)
+                if adv_num is not None and adv_num > 0.0:
+                    try:
+                        u_code = normalize_underlying_code(str(raw_u))
+                    except Exception:
+                        u_code = str(raw_u).strip()
+                    if u_code:
+                        avg_daily_volume_by_underlying[u_code] = float(adv_num)
+    if effective_root is not None and policy.liquidity_constraints:
+        for u_code in sorted(book["underlying_gross_by_code"].keys()):
+            if u_code not in avg_daily_volume_by_underlying:
+                adv_disk = read_avg_daily_volume(effective_root, u_code, as_of_trading_day=as_of_trading_day)
+                if adv_disk is not None and adv_disk > 0.0:
+                    avg_daily_volume_by_underlying[u_code] = float(adv_disk)
+
     risk_budget: dict[str, Any] = {
         "equity": round(equity, 2),
         "raw_cash": round(cash, 2),
@@ -527,6 +702,21 @@ def build_expression_inputs(
             if policy.max_single_name_weight is not None
             else None
         ),
+        "max_sector_exposure": (
+            dict(policy.max_sector_exposure)
+            if isinstance(policy.max_sector_exposure, Mapping)
+            else policy.max_sector_exposure
+        ),
+        "sector_by_underlying": sector_by_underlying,
+        "sector_exposures": sector_exposures,
+        "missing_sector_underlyings": missing_sector_underlyings,
+        "turnover_limit": turnover_limit_val,
+        "turnover_limit_notional": turnover_limit_notional,
+        "turnover_used": turnover_used,
+        "turnover_used_notional": turnover_used_notional,
+        "turnover_unavailable": turnover_unavailable,
+        "liquidity_constraints": dict(policy.liquidity_constraints) if policy.liquidity_constraints else {},
+        "avg_daily_volume_by_underlying": avg_daily_volume_by_underlying,
         "min_cash_reserve_pct": min_reserve_pct,
         "min_cash_reserve": min_reserve_abs,
         "cash_reserve_required": round(cash_reserve_required, 2),

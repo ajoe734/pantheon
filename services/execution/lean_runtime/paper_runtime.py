@@ -66,6 +66,8 @@ from services.execution.lean_runtime.futures_session_inputs import (
 )
 from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
 from services.execution.lean_runtime.instrument_candidates import (
+    _optional_date,
+    _sector_limit_for_key,
     governed_twse_holidays,
     is_trading_day,
     last_trading_day,
@@ -73,6 +75,8 @@ from services.execution.lean_runtime.instrument_candidates import (
     normalize_underlying_code,
     parse_instrument_id,
     previous_trading_day,
+    read_avg_daily_volume,
+    read_industry_classifications,
 )
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext, RuntimeContextError
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
@@ -357,12 +361,15 @@ def _state_structural_digest(state: Mapping[str, Any]) -> str:
             str(u.get("symbol")) for u in (book.get("underlyings") or []) if isinstance(u, Mapping)
         )
         books.append(entry)
-    return _sha256_json(
-        {
-            "performance": _strip_volatile_state({k: perf.get(k) for k in _STRUCTURAL_PERFORMANCE_KEYS}),
-            "books": books,
-        }
-    )
+    payload: dict[str, Any] = {
+        "performance": _strip_volatile_state({k: perf.get(k) for k in _STRUCTURAL_PERFORMANCE_KEYS}),
+        "books": books,
+    }
+    if "account_facts" in state:
+        payload["account_facts"] = _strip_volatile_state(state.get("account_facts"))
+    if "risk_policy_facts" in state:
+        payload["risk_policy_facts"] = _strip_volatile_state(state.get("risk_policy_facts"))
+    return _sha256_json(payload)
 
 
 def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[str, Any]:
@@ -545,6 +552,8 @@ class PaperExecutionAlgorithm:
         self._completed_signal_submissions: dict[str, dict[str, Any]] = {}
         self._uncertain_broker_submissions: dict[str, dict[str, Any]] = {}
         self._last_submission_outcome: dict[str, Any] | None = None
+        self._ledger_fill_history: list[dict[str, Any]] = []
+        self._member_virtual_books: Any = None
         if risk_policy is not None:
             self.SetRiskPolicy(risk_policy)
         self._state_binding_error: str | None = None
@@ -1986,6 +1995,41 @@ class PaperExecutionAlgorithm:
         free_margin_before = equity_before - margin_reserved_before - reserved_margin - reserved_cash
         spendable_cash_before = max(0.0, min(effective_cash_before, free_margin_before) - cash_reserve_required)
 
+        is_pure_reducing_exit = (
+            not is_opening_or_increasing
+            and abs(q_before) > 1e-12
+            and abs(signed_order_qty) > 1e-12
+            and abs(q_after) < abs(q_before) - 1e-12
+        )
+
+        # Resolve blueprint limit facts (sector_exposures, turnover, liquidity)
+        all_sector_underlyings = set(underlying_notional_before.keys()) | set(underlying_notional_after.keys()) | set(reserved_underlying.keys())
+        if norm_u:
+            all_sector_underlyings.add(norm_u)
+        sector_by_u, missing_sector_underlyings = self._resolve_sector_classifications(
+            all_sector_underlyings,
+            as_of_trading_day=parsed_trade_date,
+        )
+        norm_u_sector = sector_by_u.get(norm_u) if norm_u else None
+        sector_limit_dec = (
+            _sector_limit_for_key(policy.max_sector_exposure, norm_u_sector)
+            if (policy.max_sector_exposure not in (None, {}) and norm_u_sector is not None)
+            else None
+        )
+        sector_limit_mult = float(sector_limit_dec) if sector_limit_dec is not None else None
+        sector_before_notional = 0.0
+        if norm_u_sector is not None:
+            for u_k, u_val in underlying_notional_before.items():
+                if sector_by_u.get(u_k) == norm_u_sector:
+                    sector_before_notional += float(u_val)
+            for u_k, r_val in reserved_underlying.items():
+                if sector_by_u.get(u_k) == norm_u_sector:
+                    sector_before_notional += float(r_val)
+        sector_unavailable_for_order = bool(
+            policy.max_sector_exposure not in (None, {})
+            and (bool(missing_sector_underlyings) or (norm_u and norm_u_sector is None))
+        )
+
         sizing_evidence = self._compute_submission_sizing_evidence(
             symbol=symbol,
             underlying=norm_u,
@@ -2011,6 +2055,9 @@ class PaperExecutionAlgorithm:
             signed_net_before=signed_net_notional_before + reserved_signed_net,
             underlying_before=underlying_notional_before.get(norm_u, 0.0) + reserved_underlying.get(norm_u, 0.0),
             underlying_same_dir_before=underlying_same_dir_before + reserved_underlying.get(norm_u, 0.0),
+            sector_before=sector_before_notional,
+            sector_limit_mult=sector_limit_mult,
+            sector_unavailable=sector_unavailable_for_order,
             margin_reserved_before=margin_reserved_before + reserved_margin,
             active_reservations_count=len(active_res),
             current_sig_id=current_sig_id,
@@ -2109,6 +2156,50 @@ class PaperExecutionAlgorithm:
         )
         observed_cash_reserve = post_order_free_cash if is_opening_or_increasing else None
 
+        # Sector exposures after order
+        observed_sector_exposures: dict[str, float] = {}
+        eval_metadata: dict[str, Any] = {}
+        if sector_unavailable_for_order:
+            eval_metadata["missing_sector_symbols"] = missing_sector_underlyings or ([norm_u] if norm_u else ["unknown"])
+        else:
+            for u_k, val in underlying_notional_after.items():
+                if val <= 0:
+                    continue
+                sec_k = sector_by_u.get(u_k)
+                if sec_k:
+                    observed_sector_exposures[sec_k] = observed_sector_exposures.get(sec_k, 0.0) + (
+                        (val / equity_after) if equity_after > 0 else 1e9
+                    )
+
+        # Turnover over policy window (including current order notional)
+        order_notional_abs = abs(float(signed_order_qty)) * float(multiplier) * ref_price
+        prior_turnover_notional, turnover_fact_unavailable = self._resolve_prior_turnover_notional(
+            policy,
+            as_of_trading_day=parsed_trade_date,
+        )
+        if turnover_fact_unavailable or prior_turnover_notional is None:
+            observed_turnover: float | None = None
+        else:
+            total_turnover_notional = float(prior_turnover_notional) + reserved_gross + order_notional_abs
+            observed_turnover = (total_turnover_notional / equity_after) if equity_after > 0 else 1e9
+
+        # Liquidity observation (avg_daily_volume and order_pct_adv)
+        resolved_adv = self._resolve_order_avg_daily_volume(
+            norm_u,
+            instrument_id,
+            clean_kind,
+            as_of_trading_day=parsed_trade_date,
+        )
+        if resolved_adv is not None and resolved_adv > 0.0:
+            order_vol = abs(float(quantity))
+            observed_liquidity: dict[str, Any] = {
+                "avg_daily_volume": float(resolved_adv),
+                "order_volume": float(order_vol),
+                "order_pct_adv": float(order_vol) / float(resolved_adv),
+            }
+        else:
+            observed_liquidity = {}
+
         order_asset_classes = ["future"] if clean_kind == "stock_future" else ["equity"]
         eval_ctx = RiskPolicyEvaluationContext(
             target_type=RiskPolicyTargetType.RUNTIME_ACTION.value,
@@ -2126,11 +2217,16 @@ class PaperExecutionAlgorithm:
             gross_exposure=gross_mult if math.isfinite(gross_mult) else 1e9,
             net_exposure=net_mult if math.isfinite(net_mult) else 1e9,
             leverage=leverage_mult if math.isfinite(leverage_mult) else 1e9,
+            turnover=observed_turnover,
+            sector_exposures=observed_sector_exposures,
+            liquidity=observed_liquidity,
             cash_reserve_pct=observed_cash_reserve_pct,
             cash_reserve=observed_cash_reserve,
+            runtime_action="order_reduce" if is_pure_reducing_exit else "order_increase",
             asset_classes=order_asset_classes,
             decision_id=raw_decision_id or None,
             instrument_id=instrument_id,
+            metadata=eval_metadata,
         )
         evaluation = RiskPolicyEvaluator().evaluate(policy, eval_ctx)
         decision_id = raw_decision_id or evaluation.trace_id or evaluation.target_id
@@ -2187,12 +2283,6 @@ class PaperExecutionAlgorithm:
                 **policy_provenance,
             }
 
-        is_pure_reducing_exit = (
-            not is_opening_or_increasing
-            and abs(q_before) > 1e-12
-            and abs(signed_order_qty) > 1e-12
-            and abs(q_after) < abs(q_before) - 1e-12
-        )
         u_notional_before = underlying_notional_before.get(norm_u, 0.0)
         u_notional_after = underlying_notional_after.get(norm_u, 0.0)
         reduces_single_name = (
@@ -2223,60 +2313,144 @@ class PaperExecutionAlgorithm:
                 return reduces_leverage
             if chk.check_name == "net_exposure" or chk.code == "net_exposure_limit_exceeded":
                 return reduces_net
+            if chk.check_name in {"sector_exposure", "turnover", "liquidity"} or chk.code in {
+                "sector_exposure_limit_exceeded",
+                "sector_exposures_unavailable",
+                "turnover_limit_exceeded",
+                "turnover_unavailable",
+                "liquidity_min_adv_breach",
+                "liquidity_order_pct_adv_breach",
+                "liquidity_unavailable",
+            }:
+                return True
             return False
 
         unexcused_failed_checks = [chk for chk in failed_checks if not _is_excused_reducing_check(chk)]
 
         if evaluation.rejected and unexcused_failed_checks:
             max_single_w = max(target_weights.values(), default=0.0)
-            code_to_reason = {
+            max_sector_w = max(observed_sector_exposures.values(), default=0.0)
+            default_sector_lim = (
+                float(sector_limit_mult)
+                if sector_limit_mult is not None
+                else (
+                    min(float(v) for v in policy.max_sector_exposure.values())
+                    if isinstance(policy.max_sector_exposure, Mapping) and policy.max_sector_exposure
+                    else (
+                        float(policy.max_sector_exposure)
+                        if isinstance(policy.max_sector_exposure, (int, float))
+                        else 0.0
+                    )
+                )
+            )
+            order_weight_req = (order_notional_abs / equity_after) if equity_after > 0 else 0.0
+            code_to_reason: dict[str, tuple[str, float, float, float]] = {
                 "pool_risk_policy": (
                     "single_name_limit",
                     float(max_single_w),
+                    float(equity_after),
                     float(policy.max_single_name_weight) if policy.max_single_name_weight is not None else 0.0,
                 ),
                 "max_single_name_weight_limit_exceeded": (
                     "single_name_limit",
                     float(max_single_w),
+                    float(equity_after),
                     float(policy.max_single_name_weight) if policy.max_single_name_weight is not None else 0.0,
+                ),
+                "sector_exposure_limit_exceeded": (
+                    "max_sector_exposure",
+                    float(max_sector_w),
+                    float(equity_after),
+                    float(default_sector_lim),
+                ),
+                "sector_exposures_unavailable": (
+                    "sector_exposures_unavailable",
+                    float(order_weight_req),
+                    float(equity_after),
+                    float(default_sector_lim),
+                ),
+                "turnover_limit_exceeded": (
+                    "turnover_limit",
+                    float(observed_turnover if observed_turnover is not None else order_weight_req),
+                    float(equity_after),
+                    float(policy.turnover_limit) if policy.turnover_limit is not None else 0.0,
+                ),
+                "turnover_unavailable": (
+                    "turnover_unavailable",
+                    float(order_weight_req),
+                    float(equity_after),
+                    float(policy.turnover_limit) if policy.turnover_limit is not None else 0.0,
+                ),
+                "liquidity_order_pct_adv_breach": (
+                    "liquidity_order_pct_adv_breach",
+                    float(observed_liquidity.get("order_pct_adv") or 0.0),
+                    float(observed_liquidity.get("avg_daily_volume") or 0.0),
+                    float((policy.liquidity_constraints or {}).get("max_order_pct_adv") or 0.0),
+                ),
+                "liquidity_min_adv_breach": (
+                    "liquidity_min_adv_breach",
+                    float((policy.liquidity_constraints or {}).get("min_avg_daily_volume") or 0.0),
+                    float(observed_liquidity.get("avg_daily_volume") or 0.0),
+                    float((policy.liquidity_constraints or {}).get("min_avg_daily_volume") or 0.0),
+                ),
+                "liquidity_unavailable": (
+                    "liquidity_unavailable",
+                    float(abs(quantity)),
+                    0.0,
+                    float(
+                        (policy.liquidity_constraints or {}).get("max_order_pct_adv")
+                        or (policy.liquidity_constraints or {}).get("min_avg_daily_volume")
+                        or 0.0
+                    ),
                 ),
                 "leverage_limit_exceeded": (
                     "leverage_limit",
                     float(leverage_mult),
+                    float(equity_after),
                     float(policy.max_leverage) if policy.max_leverage is not None else 0.0,
                 ),
                 "gross_exposure_limit_exceeded": (
                     "gross_limit",
                     float(gross_mult),
+                    float(equity_after),
                     float(policy.gross_limit) if policy.gross_limit is not None else 0.0,
                 ),
                 "net_exposure_limit_exceeded": (
                     "net_limit",
                     float(net_mult),
+                    float(equity_after),
                     float(policy.net_limit) if policy.net_limit is not None else 0.0,
                 ),
                 "cash_reserve_breach": (
                     "cash_reserve",
                     float(cash_reserve_required),
+                    float(equity_after),
                     float(spendable_cash_before),
                 ),
             }
             for chk in unexcused_failed_checks:
                 if chk.check_name == "max_single_name_weight" or chk.code in code_to_reason:
-                    reason_code, req_val, lim_val = code_to_reason.get(
+                    reason_code, req_val, avail_val, lim_val = code_to_reason.get(
                         chk.code,
                         (
                             "single_name_limit",
                             float(max_single_w),
+                            float(equity_after),
                             float(policy.max_single_name_weight or 0.0),
                         ),
                     )
+                    if chk.code == "sector_exposure_limit_exceeded":
+                        if isinstance(chk.observed, Mapping) and chk.observed:
+                            req_val = float(next(iter(chk.observed.values())))
+                        if isinstance(chk.limit, Mapping) and chk.limit:
+                            lim_val = float(next(iter(chk.limit.values())))
                     return {
                         "accepted": False,
                         "risk_status": "rejected",
                         "reason": reason_code,
+                        "diagnostic": chk.reason,
                         "required": req_val,
-                        "available": float(equity_after),
+                        "available": avail_val,
                         "limit": lim_val,
                         "instrument_id": instrument_id,
                         "decision_id": decision_id,
@@ -2310,6 +2484,257 @@ class PaperExecutionAlgorithm:
             **policy_provenance,
         }
 
+    def _resolve_pool_record_for_facts(self) -> Mapping[str, Any]:
+        pool_id = str(
+            self._capital_pool_id
+            or self._current_signal_metadata.get("capital_pool_id")
+            or self._taiwan_capital_pool_id()
+            or ""
+        ).strip()
+        if self._capital_pool_reader is not None and pool_id:
+            try:
+                rec = self._capital_pool_reader(pool_id)
+                if isinstance(rec, Mapping):
+                    return rec
+            except Exception:
+                pass
+        if pool_id:
+            try:
+                rec = read_capital_pool_record(pool_id)
+                if isinstance(rec, Mapping):
+                    return rec
+            except Exception:
+                pass
+        return {}
+
+    def _resolve_sector_classifications(
+        self,
+        underlyings: Iterable[str],
+        *,
+        as_of_trading_day: Any = None,
+    ) -> tuple[dict[str, str], list[str]]:
+        if self._current_signal_metadata.get("sector_exposures_unavailable") is True:
+            return {}, [str(u).strip() for u in sorted(set(underlyings)) if str(u).strip()]
+        sector_by_u: dict[str, str] = {}
+        raw_root = (
+            self._current_signal_metadata.get("normalized_root")
+            or os.getenv("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT")
+            or ""
+        )
+        root_str = str(raw_root).strip()
+        if root_str:
+            disk_map = read_industry_classifications(root_str, as_of_trading_day=as_of_trading_day)
+            if isinstance(disk_map, Mapping):
+                for k, v in disk_map.items():
+                    if v not in (None, ""):
+                        sector_by_u[str(k)] = str(v).strip()
+
+        pool_rec = self._resolve_pool_record_for_facts()
+        pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
+        replay_in = (
+            self._current_signal_metadata.get("expression_replay_input")
+            if isinstance(self._current_signal_metadata.get("expression_replay_input"), Mapping)
+            else {}
+        )
+        replay_budget = replay_in.get("risk_budget") if isinstance(replay_in.get("risk_budget"), Mapping) else {}
+        for src in (
+            pool_meta.get("sector_by_underlying"),
+            pool_rec.get("sector_by_underlying"),
+            replay_budget.get("sector_by_underlying"),
+            self._current_signal_metadata.get("sector_by_underlying"),
+        ):
+            if isinstance(src, Mapping):
+                for raw_u, raw_sec in src.items():
+                    if raw_sec in (None, ""):
+                        continue
+                    try:
+                        u_code = normalize_underlying_code(str(raw_u))
+                    except Exception:
+                        u_code = str(raw_u).strip()
+                    if u_code:
+                        sector_by_u[u_code] = str(raw_sec).strip()
+
+        for (_b_id, u_code, _inst_id), pos in self._instrument_positions.items():
+            raw_sec = pos.get("sector") or pos.get("industry_code")
+            if raw_sec not in (None, "") and u_code and u_code not in sector_by_u:
+                sector_by_u[u_code] = str(raw_sec).strip()
+
+        direct_sec = self._current_signal_metadata.get("sector") or self._current_signal_metadata.get("industry_code")
+        if direct_sec not in (None, ""):
+            raw_u = self._current_signal_metadata.get("underlying") or self._current_signal_metadata.get("symbol")
+            if raw_u:
+                try:
+                    u_code = normalize_underlying_code(str(raw_u))
+                except Exception:
+                    u_code = str(raw_u).strip()
+                if u_code:
+                    sector_by_u[u_code] = str(direct_sec).strip()
+
+        missing = [str(u).strip() for u in sorted(set(underlyings)) if str(u).strip() and str(u).strip() not in sector_by_u]
+        return sector_by_u, missing
+
+    def _resolve_prior_turnover_notional(
+        self,
+        policy: RiskPolicy,
+        *,
+        as_of_trading_day: Any = None,
+    ) -> tuple[float | None, bool]:
+        if self._current_signal_metadata.get("turnover_unavailable") is True:
+            return None, True
+        for key in ("turnover_notional", "traded_notional", "rolling_turnover_notional", "turnover_used_notional"):
+            raw = self._current_signal_metadata.get(key)
+            if raw is not None and not isinstance(raw, bool):
+                try:
+                    val = float(raw)
+                    if math.isfinite(val) and val >= 0.0:
+                        return val, False
+                except (TypeError, ValueError):
+                    pass
+        replay_in = (
+            self._current_signal_metadata.get("expression_replay_input")
+            if isinstance(self._current_signal_metadata.get("expression_replay_input"), Mapping)
+            else {}
+        )
+        replay_budget = replay_in.get("risk_budget") if isinstance(replay_in.get("risk_budget"), Mapping) else {}
+        if replay_budget.get("turnover_used_notional") is not None:
+            try:
+                val = float(replay_budget["turnover_used_notional"])
+                if math.isfinite(val) and val >= 0.0:
+                    return val, False
+            except (TypeError, ValueError):
+                pass
+
+        window_days = 1
+        if isinstance(policy.metadata, Mapping) and policy.metadata.get("turnover_window_days") is not None:
+            try:
+                w = int(float(policy.metadata["turnover_window_days"]))
+                if w >= 1:
+                    window_days = w
+            except (TypeError, ValueError):
+                pass
+        ref_day = _optional_date(as_of_trading_day)
+
+        fill_records: list[Mapping[str, Any]] = []
+        meta_fills = self._current_signal_metadata.get("fills") or self._current_signal_metadata.get("virtual_book_fills")
+        if isinstance(meta_fills, list):
+            fill_records.extend(f for f in meta_fills if isinstance(f, Mapping))
+        elif self._ledger_fill_history:
+            fill_records.extend(self._ledger_fill_history)
+        elif self._member_virtual_books is not None:
+            try:
+                books = getattr(self._member_virtual_books, "_load", lambda: {})()
+                if isinstance(books, Mapping):
+                    for b in books.values():
+                        if isinstance(b, Mapping) and isinstance(b.get("fills"), list):
+                            fill_records.extend(f for f in b["fills"] if isinstance(f, Mapping))
+            except Exception:
+                pass
+
+        if fill_records:
+            total = 0.0
+            for item in fill_records:
+                if ref_day is not None:
+                    raw_ts = item.get("trade_date") or item.get("filled_at") or item.get("timestamp")
+                    f_day = _optional_date(str(raw_ts)[:10]) if raw_ts else None
+                    if f_day is not None and (ref_day - f_day).days >= window_days:
+                        continue
+                raw_n = item.get("notional") if item.get("notional") is not None else item.get("gross_notional")
+                if raw_n is not None and not isinstance(raw_n, bool):
+                    try:
+                        total += max(0.0, float(raw_n))
+                        continue
+                    except (TypeError, ValueError):
+                        pass
+                try:
+                    q = abs(float(item.get("quantity") if item.get("quantity") is not None else (item.get("units") or 0.0)))
+                    m = float(item.get("multiplier") if item.get("multiplier") is not None else (item.get("unit") or 1.0))
+                    p = float(item.get("fill_price") if item.get("fill_price") is not None else (item.get("price") or 0.0))
+                    total += max(0.0, q * m * p)
+                except (TypeError, ValueError):
+                    pass
+            return round(total, 6), False
+
+        if self._fill_count == 0:
+            return 0.0, False
+        return None, bool(policy.turnover_limit is not None)
+
+    def _resolve_order_avg_daily_volume(
+        self,
+        underlying: str,
+        instrument_id: str,
+        kind: str,
+        *,
+        as_of_trading_day: Any = None,
+    ) -> float | None:
+        if self._current_signal_metadata.get("liquidity_unavailable") is True:
+            return None
+        for direct in (
+            self._current_signal_metadata.get("avg_daily_volume"),
+            (self._current_signal_metadata.get("liquidity") or {}).get("avg_daily_volume")
+            if isinstance(self._current_signal_metadata.get("liquidity"), Mapping)
+            else None,
+        ):
+            if direct is not None and not isinstance(direct, bool):
+                try:
+                    val = float(direct)
+                    if math.isfinite(val) and val > 0.0:
+                        return val
+                except (TypeError, ValueError):
+                    pass
+
+        raw_cands = self._current_signal_metadata.get("candidates") or self._current_signal_metadata.get("admitted_candidates")
+        if isinstance(raw_cands, (list, tuple)):
+            for cand in raw_cands:
+                if not isinstance(cand, Mapping):
+                    continue
+                if str(cand.get("instrument_id") or "").strip() == instrument_id:
+                    c_liq = cand.get("liquidity")
+                    if isinstance(c_liq, Mapping):
+                        raw_v = c_liq.get("avg_daily_volume")
+                        if raw_v is None and kind == "stock_future":
+                            raw_v = c_liq.get("volume")
+                        if raw_v is not None and not isinstance(raw_v, bool):
+                            try:
+                                val = float(raw_v)
+                                if math.isfinite(val) and val > 0.0:
+                                    return val
+                            except (TypeError, ValueError):
+                                pass
+
+        pool_rec = self._resolve_pool_record_for_facts()
+        pool_meta = pool_rec.get("metadata") if isinstance(pool_rec.get("metadata"), Mapping) else {}
+        replay_in = (
+            self._current_signal_metadata.get("expression_replay_input")
+            if isinstance(self._current_signal_metadata.get("expression_replay_input"), Mapping)
+            else {}
+        )
+        replay_budget = replay_in.get("risk_budget") if isinstance(replay_in.get("risk_budget"), Mapping) else {}
+        for adv_map in (
+            self._current_signal_metadata.get("avg_daily_volume_by_underlying"),
+            replay_budget.get("avg_daily_volume_by_underlying"),
+            pool_rec.get("avg_daily_volume_by_underlying"),
+            pool_meta.get("avg_daily_volume_by_underlying"),
+        ):
+            if isinstance(adv_map, Mapping) and underlying in adv_map and adv_map[underlying] is not None:
+                try:
+                    val = float(adv_map[underlying])
+                    if math.isfinite(val) and val > 0.0:
+                        return val
+                except (TypeError, ValueError):
+                    pass
+
+        raw_root = (
+            self._current_signal_metadata.get("normalized_root")
+            or os.getenv("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT")
+            or ""
+        )
+        root_str = str(raw_root).strip()
+        if root_str and underlying:
+            adv_disk = read_avg_daily_volume(root_str, underlying, as_of_trading_day=as_of_trading_day)
+            if adv_disk is not None and adv_disk > 0.0:
+                return float(adv_disk)
+        return None
+
     def _compute_submission_sizing_evidence(
         self,
         *,
@@ -2337,6 +2762,9 @@ class PaperExecutionAlgorithm:
         signed_net_before: float,
         underlying_before: float,
         underlying_same_dir_before: float,
+        sector_before: float = 0.0,
+        sector_limit_mult: float | None = None,
+        sector_unavailable: bool = False,
         margin_reserved_before: float,
         active_reservations_count: int,
         current_sig_id: str | None = None,
@@ -2456,6 +2884,11 @@ class PaperExecutionAlgorithm:
         u_lev = _max_units_for_multiple(policy.max_leverage, gross_before)
         u_net = _max_units_for_multiple(policy.net_limit, 0.0, directional_net=True)
         u_single = _max_units_for_multiple(policy.max_single_name_weight, underlying_before)
+        u_sector: int | None = (
+            0
+            if sector_unavailable
+            else _max_units_for_multiple(sector_limit_mult, sector_before)
+        )
 
         u_cash_after_fees: int | None = None
         u_margin: int | None = None
@@ -2524,13 +2957,13 @@ class PaperExecutionAlgorithm:
 
         active_caps = [
             u
-            for u in (req_units, u_target_cap, u_gross, u_lev, u_net, u_single, u_cash_after_fees, u_margin)
+            for u in (req_units, u_target_cap, u_gross, u_lev, u_net, u_single, u_sector, u_cash_after_fees, u_margin)
             if u is not None
         ]
         permitted = min(active_caps) if active_caps else 0
         any_risk_or_cash_zero = any(
             u is not None and u == 0
-            for u in (u_single, u_cash_after_fees, u_margin, u_lev, u_net, u_gross)
+            for u in (u_single, u_sector, u_cash_after_fees, u_margin, u_lev, u_net, u_gross)
         )
 
         # Determine binding limit at submission
@@ -2538,6 +2971,11 @@ class PaperExecutionAlgorithm:
             binding_limit = "already_at_target"
         else:
             candidates_binding: list[tuple[int, int, str]] = []
+            if sector_unavailable and permitted == 0:
+                candidates_binding.append((0, -2, "sector_exposures_unavailable"))
+            elif u_sector is not None and permitted == u_sector and (u_sector < req_units or permitted == 0):
+                sec_prio = -1 if (u_single is None or u_sector < u_single) else 0
+                candidates_binding.append((u_sector, sec_prio, "max_sector_exposure"))
             if u_single is not None and permitted == u_single and (u_single < req_units or permitted == 0):
                 candidates_binding.append((u_single, 0, "max_single_name_weight"))
             if u_cash_after_fees is not None and permitted == u_cash_after_fees and (u_cash_after_fees < req_units or permitted == 0):
@@ -2634,6 +3072,11 @@ class PaperExecutionAlgorithm:
                 "max_leverage": u_lev,
                 "net_limit": u_net,
                 "max_single_name_weight": u_single,
+                **(
+                    {"max_sector_exposure": u_sector}
+                    if u_sector is not None
+                    else {}
+                ),
                 "available_cash_after_fees": u_cash_after_fees,
                 "initial_margin": u_margin,
             },
@@ -3564,6 +4007,11 @@ class PaperExecutionAlgorithm:
                 or "expression_decision" in self._current_signal_metadata
                 or is_close_leg
                 or (clean_sig_id and self._find_order_reservation_key(clean_sig_id) is not None)
+                or (
+                    gate_result.get("reason") == "max_sector_exposure"
+                    and permitted_units is not None
+                    and int(permitted_units) > 0
+                )
             )
         )
         hard_non_sizing_reasons = {
@@ -3574,6 +4022,12 @@ class PaperExecutionAlgorithm:
             "instrument_not_in_candidates",
             "price_stale",
             "asset_class_not_allowed",
+            "turnover_limit",
+            "turnover_unavailable",
+            "liquidity_order_pct_adv_breach",
+            "liquidity_min_adv_breach",
+            "liquidity_unavailable",
+            "sector_exposures_unavailable",
         }
         if (
             recheck_enabled
@@ -3689,6 +4143,11 @@ class PaperExecutionAlgorithm:
                 "required": gate_result["required"],
                 "available": gate_result["available"],
                 "limit": gate_result["limit"],
+                **(
+                    {"diagnostic": gate_result["diagnostic"]}
+                    if gate_result.get("diagnostic")
+                    else {}
+                ),
                 "instrument_id": resolved_inst_id,
                 "decision_id": gate_result["decision_id"],
                 "risk_decision_id": gate_result["decision_id"],
@@ -4201,6 +4660,26 @@ class PaperExecutionAlgorithm:
             source=price_source,
             authoritative=False,
         )
+        self._ledger_fill_history.append(
+            {
+                "symbol": symbol,
+                "underlying": norm_u,
+                "instrument_id": instrument_id,
+                "quantity": abs(u),
+                "multiplier": m,
+                "fill_price": p_fill,
+                "notional": abs(u) * m * p_fill,
+                "trade_date": str(
+                    self._current_signal_metadata.get("as_of_trading_day")
+                    or self._current_signal_metadata.get("trade_date")
+                    or price_as_of
+                    or _iso_now()
+                )[:10],
+                "filled_at": _iso_now(),
+            }
+        )
+        if len(self._ledger_fill_history) > 256:
+            self._ledger_fill_history = self._ledger_fill_history[-256:]
         self._record_fill()
         snap = self.assert_ledger_reconciliation()
         if self._margin_call_active and snap["equity"] >= snap["maintenance_margin_required"]:
@@ -5664,7 +6143,32 @@ class PaperExecutionAlgorithm:
                 self.Portfolio[alias_sym].Quantity = 0.0
             holding.Quantity = next_quantity
             self._cash = next_cash
-            self._record_fill()
+            prev_hist_len = len(self._ledger_fill_history)
+            self._ledger_fill_history.append(
+                {
+                    "symbol": holding_symbol,
+                    "underlying": norm_u,
+                    "instrument_id": eq_inst_id,
+                    "quantity": abs(u_eq),
+                    "multiplier": 1.0,
+                    "fill_price": eff_price,
+                    "notional": abs(u_eq) * eff_price,
+                    "trade_date": str(
+                        self._current_signal_metadata.get("as_of_trading_day")
+                        or self._current_signal_metadata.get("trade_date")
+                        or price_as_of
+                        or _iso_now()
+                    )[:10],
+                    "filled_at": _iso_now(),
+                }
+            )
+            if len(self._ledger_fill_history) > 256:
+                self._ledger_fill_history = self._ledger_fill_history[-256:]
+            try:
+                self._record_fill()
+            except Exception:
+                self._ledger_fill_history = self._ledger_fill_history[:prev_hist_len]
+                raise
             self.assert_ledger_reconciliation()
         except Exception:
             holding.Quantity = checkpoint["quantity"]
@@ -7236,6 +7740,7 @@ class PaperRuntimeService:
             capital_pool_reader=capital_pool_reader,
         )
         self._algo._after_signal_context_hook = self._maybe_process_futures_lifecycle
+        self._algo._member_virtual_books = self._member_virtual_books
         self._performance_state_restore_error: str | None = None
         try:
             self._drawdown_tracker.restore(self._algo.performance_window_state())
@@ -8475,6 +8980,8 @@ class PaperRuntimeService:
             state = {
                 "performance_telemetry": dict(self._performance_telemetry),
                 "member_virtual_books": self._member_book_snapshot(),
+                "account_facts": self._account_facts(),
+                "risk_policy_facts": self._performance_risk_policy_facts(),
             }
             digest = _state_change_digest(state)
             if digest == self._last_state_snapshot_digest:
@@ -8508,6 +9015,33 @@ class PaperRuntimeService:
             self._last_state_snapshot_digest = digest
             self._last_state_structural_digest = structural
             self._last_state_snapshot_monotonic = mono_now
+
+    def _resolve_active_risk_policy(self) -> RiskPolicy:
+        return self._algo._resolve_active_risk_policy()
+
+    def _account_facts(self) -> dict[str, Any]:
+        """Account facts (initial_cash, cash, fill_count) from the runtime performance ledger."""
+        ledger = self._algo.performance_ledger()
+        if (
+            ledger.get("state_load_error")
+            or ledger.get("state_binding_error")
+            or ledger.get("state_error")
+            or self._performance_state_restore_error
+        ):
+            return {"initial_cash": None, "cash": None, "fill_count": None}
+        initial_cash = _finite_number(ledger.get("initial_cash"))
+        cash = _finite_number(ledger.get("cash"))
+        if initial_cash is None or initial_cash <= 0:
+            initial_cash = None
+            cash = None
+        fill_count = ledger.get("fill_count")
+        if isinstance(fill_count, bool) or not isinstance(fill_count, int) or fill_count < 0:
+            fill_count = None
+        return {
+            "initial_cash": initial_cash,
+            "cash": cash,
+            "fill_count": fill_count,
+        }
 
     def _performance_risk_policy_facts(self) -> dict[str, Any]:
         """Bound-policy ids and limits in force at this valuation (measurement only).

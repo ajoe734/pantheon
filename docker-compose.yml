@@ -538,6 +538,10 @@ services:
       PANTHEON_L2_EXTRACTION_ENABLED: ${PANTHEON_L2_EXTRACTION_ENABLED:-0}
       PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP: ${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}
       PANTHEON_L2_EXTRACTION_LEDGER_PATH: /data/source-ingest/l2_extraction_ledger.sqlite
+      # One HYPOTHESIS_CARD call: client, adapter and gateway share this deadline (bounded 5-180 s).
+      # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
+      PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
+      PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
       DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
       DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
@@ -593,6 +597,8 @@ services:
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
       ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      # Card admission reads Registry drafts; off until the coordinator has seen one hosted tick of the bounded read.
+      ALPHA_REPLICATION_CARD_ADMISSION_ENABLED: ${ALPHA_REPLICATION_CARD_ADMISSION_ENABLED:-0}
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -624,6 +630,8 @@ services:
       ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN}
       RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
       RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Card gate dataset: the governed whole-market dataset read from the stored daily bars (DailyBarsReader).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
@@ -966,7 +974,7 @@ services:
 
   research-orchestrator-svc:
     profiles: ["research", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-384m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -1016,8 +1024,28 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
+      # Case-file composition (research demands + evolution executor): narrow read-only owner principals
+      # issued by scripts/issue_dev_paper_principals.py and delivered as files only. Identity is empty unless
+      # issued; actor id equals the memory credential subject. No write-capable RESEARCH_* token is used here.
+      RESEARCH_CASE_FILE_ACTOR_ID: ${RESEARCH_CASE_FILE_ACTOR_ID:-}
+      RESEARCH_CASE_FILE_ACTOR_ROLES: ${RESEARCH_CASE_FILE_ACTOR_ROLES:-}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      PANTHEON_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
       # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
       RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Template search dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
@@ -2168,6 +2196,8 @@ services:
       PERSONA_POOL_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
       PERSONA_POOL_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
       PERSONA_POOL_SOURCE_VOLUME_ROOT: /data/source-ingest
+      # Pool admission price dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
       PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT: /data/bff/persona-pool-dataset-authority
       PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
       PERSONA_POOL_SOURCE_READ_TOKEN_FILE: ${PERSONA_POOL_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
@@ -2932,6 +2962,12 @@ services:
       RECONCILER_LOOP_CONTROLLER_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_RUNTIME_MANAGER_TOKEN_FILE: ${PANTHEON_RUNTIME_MANAGER_TOKEN_FILE:-}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-}
+      PANTHEON_RUNTIME_MANAGER_ACTOR_ID: ${PANTHEON_RUNTIME_MANAGER_ACTOR_ID:-paper-fleet-reconciler}
+      PANTHEON_RUNTIME_MANAGER_ROLES: ${PANTHEON_RUNTIME_MANAGER_ROLES:-operator}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       RECONCILER_POLL_INTERVAL_SECONDS: ${RECONCILER_POLL_INTERVAL_SECONDS:-15}
@@ -2996,6 +3032,12 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_RUNTIME_MANAGER_TOKEN_FILE: ${PANTHEON_RUNTIME_MANAGER_TOKEN_FILE:-}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-}
+      PANTHEON_RUNTIME_MANAGER_ACTOR_ID: ${PANTHEON_RUNTIME_MANAGER_ACTOR_ID:-paper-signal-producer}
+      PANTHEON_RUNTIME_MANAGER_ROLES: ${PANTHEON_RUNTIME_MANAGER_ROLES:-operator}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       # Expression-layer inputs: pool policy and budget from the capital
       # service, cash and positions from the telemetry runtime summary.

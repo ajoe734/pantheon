@@ -2,9 +2,9 @@
   "schema_version": 1,
   "template_name_prefix": "pantheon-stg-template",
   "name": "pantheon-stg-template-20261024",
-  "description": "Pantheon ephemeral staging instance template (non-Spot e2-standard-2, bare Debian 12 bookworm, IAP SSH + HTTPS only).",
+  "description": "Pantheon ephemeral staging instance template (non-Spot e2-standard-8, bare Debian 12 bookworm, IAP SSH + HTTPS only).",
   "properties": {
-    "machineType": "e2-standard-2",
+    "machineType": "e2-standard-8",
     "scheduling": {
       "automaticRestart": true,
       "onHostMaintenance": "MIGRATE",

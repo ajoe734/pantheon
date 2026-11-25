@@ -249,6 +249,8 @@ from .heartbeat_retention import (
     INFRA_HEALTH_RETENTION_DAYS_ENV,
     RAW_RETENTION_DAYS_ENV,
     RETENTION_ENABLED_ENV,
+    STATE_SNAPSHOT_RETENTION_DAYS_ENV,
+    TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
 )
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
@@ -919,13 +921,15 @@ def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
 
 
 def _build_retention_job() -> HeartbeatRetentionJob:
-    """Build the periodic raw heartbeat and infrastructure_health retention job for canonical Postgres."""
+    """Build the periodic raw heartbeat, infrastructure_health, state_snapshot, and 14d telemetry_events retention job for canonical Postgres."""
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     enabled = _env_bool(RETENTION_ENABLED_ENV, default=True) and bool(db_dsn)
     return HeartbeatRetentionJob(
         db_dsn,
         retention_days=os.getenv(RAW_RETENTION_DAYS_ENV) or None,
         infra_health_retention_days=os.getenv(INFRA_HEALTH_RETENTION_DAYS_ENV) or None,
+        state_snapshot_retention_days=os.getenv(STATE_SNAPSHOT_RETENTION_DAYS_ENV) or None,
+        telemetry_events_retention_days=os.getenv(TELEMETRY_EVENTS_RETENTION_DAYS_ENV) or None,
         enabled=enabled,
     )
 
@@ -1447,12 +1451,12 @@ def replay_dlq():
       tag — if provided, replay only entries with this tag.
             Default: replay only write-failure entries (safe).
 
-    Returns { replayed: <count> }.
+    Returns { replayed: <count>, suppressed: <count>, refused: <count> }.
     """
     tag = request.args.get("tag") or None
     svc = _get_service()
     try:
-        count = _run_async(
+        result = _run_async(
             svc.replay_dlq(
                 tag_filter=tag,
                 tenant_id=request_tenant_id(),
@@ -1462,7 +1466,11 @@ def replay_dlq():
         log.exception("Error during DLQ replay")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
-    return jsonify({"replayed": count}), 200
+    return jsonify({
+        "replayed": int(result),
+        "suppressed": int(getattr(result, "suppressed", 0)),
+        "refused": int(getattr(result, "refused", 0)),
+    }), 200
 
 
 @app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])

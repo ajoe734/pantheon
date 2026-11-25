@@ -2349,6 +2349,20 @@ def _clone_json_value(value: Any) -> Any:
     return value
 
 
+def _project_recorded_success_rate(*candidates: Any) -> Optional[float]:
+    for raw_value in candidates:
+        if raw_value is None or raw_value == "" or isinstance(raw_value, bool):
+            continue
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if numeric == 0.0:
+            continue
+        return numeric
+    return None
+
+
 # --- _project_persona_dto ---
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -2422,17 +2436,24 @@ def _project_persona_dto(
             or metadata.get("capital_pool_id")
         )
     capital_pool_id = None if capital_mode == "paper" else metadata.get("capital_pool_id")
+    projected_state = _persona_record_projected_state(raw)
     dto: Dict[str, Any] = {
         "id": persona_id,
         "name": raw.get("name") or persona_id,
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "tenantId": metadata.get("tenant_id"),
         "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
-        "state": _persona_record_projected_state(raw),
+        "state": projected_state,
+        "listScope": _fleet_cls.classify_persona_list_scope(raw, projected_state=projected_state),
         "risk": _normalize_risk_level(metadata.get("risk_level")),
         "archetype": archetype,
         "routedStrategies": int(routed_strategies if routed_strategies is not None else 0),
-        "successRate": float(metadata.get("success_rate") or 0.0),
+        "successRate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
         "ownerLifecycleState": _persona_owner_lifecycle_state(raw),
@@ -2511,7 +2532,7 @@ def _project_persona_dto(
         dto["metrics"] = _clone_json_value(performance)
     if overlay:
         for k, v in overlay.items():
-            if v is not None:
+            if v is not None or k == "successRate":
                 dto[k] = v
     return dto
 
@@ -2945,13 +2966,14 @@ def _get_persona_directory_snapshot(
     *,
     snapshot_at: Optional[str] = None,
     reuse_request_read: bool = False,
+    read_store: Optional[Any] = None,
 ) -> PersonaDirectorySnapshot:
     snapshot_timestamp = snapshot_at or utc_now()
     clean_tenant = str(tenant_id or "").strip()
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records(clean_tenant, reuse_request_read=reuse_request_read):
+    for raw in _list_persona_records(clean_tenant, read_store=read_store, reuse_request_read=reuse_request_read):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
@@ -2961,7 +2983,7 @@ def _get_persona_directory_snapshot(
         if pid:
             records_by_id[pid] = raw
 
-    active_store = _get_active_read_store()
+    active_store = _get_active_read_store(explicit=read_store)
     try:
         if (
             reuse_request_read
@@ -6639,7 +6661,13 @@ def _persona_create_response(
         persona,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
-            "successRate": float(payload.get("successRate") or 0.0),
+            "successRate": _project_recorded_success_rate(
+                payload.get("successRate")
+                if "successRate" in payload
+                else payload.get("success_rate"),
+                metadata.get("success_rate"),
+                metadata.get("successRate"),
+            ),
             "capitalMode": "paper",
             "paperLedgerId": metadata["paper_ledger_id"],
             "paperLedger": metadata["paper_ledger"],
@@ -8982,7 +9010,12 @@ def _project_persona_league_row(
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
         "routed_strategy_count": int(routed or 0),
-        "success_rate": float(metadata.get("success_rate") or 0.0),
+        "success_rate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "mandate": raw.get("mandate") or "",
         "strategy_family": raw.get("strategy_family") or "",
         "capability_summary": capabilities,
@@ -13720,66 +13753,10 @@ def _management_prune_camel_aliases(value: Any) -> Any:
 
 # --- _management_evidence_public_item ---
 def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
-    display_label = item.get("display_label") or ref_id
-    if item.get("redacted"):
-        required_capability = item.get("required_capability")
-        return {
-            "id": ref_id,
-            "ref_id": ref_id,
-            "display_label": display_label,
-            "kind": item.get("kind"),
-            "required_capability": required_capability,
-            "reason": item.get("reason"),
-            "redacted": True,
-        }
+    """One mapping for list, detail and persona surfaces (single owner: management_read_models)."""
+    from ..management_read_models.service import _management_evidence_public_item as _one
 
-    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
-    linked_summary = (
-        item.get("linked_object_summary")
-        if isinstance(item.get("linked_object_summary"), dict)
-        else {}
-    )
-    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
-    credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
-    source_type = source_document.get("source_type") or item.get("source_type") or item.get("sourceType")
-    source_ref = source_document.get("source_ref") or item.get("source_ref") or item.get("sourceRef")
-    captured_at = source_document.get("captured_at") or item.get("captured_at") or item.get("capturedAt")
-    link_type = item.get("link_type")
-    route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
-    title = source_document.get("title") or item.get("title") or display_label
-    public_item = {
-        "id": ref_id,
-        "ref_id": ref_id,
-        "title": title,
-        "display_label": display_label,
-        "source_type": source_type,
-        "source_ref": source_ref,
-        "captured_at": captured_at,
-        "link_type": link_type,
-        "credibility": json.loads(json.dumps(credibility)),
-        "linked_object_summary": json.loads(json.dumps(linked_summary)),
-        "resolved_link": json.loads(json.dumps(resolved_link)),
-        "route_href": route_href,
-        "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
-        "redacted": False,
-    }
-    artifact_manifest = item.get("artifact_manifest")
-    if isinstance(artifact_manifest, dict):
-        cloned_manifest = _management_json_clone(artifact_manifest)
-        public_item["artifact_manifest"] = cloned_manifest
-    criteria = item.get("criteria")
-    if isinstance(criteria, dict):
-        public_item["criteria"] = _management_json_clone(criteria)
-    operator_remediation = item.get("operator_remediation")
-    if isinstance(operator_remediation, dict):
-        public_item["operator_remediation"] = _management_json_clone(operator_remediation)
-    release_gate_summary = item.get("release_gate_summary")
-    if isinstance(release_gate_summary, dict):
-        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
-    if "overall" in item:
-        public_item["overall"] = item.get("overall")
-    return public_item
+    return _one(item)
 
 
 # --- _request_dry_run_requested ---
@@ -14479,7 +14456,6 @@ def _persona_provisioning_metadata(
         "provisioning_step": record.current_step,
         "initial_mode": "paper",
         "execution_mode": "paper",
-        "success_rate": float(payload.get("successRate") or 0.0),
         "capital_mode": "paper",
         "paper_ledger_id": paper_ledger_id,
         "paper_ledger": {
@@ -14534,6 +14510,10 @@ def _persona_provisioning_metadata(
             f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
+    if "successRate" in payload and payload.get("successRate") is not None:
+        metadata["success_rate"] = float(payload["successRate"])
+    elif "success_rate" in payload and payload.get("success_rate") is not None:
+        metadata["success_rate"] = float(payload["success_rate"])
     readback_started_at = record.references.get("provisioning_readback_started_at")
     if isinstance(readback_started_at, str) and readback_started_at.strip():
         metadata["provisioning_readback_started_at"] = readback_started_at.strip()
@@ -18137,9 +18117,11 @@ class PersonaService:
             or (raw or {}).get("state")
             or "draft"
         )
-        update_metadata: Dict[str, Any] = {
-            "success_rate": float(base.get("successRate") or 0.0),
-        }
+        update_metadata: Dict[str, Any] = {}
+        if "successRate" in payload and payload.get("successRate") is not None:
+            update_metadata["success_rate"] = float(payload["successRate"])
+        elif "success_rate" in payload and payload.get("success_rate") is not None:
+            update_metadata["success_rate"] = float(payload["success_rate"])
         update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
             {
                 "id": persona_id,
@@ -18191,7 +18173,18 @@ class PersonaService:
             persona_record,
             overlay={
                 "routedStrategies": int(base.get("routedStrategies") or routed),
-                "successRate": float(base.get("successRate") or 0.0),
+                "successRate": _project_recorded_success_rate(
+                    payload.get("successRate")
+                    if "successRate" in payload
+                    else (
+                        payload.get("success_rate")
+                        if "success_rate" in payload
+                        else base.get("successRate")
+                    ),
+                    (persona_record.get("metadata") or {}).get("success_rate")
+                    if isinstance(persona_record, Mapping)
+                    else None,
+                ),
                 "tenantId": caller_tenant,
             },
             routed_strategies=routed,

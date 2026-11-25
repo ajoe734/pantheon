@@ -235,6 +235,13 @@ def test_persona_main_health_and_wrapped_controller_surface_owner_ports(
     assert pointer_file.is_file()
     assert json.loads(pointer_file.read_text(encoding="utf-8"))["dataset_version"] == "dv-002"
 
+    # A governed market dataset is read from the daily bars: it is never published as a DatasetVersion pointer.
+    pointer_file.unlink()
+    (dataset_dir / "dataset-version-dv-002.json").unlink()
+    market = {"dataset_id": "gmd-2026-11-24-x", "records": [{"instrument": "2330.TW"}], "market_boundary": {"included": 1}}
+    assert persona_main._sync_canonical_dataset_pointer(lambda p, c: market)({}, {}) == market
+    assert not pointer_file.exists()
+
     stop_event = asyncio.Event()
 
     class _FakeLoopControllerWriter:

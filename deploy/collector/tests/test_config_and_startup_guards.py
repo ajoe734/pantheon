@@ -250,6 +250,8 @@ def test_taifex_vix_refuses_unsafe_policy_before_fetch(tmp_path, test_hasher, fi
 
 
 def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits() -> None:
+    from collector_stack.pollers import RssHubNewsPoller
+
     config = load_collector_config(DEFAULT_POLICY_PATH, env={})
     news = config.get_source("collector-news-rss")
     routes = news.raw_config["routes"]
@@ -259,10 +261,20 @@ def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits
         "/cna/asc",
         "/udn/news/breakingnews/6",
         "/udn/news/breakingnews/11",
-        "/chinatimes/money",
-        "/cw/master/8",
     ]
-    assert len(routes) <= news.max_requests_per_run == 10
+    assert RssHubNewsPoller.VERIFIED_ROUTES == frozenset(routes)
+    assert RssHubNewsPoller.VERIFIED_ROUTES.isdisjoint(
+        {
+            "/cna/aall",
+            "/udn/news/breakingnews/2",
+            "/ltn/news/business",
+            "/chinatimes/realtimenews/260410",
+            "/cw/master",
+            "/chinatimes/money",
+            "/cw/master/8",
+        }
+    )
+    assert len(routes) == 4 <= news.max_requests_per_run == 10
     assert news.cadence == "hourly"
     assert news.cadence_seconds == 3600
     assert news.min_interval_seconds == 1.0
@@ -280,8 +292,20 @@ def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits
     assert "證券" in served["/cna/asc"]
     assert "財經" in served["/udn/news/breakingnews/6"]
     assert "股市" in served["/udn/news/breakingnews/11"]
-    assert "財經" in served["/chinatimes/money"]
-    assert "財經" in served["/cw/master/8"]
+    disabled = news.raw_config["disabled_routes"]
+    assert set(disabled) == {
+        "/chinatimes/money",
+        "/cw/master/8",
+        "/ltn/news/business",
+        "/chinatimes/realtimenews/260410",
+        "/cw/master",
+    }
+    assert set(disabled).isdisjoint(routes)
+    assert "503" in disabled["/chinatimes/money"]
+    assert "503" in disabled["/cw/master/8"]
+    assert "404" in disabled["/ltn/news/business"]
+    assert "404" in disabled["/chinatimes/realtimenews/260410"]
+    assert "404" in disabled["/cw/master"]
     dropped = news.raw_config["dropped_routes"]
     assert set(dropped) == {
         "/cna/aall",
@@ -292,4 +316,34 @@ def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits
     }
     compose_text = (DEFAULT_POLICY_PATH.parent / "docker-compose.yml").read_text(encoding="utf-8")
     assert news.raw_config["rsshub_image"] in compose_text
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_match"),
+    [
+        (lambda s: s.pop("routes", None), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=None), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=[]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=[""]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=["/"]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=["/cna/aie", "/cna/aie"]), "must not contain duplicates"),
+        (
+            lambda s: s.update(routes=[f"/cna/r{i}" for i in range(11)]),
+            "exceeds max_requests_per_run=10",
+        ),
+        (lambda s: s.update(routes=["/yahoo/finance"]), "DISABLED_BY_BUILD"),
+        (lambda s: s.update(routes=["/ptt/Stock"]), "cannot use /ptt route"),
+        (
+            lambda s: s.update(routes=["/cna/aie", "/chinatimes/money"]),
+            "active routes cannot include disabled_routes",
+        ),
+    ],
+)
+def test_news_rss_policy_without_routes_or_with_invalid_routes_fails_validation(
+    mutator, expected_match: str
+) -> None:
+    raw = _raw_policy()
+    mutator(raw["sources"]["collector-news-rss"])
+    with pytest.raises(CollectorConfigError, match=expected_match):
+        validate_collector_config(raw, env={})
 

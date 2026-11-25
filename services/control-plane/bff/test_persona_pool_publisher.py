@@ -151,6 +151,11 @@ def test_empty_pool_end_to_end_remove_publish_demand_admit_publish(world, monkey
     for entry in (member_entry, candidate_entry, weak_entry):
         _install_entry(world, entry)
     client = _client(world, monkeypatch, tmp_path)
+    # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (row shape of MarketBoundary)
+    from types import SimpleNamespace
+    world.pool._market_boundary = lambda: SimpleNamespace(
+        snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00",
+        symbols=("2330.TW", "2317.TW", "0050.TW"))
     ref, cand, weak = member_entry["registry_id"], candidate_entry["registry_id"], weak_entry["registry_id"]
 
     # 1. one live member, published
@@ -190,13 +195,15 @@ def test_empty_pool_end_to_end_remove_publish_demand_admit_publish(world, monkey
     assert refused["decision"]["status"] == "refused", refused["decision"]
     assert "candidate_oos_sharpe_below_persona_trial_threshold" in "; ".join(refused["decision"]["reasons"])
     assert refused["decision"]["backtest"]["pool_idle"] is True
-    # 6. a gate-passing candidate inside the recorded universe is admitted as trial and published
+    # 6. a gate-passing candidate inside the governed boundary is admitted as trial and published
     admitted = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(expected_version=3, execution_context="paper",
         action="admit", candidate={"artifact_ref": cand, "checksum": candidate_entry["checksum"]}, **common), actor_id="op-1")
     assert admitted["decision"]["status"] == "applied", admitted["decision"]["reasons"]
     trial = [m for m in admitted["members"] if m["stage"] != "removed"]
     assert len(trial) == 1 and trial[0]["artifact_ref"] == cand and trial[0]["stage"] == "trial"
-    assert admitted["decision"]["approved_universe"] == ["2330"]
+    rule = admitted["decision"]["universe_rule"]  # replaces the empty-pool stopgap's recorded symbol list
+    assert rule["previous_member_symbols"] == ["2330"] and rule["boundary_symbol_count"] == 3
+    assert rule["boundary_snapshot_id"] == "gmd-2026-11-24-0123456789abcdef" and "approved_universe" not in admitted["decision"]
     published = client.post(PATH, json={}, headers=H)
     assert published.status_code == 200 and published.json()["data"]["pool_version"] == 4, published.text
     assert _live(world)[0]["artifact_id"] == published.json()["data"]["envelope_artifact_id"]
@@ -208,3 +215,115 @@ def _book(checksum):
             "basis": "underlying_exposure_fraction_net_taiwan_costs_equal_notional",
             "dates": [(date(2026, 10, 1) + timedelta(days=i)).isoformat() for i in range(30)],
             "returns": [.002, -.0005] * 15}
+
+
+def _screened_candidate(tenant):
+    """A gate-minted entry (recorded 2330+2317 run) whose embedded artifact is a factor_rule screen.
+
+    Validated universe 2330.TW + 2317.TW: wider than the live member's 2330, inside the governed boundary.
+    """
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.registry.test_candidate_pool import screen_artifact
+    entry = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant=tenant)
+    artifact = screen_artifact()
+    artifact.update(artifact_id="artifact-screen", strategy_id="strategy-screen")
+    artifact["parameters"]["data_source"] = entry["metadata"]["strategy_artifact"]["parameters"]["data_source"]
+    # Hold the least-traded name of the governed market each day (clears the unchanged admission bar on the recorded bars).
+    artifact["strategy_logic"]["screen"]["steps"][1]["side"] = "bottom"
+    entry["metadata"]["strategy_artifact"] = artifact
+    entry["checksum"] = strategy_artifact_checksum(artifact)
+    entry["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = entry["checksum"]
+    entry.update(registry_id=artifact["artifact_id"], version=artifact["version"])
+    return entry
+
+
+def _recorded_whole_market_dataset():
+    """The recorded TWSE 2330/2317 admission bars plus the candidate_pool_market.v1 view of the same official rows."""
+    import json
+    from services.research.tests.test_pool_admission import FIXTURE, recorded_dataset
+    dataset = recorded_dataset()
+    traded = {}
+    for item in json.loads(FIXTURE.read_text())["responses"]:
+        for row in item["response"]["data"]:
+            year, month, day = map(int, row[0].split("/"))
+            traded[(item["symbol"], f"{year + 1911:04}-{month:02}-{day:02}")] = float(row[2].replace(",", ""))
+    symbols = {}
+    for record in dataset["records"]:
+        code = record["instrument"].split(".")[0]
+        symbols.setdefault(f"{code}.TW", {"dataset": "tw_price_daily", "bars": [], "features": {}})["bars"].append({
+            "event_time": record["date"] + "T13:30:00+08:00", "available_time": record["date"] + "T18:00:00+08:00",
+            **{k: record[k] for k in ("open", "high", "low", "close", "volume")},
+            "traded_value": traded[(code, record["date"])], "suspended": False})
+    sessions = sorted({r["date"] for r in dataset["records"]})
+    dataset["candidate_pool_market"] = {"schema_version": "candidate_pool_market.v1", "scope": "all_governed_tw",
+        "source_refs": dataset["source_dataset_refs"], "includes_delisted": False, "includes_suspended": False,
+        "symbols": symbols, "trading_sessions": sessions, "calendar_coverage_through": sessions[-1]}
+    return dataset
+
+
+def test_screened_member_admitted_by_governed_boundary_is_enveloped_and_published(world, monkeypatch, tmp_path):
+    """AC5 (POOL-ADMISSION-GOVERNED-UNIVERSE-20261125): real PersonaStrategyPoolStore.decide paper admit of a
+    screened member whose validated universe is wider than the pool's, then the real publish route."""
+    import json
+    from types import SimpleNamespace
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import (
+        H, PATH, PERSONA, TENANT, _client, _envelope_members, _genuine_trial_entry, _live)
+    from services.control_plane.persona.persona_strategy_pool import PoolDecisionRequest, PoolMember
+    from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+    import pool_policy
+
+    member_entry, screened = _genuine_trial_entry(), _screened_candidate(TENANT)
+    for entry in (member_entry, screened):
+        _install_entry(world, entry)
+    client = _client(world, monkeypatch, tmp_path)
+    boundary_only = tuple(f"{9000 + i}.TW" for i in range(40))  # governed symbols no member or candidate trades
+    world.pool._market_boundary = lambda: SimpleNamespace(snapshot_id="gmd-2026-11-24-screen",
+        as_of="2026-11-25T00:00:00+00:00", symbols=("2330.TW", "2317.TW") + boundary_only)
+    ref, cand = member_entry["registry_id"], screened["registry_id"]
+    world.append([PoolMember(artifact_ref=ref, checksum=member_entry["checksum"], stage="active", risk_weight=.5,
+        baseline_ref=member_entry["approval_decision_id"], joined_at="2026-10-01T00:00:00Z")], 0)
+    assert client.post(PATH, json={}, headers=H).status_code == 200
+    calls_before, runtime_before = list(world.runtime.calls), _live(world)[0]
+    positions, ledger = dict(world.runtime.positions), {k: list(v) for k, v in world.runtime.ledger.items()}
+
+    window = pool_policy.load_policy().health_window_days
+    days = [f"2026-10-{d:02d}" for d in range(1, 29)][-window:]
+    observations = idle_pool_observations(days, source_ref="test:paper-runtime-risk-owner", gross_limit=100, drawdown_limit=.1)
+    admitted = world.pool.decide(PERSONA, TENANT, PoolDecisionRequest(expected_version=1, execution_context="paper",
+        action="admit", candidate={"artifact_ref": cand, "checksum": screened["checksum"]},
+        books={ref: _book(member_entry["checksum"]), cand: _book(screened["checksum"])},
+        dataset=_recorded_whole_market_dataset(), observations=observations), actor_id="op-1")
+    decision = admitted["decision"]
+    assert decision["status"] == "applied", decision["reasons"]
+    # Admitted through the boundary rule: the old members-only rule would have refused 2317.
+    rule = decision["universe_rule"]
+    assert rule["candidate_symbols"] == ["2317", "2330"] and rule["previous_member_symbols"] == ["2330"]
+    assert rule["boundary_snapshot_id"] == "gmd-2026-11-24-screen" and rule["boundary_symbol_count"] == 42
+    assert "approved_universe" not in decision and decision["backtest"]["admitted"] is True
+    assert {m["artifact_ref"]: m["stage"] for m in admitted["members"]} == {ref: "active", cand: "trial"}
+
+    published = client.post(PATH, json={}, headers=H)
+    assert published.status_code == 200, published.text
+    data = published.json()["data"]
+    assert data["status"] == "published" and data["pool_version"] == 2
+    envelope = world.transport.objects[
+        ("registry", f"/api/registry/strategy-artifacts/{data['envelope_artifact_id']}")]["entry"]["metadata"]["strategy_artifact"]
+    pins = _envelope_members(world, data)
+    assert set(pins) == {ref, cand} and pins[cand]["checksum"] == screened["checksum"]
+    # The screen rules are pinned as the member's own artifact; no pick list and no boundary copy.
+    assert pins[cand]["artifact"]["strategy_logic"]["screen"] == screened["metadata"]["strategy_artifact"]["strategy_logic"]["screen"]
+    # Envelope symbols are the non-screened member's own (2330); the screen enumerates no picks (2317 absent).
+    assert envelope["parameters"]["symbols"] == member_entry["metadata"]["strategy_artifact"]["parameters"]["symbols"]
+    def strings(node):
+        if isinstance(node, dict):
+            return {x for k, v in node.items() for x in strings(k) | strings(v)}
+        return {x for v in node for x in strings(v)} if isinstance(node, list) else {str(node)}
+    copied = {s for s in boundary_only for s in (s, s.split(".")[0])} & (strings(envelope) | strings(admitted))
+    assert not copied and len(json.dumps(rule)) < 1000  # the boundary list is neither in the envelope nor the version
+    # Paper only: the existing in-stage replace of the same runtime; no new deploy, order, capital or live path.
+    live = _live(world)
+    assert world.runtime.calls == calls_before + ["replace"] and len(live) == 1
+    assert live[0]["runtime_id"] == runtime_before["runtime_id"] and live[0]["deployment_mode"] == "paper"
+    assert live[0]["capital_pool_id"] == runtime_before["capital_pool_id"]
+    assert world.runtime.positions == positions and world.runtime.ledger == ledger

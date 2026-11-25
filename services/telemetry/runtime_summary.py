@@ -1204,6 +1204,7 @@ class RuntimeSummaryProjectionStore:
                     "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "ledger_fill_count", "positions_status", "positions_unavailable_reason",
                     "ledger_cash", "ledger_cash_fill_count", "ledger_cash_as_of",
+                    _pool_risk_snapshot.ACCOUNT_KEY, _pool_risk_snapshot.POLICY_KEY,
                     "_cost_by_symbol", "_cost_applied_fill_count", "_cost_pending_fills", "_cost_withheld",
                     "_currency_by_symbol", "_broker_by_symbol", "_instrument_by_key",
                     "_decision_by_key", "_pending_decision_by_instrument",
@@ -1811,6 +1812,19 @@ class RuntimeSummaryProjectionStore:
                 safe_books = _json_safe_object({"books": member_books})
                 if safe_books is not None:
                     current["member_virtual_books"] = safe_books["books"]
+            account_facts = metadata.get("account_facts")
+            if event_type in _STATE_CARRIER_EVENT_TYPES and isinstance(account_facts, dict):
+                af_fill_count = account_facts.get("fill_count")
+                if (
+                    isinstance(af_fill_count, int)
+                    and not isinstance(af_fill_count, bool)
+                    and af_fill_count >= 0
+                ):
+                    current["ledger_fill_count"] = max(
+                        int(current.get("ledger_fill_count") or 0),
+                        af_fill_count,
+                    )
+                    rebuild_positions_needed = True
             perf = metadata.get("performance_telemetry")
             if event_type in _STATE_CARRIER_EVENT_TYPES and isinstance(perf, dict):
                 # The heartbeat reports the same authoritative ledger fill_count

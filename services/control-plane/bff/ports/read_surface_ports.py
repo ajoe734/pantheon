@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant, shared_persona_directory_list
 from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
@@ -147,7 +148,11 @@ class ReadSurfacePorts:
         paper_fleet_transport: Optional[Any] = None,
         reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
         latest_ranking_snapshot_reader: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
+        persona_pool_versions_reader: Optional[Callable[[str, str], Any]] = None,
+        registry_entry_reader: Optional[Callable[[str, str], Any]] = None,
     ) -> None:
+        self._persona_pool_versions_reader = persona_pool_versions_reader
+        self._registry_entry_reader = registry_entry_reader
         self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
         self.persona_capital_runtime = persona_capital_runtime or create_persona_capital_runtime_port()
@@ -443,6 +448,22 @@ class ReadSurfacePorts:
 
     def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
         return self.persona_capital_runtime.get_evolution_qualification(**kwargs)
+
+    def read_persona_pool_versions(self, persona_id: str, tenant_id: str) -> List[Dict[str, Any]]:
+        """Owner strategy pool versions of one persona (read-only, one owner read)."""
+        if self._persona_pool_versions_reader is None:
+            raise ActionUnavailableError("Persona pool versions reader is unconfigured", downstream_status=503)
+        payload = self._persona_pool_versions_reader(persona_id, tenant_id)
+        versions = payload.get("versions") if isinstance(payload, dict) else payload
+        if not isinstance(versions, list) or any(not isinstance(v, dict) for v in versions):
+            raise ActionUnavailableError("Persona pool versions payload is malformed", downstream_status=503)
+        return copy.deepcopy(versions)
+
+    def read_registry_entry(self, registry_id: str, tenant_id: str) -> Any:
+        """Registry owner entry of one artifact; ``{}`` when the owner has none."""
+        if self._registry_entry_reader is None:
+            raise ActionUnavailableError("Registry entry reader is unconfigured", downstream_status=503)
+        return self._registry_entry_reader(registry_id, tenant_id)
 
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_program_runs(program_id)
@@ -1668,6 +1689,8 @@ def create_read_surface_ports(
         create_owner_domain_ports,
         decidable_evolution_records,
         latest_ranking_snapshot,
+        read_persona_pool_versions,
+        read_registry_entry,
         pending_approval_records,
         telemetry_summaries,
     )
@@ -1721,6 +1744,8 @@ def create_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        persona_pool_versions_reader=read_persona_pool_versions,
+        registry_entry_reader=read_registry_entry,
         latest_ranking_snapshot_reader=lambda surface="quarterly": latest_ranking_snapshot(
             ranking_store, surface=surface
         ),
@@ -1790,4 +1815,6 @@ def create_in_memory_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        persona_pool_versions_reader=generic_kwargs.get("persona_pool_versions_reader"),
+        registry_entry_reader=generic_kwargs.get("registry_entry_reader"),
     )

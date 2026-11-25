@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from services.control_plane.bff.research import discovery_projection
 from services.evolution.program_qualification import (
@@ -865,11 +865,22 @@ def evolution_journal_auto_proposal_counts(
     decisions: Sequence[Dict[str, Any]],
     *,
     postmortem_draft_count: int,
+    subject_class_fn: Optional[Callable[[Dict[str, Any]], str]] = None,
 ) -> Dict[str, int]:
-    """Compute auto_proposal_counts per record so a decision and its mutation_review count once."""
-    incident_followup = 0
-    incident_severity = 0
-    other_proposed = 0
+    """Count each proposed decision once; the parts always add up to ``total``.
+
+    A decision and its derived mutation review are one record.  Proposals about
+    infrastructure are their own part; the rest are split by recorded evidence
+    class.  Postmortem drafts are reports, not proposals: they stay a separate
+    count and are never part of ``total``.
+    """
+    counts = {
+        "threshold": 0,
+        "incident_followup": 0,
+        "incident_severity": 0,
+        "other": 0,
+        "infrastructure": 0,
+    }
     seen_ids: Set[str] = set()
     for dec in decisions:
         if not isinstance(dec, dict):
@@ -880,24 +891,22 @@ def evolution_journal_auto_proposal_counts(
         seen_ids.add(dec_id)
         if evolution_journal_status(dec) != "proposed":
             continue
+        if subject_class_fn is not None and subject_class_fn(dec) == "infrastructure":
+            counts["infrastructure"] += 1
+            continue
         ev_class = evolution_journal_decision_evidence_class(dec)
         if ev_class == "threshold_signal":
-            continue
-        if ev_class == "incident_followup":
-            incident_followup += 1
+            counts["threshold"] += 1
+        elif ev_class == "incident_followup":
+            counts["incident_followup"] += 1
         elif ev_class == "incident_severity":
-            incident_severity += 1
+            counts["incident_severity"] += 1
         else:
-            other_proposed += 1
-    draft_count = max(0, int(postmortem_draft_count))
-    # Postmortem drafts are reports, not proposals: they are returned as a
-    # separate labelled count and never added to the proposal total.
-    total = incident_followup + incident_severity + other_proposed
+            counts["other"] += 1
     return {
-        "incident_followup": incident_followup,
-        "incident_severity": incident_severity,
-        "postmortem_draft": draft_count,
-        "total": total,
+        **counts,
+        "postmortem_draft": max(0, int(postmortem_draft_count)),
+        "total": sum(counts.values()),
     }
 
 
@@ -996,11 +1005,18 @@ def evolution_journal_read_postmortems(
 def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
     by_type = _management_count_by(items, "entry_type")
     by_status = _management_count_by(items, "status")
-    # Decision rows that carry a mutation_review projection (one row per decision).
+    # A decision row only counts as a review when it has its own review record
+    # (an approval decision); the projection nested in every decision row is the
+    # same decision and is not a second quantity.
     review_items = [
         item for item in items
         if item.get("entry_type") == "evolution_decision"
         and isinstance(item.get("mutation_review"), dict)
+        and str(
+            (item.get("decision") or {}).get("approval_decision_id")
+            or item["mutation_review"].get("approval_decision_id")
+            or ""
+        ).strip()
     ]
     by_risk_level = _management_count_by(items, "risk_level")
     latest_at = max(
@@ -1038,6 +1054,280 @@ def evolution_journal_summary(items: List[Dict[str, Any]], returned_count: int) 
         "byRiskLevel": by_risk_level,
         "by_risk_level": by_risk_level,
     }
+
+
+_INFRA_BINDING_PREFIX = "infra-subject-"
+_INFRA_PLAN_PREFIX = "infra-plan-"
+_INFRA_AUTHORITY_PREFIX = "infra-authority-"
+_INFRA_CLUSTER_PREFIX = "infrastructure:"
+_TEST_DATA_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+EVOLUTION_JOURNAL_SUBJECT_CLASSES = ("strategy", "infrastructure", "deployment", "test")
+EVOLUTION_JOURNAL_HIDDEN_SUBJECT_CLASSES = ("infrastructure", "test")
+EVOLUTION_JOURNAL_MAX_POOL_PERSONAS = 20
+EVOLUTION_JOURNAL_MAX_MEMBER_BASELINE_READS = 50
+
+
+def _meta_dict(record: Any) -> Dict[str, Any]:
+    meta = record.get("metadata") if isinstance(record, dict) else None
+    return meta if isinstance(meta, dict) else {}
+
+
+def _incident_subject_class(incident: Dict[str, Any]) -> Optional[str]:
+    """Class of a recorded incident from its own owner fields, never from its name."""
+    cluster = str(incident.get("incident_cluster_id") or "")
+    binding = str(incident.get("binding_id") or incident.get("runtime_binding_id") or "")
+    plan = str(incident.get("deployment_plan_id") or "")
+    authority = str(incident.get("persona_capital_binding_id") or "")
+    if (
+        cluster.startswith(_INFRA_CLUSTER_PREFIX)
+        or ":monitor-agent:agent-finding-" in cluster
+        or binding.startswith(_INFRA_BINDING_PREFIX)
+        or plan.startswith(_INFRA_PLAN_PREFIX)
+        or authority.startswith(_INFRA_AUTHORITY_PREFIX)
+    ):
+        return "infrastructure"
+    if cluster.startswith("deployment:"):
+        return "deployment"
+    return None
+
+
+EVOLUTION_JOURNAL_UNCLASSIFIED = "unclassified"
+EVOLUTION_JOURNAL_MAX_INCIDENT_READS = 100
+
+
+def evolution_journal_incident_ref(decision: Dict[str, Any]) -> str:
+    meta = _meta_dict(decision)
+    return str(
+        decision.get("linked_incident_id") or decision.get("incident_ref") or meta.get("incident_id") or ""
+    ).strip()
+
+
+def _decision_own_subject_class(
+    decision: Dict[str, Any], personas_by_id: Optional[Dict[str, Dict[str, Any]]]
+) -> Optional[str]:
+    """Class decided from the decision's own recorded fields and its target persona; None if undecided."""
+    from services.control_plane.bff.personas import fleet_classification
+
+    meta = _meta_dict(decision)
+    binding = str(meta.get("runtime_binding_id") or decision.get("runtime_binding_id") or "")
+    if binding.startswith(_INFRA_BINDING_PREFIX):
+        return "infrastructure"
+    persona_id = ""
+    if str(decision.get("target_type") or "").strip().lower() == "persona":
+        persona_id = str(decision.get("target_id") or "").strip()
+    persona_id = persona_id or str(decision.get("persona_id") or meta.get("persona_id") or "").strip()
+    persona = (personas_by_id or {}).get(persona_id) if persona_id else None
+    if isinstance(persona, dict):
+        scope, _source = fleet_classification.classify_persona_data_scope(persona)
+        if scope == fleet_classification.DATA_SCOPE_TEST:
+            return "test"
+    if str(meta.get("data_scope") or decision.get("data_scope") or "").strip().lower() in _TEST_DATA_SCOPES:
+        return "test"
+    return None
+
+
+def evolution_journal_incident_refs_to_read(
+    decisions: Sequence[Dict[str, Any]],
+    *,
+    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    cap: int = EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
+) -> Tuple[List[str], int]:
+    """Linked incident ids still needed after the decision's own fields; (ids within cap, beyond-cap count)."""
+    seen: List[str] = []
+    for dec in decisions:
+        if not isinstance(dec, dict) or _decision_own_subject_class(dec, personas_by_id):
+            continue
+        ref = evolution_journal_incident_ref(dec)
+        if ref and ref not in seen:
+            seen.append(ref)
+    return seen[:cap], max(0, len(seen) - cap)
+
+
+def evolution_journal_subject_class(
+    decision: Dict[str, Any],
+    *,
+    incidents_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    unresolved_incident_ids: Optional[Collection[str]] = None,
+) -> str:
+    """strategy | infrastructure | deployment | test | unclassified from recorded owner fields.
+
+    The decision's own runtime_binding_id and target persona data_scope decide
+    first; only then the linked incident record read by id.  A linked incident
+    that could not be read (or was beyond the per request cap) is
+    ``unclassified``, never a confirmed class.  Names and id patterns are never
+    consulted.
+    """
+    own = _decision_own_subject_class(decision, personas_by_id)
+    if own:
+        return own
+    incident_ref = evolution_journal_incident_ref(decision)
+    incident = (incidents_by_id or {}).get(incident_ref) if incident_ref else None
+    if isinstance(incident, dict):
+        return _incident_subject_class(incident) or "strategy"
+    if incident_ref and (unresolved_incident_ids is None or incident_ref in unresolved_incident_ids):
+        return EVOLUTION_JOURNAL_UNCLASSIFIED
+    return "strategy"
+
+
+def _pool_member_view(member: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "artifact_ref": member.get("artifact_ref"),
+        "stage": member.get("stage"),
+        "risk_weight": member.get("risk_weight"),
+    }
+
+
+def _pool_members(version: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(version, dict):
+        return []
+    return [_pool_member_view(m) for m in version.get("members") or [] if isinstance(m, dict)]
+
+
+def persona_record_tenant_id(record: Dict[str, Any]) -> str:
+    meta = _meta_dict(record)
+    for value in (record.get("tenant_id"), record.get("tenantId"), meta.get("tenant_id"), meta.get("tenantId")):
+        if str(value or "").strip():
+            return str(value).strip()
+    return ""
+
+
+def persona_display_name(record: Dict[str, Any]) -> str:
+    return str(
+        _management_first_non_empty(record.get("display_name"), record.get("name"), record.get("persona_id"), record.get("id"))
+        or ""
+    )
+
+
+def evolution_journal_pool_version_items(
+    persona: Dict[str, Any], versions: Sequence[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """One journal entry per owner strategy pool version, before/after from consecutive versions.
+
+    A refused version is labelled refused and its after-members equal its
+    before-members; it is never worded as an applied change.  Version 1 is the
+    initial pool.
+    """
+    persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    name = persona_display_name(persona)
+    ordered = sorted(
+        (v for v in versions if isinstance(v, dict) and type(v.get("pool_version")) is int),
+        key=lambda v: v["pool_version"],
+    )
+    items: List[Dict[str, Any]] = []
+    previous: Optional[Dict[str, Any]] = None
+    for version in ordered:
+        number = version["pool_version"]
+        decision = version.get("decision") if isinstance(version.get("decision"), dict) else {}
+        initial = number == 1
+        action = "initial" if initial else str(decision.get("action") or "member_change")
+        raw_status = str(decision.get("status") or "").strip().lower()
+        decision_status = "applied" if initial and not raw_status else (raw_status or "applied")
+        refused = decision_status == "refused"
+        reasons = [str(r) for r in (decision.get("reasons") or []) if str(r).strip()]
+        if not reasons and version.get("change_reason"):
+            reasons = [str(version["change_reason"])]
+        before = _pool_members(previous)
+        after = _pool_members(version)
+        changed = before != after
+        if initial:
+            summary = f"Initial strategy pool created with {len(after)} member(s)."
+        elif refused:
+            summary = f"Refused {action}; the pool membership was not changed." + (
+                f" Reason: {'; '.join(reasons)}" if reasons else ""
+            )
+        elif changed:
+            summary = f"Applied {action}; pool membership changed."
+        else:
+            summary = f"Applied {action}; pool membership did not change."
+        source_id = f"{persona_id}:v{number}"
+        item = evolution_journal_base_item(
+            entry_type="pool_version",
+            source_id=source_id,
+            title=f"{name} pool v{number}: {action} {decision_status}",
+            summary=summary,
+            status=decision_status,
+            created_at=version.get("created_at"),
+            updated_at=version.get("created_at"),
+            occurred_at=version.get("created_at"),
+            action_type=action,
+            target={"type": "persona", "id": persona_id, "version": number},
+            route=f"/management/evolution-journal?persona={persona_id}",
+        )
+        item.update(
+            {
+                "subject_class": "strategy",
+                "persona_id": persona_id,
+                "persona_name": name,
+                "pool_version": number,
+                "action": action,
+                "decision_status": decision_status,
+                "refused": refused,
+                "membership_changed": bool(changed and not refused),
+                "reasons": reasons,
+                "members_before": before,
+                "members_after": after,
+                "record": {"persona_id": persona_id, "pool_version": number, "digest": version.get("digest")},
+            }
+        )
+        items.append(item)
+        previous = version
+    return items
+
+
+def evolution_journal_member_baselines(
+    personas: Sequence[Dict[str, Any]],
+    versions_by_persona: Dict[str, Optional[List[Dict[str, Any]]]],
+    *,
+    tenant_id: str,
+    registry_entry_reader: Callable[[str, str], Any],
+    max_reads: int = EVOLUTION_JOURNAL_MAX_MEMBER_BASELINE_READS,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Baseline state of every live pool member via the approved-baseline resolver.
+
+    Reads one Registry owner entry per live member (bounded by ``max_reads``).
+    Nothing is defaulted or written; the resolver's reason is passed through.
+    """
+    from services.evolution.approved_baselines import resolve_member_baseline
+
+    rows: List[Dict[str, Any]] = []
+    reads = 0
+    skipped = 0
+    for persona in personas:
+        persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+        versions = versions_by_persona.get(persona_id)
+        if not versions:
+            continue
+        current = max((v for v in versions if type(v.get("pool_version")) is int), key=lambda v: v["pool_version"], default=None)
+        for member in (current or {}).get("members") or []:
+            if not isinstance(member, dict) or member.get("stage") == "removed":
+                continue
+            artifact_ref = str(member.get("artifact_ref") or "")
+            checksum = str(member.get("checksum") or "")
+            row = {
+                "persona_id": persona_id,
+                "persona_name": persona_display_name(persona),
+                "artifact_ref": artifact_ref,
+                "stage": member.get("stage"),
+                "risk_weight": member.get("risk_weight"),
+                "pool_version": (current or {}).get("pool_version"),
+            }
+            if reads >= max_reads:
+                skipped += 1
+                rows.append({**row, "status": "unavailable", "reason": "member_read_limit_reached"})
+                continue
+            reads += 1
+            try:
+                entry = registry_entry_reader(artifact_ref, tenant_id)
+            except Exception as exc:  # noqa: BLE001 - an unreadable entry is reported, never defaulted
+                rows.append({**row, "status": "unavailable", "reason": f"registry_entry_unreadable:{type(exc).__name__}"})
+                continue
+            resolved = resolve_member_baseline(
+                tenant_id=tenant_id, persona_id=persona_id, artifact_ref=artifact_ref,
+                checksum=checksum, entry=entry if isinstance(entry, dict) else None,
+            )
+            rows.append({**row, "status": resolved.get("status"), "reason": resolved.get("reason")})
+    return rows, {"registry_reads": reads, "max_registry_reads": max_reads, "skipped_over_limit": skipped}
 
 
 def evolution_journal_surfaces(

@@ -152,7 +152,8 @@ def test_unconfigured_feature_connector_fails_closed(source_case):
 
 def test_price_only_rule_is_unchanged(source_case):
     env, _, _ = source_case
-    dataset = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, {"artifact_ref": "candidate"})
+    candidate = {"artifact_ref": "candidate", "strategy_artifact": {"parameters": {"symbols": ["2330.TW"]}}}
+    dataset = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, candidate)
     assert "features_by_instrument" not in dataset
 
 
@@ -248,5 +249,6 @@ def test_feature_datasets_never_land_where_the_canonical_pointer_looks(source_ca
     governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, _candidate_with_revenue_rule())
     root = Path(env["PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"])
     top = [p for p in root.glob("dataset-version-*.json")]
-    assert top and all("tw_monthly_revenue" not in p.read_text() for p in top)
+    # the price dataset no longer materialises a DatasetVersion here; nothing at the top may be a feature dataset
+    assert all("tw_monthly_revenue" not in p.read_text() for p in top)
     assert list((root / "feature-datasets" / "tw_monthly_revenue").glob("dataset-version-*.json"))

@@ -24,6 +24,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 - `hindsight` 10g: peak 5784 MiB; 1.5x is 8676 MiB, 10g gives 1.77x (the incident floor was 8g).
 - `search-svc` 13g: kept above the earlier 11.5 GiB peak so a leak restarts search-svc only (1.5x of the current 4578 MiB peak would be lower, 13g is not reduced).
 - `loop-run-projector-scheduler`: keeps its pre-existing 16g limit (`LIFECYCLE_PROJECTOR_MEMORY_LIMIT`).
+- `research-orchestrator-svc` 384m (steady peak 99): raised from 256m by DISCOVERY-GOVERNED-MARKET-DATASET-20261125 because template search builds the governed market boundary in this service (measured on a 1,950 symbol x 483 day store: about +50 MiB pyarrow import, +75 MiB boundary, +45 MiB for a 60 symbol dataset, 237 MiB peak for the process alone); 99 MiB steady + that exceeds 256m.
 - `persona` 512m (peak 230) and `postmortems` 512m (peak 280) are not exceptions: they follow the 1.5x rule and were raised from 256m and 384m.
 
 ## Table
@@ -58,7 +59,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 | training-session-preview-worker | 32 | 256 | 256m | `DEV_MEM_LIMIT_TRAINING_SESSION_PREVIEW_WORKER` | 8.0x |
 | policy-learning-svc | 85 | 256 | 256m | `DEV_MEM_LIMIT_POLICY_LEARNING_SVC` | 3.0x |
 | policy-learning-shadow-eval-scheduler | 49 | 256 | 256m | `DEV_MEM_LIMIT_POLICY_LEARNING_SHADOW_EVAL_SCHEDULER` | 5.2x |
-| research-orchestrator-svc | 99 | 256 | 256m | `DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC` | 2.6x |
+| research-orchestrator-svc | 99 | 384 | 384m | `DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC` | 3.9x |
 | runtime-manager | 85 | 256 | 256m | `DEV_MEM_LIMIT_RUNTIME_MANAGER` | 3.0x |
 | governance | 87 | 256 | 256m | `DEV_MEM_LIMIT_GOVERNANCE` | 2.9x |
 | agora-interaction-worker | 80 | 256 | 256m | `DEV_MEM_LIMIT_AGORA_INTERACTION_WORKER` | 3.2x |
@@ -91,7 +92,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 ## Overcommit vs the 32 GiB host
 
-- Sum of all limits: 84224 MiB (82.3 GiB) = 2.62x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
+- Sum of all limits: 84352 MiB (82.4 GiB) = 2.63x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
 - Sum of recorded peaks: 24740 MiB (24.2 GiB), of which search-svc is 4578 MiB.
 - Limits that mostly bound reclaimable page cache rather than process memory: postgres (8g; anon 22 MiB), paper-fleet-reconciler (file 382 of 640 MiB), hindsight and search-svc (large cached data). A page cache ceiling is reclaimed under pressure and does not OOM-kill, but a ceiling that is too low causes IO thrash, which is what happened to postgres.
 - Limits that bound process memory: openclaw-gateway-adapter (3g, six concurrent node pairs), operator-bff, source-ingest, telemetry, loop-run-projector-scheduler (16g).

@@ -1,0 +1,47 @@
+{
+  "task_id": "BFF-PM12-HOLDINGS-SERVING-BINDING-20261125",
+  "class": "RC6",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Harden PM12 holdings serving-binding selection in services/control-plane/bff/pm12/service.py and add focused unit tests in services/control-plane/bff/pm12/test_holdings_serving_binding.py wired into .github/workflows/branch-ci.yml and verified by scripts/ci_test_inventory.py.",
+  "changes": [
+    {
+      "path": "services/control-plane/bff/pm12/service.py",
+      "description": "Select the active serving RuntimeBinding per runtime_id in PM12 holdings projection; treat terminal statuses and retirement timestamps (retired_at/ended_at/terminated_at/deleted_at) and telemetry rollover _retired_binding_ids/retired_binding_id as terminal/retired when ranking bindings; prefer active non-terminal PersonaCapitalBindings in plan.binding_ids; deduplicate runtime_id telemetry lookups and pool telemetry rollups; preserve residual positions on genuinely terminal-only runtimes while omitting empty terminal runtimes."
+    },
+    {
+      "path": "services/control-plane/bff/pm12/test_holdings_serving_binding.py",
+      "description": "Focused unit tests covering active+retired binding on the same runtime (1 row across both orders, retirement timestamps, and plan binding fallback), multi-persona distinct runtimes (1 row per runtime, deduplicated pool telemetry rollup), and retired-only runtime residual position visibility vs empty terminal omission."
+    },
+    {
+      "path": ".github/workflows/branch-ci.yml",
+      "description": "Wire services/control-plane/bff/pm12/test_holdings_serving_binding.py into the service-suites-heavy control_plane pytest step (collected as whole by scripts/ci_test_inventory.py check with 0 exemptions added to docs/operations/ci-test-inventory.json)."
+    }
+  ],
+  "runtime_budget": {
+    "projection_mode": "read_only_in_memory",
+    "recurring_jobs_added": 0,
+    "emitters_added": 0,
+    "persistent_writers_added": 0
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/pm12/test_holdings_serving_binding.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ci_test_inventory.py",
+      ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check"
+    ],
+    "results": {
+      "test_holdings_serving_binding": "4 passed",
+      "test_bff_pm12_portfolio_book_contract": "74 passed",
+      "test_bff_test_architecture": "39 passed",
+      "test_ci_test_inventory": "15 passed",
+      "ci_test_inventory_check": "test inventory ok"
+    }
+  },
+  "delivery_state": "source_only_pending_pr_review_and_merge",
+  "residual_findings": [
+    "docs/operations/problem-register.md RC6 row 530 also corresponds to earlier source commit 39962e6cb (BFF-PORTFOLIO-SERVING-BINDING-20261121); hosted acceptance for live post-switch fills remains tracked under HOLDINGS-COST-HOSTED-ACCEPTANCE-20261106 and MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114."
+  ]
+}

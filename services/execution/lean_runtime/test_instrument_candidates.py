@@ -1180,5 +1180,107 @@ def test_candidates_respect_single_name_net_limit_cash_reserve_and_reservations(
     assert cash_raw_fut_res["max_units_by_risk"] == 180
 
 
+def test_industry_classification_and_20d_adv_readers_with_bounded_cache_and_sector_cap(
+    rows: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    ic.clear_market_fact_cache()
+    ind_dir = tmp_path / "normalized" / "tw_industry_classification" / "date=2026-11-06"
+    ind_dir.mkdir(parents=True)
+    with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+        for sym, code_int, code_raw in (("2330", 24, "24"), ("2303", 24, "24"), ("2317", 25, "25")):
+            handle.write(
+                json.dumps(
+                    {
+                        "source_id": "tw_official_industry_classification",
+                        "symbol": sym,
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol": sym,
+                                "industry_code": code_int,
+                                "industry_code_raw": code_raw,
+                                "market": "TWSE",
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    price_dir = tmp_path / "normalized" / "tw_price_daily" / "date=2026-11-06"
+    price_dir.mkdir(parents=True)
+    with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+        for day_idx in range(1, 21):
+            d_str = f"2026-10-{day_idx:02d}"
+            handle.write(
+                json.dumps(
+                    {
+                        "source_id": "tw_price_daily",
+                        "symbol": "2330",
+                        "event_time": f"{d_str}T06:00:00Z",
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol": "2330",
+                                "trade_date": d_str,
+                                "close": 1000.0,
+                                "volume": 100_000.0 + day_idx * 1000.0,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    sectors = ic.read_industry_classifications(tmp_path, as_of_trading_day="2026-11-09")
+    assert sectors == {"2330": "24", "2303": "24", "2317": "25"}
+    assert ic.read_industry_classifications(tmp_path, underlying="2330.TW", as_of_trading_day="2026-11-09") == {
+        "2330": "24"
+    }
+
+    adv_2330 = ic.read_avg_daily_volume(tmp_path, "2330.TW", as_of_trading_day="2026-11-09", window_days=20)
+    expected_adv = sum(100_000.0 + i * 1000.0 for i in range(1, 21)) / 20.0
+    assert adv_2330 == pytest.approx(expected_adv)
+    assert ic.read_avg_daily_volume(tmp_path, "9999", as_of_trading_day="2026-11-09") is None
+    assert ic.market_fact_cache_stats()["entries"] >= 2
+
+    # Sector cap limits max_units_by_risk across holdings in the same Taiwan industry sector ("24").
+    book = {
+        "positions": [
+            {
+                "instrument_id": "eq:2303",
+                "underlying": "2303",
+                "direction": "LONG",
+                "units": 200,
+                "multiplier": 1,
+                "mark_price": 100.0,
+                "notional": 20_000.0,
+            }
+        ],
+        "gross_notional": 20_000.0,
+    }
+    budget = {
+        "equity": 100_000.0,
+        "available_cash": 80_000.0,
+        "gross_limit": 200_000.0,
+        "gross_used": 20_000.0,
+        "max_sector_exposure": {"24": 0.30},
+        "sector_by_underlying": sectors,
+        "liquidity_constraints": {"max_order_pct_adv": 0.05},
+    }
+    [cash_2330, *_] = ic.build_candidates(
+        "2330",
+        "2026-11-09",
+        book,
+        budget,
+        cash_price=1000.0,
+        cash_price_date="2026-11-06",
+        normalized_root=tmp_path,
+        rows_reader=lambda: rows,
+    )
+    # Sector 24 cap is 30,000 TWD; 2303 already uses 20,000 TWD -> 10,000 TWD remaining -> 10 shares @ 1000 TWD
+    assert cash_2330["max_units_by_risk"] == 10
+    assert cash_2330["liquidity"] == {"avg_daily_volume": pytest.approx(expected_adv)}
+
+
+
 
 
