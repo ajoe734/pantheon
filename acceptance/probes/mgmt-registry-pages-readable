@@ -8,6 +8,10 @@ memory and is never printed) and then uses GET only. Each check names the task t
   strategy_state_totals      REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125
       GET /bff/strategies (no filter, state=draft, state=retired): page_info.total equals
       meta.visible_state_counts for the same filter (non-retired sum, draft, retired).
+  strategy_default_view_counts  BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125
+      GET /bff/strategies?exclude_state=draft&hide_retired_personas=true: meta.visible_state_counts is a
+      count map (not null), equals the unfiltered view's map, and page_info.total equals non-draft
+      non-retired visible rows minus meta.hidden_retired_persona_count.
   strategy_metrics_vs_pulse  BFF-STRATEGY-METRICS-RUNTIME-20261125
       GET /bff/strategies?exclude_state=draft and GET /bff/management/trading-pulse: a strategy with a
       running admitted binding shows the same pnl / totalTrades as the one Trading Pulse row of that
@@ -15,7 +19,7 @@ memory and is never printed) and then uses GET only. Each check names the task t
       pnl and no metricsReason.
   persona_artifact_scope     BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125
       GET /bff/personas: no row has successRate 0 (no recorded value or the filled-in 0.0 is null); every
-      row carries listScope. GET /bff/artifacts: every row carries list_scope.
+      row carries listScope. GET /bff/artifacts (page_size 100, all pages): every row carries list_scope.
   lineage_node_names         REGISTRY-LINEAGE-NODE-NAMES-20261125
       GET /bff/lineage?root_id=<running strategy>: every node has a display_name and name_missing false.
   evidence_detail_paging     BFF-EVIDENCE-DETAIL-AND-PAGING-20261125
@@ -53,9 +57,10 @@ STRATEGY_TOTAL_QUERIES = (
     ("state=retired", "retired"),
 )
 STRATEGY_ROWS = "/bff/strategies?exclude_state=draft&page_size=200"
+DEFAULT_VIEW = "/bff/strategies?exclude_state=draft&hide_retired_personas=true&page_size=1"
 PULSE = "/bff/management/trading-pulse"
 PERSONAS = "/bff/personas?page_size=200"
-ARTIFACTS = "/bff/artifacts?page_size=200"
+ARTIFACTS = "/bff/artifacts?page_size=100"  # the route enforces page_size 1..100
 EVIDENCE = "/bff/management/evidence"
 CITED = "/bff/management/evidence?scope=cited&page_size=100"
 POSTMORTEMS = "/api/v1/postmortems?page_size=200"
@@ -66,6 +71,7 @@ CITED_SOURCE_KEYS = ("meeting_proposals", "meeting_positions", "governance_appro
 
 OWNERS = {
     "strategy_state_totals": "REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125",
+    "strategy_default_view_counts": "BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125",
     "strategy_metrics_vs_pulse": "BFF-STRATEGY-METRICS-RUNTIME-20261125",
     "persona_artifact_scope": "BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125",
     "lineage_node_names": "REGISTRY-LINEAGE-NODE-NAMES-20261125",
@@ -101,8 +107,11 @@ class Context:
             self.cache[path] = self.fetch(path)
         return self.cache[path]
 
-    def fail(self, code, route, **values):
-        self.failures.append({"code": code, "route": route, "values": values})
+    def fail(self, code, route, owner=None, **values):
+        failure = {"code": code, "route": route, "values": values}
+        if owner:  # a check may name a more specific owner than its own default
+            failure["owner"] = owner
+        self.failures.append(failure)
 
 
 # ---------------------------------------------------------------- helpers
@@ -192,6 +201,29 @@ def check_strategy_state_totals(ctx):
                      visible_state_counts=counts, expected=expected)
 
 
+def check_strategy_default_view_counts(ctx):
+    """The default view (exclude_state=draft&hide_retired_personas=true) answers visible_state_counts."""
+    owner = OWNERS["strategy_default_view_counts"]
+    body = ctx.get(DEFAULT_VIEW)
+    counts = _meta(body).get("visible_state_counts")
+    total = _int(_page_info(body).get("total"))
+    if not isinstance(counts, dict) or not all(_int(v) is not None for v in counts.values()):
+        ctx.fail("default_view_visible_state_counts_missing", DEFAULT_VIEW, owner=owner,
+                 total=total, visible_state_counts=counts)
+        return
+    unfiltered = _meta(ctx.get("/bff/strategies?page_size=1")).get("visible_state_counts")
+    if isinstance(unfiltered, dict) and unfiltered != counts:
+        ctx.fail("default_view_counts_differ_from_unfiltered_view", DEFAULT_VIEW, owner=owner,
+                 default_view=counts, unfiltered=unfiltered)
+    hidden_retired = _int(_meta(body).get("hidden_retired_persona_count"))
+    if hidden_retired is not None:
+        expected = sum(v for k, v in counts.items() if k not in ("draft", "retired")) - hidden_retired
+        if total != expected:
+            ctx.fail("default_view_total_differs_from_visible_state_counts", DEFAULT_VIEW, owner=owner,
+                     total=total, expected=expected, visible_state_counts=counts,
+                     hidden_retired_persona_count=hidden_retired)
+
+
 def _pulse_by_strategy(ctx, fresh=False):
     body = ctx.get(PULSE, fresh=fresh)
     data = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else {}
@@ -258,7 +290,7 @@ def check_persona_artifact_scope(ctx):
     unscoped = [str(p.get("id") or p.get("persona_id")) for p in personas if p.get("listScope") not in PERSONA_SCOPES]
     if unscoped:
         ctx.fail("persona_list_scope_missing", PERSONAS, persona_ids=unscoped[:5], count=len(unscoped))
-    artifacts = _rows(ctx.get(ARTIFACTS))
+    artifacts = _all_pages(ctx, ARTIFACTS)
     ctx.info["artifact_rows"] = len(artifacts)
     unscoped = [str(a.get("id")) for a in artifacts if a.get("list_scope") not in ARTIFACT_SCOPES]
     if unscoped:
@@ -373,6 +405,7 @@ def check_postmortem_infra_hidden(ctx):
 
 CHECKS = (
     ("strategy_state_totals", check_strategy_state_totals),
+    ("strategy_default_view_counts", check_strategy_default_view_counts),
     ("strategy_metrics_vs_pulse", check_strategy_metrics_vs_pulse),
     ("persona_artifact_scope", check_persona_artifact_scope),
     ("lineage_node_names", check_lineage_node_names),
@@ -425,7 +458,7 @@ def _print_report(report):
             print(f"DENIED {result['check']} owner={result['owner']} route={result['info']['denied']['route']} "
                   f"http_{result['info']['denied']['status']}")
         for failure in result["failures"]:
-            print(f"FAILED {result['check']} owner={result['owner']} code={failure['code']} "
+            print(f"FAILED {result['check']} owner={failure.get('owner') or result['owner']} code={failure['code']} "
                   f"route={failure['route']} values={json.dumps(failure['values'], sort_keys=True, default=str)}")
         if "state_draft_seconds" in result["info"]:
             print(f"INFO state=draft read took {result['info']['state_draft_seconds']}s (information only)")

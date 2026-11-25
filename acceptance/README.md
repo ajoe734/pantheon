@@ -245,14 +245,14 @@ persona-ee7112a829d38b9135ac. Accepted only after the operator acceptance task r
 ## mgmt-registry-pages-readable probe (`acceptance/probes/mgmt-registry-pages-readable`)
 
 Task: REGISTRY-PAGES-ACCEPTANCE-PROBE-20261125 (RC6). Read-only (GET only), same viewer login as the other probes; exit
-77 naming the missing variable, 1 failed, 0 passed. Seven checks, each naming the task that owns it:
+77 naming the missing variable, 1 failed, 0 passed. Eight checks, each naming the task that owns it:
 `strategy_state_totals` (REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125: `GET /bff/strategies` with no filter, `state=draft`
 and `state=retired` has `page_info.total` equal to `meta.visible_state_counts` for that filter, and the counts are not
-null); `strategy_metrics_vs_pulse` (BFF-STRATEGY-METRICS-RUNTIME-20261125: a strategy with a running admitted binding
+null); `strategy_default_view_counts` (BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125: the default view `exclude_state=draft&hide_retired_personas=true` answers non-null `meta.visible_state_counts`, equal to the unfiltered view's, with `page_info.total` equal to the visible non-draft non-retired rows minus `hidden_retired_persona_count`); `strategy_metrics_vs_pulse` (BFF-STRATEGY-METRICS-RUNTIME-20261125: a strategy with a running admitted binding
 shows the same `pnl` / `totalTrades` as its one `GET /bff/management/trading-pulse` runtime row after one re-read of
 both, and `metricsResolution: fresh` never comes with a null `pnl` and no `metricsReason`); `persona_artifact_scope`
 (BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125: no `GET /bff/personas` row has `successRate` 0, every row has `listScope`, every
-`GET /bff/artifacts` row has `list_scope`); `lineage_node_names` (REGISTRY-LINEAGE-NODE-NAMES-20261125: every node of
+`GET /bff/artifacts?page_size=100` row (all pages) has `list_scope`); `lineage_node_names` (REGISTRY-LINEAGE-NODE-NAMES-20261125: every node of
 `GET /bff/lineage?root_id=<running strategy>` has a `display_name`, at most 5 roots); `evidence_detail_paging`
 (BFF-EVIDENCE-DETAIL-AND-PAGING-20261125: `GET /bff/management/evidence/{ref_id}` is one flat object, and the page at
 offset total-1 is not empty while `meta.surfaces.evidence_refs` is ok); `cited_sources_visible`

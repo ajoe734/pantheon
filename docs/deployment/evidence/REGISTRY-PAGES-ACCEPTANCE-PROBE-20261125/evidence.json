@@ -33,5 +33,17 @@
     "Strategy rows do not expose the runtime binding id, so the metric comparison joins list rows to Trading Pulse by strategy_id and skips (does not fail) a strategy that has more than one pulse row; hosted multi-binding strategies are therefore not compared.",
     "Strategy default pages are read with exclude_state=draft (at most 10 pages of 200) for metrics and live-strategy discovery; state=draft is only counted with page_size=1 so the draft read time stays the single owner call that the task wants printed.",
     "BFF-EVO-JOURNAL-POOL-VERSIONS-20261125 is a declared prerequisite but its page already has acceptance/probes/mgmt-evolution-pages-readable; it is not duplicated here."
-  ]
+  ],
+  "reopen_20261125": {
+    "pr": "7870 head 122c4331b70a9afb692c94c7e438ac78a94e5bba",
+    "defect_1_artifacts_page_size": "ARTIFACTS was /bff/artifacts?page_size=200 read as one page; research/routes/artifacts.py enforces Query(default=20, ge=1, le=100), so hosted BFF b3f93d448 answered HTTP 422 and persona_artifact_scope failed read_failed http_422. Now page_size=100 and _all_pages follows next_page_token (test_artifacts_follow_next_page_token_and_fail_on_a_later_page).",
+    "fixture_bounds": "The fixture server answers HTTP 422 for out-of-range queries using the real bounds: artifacts page_size 1..100, strategies 1..200, personas 1..200, evidence 1..100 (list and cited), postmortems 1..200, lineage depth 1..20 (test_fixture_server_enforces_real_route_bounds, test_every_probe_request_is_inside_the_real_route_bounds, test_artifacts_page_size_above_route_bound_would_fail_read).",
+    "defect_2_default_view": "New check strategy_default_view_counts reads /bff/strategies?exclude_state=draft&hide_retired_personas=true&page_size=1: visible_state_counts null -> default_view_visible_state_counts_missing; differs from the unfiltered view -> default_view_counts_differ_from_unfiltered_view; total != non-draft non-retired visible counts minus hidden_retired_persona_count -> default_view_total_differs_from_visible_state_counts (hosted shape 14-11=3 passes). Failures print owner=BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125 (per-failure owner override; the check default owner is REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125).",
+    "justified_changed_assertions": [
+      "test_unreadable_route_fails_that_check_only: expected route string page_size=200 -> page_size=100, because the probe's artifacts route changed to the real bound; same assertion otherwise (read_failed, http_404)."
+    ],
+    "tests_run": [
+      ".venv-pantheon/bin/python3 -m pytest -q acceptance/ scripts/test_dev_acceptance_stage.py -> 310 passed"
+    ]
+  }
 }

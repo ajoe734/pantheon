@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
@@ -53,6 +54,32 @@ EVIDENCE_TOTAL = 43409
 STATE_COUNTS = {"draft": 7421, "review": 0, "approved": 141, "paper_running": 0, "canary_running": 0,
                 "live_running": 0, "deployed": 0, "paused": 0, "retired": 12}
 VISIBLE = {**STATE_COUNTS, "draft": 4205}
+
+
+DEFAULT_VIEW_TOTAL = 141  # approved 141 + review 0 + ... , hidden_retired_persona_count 0
+
+# Query bounds the real route handlers enforce (FastAPI Query(ge=, le=)); out of range answers HTTP 422.
+BOUNDS = {
+    "/bff/artifacts": {"page_size": (1, 100)},          # research/routes/artifacts.py
+    "/bff/strategies": {"page_size": (1, 200)},         # strategies/routes/collection.py
+    "/bff/personas": {"page_size": (1, 200)},           # personas/routes/collection.py
+    "/bff/management/evidence": {"page_size": (1, 100)},  # management_read_models/router.py
+    "/api/v1/postmortems": {"page_size": (1, 200)},     # postmortems/router.py
+    "/bff/lineage": {"depth": (1, 20)},                 # console_gap/lineage.py
+}
+
+
+def out_of_bounds(path):
+    """The (name, value) of the first query parameter the real route would reject with 422, else None."""
+    parsed = urllib.parse.urlparse(path)
+    for name, (low, high) in BOUNDS.get(parsed.path, {}).items():
+        for value in urllib.parse.parse_qs(parsed.query).get(name, []):
+            try:
+                if not low <= int(value) <= high:
+                    return name, value
+            except ValueError:
+                return name, value
+    return None
 
 
 def strategy_page(total, visible=VISIBLE, items=()):
@@ -171,6 +198,7 @@ def passing_world():
     lineage = {f"/bff/lineage?root_id={sid}&depth=3": lineage_body() for sid in (LIVE_STRATEGY, SECOND_STRATEGY, NO_FILL_STRATEGY)}
     return {
         "/bff/strategies?page_size=1": strategy_page(sum(v for k, v in VISIBLE.items() if k != "retired")),
+        probe.DEFAULT_VIEW: strategy_page(DEFAULT_VIEW_TOTAL),
         "/bff/strategies?state=draft&page_size=1": strategy_page(VISIBLE["draft"]),
         "/bff/strategies?state=retired&page_size=1": strategy_page(VISIBLE["retired"]),
         probe.STRATEGY_ROWS: strategy_page(len(strategies), items=strategies),
@@ -221,6 +249,9 @@ def server(monkeypatch):
             state["seen"].append(("GET", self.path))
             if self.headers.get("Authorization") != "Bearer " + TOKEN:
                 return self._send(401, {"error": "unauthorized"})
+            bad = out_of_bounds(self.path)
+            if bad:
+                return self._send(422, {"detail": [{"loc": ["query", bad[0]], "type": "value_error"}]})
             answer = state["routes"].get(self.path)
             if answer is None:
                 return self._send(404, {"error": "not_in_fixture", "path": self.path})
@@ -301,6 +332,24 @@ def _break_visible_counts_null(routes):
     routes["/bff/strategies?page_size=1"]["meta"]["visible_state_counts"] = None
 
 
+def _break_default_view_null(routes):  # hosted b3f93d448: default view answered visible_state_counts null
+    routes[probe.DEFAULT_VIEW]["meta"]["visible_state_counts"] = None
+
+
+def _break_default_view_differs(routes):
+    routes[probe.DEFAULT_VIEW]["meta"]["visible_state_counts"] = {**VISIBLE, "draft": 7421}  # hidden drafts counted
+
+
+def _break_default_view_total(routes):  # hosted shape: 14 approved, 11 hidden for retired personas, total 3
+    body = strategy_page(3, visible={**VISIBLE, "approved": 14})
+    body["meta"]["hidden_retired_persona_count"] = 5
+    routes[probe.DEFAULT_VIEW] = body
+    routes["/bff/strategies?page_size=1"] = strategy_page(
+        sum(v for k, v in {**VISIBLE, "approved": 14}.items() if k != "retired"), visible={**VISIBLE, "approved": 14})
+    routes["/bff/strategies?state=draft&page_size=1"] = strategy_page(VISIBLE["draft"], visible={**VISIBLE, "approved": 14})
+    routes["/bff/strategies?state=retired&page_size=1"] = strategy_page(VISIBLE["retired"], visible={**VISIBLE, "approved": 14})
+
+
 def _break_metric_vs_pulse(routes):
     routes[probe.PULSE]["data"]["runtime_rows"][1]["telemetry_summary"]["metrics"]["pnl"] = -150.0
 
@@ -362,6 +411,9 @@ def _break_hidden_count(routes):
 FAILING = [
     ("strategy_state_totals", _break_state_total, "state_total_differs_from_visible_state_counts", "/bff/strategies?state=draft"),
     ("strategy_state_totals", _break_visible_counts_null, "visible_state_counts_missing", "/bff/strategies?page_size=1"),
+    ("strategy_default_view_counts", _break_default_view_null, "default_view_visible_state_counts_missing", "hide_retired_personas=true"),
+    ("strategy_default_view_counts", _break_default_view_differs, "default_view_counts_differ_from_unfiltered_view", "hide_retired_personas=true"),
+    ("strategy_default_view_counts", _break_default_view_total, "default_view_total_differs_from_visible_state_counts", "hide_retired_personas=true"),
     ("strategy_metrics_vs_pulse", _break_metric_vs_pulse, "list_metric_differs_from_trading_pulse", "trading-pulse"),
     ("strategy_metrics_vs_pulse", _break_fresh_null, "fresh_metrics_with_null_values_without_reason", probe.STRATEGY_ROWS),
     ("persona_artifact_scope", _break_persona_zero, "persona_success_rate_zero_without_record", probe.PERSONAS),
@@ -387,6 +439,73 @@ def test_each_check_fails_on_its_defect_and_names_route_and_owner(server, capsys
     lines = [line for line in out.splitlines() if line.startswith("FAILED ")]
     assert lines and all(f"FAILED {check_name} owner={probe.OWNERS[check_name]} code={code}" in line for line in lines), lines
     assert route_part in lines[0] and "values=" in lines[0]
+
+
+def test_default_view_null_counts_names_default_view_owner(server, capsys):
+    _break_default_view_null(server["routes"])
+    code, out, report = run(capsys)
+    assert code == 1 and report["failed"] == ["strategy_default_view_counts"]
+    assert report["checks"][0]["owner"] == "REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125"
+    assert "owner=BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125 code=default_view_visible_state_counts_missing" in out
+
+
+def test_default_view_hosted_shape_passes_when_total_is_visible_minus_hidden_retired(server, capsys):
+    """Hosted shape: 14 approved visible-state rows, 11 hidden for retired personas, default total 3."""
+    _break_default_view_total(server["routes"])
+    body = server["routes"][probe.DEFAULT_VIEW]
+    body["meta"]["hidden_retired_persona_count"] = 11
+    body["page_info"]["total"] = body["meta"]["total"] = 3
+    code, out, report = run(capsys)
+    assert code == 0, out
+
+
+def test_fixture_server_enforces_real_route_bounds(server):
+    """Every bound the real handlers declare answers 422 outside its range (and the probe reads only inside it)."""
+    cases = ["/bff/artifacts?page_size=200", "/bff/artifacts?page_size=0", "/bff/strategies?page_size=201",
+             "/bff/personas?page_size=201", "/bff/management/evidence?page_size=101", "/api/v1/postmortems?page_size=201",
+             "/bff/lineage?root_id=x&depth=21", "/bff/lineage?root_id=x&depth=0", "/bff/artifacts?page_size=abc"]
+    assert all(out_of_bounds(p) for p in cases)
+    assert not any(out_of_bounds(p) for p in ["/bff/artifacts?page_size=100", "/bff/strategies?page_size=200",
+                                              "/bff/lineage?root_id=x&depth=3", "/bff/management/evidence?page_size=100"])
+    base = os.environ["ACCEPTANCE_BFF_URL"]
+    import urllib.error
+    import urllib.request
+    request = urllib.request.Request(base + "/bff/artifacts?page_size=200", headers={"Authorization": "Bearer " + TOKEN})
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        urllib.request.urlopen(request)
+    assert caught.value.code == 422
+
+
+def test_every_probe_request_is_inside_the_real_route_bounds(server, capsys):
+    assert run(capsys)[0] == 0
+    sent = [p for m, p in server["seen"] if m == "GET"]
+    assert sent and not [p for p in sent if out_of_bounds(p)], sent
+    assert not [p for p in sent if p.startswith("/bff/artifacts") and "page_size=100" not in p]
+
+
+def test_artifacts_follow_next_page_token_and_fail_on_a_later_page(server, capsys):
+    routes = server["routes"]
+    routes[probe.ARTIFACTS]["page_info"]["next_page_token"] = "100"
+    routes[probe.ARTIFACTS + "&page_token=100"] = {
+        "data": [{"id": "artifact-page-2", "kind": "execution_bundle"}],  # no list_scope
+        "page_info": {"total": 3, "next_page_token": None}}
+    code, out, report = run(capsys)
+    assert code == 1 and report["failed"] == ["persona_artifact_scope"]
+    assert "code=artifact_list_scope_missing" in out and "artifact-page-2" in out
+    assert ("GET", probe.ARTIFACTS + "&page_token=100") in server["seen"]
+
+
+def test_artifacts_page_size_above_route_bound_would_fail_read(server, capsys):
+    """Regression: page_size=200 on /bff/artifacts is HTTP 422 on the real route (persona_artifact_scope read_failed)."""
+    routes = server["routes"]
+    routes["/bff/artifacts?page_size=200"] = routes[probe.ARTIFACTS]
+    probe_artifacts = probe.ARTIFACTS
+    try:
+        probe.ARTIFACTS = "/bff/artifacts?page_size=200"
+        code, out, report = run(capsys)
+    finally:
+        probe.ARTIFACTS = probe_artifacts
+    assert code == 1 and "code=read_failed route=/bff/artifacts?page_size=200" in out and "http_422" in out
 
 
 def test_metric_difference_that_settles_on_reread_passes(server, capsys):
@@ -419,7 +538,7 @@ def test_unreadable_route_fails_that_check_only(server, capsys):
     server["routes"].pop(probe.ARTIFACTS)
     code, out, report = run(capsys)
     assert code == 1 and report["failed"] == ["persona_artifact_scope"]
-    assert "code=read_failed route=/bff/artifacts?page_size=200" in out and "http_404" in out
+    assert "code=read_failed route=/bff/artifacts?page_size=100" in out and "http_404" in out
 
 
 def test_no_running_strategy_is_not_exercised_not_passed(server, capsys):
@@ -471,6 +590,6 @@ def test_every_route_the_probe_reads_is_registered_in_the_bff_application(server
     assert run(capsys)[0] == 0
     requested = {p.split("?")[0] for m, p in server["seen"] if m == "GET"}
     templates = {"/bff/management/evidence/" + EVIDENCE_REF: "/bff/management/evidence/{ref_id}"}
-    assert len(requested) == 8, requested
+    assert len(requested) == 8, requested  # the default-view read is the same route as the others
     for path in requested:
         assert templates.get(path, path) in registered, path
