@@ -90,6 +90,8 @@ components:
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
       - docs/operations/pi-astra-worker.md
+      - docs/operations/problem-register.md
+      - docs/operations/remediation-plan-20261117.md
       - ai-task-archive/
       - docs/deployment/evidence/PI-LANDED-REOPEN-GENERATION-20261011/evidence.json
     runtime_required: false
