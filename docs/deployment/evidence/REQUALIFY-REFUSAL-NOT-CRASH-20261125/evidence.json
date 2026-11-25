@@ -114,6 +114,10 @@
     {
       "command": "mutation: _deferred_retry_due forced to return True (local, reverted), refusal test [boundary_unavailable]",
       "result": "failed as expected: attempt_number 7 == 1"
+    },
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/research/tests/test_pool_evolution_integration.py services/evolution/test_auto_consumer_runtime.py; then services/evolution (re-run at head ade7e8fd3 after ci-red return)",
+      "result": "25 passed; 586 passed, 3 skipped"
     }
   ],
   "test_ports_disclosed": [
@@ -150,5 +154,19 @@
       "change": "Setup only. research.utc_now is replaced with a test clock, and the clock moves forward one cadence (86400 s) before each step labelled 'next cadence'. No assertion was changed, added or removed.",
       "justification": "This test ran its 'next cadence' steps back to back at the same wall-clock time, relying on a deferred run re-executing immediately. That immediate re-execution is the defect the reviewer reported. Under the once-per-cadence gate a step only re-executes when it really is one cadence later, so the clock must move. Without the clock change it fails with attempt_number 1 == 2."
     }
-  ]
+  ],
+  "ci_red_return_2026_11_25": {
+    "pr": 7879,
+    "run_id": 45715715898,
+    "head": "ade7e8fd3eeb2fbe68b7572edfa3598f6eb99606",
+    "failed_checks": [
+      "Test sweep (shard 5)",
+      "Service suites (aggregate; failed only because the shard 5 leg failed)"
+    ],
+    "failing_test": "acceptance/test_mgmt_registry_pages_readable.py::test_every_route_the_probe_reads_is_registered_in_the_bff_application",
+    "error": "sqlite3.OperationalError: database is locked, raised at import of services/control-plane/bff/main.py in DownstreamHealthMonitor._DurableHealthStore._connect (PRAGMA journal_mode = WAL) while the shard ran 3 test files in parallel",
+    "relation_to_this_task": "none: this branch does not touch services/control-plane/bff or acceptance/; the failure is shared-SQLite contention in the BFF health store",
+    "local_repro": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q acceptance/test_mgmt_registry_pages_readable.py -> 36 passed",
+    "action": "gh run rerun --failed was refused for the run, and dev had no new commits to merge, so this evidence update is the new head that re-triggers CI; no product code or test was changed for the CI return"
+  }
 }
