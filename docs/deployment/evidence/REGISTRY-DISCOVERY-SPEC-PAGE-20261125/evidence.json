@@ -1,0 +1,99 @@
+{
+  "task": "REGISTRY-DISCOVERY-SPEC-PAGE-20261125",
+  "register_instance": "RC3",
+  "requested_by": "POOL-CYCLE-SPEC-READ-BOUNDED-20261125 (blocked on this owner read)",
+  "hosted_access_used": false,
+  "hosted_verification": "not done here; the operator acceptance task does it. Functional evidence only.",
+  "review_independence_exception": "Reviewer Claude2 is from the owner model family: the other model families are at terminal quota until 2026-11-27 10:03Z (task brief).",
+  "feature_freeze": "Operator approval 2026-11-25 06:2xZ in conversation 5724fc3b names this page; freeze does not apply to this scope (task brief).",
+  "change": {
+    "endpoint": "GET /api/registry/strategy-specs?view=discovery_candidates&tenant_id=<t>&page_size=<=50>&page_token=<opaque>",
+    "response": "{items: [{entry: {registry_id, strategy_id, artifact_state, lineage, metadata}}], next_page_token}; no other entry field",
+    "filter": "artifact_type = strategy_spec, artifact_state NOT IN (retired, rejected), owner_tenant in {tenant_id, __builtin__} intersected with what the caller may read",
+    "scope_rules": "tenant_id required (400); validated with the existing X-Tenant-Id rules in _strategy_spec_read_scope (401 unauthenticated, 403 role, 403 tenant mismatch/builtin); a differing X-Tenant-Id header is 403",
+    "token": "base64url JSON {v: view, s: sha256(view NUL tenant)[:24], k: last registry_id}; another tenant's or view's token, a card admission cursor (raw registry_id) or malformed input is 400 Invalid page_token; no tenant identifier in the token",
+    "owner_read_reuse": "PR 7862's PostgresRegistryStore.list_card_admission_drafts body factored into _strategy_spec_keyset_rows (visible tenants via persona_binding_family_keep_sql, bound params, registry_id keyset, ORDER BY key LIMIT n in SQL); card admission and discovery both call it. Card admission predicates, ordering, result type and response are unchanged; the only SQL change is that the projection runs on the LIMITed subquery.",
+    "postgres_discovery_sql": "source unwraps legacy JSON-string payloads like PostgresJsonOwnerStore.list_all_selected and detoasts each row once (payload || '{}'); WHERE type/state/tenant/keyset, ORDER BY (registry_id) COLLATE \"C\" LIMIT page_size+1 in a subquery; jsonb_build_object of the five fields only for the kept rows",
+    "in_memory_owner": "RegistryStore.list_discovery_candidates: compares under the lock, heapq.nsmallest(limit), projects (deep copy of metadata) only the page rows",
+    "schema_or_index": "none (no migration, no new index); measured 0.28 s Postgres time per page at 9,940 rows, see measurement",
+    "writer_added": false,
+    "files": [
+      "services/registry/service.py",
+      "services/registry/split_api.py",
+      "services/registry/storage.py",
+      "services/registry/pg_store.py",
+      "services/registry/contract.md",
+      "services/registry/test_discovery_spec_page.py"
+    ]
+  },
+  "runtime_budget": {
+    "rows_per_page": "at most page_size (<= 50) returned, page_size + 1 (<= 51) fetched from Postgres",
+    "bytes_per_page": "about 250 kB for 5.6 kB rows (measured max 247,932 bytes at page_size 50); scales with metadata size, about page_size x metadata bytes",
+    "postgres_time_per_page": "about 0.28 s (EXPLAIN ANALYZE, 9,940 rows, local postgres:16-alpine); was 3.8 s before the detoast-once source and late projection",
+    "full_walk": "161 pages for 8,019 rows of tenant-a + builtins at page_size 50"
+  },
+  "measurement": {
+    "environment": "local postgres:16-alpine container on 127.0.0.1 (TEST_DATABASE_URL), Python 3.12 venv; no VM or SSH",
+    "population": {
+      "rows": 9940,
+      "avg_row_bytes": 5324,
+      "total_payload_bytes": 52929353,
+      "mix": "tenant-a strategy_spec draft 7521 / retired 1556 / approved 338 / candidate 150; tenant-b strategy_spec draft 200; builtin strategy_spec approved 10; tenant-a execution_bundle 100 and model_artifact 65; every 97th row of each group without metadata, every 89th with empty lineage; 10 rows stored as legacy JSON-string payloads",
+      "row_shape": "test_strategy_summary_page_bounded._realistic_strategy_spec_payload (the hosted summary-page shape) trimmed to about 5.6 kB per stored row"
+    },
+    "postgres_owner": {
+      "test": "services/registry/test_discovery_spec_page.py::test_postgres_hosted_shape_peak_memory_and_rows_per_page",
+      "twenty_consecutive_pages_python_peak_bytes": 2222445,
+      "three_concurrent_readers_twenty_pages_each_python_peak_bytes": 5294484,
+      "unpaged_list_all_entries_python_peak_bytes_contrast": 206949470,
+      "process_rss_kib_before": 294264,
+      "process_rss_hwm_kib_twenty_pages": 294264,
+      "process_rss_hwm_kib_three_readers": 302712,
+      "process_rss_hwm_kib_unpaged_contrast": 767352,
+      "rss_growth_mib": {"twenty_pages": 0.0, "three_readers": 8.2, "unpaged_contrast": 462.0},
+      "max_rows_fetched_per_call": 51,
+      "calls": 80,
+      "max_response_bytes_per_page": 247932,
+      "twenty_pages_seconds": 6.752,
+      "note": "RSS is the pytest process (which also holds the test population), so growth over the pre-read baseline is the figure; VmHWM reset via /proc/self/clear_refs before each phase. Registry limit 256 MiB, idle about 72 MB."
+    },
+    "in_memory_owner": {
+      "test": "services/registry/test_discovery_spec_page.py::test_in_memory_hosted_scale_peak_memory_twenty_pages_and_three_readers",
+      "rows": 9940,
+      "twenty_pages_python_peak_bytes": 739387,
+      "three_readers_python_peak_bytes": 1339733,
+      "unpaged_list_all_entries_python_peak_bytes": 4540344,
+      "last_page_response_bytes": 239403
+    },
+    "equality": {
+      "test": "services/registry/test_discovery_spec_page.py::test_postgres_hosted_shape_equality_with_unpaged_list",
+      "result": "all 161 pages (8,019 entries) equal the unpaged GET /api/registry/strategy-specs with X-Tenant-Id tenant-a, minus retired, projected to the five fields, in registry_id order",
+      "unpaged_rows": 9575,
+      "states_returned": ["approved", "candidate", "draft"],
+      "missing_metadata_rows_returned": 85,
+      "legacy_string_rows_returned": "yes (asserted)"
+    }
+  },
+  "acceptance_mapping": {
+    "1_view_filter_limit_fields": "test_postgres_owner_filters_and_limits_in_sql_and_projects_five_fields; test_http_all_pages_equal_unpaged_filtered_set_and_carry_five_fields; test_page_size_is_capped_at_fifty",
+    "2_memory_and_load_guard": "test_postgres_hosted_shape_peak_memory_and_rows_per_page (fails if a call fetches more than 51 rows or decodes a row that is not a visible non-retired strategy_spec); test_in_memory_owner_projects_only_page_rows_of_strategy_spec (fails if a row outside the page or of another type is projected); test_in_memory_hosted_scale_peak_memory_twenty_pages_and_three_readers",
+    "3_existing_unchanged": "no existing parameter, branch or response of the endpoint changed; full services/registry suite passes; test_postgres_card_admission_keyset_unchanged_by_shared_helper walks card drafts on real Postgres; test_tenant_and_auth_denials_match_the_unpaged_call",
+    "4_stability_and_token_binding": "test_page_walk_is_stable_while_entries_are_appended_or_change_state; test_tokens_are_bound_to_view_and_tenant_and_carry_no_tenant_identifier",
+    "5_equality": "test_postgres_hosted_shape_equality_with_unpaged_list (real Postgres, mixed states/tenants/types, missing metadata, legacy payloads); test_http_all_pages_equal_unpaged_filtered_set_and_carry_five_fields (in-memory)",
+    "6_docs_no_migration_no_writer": "services/registry/contract.md row for view=discovery_candidates with the runtime budget; no index, schema or writer change"
+  },
+  "existing_tests": {
+    "changed_or_deleted": "none",
+    "suite": "services/registry/ + services/research/alpha_replication/test_replication_controller.py: 628 passed, 52 skipped, 1 failed (pre-existing, below)",
+    "pre_existing_failure": "services/research/alpha_replication/test_replication_controller.py::test_controller_discovers_canonical_id_and_reads_authority_before_success fails identically on unmodified b3f93d448 (created_run_ids empty); also recorded by CARD-ADMISSION-DRAFT-READ-BOUNDED-20261125; unrelated"
+  },
+  "notes": [
+    "ArtifactState has no 'rejected' value, so the in-memory owner cannot hold one and the unpaged list would fail to decode one; the exclusion is kept in SQL and in memory as the brief asks.",
+    "The fields read by acceptance/probes/mgmt-strategy-meeting-research-readable are not touched.",
+    "Page order is registry_id byte order (COLLATE \"C\") so the Postgres and in-memory owners agree."
+  ],
+  "residual_findings": [
+    "Callers (services/persona/pool_autonomy_cycle.py read_strategy_specs, BFF research_knowledge_source) still use the unpaged list until POOL-CYCLE-SPEC-READ-BOUNDED-20261125 moves the pool cycle to this view.",
+    "Each page is a sequential scan inside Postgres (about 0.28 s at 9,940 rows); a partial index on registry_id would make it an index scan if the table grows much larger."
+  ]
+}
