@@ -132,7 +132,7 @@ def _backfilled(tmp_path):
     pytest.importorskip("pyarrow")
     from scripts import backfill_daily_bars as bf
 
-    _write(tmp_path, [_row(s, d, 100 + i, volume=i * 10) for s in ("2330.TW", "2317.TW")
+    _write(tmp_path, [_row(s, d, 100 + i, volume=i * 10, value=(100 + i) * i * 10) for s in ("2330.TW", "2317.TW")
                       for i, d in enumerate(["2026-10-29", "2026-10-30"])])
     bf.backfill(tmp_path, _bars_state(), today="2026-11-17", apply=True)
 
@@ -221,8 +221,8 @@ def test_daily_bars_feed_available_time_and_traded_value_equal_the_run_file_read
 
     rows = [_row("2330.TW", "2026-10-29", 100, volume=10, value=1234.5, available="2026-10-29T18:05:07.250000+08:00"),
             _row("2330.TW", "2026-10-30", 101, volume=0, value=0.0),  # a suspended day: zero value is a value
-            _row("2317.TW", "2026-10-29", 50, volume=5, available="2026-10-29T16:00:00Z"),
-            _row("2317.TW", "2026-10-30", 51, volume=5)]
+            _row("2317.TW", "2026-10-29", 50, volume=5, value=250, available="2026-10-29T16:00:00Z"),
+            _row("2317.TW", "2026-10-30", 51, volume=5, value=255)]
     del rows[3]["metadata"]["normalized_row"]["value"]  # the source gave no value: no traded_value, never zero
     _write(tmp_path, rows)
     bf.backfill(tmp_path, _bars_state(), today="2026-11-17", apply=True)
