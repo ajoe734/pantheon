@@ -30,7 +30,9 @@ from services.research.candidate_registration import (
     TemplateCandidateRegistrar,
 )
 from services.research.research_demand import ResearchDemandStore
-from services.research.template_demand_search import TemplateDemandSearch, compile_template
+from services.research.template_demand_search import (
+    TemplateDemandSearch, compile_template, market_from_dataset,
+)
 from services.research.tests.test_persona_demand_routes_auth import (
     AUDIENCE,
     ISSUER,
@@ -57,8 +59,37 @@ BACKTEST_FIXTURE = (
 BARS_FIXTURE = Path(__file__).with_name("fixtures") / "template_demand_tw_bars.json"
 
 
+@pytest.fixture(autouse=True)
+def recorded_screen_contribution(monkeypatch):
+    """These tests cover registration of a gate-passed template, with the backtest evaluation recorded.
+    The screen contribution measure replays the whole-boundary control backtest day by day (about six minutes
+    for the recorded two symbols) and has its own real-data tests (replication/tests/test_gate_screen_contribution.py).
+    Here it is fixed to the recorded outcome 'contributes'; the gate's trial accounting around it stays real."""
+    from services.research.replication import gate as gate_module
+    monkeypatch.setattr(gate_module.ReplicationGate, "_measure_screen_contribution",
+                        lambda self, request, evaluation, artifact, dataset: {"status": "contributes",
+                                                                              "rule": "recorded outcome"})
+
+
+# A screened template is two family trials in the gate (screen variant + whole-boundary entry variant;
+# replication/gate.py trial_accounting). It was one while the template carried no screen. Still charged once.
+SCREENED_EVALUATION_TRIALS = 2
+
+
 def _recorded_dataset() -> dict[str, Any]:
-    return json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"]
+    """Recorded TWSE bars as the governed dataset presents them: traded_value (close * volume) and the stored
+    available_time (08:00Z of the day) are the fixture-store conventions of test_governed_market_dataset;
+    the screen of the compiled template reads both. No bar is generated."""
+    dataset = json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"]
+    for r in dataset["records"]:
+        r["traded_value"] = r["close"] * r["volume"]
+        r["available_time"] = r["date"] + "T08:00:00Z"
+    # Test-only coverage attestation (as test_gate_screen_contribution): the recording attests none, and the
+    # governed builder supplies none yet. Production builds the market unattested and the gate refuses it.
+    market = market_from_dataset(dataset)
+    market["includes_delisted"] = market["includes_suspended"] = True
+    dataset["candidate_pool_market"] = market
+    return dataset
 
 
 def _template_entries(*ids: str) -> list[dict[str, Any]]:
@@ -354,7 +385,7 @@ def test_passing_template_attempt_registers_bundle_approves_baseline_and_records
     attempts = updated_demand["discovery"]["template_search"]["attempts"]
     assert artifact["artifact_id"] in attempts
     receipt = attempts[artifact["artifact_id"]]
-    assert receipt["status"] == "admitted"
+    assert receipt["status"] == "admitted", [(r["criterion_id"], r["evidence"][:200]) for r in receipt["gate"]["results"] if not r["passed"]]
     assert receipt["registry_id"] == artifact["artifact_id"]
     assert receipt["baseline_ref"].startswith("apv-tpl-")
     reg = receipt["registration"]
@@ -569,7 +600,7 @@ def test_registration_retry_after_transient_owner_failure_does_not_recharge_fami
     # First run: gate passes (trial count = 1), governance fails mid-registration.
     first = search.run(demand)
     family = f"template:{template['origin']['library']}:{template['family']}"
-    assert raw_gate.get_family_total_trial_count(family) == 1
+    assert raw_gate.get_family_total_trial_count(family) == SCREENED_EVALUATION_TRIALS
     assert first["discovery"]["template_search"]["reason"].startswith("template_search_unavailable:RuntimeError")
     assert first["discovery"]["template_search"]["attempts"][artifact["artifact_id"]]["status"] == "admitted"
     assert "registration" not in first["discovery"]["template_search"]["attempts"][artifact["artifact_id"]]
@@ -577,7 +608,7 @@ def test_registration_retry_after_transient_owner_failure_does_not_recharge_fami
     # Second run (replay after recovery): completes registration without re-charging the family trial counter!
     fail_governance = False
     second = search.run(demand)
-    assert raw_gate.get_family_total_trial_count(family) == 1
+    assert raw_gate.get_family_total_trial_count(family) == SCREENED_EVALUATION_TRIALS
     assert second["discovery"]["template_search"]["reason"] == "search_completed"
     reg = second["discovery"]["template_search"]["attempts"][artifact["artifact_id"]]["registration"]
     assert reg["status"] == "approved"

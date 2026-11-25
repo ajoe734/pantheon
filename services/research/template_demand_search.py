@@ -228,7 +228,10 @@ class TemplateDemandSearch:
                 raise ValueError("governed_market_data_missing")
             if dataset.get("data_frequency") not in ("daily", "1d"):
                 raise ValueError("template_search_requires_daily_bars")
-            gate_dataset = {**dataset, "candidate_pool_market": market_from_dataset(dataset)}
+            # A market the dataset owner supplies with its own attestation is used as supplied; otherwise the
+            # unattested market of the same bars is built (survivorship_limited at the gate, never bypassed).
+            gate_dataset = {**dataset, "candidate_pool_market": dataset.get("candidate_pool_market")
+                            or market_from_dataset(dataset)}
             entries = context["templates"]
             if self.registrar is not None:
                 for prev_aid, prev_receipt in previous.items():
