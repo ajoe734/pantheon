@@ -273,7 +273,7 @@ def build_lineage_graph(
     Edges come only from ``lineage.parent_registry_ids`` / ``source_strategy_spec_id``
     / ``source_dataset_refs`` / ``source_run_ids`` and ``metadata.persona_id`` /
     ``capital_pool_id``; an absent or JSON-null field yields no edge. ``root_id`` may be
-    a registry id, a strategy id or a persona id. Without a root the traversal starts
+    a registry id, a strategy id, a persona id or a capital pool id. Without a root the traversal starts
     from the most recent ``execution_bundle`` rows, never the whole population.
     Traversal is breadth-first over ``depth`` hops (nearest edges win the ``limit`` cap).
     """
@@ -379,6 +379,12 @@ def build_lineage_graph(
                 node["type"] = ntype
             if r.get("artifact_state"):
                 node["state"] = r["artifact_state"]
+            sid = _lineage_id(r.get("strategy_id"))
+            if sid:
+                node["strategy_id"] = sid
+            ver = _lineage_id(r.get("version"))
+            if ver:
+                node["version"] = ver
             risk = _lineage_id(r.get("risk_level"))
             if risk:
                 node["risk"] = risk
