@@ -3,7 +3,7 @@
   "task_id": "BFF-PERSONA-PROVISIONING-LEASE-LOAD-20261125",
   "class": "RC3",
   "title": "Persona 佈建背景對帳在無待處理紀錄時略過資料庫租約寫入，消除每分鐘 32 次空轉負載",
-  "recorded_at": "2026-11-25T18:45:30Z",
+  "recorded_at": "2026-11-25T19:29:00Z",
   "owner": "Antigravity2",
   "reviewer": "Claude2",
   "target_repo": "pantheon",
@@ -25,15 +25,15 @@
   "changes": [
     {
       "path": "services/control-plane/bff/personas/service.py",
-      "summary": "Added _has_actionable_persona_provisioning_store_records (preferring store.list_non_terminal(limit=64) when exposed by the store port, with a bounded SELECT persona_id, state FROM <table> WHERE state NOT IN ('succeeded', 'retired') ORDER BY created_at ASC, persona_id ASC LIMIT 64 fallback on PostgresPersonaProvisioningStore and an in-memory terminal/orphan pre-check on MemoryPersonaProvisioningStore) and _is_persona_provisioning_record_actionable in _reconcile_persona_provisioning_once so idle ticks return 0 immediately before owner readback snapshots or lease writes. Ported _PERSONA_PROVISIONING_ORPHAN_SKIP to services/control-plane/bff/personas/service.py so confirmed orphans (PersonaReconciliationMutationError) are skipped after the first attempt. Added _is_paper_enrollment_record_actionable and _persona_owner_supports_paper_enrollment (using literal attribute checks to comply with BFF service architecture rules) in _reconcile_paper_enrollment_once so permanent not_eligible outcomes and backoff-throttled records do not acquire/release leases on idle ticks."
+      "summary": "Added _has_actionable_persona_provisioning_store_records (preferring store.list_non_terminal(limit=64) when exposed by the store port, with a bounded SELECT persona_id, state FROM <table> WHERE state NOT IN ('succeeded', 'retired') ORDER BY created_at ASC, persona_id ASC LIMIT 64 fallback on PostgresPersonaProvisioningStore and an in-memory terminal/orphan pre-check on MemoryPersonaProvisioningStore, and uniformly consulting the read surface active_store.list_personas() via _is_persona_provisioning_record_actionable across all three store paths before returning False, without any ReadSurfacePorts class-level list_personas early-return skip heuristic) and _is_persona_provisioning_record_actionable in _reconcile_persona_provisioning_once so idle ticks return 0 immediately before owner readback snapshots or lease writes while canonical-only read-surface provisioning and provisioning_failed personas still evaluate and clean up. Ported _PERSONA_PROVISIONING_ORPHAN_SKIP to services/control-plane/bff/personas/service.py so confirmed orphans (PersonaReconciliationMutationError) are skipped after the first attempt. Added _is_paper_enrollment_record_actionable and _persona_owner_supports_paper_enrollment (using literal attribute checks to comply with BFF service architecture rules) in _reconcile_paper_enrollment_once so permanent not_eligible outcomes and backoff-throttled records do not acquire/release leases on idle ticks."
     },
     {
       "path": "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py",
-      "summary": "Bound existing orphan-skip tests to the real services.control_plane.bff.personas.service._reconcile_persona_provisioning_once and _PERSONA_PROVISIONING_ORPHAN_SKIP, and added regression tests proving steady-state ticks with only succeeded and retired rows (on both PostgresPersonaProvisioningStore and MemoryPersonaProvisioningStore, plus store.list_non_terminal(limit=64) delegation) perform 0 lease INSERT/UPDATE/DELETE writes while pending rows reconcile normally."
+      "summary": "Bound existing orphan-skip tests to the real services.control_plane.bff.personas.service._reconcile_persona_provisioning_once and _PERSONA_PROVISIONING_ORPHAN_SKIP, and added regression tests proving steady-state ticks with only succeeded and retired rows (on both PostgresPersonaProvisioningStore and MemoryPersonaProvisioningStore, plus store.list_non_terminal(limit=64) delegation and ReadSurfacePorts class-level list_personas) perform 0 lease INSERT/UPDATE/DELETE writes while pending store rows and canonical-only provisioning/provisioning_failed read-surface personas reconcile normally."
     },
     {
       "path": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
-      "summary": "Added regression tests for steady-state ticks with succeeded (complete, legacy, and not_eligible) and retired rows performing 0 lease writes across _reconcile_persona_provisioning_once and _reconcile_persona_provisioning_pass, pending row reconciliation alongside terminal rows, and _PERSONA_CLEANUP_BACKOFF retry/settled skip semantics."
+      "summary": "Added regression tests for steady-state ticks with succeeded (complete, legacy, and not_eligible) and retired rows performing 0 lease writes across _reconcile_persona_provisioning_once and _reconcile_persona_provisioning_pass, pending row reconciliation alongside terminal rows, PostgresPersonaProvisioningStore reconciliation of canonical-only provisioning and provisioning_failed read-surface personas followed by 0-write steady-state idle ticks, and _PERSONA_CLEANUP_BACKOFF retry/settled skip semantics."
     },
     {
       "path": "docs/operations/storage-manifest.json",

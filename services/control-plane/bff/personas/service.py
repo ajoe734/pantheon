@@ -6152,12 +6152,17 @@ def _is_persona_provisioning_record_actionable(
             and existing_cleanup.get("registered") is False
         )
         if not cleanup_settled:
-            backoff_key = (id(_get_active_write_owner()), persona_id)
-            _, retry_at = _PERSONA_CLEANUP_BACKOFF.get(backoff_key, (0, 0.0))
-            current_mono = time.monotonic() if now_mono is None else now_mono
-            cleanup_due = not (
-                isinstance(existing_cleanup, Mapping) and current_mono < retry_at
-            )
+            if isinstance(existing_cleanup, Mapping) and _PERSONA_CLEANUP_BACKOFF:
+                try:
+                    writer_id = id(_get_active_write_owner())
+                except Exception:
+                    writer_id = id(None)
+                backoff_key = (writer_id, persona_id)
+                _, retry_at = _PERSONA_CLEANUP_BACKOFF.get(backoff_key, (0, 0.0))
+                current_mono = time.monotonic() if now_mono is None else now_mono
+                cleanup_due = current_mono >= retry_at
+            else:
+                cleanup_due = True
         else:
             cleanup_due = False
         existing_comp = metadata.get("provisioning_compensation")
@@ -6175,7 +6180,7 @@ def _is_persona_provisioning_record_actionable(
 def _has_actionable_persona_provisioning_store_records(
     store: Any,
 ) -> Optional[bool]:
-    """Bounded read check on the durable provisioning store before full projection or lease writes.
+    """Bounded read check on the durable provisioning store and read surface before full projection or lease writes.
 
     Prefers ``store.list_non_terminal(limit=64)`` when exposed by the store port,
     and otherwise executes a bounded 64-row non-terminal check before falling
@@ -6183,9 +6188,10 @@ def _has_actionable_persona_provisioning_store_records(
     is outside this task's declared artifact scope).
 
     Returns ``False`` when the store was inspected and holds only ``succeeded``,
-    ``retired``, or confirmed-orphan rows (and no non-store provisioning persona
-    is pending in the read surface), ``True`` when at least one non-terminal or
-    cleanup-candidate row exists, or ``None`` when the pre-check cannot decide.
+    ``retired``, or confirmed-orphan rows and no read-surface persona is
+    actionable in ``provisioning`` or ``provisioning_failed``, ``True`` when at
+    least one non-terminal or cleanup-candidate record exists, or ``None`` when
+    the pre-check cannot decide.
     """
     list_non_terminal = getattr(store, "list_non_terminal", None)
     if callable(list_non_terminal):
@@ -6203,76 +6209,72 @@ def _has_actionable_persona_provisioning_store_records(
                     and row_state not in {"succeeded", "retired"}
                 ):
                     return True
-            return False
         except Exception as exc:
             log.warning("Bounded provisioning store list_non_terminal failed: %s", exc)
             return None
+    else:
+        connect = getattr(store, "_connect", None)
+        dsn = getattr(store, "dsn", None)
+        table = getattr(store, "table", None)
+        if callable(connect) and dsn and table:
+            try:
+                with connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        f"""SELECT persona_id, state
+                            FROM {table}
+                            WHERE state NOT IN ('succeeded', 'retired')
+                            ORDER BY created_at ASC, persona_id ASC
+                            LIMIT 64"""
+                    )
+                    rows = cur.fetchall() or []
+                for row in rows:
+                    if not isinstance(row, (tuple, list)) or len(row) < 2:
+                        return True
+                    pid = str(row[0] or "").strip()
+                    row_state = str(row[1] or "").strip().lower()
+                    if (
+                        pid
+                        and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
+                        and row_state not in {"succeeded", "retired"}
+                    ):
+                        return True
+            except Exception as exc:
+                log.warning("Bounded provisioning store read check failed: %s", exc)
+                return None
+        else:
+            list_all = getattr(store, "list_all", None)
+            if not callable(list_all):
+                return None
+            try:
+                records = list(list_all() or [])
+            except Exception:
+                return None
+            for record in records:
+                pid = str(getattr(record, "persona_id", "") or "").strip()
+                rec_state = str(getattr(record, "state", "") or "").strip().lower()
+                if not pid or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+                    continue
+                if rec_state in {"succeeded", "retired"}:
+                    continue
+                return True
 
-    connect = getattr(store, "_connect", None)
-    dsn = getattr(store, "dsn", None)
-    table = getattr(store, "table", None)
-    if callable(connect) and dsn and table:
-        try:
-            with connect(dsn) as conn, conn.cursor() as cur:
-                cur.execute(
-                    f"""SELECT persona_id, state
-                        FROM {table}
-                        WHERE state NOT IN ('succeeded', 'retired')
-                        ORDER BY created_at ASC, persona_id ASC
-                        LIMIT 64"""
-                )
-                rows = cur.fetchall() or []
-            for row in rows:
-                if not isinstance(row, (tuple, list)) or len(row) < 2:
-                    return True
-                pid = str(row[0] or "").strip()
-                row_state = str(row[1] or "").strip().lower()
-                if (
-                    pid
-                    and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
-                    and row_state not in {"succeeded", "retired"}
-                ):
-                    return True
-            return False
-        except Exception as exc:
-            log.warning("Bounded provisioning store read check failed: %s", exc)
-            return None
-
-    list_all = getattr(store, "list_all", None)
-    if not callable(list_all):
-        return None
     try:
-        records = list(list_all() or [])
+        active_store = _get_active_read_store()
     except Exception:
-        return None
-    terminal_or_skipped_ids: Set[str] = set()
-    for record in records:
-        pid = str(getattr(record, "persona_id", "") or "").strip()
-        rec_state = str(getattr(record, "state", "") or "").strip().lower()
-        if not pid or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
-            if pid:
-                terminal_or_skipped_ids.add(pid)
-            continue
-        if rec_state in {"succeeded", "retired"}:
-            terminal_or_skipped_ids.add(pid)
-            continue
-        return True
-
-    active_store = _get_active_read_store()
-    list_personas = getattr(active_store, "list_personas", None) if active_store is not None else None
+        active_store = None
+    list_personas = (
+        getattr(active_store, "list_personas", None)
+        if active_store is not None
+        else None
+    )
     if not callable(list_personas):
         return False
-    if records and isinstance(active_store, ReadSurfacePorts) and "list_personas" not in getattr(active_store, "__dict__", {}):
-        return False
     try:
+        now_mono = time.monotonic()
         for item in list_personas() or []:
             if not isinstance(item, Mapping):
                 continue
-            pid = str(item.get("persona_id") or item.get("id") or "").strip()
-            if not pid or pid in terminal_or_skipped_ids or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
-                continue
-            item_state = str(item.get("lifecycle_state") or item.get("state") or "").strip()
-            if item_state in {"provisioning", "provisioning_failed"}:
+            if _is_persona_provisioning_record_actionable(item, now_mono=now_mono):
                 return True
     except Exception:
         return None

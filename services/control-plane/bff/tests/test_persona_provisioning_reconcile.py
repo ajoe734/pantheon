@@ -1843,3 +1843,115 @@ def test_terminal_cleanup_backoff_and_settled_skip_semantics_preserved(
         assert lease_calls == []
 
 
+def test_postgres_store_reconciles_canonical_only_provisioning_and_failed_personas_then_idles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When PostgresPersonaProvisioningStore holds only succeeded/retired rows, canonical-only
+    read-surface personas in provisioning or provisioning_failed still reconcile and settle,
+    and subsequent steady-state ticks return 0 with 0 lease writes.
+    """
+    from services.control_plane.bff.persona_provisioning import PostgresPersonaProvisioningStore
+    from services.control_plane.bff.test_persona_provisioning_reconcile_orphan_skip import (
+        _SqlTrackingConnect,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        _fresh_client(td)
+        _compose_background_service(monkeypatch)
+        tracker = _SqlTrackingConnect(
+            [
+                ("persona-live-1", "succeeded"),
+                ("persona-retired-1", "retired"),
+            ]
+        )
+        pg_store = PostgresPersonaProvisioningStore(
+            "postgresql://example/provisioning",
+            connect=tracker,
+        )
+        tracker.statements.clear()
+        monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", pg_store)
+
+        # 1. Seed a canonical-only provisioning persona in read_store (no store row).
+        canon_prov_id = "canon-prov-only-001"
+        _state.read_store.create_persona(
+            persona_id=canon_prov_id,
+            name="Canonical Provisioning Only",
+            actor_id="op-2",
+            lifecycle_state="provisioning",
+            metadata={
+                "tenant_id": "pantheon-dev",
+                "deployment_plan_id": "plan-canon-prov-001",
+                "deployment_saga_id": "saga-canon-prov-001",
+                "persona_capital_binding_id": "pcb-canon-prov-001",
+                "internal_paper_capital_pool_id": "pool-canon-prov-001",
+            },
+        )
+
+        # 2. Seed a canonical-only provisioning_failed persona in read_store (no store row) with cleanup due.
+        canon_failed_id = "canon-failed-only-001"
+        _state.read_store.create_persona(
+            persona_id=canon_failed_id,
+            name="Canonical Failed Only",
+            actor_id="op-2",
+            lifecycle_state="provisioning_failed",
+            metadata={
+                "tenant_id": "pantheon-dev",
+                "provisioning_failure_reason": "deployment_saga_failed",
+            },
+        )
+        removed_for: List[str] = []
+        monkeypatch.setattr(
+            _persona_service_module,
+            "_remove_persona_cron_required",
+            lambda pid, **_kw: (
+                removed_for.append(pid)
+                or {"persona_id": pid, "registered": False, "removed_ids": ["job-canon-1"]}
+            ),
+        )
+
+        # Pass 1 evaluates both canonical-only personas even though Postgres store has 0 non-terminal rows.
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 2
+        assert tracker.write_statements == []
+
+        persisted_prov = _state.read_store.get_persona(canon_prov_id)
+        assert persisted_prov["lifecycle_state"] == "provisioning"
+        assert isinstance(
+            persisted_prov["metadata"].get("provisioning_readback_summary"), dict
+        )
+
+        persisted_failed = _state.read_store.get_persona(canon_failed_id)
+        assert persisted_failed["lifecycle_state"] == "provisioning_failed"
+        assert (
+            persisted_failed["metadata"]["first_evaluation_schedule_cleanup"]["registered"]
+            is False
+        )
+        assert (
+            persisted_failed["metadata"]["provisioning_reconciliation_state"]
+            == "provisioning_failed"
+        )
+        assert removed_for == [canon_failed_id]
+
+        # Once canonical personas settle on the read surface, subsequent ticks idle with 0 writes.
+        _state.read_store.update_persona(
+            canon_prov_id,
+            lifecycle_state="paper_running",
+            metadata={"provisioning_reconciliation_state": "paper_running"},
+        )
+        _state.read_store.update_persona(
+            canon_failed_id,
+            metadata={"provisioning_compensation": {"status": "not_required"}},
+        )
+        tracker.statements.clear()
+        removed_for.clear()
+        for _ in range(3):
+            assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+        assert removed_for == []
+        assert tracker.write_statements == []
+        assert len(tracker.statements) == 3
+        assert all(
+            "WHERE state NOT IN ('succeeded', 'retired')" in sql
+            for sql, _ in tracker.statements
+        )
+
+
+

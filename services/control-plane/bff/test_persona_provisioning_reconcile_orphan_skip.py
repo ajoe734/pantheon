@@ -171,6 +171,8 @@ class _SqlTrackingConnect:
 def test_postgres_steady_state_ticks_with_only_succeeded_and_retired_rows_perform_zero_lease_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+
     rows = [
         ("persona-live-1", "succeeded"),
         ("persona-live-2", "succeeded"),
@@ -186,8 +188,26 @@ def test_postgres_steady_state_ticks_with_only_succeeded_and_retired_rows_perfor
     # Clear bootstrap DDL statements before measuring steady-state reconcile ticks.
     tracker.statements.clear()
 
+    read_surface = create_read_surface_ports()
+    assert isinstance(read_surface, ReadSurfacePorts)
+    assert "list_personas" not in read_surface.__dict__
+    read_surface.persona_capital_runtime.persona._records_provider = lambda: [
+        {"persona_id": "persona-live-1", "lifecycle_state": "paper_running"},
+        {"persona_id": "persona-retired-0", "lifecycle_state": "retired"},
+        {
+            "persona_id": "persona-failed-settled",
+            "lifecycle_state": "provisioning_failed",
+            "metadata": {
+                "first_evaluation_schedule_cleanup": {"registered": False},
+                "provisioning_compensation": {"status": "completed"},
+                "provisioning_reconciliation_state": "provisioning_failed",
+            },
+        },
+    ]
+
     snapshot_calls: list[int] = []
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: read_surface)
     monkeypatch.setattr(
         personas_service,
         "_persona_readback_snapshot",
@@ -204,6 +224,89 @@ def test_postgres_steady_state_ticks_with_only_succeeded_and_retired_rows_perfor
         "WHERE state NOT IN ('succeeded', 'retired')" in sql
         for sql, _ in tracker.statements
     )
+
+
+def test_postgres_store_reconciles_canonical_only_provisioning_and_provisioning_failed_personas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+
+    rows = [
+        ("persona-live-1", "succeeded"),
+        ("persona-retired-1", "retired"),
+    ]
+    tracker = _SqlTrackingConnect(rows)
+    store = PostgresPersonaProvisioningStore(
+        "postgresql://example/provisioning",
+        connect=tracker,
+    )
+    tracker.statements.clear()
+
+    canonical_personas: dict[str, dict[str, Any]] = {
+        "persona-live-1": {
+            "persona_id": "persona-live-1",
+            "lifecycle_state": "paper_running",
+            "metadata": {"provisioning_reconciliation_state": "paper_running"},
+        },
+        "canon-1": {
+            "persona_id": "canon-1",
+            "lifecycle_state": "provisioning",
+            "metadata": {"tenant_id": "tenant-dev"},
+        },
+        "canon-failed-1": {
+            "persona_id": "canon-failed-1",
+            "lifecycle_state": "provisioning_failed",
+            "metadata": {"tenant_id": "tenant-dev"},
+        },
+    }
+    read_surface = create_read_surface_ports()
+    assert isinstance(read_surface, ReadSurfacePorts)
+    assert "list_personas" not in read_surface.__dict__
+    read_surface.persona_capital_runtime.persona._records_provider = lambda: [
+        dict(item) for item in canonical_personas.values()
+    ]
+
+    evaluated: list[str] = []
+
+    def _fake_evaluate(pid: str, raw: dict[str, Any], **_kwargs: Any) -> str:
+        evaluated.append(pid)
+        if pid == "canon-1":
+            canonical_personas[pid]["lifecycle_state"] = "paper_running"
+            canonical_personas[pid]["metadata"] = {
+                "tenant_id": "tenant-dev",
+                "provisioning_reconciliation_state": "paper_running",
+            }
+            raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = "paper_running"
+            return "paper_running"
+        if pid == "canon-failed-1":
+            canonical_personas[pid]["metadata"] = {
+                "tenant_id": "tenant-dev",
+                "first_evaluation_schedule_cleanup": {"registered": False},
+                "provisioning_compensation": {"status": "completed"},
+                "provisioning_reconciliation_state": "provisioning_failed",
+            }
+            raw.setdefault("metadata", {}).update(canonical_personas[pid]["metadata"])
+            return "provisioning_failed"
+        return str(raw.get("lifecycle_state") or "")
+
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: read_surface)
+    monkeypatch.setattr(
+        personas_service, "_evaluate_persona_provisioning_status", _fake_evaluate
+    )
+
+    assert personas_service._reconcile_persona_provisioning_once() == 2
+    assert evaluated == ["canon-1", "canon-failed-1"]
+    assert tracker.write_statements == []
+
+    # Subsequent tick after both canonical personas settle performs 0 evaluations and 1 bounded pre-check query.
+    evaluated.clear()
+    tracker.statements.clear()
+    assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert evaluated == []
+    assert tracker.write_statements == []
+    assert len(tracker.statements) == 1
+    assert "WHERE state NOT IN ('succeeded', 'retired')" in tracker.statements[0][0]
 
 
 def test_memory_steady_state_succeeded_and_retired_rows_perform_zero_lease_writes_while_pending_reconciles(
@@ -318,19 +421,43 @@ def test_store_list_non_terminal_method_is_preferred_when_exposed_by_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     limits_seen: list[int] = []
+    read_personas: list[dict[str, Any]] = []
 
     class _BoundedStoreWithMethod:
         def list_non_terminal(self, *, limit: int = 64) -> list[Any]:
             limits_seen.append(limit)
             return []
 
+        def list_all(self) -> list[Any]:
+            return []
+
         def _connect(self, _dsn: str) -> Any:
             raise AssertionError("list_non_terminal must be preferred over raw _connect")
+
+    class _ReadStore:
+        @staticmethod
+        def list_personas(**_kwargs: Any) -> list[dict[str, Any]]:
+            return list(read_personas)
 
     monkeypatch.setattr(
         personas_service, "_PERSONA_PROVISIONING_STORE", _BoundedStoreWithMethod()
     )
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: _ReadStore())
     assert personas_service._reconcile_persona_provisioning_once() == 0
     assert limits_seen == [64]
+
+    # When the read surface lists a canonical-only provisioning persona, list_non_terminal
+    # returning [] must still consult list_personas() and evaluate the canonical persona.
+    read_personas.append({"persona_id": "canon-list-non-terminal", "lifecycle_state": "provisioning"})
+    evaluated: list[str] = []
+    monkeypatch.setattr(
+        personas_service,
+        "_evaluate_persona_provisioning_status",
+        lambda pid, *_a, **_kw: (evaluated.append(pid) or "provisioning"),
+    )
+    assert personas_service._reconcile_persona_provisioning_once() == 1
+    assert evaluated == ["canon-list-non-terminal"]
+    assert limits_seen == [64, 64]
+
 
 
