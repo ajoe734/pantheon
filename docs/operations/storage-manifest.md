@@ -67,3 +67,10 @@ The run is red only for the red findings. The report also carries filesystem fre
 budget to `BUDGETS` (keyed by manifest name) in the same change.
 
 Run: `python3 -m unittest scripts.test_measure_hosted_storage scripts.test_dev_storage_budget_workflow`.
+
+## Bounded in-memory runtime caches (0 persistent writers)
+
+| cache | owner | cadence | hosted size & count | growth/day | cap & cleanup |
+|---|---|---|---|---|---|
+| `_MARKET_FACT_CACHE` (`services/execution/lean_runtime/instrument_candidates.py`) | execution (`RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124`) | on-demand per expression / pre-order risk evaluation (cached for 300 s TTL per dataset partition mtime and symbol) | <= 256 entries per process (~64 KB max RSS across 3 trading personas; 0 disk bytes) | 0 bytes/day on disk; bounded in RAM | `FACT_CACHE_MAX_ENTRIES = 256`, `FACT_CACHE_TTL_SECONDS = 300.0`; expired entries evicted on every `_fact_cache_get` and oldest LRU entry evicted on `_fact_cache_put` |
+| `_ledger_fill_history` (`services/execution/lean_runtime/paper_runtime.py`) | execution (`RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124`) | on paper fill commit (`_commit_fill` / `_commit_futures_fill`) | <= 256 fill records per algorithm instance (~48 KB max RSS; 0 disk bytes, not persisted in `paper_performance_ledger.v1`) | 0 bytes/day on disk; bounded in RAM | hard cap of 256 records (`self._ledger_fill_history[-256:]` on append) |

@@ -416,6 +416,53 @@ def validate_collector_config(
         if max_requests <= 0:
             raise CollectorConfigError(f"source {source_id} max_requests_per_run must be > 0")
 
+        if source_id == "collector-news-rss":
+            raw_routes = entry.get("routes")
+            if (
+                not isinstance(raw_routes, list)
+                or not raw_routes
+                or not all(isinstance(r, str) and r.strip().strip("/") for r in raw_routes)
+            ):
+                raise CollectorConfigError(
+                    "source collector-news-rss requires a non-empty routes list in fetch-policy.json"
+                )
+            norm_routes: list[str] = []
+            for raw_route in raw_routes:
+                norm_route = "/" + raw_route.strip().lstrip("/")
+                lowered_route = norm_route.lower()
+                for tok in DISABLED_BY_BUILD_TOKENS:
+                    if tok in lowered_route:
+                        raise CollectorConfigError(
+                            f"source collector-news-rss route {raw_route!r} references DISABLED_BY_BUILD source {tok!r}"
+                        )
+                if "/ptt" in lowered_route:
+                    raise CollectorConfigError(
+                        "source collector-news-rss cannot use /ptt route; use PttStockSpider instead"
+                    )
+                norm_routes.append(norm_route)
+            if len(set(norm_routes)) != len(norm_routes):
+                raise CollectorConfigError(
+                    "source collector-news-rss routes must not contain duplicates"
+                )
+            if len(norm_routes) > max_requests:
+                raise CollectorConfigError(
+                    f"source collector-news-rss routes count ({len(norm_routes)}) exceeds max_requests_per_run={max_requests}"
+                )
+            disabled_routes = entry.get("disabled_routes")
+            if disabled_routes is not None:
+                if not isinstance(disabled_routes, Mapping) or not all(
+                    isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()
+                    for k, v in disabled_routes.items()
+                ):
+                    raise CollectorConfigError(
+                        "source collector-news-rss disabled_routes must map route strings to non-empty observed reasons"
+                    )
+                overlap = set(norm_routes) & {"/" + k.strip().lstrip("/") for k in disabled_routes}
+                if overlap:
+                    raise CollectorConfigError(
+                        f"source collector-news-rss active routes cannot include disabled_routes {sorted(overlap)}"
+                    )
+
         min_interval = float(entry.get("min_interval_seconds", -1.0))
         if min_interval < 0.0:
             raise CollectorConfigError(f"source {source_id} min_interval_seconds must be >= 0")

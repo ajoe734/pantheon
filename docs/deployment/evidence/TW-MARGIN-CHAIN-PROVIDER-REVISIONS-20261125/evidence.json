@@ -1,0 +1,13 @@
+{
+  "task": "TW-MARGIN-CHAIN-PROVIDER-REVISIONS-20261125",
+  "threshold": {"old": 0.99, "new": 0.90, "right_sessions": ["1272/1311=97.0%", "1304/1311=99.5%", "500/500"], "wrong_sessions": ["186/1311=14.2%", "185/1311=14.1%", "102/500=20%"]},
+  "runtime_budget": {
+    "added_bytes_per_stored_row": "session_chain gains mismatched_symbols (at most 10 symbols, about 70 bytes at 4 to 6 character codes); gap_bridged evidence adds compared_session and at most 9 missing session dates",
+    "partitions_read_per_run": "unchanged 1 on the normal path; only when the previous session is missing, at most 10 session partitions, newest first, stopping at the first stored one",
+    "new_writers_files_jobs_recurring_reads": 0
+  },
+  "tests": "test_tw_margin_session_chain_wired.py, test_tw_official_chip_full_market.py, test_chip_publication_schedule.py: 97 passed",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residual_findings": [],
+  "hosted_acceptance": "pending: two consecutive Taiwan refresh runs store tw-official-twse-margin-balances with session_chain evidence"
+}
