@@ -3357,3 +3357,114 @@ def test_program_linked_decision_is_refused_by_execution_approval_request_with_4
     assert refused.status_code == 409, refused.text
     assert "EvolutionProgram" in refused.json()["detail"]
     assert "direct EvolutionDecision" in refused.json()["detail"]
+
+
+# -- EVOLUTION-SWEEP-SKIP-INFRA-20261125: infrastructure incidents are not strategy signals --
+
+def _recorded_shape_incident(incident_id: str, **overrides) -> IncidentCase:
+    base = dict(
+        incident_id=incident_id,
+        title="recorded shape",
+        status="open",
+        severity="medium",
+        created_at="2026-11-25T06:00:00Z",
+        binding_id="bind-x",
+        deployment_stage="paper",
+        deployment_plan_id="plan-x",
+        capital_pool_id="pool-x",
+        persona_capital_binding_id="pcb-x",
+        artifact_id="artifact-x",
+        artifact_version="v1",
+        runtime_id="runtime-x",
+        trace_id="trace-x",
+    )
+    base.update(overrides)
+    return IncidentCase(**base)
+
+
+def _monitor_agent_incident(severity="medium") -> IncidentCase:
+    return _recorded_shape_incident(
+        "agent-000b205c0ef9-0000",
+        severity=severity,
+        binding_id="infra-subject-tenant-dev-agent-finding-000b205c0ef9",
+        deployment_plan_id="infra-plan-monitor-agent",
+        capital_pool_id="infra-tenant-tenant-dev",
+        persona_capital_binding_id="infra-authority-monitor-agent",
+        artifact_id="infra-component-agent-finding-000b205c0ef9",
+        runtime_id="infra-runtime:monitor-agent",
+        incident_cluster_id="infra-cluster:monitor-agent:agent-finding-000b205c0ef9",
+        evidence_summary="component_kind=monitor-agent-finding",
+    )
+
+
+def _bff_infra_incident(severity="medium") -> IncidentCase:
+    return _recorded_shape_incident(
+        "infra-bff-0001",
+        severity=severity,
+        binding_id="infra-subject-tenant-dev-control-plane-bff",
+        deployment_plan_id="infra-plan-tenant-dev",
+        capital_pool_id="infra-tenant-tenant-dev",
+        persona_capital_binding_id="infra-authority-tenant-dev",
+        artifact_id="infra-component-control-plane-bff",
+        runtime_id="infra-endpoint-control-plane-bff",
+        incident_cluster_id="infrastructure:tenant-dev:health:control-plane-bff",
+        evidence_summary="non_trading_infrastructure_incident=true; service_name=control-plane-bff",
+    )
+
+
+def _drift_incident() -> IncidentCase:
+    return _recorded_shape_incident(
+        "inc-drift-0001",
+        binding_id="binding-persona-paper-1",
+        deployment_plan_id="plan-persona-paper-1",
+        capital_pool_id="pool-persona-paper-1",
+        artifact_id="artifact-persona-paper-1",
+        incident_cluster_id="drift:persona-paper-1",
+    )
+
+
+def test_daily_sweep_skips_infrastructure_incidents_and_keeps_drift_proposal():
+    for inc in (_monitor_agent_incident(), _bff_infra_incident(), _drift_incident()):
+        evo_main.incident_store.create_incident(inc)
+
+    r = client.post("/api/evolution/daily-sweep", json={"sweep_id": "skip-infra"})
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scanned_incidents"] == 3
+    assert body["created_decisions"] == 1
+    assert body["infrastructure_skipped"] == 2
+    assert body["skipped_incidents"] == 2
+    by_id = {item["incident_id"]: item for item in body["items"]}
+    for incident_id in ("agent-000b205c0ef9-0000", "infra-bff-0001"):
+        assert by_id[incident_id]["status"] == "skipped"
+        assert by_id[incident_id]["reason"] == "infrastructure_incident"
+        assert not by_id[incident_id].get("decision_id")
+    assert by_id["inc-drift-0001"]["status"] == "created"
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_daily_sweep_skips_critical_infrastructure_incident_without_freeze():
+    evo_main.incident_store.create_incident(_bff_infra_incident(severity="critical"))
+    evo_main.incident_store.create_incident(_monitor_agent_incident(severity="critical"))
+
+    body = client.post("/api/evolution/daily-sweep", json={"sweep_id": "skip-crit"}).json()
+
+    assert body["created_decisions"] == 0
+    assert body["infrastructure_skipped"] == 2
+    assert evo_main.store.list_all() == []
+
+
+def test_daily_sweep_strategy_incident_keeps_cooldown_rule():
+    first = _drift_incident()
+    second = _recorded_shape_incident(
+        "inc-drift-0002", artifact_id=first.artifact_id, incident_cluster_id="drift:persona-paper-1"
+    )
+    evo_main.incident_store.create_incident(first)
+    evo_main.incident_store.create_incident(second)
+
+    body = client.post("/api/evolution/daily-sweep", json={"sweep_id": "cooldown"}).json()
+
+    assert body["created_decisions"] == 1
+    assert body["cooldown_blocked"] == 1
+    assert body["infrastructure_skipped"] == 0

@@ -177,3 +177,23 @@ def test_owner_object_read_carries_the_callers_identity_and_query(monkeypatch) -
     assert calls[0]["url"] == "http://evolution:8093/api/evolution/program-qualification?limit=10&offset=0"
     assert calls[0]["caller_token"] == CALLER_JWT
     assert calls[0]["tenant_id"] == "tenant-a"
+
+
+def test_report_with_excluded_infrastructure_field_reads_through() -> None:
+    report = {**OWNER_REPORT, "excluded_infrastructure": 46}
+    response = _client(lambda query: dict(report)).get(
+        "/bff/management/evolution-qualification", headers=HEADERS
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["evaluated"] == 1
+    assert data.get("excluded_infrastructure") == 46
+
+
+def test_older_report_without_excluded_infrastructure_still_reads() -> None:
+    assert "excluded_infrastructure" not in OWNER_REPORT
+    response = _client(lambda query: dict(OWNER_REPORT)).get(
+        "/bff/management/evolution-qualification", headers=HEADERS
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["evaluated"] == 1
