@@ -133,14 +133,14 @@
   }
  ],
  "tests_run": [
-  "services/research/tests/test_template_demand_search.py (26 passed)",
+  "services/research full suite (1281 passed, 38 skipped, 0 failed in 1451.55s)",
+  "services/research/tests/test_pool_evolution_integration.py (4 passed)",
+  "services/research/tests/test_governed_market_dataset.py, services/research/tests/test_template_demand_search.py, services/research/alpha_replication/test_card_production_wiring.py with pyarrow (59 passed, 0 skipped)",
   "services/research/tests/test_candidate_registration.py, test_persona_demand_routes_auth.py, services/source_ingestion/tests/test_hypothesis_compiler.py (76 passed)",
-  "services/research/tests/test_persona_cycle_demand_integration.py -k open_demand_reconcile_template (1 passed)",
   "scripts/check_storage_manifest.py (passed)"
  ],
- "test_environment_note": "The worker dependency interpreter lacks pyarrow, so modules importing test_governed_market_dataset skip; tests were run with pyarrow 26.0.1 on PYTHONPATH from an existing local venv.",
+ "test_environment_note": "Full Research suite ran in .venv-pantheon provisioned from /tmp/pantheon-worker-temp/research-venv-pool/bin/python3; pyarrow-dependent modules were additionally verified with pyarrow 26.0.1 on PYTHONPATH.",
  "not_run": [
-  "The other tests of test_persona_cycle_demand_integration.py (not touched by this change)",
   "any hosted check"
  ],
  "residual_findings": [
