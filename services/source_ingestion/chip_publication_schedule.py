@@ -775,11 +775,14 @@ def previous_chip_session(session: date, *, is_session_day: Callable[[date], boo
     raise ChipSessionUndecidable(f"no session found before {session.isoformat()}")
 
 
-# Hosted read-only measurement 2026-11-20 of stored TWSE margin rows: consecutive sessions matched the previous-balance
-# chain 498 of 498 and 500 of 500; contents several sessions apart matched only 102 of 500 (about 20%). A correct
-# session therefore matches essentially fully, a wrong one about a fifth; 99% leaves room for a few symbols whose
-# balances were corrected between publications while refusing any wrongly dated payload.
-MARGIN_CHAIN_MIN_MATCH_RATIO = 0.99
+# Hosted read-only measurements of stored TWSE margin rows. Right sessions: 498/498 and 500/500 (2026-11-20 sample),
+# 1272 of 1311 = 97.0% (2026-11-24; the exchange revised the previous balance of 39 symbols) and 1304 of 1311 = 99.5%
+# (2026-11-23). Wrong sessions: 102 of 500 = 20%, 186 of 1311 = 14.2%, 185 of 1311 = 14.1% (13.5 to 14.2% on the
+# full market). The earlier 99% rule came from a 500-row sample and refused the correct 11/24 session, so the
+# threshold sits between the two populations (0.97 and above accepted, 0.20 and below refused).
+MARGIN_CHAIN_MIN_MATCH_RATIO = 0.90
+MARGIN_CHAIN_MAX_MISMATCH_SYMBOLS = 10
+MARGIN_CHAIN_GAP_LOOKBACK_SESSIONS = 10
 MARGIN_DATASET = "tw_margin_short_balance"
 
 
@@ -843,11 +846,53 @@ def stored_margin_session_lookup(root: str | Path | None = None) -> Callable[[st
     return lookup
 
 
+def stored_margin_earlier_session_lookup(
+    root: str | Path | None = None,
+) -> Callable[..., tuple[date, dict[str, dict[str, Any]]] | None]:
+    """Newest stored session of one connector among the ``max_sessions`` sessions from ``start`` backwards.
+
+    Reads at most the partitions of those sessions, newest first, and stops at the first one that holds rows of
+    the connector with a recorded session equal to the partition. Returns ``(session, {symbol: balances})`` or
+    ``None`` when none is stored in the window (the caller fails closed).
+    """
+    from .market_data_storage import _iter_normalized_rows
+
+    def lookup(connector_id: str, start: date, *, is_session_day: Callable[[date], bool] | None = None,
+               max_sessions: int = MARGIN_CHAIN_GAP_LOOKBACK_SESSIONS):
+        base = (Path(root) if root is not None else _margin_store_root()) / "normalized" / MARGIN_DATASET
+        session = start
+        for index in range(max_sessions):
+            if index:
+                session = previous_chip_session(session, is_session_day=is_session_day)
+            part = base / f"date={session.isoformat()}"
+            if not part.is_dir():
+                continue
+            out: dict[str, dict[str, Any]] = {}
+            for path in sorted(part.glob("*.jsonl*")):
+                for row in _iter_normalized_rows(path):
+                    if row.get("connector_id") != connector_id:
+                        continue
+                    meta = row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}
+                    nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+                    if str(meta.get("date") or nrow.get("date") or "")[:10] != session.isoformat():
+                        continue
+                    symbol = str(nrow.get("symbol") or meta.get("symbol") or "").strip().upper()
+                    if symbol:
+                        out[symbol] = {"margin_balance": nrow.get("margin_balance"),
+                                       "short_balance": nrow.get("short_balance")}
+            if out:
+                return session, out
+        return None
+
+    return lookup
+
+
 def margin_chain_wiring(connector_id: str, *, root: str | Path | None = None) -> dict[str, Any]:
     """Adapter kwargs that wire the chain check for a margin connector; empty for every other connector."""
     if connector_id not in margin_chain_connector_ids():
         return {}
-    return {"previous_session_lookup": stored_margin_session_lookup(root), "accept_first_load": True}
+    return {"previous_session_lookup": stored_margin_session_lookup(root), "accept_first_load": True,
+            "earlier_session_lookup": stored_margin_earlier_session_lookup(root)}
 
 
 def verify_margin_session_chain(
@@ -857,6 +902,8 @@ def verify_margin_session_chain(
     stored_previous: Mapping[str, Mapping[str, Any]] | None,
     *,
     accept_first_load: bool = False,
+    compared_session: date | None = None,
+    missing_sessions: Sequence[date] = (),
 ) -> dict[str, Any]:
     """Verify an inferred margin session with the provider's own balance chain.
 
@@ -875,7 +922,11 @@ def verify_margin_session_chain(
             f"{connector_id}: previous session of {inferred_session.isoformat()} is not stored; cannot verify the "
             "inferred session (matched 0, mismatched 0); first load needs an explicit accept_first_load flag"
         )
+    if compared_session is not None:
+        return _verify_gap_bridge(connector_id, inferred_session, rows, stored_previous, compared_session,
+                                  missing_sessions)
     matched = mismatched = 0
+    mismatched_symbols: list[str] = []
     for row in rows:
         symbol = str(row.get("symbol") or "").strip().upper()
         prev = stored_previous.get(symbol)
@@ -889,6 +940,8 @@ def verify_margin_session_chain(
             matched += 1
         else:
             mismatched += 1
+            if len(mismatched_symbols) < MARGIN_CHAIN_MAX_MISMATCH_SYMBOLS:
+                mismatched_symbols.append(symbol)
     total = matched + mismatched
     if not matched or matched < MARGIN_CHAIN_MIN_MATCH_RATIO * total:
         raise ChipSessionUndecidable(
@@ -897,4 +950,37 @@ def verify_margin_session_chain(
             "refusing to store"
         )
     return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "chain_verified",
-            "matched_count": matched, "mismatched_count": mismatched, "first_load_accepted": False}
+            "matched_count": matched, "mismatched_count": mismatched, "first_load_accepted": False,
+            "mismatched_symbols": mismatched_symbols}
+
+
+def _balance_match(rows: Sequence[Mapping[str, Any]], stored: Mapping[str, Mapping[str, Any]],
+                   margin_key: str, short_key: str) -> tuple[int, int]:
+    matched = mismatched = 0
+    for row in rows:
+        prev = stored.get(str(row.get("symbol") or "").strip().upper())
+        if prev is None:
+            continue
+        if row.get(margin_key) == prev.get("margin_balance") and row.get(short_key) == prev.get("short_balance"):
+            matched += 1
+        else:
+            mismatched += 1
+    return matched, mismatched
+
+
+def _verify_gap_bridge(connector_id, inferred_session, rows, stored, compared_session, missing_sessions):
+    """The session before the inferred one is not stored: compare with the newest stored earlier session."""
+    label = f"{connector_id}: inferred session {inferred_session.isoformat()} vs stored {compared_session.isoformat()}"
+    for kind, keys, why in (
+        ("previous", ("margin_previous_balance", "short_previous_balance"), "payload is an earlier session"),
+        ("own", ("margin_balance", "short_balance"), "payload repeats the stored session"),
+    ):
+        matched, mismatched = _balance_match(rows, stored, *keys)
+        if matched and matched >= MARGIN_CHAIN_MIN_MATCH_RATIO * (matched + mismatched):
+            raise ChipSessionUndecidable(
+                f"{label} ({why}: {kind} balances matched {matched}, mismatched {mismatched}); refusing to store"
+            )
+    return {"connector_id": connector_id, "session": inferred_session.isoformat(), "status": "gap_bridged",
+            "compared_session": compared_session.isoformat(),
+            "missing_sessions": [d.isoformat() for d in missing_sessions],
+            "matched_count": 0, "mismatched_count": 0, "first_load_accepted": False}
