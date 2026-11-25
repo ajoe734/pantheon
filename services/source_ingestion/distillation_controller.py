@@ -12,13 +12,14 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -46,7 +47,8 @@ from services.source_ingestion.distillation_worker import (
     source_version_digest,
     source_version_digest_matches,
 )
-from services.source_ingestion.hypothesis_compiler import compiler_from_env
+from services.source_ingestion.hypothesis_card import ENABLED_ENV
+from services.source_ingestion.hypothesis_compiler import compiler_enabled, compiler_from_env
 from services.source_ingestion.pg_store import read_source_records_for_tenant
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
@@ -320,29 +322,126 @@ def _drop_nulls(value: Any) -> Any:
     return value
 
 
-def card_dataset_binding_from_env(env: Mapping[str, str] | None = None) -> dict[str, Any] | None:
-    """Governed dataset reference compiled hypothesis rules are bound to.
+# HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: a compiled card rule is bound to the governed whole-market
+# dataset of DISCOVERY-GOVERNED-MARKET-DATASET-20261125 (every Taiwan symbol with governed data, screened by the
+# rule's own screen or the declared ``whole_governed_tw_boundary.v1`` default). No fixed symbol list is read.
+CARD_DATASET_ENV = "PANTHEON_L2_CARD_DATASET_ID"
+GOVERNED_CARD_DATASET_IDS = ("governed-market:tw-daily", "tw_price_daily")
+CARD_BINDING_SCOPE = "all_governed_tw"
+_PINNED_SNAPSHOT_RE = re.compile(r"^gmd-\d{4}-\d{2}-\d{2}-[0-9a-f]{8,64}$")
 
-    Reference only (no records); Research resolves the governed dataset version
-    at gate time. Unset means a card's compiled rule stays a research-only draft.
+
+def card_binding_status(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Whether compiled card rules can be bound, with a readable reason when they cannot (fail closed).
+
+    ``bound`` names the governed market dataset (a logical id or a pinned ``gmd-`` snapshot); anything else
+    is ``unconfigured`` and every compiled rule stays a research-only draft. Reported in the controller state.
     """
     source = os.environ if env is None else env
+    dataset_id = str(source.get(CARD_DATASET_ENV) or "").strip()
+    if not dataset_id:
+        return {"status": "unconfigured", "dataset_id": None,
+                "reason": f"card_binding_unconfigured:{CARD_DATASET_ENV} is not set"}
+    if dataset_id not in GOVERNED_CARD_DATASET_IDS and not _PINNED_SNAPSHOT_RE.match(dataset_id):
+        return {"status": "unconfigured", "dataset_id": dataset_id,
+                "reason": (f"card_binding_not_governed_market:{CARD_DATASET_ENV}={dataset_id!r} is neither "
+                           f"{' nor '.join(GOVERNED_CARD_DATASET_IDS)} nor a pinned gmd- snapshot")}
+    return {"status": "bound", "dataset_id": dataset_id, "scope": CARD_BINDING_SCOPE, "reason": None}
 
-    def csv(name: str) -> list[str]:
-        return [v.strip() for v in str(source.get(name) or "").split(",") if v.strip()]
 
-    dataset_id = str(
-        source.get("PANTHEON_L2_CARD_DATASET_ID") or source.get("PERSONA_POOL_SOURCE_DATASET_ID") or ""
-    ).strip()
-    symbols = csv("PANTHEON_L2_CARD_SYMBOLS")
-    if not dataset_id or not symbols:
+# Successful bindings only, one per (dataset id, end day, store root); a tick needs one or two. Bounded at
+# _BINDING_CACHE_ENTRIES entries of about 60 symbol names each (a few KiB), process lifetime, no file.
+_BINDING_CACHE: dict[str, dict[str, Any]] = {}
+_BINDING_CACHE_ENTRIES = 4
+
+
+def _binding_end_day(as_of: datetime) -> str:
+    """The last trade day a binding made at ``as_of`` may use: the day before (settled bars only), so the
+    same job re-derives the same snapshot on replay even if today's bars land later."""
+    value = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+    return (value.astimezone(timezone.utc).date() - timedelta(days=1)).isoformat()
+
+
+def resolve_card_dataset_binding(*, as_of: datetime, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The governed market binding of a compiled card rule made at ``as_of``, or the fail-closed reason.
+
+    Returns ``{"status": "bound", "dataset_id": <pinned gmd- snapshot>, "symbols": <the governed dataset's
+    symbols>, "scope": "all_governed_tw", ...}``; otherwise ``status`` is ``unconfigured`` or ``unavailable``
+    with a readable ``reason``. The boundary is the governed market of DISCOVERY-GOVERNED-MARKET-DATASET-20261125
+    (stored daily bars only, minus suspended, short-history and illiquid symbols); the symbols are the governed
+    dataset's own (its documented size cap), never an operator list. One boundary is built per end day and
+    cached; it reads parquet and runs on this controller's thread, never on an event loop.
+    """
+    status = card_binding_status(env)
+    if status["status"] != "bound":
+        return status
+    from services.research import governed_market_dataset as governed
+
+    source = os.environ if env is None else env
+    requested = status["dataset_id"]
+    pinned = requested if requested.startswith("gmd-") else None
+    end = "-".join(requested.split("-")[1:4]) if pinned else _binding_end_day(as_of)
+    key = f"{requested}|{end}|{governed.store_root(source)}"
+    cached = _BINDING_CACHE.get(key)
+    if cached is not None:
+        return dict(cached)
+    try:
+        boundary = governed.build_market_boundary(end_date=end, now=as_of, env=source)
+        if pinned and boundary.snapshot_id != pinned:
+            raise governed.GovernedMarketDatasetError(
+                "snapshot_not_reproducible", f"{pinned} now derives as {boundary.snapshot_id}")
+        age = (date.fromisoformat(end) - date.fromisoformat(boundary.window_end)).days
+        if not pinned and age > boundary.policy.max_stale_calendar_days:
+            raise governed.GovernedMarketDatasetError(
+                "daily_bars_store_stale", f"newest stored day {boundary.window_end} is {age} days before {end}"
+                f" (limit {boundary.policy.max_stale_calendar_days})")
+        symbols = list(boundary.symbols[:governed.MAX_DATASET_SYMBOLS])
+        result: dict[str, Any] = {
+            "status": "bound", "reason": None, "requested_dataset_id": requested,
+            "dataset_id": boundary.snapshot_id, "source_dataset_refs": [f"daily_bars:{boundary.snapshot_id}"],
+            "symbols": symbols, "scope": CARD_BINDING_SCOPE, "bar_frequency": "1d",
+            "market_boundary": {"window_start": boundary.window_start, "window_end": boundary.window_end,
+                                "boundary_symbols": len(boundary.symbols), "bound_symbols": len(symbols),
+                                "store_symbols": boundary.store_symbol_count},
+        }
+    except governed.GovernedMarketDatasetError as exc:
+        # never cached: a store that recovers later the same day is bound on the next attempt
+        return {"status": "unavailable", "dataset_id": requested, "reason": f"card_binding_unavailable:{exc}"[:300]}
+    while len(_BINDING_CACHE) >= _BINDING_CACHE_ENTRIES:
+        _BINDING_CACHE.pop(next(iter(_BINDING_CACHE)))
+    _BINDING_CACHE[key] = dict(result)
+    return result
+
+
+def card_dataset_binding_from_env(env: Mapping[str, str] | None = None, *,
+                                  as_of: datetime | None = None) -> dict[str, Any] | None:
+    """Governed dataset reference a compiled hypothesis rule made at ``as_of`` is bound to.
+
+    Reference only (no records): the pinned governed snapshot id and its dataset's symbols; the alpha
+    replication worker reproduces that snapshot at gate time. ``None`` when unconfigured (the rule stays a
+    research-only draft, reason in ``card_binding_status``); an unavailable governed store yields a binding that
+    carries only ``unavailable_reason`` so the draft records why.
+    """
+    resolved = resolve_card_dataset_binding(as_of=as_of or datetime.now(timezone.utc), env=env)
+    if resolved["status"] == "unconfigured":
         return None
-    return {
-        "dataset_id": dataset_id,
-        "source_dataset_refs": csv("PANTHEON_L2_CARD_SOURCE_DATASET_REFS") or [dataset_id],
-        "symbols": symbols,
-        "bar_frequency": str(source.get("PANTHEON_L2_CARD_BAR_FREQUENCY") or "1d"),
-    }
+    if resolved["status"] != "bound":
+        return {"unavailable_reason": resolved["reason"]}
+    return {k: resolved[k] for k in ("dataset_id", "source_dataset_refs", "symbols", "scope", "bar_frequency")}
+
+
+def _job_time(job: DistillationJob) -> datetime:
+    """When the job was enqueued (the binding's as-of time); unparseable falls back to now."""
+    try:
+        value = datetime.fromisoformat(str(job.enqueued_at).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _card_binding_summary(resolved: Mapping[str, Any]) -> dict[str, Any]:
+    """The controller-state view of the binding (no symbol list, only counts)."""
+    return {k: v for k, v in resolved.items() if k != "symbols"}
 
 
 def _versioned_registry_id(source: SourceRecord, job: DistillationJob) -> str:
@@ -398,8 +497,12 @@ def _build_registry_payload(
     # Registry delivery and replay must be a pure projection of the committed
     # SourceRecord plus the exact seed/evidence lineage materialized for this
     # version. Never resolve mutable production-note bytes by source_id here.
+    # Only a seed carrying a compiled card rule needs the governed market binding (one boundary per day).
+    card = request.seed.metadata.get("hypothesis_card") if isinstance(request.seed.metadata, Mapping) else None
+    binding = (card_dataset_binding_from_env(as_of=_job_time(job))
+               if isinstance(card, Mapping) and isinstance(card.get("factor_rule_v1"), Mapping) else None)
     conversion = StrategySpecConversionService(
-        dataset_binding=card_dataset_binding_from_env()
+        dataset_binding=binding
     ).convert_seed(
         seed=request.seed,
         source_records=[source],
@@ -602,7 +705,13 @@ def run_controller_tick(
     loop_id = os.getenv("PANTHEON_LOOP_ID") or "strategy_distillation"
     
     desired_meta: dict[str, Any] = {}
-    reconcile_meta: dict[str, Any] = {}
+    # The card path's binding is reported on every tick (success or failure) so an unconfigured binding is
+    # readable in the controller state; with L2 extraction off no card is produced and nothing is bound.
+    card_binding = (_card_binding_summary(resolve_card_dataset_binding(as_of=datetime.now(timezone.utc)))
+                    if compiler_enabled() else
+                    {"status": "extraction_disabled", "dataset_id": None,
+                     "reason": f"card_path_off:{ENABLED_ENV} is not enabled"})
+    reconcile_meta: dict[str, Any] = {"card_binding": card_binding}
     actual_meta: dict[str, Any] = {}
     hard_failure = False
     alive_status = STATUS_NOT_WORKING
@@ -726,6 +835,7 @@ def run_controller_tick(
                     tenant_id=state.tenant_id,
                 )
             reconcile_meta = {
+                "card_binding": card_binding,
                 "lease_expired_redriven": len(lease_redriven),
                 "lineage_replayed": len(lineage_recovery["replayed"]),
                 "lineage_closed": len(lineage_recovery["closed"]),

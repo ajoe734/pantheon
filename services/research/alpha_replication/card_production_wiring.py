@@ -7,7 +7,9 @@ builds them from the deployed environment so the compose service entry point run
 
 * ``registrar`` - the template path's ``TemplateCandidateRegistrar`` (owner-call plumbing, Governance
   and Registry addresses, the research proposer principal and the distinct paper gate principal);
-* ``matcher`` - the existing persona discovery scorer ``discover_for_demand`` (no second scorer);
+* ``matcher`` - the existing persona discovery scorer ``discover_for_demand`` (no second scorer), with the
+  persona's route policy and capability snapshot resolved exactly as the persona daily cycle resolves them
+  (``services.persona.discovery_constraints``; HYPOTHESIS-CARD-GOVERNED-BINDING-20261125);
 * ``demands_provider`` - the research owner's open persona demand read (HTTP, service credential);
 * ``dataset_resolver`` - the governed whole-market dataset read from the stored daily bars
   (``services.research.governed_market_dataset``), never synthesised and never waiting for a persona
@@ -56,6 +58,7 @@ REQUIRED_CREDENTIALS: tuple[str, ...] = (
 # snapshot id in ``snapshot_id`` and ``source_dataset_refs``).
 GOVERNED_MARKET_DATASET_ID = "governed-market:tw-daily"
 LOGICAL_DATASET_IDS = (GOVERNED_MARKET_DATASET_ID, "tw_price_daily")
+WHOLE_MARKET_SCOPE = "all_governed_tw"  # conversion's whole governed Taiwan boundary binding
 
 
 class OwnerCallError(RuntimeError):
@@ -165,14 +168,48 @@ def _discovery_module() -> Any:
     return importlib.import_module("services.control_plane.persona.persona_strategy_discovery")
 
 
-def build_matcher(env: Mapping[str, str]) -> Callable[[Mapping[str, Any], Mapping[str, Any]], bool]:
+def route_policy_catalog() -> Any:
+    """The route policy owner catalog the persona daily cycle reads.
+
+    The daily cycle reads ``ReadSurfacePorts().list_route_policies()``, which delegates to the workflow catalog
+    port built by ``create_operations_consultation_port()`` (``DomainWorkflowCatalogPort``). The worker builds
+    that same port the same way; it reads no environment for route policies.
+    """
+    from services.control_plane.bff.ports.operations_consultation import DomainWorkflowCatalogPort
+
+    return DomainWorkflowCatalogPort()
+
+
+def _persona_capability_snapshot(env: Mapping[str, str], persona_url: str, tenant_id: str,
+                                 persona_id: str) -> Mapping[str, Any] | None:
+    """The persona owner's capability snapshot for the persona (``None`` when the owner has none)."""
+    try:
+        snapshot = _owner_request(
+            step="read_capability_snapshot", service="persona", method="GET", env=env, tenant_id=tenant_id,
+            url=f"{persona_url}/api/personas/{urllib.parse.quote(persona_id, safe='')}/capability-snapshot",
+            token_variable="ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN")
+    except OwnerCallError as exc:
+        if exc.status == 404:
+            return None
+        raise
+    return snapshot if isinstance(snapshot, Mapping) else None
+
+
+def build_matcher(env: Mapping[str, str], *,
+                  catalog_factory: Callable[[], Any] | None = None) -> Callable[[Mapping[str, Any], Mapping[str, Any]], bool]:
     """The existing discovery scorer, asked whether this one spec fits the demand's persona.
 
-    The persona is read from the persona owner. Route policy and capability snapshot are taken only from
-    the persona record itself; a persona that references a route policy it does not carry inline cannot be
-    scored without its constraints, so the match fails closed with that reason (never scored unconstrained).
+    The persona is read from the persona owner. Its route policy and capability snapshot are resolved by the
+    persona daily cycle's own functions (``services.persona.discovery_constraints``): inline wins; a referenced
+    ``route_policy_id`` is selected from the route policy owner catalog by its own id and the capability snapshot
+    is read from the persona owner. A referenced policy or snapshot the owner cannot return fails the match with
+    ``route_policy_unavailable:<id>`` / ``capability_snapshot_unavailable:<id>``; it is never scored without its
+    constraints.
     """
+    from services.persona.discovery_constraints import resolve_capability_snapshot, resolve_route_policy
+
     persona_url = env["PERSONA_API_URL"].rstrip("/")
+    catalogs = catalog_factory or route_policy_catalog
 
     def match(entry: Mapping[str, Any], demand: Mapping[str, Any]) -> bool:
         tenant_id = str(demand.get("tenant_id") or "")
@@ -184,21 +221,42 @@ def build_matcher(env: Mapping[str, str]) -> Callable[[Mapping[str, Any], Mappin
         if not isinstance(persona, Mapping) or persona.get("persona_id") != persona_id:
             raise OwnerCallError(f"read_persona: persona owner returned no exact record for {persona_id}")
         persona_meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
-        route_policy = persona.get("route_policy") or persona_meta.get("route_policy")
-        snapshot = persona.get("capability_snapshot") or persona_meta.get("capability_snapshot")
-        policy_id = str(persona.get("route_policy_id") or "").strip()
-        if policy_id and not isinstance(route_policy, Mapping):
-            raise OwnerCallError(f"route_policy_unavailable:{policy_id}")
+        # The persona owner keeps inline values either top level or in metadata; the daily cycle's resolver reads
+        # the top-level fields, so carry a metadata-held inline value up (an empty value is not inline).
+        view = dict(persona)
+        for key in ("route_policy", "capability_snapshot"):
+            if not view.get(key) and isinstance(persona_meta.get(key), Mapping):
+                view[key] = persona_meta[key]
+        view.setdefault("tenant_id", tenant_id)
+        try:
+            route_policy = resolve_route_policy(view, lambda: _catalog_policies(catalogs, tenant_id))
+            snapshot = resolve_capability_snapshot(
+                view, lambda: _persona_capability_snapshot(env, persona_url, tenant_id, persona_id))
+        except RuntimeError as exc:
+            if isinstance(exc, OwnerCallError):
+                raise
+            raise OwnerCallError(str(exc)) from None
         found = _discovery_module().discover_for_demand(
-            dict(persona), demand,
-            route_policy=route_policy if isinstance(route_policy, Mapping) else None,
-            capability_snapshot=snapshot if isinstance(snapshot, Mapping) else None,
+            view, demand, route_policy=route_policy, capability_snapshot=snapshot,
             strategy_specs=[_strategy_spec_view(entry)],
             created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             discovery_session_id="card-admission-" + str(demand.get("demand_id")))
         return bool(found.get("matches"))
 
     return match
+
+
+def _catalog_policies(catalogs: Callable[[], Any], tenant_id: str) -> list[Any]:
+    """Read the route policy catalog bound to the persona's tenant, as the daily cycle's owner read does."""
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+
+    mark = selected_tenant.set(tenant_id)
+    try:
+        return list(catalogs().list_route_policies() or [])
+    except Exception as exc:  # noqa: BLE001 - an unreadable catalog is never an empty one
+        raise OwnerCallError(f"read_route_policies: route policy owner unavailable: {type(exc).__name__}: {exc}")
+    finally:
+        selected_tenant.reset(mark)
 
 
 def build_demands_provider(env: Mapping[str, str]) -> Callable[[str], list[dict[str, Any]]]:
@@ -225,7 +283,13 @@ def build_dataset_resolver(env: Mapping[str, str],
     ``binding`` carries ``dataset_id`` and, for the symbols the rule trades, ``symbols``. A pinned ``gmd-``
     id is reproduced exactly (or refused); a logical id resolves the newest snapshot. Anything else, a
     missing or stale store, or a symbol outside the market boundary raises a readable reason; the worker
-    drops the binding (fail closed). No ``candidate_pool_market`` attestation is added here.
+    drops the binding (fail closed).
+
+    A whole-market binding (``scope: all_governed_tw``, HYPOTHESIS-CARD-GOVERNED-BINDING-20261125) also gets the
+    screen's ``candidate_pool_market`` built from the same stored bars by the template search's own
+    ``market_from_dataset`` (no copy). It carries no survivorship attestation (``includes_delisted`` and
+    ``includes_suspended`` stay false), so the gate refuses a screened rule as ``survivorship_limited`` until
+    the source owner attests coverage: a correct refusal, never bypassed.
     """
     from services.research import governed_market_dataset as governed
 
@@ -240,8 +304,13 @@ def build_dataset_resolver(env: Mapping[str, str],
             symbols=list(symbols) if symbols else None, snapshot_id=pinned, strategy_id=dataset_id,
             now=now, env=env)
         snapshot = dataset["dataset_id"]
-        return {**dataset, "dataset_id": dataset_id, "snapshot_id": snapshot,
-                "source_dataset_refs": [f"daily_bars:{snapshot}"]}
+        resolved = {**dataset, "dataset_id": dataset_id, "snapshot_id": snapshot,
+                    "source_dataset_refs": [f"daily_bars:{snapshot}"]}
+        if binding.get("scope") == WHOLE_MARKET_SCOPE:
+            from services.research.template_demand_search import market_from_dataset
+
+            resolved["candidate_pool_market"] = market_from_dataset(resolved)
+        return resolved
 
     return resolve
 

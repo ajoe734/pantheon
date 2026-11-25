@@ -542,6 +542,11 @@ services:
       # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
       PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
       PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
+      # A compiled card rule is bound to the governed whole-market dataset (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125):
+      # a logical id or a pinned gmd- snapshot; no symbol list. Unset or not governed keeps every rule a research-only
+      # draft with the reason in the controller state. The boundary is read from the stored daily bars below.
+      PANTHEON_L2_CARD_DATASET_ID: ${PANTHEON_L2_CARD_DATASET_ID:-governed-market:tw-daily}
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
       DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
       DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
