@@ -159,7 +159,7 @@ def test_registry_replay_rejects_real_conflict(tmp_path, monkeypatch, field):
 def _normalized_source(
     source_id: str = "src-tw-001",
     title: str = "LightGBM TW equity momentum factor paper",
-    source_type: str = "paper",
+    source_type: str = "internal_note",
     trust_score: float = 0.8,
     **metadata_overrides: Any,
 ) -> SourceRecord:

@@ -146,11 +146,13 @@ def test_compose_limits_issuer_and_mounts_each_reader_read_only():
     source_volumes = {v.split(":")[1].split("/")[-1]: v.split(":")[0] for v in issuer["volumes"]}
     # A consumer directory normally carries the name of its one service. The
     # paper capital reader directory is shared by exactly these two services.
-    shared_consumers = {"paper-capital-reader": ("paper-signal-producer", "paper-fleet-reconciler")}
+    shared_consumers = {"paper-capital-reader": ("paper-signal-producer", "paper-fleet-reconciler"),
+                        "paper-registry-reader": ("paper-fleet-reconciler",)}
     for consumer, variables in CONSUMER_FILES.items():
         for service in shared_consumers.get(consumer, (consumer,)):
             mounts = services[service]["volumes"]
-            assert source_volumes[consumer] + ":/run/pantheon-principals:ro" in mounts
+            root = "/run/pantheon-registry-read" if consumer == "paper-registry-reader" else "/run/pantheon-principals"
+            assert source_volumes[consumer] + ":" + root + ":ro" in mounts
             for variable in variables:
                 assert variable + "_FILE" in services[service]["environment"]
     outbox = services["deployment-outbox-consumer"]
@@ -255,6 +257,10 @@ def test_paper_capital_reader_directory_is_issued_renewed_and_capital_only(tmp_p
     refresh_files(tmp_path, env, now=NOW)
     directory = tmp_path / consumer
     assert sorted(p.name for p in directory.iterdir()) == ["DEPLOYMENT_CAPITAL_SERVICE_TOKEN"]
+    assert CONSUMER_FILES["paper-registry-reader"] == ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",)
+    registry = verify((tmp_path / "paper-registry-reader" / "PAPER_RUNTIME_REGISTRY_READ_TOKEN").read_text())
+    assert registry["roles"] == ["registry-reader"] and registry["sub"] == "pantheon-dev-paper-runtime-registry-reader"
+    assert registry["allowed_tenants"] == ["tenant-dev"]
     path = directory / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
     first = configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", {"DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": str(path)})
     claims = verify(first)

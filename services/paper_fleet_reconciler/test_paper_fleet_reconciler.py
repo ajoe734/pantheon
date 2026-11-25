@@ -377,6 +377,21 @@ class TestPaperFleetReconcilerRestarts(unittest.TestCase):
 
 
 class TestPaperFleetReconcilerEnvBuilder(unittest.TestCase):
+    def test_registry_read_credential_only_reaches_persona_scoped_workers(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+        keys = {
+            "PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE": "/run/pantheon-registry-read/PAPER_RUNTIME_REGISTRY_READ_TOKEN",
+            "PERSONA_REGISTRY_BASE_URL": "http://registry:8087",
+        }
+        with patch.dict(os.environ, keys):
+            recon = PaperFleetReconciler(runtime_manager_url="http://rm:8081",
+                                         runtime_manager_token="tok", poll_interval_seconds=999)
+            scoped = recon._build_worker_env(_make_binding("b-p", metadata={"persona_id": "persona-x"}))
+            plain = recon._build_worker_env(_make_binding("b-n"))
+        for key, value in keys.items():
+            self.assertEqual(scoped[key], value)
+            self.assertNotIn(key, plain)
+
     def test_worker_env_contains_binding_fields(self) -> None:
         from paper_fleet_reconciler import PaperFleetReconciler
         recon = PaperFleetReconciler(

@@ -141,7 +141,7 @@ def replay_worker(tmp_path, clock, monkeypatch, *, cap=2):
     return worker, queue, ledger, model_calls, recording["stored_text"]
 
 
-def source(sid, text, title="unrelated", tenant=TENANT):
+def source(sid, text, title="台股 stock 財報", tenant=TENANT):
     return SourceRecord(source_id=sid, connector_id="test-replay", source_type="paper", title=title,
                         content_ref="https://example.test/" + sid, status="normalized",
                         metadata={"tenant_id": tenant, "license_scope": "collector_public_web",
@@ -160,13 +160,16 @@ def test_cap_two_five_records_across_windows_real_worker_queue_and_extractor(tmp
     monkeypatch.setattr(httpx, "get", read)
     clock = [START]
     worker, queue, ledger, calls, text = replay_worker(tmp_path, clock, monkeypatch)
-    titles = ["first", "second", "third", "momentum", "momentum equity"]
+    titles = ["first 股票", "second 股票", "third 股票", "momentum 股票", "momentum equity 股票"]
     for i, title in enumerate(titles):
         queue.enqueue_source_record(source(str(i), text, title), enqueued_at=START.timestamp() + i)
     clock[0] += timedelta(seconds=10)
     first = worker.catch_up([source(str(i), text, title) for i, title in enumerate(titles)], tenant_id=TENANT)
     assert (first.created, first.deferred, first.skipped) == (2, 3, 0)
-    assert [c["source_id"] for c in calls] == ["0", "1"]  # New work always FIFO.
+    # New work: papers first, then demand score, then FIFO (a hint only orders).
+    assert [c["source_id"] for c in calls] == (["4", "3"] if mode == "demand" else ["0", "1"])
+    if mode == "demand":
+        assert queue.get("4").demand_score > queue.get("3").demand_score
     since = queue.get("2").deferred_since
     assert queue.get("2").attempts == 0
     assert queue.get("2").next_attempt_at == "2026-11-14T00:00:00Z"
@@ -178,7 +181,7 @@ def test_cap_two_five_records_across_windows_real_worker_queue_and_extractor(tmp
     worker, queue, ledger, second_calls, _ = replay_worker(tmp_path, clock, monkeypatch)
     queue.enqueue_source_record(source("new", text, "momentum equity macro"), enqueued_at=clock[0])
     second = worker.run_pending(tenant_id=TENANT)
-    expected = ["4", "3"] if mode == "demand" else ["2", "3"]
+    expected = ["0", "1"] if mode == "demand" else ["2", "3"]
     assert [c["source_id"] for c in second_calls] == expected
     assert (second.created, second.deferred, second.skipped) == (2, 2, 0)
     assert ledger.calls_today() == 2 and queue.get("new").status == "retry_wait"
@@ -186,7 +189,6 @@ def test_cap_two_five_records_across_windows_real_worker_queue_and_extractor(tmp
               "outage": "demand_read_unavailable:ConnectError"}[mode]
     assert queue.get(expected[0]).priority_reason == reason
     if mode == "demand":
-        assert queue.get("4").demand_score > queue.get("3").demand_score
         assert queue.get("2").deferred_since == since  # Second cap hit doesn't reset TTL.
     assert not queue.list_dead_letters()
 
@@ -300,7 +302,7 @@ def test_environment_controller_tick_drives_demand_deferral_across_two_windows(t
     monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
     queue_path = tmp_path / "queue.sqlite"
     records = [source(str(i), recording["stored_text"], title) for i, title in enumerate(
-        ["first", "second", "third", "momentum", "momentum equity"])]
+        ["first 股票", "second 股票", "third 股票", "momentum 股票", "momentum equity 股票"])]
     queue = DistillationJobQueue(queue_path, now=lambda: clock[0].timestamp())
     for i, record in enumerate(records):
         queue.enqueue_source_record(record, enqueued_at=START.timestamp() + i)
@@ -320,11 +322,11 @@ def test_environment_controller_tick_drives_demand_deferral_across_two_windows(t
     store.save(state)
     clock[0] += timedelta(seconds=10)
     first = dc.run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
-    assert first["reconcile"]["deferred"] == 3 and extracted == ["0", "1"]
-    assert all(queue.get(sid).status == "retry_wait" for sid in ("2", "3", "4"))
+    assert first["reconcile"]["deferred"] == 3 and extracted == ["4", "3"]
+    assert all(queue.get(sid).status == "retry_wait" for sid in ("0", "1", "2"))
     clock[0] = START + timedelta(days=1)
     second = dc.run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
-    assert second["reconcile"]["deferred"] == 1 and extracted == ["0", "1", "4", "3"]
+    assert second["reconcile"]["deferred"] == 1 and extracted == ["4", "3", "0", "1"]
     assert queue.get("4").priority_reason == "open_demand"
 
 
@@ -362,3 +364,26 @@ def test_real_research_owner_route_enforces_issued_reader_tenant(tmp_path, monke
     reader = ResearchDemandReader("http://research.test")
     assert reader.read(dev_tenant, now=START.timestamp()) == DemandPriority(frozenset({"taiwan", "momentum"}), "open_demand")
     assert reader.read("foreign", now=START.timestamp()).reason == "demand_read_http_403"
+
+
+def test_papers_then_demand_relevant_are_claimed_first_behind_news_volume(tmp_path):
+    """RC2: ~650 news a day must not starve ~11 papers or demand-relevant records."""
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite", now=lambda: START.timestamp())
+
+    def record(sid, stype, title):
+        return SourceRecord(source_id=sid, connector_id="c", source_type=stype, title=title,
+                            content_ref="https://example.test/" + sid, status="normalized",
+                            metadata={"tenant_id": TENANT, "body": title})
+
+    for i in range(650):
+        queue.enqueue_source_record(record(f"news-{i}", "news", "台股收盤 大盤"), enqueued_at=START.timestamp() + i)
+    queue.enqueue_source_record(record("news-demand", "news", "momentum equity 台股"), enqueued_at=START.timestamp() + 300.5)  # inside the 500-row window
+    for i in range(3):
+        queue.enqueue_source_record(record(f"paper-{i}", "paper", "factor study"), enqueued_at=START.timestamp() + 800 + i)
+    priority = {TENANT: DemandPriority(frozenset({"momentum", "equity"}), "open_demand")}
+    claimed = queue.claim_due(worker_id="w", now=START.timestamp() + 1000, limit=6,
+                              tenant_id=TENANT, priority_by_tenant=priority)
+    ids = [job.source_id for job in claimed]
+    assert ids[:3] == ["paper-0", "paper-1", "paper-2"]
+    assert ids[3] == "news-demand"
+    assert ids[4:] == ["news-0", "news-1"]  # the rest stay FIFO; nothing was dropped

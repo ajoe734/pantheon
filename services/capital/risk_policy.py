@@ -1925,6 +1925,7 @@ _ABSENCE_SOURCE_PRIORITY: dict[str, int] = {
     "policy_version_mismatch": 40,
     "policy_invalid_or_stage_not_allowed": 35,
     "policy_definition_and_approval_absent": 10,
+    "approval_reader_unavailable": 65,
 }
 
 
@@ -1990,14 +1991,21 @@ def _policy_approval_veto_source(
     return None
 
 
-def _build_approval_readers(
+
+
+def _build_approval_readers(**kwargs: Any) -> list[Any]:
+    return _build_approval_readers_with_diag(**kwargs)[0]
+
+
+def _build_approval_readers_with_diag(
     *,
     approval_reader: Any | None,
     capital_pool_reader: Any | None,
     resolved_pool_id: str,
     effective_tenant_id: str | None,
-) -> list[Any]:
+) -> tuple[list[Any], str | None, tuple[str, ...]]:
     readers: list[Any] = []
+    failure_types: list[str] = []
     seen_reader_ids: set[int] = set()
 
     def _add_reader(cand_reader: Any) -> None:
@@ -2016,8 +2024,8 @@ def _build_approval_readers(
                         tenant_id=effective_tenant_id,
                     )
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                failure_types.append(type(exc).__name__)
         _add_reader(
             _capital_owner_approval_reader_from_pool_reader(
                 capital_pool_reader,
@@ -2041,18 +2049,22 @@ def _build_approval_readers(
                 for domain in domains:
                     try:
                         _add_reader(auth_factory(domain))
-                    except Exception:
+                    except Exception as exc:
+                        failure_types.append(type(exc).__name__)
                         continue
             local_factory = globals().get("configured_approval_reader")
             if not readers and callable(local_factory) and local_factory is not auth_factory:
                 for domain in domains:
                     try:
                         _add_reader(local_factory(domain))
-                    except Exception:
+                    except Exception as exc:
+                        failure_types.append(type(exc).__name__)
                         continue
-        except Exception:
-            pass
-    return readers
+        except Exception as exc:
+            failure_types.append(type(exc).__name__)
+    diag = "approval_reader_unavailable" if (not readers and failure_types) else None
+    # Only exception type names are retained (never message text, URLs or credentials).
+    return readers, diag, (tuple(dict.fromkeys(failure_types)) if diag else ())
 
 
 def _classify_decision_payload_rejection(
@@ -2775,12 +2787,14 @@ def discover_approved_profile_risk_policy(
             catalog_candidates.append((cand_policy, raw_dict))
             catalog_by_id[cand_policy.risk_policy_id] = (cand_policy, raw_dict)
 
-    readers = _build_approval_readers(
+    readers, reader_diag, reader_err_types = _build_approval_readers_with_diag(
         approval_reader=approval_reader,
         capital_pool_reader=capital_pool_reader,
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
     )
+    if reader_diag:
+        diagnostic_source = _higher_priority_absence_source(diagnostic_source, reader_diag)
 
     base = dict(base_pool) if isinstance(base_pool, Mapping) else {}
     base_meta = dict(base.get("metadata")) if isinstance(base.get("metadata"), Mapping) else {}
@@ -3266,6 +3280,8 @@ def discover_approved_profile_risk_policy(
         f" on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r}"
         if best_candidate_policy is not None else ""
     )
+    if final_absence == "approval_reader_unavailable" and reader_err_types:
+        on_policy += f" (approval_reader_error_types={list(reader_err_types)!r})"
     return ProfilePolicyAutoResolution(
         resolved=False,
         status="unresolved_profile_mapping",

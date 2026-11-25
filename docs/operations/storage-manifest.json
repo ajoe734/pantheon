@@ -3047,6 +3047,24 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "DELETE FROM reservations WHERE day < ?",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) rows per UTC day (one per record version that reserved a call that day); rows of earlier days are deleted on every reserve_call",
+   "cleanup": "DELETE FROM reservations WHERE day < today on each reserve_call write",
+   "growth_driver": "one row per record version that reserved a model call that day, so a retry of the same record is not charged twice",
+   "growth_per_day": "at most 400 rows (about 150 bytes each, about 60 KB), none carried past the next UTC day",
+   "kind": "table",
+   "name": "reservations",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
