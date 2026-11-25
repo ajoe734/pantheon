@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
+import os
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import uuid
@@ -53,6 +54,27 @@ _DEFAULT_PROMPT_VERSION = "semantic_extraction_prompt.v1"
 _LOW_CONFIDENCE_THRESHOLD = 0.60
 _MAX_TURN_DEADLINE_SECONDS = 15.0
 _TARGET_P95_SECONDS = 10.0
+
+# HYPOTHESIS_CARD turns run through the gateway's provider fallback chain
+# (hosted 2026-11-25: ~9-10 s after two billing skips), so they have their own
+# deadline instead of the 15 s interactive clamp. One setting bounds the client
+# turn, the adapter call and the gateway call together.
+HYPOTHESIS_CARD_DEADLINE_ENV = "PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS"
+HYPOTHESIS_CARD_DEADLINE_DEFAULT_SECONDS = 90.0
+HYPOTHESIS_CARD_DEADLINE_MIN_SECONDS = 5.0
+HYPOTHESIS_CARD_DEADLINE_MAX_SECONDS = 180.0
+
+
+def hypothesis_card_deadline_seconds(value: Any = None) -> float:
+    """Bounded HYPOTHESIS_CARD turn deadline (explicit value, env override, or 90 s)."""
+    raw = value if value is not None else os.environ.get(HYPOTHESIS_CARD_DEADLINE_ENV)
+    try:
+        seconds = float(raw) if raw not in (None, "") else HYPOTHESIS_CARD_DEADLINE_DEFAULT_SECONDS
+    except (TypeError, ValueError):
+        seconds = HYPOTHESIS_CARD_DEADLINE_DEFAULT_SECONDS
+    if seconds != seconds:  # NaN
+        seconds = HYPOTHESIS_CARD_DEADLINE_DEFAULT_SECONDS
+    return min(HYPOTHESIS_CARD_DEADLINE_MAX_SECONDS, max(HYPOTHESIS_CARD_DEADLINE_MIN_SECONDS, seconds))
 
 
 def _utc_now() -> str:
@@ -109,6 +131,9 @@ class ExtractionFailureCode(str, Enum):
     TIMEOUT = "timeout"
     BUDGET_BREACH = "budget_breach"
     TRANSPORT_ERROR = "transport_error"
+    # Every provider of the gateway chain was skipped for billing/quota: the
+    # model was not reached, so this is retryable, never "no hypothesis".
+    PROVIDER_BILLING = "provider_billing"
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +377,68 @@ class TradeLessonExtractionPayload:
 # Admission Decision & Checker
 # ---------------------------------------------------------------------------
 
+
+# Public, licensed external text (news, papers, books, community digests) is
+# read for HYPOTHESIS_CARD extraction. Published figures such as "$3 billion"
+# in that text describe companies and markets, not the operator's capital, so
+# the capital-amount rule does not apply to it. Credentials, PII, private-note
+# markers, raw transcripts and broker account references still deny.
+_PUBLIC_EXTERNAL_SOURCE_TYPES = frozenset({"news", "paper", "social", "book"})
+_SECRET_CLASSES = frozenset({"credential", "pii", "broker_ref", "private_marker"})
+
+
+def _is_public_external_hypothesis(request: "SemanticExtractionRequest") -> bool:
+    return (
+        request.normalized_task_type() == ExtractionTaskType.HYPOTHESIS_CARD
+        and str(request.source_type or "").strip().lower() in _PUBLIC_EXTERNAL_SOURCE_TYPES
+    )
+
+
+def _masked_preview(value: str, *, secret: bool) -> str:
+    """Never echo a possible secret: secret classes keep 2 chars, others 12."""
+    keep = 2 if secret else 12
+    flat = " ".join(value.split())
+    return flat[:keep] + ("\u2026" if len(flat) > keep else "")
+
+
+def explain_redaction_matches(text: str, *, public_external_text: bool = False) -> list[dict[str, Any]]:
+    """Every redaction rule match with what matched and whether it is a secret class."""
+    out: list[dict[str, Any]] = []
+
+    def add(category: str, rule: str, match: Any) -> None:
+        secret = category in _SECRET_CLASSES
+        matched = match.group(0) if hasattr(match, "group") else str(match)
+        offset = match.start() if hasattr(match, "start") else text.find(matched)
+        out.append({
+            "finding": f"{category}:{rule}" if rule else category,
+            "category": category,
+            "rule": rule,
+            "offset": offset,
+            "length": len(matched),
+            "preview": _masked_preview(matched, secret=secret),
+            "secret_class": secret,
+        })
+
+    for marker in sorted(_PRIVATE_NOTE_MARKERS):
+        if marker in text:
+            add("private_marker", marker, marker)
+    for pattern in _RAW_TRANSCRIPT_PATTERNS:
+        found = pattern.search(text)
+        if found:
+            add("raw_transcript_prompt", "", found)
+            break
+    for category, patterns in (
+        ("pii", _PII_PATTERNS),
+        ("credential", _CREDENTIAL_PATTERNS),
+        ("capital_amount", () if public_external_text else _CAPITAL_AMOUNT_PATTERNS),
+        ("broker_ref", _BROKER_REF_PATTERNS),
+    ):
+        for name, pattern in patterns:
+            found = pattern.search(text)
+            if found:
+                add(category, name, found)
+    return out
+
 @dataclass(frozen=True)
 class AdmissionDecision:
     """Structured decision returned by pre-call admission checks."""
@@ -360,6 +447,9 @@ class AdmissionDecision:
     denial_code: Optional[str] = None
     denial_reason: Optional[str] = None
     findings: Tuple[str, ...] = field(default_factory=tuple)
+    # One entry per redaction match: rule, class, offset, length, masked
+    # preview and whether it is a secret class (credential/PII/account).
+    explanations: Tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -367,6 +457,7 @@ class AdmissionDecision:
             "denial_code": self.denial_code,
             "denial_reason": self.denial_reason,
             "findings": list(self.findings),
+            "explanations": [dict(item) for item in self.explanations],
         }
 
 
@@ -476,46 +567,18 @@ class SemanticExtractionAdmission:
                 )
 
         # 5. Redaction / sensitive data admission
-        findings: list[str] = []
-        text = request.text or ""
-
-        # Check private note markers
-        for marker in _PRIVATE_NOTE_MARKERS:
-            if marker in text:
-                findings.append(f"private_marker:{marker}")
-
-        # Check raw transcript markers (unredacted raw chat/transcript)
-        for pattern in _RAW_TRANSCRIPT_PATTERNS:
-            if pattern.search(text):
-                findings.append("raw_transcript_prompt")
-                break
-
-        # Check PII
-        for name, pattern in _PII_PATTERNS:
-            if pattern.search(text):
-                findings.append(f"pii:{name}")
-
-        # Check credentials
-        for name, pattern in _CREDENTIAL_PATTERNS:
-            if pattern.search(text):
-                findings.append(f"credential:{name}")
-
-        # Check capital amounts
-        for name, pattern in _CAPITAL_AMOUNT_PATTERNS:
-            if pattern.search(text):
-                findings.append(f"capital_amount:{name}")
-
-        # Check broker references
-        for name, pattern in _BROKER_REF_PATTERNS:
-            if pattern.search(text):
-                findings.append(f"broker_ref:{name}")
-
+        explanations = explain_redaction_matches(
+            request.text or "",
+            public_external_text=_is_public_external_hypothesis(request),
+        )
+        findings = list(dict.fromkeys(item["finding"] for item in explanations))
         if findings:
             return AdmissionDecision(
                 admitted=False,
                 denial_code="REDACTION_VIOLATION",
                 denial_reason=f"text contains sensitive or unredacted information: {', '.join(findings)}",
                 findings=tuple(findings),
+                explanations=tuple(explanations),
             )
 
         return AdmissionDecision(admitted=True)

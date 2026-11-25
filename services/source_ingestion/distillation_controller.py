@@ -572,8 +572,16 @@ TERMINAL_DRAFT_READBACK_LIMIT = 200
 
 
 def _controller_lease_seconds(config: DistillationControllerConfig) -> int:
-    """Lease must outlive one steady-state interval plus one tick budget."""
-    return int(config.interval_seconds) + max(30, int(config.lease_seconds))
+    """Lease must outlive one steady-state interval plus one tick budget.
+
+    With L2 extraction on, a tick may spend its extraction budget plus one call
+    deadline, so the loop truth must not go stale during a normal tick.
+    """
+    from services.source_ingestion.hypothesis_card import l2_extraction_tick_ceiling_seconds
+
+    return int(config.interval_seconds) + max(
+        30, int(config.lease_seconds), int(l2_extraction_tick_ceiling_seconds() + 0.999),
+    )
 
 
 def _controller_tick_evidence_ref(state: ControllerState) -> str:

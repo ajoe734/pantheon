@@ -581,7 +581,7 @@ def test_evidence_summary() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["data"]["items"]) == 2
-    assert data["data"]["summary"]["verified_count"] == 1
+    assert data["data"]["summary"]["verified_count"] is None  # removed, never derived from a flag/confidence
 
 
 def test_operations_read_model_and_degraded_control_guidance() -> None:

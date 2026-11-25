@@ -50,6 +50,7 @@ from services.source_ingestion.hypothesis_card import (
     card_to_strategy_seed_metadata,
     extraction_origin,
     extractor_from_env,
+    l2_extraction_tick_budget_seconds,
 )
 from services.source_ingestion.hypothesis_compiler import (
     COMPILED,
@@ -70,6 +71,9 @@ MARKET_SOURCE_SKIP_REASON: str = (
     "source_type=market does not produce Registry strategy drafts"
 )
 DEFER_TTL_SECONDS = 14 * 86400
+# A started job's lease covers one extraction call (its deadline) plus this.
+EXTRACTION_LEASE_MARGIN_SECONDS = 60.0
+EXTRACTION_ATTEMPTS_EXHAUSTED_REASON = "l2_extraction_attempts_exhausted"
 DEFAULT_MAX_LEASE_EXPIRIES = 5
 LEASE_BACKOFF_BASE_SECONDS = 30.0
 LEASE_BACKOFF_CAP_SECONDS = 3600.0
@@ -474,6 +478,8 @@ class DistillationRunResult:
     dead_lettered: int = 0
     deferred: int = 0
     lease_lost: tuple[str, ...] = ()
+    # Today's L2 extraction spend (ledger summary) when an extractor is wired.
+    extraction: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -488,6 +494,7 @@ class DistillationRunResult:
             "dead_lettered": self.dead_lettered,
             "deferred": self.deferred,
             "lease_lost": list(self.lease_lost),
+            **({"extraction": dict(self.extraction)} if self.extraction is not None else {}),
         }
 
 
@@ -1441,8 +1448,22 @@ class DistillationJobQueue:
         assert current is not None
         return self._job_from_row(current)
 
-    def defer_budget(self, job: DistillationJob, *, now: float) -> None:
-        """Return a fenced lease to next UTC cap window, without burning retries."""
+    def defer_budget(
+        self,
+        job: DistillationJob,
+        *,
+        now: float,
+        reason: str = "budget_exhausted",
+        next_window: bool = True,
+    ) -> None:
+        """Return a fenced lease without burning retries.
+
+        ``next_window`` waits for the next UTC cap window (14-day deferral TTL);
+        otherwise the job is due again at once (end of this tick's budget).
+        """
+        if not next_window:
+            self._release_started(job, now=now, reason=reason)
+            return
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1454,17 +1475,42 @@ class DistillationJobQueue:
                 available = min((int(now) // 86400 + 1) * 86400, since + DEFER_TTL_SECONDS)
                 connection.execute(
                     """UPDATE distillation_outbox SET status = 'retry_wait', available_at = ?,
-                       deferred_since = ?, last_error = 'budget_exhausted',
-                       skip_reason = 'budget_exhausted: deferred to next cap window',
+                       deferred_since = ?, last_error = ?,
+                       skip_reason = ?,
                        attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
                        lease_expires_at = NULL, updated_at = ? WHERE job_id = ?""",
-                    (available, since, now, job.job_id),
+                    (available, since, reason, f"{reason}: deferred to next cap window", now, job.job_id),
                 )
                 connection.execute(
                     """UPDATE distillation_inbox SET status = 'retry_wait',
                        attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
-                       lease_expires_at = NULL, last_error = 'budget_exhausted', updated_at = ?
-                       WHERE job_id = ?""", (now, job.job_id),
+                       lease_expires_at = NULL, last_error = ?, updated_at = ?
+                       WHERE job_id = ?""", (reason, now, job.job_id),
+                )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def _release_started(self, job: DistillationJob, *, now: float, reason: str) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._select_job(connection, job.job_id)
+                if (row is None or row["status"] != "leased"
+                        or row["lease_token"] != job.lease_token):
+                    raise DistillationLeaseError(f"stale or expired distillation release: {job.job_id}")
+                connection.execute(
+                    """UPDATE distillation_outbox SET status = 'retry_wait', available_at = ?,
+                       last_error = ?, attempts = MAX(0, attempts - 1), lease_owner = NULL,
+                       lease_token = NULL, lease_expires_at = NULL, updated_at = ? WHERE job_id = ?""",
+                    (now, reason, now, job.job_id),
+                )
+                connection.execute(
+                    """UPDATE distillation_inbox SET status = 'retry_wait',
+                       attempts = MAX(0, attempts - 1), lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, last_error = ?, updated_at = ?
+                       WHERE job_id = ?""", (reason, now, job.job_id),
                 )
                 connection.execute("COMMIT")
             except Exception:
@@ -2401,7 +2447,8 @@ class DistillationJobQueue:
             ).fetchall()
             metrics["deferred"] = int(connection.execute(
                 """SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
-                   AND deferred_since IS NOT NULL AND last_error = 'budget_exhausted'""",
+                   AND deferred_since IS NOT NULL
+                   AND last_error IN ('budget_exhausted', 'attempts_deferred')""",
             ).fetchone()[0])
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
@@ -2738,6 +2785,8 @@ class DistillationWorker:
         self._created_by = created_by
         self._worker_id = worker_id or f"{created_by}-{uuid.uuid4().hex[:8]}"
         self._lease_seconds = max(0.1, float(lease_seconds))
+        self._tick_extraction_budget = l2_extraction_tick_budget_seconds()
+        self._tick_extraction_seconds = 0.0
         self._retry_base_seconds = max(0.0, float(retry_base_seconds))
         self._registry_sync = registry_sync
 
@@ -2789,6 +2838,7 @@ class DistillationWorker:
             tenant_id=tenant_id,
             priority_by_tenant=priorities,
         )
+        self._tick_extraction_seconds = 0.0
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
         deferred = 0
@@ -2798,7 +2848,7 @@ class DistillationWorker:
                 # The job's own lease starts now; claim time and earlier jobs of
                 # this batch do not consume it, and only here is an attempt counted.
                 job = self._queue.begin_job(
-                    claimed_job, lease_seconds=self._lease_seconds, now=now,
+                    claimed_job, lease_seconds=self._job_lease_seconds(), now=now,
                 )
                 outcome, delivery = self._process_claimed(
                     job, source_records, now=now, effective_now=effective_now,
@@ -2837,6 +2887,32 @@ class DistillationWorker:
             dead_lettered=dead_lettered,
             deferred=deferred,
             lease_lost=tuple(lease_lost),
+            extraction=self._extraction_summary(),
+        )
+
+    def _extraction_summary(self) -> dict[str, Any] | None:
+        if self._hypothesis_extractor is None:
+            return None
+        try:
+            summary = dict(self._hypothesis_extractor.ledger.summary())
+        except Exception as exc:  # noqa: BLE001 - a summary read must not fail the tick
+            return {"summary_unavailable": type(exc).__name__}
+        summary["call_deadline_seconds"] = self._hypothesis_extractor.call_deadline_seconds
+        summary["tick_extraction_seconds"] = round(self._tick_extraction_seconds, 3)
+        return summary
+
+    def _job_lease_seconds(self) -> float:
+        """A started job's lease outlives one extraction call plus margin.
+
+        The extractor makes exactly one model call per job attempt, bounded by
+        its deadline, so a slow call can never let the lease lapse and be
+        counted toward ``lease_expired_repeatedly``.
+        """
+        if self._hypothesis_extractor is None:
+            return self._lease_seconds
+        return max(
+            self._lease_seconds,
+            float(self._hypothesis_extractor.call_deadline_seconds) + EXTRACTION_LEASE_MARGIN_SECONDS,
         )
 
     def _process_claimed(
@@ -2933,6 +3009,7 @@ class DistillationWorker:
             dead_lettered=run_result.dead_lettered,
             deferred=run_result.deferred,
             lease_lost=run_result.lease_lost,
+            extraction=run_result.extraction,
         )
 
     def redispatch(self, source_id: str, source: SourceRecord) -> DistillationJob:
@@ -3026,13 +3103,35 @@ class DistillationWorker:
                         job.job_id, reason=reason, processed_at=now, claim_token=job.lease_token,
                     )
                     return "skipped", reason.split(":")[0]
-                outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
+                if self._tick_extraction_seconds >= self._tick_extraction_budget:
+                    # One tick must stay inside the controller's health window:
+                    # once this tick spent its extraction time, return the job
+                    # for the next tick without counting an attempt.
+                    self._queue.defer_budget(
+                        job, now=_timestamp(now) if now is not None else self._queue._now(),
+                        reason="extraction_tick_budget", next_window=False,
+                    )
+                    return "deferred", "extraction_tick_budget"
+                started = time.monotonic()
+                try:
+                    outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
+                finally:
+                    self._tick_extraction_seconds += time.monotonic() - started
                 if outcome.card is None:
-                    if outcome.status == "budget_exhausted":
+                    if outcome.status in ("budget_exhausted", "attempts_deferred"):
+                        # Daily cap, or this record already had 3 calls today:
+                        # wait for the next UTC day without burning an attempt.
                         self._queue.defer_budget(
                             job, now=_timestamp(now) if now is not None else self._queue._now(),
+                            reason=outcome.status,
                         )
-                        return "deferred", "budget_exhausted"
+                        return "deferred", outcome.status
+                    if outcome.status == "attempts_exhausted":
+                        reason = f"{EXTRACTION_ATTEMPTS_EXHAUSTED_REASON}: {outcome.detail}"
+                        self._queue.mark_skipped(
+                            job.job_id, reason=reason, processed_at=now, claim_token=job.lease_token,
+                        )
+                        return "skipped", EXTRACTION_ATTEMPTS_EXHAUSTED_REASON
                     if outcome.status == "unavailable":
                         # The model or adapter did not answer: not a delivered
                         # outcome. Retry with backoff; never store no_hypothesis.
