@@ -1,0 +1,29 @@
+{
+  "task_id": "BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125",
+  "class": "RC6",
+  "scope": "GET /bff/strategies/{id} owner reads overlap; functional evidence only, hosted verification is left to the operator acceptance task",
+  "change": {
+    "overlapped_reads": ["strategy spec detail", "persona directory", "runtime bindings + telemetry", "ranking snapshot", "strategy rules"],
+    "waits_for_another_result": "runtime-truth projection waits only for the Persona records (no further owner call); 404 check waits for the spec read",
+    "executor": "existing _PERSONA_FLEET_READ_EXECUTOR via submit_owner_read (copy of request context: identity, tenant, deadline); joins bounded by remaining_management_read_budget; unfinished futures cancelled in finally",
+    "split": "management_read_models.read_strategy_runtime_truth_inputs added; read_strategy_runtime_truth accepts prefetched_inputs (default behaviour unchanged for Trading Pulse and the list route)"
+  },
+  "owner_calls_per_request": {
+    "before": {"spec_detail": 1, "persona_directory": 1, "runtime_bindings": 1, "telemetry": 1, "ranking": 1, "rules": 1},
+    "after": {"spec_detail": 1, "persona_directory": 1, "runtime_bindings": 1, "telemetry": 1, "ranking": 1, "rules": 1}
+  },
+  "local_measurement": {
+    "method": "isolated FastAPI app, real row shapes from acceptance/fixtures/hosted_strategy_rules_20261119.json, each owner call (spec, persona, bindings, ranking, rules) delayed 500 ms, one request",
+    "before_seconds": 2.58,
+    "after_seconds": 0.59,
+    "note": "local, informational; no wall-clock assertion in any required check"
+  },
+  "tests": {
+    "new": "services/control-plane/bff/tests/test_strategy_detail_overlap_reads.py (4 passed)",
+    "existing_run_unchanged": ["strategies/test_router_isolation.py", "tests/test_strategy_rules_pool_envelope.py", "tests/test_strategy_metrics_truth.py", "tests/test_event_loop_owner_reads_guard.py"],
+    "assertions_changed": "none; no existing test weakened or deleted"
+  },
+  "residual_findings": [
+    "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies fails on dev HEAD 6ef1477d5 before this change (list route page 2 reads 0 owner pages, expected 2); outside this scope"
+  ]
+}

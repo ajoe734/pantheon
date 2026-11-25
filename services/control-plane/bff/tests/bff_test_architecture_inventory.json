@@ -2916,6 +2916,13 @@
       "rationale": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106 regression coverage for GET /bff/strategies exclude_state=draft, meta.state_counts at 5000 real-shape rows, state=retired, unknown lifecycle visibility, and tenant isolation; never imports main"
     },
     {
+      "file": "tests/test_strategy_detail_overlap_reads.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125 proves GET /bff/strategies/{id} starts the spec, Persona directory, runtime bindings, ranking and rules owner reads together (gate opens only after all started; no clock), one owner call each, tenant reaching the overlapped read, degraded secondary reads keep 200, 404 and spec failure unchanged; never imports main"
+    },
+    {
       "file": "tests/test_strategy_rules_pool_envelope.py",
       "layer": "application",
       "imports_main": false,
