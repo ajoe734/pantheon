@@ -2326,7 +2326,10 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "incident_followup": 1,
         "incident_severity": 1,
         "postmortem_draft": 2,
-        "total": 2,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
+        "total": 3,
     }
 
     # 1. Omitting view behaves identically to view=all
@@ -2377,7 +2380,7 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
     }
     # The auto list still shows drafts; the proposal total excludes them and
     # drafts are a separate labelled count.
-    assert body_auto["page_info"]["total"] == expected_counts["total"] + expected_counts["postmortem_draft"] == 4
+    assert body_auto["page_info"]["total"] == expected_counts["total"] - expected_counts["threshold"] + expected_counts["postmortem_draft"] == 4
     assert body_auto["data"]["summary"]["total_items"] == 4
     assert body_auto["data"]["auto_proposal_counts"] == expected_counts
 
@@ -2486,10 +2489,13 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
         "incident_followup": 15,
         "incident_severity": 0,
         "postmortem_draft": 1,
-        "total": 15,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
+        "total": 16,
     }
-    assert auto_body["page_info"]["total"] == counts["total"] + counts["postmortem_draft"]
-    assert auto_body["data"]["summary"]["total_items"] == counts["total"] + counts["postmortem_draft"]
+    assert auto_body["page_info"]["total"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
+    assert auto_body["data"]["summary"]["total_items"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
     seen_ids: list[str] = []
     token = auto_body["page_info"]["next_page_token"]
     seen_ids.extend(it["id"] for it in auto_body["data"]["items"])
@@ -2498,10 +2504,10 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
             f"/bff/management/evolution-journal?view=auto_proposals&page_size=4&page_token={token}",
             headers=OPERATOR_HEADERS,
         ).json()
-        assert page["page_info"]["total"] == counts["total"] + counts["postmortem_draft"]
+        assert page["page_info"]["total"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
         seen_ids.extend(it["id"] for it in page["data"]["items"])
         token = page["page_info"]["next_page_token"]
-    assert len(seen_ids) == len(set(seen_ids)) == counts["total"] + counts["postmortem_draft"]
+    assert len(seen_ids) == len(set(seen_ids)) == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
 
 
 def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view() -> None:
@@ -2694,6 +2700,9 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
+            "threshold": 0,
+            "other": 0,
+            "infrastructure": 0,
             "total": 2,
         }
         assert body_default["page_info"]["total"] == 2027 + 3
@@ -2717,6 +2726,9 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
+            "threshold": 0,
+            "other": 0,
+            "infrastructure": 0,
             "total": 2,
         }
 
@@ -2923,6 +2935,7 @@ def test_hosted_shape_history_reports_one_row_per_decision() -> None:
     ).json()
     assert auto["page_info"]["total"] == (
         auto["data"]["auto_proposal_counts"]["total"]
+        - auto["data"]["auto_proposal_counts"]["threshold"]
         + auto["data"]["auto_proposal_counts"]["postmortem_draft"]
     )
     assert auto["data"]["auto_proposal_counts"]["incident_severity"] == 0
@@ -3366,7 +3379,10 @@ def test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_wh
         "incident_followup": 1,
         "incident_severity": 1,
         "postmortem_draft": 1,
-        "total": 2,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
+        "total": 3,
     }
 
     with TestClient(app) as client:
@@ -3393,7 +3409,9 @@ def test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_wh
         assert viewer_body["data"]["summary"]["total_items"] == 8
         assert viewer_body["data"]["summary"]["returned_items"] == 8
         assert viewer_body["data"]["summary"]["decision_count"] == 5
-        assert viewer_body["data"]["summary"]["mutation_review_count"] == 5
+        # BFF-EVO-JOURNAL-POOL-VERSIONS: only decisions with their own review record
+        # (approval_decision_id) count as reviews; 4 of these 5 decisions have one.
+        assert viewer_body["data"]["summary"]["mutation_review_count"] == 4
         assert viewer_body["data"]["summary"]["postmortem_count"] == 1
         assert viewer_body["data"]["summary"]["freeze_order_count"] == 1
         assert viewer_body["data"]["summary"]["rollback_count"] == 1

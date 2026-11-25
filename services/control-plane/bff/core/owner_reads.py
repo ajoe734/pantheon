@@ -244,6 +244,31 @@ def read_records(url_builder, path, key=None):
     return cached_owner_call(("http_records", path, url, key, token, tenant), _fetch)
 
 
+def read_persona_pool_versions(persona_id: str, tenant_id: str) -> Any:
+    """Persona owner strategy pool versions as the caller; one bounded owner read."""
+    from urllib.parse import quote
+
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    base = get_base_url("PANTHEON_PERSONA_API_URL", "PANTHEON_PERSONA_SERVICE_URL")
+    url = base + f"/api/personas/{quote(persona_id, safe='')}/strategy-pool/versions"
+    token = auth.removeprefix("Bearer ")
+
+    def _fetch():
+        rem = remaining_management_read_budget(2.0)
+        return http_request_json(url, auth_token=token, tenant_id=tenant_id, timeout=rem)
+
+    return cached_owner_call(("persona_pool_versions", url, token, tenant_id), _fetch)
+
+
+def read_registry_entry(registry_id: str, tenant_id: str) -> Any:
+    """Registry owner entry through the existing member-baseline owner read."""
+    from services.evolution.approved_baselines import http_registry_entry_reader
+
+    return http_registry_entry_reader(registry_id, tenant_id)
+
+
 def _evolution_http_get(url: str, caller_token: str, tenant_id: str) -> Any:
     rem = remaining_management_read_budget()
     try:
@@ -492,6 +517,8 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         evolution_port=EvolutionProjectionPort(
             evolution_programs_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/programs", "items"),
             evolution_qualification_reader=lambda query: read_evolution_object(evolution_url, "/api/evolution/program-qualification", query),
+            persona_pool_versions_reader=read_persona_pool_versions,
+            registry_entry_reader=read_registry_entry,
             evolution_decisions_reader=lambda: persona_store.list_evolution_decisions() if hasattr(persona_store, "list_evolution_decisions") and not os.getenv("PANTHEON_EVOLUTION_API_URL", "").strip() else read_evolution_records(evolution_url, "/api/evolution/proposals"),
         ),
     )

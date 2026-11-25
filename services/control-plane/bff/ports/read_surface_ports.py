@@ -444,6 +444,12 @@ class ReadSurfacePorts:
     def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
         return self.persona_capital_runtime.get_evolution_qualification(**kwargs)
 
+    def read_persona_pool_versions(self, persona_id: str, tenant_id: str) -> List[Dict[str, Any]]:
+        return self.persona_capital_runtime.read_persona_pool_versions(persona_id, tenant_id)
+
+    def read_registry_entry(self, registry_id: str, tenant_id: str) -> Any:
+        return self.persona_capital_runtime.read_registry_entry(registry_id, tenant_id)
+
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_program_runs(program_id)
 
