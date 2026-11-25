@@ -1,0 +1,42 @@
+{
+  "task_id": "CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125",
+  "class": "RC1 Required check that fails under CI load",
+  "incident": "Dev run 45615265822: scripts/test_dev_tw_market_refresh_workflow.py::test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat failed with FileNotFoundError for state.json.renewals under CI load, blocking a green dev candidate.",
+  "root_cause": "In scripts/test_dev_tw_market_refresh_workflow.py, _FAKE_LEASE_CLI wrote state.json (non-atomically via open(opt('--state-file'), 'w').write(...)) BEFORE appending to the test spy counter state.json.renewals. The workflow re-arm step (.github/workflows/dev-tw-market-refresh.yml) polls sha256sum(state.json) every 0.2s and immediately sends SIGTERM to the 1s heartbeat-loop process as soon as state.json's SHA-256 changes. Under CI load (or when preempted between the two file opens/writes), SIGTERM terminated the fake 1s heartbeat-loop after it truncated/wrote state.json and before it created state.json.renewals; the subsequent 60s heartbeat-loop sleeps 60s before its first renewal, so the step returned with state.json.renewals absent.",
+  "workflow_step_assessment": "The workflow step in .github/workflows/dev-tw-market-refresh.yml and production scripts/dev_environment_lease.py are not defective: in production heartbeat_loop, manager.heartbeat() completes the remote GitHub renewal first and atomic_write_json(args.state_file, ...) atomically replaces state.json via os.replace as the final step of renewal. Therefore, state.json changing in production proves the renewal is already complete.",
+  "reproduction": {
+    "delayed_second_write_in_fake": {
+      "command": ".venv-pantheon/bin/python3 -c 'import pathlib, shutil, scripts.test_dev_tw_market_refresh_workflow as m; m._FAKE_LEASE_CLI = m._FAKE_LEASE_CLI.replace(\"open(opt(\\x27--state-file\\x27) + \\x27.renewals\\x27\", \"time.sleep(0.3); open(opt(\\x27--state-file\\x27) + \\x27.renewals\\x27\"); tmp = pathlib.Path(\"/tmp/repro-r3-delay\"); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True); m.test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat(tmp)'",
+      "result": "REPRODUCED: FileNotFoundError: [Errno 2] No such file or directory: '/tmp/repro-r3-delay/ld/state.json.renewals'"
+    },
+    "delayed_second_write_after_fix": {
+      "command": ".venv-pantheon/bin/python3 -c 'import pathlib, shutil, scripts.test_dev_tw_market_refresh_workflow as m; m._FAKE_LEASE_CLI = m._FAKE_LEASE_CLI.replace(\"atomic_write(opt(\\x27--state-file\\x27)\", \"time.sleep(0.3); atomic_write(opt(\\x27--state-file\\x27))\"); tmp = pathlib.Path(\"/tmp/repro-r3-fixed-delay\"); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True); m.test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat(tmp)'",
+      "result": "PASSED deterministically (state.json.renewals == ['1'], heartbeatAt in state.json, rearm=done)"
+    }
+  },
+  "change": "In scripts/test_dev_tw_market_refresh_workflow.py (_FAKE_LEASE_CLI), append and flush state.json.renewals BEFORE atomically replacing state.json via temp file + os.replace (and use atomic replacement for --identity-json-out as well), matching atomic_write_json in scripts/dev_environment_lease.py. No skip, xfail, quarantine, rerun, or wall-clock threshold added; test assertions unchanged.",
+  "load_runs": {
+    "full_file_under_cpu_load": {
+      "command": "4 busy-loop python3 -c 'while True: pass' processes + 3 waves of 10 concurrent `.venv-pantheon/bin/python3 -m pytest -q --basetemp=/tmp/pytest-r3-full-$i scripts/test_dev_tw_market_refresh_workflow.py` on 12-core host",
+      "runs": 30,
+      "passed": 30,
+      "failures": 0,
+      "per_run": "46 passed",
+      "wave_durations_seconds": [247.7, 259.5, 264.6],
+      "total_elapsed_seconds": 771.8
+    },
+    "focused_target_test_under_cpu_load": {
+      "command": "6 busy-loop python3 -c 'while True: pass' processes + 30x `.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py -k test_rearm_renews_synchronously_before_first_interval_of_the_long_heartbeat` on 12-core host",
+      "runs": 30,
+      "passed": 30,
+      "failures": 0,
+      "per_run": "1 passed, 45 deselected",
+      "total_elapsed_seconds": 105.0
+    }
+  },
+  "runtime_budget": "none (test-only / problem-register change; no recurring job, emitter, or persistent writer added or changed)",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer may be from the owner's family; owner is Antigravity2 and reviewer is Claude2 (different model family), and the task exception is recorded per acceptance item 4.",
+  "residual_findings": [
+    "scripts/test_dev_tw_market_refresh_workflow.py::test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime (line 1080) and test_chip_and_fundamentals_profile_hosts_match_the_plan_table (line 1099) use nested-quantifier regex ((?:[a-z0-9.-]+,?)+) with re.findall across .github/workflows/dev-tw-market-refresh.yml, causing ~65s of catastrophic regex backtracking CPU time per test run on non-matching lines."
+  ]
+}

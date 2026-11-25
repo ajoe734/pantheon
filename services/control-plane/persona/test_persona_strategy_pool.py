@@ -64,6 +64,13 @@ class FakeRegistry:
                 if e["metadata"].get("persona_id") == persona_id and e["artifact_state"] == "approved"]
 
 
+class FakeBoundary:
+    """Row shape of services.research.governed_market_dataset.MarketBoundary (the fields admission reads)."""
+
+    def __init__(self, symbols=("2330.TW", "2317.TW", "0050.TW", "2412.TW"), snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00"):
+        self.symbols, self.snapshot_id, self.as_of = tuple(symbols), snapshot_id, as_of
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     for k, v in {
@@ -80,6 +87,7 @@ def env(tmp_path, monkeypatch):
     module.POOL_STORE = PersonaStrategyPoolStore(
         AtomicJsonRecordStore(tmp_path / "pools.json"),
         registry_reader=registry.read, owner_lister=registry.lister,
+        market_boundary_provider=FakeBoundary,
     )
     owner = module.PERSONA_OWNER_API.state.persona_owner
     for pid, tenant in (("persona-1", "tenant-a"), ("persona-2", "tenant-b")):
@@ -741,7 +749,8 @@ def test_empty_pool_keeps_its_last_approved_universe_and_every_other_criterion(e
                          candidate={"artifact_ref": ref, "checksum": reg.entries[ref]["checksum"]}, **common, **extra)
 
     out = admit("outside", 2)
-    assert out.json()["decision"]["reasons"] == ["candidate_outside_pool_approved_universe"]
+    # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper's symbol limit is the governed market boundary (2454 is outside it)
+    assert out.json()["decision"]["reasons"][0].startswith("candidate_outside_governed_market_boundary: 2454")
     memo = admit("inside", 3, initiated_by="persona")  # the consultation memo rule is unchanged
     assert memo.json()["decision"]["reasons"] == ["consultation_memo_required"]
     refused = admit("weak", 4)  # nothing is waived because the pool is idle
@@ -751,7 +760,11 @@ def test_empty_pool_keeps_its_last_approved_universe_and_every_other_criterion(e
     assert "combined_oos_sharpe_did_not_improve" in decision["reasons"][0]
     applied = admit("inside", 5)
     assert applied.json()["decision"]["status"] == "applied", applied.text
-    assert applied.json()["decision"]["approved_universe"] == ["2317", "2330"]
+    rule = applied.json()["decision"]["universe_rule"]  # the widening is recorded; the symbol list is not copied
+    assert rule["rule"] == "paper_governed_taiwan_market_boundary" and rule["approved_by"] == "operator"
+    assert rule["previous_member_symbols"] == ["2317", "2330"] and rule["boundary_symbol_count"] == 4
+    assert rule["boundary_snapshot_id"] == "gmd-2026-11-24-0123456789abcdef"
+    assert "approved_universe" not in applied.json()["decision"]
     live = [m for m in applied.json()["members"] if m["stage"] != "removed"]
     assert [(m["artifact_ref"], m["stage"]) for m in live] == [("inside", "trial")]
 
@@ -842,3 +855,163 @@ def test_legacy_close_fill_member_blocks_ordinary_admission_and_replaces_in_one_
     assert by_ref["requalified-pass"]["stage"] == "trial"
     assert by_ref["requalified-pass"]["parent_ref"] == "legacy-close"
 
+
+
+# --- POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission uses the governed Taiwan boundary -------------------
+
+_WHOLE = ["2330.TW", "2317.TW"]  # the governed boundary of these tests is exactly the recorded dataset's symbols
+
+
+def _whole_market_world(env, *, buy=True, members_weight=.7, symbols=_WHOLE, member_symbols=None):
+    """A pool whose only member trades one symbol and a candidate whose universe is the WHOLE boundary."""
+    from services.research.tests.test_pool_admission import entries_and_members, recorded_dataset
+    import persona_strategy_pool
+
+    client, reg, _ = env
+    entries, one, two = entries_and_members()
+    member = entries[one["artifact_ref"]]  # approved on 2330 only
+    if member_symbols:
+        member = _variant(member, symbols=member_symbols, buy=False)
+    whole = _variant(entries[one["artifact_ref"]], symbols=symbols, buy=buy)
+    reg.entries = {"current": {**member, "registry_id": "current"}, "whole": {**whole, "registry_id": "whole"}}
+    assert _post(client, [_member("current", checksum=member["checksum"], risk_weight=members_weight)], 0).status_code == 201
+    books = {ref: _observed_book(e["checksum"], better=ref == "whole") for ref, e in reg.entries.items()}
+    common = {"books": books, "dataset": recorded_dataset(), "observations": _risk_observations(books),
+              "candidate": {"artifact_ref": "whole", "checksum": whole["checksum"]}}
+    return client, reg, common
+
+
+def test_paper_admission_widens_to_the_governed_boundary_and_records_the_rule_not_the_symbol_list(env):
+    import json
+    from services.execution.lean_runtime.member_virtual_book import idle_pool_observations
+    from services.research.tests.test_pool_admission import entries_and_members
+    # candidate: always long 2330; the pool's only member traded 2317, not the candidate's 2330
+    client, reg, common = _whole_market_world(env, symbols=["2330.TW"], member_symbols=["2317.TW"])
+    member = reg.entries["current"]
+    removed = _member("current", checksum=member["checksum"], stage="removed", risk_weight=0,
+                      removed_at="2026-11-16T00:00:00Z", removal_reason="baseline_not_revalidated")
+    assert _post(client, [removed], 1).status_code == 201  # empty pool: the previous member symbols are the last live ones
+    common["observations"] = idle_pool_observations(common["books"]["whole"]["dates"][-20:], source_ref="test:risk-owner",
+                                                    gross_limit=100, drawdown_limit=.1)
+    store = sys_store()
+    store._market_boundary = lambda: FakeBoundary(symbols=[f"{c:04d}.TW" for c in range(1000, 1900)] + _WHOLE)
+    body = _decision(client, 2, "admit", **common).json()
+    assert body["decision"]["status"] == "applied", body["decision"]["reasons"]
+    rule = body["decision"]["universe_rule"]
+    assert rule["previous_member_symbols"] == ["2317"] and rule["candidate_symbols"] == ["2330"]
+    assert rule["boundary_symbol_count"] == 902 and rule["boundary_snapshot_id"].startswith("gmd-")
+    assert rule["approved_by"] == "operator" and rule["approved_on"] == "2026-11-25"
+    assert "approved_universe" not in body["decision"]
+    # bytes per version: the old shape copied the boundary's symbols into every version, the rule copies none
+    old_shape = len(json.dumps(sorted(f"{c:04d}" for c in range(1000, 1900)) + ["2317", "2330"]))
+    assert len(json.dumps(rule)) < old_shape / 10 and "1500" not in json.dumps(rule)
+
+
+def sys_store():
+    import sys
+    return sys.modules["persona_main_pool_test_module"].POOL_STORE
+
+
+def test_paper_candidate_outside_the_boundary_is_refused_with_a_readable_reason_on_demand_and_version(env):
+    client, reg, common = _whole_market_world(env)
+    sys_store()._market_boundary = lambda: FakeBoundary(symbols=["2330.TW", "0050.TW"])
+    body = _decision(client, 1, "admit", **common).json()
+    assert body["decision"]["status"] == "refused"
+    assert body["decision"]["reasons"][0].startswith("candidate_outside_governed_market_boundary: 2317")
+    assert "gmd-2026-11-24-0123456789abcdef" in body["decision"]["reasons"][0]
+    assert "candidate_outside_governed_market_boundary" in body["change_reason"]  # visible on the pool version
+    assert [m["artifact_ref"] for m in body["members"]] == ["current"]
+
+
+@pytest.mark.parametrize("failure", ["raises", "empty", "no_snapshot"])
+def test_unreadable_or_stale_boundary_refuses_and_never_falls_back_to_a_wider_set(env, failure):
+    from services.research.governed_market_dataset import GovernedMarketDatasetError
+    client, reg, common = _whole_market_world(env)
+
+    def provider():
+        if failure == "raises":
+            raise GovernedMarketDatasetError("daily_bars_store_stale", "newest stored day 2026-11-01 is 24 days before 2026-11-25 (limit 7)")
+        return FakeBoundary(symbols=[] if failure == "empty" else _WHOLE, snapshot_id="" if failure == "no_snapshot" else "gmd-x")
+    sys_store()._market_boundary = provider
+    body = _decision(client, 1, "admit", **common).json()
+    assert body["decision"]["status"] == "refused"
+    assert body["decision"]["reasons"][0].startswith("governed_market_boundary_unavailable")
+    if failure == "raises":
+        assert "daily_bars_store_stale" in body["decision"]["reasons"][0]
+    assert [m["artifact_ref"] for m in body["members"]] == ["current"]
+
+
+def test_default_boundary_provider_is_the_governed_dataset_builder_and_a_missing_store_refuses(env, tmp_path, monkeypatch):
+    import persona_strategy_pool
+    client, reg, common = _whole_market_world(env)
+    sys_store()._market_boundary = persona_strategy_pool.governed_market_boundary
+    monkeypatch.setenv("GOVERNED_MARKET_STORE_ROOT", str(tmp_path / "no-such-store"))
+    body = _decision(client, 1, "admit", **common).json()
+    assert body["decision"]["status"] == "refused"
+    assert body["decision"]["reasons"][0].startswith("governed_market_boundary_unavailable")
+
+
+def _fresh_world(env, **kw):
+    client, reg, common = _whole_market_world(env, **kw)
+    sys_store()._market_boundary = lambda: FakeBoundary(symbols=_WHOLE)
+    return client, reg, common
+
+
+def _reasons(client, common, version=1, **extra):
+    return _decision(client, version, "admit", **{**common, **extra}).json()["decision"]["reasons"]
+
+
+def test_whole_market_live_member_without_approved_baseline_still_refuses(env):
+    import copy
+    client, reg, common = _fresh_world(env)
+    legacy = copy.deepcopy(reg.entries["current"])
+    del legacy["evaluation_summary"]["fill_convention"]
+    del legacy["replication_proof"]["evaluation_summary"]["fill_convention"]
+    reg.entries["current"] = legacy
+    assert _reasons(client, common)[0].startswith("current: baseline_computed_under_decision_close_fill")
+
+
+def test_whole_market_persona_initiated_without_memo_still_refuses(env):
+    client, reg, common = _fresh_world(env)
+    assert _reasons(client, common, initiated_by="persona") == ["consultation_memo_required"]
+
+
+def test_whole_market_candidate_without_approved_baseline_still_refuses(env, monkeypatch):
+    import services.evolution.approved_baselines as baselines
+    client, reg, common = _fresh_world(env)
+    real = baselines.resolve_member_baseline
+    monkeypatch.setattr(baselines, "resolve_member_baseline",
+        lambda **kw: {"status": "missing", "reason": "approval_withdrawn"} if kw["artifact_ref"] == "whole" else real(**kw))
+    assert _reasons(client, common) == ["whole: approval_withdrawn"]
+
+
+def test_whole_market_candidate_missing_gate_baseline_reference_still_refuses(env):
+    client, reg, common = _fresh_world(env)
+    reg.entries["whole"] = {**reg.entries["whole"], "approval_decision_id": None}
+    out = _reasons(client, common)
+    assert out and ("candidate_gate_baseline_reference_missing" in out[0] or out[0].startswith("whole:")), out
+
+
+def test_whole_market_candidate_with_virtual_book_drawdown_still_refuses(env):
+    client, reg, common = _fresh_world(env)
+    common["books"]["whole"] = {**common["books"]["whole"], "returns": [-.05, .001] * 15}
+    assert _reasons(client, common) == ["candidate_virtual_book_drawdown_exceeds_removal_policy"]
+
+
+def test_whole_market_candidate_without_risk_budget_observations_still_refuses(env):
+    client, reg, common = _fresh_world(env)
+    assert _reasons(client, common, observations=[]) == ["risk_budget_observations_missing"]
+
+
+def test_whole_market_candidate_beyond_the_member_safety_ceiling_still_refuses(env, monkeypatch):
+    import pool_policy
+    client, reg, common = _fresh_world(env, members_weight=.3)
+    real = pool_policy.load_policy
+    monkeypatch.setattr(pool_policy, "load_policy", lambda *a, **k: real(*a, **k).model_copy(update={"member_ceiling": 1}))
+    assert _reasons(client, common) == ["pool_member_safety_ceiling"]
+
+
+def test_whole_market_candidate_failing_the_admission_backtest_and_deflated_threshold_still_refuses(env):
+    client, reg, common = _fresh_world(env, buy=False)  # the recorded momentum rule does not clear the bar
+    out = _reasons(client, common)
+    assert "candidate_oos_sharpe_below_persona_trial_threshold" in out[0]

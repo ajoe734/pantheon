@@ -53,6 +53,18 @@ def _patch_tenant_payload(monkeypatch: pytest.MonkeyPatch, fn):
 @pytest.fixture()
 def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
     read_store = _provisioning_read_surface_double()
+
+    def _count_strategy_persona_bindings() -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in read_store.list_strategy_specs() or []:
+            if not isinstance(item, dict):
+                continue
+            for pid in {str(v).strip() for v in item.get("persona_ids") or []}:
+                if pid:
+                    counts[pid] = counts.get(pid, 0) + 1
+        return counts
+
+    read_store.count_strategy_persona_bindings = _count_strategy_persona_bindings
     transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
     cmd_store = CommandStore(str(tmp_path / "cmd_store.jsonl"))
@@ -291,6 +303,36 @@ def test_persona_list_projects_only_requested_page(
     assert response.status_code == 200, response.text
     assert len(response.json()["data"]) == 1
     assert projected_sizes == [1]
+
+
+def test_persona_list_fails_closed_503_when_strategy_store_unavailable(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    route_harness.read_store.create_persona(
+        persona_id="persona-store-unavailable",
+        name="Store Unavailable Persona",
+        actor_id="operator-a",
+        lifecycle_state="provisioning",
+        metadata={"tenant_id": "pantheon-dev", "archetype": "generalist"},
+    )
+    unauthenticated = route_harness.client.get("/bff/personas?page_size=1")
+    assert unauthenticated.status_code == 401, unauthenticated.text
+
+    monkeypatch.delattr(
+        route_harness.read_store,
+        "count_strategy_persona_bindings",
+        raising=False,
+    )
+    response = route_harness.client.get(
+        "/bff/personas?page_size=1",
+        headers={"Authorization": "Bearer viewer-a:viewer"},
+    )
+
+    assert response.status_code == 503, response.text
+    error = response.json()["error"]
+    assert error["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert error["reason"] == "strategy_store_unavailable"
 
 
 def test_patch_cache_is_namespaced_after_tenant_authorization(

@@ -1,0 +1,51 @@
+{
+  "task_id": "BFF-PROVISIONING-ROUTE-SECURITY-TESTS-CI-20261125",
+  "class": "RC2 and RC5",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Repair the route_harness fixture in services/control-plane/bff/test_persona_provisioning_route_security.py so GET /bff/personas list projection uses the in-memory strategy persona binding count double rather than failing prematurely on 503 strategy_store_unavailable, retain explicit fail-closed 503 coverage when store unavailability is under test, wire the suite into .github/workflows/branch-ci.yml, and remove its exemption from docs/operations/ci-test-inventory.json.",
+  "changes": [
+    {
+      "path": "services/control-plane/bff/test_persona_provisioning_route_security.py",
+      "description": "Wire read_store.count_strategy_persona_bindings in route_harness to derive per-persona strategy counts from read_store.list_strategy_specs() (matching the existing in-memory list_strategy_specs double), fixing test_persona_get_and_list_are_pure_reads and test_persona_list_projects_only_requested_page; add test_persona_list_fails_closed_503_when_strategy_store_unavailable to verify 401 unauthenticated rejection and 503 strategy_store_unavailable fail-closed behavior when the strategy store is unavailable."
+    },
+    {
+      "path": ".github/workflows/branch-ci.yml",
+      "description": "Add services/control-plane/bff/test_persona_provisioning_route_security.py to the service-suites-heavy control_plane pytest step so Branch CI executes the suite as part of the required Service suites gate."
+    },
+    {
+      "path": "docs/operations/ci-test-inventory.json",
+      "description": "Remove the exemption entry for services/control-plane/bff/test_persona_provisioning_route_security.py now that all 21 tests pass and the file is executed as a whole suite by .github/workflows/branch-ci.yml."
+    },
+    {
+      "path": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "description": "Update the rationale for test_persona_provisioning_route_security.py to record the BFF-PROVISIONING-ROUTE-SECURITY-TESTS-CI-20261125 standalone router security harness and Branch CI wiring."
+    }
+  ],
+  "runtime_budget": {
+    "scope": "test_and_ci_workflow_configuration_only",
+    "recurring_jobs_added": 0,
+    "emitters_added": 0,
+    "persistent_writers_added": 0
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/test_persona_provisioning_route_security.py",
+      ".venv-pantheon/bin/python3 -m pytest -v scripts/test_ci_test_inventory.py",
+      ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      ".venv-pantheon/bin/python3 -m unittest scripts.test_branch_ci_gate_selection"
+    ],
+    "results": {
+      "test_persona_provisioning_route_security": "21 passed",
+      "test_ci_test_inventory": "18 passed",
+      "ci_test_inventory_check": "test inventory ok",
+      "test_bff_test_architecture": "57 passed",
+      "test_branch_ci_gate_selection": "16 passed"
+    }
+  },
+  "delivery_state": "source_only_pending_pr_review_and_merge",
+  "residual_findings": [
+    "Out of task artifact scope: _provisioning_read_surface_double() in services/control-plane/bff/test_loop_prod_per_001_provisioning.py and services/control-plane/bff/tests/test_persona_provisioning_reconcile.py stubs list_strategy_specs and get_strategy_spec_detail without count_strategy_persona_bindings (those suites currently do not call GET /bff/personas list projection, but any future list-route test reusing those doubles directly without count_strategy_persona_bindings would hit the same 503 strategy_store_unavailable)."
+  ]
+}

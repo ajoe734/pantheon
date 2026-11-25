@@ -161,13 +161,6 @@ def _normalize_owner_evidence_summary(
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(raw_summary, Mapping):
         return None
-    verified_raw = (
-        raw_summary.get("verified_count")
-        if raw_summary.get("verified_count") is not None
-        else raw_summary.get("verified_evidence")
-    )
-    if not isinstance(verified_raw, int) or isinstance(verified_raw, bool) or verified_raw < 0:
-        return None
     buckets: Dict[str, Dict[str, int]] = {}
     for key in ("by_source_type", "by_link_type", "by_credibility_tier"):
         raw_bucket = raw_summary.get(key)
@@ -188,8 +181,6 @@ def _normalize_owner_evidence_summary(
     )
     return {
         "total": total_val,
-        "verified_count": int(verified_raw),
-        "verified_evidence": int(verified_raw),
         "by_source_type": buckets["by_source_type"],
         "by_link_type": buckets["by_link_type"],
         "by_credibility_tier": buckets["by_credibility_tier"],
@@ -356,37 +347,77 @@ def normalize_research_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _evidence_resolved_link(content_ref: Any, label: Any) -> Dict[str, Any]:
+    """External only for a recorded public http(s) URL; every other scheme stays unavailable."""
+    from urllib.parse import urlsplit
+
+    ref = str(content_ref or "").strip()
+    try:
+        parts = urlsplit(ref)
+    except ValueError:
+        parts = None
+    if parts is not None and parts.scheme.lower() in ("http", "https") and parts.netloc and not parts.username and not parts.password:
+        return {"availability": "external", "route_href": ref, "display_label": label or ref, "open_in_new_tab": True}
+    return {"availability": "unavailable", "route_href": None, "display_label": "Source unavailable", "open_in_new_tab": False}
+
+
 def normalize_source_ingest_evidence_item(item: Mapping[str, Any]) -> Dict[str, Any]:
     """The one mapping from a source-ingest evidence item to a BFF evidence ref.
 
     Never fills a field with the current time: ``captured_at`` is
     ``available_time`` then ``event_time`` and stays ``None`` when neither
-    exists.
+    exists. ``credibility.verified`` is ``None`` (unknown) unless a verification
+    record with a method and a time exists; the connector confidence is shown
+    as a number and never decides verification.
     """
+    from services.knowledge.evidence.models import evidence_verification_record
+
     metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
     ref_id = item.get("evidence_item_id") or item.get("ref_id")
     label = item.get("citation_label") or ref_id
-    try:
-        confidence = float(item.get("confidence") if item.get("confidence") is not None else 0.0)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    verified = confidence >= 0.8
+    raw_conf = item.get("confidence")
+    confidence: Optional[float]
+    if isinstance(raw_conf, bool) or raw_conf is None:
+        confidence = None
+    else:
+        try:
+            confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            confidence = None
+    record = evidence_verification_record(metadata)
+    credibility: Dict[str, Any] = {
+        "tier": str(metadata.get("credibility_tier") or "").strip() or ("verified" if record else "unverified"),
+        "verified": True if record else None,
+        "confidence": confidence,
+    }
+    if record:
+        credibility["verification_method"] = str(record.get("method")).strip()
+        credibility["last_verified_at"] = str(record.get("verified_at") or record.get("time")).strip()
     body = item.get("body") or None
+    source_class = str(metadata.get("source_class") or "").strip() or None
+    linked_decisions = [
+        {"entity_type": d.get("entity_type") or d.get("type"), "entity_ref": d.get("entity_ref") or d.get("ref") or d.get("id")}
+        for d in (metadata.get("linked_decisions") if isinstance(metadata.get("linked_decisions"), list) else [])
+        if isinstance(d, Mapping)
+    ]
     return {
         "ref_id": ref_id,
         "evidence_origin": "source_ingest",
         "evidence_type": item.get("item_type") or None,
         "display_label": label,
         "summary": body,
+        "source_class": source_class,
         "source_document": {
             "title": label,
-            "source_type": metadata.get("source_class") or item.get("item_type") or "internal",
+            "source_type": source_class or item.get("item_type") or "internal",
             "source_ref": item.get("content_ref"),
             "captured_at": item.get("available_time") or item.get("event_time") or None,
             "excerpt": body,
         },
         "link_type": "supporting",
-        "credibility": {"tier": "verified" if verified else "unverified", "verified": verified},
+        "credibility": credibility,
+        "resolved_link": _evidence_resolved_link(item.get("content_ref"), label),
+        "linked_decisions": linked_decisions,
         "metadata": dict(metadata),
     }
 
@@ -542,6 +573,10 @@ class ResearchKnowledgeSourcePort:
 
     def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
         """``{strategy_id: {"title", "name"}}`` of bound strategies' current versions, without spec bodies."""
+        raise NotImplementedError
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        """``{strategy_id: [persona_id, ...]}`` of bound strategies' current versions, without spec bodies."""
         raise NotImplementedError
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
@@ -903,6 +938,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         except Exception:
             return False, None
 
+    def _owner_item_get(self, path: str) -> Tuple[str, Any]:
+        """One owner item read -> ``("ok"|"absent"|"unavailable", payload)``.
+
+        ``absent`` only when the owner itself answered 404. Timeout, 401, 5xx and
+        transport failure are ``unavailable``. An injected getter has no status
+        line: ``(False, {"status_code": 404})`` is its way to say absent.
+        """
+        base = self._source_ingest_service_url
+        if self._has_custom_http_get:
+            avail, payload = self._http_get(base, path)
+            if avail:
+                return "ok", payload
+            if isinstance(payload, Mapping) and payload.get("status_code") == 404:
+                return "absent", None
+            return "unavailable", None
+        import urllib.error
+        import urllib.request
+        from ..core.owner_reads import authorization, remaining_management_read_budget, selected_tenant
+
+        timeout = evidence_owner_read_timeout_seconds()
+        budget = remaining_management_read_budget(timeout)
+        if budget is not None:
+            if budget <= 0.0:
+                return "unavailable", None
+            timeout = max(0.05, float(budget))
+        h = {k: v for k, v in (("Authorization", authorization.get()), ("X-Tenant-Id", selected_tenant.get())) if v}
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(f"{base.rstrip('/')}/{path.lstrip('/')}", headers=h), timeout=timeout
+            ) as resp:
+                raw = resp.read()
+                return "ok", (json.loads(raw.decode("utf-8")) if raw else None)
+        except urllib.error.HTTPError as exc:
+            return ("absent" if exc.code == 404 else "unavailable"), None
+        except Exception:
+            return "unavailable", None
+
     @staticmethod
     def _default_http_post(base_url: str, path: str, body: Dict[str, Any]) -> Tuple[bool, Any]:
         return False, None
@@ -1115,10 +1187,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     @staticmethod
     def _kw03_normalize_credibility(raw: Any, *, include_detail: bool) -> Dict[str, Any]:
         credibility = raw if isinstance(raw, dict) else {}
+        verified = credibility.get("verified")
         payload: Dict[str, Any] = {
             "tier": credibility.get("tier") or "unverified",
-            "verified": bool(credibility.get("verified")),
+            "verified": None if verified is None else bool(verified),
         }
+        if "confidence" in credibility:
+            payload["confidence"] = credibility.get("confidence")
         if include_detail:
             payload["last_verified_at"] = credibility.get("last_verified_at")
             payload["verification_method"] = credibility.get("verification_method")
@@ -1311,6 +1386,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "evidence_type": evidence_ref.get("evidence_type") or evidence_ref.get("type") or None,
             "display_label": evidence_ref.get("display_label") or source_document.get("title") or linked_display_label or ref_id,
             "route_href": route_href,
+            "source_class": evidence_ref.get("source_class")
+            or (evidence_ref.get("metadata") or {}).get("source_class")
+            or source_document.get("source_class"),
             "source_document": {
                 "title": source_document.get("title") or evidence_ref.get("display_label") or ref_id,
                 "source_type": source_document.get("source_type"),
@@ -1401,6 +1479,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "evidence_type": projected.get("evidence_type"),
             "display_label": projected.get("display_label"),
             "route_href": projected.get("route_href"),
+            "source_class": projected.get("source_class"),
             "source_document": {
                 "title": projected["source_document"].get("title"),
                 "source_type": projected["source_document"].get("source_type"),
@@ -1798,25 +1877,17 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if self._source_ingest_service_url:
             from urllib.parse import quote
 
-            try:
-                avail, payload = self._http_get(
-                    self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
-                )
-            except Exception:  # noqa: BLE001
+            state, payload = self._owner_item_get(f"/api/source-ingest/evidence/items/{quote(clean, safe='')}")
+            if state == "unavailable":
                 return None, "unavailable", "unavailable"
-            record = payload.get("item") if avail and isinstance(payload, dict) else None
+            record = payload.get("item") if state == "ok" and isinstance(payload, dict) else None
             if isinstance(record, dict):
                 raw = normalize_source_ingest_evidence_item(record)
                 if not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
                     return None, "ok", "service_client"
                 return raw, "ok", "service_client"
-            if avail:
-                return None, "ok", "service_client"
-            # The helper reports 404 and transport failure alike; a one-row
-            # list probe tells "absent" apart from "owner down".
-            try:
-                next(self._iter_owner_evidence_pages(page_size=1))
-            except (_EvidenceOwnerReadError, StopIteration):
+            if state == "ok":
+                # 200 without an item is a malformed owner answer, not "absent".
                 return None, "unavailable", "unavailable"
             return None, "ok", "service_client"
         return None, "unavailable", "missing"
@@ -1829,7 +1900,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
         if status != "ok":
             return EvidenceReadResult([], None, "unavailable", source)
-        rows = [self._project_evidence_ref_list_item(raw)] if raw else []
+        rows = [self._project_evidence_ref_detail(raw)] if raw else []
         return EvidenceReadResult(rows, len(rows), "ok", source)
 
     def read_evidence_ref_detail(
@@ -3051,6 +3122,89 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 labels[strategy_id] = {"title": str(title), "name": str(title)}
         return labels
 
+    def _persona_bindings_from_persona_binding_rows(self, raw: Any) -> Dict[str, List[str]]:
+        """Current-version persona_ids per family from flat registry ``persona_binding`` rows."""
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry binding payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, List[str]]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            raw_ids = (
+                inner.get("persona_ids")
+                or meta.get("personaIds")
+                or meta.get("persona_ids")
+                or ([meta["persona_id"]] if meta.get("persona_id") else (
+                    [inner_meta["persona_id"]] if inner_meta.get("persona_id") else []
+                ))
+                or entry.get("persona_ids")
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, list(dict.fromkeys(persona_ids)))
+        return {sid: pids for sid, (_key, pids) in best.items()}
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._persona_bindings_from_persona_binding_rows(
+                self._fetch_canonical_persona_binding_view("persona_binding")
+            )
+        bindings: Dict[str, List[str]] = {}
+        for strategy_spec in list(self._strategy_specs.values()):
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, _index, raw_current, _candidates, _versions = selected
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+            raw_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            bindings[str(strategy_id)] = list(dict.fromkeys(persona_ids))
+        return bindings
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -3087,14 +3241,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
-        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
 
         auth = authorization.get()
         if not auth:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-            raw = http_request_json(registry_url(f"/api/registry/strategy-specs?view={view}"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+            target_url = registry_url(f"/api/registry/strategy-specs?view={view}")
+            token = auth.removeprefix("Bearer ").strip()
+            raw = cached_owner_call(
+                ("registry_persona_binding_view", id(self), view, target_url, caller_tenant, token),
+                lambda: http_request_json(target_url, auth_token=token, tenant_id=caller_tenant),
+            )
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc

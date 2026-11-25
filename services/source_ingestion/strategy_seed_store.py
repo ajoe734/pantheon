@@ -238,6 +238,9 @@ class _SeedStoreIndex:
     next_seq: int = 0
     pruned_by_bundle: dict[tuple[str, frozenset[str]], StrategySpecSeed] = None  # type: ignore[assignment]
     pruned_by_seed_id: dict[str, StrategySpecSeed] = None  # type: ignore[assignment]
+    order_generation: int = -2
+    order: list[str] = None  # type: ignore[assignment]
+    order_by_digest: dict[str, int] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         self.seeds_cache = {}
@@ -247,6 +250,8 @@ class _SeedStoreIndex:
         self.insertion_order = {}
         self.pruned_by_bundle = {}
         self.pruned_by_seed_id = {}
+        self.order = []
+        self.order_by_digest = {}
 
     def record_pruned(self, seed: StrategySpecSeed) -> None:
         bundle_key = (seed.evidence_bundle_id, frozenset(seed.source_ids))
@@ -599,6 +604,41 @@ class StrategySpecSeedStore:
                     out.append(seed)
             return out
 
+    def read_window(
+        self, *, page_token: str | None, max_scan: int
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Return up to ``max_scan`` raw seed records after ``page_token`` and the next token.
+
+        Bounded work: no seed object is built and nothing outside the window is touched. The
+        order is the store's insertion order, so seeds appended while a caller pages arrive after
+        its cursor. The token is opaque (ordinal plus a digest of the last seed id) and never
+        carries a seed id, because the window may cross seeds the caller cannot see. ``None``
+        means the end of the store was reached.
+        """
+        limit = max(1, int(max_scan))
+        with _local_lock_for(self._store.path):
+            index, raw_records = self._ensure_index_locked()
+            if index.order_generation != index.synced_generation:
+                index.order = list(raw_records)
+                index.order_by_digest = {_cursor_digest(sid): i for i, sid in enumerate(index.order)}
+                index.order_generation = index.synced_generation
+            start = _cursor_start(page_token, index.order_by_digest, len(index.order))
+            ids = index.order[start:start + limit]
+            window = [raw_records[sid] for sid in ids if sid in raw_records]
+            end = start + len(ids)
+            if end >= len(index.order):
+                return window, None
+            return window, f"{end}.{_cursor_digest(index.order[end - 1])}"
+
+    def cursor_after(self, seed_id: str, *, fallback: str | None = None) -> str | None:
+        """Token that resumes right after ``seed_id`` in the order of the last ``read_window``."""
+        with _local_lock_for(self._store.path):
+            index, _ = self._ensure_index_locked()
+            pos = index.order_by_digest.get(_cursor_digest(seed_id)) if index.order_generation == index.synced_generation else None
+            if pos is None:
+                return fallback
+            return None if pos + 1 >= len(index.order) else f"{pos + 1}.{_cursor_digest(seed_id)}"
+
     def list_by_status(self, status: str | StrategySpecSeedStatus) -> list[StrategySpecSeed]:
         target = status.value if isinstance(status, StrategySpecSeedStatus) else str(status)
         with _local_lock_for(self._store.path):
@@ -905,6 +945,21 @@ class StrategySpecSeedStore:
         with _local_lock_for(self._store.path):
             _, raw_records = self._ensure_index_locked()
             return len(raw_records)
+
+
+def _cursor_digest(seed_id: str) -> str:
+    return hashlib.sha256(str(seed_id).encode("utf-8")).hexdigest()[:16]
+
+
+def _cursor_start(token: str | None, order_by_digest: Mapping[str, int], size: int) -> int:
+    """Position after the cursor seed; falls back to the ordinal when that seed was pruned."""
+    if not token:
+        return 0
+    ordinal_text, _, digest = str(token).partition(".")
+    if not ordinal_text.isdigit() or not digest:
+        raise StrategySpecSeedStoreError("invalid_page_token")
+    pos = order_by_digest.get(digest)
+    return min(pos + 1 if pos is not None else int(ordinal_text), size)
 
 
 def _require_text(value: Any, field_name: str) -> str:

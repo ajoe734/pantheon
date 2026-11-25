@@ -1685,3 +1685,636 @@ def test_state_snapshot_retention_days_parsing() -> None:
     for bad in ("0", "-1", "abc", "nan"):
         with pytest.raises(ValueError):
             parse_state_snapshot_retention_days(bad)
+
+
+def test_telemetry_events_14d_retention_days_parsing_and_readers_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TELEMETRY-EVENTS-RETENTION-14D-20261125 AC 1: PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS defaults to 14.0 and validates readers."""
+    from services.telemetry.heartbeat_retention import (
+        TELEMETRY_EVENTS_READERS,
+        TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
+        check_telemetry_events_readers_against_retention_window,
+        parse_telemetry_events_retention_days,
+    )
+
+    monkeypatch.delenv(TELEMETRY_EVENTS_RETENTION_DAYS_ENV, raising=False)
+    assert parse_telemetry_events_retention_days() == 14.0
+    assert parse_telemetry_events_retention_days("21") == 21.0
+    monkeypatch.setenv(TELEMETRY_EVENTS_RETENTION_DAYS_ENV, "14.5")
+    assert parse_telemetry_events_retention_days() == 14.5
+    for bad in (0, -1, "0", "-5", "abc", "nan", True):
+        with pytest.raises(ValueError):
+            parse_telemetry_events_retention_days(bad)
+
+    reader_ids = {r["reader_id"] for r in TELEMETRY_EVENTS_READERS}
+    assert {
+        "trade_journey_lifecycle_projector",
+        "telemetry_runtime_summary_and_fill_history",
+        "trade_episode_projection_store",
+        "incident_and_postmortem_reference_validation",
+        "agora_operational_readiness",
+        "hosted_lifecycle_probe_and_stimulus",
+        "telemetry_lineage_binding_reader",
+    } <= reader_ids
+
+    check = check_telemetry_events_readers_against_retention_window(14.0)
+    assert check["all_readers_within_window"] is True
+    assert check["max_reader_required_age_seconds"] <= 14 * 86400
+
+    with pytest.raises(HeartbeatRetentionReaderBlocker):
+        check_telemetry_events_readers_against_retention_window(
+            14.0,
+            readers=[
+                *TELEMETRY_EVENTS_READERS,
+                {
+                    "reader_id": "hypothetical_30d_raw_telemetry_reader",
+                    "module": "services/hypothetical/reader.py",
+                    "oldest_telemetry_events_needed_seconds": 30 * 86400,
+                },
+            ],
+        )
+
+
+def test_telemetry_events_14d_pruning_preserves_watermarks_incident_references_anchors_and_projection_invariance(
+    pg_cluster: str,
+    tmp_path: Path,
+) -> None:
+    """TELEMETRY-EVENTS-RETENTION-14D-20261125 AC 1, AC 2, AC 3: Prunes >14d unreferenced non-permanent rows in bounded batches while preserving consumer watermarks, incident/postmortem references, latest per-runtime snapshot anchors, and projection invariance across RuntimeSummaryProjectionStore, CanonicalFillHistoryReader, and TradeEpisodeProjectionStore."""
+    import asyncpg  # type: ignore[import]
+    from services.telemetry.ingest_svc import CanonicalFillHistoryReader
+
+    db_dsn = asyncio.run(
+        _create_migrated_db(pg_cluster, "test_telemetry_events_14d_ret", with_trade_journey=False)
+    )
+    now = datetime(2026, 11, 25, 0, 0, 0, tzinfo=timezone.utc)
+    old_25d = datetime(2026, 10, 31, 6, 0, 0, tzinfo=timezone.utc)
+    old_20d = datetime(2026, 11, 5, 6, 0, 0, tzinfo=timezone.utc)
+    recent_5d = datetime(2026, 11, 20, 6, 0, 0, tzinfo=timezone.utc)
+    recent_1d = datetime(2026, 11, 24, 23, 0, 0, tzinfo=timezone.utc)
+    quarter_window = {
+        "quarter": "2026-Q4",
+        "start_at": "2026-10-01T00:00:00Z",
+        "end_exclusive_at": "2027-01-01T00:00:00Z",
+    }
+
+    write_fn = build_postgres_write_fn(db_dsn)
+    rid = "rt-49c1c3d1"
+
+    # 1. Permanent & canonical rows older than 14 days (20-25 days old -> MUST BE PRESERVED)
+    permanent_and_canonical_old: list[dict[str, Any]] = [
+        _build_hosted_event(
+            "deploy_started",
+            runtime_id=rid,
+            created_at=old_25d,
+            event_id="evt-14d-deploy-start-keep",
+        ),
+        _build_hosted_event(
+            "deploy_completed",
+            runtime_id=rid,
+            created_at=old_25d + timedelta(seconds=5),
+            event_id="evt-14d-deploy-complete-keep",
+        ),
+        _build_hosted_event(
+            "governance_decision",
+            runtime_id=rid,
+            created_at=old_20d,
+            event_id="evt-14d-gov-keep",
+        ),
+        _build_hosted_event(
+            "approval_action",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=2),
+            event_id="evt-14d-appr-keep",
+        ),
+        _build_hosted_event(
+            "persona_instrument_counterfactual",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=4),
+            event_id="evt-14d-cf-keep",
+            metadata_extra={
+                "decision_id": "dec-20d-1",
+                "instrument_id": "2330.TW",
+                "kind": "cash_equity",
+                "underlying": "2330.TW",
+                "view_direction": "long",
+                "chosen": True,
+                "units": 10,
+                "multiplier": 1.0,
+                "entry": 100.0,
+                "mark": 105.0,
+                "pnl_cf": 50.0,
+                "costs": 1.5,
+                "margin_use": 0.0,
+                "underlying_entry": 100.0,
+                "underlying_mark": 105.0,
+            },
+        ),
+        _build_hosted_event(
+            "trade_decision",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=10),
+            event_id="evt-14d-decision-canonical-keep",
+            metadata_extra={
+                "decision_id": "dec-20d-1",
+                "instrument_id": "2330.TW",
+                "expression_decision": {"chosen_instrument_id": "2330.TW"},
+                "pre_trade_sizing": {"units": 10, "notional": 1000.0},
+            },
+        ),
+        _build_hosted_event(
+            "order_submitted",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=12),
+            event_id="evt-14d-ord-sub-keep",
+            metrics={"order_quantity": 10.0, "submitted_to_broker": 1},
+            metadata_extra={
+                "symbol": "2330.TW",
+                "order_id": "oid-20d-1",
+                "submission_sizing_evidence": {"units": 10},
+            },
+        ),
+        _build_hosted_event(
+            "paper_order_simulated",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=14),
+            event_id="evt-14d-paper-ord-keep",
+            metrics={"order_quantity": 10.0, "submitted_to_broker": 1},
+            metadata_extra={
+                "symbol": "2330.TW",
+                "order_id": "oid-20d-1",
+                "trade_episode_id": "ep-20d-1",
+            },
+        ),
+        _build_hosted_event(
+            "paper_fill_simulated",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=16),
+            event_id="evt-14d-fill-keep",
+            metrics={
+                "fill_quantity": 10.0,
+                "fill_price": 100.0,
+                "action": "BUY",
+                "submitted_to_broker": 1,
+            },
+            metadata_extra={
+                "symbol": "2330.TW",
+                "currency": "TWD",
+                "broker": "paper-sim",
+                "order_id": "oid-20d-1",
+                "decision_id": "dec-20d-1",
+                "ledger_fill_count": 1,
+                "ledger_cash": 99000.0,
+                "trade_episode_id": "ep-20d-1",
+            },
+        ),
+        _build_hosted_event(
+            "order_rejection",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(seconds=18),
+            event_id="evt-14d-reject-keep",
+            metadata_extra={"symbol": "2317.TW", "reason": "risk_limit"},
+        ),
+    ]
+
+    # 2. Snapshot & valuation rows >14d: superseded/duplicate rows PRUNED, latest/distinct anchors PRESERVED
+    val_20d_iso = (old_20d + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    snapshot_and_anchor_old: list[dict[str, Any]] = [
+        _build_hosted_event(
+            "position_snapshot",
+            runtime_id=rid,
+            created_at=old_25d + timedelta(minutes=5),
+            event_id="evt-14d-pos-snap-superseded-del",
+            metrics={"position_qty": 5.0, "price": 98.0, "cash": 99500.0},
+        ),
+        _build_hosted_event(
+            "position_snapshot",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=5),
+            event_id="evt-14d-pos-snap-latest-keep",
+            metrics={"position_qty": 10.0, "price": 105.0, "cash": 99000.0},
+        ),
+        _build_hosted_event(
+            "reconciliation_completed",
+            runtime_id=rid,
+            created_at=old_25d + timedelta(minutes=6),
+            event_id="evt-14d-recon-superseded-del",
+        ),
+        _build_hosted_event(
+            "reconciliation_completed",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=6),
+            event_id="evt-14d-recon-latest-keep",
+        ),
+        _build_hosted_event(
+            "drawdown_snapshot",
+            runtime_id=rid,
+            created_at=old_25d + timedelta(minutes=8),
+            event_id="evt-14d-dd-superseded-del",
+            metrics={"drawdown_pct": 0.01, "fill_count": 1},
+        ),
+        _build_hosted_event(
+            "drawdown_snapshot",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=8),
+            event_id="evt-14d-dd-latest-keep",
+            metrics={"drawdown_pct": 0.02, "fill_count": 1},
+        ),
+        _build_hosted_event(
+            "pnl_snapshot",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=10),
+            event_id="evt-14d-pnl-first-keep",
+            pnl_as_of=val_20d_iso,
+            metrics={
+                "pnl": 50.0,
+                "portfolio_value": 100050.0,
+                "initial_cash": 100000.0,
+                "cash": 99000.0,
+                "pnl_period_start_at": "2026-10-01T00:00:00Z",
+                "pnl_currency": "TWD",
+                "valuation_mark_count": 1,
+                "fill_count": 1,
+                "sharpe_ratio": 1.6,
+                "avg_slippage_bps": 2.0,
+                "total_trades": 1,
+            },
+            metadata_extra={
+                "valuation_method": "fill_cash_ledger_mark_to_market",
+                "valuation_as_of": val_20d_iso,
+                "mark_refs": [
+                    {
+                        "symbol": "2330.TW",
+                        "price": 105.0,
+                        "as_of": val_20d_iso,
+                        "source_ref": "twse-closing-quote",
+                        "quote_currency": "TWD",
+                    }
+                ],
+            },
+        ),
+        # Duplicate pnl_snapshot with identical valuation_as_of, pnl, and portfolio_value (superseded by a later event so it is neither earliest observation nor latest pnl_snapshot)
+        _build_hosted_event(
+            "pnl_snapshot",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=11),
+            event_id="evt-14d-pnl-dup-del",
+            pnl_as_of=val_20d_iso,
+            metrics={
+                "pnl": 50.0,
+                "portfolio_value": 100050.0,
+                "initial_cash": 100000.0,
+                "cash": 99000.0,
+                "pnl_period_start_at": "2026-10-01T00:00:00Z",
+                "pnl_currency": "TWD",
+                "valuation_mark_count": 1,
+                "fill_count": 1,
+                "sharpe_ratio": 1.6,
+                "avg_slippage_bps": 2.0,
+                "total_trades": 1,
+            },
+            metadata_extra={
+                "valuation_method": "fill_cash_ledger_mark_to_market",
+                "valuation_as_of": val_20d_iso,
+                "mark_refs": [
+                    {
+                        "symbol": "2330.TW",
+                        "price": 105.0,
+                        "as_of": val_20d_iso,
+                        "source_ref": "twse-closing-quote",
+                        "quote_currency": "TWD",
+                    }
+                ],
+            },
+        ),
+    ]
+    val_20d_later_iso = (old_20d + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+    snapshot_and_anchor_old.append(
+        _build_hosted_event(
+            "pnl_snapshot",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=15),
+            event_id="evt-14d-pnl-latest-keep",
+            pnl_as_of=val_20d_later_iso,
+            metrics={
+                "pnl": 80.0,
+                "portfolio_value": 100080.0,
+                "initial_cash": 100000.0,
+                "cash": 99000.0,
+                "pnl_period_start_at": "2026-10-01T00:00:00Z",
+                "pnl_currency": "TWD",
+                "valuation_mark_count": 1,
+                "fill_count": 1,
+                "sharpe_ratio": 1.7,
+                "avg_slippage_bps": 2.0,
+                "total_trades": 1,
+            },
+            metadata_extra={
+                "valuation_method": "fill_cash_ledger_mark_to_market",
+                "valuation_as_of": val_20d_later_iso,
+                "mark_refs": [
+                    {
+                        "symbol": "2330.TW",
+                        "price": 108.0,
+                        "as_of": val_20d_later_iso,
+                        "source_ref": "twse-closing-quote",
+                        "quote_currency": "TWD",
+                    }
+                ],
+            },
+        )
+    )
+
+    # 3. Incident & postmortem referenced non-infra events >14d (MUST BE PROTECTED)
+    incident_referenced_old: list[dict[str, Any]] = [
+        _build_hosted_event(
+            "signal_generation",
+            runtime_id=rid,
+            created_at=old_20d + timedelta(minutes=1),
+            event_id="evt-14d-sig-ref-incident-keep",
+        ),
+        _build_hosted_event(
+            "reconciliation_failed",
+            runtime_id=rid,
+            created_at=old_25d + timedelta(minutes=4),
+            event_id="evt-14d-recon-fail-ref-pm-keep",
+        ),
+    ]
+
+    # 4. Unreferenced transient & synthetic tenant-capacity rows >14d (MUST BE PRUNED)
+    prunable_old: list[dict[str, Any]] = []
+    for i in range(6):
+        prunable_old.append(
+            _build_hosted_event(
+                "signal_generation",
+                runtime_id=rid,
+                created_at=old_25d + timedelta(minutes=10 + i),
+                event_id=f"evt-14d-sig-unref-del-{i}",
+            )
+        )
+    for i in range(4):
+        prunable_old.append(
+            _build_hosted_event(
+                "risk_evaluation",
+                runtime_id=rid,
+                created_at=old_25d + timedelta(minutes=20 + i),
+                event_id=f"evt-14d-risk-unref-del-{i}",
+            )
+        )
+    for i in range(4):
+        prunable_old.append(
+            _build_hosted_event(
+                "order_accepted",
+                runtime_id=rid,
+                created_at=old_25d + timedelta(minutes=30 + i),
+                event_id=f"evt-14d-ord-acc-unref-del-{i}",
+            )
+        )
+    for i in range(2):
+        prunable_old.append(
+            _build_hosted_event(
+                "paper_order_simulated",
+                runtime_id=rid,
+                created_at=old_25d + timedelta(minutes=40 + i),
+                event_id=f"evt-14d-paper-ord-notrade-del-{i}",
+                metrics={"order_quantity": 0.0, "submitted_to_broker": 0},
+            )
+        )
+    for i in range(2):
+        cap_fill = _build_hosted_event(
+            "paper_fill_simulated",
+            runtime_id="rt-capacity",
+            created_at=old_25d + timedelta(minutes=50 + i),
+            event_id=f"evt-14d-cap-fill-del-{i}",
+            metrics={"fill_quantity": 1.0, "fill_price": 100.0},
+        )
+        cap_fill["tenant_id"] = "tenant-capacity"
+        cap_fill["metadata"]["tenant_id"] = "tenant-capacity"
+        prunable_old.append(cap_fill)
+
+        cap_ord = _build_hosted_event(
+            "order_submitted",
+            runtime_id="rt-capacity",
+            created_at=old_25d + timedelta(minutes=55 + i),
+            event_id=f"evt-14d-cap-ord-del-{i}",
+            metrics={"order_quantity": 1.0},
+        )
+        cap_ord["tenant_id"] = "tenant-capacity"
+        cap_ord["metadata"]["tenant_id"] = "tenant-capacity"
+        prunable_old.append(cap_ord)
+
+    # 5. Recent (<14d) events -> MUST BE RETAINED
+    recent_events: list[dict[str, Any]] = [
+        _build_hosted_event(
+            "signal_generation",
+            runtime_id=rid,
+            created_at=recent_5d,
+            event_id="evt-14d-sig-5d-keep",
+        ),
+        _build_hosted_event(
+            "heartbeat",
+            runtime_id=rid,
+            created_at=recent_1d,
+            event_id="evt-14d-hb-1d-keep",
+        ),
+    ]
+
+    all_events = [
+        *permanent_and_canonical_old,
+        *snapshot_and_anchor_old,
+        *incident_referenced_old,
+        *prunable_old,
+        *recent_events,
+    ]
+    all_events.sort(key=lambda e: (e["created_at"], e["event_id"]))
+    assert asyncio.run(write_fn(all_events)).success
+
+    async def _seed_incident_refs_and_get_partial_seq() -> int:
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS incident")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incident.incident_cases (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS incident.postmortems (
+                    record_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            await conn.execute(
+                "INSERT INTO incident.incident_cases (record_id, payload) VALUES ($1, $2::jsonb)",
+                "inc-14d-001",
+                json.dumps(
+                    {
+                        "incident_id": "inc-14d-001",
+                        "trace_id": "evt-14d-sig-ref-incident-keep",
+                        "telemetry_event_ids": ["evt-14d-sig-ref-incident-keep"],
+                    }
+                ),
+            )
+            await conn.execute(
+                "INSERT INTO incident.postmortems (record_id, payload) VALUES ($1, $2::jsonb)",
+                "pm-14d-001",
+                json.dumps(
+                    {
+                        "postmortem_id": "pm-14d-001",
+                        "incident_id": "inc-14d-001",
+                        "trace_id": "evt-14d-recon-fail-ref-pm-keep",
+                        "telemetry_event_ids": ["evt-14d-recon-fail-ref-pm-keep"],
+                    }
+                ),
+            )
+            # Get ingested_seq of the 3rd prunable row to test consumer watermark protection
+            seq_val = await conn.fetchval(
+                "SELECT ingested_seq FROM public.telemetry_events WHERE event_id = 'evt-14d-sig-unref-del-1'"
+            )
+            return int(seq_val)
+        finally:
+            await conn.close()
+
+    partial_seq = asyncio.run(_seed_incident_refs_and_get_partial_seq())
+
+    # Capture projections BEFORE 14-day pruning
+    before_store_path = tmp_path / "before_14d_summaries.json"
+    before_store, before_episodes = asyncio.run(
+        rebuild_runtime_summaries_from_db(db_dsn, summary_store_path=str(before_store_path))
+    )
+    summaries_before = [
+        _strip_volatile_summary_fields(s)
+        for s in before_store.list(tenant_id="tenant-dev", now=now)
+    ]
+    _, binding_reader_before = build_postgres_event_reader(db_dsn)
+    fills_before = CanonicalFillHistoryReader(
+        before_episodes, binding_reader_before
+    ).retained_paper_fill_events(
+        tenant_id="tenant-dev",
+        runtime_id=rid,
+        binding_id=f"rb-{rid}",
+    )
+    episodes_before = before_episodes.list(tenant_id="tenant-dev")
+    quarter_before = _pm12_quarter_metrics([rid], summaries_before, quarter_window)
+
+    # 1. Consumer watermark protection: hold checkpoint at partial_seq
+    res_watermark = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            telemetry_events_retention_days=14,
+            batch_size=5,
+            max_batches=10,
+            extra_consumer_checkpoints={"trade_journey_projection": partial_seq},
+        )
+    )
+    assert res_watermark.status == "ok"
+    assert res_watermark.safe_ingested_seq == partial_seq
+    # Only the prunable rows at or below partial_seq are deleted
+    assert 0 < res_watermark.telemetry_events_rows_deleted < 24
+
+    # 2. Release watermark and run bounded multi-batch pruning (batch_size=4, max_batches=3)
+    res_batch1 = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            telemetry_events_retention_days=14,
+            batch_size=4,
+            max_batches=3,
+        )
+    )
+    assert res_batch1.status == "ok"
+    assert res_batch1.telemetry_events_batches_executed == 3
+    assert res_batch1.telemetry_events_rows_deleted == 12
+
+    # 3. Finish remaining >14d prunable rows
+    res_batch2 = asyncio.run(
+        run_heartbeat_retention(
+            db_dsn,
+            now=now,
+            retention_days=3,
+            infra_health_retention_days=7,
+            telemetry_events_retention_days=14,
+            batch_size=4,
+            max_batches=20,
+        )
+    )
+    assert res_batch2.status == "ok"
+    total_14d_deleted = (
+        res_watermark.telemetry_events_rows_deleted
+        + res_batch1.telemetry_events_rows_deleted
+        + res_batch2.telemetry_events_rows_deleted
+    )
+    # 20 prunable_old rows + 4 superseded/duplicate snapshot rows = 24 total deleted
+    assert total_14d_deleted == 24
+
+    async def _fetch_remaining_ids() -> set[str]:
+        conn = await asyncpg.connect(db_dsn)
+        try:
+            rows = await conn.fetch("SELECT event_id FROM public.telemetry_events")
+            return {str(r["event_id"]) for r in rows}
+        finally:
+            await conn.close()
+
+    remaining_ids = asyncio.run(_fetch_remaining_ids())
+
+    expected_deleted_ids = {
+        *(e["event_id"] for e in prunable_old),
+        "evt-14d-pos-snap-superseded-del",
+        "evt-14d-recon-superseded-del",
+        "evt-14d-dd-superseded-del",
+        "evt-14d-pnl-dup-del",
+    }
+    expected_kept_ids = {
+        *(e["event_id"] for e in permanent_and_canonical_old),
+        "evt-14d-pos-snap-latest-keep",
+        "evt-14d-recon-latest-keep",
+        "evt-14d-dd-latest-keep",
+        "evt-14d-pnl-first-keep",
+        "evt-14d-pnl-latest-keep",
+        *(e["event_id"] for e in incident_referenced_old),
+        *(e["event_id"] for e in recent_events),
+    }
+    assert remaining_ids.isdisjoint(expected_deleted_ids)
+    assert expected_kept_ids <= remaining_ids
+
+    # 4. Verify projections are 100% invariant AFTER 14-day pruning
+    after_store_path = tmp_path / "after_14d_summaries.json"
+    after_store, after_episodes = asyncio.run(
+        rebuild_runtime_summaries_from_db(db_dsn, summary_store_path=str(after_store_path))
+    )
+    summaries_after = [
+        _strip_volatile_summary_fields(s)
+        for s in after_store.list(tenant_id="tenant-dev", now=now)
+    ]
+    _, binding_reader_after = build_postgres_event_reader(db_dsn)
+    fills_after = CanonicalFillHistoryReader(
+        after_episodes, binding_reader_after
+    ).retained_paper_fill_events(
+        tenant_id="tenant-dev",
+        runtime_id=rid,
+        binding_id=f"rb-{rid}",
+    )
+    episodes_after = after_episodes.list(tenant_id="tenant-dev")
+    quarter_after = _pm12_quarter_metrics([rid], summaries_after, quarter_window)
+
+    assert summaries_after == summaries_before
+    assert fills_after == fills_before
+    assert fills_after is not None and len(fills_after) == 1
+    assert fills_after[0]["event_id"] == "evt-14d-fill-keep"
+    assert episodes_after == episodes_before
+    assert len(episodes_after["projections"]) == 1
+    assert episodes_after["projections"][0]["trade_episode_id"] == "ep-20d-1"
+    assert quarter_after == quarter_before
+    assert quarter_after["pnl_return_status"] == "known"

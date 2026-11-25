@@ -259,12 +259,19 @@ def approved_mapping(approvals, persona, pool, policy, now):
     No such subject was found on hosted. Registry admission risk_level=low and
     pool activation digests alone do not bind the financial policy contents.
     """
-    matches = set()
+    matches = {}
+    bindings = set()
     digests = {policy_digest(policy), risk_policy_digest(policy)}
     for approval in approvals:
         subject = (approval.get("metadata") or {}).get("subject") or {}
         policy_target = (approval.get("target_id") == policy.get("risk_policy_id")
                          and not str(policy.get("risk_policy_id")).startswith("rp-pool-"))
+        pool_ok = (
+            subject.get("pool_id") in {pool.get("pool_id"), policy.get("risk_policy_id"), "*"}
+        ) if policy_target else (
+            subject.get("pool_id") == pool.get("pool_id")
+            and approval.get("target_id") in {pool.get("pool_id"), subject.get("risk_policy_id")}
+        )
         target_ok = (
             approval.get("target_version") in digests | {str(policy.get("version"))}
             and subject.get("pool_id") in {pool.get("pool_id"), policy.get("risk_policy_id"), "*"}
@@ -276,7 +283,7 @@ def approved_mapping(approvals, persona, pool, policy, now):
         )
         if (approval.get("tenant_id") != persona.get("tenantId")
                 or approval.get("target_type") != "capital_pool_activation"
-                or not target_ok
+                or not pool_ok
                 or approval.get("decision_state") != "decided"
                 or approval.get("decision") != "approved"
                 or not approval.get("decision_id")
@@ -288,10 +295,7 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
                 or (subject.get("requested_risk") or subject.get("requested_profile") or subject.get("risk_profile")) != persona.get("risk")
-                or computed_direction_errors(approval, subject)
-                or subject.get("risk_policy_id") != policy.get("risk_policy_id")
-                or subject.get("risk_policy_version") != policy.get("version")
-                or subject.get("risk_policy_digest") not in digests):
+                or computed_direction_errors(approval, subject)):
             continue
         try:
             expiry = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
@@ -304,8 +308,18 @@ def approved_mapping(approvals, persona, pool, policy, now):
                 ApprovalUsageContext(environment="dev", target_stage="paper", capital_scale_pct=0.0))
         except (KeyError, AttributeError, ValueError, TypeError):
             continue
-        matches.add(approval["decision_id"])
-    return next(iter(matches)) if len(matches) == 1 else None
+        bindings.add((approval.get("target_version"), subject.get("risk_policy_id"),
+                      subject.get("risk_policy_version"), subject.get("risk_policy_digest")))
+        if (not target_ok
+                or subject.get("risk_policy_id") != policy.get("risk_policy_id")
+                or subject.get("risk_policy_version") != policy.get("version")
+                or subject.get("risk_policy_digest") not in digests):
+            continue
+        matches[approval["decision_id"]] = (decided, len(matches), approval["decision_id"])
+    if not matches or len(bindings) != 1:
+        return None
+    bound = (pool.get("metadata") or {}).get("profile_mapping_approval_id")
+    return bound if bound in matches else max(matches.values())[2]
 
 
 def rows(body):

@@ -162,14 +162,32 @@ def test_normalizer_maps_real_row_without_inventing_time() -> None:
     assert out["source_document"]["captured_at"] == row["available_time"]
     assert out["source_document"]["source_ref"] == row["content_ref"]
     assert out["source_document"]["source_type"] == "official_reference"
-    assert out["credibility"] == {"tier": "verified", "verified": True}
+    # Connector confidence 1.0 is shown as a number; it is not a verification.
+    assert out["credibility"] == {"tier": "unverified", "verified": None, "confidence": 1.0}
+    assert out["source_class"] == "official_reference"
+    # tw-official:// is not a public URL: stays unavailable, never a fabricated link.
+    assert out["resolved_link"]["availability"] == "unavailable" and out["resolved_link"]["route_href"] is None
+    for url in ("http://example.test/a", "https://example.test/a"):
+        link = normalize_source_ingest_evidence_item(dict(row, content_ref=url))["resolved_link"]
+        assert link["availability"] == "external" and link["route_href"] == url and link["open_in_new_tab"] is True
+    for ref in ("gs://bucket/x", "file:///etc/passwd", "javascript:alert(1)", "ftp://h/x", "//h/x", ""):
+        assert normalize_source_ingest_evidence_item(dict(row, content_ref=ref))["resolved_link"]["availability"] == "unavailable"
+    verified = dict(row, metadata=dict(row["metadata"], verification={"method": "manual_review", "verified_at": "2026-11-02T00:00:00Z"}))
+    assert normalize_source_ingest_evidence_item(verified)["credibility"] == {
+        "tier": "verified", "verified": True, "confidence": 1.0,
+        "verification_method": "manual_review", "last_verified_at": "2026-11-02T00:00:00Z",
+    }
+    for partial in ({"method": "manual_review"}, {"verified_at": "2026-11-02T00:00:00Z"}):
+        half = dict(row, metadata=dict(row["metadata"], verification=partial))
+        assert normalize_source_ingest_evidence_item(half)["credibility"]["verified"] is None
+    assert normalize_source_ingest_evidence_item(dict(row, confidence=None))["credibility"]["confidence"] is None
 
     no_available = dict(row, available_time=None)
     assert normalize_source_ingest_evidence_item(no_available)["source_document"]["captured_at"] == row["event_time"]
     neither = dict(row, available_time=None, event_time=None)
     assert normalize_source_ingest_evidence_item(neither)["source_document"]["captured_at"] is None
     weak = dict(row, confidence=0.5)
-    assert normalize_source_ingest_evidence_item(weak)["credibility"] == {"tier": "unverified", "verified": False}
+    assert normalize_source_ingest_evidence_item(weak)["credibility"] == {"tier": "unverified", "verified": None, "confidence": 0.5}
 
 
 def test_repository_branch_uses_the_same_normalizer() -> None:
@@ -220,7 +238,7 @@ class FakeOwner:
             }
         item_id = parsed.path.rsplit("/", 1)[-1]
         i = int(item_id.removeprefix("evi-"), 16)
-        return (True, {"item": real_row(i)}) if i < self.rows else (False, None)
+        return (True, {"item": real_row(i)}) if i < self.rows else (False, {"status_code": 404})
 
 
 def mounted(store: Any) -> TestClient:
@@ -262,12 +280,14 @@ def test_filtered_management_read_has_correct_totals_across_owner_pages() -> Non
     owner = FakeOwner(614)
     store, _ks = store_with(owner)
     body = mounted(store).get(
-        "/bff/management/evidence?verified=true&page_size=10", headers=ADMIN_HEADERS
+        "/bff/management/evidence?verified=false&page_size=10", headers=ADMIN_HEADERS
     ).json()
+    # Real rows carry a connector confidence but no verification record, so none is
+    # verified (confidence >= 0.8 no longer means verified).
     assert body["page_info"]["total"] == 614
     assert len([c for c in owner.calls if "/evidence/items?" in c]) == 4  # 200 + 200 + 200 + 14
     none = mounted(store).get(
-        "/bff/management/evidence?verified=false&page_size=10", headers=ADMIN_HEADERS
+        "/bff/management/evidence?verified=true&page_size=10", headers=ADMIN_HEADERS
     ).json()
     assert none["page_info"]["total"] == 0
     assert none["meta"]["surfaces"]["evidence_refs"]["status"] == "ok"
@@ -295,7 +315,9 @@ def test_four_surfaces_agree_for_the_same_real_item() -> None:
     # The fourth surface: /bff/management/evidence/{id}.
     mgmt_detail = client.get(f"/bff/management/evidence/{target}", headers=ADMIN_HEADERS)
     assert mgmt_detail.status_code == 200
-    md = mgmt_detail.json()["data"]["items"][0]
+    md = mgmt_detail.json()["data"]  # flat detail object, not a list envelope
+    assert "items" not in md and md["credibility"]["verified"] is None and md["credibility"]["confidence"] == row["confidence"]
+    assert mgmt_detail.json()["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "ok"
     for key in ("title", "summary", "captured_at", "source_ref", "source_type"):
         assert md[key] == mgmt[key], key
     # display_label is kept by both knowledge projections.
@@ -315,8 +337,9 @@ def test_ref_id_filter_reads_one_owner_item_not_every_page() -> None:
     owner.calls.clear()
     owner.fail = True
     down = client.get(f"/bff/management/evidence/{target}", headers=ADMIN_HEADERS).json()
-    assert down["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
-    assert down["data"]["summary"]["total_evidence"] is None
+    assert down["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "unavailable"
+    assert down["meta"]["surfaces"]["evidence_ref_detail"]["reason"]
+    assert "items" not in down["data"] and down["data"]["ref_id"] == target
 
 
 def test_knowledge_list_and_detail_issue_no_extra_availability_probe() -> None:
@@ -509,6 +532,8 @@ def test_management_evidence_summary_covers_whole_tenant_population_across_pages
     for i in range(518):
         raw = real_row(i)
         raw["confidence"] = 0.95 if i < 418 else 0.55
+        if i < 418:  # verified = a recorded verification with method and time, not a confidence
+            raw["metadata"]["verification"] = {"method": "manual_review", "verified_at": "2026-11-02T00:00:00Z"}
         raw["metadata"]["source_class"] = "official_reference" if i < 400 else "exchange_filing"
         item = EvidenceItem.from_dict(raw)
         repo._evidence_items[item.evidence_item_id] = item
@@ -568,8 +593,8 @@ def test_management_evidence_summary_covers_whole_tenant_population_across_pages
     expected_population_fields = {
         "total_evidence": 518,
         "total_items": 518,
-        "verified_count": 418,
-        "verified_evidence": 418,
+        "verified_count": None,  # removed: a count over confidence was misleading
+        "verified_evidence": None,
         "by_source_type": {"official_reference": 400, "exchange_filing": 118},
         "by_link_type": {"supporting": 518},
         "by_credibility_tier": {"verified": 418, "unverified": 100},
@@ -649,9 +674,9 @@ def test_postgres_owner_summarize_evidence_items_aggregates_in_sql_and_excludes_
             seen.append((sql, params))
             return Result(
                 [
-                    ("official_reference", "supporting", "verified", True, 400),
-                    ("official_reference", "supporting", "unverified", False, 18),
-                    ("exchange_filing", "supporting", "verified", True, 100),
+                    ("official_reference", "supporting", "verified", 400),
+                    ("official_reference", "supporting", "unverified", 18),
+                    ("exchange_filing", "supporting", "verified", 100),
                 ]
             )
 
@@ -663,14 +688,97 @@ def test_postgres_owner_summarize_evidence_items_aggregates_in_sql_and_excludes_
     summary = repo.summarize_evidence_items(tenant_id=TENANT)
     assert len(seen) == 1
     sql, params = seen[0]
-    assert "GROUP BY 1, 2, 3, 4" in sql
-    assert "payload->'metadata'->>'tenant_id' = %s" in sql
+    assert "GROUP BY 1, 2, 3" in sql
+    assert "evidence_tenant_id = %s" in sql  # stored projection, not a payload parse
     assert params == ("evidence_item", TENANT)
     assert summary == {
         "total": 518,
-        "verified_count": 500,
-        "verified_evidence": 500,
         "by_source_type": {"official_reference": 418, "exchange_filing": 100},
         "by_link_type": {"supporting": 518},
         "by_credibility_tier": {"verified": 500, "unverified": 18},
     }
+
+
+# --------------------------------------------------------------------------
+# BFF-EVIDENCE-DETAIL-AND-PAGING-20261125: flat detail, 404 vs unavailable
+# --------------------------------------------------------------------------
+class _StatusOwner(FakeOwner):
+    """Owner answering one fixed status for item reads (a real 404 is (False, {"status_code": 404}))."""
+
+    def __init__(self, rows: int, status: Any) -> None:
+        super().__init__(rows)
+        self.status = status
+
+    def __call__(self, base_url: str, path: str) -> Tuple[bool, Any]:
+        if urlparse(path).path.endswith("/evidence/items"):
+            return super().__call__(base_url, path)
+        self.calls.append(path)
+        if self.status == "timeout":
+            raise TimeoutError("owner timed out")
+        return False, ({"status_code": self.status} if self.status else None)
+
+
+def test_detail_is_one_flat_object_the_frontend_adapter_reads() -> None:
+    owner = FakeOwner(5)
+    store, _ks = store_with(owner)
+    target = "evi-0000000000000002"
+    body = mounted(store).get(f"/bff/management/evidence/{target}", headers=ADMIN_HEADERS).json()
+    data = body["data"]
+    assert "items" not in data and "page_info" not in data
+    for key in ("ref_id", "title", "source_document", "credibility", "resolved_link", "linked_decisions", "source_class"):
+        assert key in data, key
+    assert data["ref_id"] == target and data["source_class"] == "official_reference"
+    assert data["source_document"]["source_ref"] == real_row(2)["content_ref"]
+    assert data["resolved_link"]["availability"] == "unavailable"
+    assert data["credibility"]["verified"] is None and data["credibility"]["confidence"] == 1.0
+    assert body["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "ok"
+    assert [c for c in owner.calls if "/evidence/items?" in c] == []
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 401, 403, "timeout", None])
+def test_detail_is_unavailable_not_404_unless_the_owner_answered_404(status: Any) -> None:
+    store, _ks = store_with(_StatusOwner(5, status))
+    response = mounted(store).get("/bff/management/evidence/evi-0000000000000002", headers=ADMIN_HEADERS)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["meta"]["surfaces"]["evidence_ref_detail"]["status"] == "unavailable"
+    assert body["meta"]["surfaces"]["evidence_ref_detail"]["reason"]
+    assert "items" not in body["data"] and body["data"]["title"] is None
+
+
+def test_detail_is_404_when_the_owner_answered_404() -> None:
+    store, _ks = store_with(_StatusOwner(5, 404))
+    assert mounted(store).get("/bff/management/evidence/evi-0000000000000002", headers=ADMIN_HEADERS).status_code == 404
+
+
+def test_redacted_detail_leaks_no_title_excerpt_or_link() -> None:
+    from services.control_plane.bff.management_read_models.service import _management_evidence_public_item
+
+    item = {
+        "ref_id": "evi-1", "redacted": True, "kind": "artifact", "required_capability": "metric.read", "reason": "capability_missing",
+        "title": "SECRET TITLE", "summary": "SECRET BODY", "source_document": {"title": "SECRET TITLE", "excerpt": "SECRET BODY"},
+        "resolved_link": {"availability": "external", "route_href": "https://secret.test/x"},
+    }
+    dumped = json.dumps(_management_evidence_public_item(item))
+    assert "SECRET" not in dumped and "secret.test" not in dumped
+
+
+def test_personas_service_uses_the_one_public_item_mapping() -> None:
+    from services.control_plane.bff.management_read_models.service import _management_evidence_public_item as mgmt
+    from services.control_plane.bff.personas.service import _management_evidence_public_item as persona
+
+    row = normalize_source_ingest_evidence_item(real_row(1))
+    assert persona(row) == mgmt(row)
+    assert mgmt(row)["source_class"] == "official_reference"
+
+
+def test_failed_page_read_is_unavailable_with_null_total_never_empty_zero() -> None:
+    owner = FakeOwner(614)
+    owner.fail = True
+    store, _ks = store_with(owner)
+    response = mounted(store).get("/bff/management/evidence?page_size=20&page_token=41000", headers=ADMIN_HEADERS)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page_info"]["total"] is None and body["data"]["items"] == []
+    assert body["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
+    assert body["data"]["summary"]["total_evidence"] is None

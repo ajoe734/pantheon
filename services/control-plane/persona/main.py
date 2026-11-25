@@ -115,6 +115,8 @@ def _sync_canonical_dataset_pointer(dataset_loader):
             os.getenv("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT", "/data/bff/persona-pool-dataset-authority")
         )
         record = dataset_loader(*args, **kwargs)
+        if isinstance(record, Mapping) and record.get("market_boundary"):
+            return record  # a governed market dataset is read from the daily bars; it is no DatasetVersion pointer
         if not _sync_existing_dataset_version_to_pointer(output_root):
             if isinstance(record, Mapping) and (
                 record.get("parquet_path")
@@ -250,7 +252,12 @@ async def persona_lifespan(app):
             from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
             from services.control_plane.bff.source_management_client import SourceManagementClient
             from services.service_token_file import configured_service_token
-            client = SourceManagementClient()
+            # Bounded background read (own per-page and total budget, not the 2 s interactive limit).
+            client = SourceManagementClient(background_seed_read={
+                "page_size": int(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_SIZE", "100")),
+                "max_pages": int(os.getenv("PERSONA_DISCOVERY_SEED_MAX_PAGES", "50")),
+                "page_timeout_seconds": float(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_TIMEOUT_SECONDS", "10")),
+                "budget_seconds": float(os.getenv("PERSONA_DISCOVERY_SEED_BUDGET_SECONDS", "60"))})
             if not client.configured:
                 raise RuntimeError("seed_store_unconfigured")
             token = configured_service_token("PERSONA_SOURCE_INGEST_SERVICE_TOKEN") or configured_service_token(

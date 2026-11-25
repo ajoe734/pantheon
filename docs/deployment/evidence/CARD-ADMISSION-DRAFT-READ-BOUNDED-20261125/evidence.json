@@ -1,0 +1,42 @@
+{
+  "task": "CARD-ADMISSION-DRAFT-READ-BOUNDED-20261125",
+  "hosted_access_used": false,
+  "why_rollback": "Dev release 45631113416 (da29832f8, 2026-11-25 14:10Z) rolled back: Registry (256 MiB) memcg OOM-killed about every 64 s from 14:50:35Z. The alpha-replication-worker card path, enabled first by DISCOVERY-GOVERNED-MARKET-DATASET-20261125, called the unpaged GET /api/registry/strategy-specs?artifact_state=draft every 60 s tick (9,415 entries, 7,521 drafts, ~39 MB payload; one call OOM-killed after 3.06 s per the other coordinator's reproduction).",
+  "change": {
+    "switch": "ALPHA_REPLICATION_CARD_ADMISSION_ENABLED, default 0 in code (card_admission_enabled) and docker-compose.yml; checked in refresh_card_wiring before any wiring build or draft read; off reports card_path_disabled",
+    "removed": "_list_registry_strategy_specs(registry_url, 'draft') from the tick",
+    "owner_read": "GET /api/registry/strategy-specs?view=card_admission_drafts&tenant_id=<t>&page_size=20&page_token=<registry_id>; Postgres-side WHERE on type, state=draft, card_wiring.status=gate_ready, metadata.tenant_id, visible owner tenants; ORDER BY registry_id LIMIT page_size+1 (page_size max 50)",
+    "controller_bounds": "page size 20, hard cap 3 pages (60 drafts) per tick; keyset cursor kept on the config so a larger backlog is walked across ticks, wrapping when exhausted"
+  },
+  "measurement": {
+    "test": "services/registry/test_card_draft_page_bounded.py::test_owner_read_does_not_materialise_non_matching_drafts_hosted_shape",
+    "population": "7,441 non-card strategy_spec drafts of ~5.6 kB + 3 gate-ready card drafts + other-tenant and approved cards",
+    "owner_read_peak_python_heap_bytes": 5704,
+    "response_bytes": 17613,
+    "reference": "unpaged draft list 39 MB; strategy_summary_page hide_stubs 107 MiB alone / 222 MiB at 8 concurrent; Registry limit 256 MiB (DEV_MEM_LIMIT_REGISTRY unchanged)",
+    "note": "In-memory store peak via tracemalloc; the Postgres path returns only matching rows by construction (SQL captured in test_postgres_owner_filters_in_sql_with_limit_and_bound_tenant). A hosted number is not taken (no hosted access)."
+  },
+  "other_callers_of_unpaged_strategy_specs_draft_list": [
+    {"caller": "services/control-plane/bff/ports/research_knowledge_source.py _fetch_canonical_strategy_specs_uncached (GET /api/registry/strategy-specs, no state filter)", "cadence": "on BFF request, memoised/cached owner call", "bounded": "no (whole list; residual finding)"},
+    {"caller": "services/persona/pool_autonomy_cycle.py read_strategy_specs (GET /api/registry/strategy-specs)", "cadence": "once per persona pool autonomy cycle", "bounded": "no (whole list; residual finding)"},
+    {"caller": "services/control-plane/bff/ports/research_knowledge_source.py strategy summary (view=strategy_summary_page)", "cadence": "on BFF request, memoised", "bounded": "paged, but scans candidate rows (107 MiB peak; residual finding)"},
+    {"caller": "alpha-replication-worker card path", "cadence": "was every 60 s", "bounded": "now view=card_admission_drafts, bounded and off by default"}
+  ],
+  "deployment_sequence": [
+    "1. Deploy with ALPHA_REPLICATION_CARD_ADMISSION_ENABLED unset/0: worker makes no draft request, health file card_path.reason = card_path_disabled.",
+    "2. Coordinator confirms Registry is stable after deploy.",
+    "3. Set ALPHA_REPLICATION_CARD_ADMISSION_ENABLED=1 in the dev env and recreate alpha-replication-worker; watch exactly one tick: Registry memory and the view=card_admission_drafts request count/bytes.",
+    "4. Leave on only if Registry stays well below 256 MiB; turn off by setting it back to 0 and recreating the worker."
+  ],
+  "tests": [
+    "services/registry/test_card_draft_page_bounded.py (4)",
+    "services/research/alpha_replication/test_replication_controller.py (switch-off no draft request, paged/capped read)",
+    "services/research/tests/test_card_admission_production_integration.py (switch on)",
+    "scripts/test_persona_cycle_owner_ports_compose_contract.py"
+  ],
+  "pre_existing_failure": "test_controller_discovers_canonical_id_and_reads_authority_before_success fails on unmodified HEAD in this environment (created_run_ids empty); unrelated",
+  "residual_findings": [
+    "BFF and pool_autonomy_cycle still read the whole strategy-spec list on Registry (see other callers)",
+    "Drafts in legacy JSON-string payload form are not returned by the card read (not card drafts)"
+  ]
+}

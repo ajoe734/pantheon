@@ -51,6 +51,8 @@ from services.source_ingestion.daily_bars_store import (  # noqa: E402
     _available_time,
     _body_of,
     _number,
+    _traded_value,
+    _volume,
     validate_trade_date,
 )
 from services.source_ingestion.security_listing import ListingState, bare_symbol  # noqa: E402
@@ -176,8 +178,9 @@ def _ohlcv(row: Mapping[str, Any]) -> tuple[float | None, ...]:
     meta = effective_metadata(row)
     normalized = meta.get("normalized_row")
     body = normalized if isinstance(normalized, Mapping) else meta
-    return tuple(
-        _number(body.get(k) if body.get(k) is not None else meta.get(k)) for k in (*_PRICE_FIELDS, "volume"))
+    prices = tuple(_number(body.get(k) if body.get(k) is not None else meta.get(k)) for k in _PRICE_FIELDS)
+    sources = (body, _body_of(meta), meta)  # the collector names (volume_shares, turnover_twd) count as volume and value
+    return (*prices, _volume(sources), _traded_value(sources))
 
 
 def _avail(row: Mapping[str, Any]):

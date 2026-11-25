@@ -1280,7 +1280,7 @@ if args[:3] == ["compute", "instances", "create"]:
         "name": name,
         "project_id": project,
         "zone": zone,
-        "machineType": parse_flag("--machine-type", "e2-standard-2"),
+        "machineType": parse_flag("--machine-type", "e2-standard-8"),
         "selfLink": f"https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{name}",
         "labels": labels,
         "disks": disks_attached,
@@ -5067,9 +5067,72 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
 
         tpl = json.loads(INSTANCE_TEMPLATE.read_text(encoding="utf-8"))
         self.assertEqual(tpl["name"], "pantheon-stg-template-20261024")
-        self.assertEqual(tpl["properties"]["machineType"], "e2-standard-2")
+        self.assertEqual(tpl["properties"]["machineType"], "e2-standard-8")
         defaults_raw = (REPO_ROOT / "deploy" / "staging" / "staging-env.defaults").read_text(encoding="utf-8")
         self.assertIn("STAGING_MACHINE_TYPE=e2-standard-8", defaults_raw)
+        self.assertIn("prod_preflight.py vm-size", EPHEMERAL_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIn("--instance-template deploy/staging/instance-template.json", EPHEMERAL_WORKFLOW.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            manifest = _sample_manifest()
+            sha = release_manifest.compute_manifest_sha256(manifest)
+            mpath = td_path / "manifest.json"
+            mpath.write_text(json.dumps(manifest), encoding="utf-8")
+            bad_tpl = td_path / "bad-template.json"
+            bad_doc = json.loads(INSTANCE_TEMPLATE.read_text(encoding="utf-8"))
+            bad_doc["properties"]["machineType"] = "e2-standard-2"
+            bad_tpl.write_text(json.dumps(bad_doc), encoding="utf-8")
+            for extra_env in (
+                {"STAGING_MACHINE_TYPE": "e2-standard-2"},
+                {"STAGING_MACHINE_TYPE": "e2-standard-4"},
+                {"STAGING_INSTANCE_TEMPLATE_FILE": str(bad_tpl)},
+            ):
+                ops_rc = subprocess.run(
+                    [str(OPS_SCRIPT), "verify-artifacts"],
+                    env={
+                        **os.environ,
+                        "RELEASE_MANIFEST_PATH": str(mpath),
+                        "EXPECTED_MANIFEST_SHA256": sha,
+                        "STAGING_DRY_RUN": "true",
+                        "STAGING_STATE_DIR": str(td_path / "state"),
+                        **extra_env,
+                    },
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(ops_rc.returncode, 0, extra_env)
+                self.assertIn("VM_SIZE_BELOW_GATE", ops_rc.stderr + ops_rc.stdout, extra_env)
+            bundle = td_path / "bundle"
+            bundle.mkdir()
+            for boot_env in (
+                {"STAGING_MACHINE_TYPE": "e2-standard-2"},
+                {"STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE": "e2-standard-4"},
+                {"STAGING_INSTANCE_TEMPLATE_FILE": str(bad_tpl)},
+                {"STAGING_OBSERVED_VCPUS": "2"},
+            ):
+                boot_rc = subprocess.run(
+                    [
+                        "bash",
+                        str(BOOTSTRAP_SCRIPT),
+                        "--bundle-dir",
+                        str(bundle),
+                        "--release-id",
+                        manifest["release_id"],
+                        "--fe-sha",
+                        manifest["frontend"]["artifact_sha256"],
+                        "--bff-image",
+                        manifest["backend"]["images"]["operator_bff"],
+                        "--bff-host",
+                        "bff.stg.internal",
+                        "--fe-host",
+                        "fe.stg.internal",
+                    ],
+                    env={**os.environ, **boot_env},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(boot_rc.returncode, 0, boot_env)
+                self.assertIn("VM_SIZE_BELOW_GATE", boot_rc.stderr + boot_rc.stdout, boot_env)
         self.assertFalse(tpl["properties"]["scheduling"]["preemptible"])
         self.assertEqual(tpl["properties"]["scheduling"]["provisioningModel"], "STANDARD")
         self.assertEqual(
@@ -5505,6 +5568,7 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
             reg_runtime_env = {**rendered_kv, **{k: str(v) for k, v in reg_env.items()}, "PANTHEON_ENV": "staging"}
             with mock.patch.dict(os.environ, runtime_env, clear=True), \
                  mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
                  mock.patch.object(PostgresSourceManagementStore, "_bootstrap", return_value=None), \
                  mock.patch.object(PostgresActionLedger, "_bootstrap", return_value=None), \
                  mock.patch.object(PostgresTradingRoomStore, "_bootstrap", return_value=None), \
@@ -5601,7 +5665,8 @@ class WorkflowAndTemplateContractTests(unittest.TestCase):
                 self.assertEqual(al.schema, "public")
 
             with mock.patch.dict(os.environ, reg_runtime_env, clear=True), \
-                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None):
+                 mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None):
                 owner_reg = build_registry_store()
                 self.assertIsInstance(owner_reg, PostgresRegistryStore)
                 self.assertEqual(bff_reg._entries.dsn, owner_reg._entries.dsn)

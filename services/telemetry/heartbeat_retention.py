@@ -1,6 +1,7 @@
-"""Runtime heartbeat and infrastructure_health retention and permanent hourly summary aggregation.
+"""Runtime heartbeat, infrastructure_health, runtime_state_snapshot, and 14-day telemetry_events retention.
 
-TELEMETRY-HEARTBEAT-RETENTION-20261117 & TELEMETRY-INFRA-HEALTH-RETENTION-20261117:
+TELEMETRY-HEARTBEAT-RETENTION-20261117, TELEMETRY-INFRA-HEALTH-RETENTION-20261117 &
+TELEMETRY-EVENTS-RETENTION-14D-20261125:
 - Keeps raw ``event_type = 'heartbeat'`` rows in ``public.telemetry_events``
   for ``PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS`` (default 3 days).
 - Summarises each ``(runtime_id, hour_bucket)`` in UTC into
@@ -14,13 +15,18 @@ TELEMETRY-HEARTBEAT-RETENTION-20261117 & TELEMETRY-INFRA-HEALTH-RETENTION-202611
   or Postmortem so ``GET /api/telemetry/events/<event_id>`` and
   ``GET /api/telemetry/lineage/events/<event_id>/trace`` stay resolvable for as
   long as that incident or postmortem can be validated.
-- Never touches any other ``event_type``.
+- Prunes unreferenced non-permanent ``public.telemetry_events`` rows older than
+  ``PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS`` (default 14 days per 2026-11-25
+  operator decision) in bounded batches while preserving consumer watermarks,
+  incident/postmortem references, latest per-runtime snapshot anchors, distinct
+  quarter-equity valuation observations, and canonical fill/governance/deploy/
+  decision/episode rows required by ``CanonicalFillHistoryReader``,
+  ``RuntimeSummaryProjectionStore``, or ``TradeEpisodeProjectionStore``.
 - Never deletes a row whose ``ingested_seq`` has not yet been passed by every
   consumer reading ``public.telemetry_events`` by ``ingested_seq``.
-- Verifies that no registered heartbeat or infrastructure_health reader requires
-  unreferenced raw rows older than its configured retention window; if any reader
-  does, refuses to delete and raises ``HeartbeatRetentionReaderBlocker`` naming
-  that reader.
+- Verifies that no registered reader requires unreferenced raw rows older than
+  its configured retention window; if any reader does, refuses to delete and
+  raises ``HeartbeatRetentionReaderBlocker`` naming that reader.
 """
 
 from __future__ import annotations
@@ -59,6 +65,12 @@ DEFAULT_INFRA_HEALTH_RETENTION_DAYS = 7.0
 # is kept too: the summary's binding first-event time derives from it.
 DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS = 3.0
 STATE_SNAPSHOT_KEEP_STATUSES = ("marks_unavailable", "invalid_ledger", "invalid_drawdown_series")
+# TELEMETRY-EVENTS-RETENTION-14D-20261125: operator decision (2026-11-25) sets
+# a 14-day retention window on unreferenced non-permanent public.telemetry_events
+# rows while preserving consumer watermarks, incident/postmortem references,
+# per-runtime snapshot/valuation anchors, and canonical fill/governance/deploy/
+# decision/episode rows.
+DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS = 14.0
 DEFAULT_BATCH_SIZE = 5000
 DEFAULT_MAX_BATCHES_PER_RUN = 20
 DEFAULT_INTERVAL_SECONDS = 300.0
@@ -70,11 +82,87 @@ DEFAULT_POSTMORTEMS_TABLE = "incident.postmortems"
 RAW_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS"
 INFRA_HEALTH_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_INFRA_HEALTH_RETENTION_DAYS"
 STATE_SNAPSHOT_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS"
+TELEMETRY_EVENTS_RETENTION_DAYS_ENV = "PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS"
 RETENTION_ENABLED_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_ENABLED"
 RETENTION_BATCH_SIZE_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_BATCH_SIZE"
 RETENTION_MAX_BATCHES_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_MAX_BATCHES_PER_RUN"
 RETENTION_INTERVAL_SECONDS_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_INTERVAL_SECONDS"
 RETENTION_STATEMENT_TIMEOUT_MS_ENV = "PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_STATEMENT_TIMEOUT_MS"
+
+DEDICATED_RETENTION_EVENT_TYPES: tuple[str, ...] = (
+    HEARTBEAT_EVENT_TYPE,
+    INFRA_HEALTH_EVENT_TYPE,
+    STATE_SNAPSHOT_EVENT_TYPE,
+)
+
+PERMANENT_TELEMETRY_EVENT_TYPES: tuple[str, ...] = (
+    "deploy_started",
+    "deploy_completed",
+    "runtime_retired",
+    "rollback_started",
+    "rollback_completed",
+    "pause_triggered",
+    "liquidate_triggered",
+    "governance_decision",
+    "approval_action",
+    "manual_override",
+    "kill_switch_action",
+    "persona_instrument_counterfactual",
+    "trade_episode.opened",
+    "trade_episode.updated",
+    "trade_episode.closed",
+    "trade_episode.unresolved",
+    "trade_reflection.requested",
+    "trade_reflection.completed",
+    "trade_reflection.failed",
+    "trade_lesson.proposed",
+    "trade_lesson.reviewed",
+    "trade_lesson.merged",
+    "trade_lesson.quarantined",
+)
+
+CANONICAL_FILL_AND_REJECTION_EVENT_TYPES: tuple[str, ...] = (
+    "paper_fill_simulated",
+    "paper_futures_settled",
+    "order_filled",
+    "fill_received",
+    "fill_observation",
+    "order_partially_filled",
+    "order_rejection",
+    "order_rejection_simulated",
+    "order_canceled",
+    "order_cancelled",
+)
+
+SNAPSHOT_ANCHOR_EVENT_TYPES: tuple[str, ...] = (
+    "pnl_snapshot",
+    "drawdown_snapshot",
+    "position_snapshot",
+    "position_snapshot_received",
+    "broker_position_snapshot",
+)
+
+LIFECYCLE_IDENTITY_EVENT_TYPES: tuple[str, ...] = (
+    "signal_generation",
+    "trade_decision",
+    "risk_evaluation",
+    "paper_order_simulated",
+    "order_submitted",
+    "order_accepted",
+    "order_partially_filled",
+    "paper_fill_simulated",
+    "fill_received",
+    "order_filled",
+    "order_rejection",
+    "order_rejection_simulated",
+    "order_canceled",
+    "order_cancelled",
+    "position_snapshot",
+    "position_snapshot_received",
+    "broker_position_snapshot",
+    "reconciliation_completed",
+    "reconciliation_failed",
+)
 
 
 CREATE_HEARTBEAT_SUMMARY_TABLE_SQL = """
@@ -344,6 +432,89 @@ INFRASTRUCTURE_HEALTH_READERS: tuple[dict[str, Any], ...] = (
 )
 
 
+TELEMETRY_EVENTS_READERS: tuple[dict[str, Any], ...] = (
+    {
+        "reader_id": "trade_journey_lifecycle_projector",
+        "module": "services/trade_journey/lifecycle_projector.py",
+        "surface": "RelationalLifecycleProjector / PostgresLifecycleSource",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 0,
+        "oldest_telemetry_events_needed_description": (
+            "Reads public.telemetry_events by ingested_seq > controller.checkpoint_seq and materializes "
+            "journeys and loop_runs into trade_journey_projection; 14-day retention never deletes rows "
+            "with ingested_seq > safe_ingested_seq."
+        ),
+    },
+    {
+        "reader_id": "telemetry_runtime_summary_and_fill_history",
+        "module": "services/telemetry/runtime_summary.py & services/telemetry/ingest_svc.py",
+        "surface": "RuntimeSummaryProjectionStore & CanonicalFillHistoryReader",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 0,
+        "oldest_telemetry_events_needed_description": (
+            "Latest per-runtime snapshot anchors, distinct quarter_equity.v1 pnl_snapshot observations, "
+            "and canonical fill/governance/deploy/decision/episode rows are preserved permanently so "
+            "runtime summaries and fill history are invariant across 14-day pruning."
+        ),
+    },
+    {
+        "reader_id": "trade_episode_projection_store",
+        "module": "services/telemetry/trade_episode_projection.py",
+        "surface": "TradeEpisodeProjectionStore",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 0,
+        "oldest_telemetry_events_needed_description": (
+            "All trade_episode.*, trade_reflection.*, trade_lesson.* rows and any telemetry row carrying "
+            "trade_episode_id (or reversal episode IDs) are preserved permanently."
+        ),
+    },
+    {
+        "reader_id": "incident_and_postmortem_reference_validation",
+        "module": "services/incident/reference_validation.py, services/incidents/main.py, services/postmortems/main.py",
+        "surface": "CanonicalReferenceValidator.validate_incident & LineageReadService",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 0,
+        "oldest_telemetry_events_needed_description": (
+            "All event IDs referenced by incident.incident_cases, incident.postmortems, on-disk incidents.json, "
+            "or BFF downstream_health.sqlite3 are protected from 14-day pruning indefinitely."
+        ),
+    },
+    {
+        "reader_id": "agora_operational_readiness",
+        "module": "services/control-plane/bff/agora/operational_readiness.py",
+        "surface": "AgoraOperationalReadinessAssembler._read_canonical_telemetry",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 86400,
+        "oldest_telemetry_events_needed_description": (
+            "Queries recent signal_generation rows (ORDER BY ingested_seq DESC LIMIT 200), well within the "
+            "14-day (1209600s) retention window."
+        ),
+    },
+    {
+        "reader_id": "hosted_lifecycle_probe_and_stimulus",
+        "module": "services/trade_journey/hosted_lifecycle_probe.py & services/trade_journey/hosted_lifecycle_stimulus.py",
+        "surface": "AsyncpgTelemetrySource / HostedLifecycleStimulus",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 86400,
+        "oldest_telemetry_events_needed_description": (
+            "Probes recent lifecycle events emitted during or immediately preceding a probe run, well within "
+            "the 14-day (1209600s) retention window."
+        ),
+    },
+    {
+        "reader_id": "telemetry_lineage_binding_reader",
+        "module": "services/telemetry/ingest_svc.py & services/telemetry/lineage_read/service.py",
+        "surface": "build_postgres_event_reader._fetch_binding_events",
+        "reads_raw_telemetry_events": True,
+        "oldest_telemetry_events_needed_seconds": 86400,
+        "oldest_telemetry_events_needed_description": (
+            "Queries recent LIMIT 50..100 events per binding; canonical fill history rows for active positions "
+            "are preserved permanently."
+        ),
+    },
+)
+
+
 _SUMMARY_EVENT_ID_KV_RE = re.compile(
     r"(?:source_event_id|telemetry_event_id|opening_event_id|resolving_event_id)=([^;\s,]+)"
 )
@@ -427,6 +598,26 @@ def parse_state_snapshot_retention_days(raw: Any = None) -> float:
     return days
 
 
+def parse_telemetry_events_retention_days(raw: Any = None) -> float:
+    """Parse and validate PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS (default 14)."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raw = os.getenv(
+            TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
+            str(int(DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS)),
+        )
+    if isinstance(raw, bool):
+        raise ValueError(f"{TELEMETRY_EVENTS_RETENTION_DAYS_ENV} must be a positive number")
+    try:
+        days = float(str(raw).strip() if isinstance(raw, str) else raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{TELEMETRY_EVENTS_RETENTION_DAYS_ENV} must be a positive number, got {raw!r}"
+        ) from exc
+    if not math.isfinite(days) or days <= 0.0:
+        raise ValueError(f"{TELEMETRY_EVENTS_RETENTION_DAYS_ENV} must be > 0, got {raw!r}")
+    return days
+
+
 def check_readers_against_retention_window(
     retention_days: float,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
@@ -494,6 +685,53 @@ def check_infra_health_readers_against_retention_window(
                 "reader_id": reader_id,
                 "module": module,
                 "oldest_infra_health_needed_seconds": required_seconds,
+                "within_retention_window": required_seconds <= window_seconds,
+            }
+        )
+        if required_seconds > window_seconds:
+            raise HeartbeatRetentionReaderBlocker(
+                reader_id=reader_id,
+                required_seconds=required_seconds,
+                retention_window_seconds=window_seconds,
+                module=module,
+            )
+    return {
+        "all_readers_within_window": True,
+        "retention_days": float(retention_days),
+        "retention_window_seconds": window_seconds,
+        "max_reader_required_age_seconds": max_required,
+        "blocking_reader": None,
+        "readers": checked,
+    }
+
+
+def check_telemetry_events_readers_against_retention_window(
+    retention_days: float,
+    readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
+) -> dict[str, Any]:
+    """Verify every telemetry_events reader's unreferenced age fits within retention_days.
+
+    Raises HeartbeatRetentionReaderBlocker if any reader requires unreferenced
+    non-permanent telemetry_events rows older than the configured retention window.
+    """
+    window_seconds = float(retention_days) * 86400.0
+    max_required = 0.0
+    checked: list[dict[str, Any]] = []
+    for reader in readers:
+        reader_id = str(reader.get("reader_id") or "unknown")
+        module = str(reader.get("module") or "")
+        raw_required = reader.get("oldest_telemetry_events_needed_seconds")
+        if raw_required is None:
+            raw_required = reader.get("oldest_infra_health_needed_seconds")
+        if raw_required is None:
+            raw_required = reader.get("oldest_heartbeat_needed_seconds")
+        required_seconds = float(raw_required or 0.0)
+        max_required = max(max_required, required_seconds)
+        checked.append(
+            {
+                "reader_id": reader_id,
+                "module": module,
+                "oldest_telemetry_events_needed_seconds": required_seconds,
                 "within_retention_window": required_seconds <= window_seconds,
             }
         )
@@ -676,6 +914,220 @@ async def resolve_protected_infrastructure_health_event_ids(
             continue
 
     return protected
+
+
+resolve_protected_telemetry_event_ids = resolve_protected_infrastructure_health_event_ids
+
+
+async def resolve_protected_telemetry_anchor_event_ids(
+    conn: Any,
+    *,
+    timeout: float | None = None,
+) -> set[str]:
+    """Return per-runtime snapshot, valuation, and boundary anchor event IDs in public.telemetry_events.
+
+    Preserves across 14-day pruning (for non-``tenant-capacity`` tenants):
+    1. Oldest and newest event per ``(tenant_key, runtime_key, binding_key)`` so binding
+       first/latest event boundaries and ``last_event_id`` stay invariant.
+    2. Newest lifecycle-identity event per ``(tenant_key, runtime_key, binding_key)`` so
+       ``last_lifecycle_identity`` and top-level trace/correlation fields stay invariant.
+    3. Latest ``pnl_snapshot``, ``drawdown_snapshot``, ``position_snapshot``,
+       ``position_snapshot_received``, and ``broker_position_snapshot`` per
+       ``(tenant_key, runtime_key, binding_key, event_type)`` (both by ``(created_at, ingested_seq)``
+       and by explicit metric ``as_of``).
+    4. Earliest ``pnl_snapshot`` per distinct ``(tenant_key, runtime_key, binding_key,
+       valuation_as_of, pnl, portfolio_value)`` observation so ``quarter_equity_observations``
+       and ``pool_risk_snapshots`` stay invariant while duplicate repeated ``pnl_snapshot``
+       rows are pruned.
+    5. Latest ``reconciliation_completed`` / ``reconciliation_failed`` row and latest
+       ``member_virtual_books`` carrier per ``(tenant_key, runtime_key, binding_key)``.
+    """
+    rows = await conn.fetch(
+        """
+        WITH scoped AS (
+            SELECT
+                e.event_id,
+                e.event_type,
+                e.created_at,
+                e.ingested_seq,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'tenant_id'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'tenant_id'), ''),
+                    'default'
+                ) AS tenant_key,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'runtime_id'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'runtime_id'), ''),
+                    'unknown'
+                ) AS runtime_key,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'binding_id'), ''),
+                    NULLIF(trim(e.payload->>'runtime_binding_id'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'binding_id'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'runtime_binding_id'), ''),
+                    ''
+                ) AS binding_key,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'pnl_as_of'), ''),
+                    NULLIF(trim(e.payload->>'drawdown_as_of'), ''),
+                    NULLIF(trim(e.payload->'metrics'->>'pnl_as_of'), ''),
+                    NULLIF(trim(e.payload->'metrics'->>'drawdown_as_of'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'valuation_as_of'), ''),
+                    NULLIF(trim(e.payload->>'created_at'), ''),
+                    e.created_at::text
+                ) AS metric_as_of_key,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'pnl_as_of'), ''),
+                    NULLIF(trim(e.payload->'metrics'->>'pnl_as_of'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'valuation_as_of'), ''),
+                    NULLIF(trim(e.payload->>'created_at'), ''),
+                    e.created_at::text
+                ) AS valuation_as_of_key,
+                COALESCE(e.payload->'metrics'->>'pnl', '') AS pnl_val,
+                COALESCE(e.payload->'metrics'->>'portfolio_value', '') AS portfolio_val,
+                COALESCE(
+                    NULLIF(trim(e.payload->>'trace_id'), ''),
+                    NULLIF(trim(e.payload->'metadata'->>'trace_id'), ''),
+                    NULLIF(trim(e.payload->'correlation_envelope'->>'trace_id'), '')
+                ) AS trace_key,
+                (jsonb_typeof(e.payload->'metadata'->'member_virtual_books') = 'array') AS has_member_books
+            FROM public.telemetry_events e
+            WHERE e.event_type NOT IN ('heartbeat', 'infrastructure_health', 'runtime_state_snapshot')
+              AND COALESCE(
+                  NULLIF(trim(e.payload->>'tenant_id'), ''),
+                  NULLIF(trim(e.payload->'metadata'->>'tenant_id'), ''),
+                  'default'
+              ) <> 'tenant-capacity'
+        )
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key) event_id
+            FROM scoped
+            ORDER BY tenant_key, runtime_key, binding_key, created_at ASC, ingested_seq ASC, event_id ASC
+        ) oldest_per_binding
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key) event_id
+            FROM scoped
+            ORDER BY tenant_key, runtime_key, binding_key, created_at DESC, ingested_seq DESC, event_id DESC
+        ) newest_per_binding
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key) event_id
+            FROM scoped
+            WHERE trace_key IS NOT NULL
+              AND event_type = ANY($1::text[])
+            ORDER BY tenant_key, runtime_key, binding_key, created_at DESC, ingested_seq DESC, event_id DESC
+        ) newest_lifecycle_per_binding
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key, event_type) event_id
+            FROM scoped
+            WHERE event_type = ANY($2::text[])
+            ORDER BY tenant_key, runtime_key, binding_key, event_type, created_at DESC, ingested_seq DESC, event_id DESC
+        ) latest_snapshot_by_created
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key, event_type) event_id
+            FROM scoped
+            WHERE event_type = ANY($2::text[])
+            ORDER BY tenant_key, runtime_key, binding_key, event_type, metric_as_of_key DESC, created_at DESC, ingested_seq DESC, event_id DESC
+        ) latest_snapshot_by_as_of
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key, valuation_as_of_key, pnl_val, portfolio_val) event_id
+            FROM scoped
+            WHERE event_type = 'pnl_snapshot'
+            ORDER BY tenant_key, runtime_key, binding_key, valuation_as_of_key, pnl_val, portfolio_val, created_at ASC, ingested_seq ASC, event_id ASC
+        ) distinct_pnl_observations
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key) event_id
+            FROM scoped
+            WHERE event_type IN ('reconciliation_completed', 'reconciliation_failed')
+            ORDER BY tenant_key, runtime_key, binding_key, created_at DESC, ingested_seq DESC, event_id DESC
+        ) latest_reconciliation_per_binding
+        UNION
+        SELECT event_id FROM (
+            SELECT DISTINCT ON (tenant_key, runtime_key, binding_key) event_id
+            FROM scoped
+            WHERE has_member_books
+            ORDER BY tenant_key, runtime_key, binding_key, created_at DESC, ingested_seq DESC, event_id DESC
+        ) latest_member_books_per_binding
+        """,
+        list(LIFECYCLE_IDENTITY_EVENT_TYPES),
+        list(SNAPSHOT_ANCHOR_EVENT_TYPES),
+        timeout=timeout,
+    )
+    return {str(r["event_id"]) for r in rows if r["event_id"]}
+
+
+def _telemetry_events_14d_prunable_where_sql(
+    alias: str = "e",
+    *,
+    cutoff_param: str = "$1",
+    safe_seq_param: str = "$2",
+    protected_ids_param: str = "$3",
+    permanent_types_param: str = "$4",
+    canonical_fill_types_param: str = "$5",
+) -> str:
+    """Return the SQL WHERE predicate identifying 14-day prunable public.telemetry_events rows."""
+    a = alias
+    return f"""{a}.event_type NOT IN ('heartbeat', 'infrastructure_health', 'runtime_state_snapshot')
+      AND {a}.created_at < {cutoff_param}
+      AND {a}.ingested_seq <= {safe_seq_param}
+      AND NOT ({a}.event_id = ANY({protected_ids_param}::text[]))
+      AND NOT ({a}.event_type = ANY({permanent_types_param}::text[]))
+      AND COALESCE(
+          NULLIF(trim({a}.payload->>'trade_episode_id'), ''),
+          NULLIF(trim({a}.payload->'metadata'->>'trade_episode_id'), ''),
+          NULLIF(trim({a}.payload->'payload'->>'trade_episode_id'), ''),
+          NULLIF(trim({a}.payload->'metadata'->'reversal'->>'closed_episode_id'), ''),
+          NULLIF(trim({a}.payload->'metadata'->'reversal'->>'opened_episode_id'), '')
+      ) IS NULL
+      AND (
+          COALESCE(
+              NULLIF(trim({a}.payload->>'tenant_id'), ''),
+              NULLIF(trim({a}.payload->'metadata'->>'tenant_id'), ''),
+              'default'
+          ) = 'tenant-capacity'
+          OR (
+              NOT ({a}.event_type = ANY({canonical_fill_types_param}::text[]))
+              AND NOT (
+                  {a}.event_type = 'order_submitted'
+                  AND COALESCE(
+                      NULLIF(trim({a}.payload->'metrics'->>'order_quantity'), ''),
+                      NULLIF(trim({a}.payload->'metrics'->>'requested_quantity'), ''),
+                      NULLIF(trim({a}.payload->>'quantity'), ''),
+                      NULLIF(trim({a}.payload->'metadata'->>'submission_sizing_evidence'), '')
+                  ) IS NOT NULL
+              )
+              AND NOT (
+                  {a}.event_type = 'paper_order_simulated'
+                  AND LOWER(COALESCE({a}.payload->'metrics'->>'submitted_to_broker', '')) IN ('1', 'true')
+                  AND COALESCE(
+                      NULLIF(trim({a}.payload->'metrics'->>'order_quantity'), ''),
+                      NULLIF(trim({a}.payload->'metrics'->>'requested_quantity'), ''),
+                      NULLIF(trim({a}.payload->>'quantity'), '')
+                  ) IS NOT NULL
+              )
+              AND NOT (
+                  {a}.event_type = 'trade_decision'
+                  AND (
+                      (
+                          jsonb_typeof({a}.payload->'metadata') = 'object'
+                          AND (
+                              {a}.payload->'metadata' ? 'expression_decision'
+                              OR {a}.payload->'metadata' ? 'pre_trade_sizing'
+                          )
+                      )
+                      OR COALESCE(
+                          NULLIF(trim({a}.payload->'metadata'->>'instrument_id'), ''),
+                          NULLIF(trim({a}.payload->>'instrument_id'), '')
+                      ) IS NOT NULL
+                  )
+              )
+          )
+      )"""
 
 
 def _utc_now() -> datetime:
@@ -1173,7 +1625,7 @@ async def _summarize_hours_before_delete(
 
 @dataclass
 class RetentionRunResult:
-    """Result of one bounded heartbeat and infrastructure_health retention execution."""
+    """Result of one bounded heartbeat, infrastructure_health, state_snapshot, and 14d telemetry_events retention execution."""
 
     status: str
     retention_days: float
@@ -1199,6 +1651,11 @@ class RetentionRunResult:
     state_snapshot_rows_deleted: int = 0
     state_snapshot_retention_days: float = DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS
     state_snapshot_batches_executed: int = 0
+    telemetry_events_rows_deleted: int = 0
+    telemetry_events_retention_days: float = DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS
+    telemetry_events_cutoff_at: str = ""
+    telemetry_events_batches_executed: int = 0
+    protected_telemetry_anchor_event_ids_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1226,6 +1683,11 @@ class RetentionRunResult:
             "state_snapshot_rows_deleted": self.state_snapshot_rows_deleted,
             "state_snapshot_retention_days": self.state_snapshot_retention_days,
             "state_snapshot_batches_executed": self.state_snapshot_batches_executed,
+            "telemetry_events_rows_deleted": self.telemetry_events_rows_deleted,
+            "telemetry_events_retention_days": self.telemetry_events_retention_days,
+            "telemetry_events_cutoff_at": self.telemetry_events_cutoff_at,
+            "telemetry_events_batches_executed": self.telemetry_events_batches_executed,
+            "protected_telemetry_anchor_event_ids_count": self.protected_telemetry_anchor_event_ids_count,
         }
 
 
@@ -1236,6 +1698,7 @@ async def run_heartbeat_retention_on_connection(
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
     state_snapshot_retention_days: float | None = None,
+    telemetry_events_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -1244,17 +1707,21 @@ async def run_heartbeat_retention_on_connection(
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
     infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    telemetry_events_readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
     incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
     postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
     incident_store_paths: Sequence[str | Path] | None = None,
     bff_health_sqlite_path: str | Path | None = None,
     extra_protected_event_ids: Iterable[str] | None = None,
 ) -> RetentionRunResult:
-    """Run bounded heartbeat summarization and raw heartbeat + infrastructure_health deletion on an open asyncpg connection."""
+    """Run bounded heartbeat summarization and raw heartbeat + infrastructure_health + state_snapshot + 14d telemetry_events deletion on an open asyncpg connection."""
     t0 = time.monotonic()
     effective_days = parse_retention_days(retention_days)
     effective_infra_days = parse_infra_health_retention_days(infra_health_retention_days)
     effective_snapshot_days = parse_state_snapshot_retention_days(state_snapshot_retention_days)
+    effective_telemetry_days = parse_telemetry_events_retention_days(
+        telemetry_events_retention_days
+    )
     effective_batch_size = max(1, int(batch_size))
     effective_timeout_ms = max(100, int(statement_timeout_ms))
     reference_now = _coerce_utc(now) if now is not None else _utc_now()
@@ -1263,11 +1730,17 @@ async def run_heartbeat_retention_on_connection(
     infra_cutoff_dt = reference_now - timedelta(days=effective_infra_days)
     infra_cutoff_iso = _format_rfc3339(infra_cutoff_dt) or ""
     snapshot_cutoff_dt = reference_now - timedelta(days=effective_snapshot_days)
+    telemetry_cutoff_dt = reference_now - timedelta(days=effective_telemetry_days)
+    telemetry_cutoff_iso = _format_rfc3339(telemetry_cutoff_dt) or ""
 
     check_readers_against_retention_window(effective_days, readers=readers)
     check_infra_health_readers_against_retention_window(
         effective_infra_days,
         readers=infra_health_readers,
+    )
+    check_telemetry_events_readers_against_retention_window(
+        effective_telemetry_days,
+        readers=telemetry_events_readers,
     )
     await ensure_heartbeat_summary_schema(conn)
 
@@ -1312,6 +1785,14 @@ async def run_heartbeat_retention_on_connection(
             infra_health_batches_executed=0,
             protected_infra_health_event_ids_count=len(protected_ids),
             protected_infra_health_event_ids=protected_ids,
+            state_snapshot_rows_deleted=0,
+            state_snapshot_retention_days=effective_snapshot_days,
+            state_snapshot_batches_executed=0,
+            telemetry_events_rows_deleted=0,
+            telemetry_events_retention_days=effective_telemetry_days,
+            telemetry_events_cutoff_at=telemetry_cutoff_iso,
+            telemetry_events_batches_executed=0,
+            protected_telemetry_anchor_event_ids_count=0,
         )
 
     total_hb_deleted = 0
@@ -1512,13 +1993,95 @@ async def run_heartbeat_retention_on_connection(
         if deleted_snap_in_batch < effective_batch_size:
             break
 
+    total_telemetry_events_deleted = 0
+    telemetry_events_batches_run = 0
+    anchor_ids: set[str] = set()
+    prunable_where_sql = _telemetry_events_14d_prunable_where_sql("e")
+
+    while max_batches is None or telemetry_events_batches_run < max_batches:
+        query_timeout = (effective_timeout_ms / 1000.0) + 5.0
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('statement_timeout', $1, true)",
+                f"{effective_timeout_ms}ms",
+                timeout=query_timeout,
+            )
+            protected_ids = sorted(
+                await resolve_protected_telemetry_event_ids(
+                    conn,
+                    incident_cases_table=incident_cases_table,
+                    postmortems_table=postmortems_table,
+                    incident_store_paths=incident_store_paths,
+                    bff_health_sqlite_path=bff_health_sqlite_path,
+                    extra_protected_event_ids=extra_protected_event_ids,
+                )
+            )
+            anchor_ids = await resolve_protected_telemetry_anchor_event_ids(
+                conn,
+                timeout=query_timeout,
+            )
+            all_protected_14d_ids = sorted(set(protected_ids) | anchor_ids)
+            telemetry_candidates = await conn.fetch(
+                f"""
+                SELECT e.event_id
+                FROM public.telemetry_events e
+                WHERE {prunable_where_sql}
+                ORDER BY e.ingested_seq ASC
+                LIMIT $6
+                """,
+                telemetry_cutoff_dt,
+                safe_seq,
+                all_protected_14d_ids,
+                list(PERMANENT_TELEMETRY_EVENT_TYPES),
+                list(CANONICAL_FILL_AND_REJECTION_EVENT_TYPES),
+                effective_batch_size,
+                timeout=query_timeout,
+            )
+            if not telemetry_candidates:
+                break
+
+            candidate_telemetry_ids = [str(row["event_id"]) for row in telemetry_candidates]
+            deleted_telemetry_rows = await conn.fetch(
+                f"""
+                DELETE FROM public.telemetry_events e
+                WHERE e.event_id = ANY($6::text[])
+                  AND {prunable_where_sql}
+                RETURNING e.event_id
+                """,
+                telemetry_cutoff_dt,
+                safe_seq,
+                all_protected_14d_ids,
+                list(PERMANENT_TELEMETRY_EVENT_TYPES),
+                list(CANONICAL_FILL_AND_REJECTION_EVENT_TYPES),
+                candidate_telemetry_ids,
+                timeout=query_timeout,
+            )
+            deleted_telemetry_in_batch = len(deleted_telemetry_rows)
+
+        if deleted_telemetry_in_batch == 0:
+            break
+        telemetry_events_batches_run += 1
+        total_telemetry_events_deleted += deleted_telemetry_in_batch
+        if deleted_telemetry_in_batch < effective_batch_size:
+            break
+
     return RetentionRunResult(
         status="ok",
         retention_days=effective_days,
         cutoff_at=cutoff_iso,
         safe_ingested_seq=safe_seq,
-        batches_executed=hb_batches_run + infra_batches_run + snapshot_batches_run,
-        rows_deleted=total_hb_deleted + total_infra_deleted + total_snapshot_deleted,
+        batches_executed=(
+            hb_batches_run
+            + infra_batches_run
+            + snapshot_batches_run
+            + telemetry_events_batches_run
+        ),
+        rows_deleted=(
+            total_hb_deleted
+            + total_infra_deleted
+            + total_snapshot_deleted
+            + total_telemetry_events_deleted
+        ),
         hours_summarized=total_hours_summarized,
         statement_timeout_ms=effective_timeout_ms,
         batch_size=effective_batch_size,
@@ -1535,6 +2098,11 @@ async def run_heartbeat_retention_on_connection(
         state_snapshot_rows_deleted=total_snapshot_deleted,
         state_snapshot_retention_days=effective_snapshot_days,
         state_snapshot_batches_executed=snapshot_batches_run,
+        telemetry_events_rows_deleted=total_telemetry_events_deleted,
+        telemetry_events_retention_days=effective_telemetry_days,
+        telemetry_events_cutoff_at=telemetry_cutoff_iso,
+        telemetry_events_batches_executed=telemetry_events_batches_run,
+        protected_telemetry_anchor_event_ids_count=len(anchor_ids),
     )
 
 
@@ -1545,6 +2113,7 @@ async def run_heartbeat_retention(
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
     state_snapshot_retention_days: float | None = None,
+    telemetry_events_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = DEFAULT_MAX_BATCHES_PER_RUN,
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -1553,13 +2122,14 @@ async def run_heartbeat_retention(
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
     infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    telemetry_events_readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
     incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
     postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
     incident_store_paths: Sequence[str | Path] | None = None,
     bff_health_sqlite_path: str | Path | None = None,
     extra_protected_event_ids: Iterable[str] | None = None,
 ) -> RetentionRunResult:
-    """Connect to PostgreSQL and run a bounded heartbeat + infrastructure_health retention pass."""
+    """Connect to PostgreSQL and run a bounded heartbeat + infrastructure_health + state_snapshot + 14d telemetry_events retention pass."""
     import asyncpg  # type: ignore[import]
 
     conn = await asyncpg.connect(dsn)
@@ -1570,6 +2140,7 @@ async def run_heartbeat_retention(
             retention_days=retention_days,
             infra_health_retention_days=infra_health_retention_days,
             state_snapshot_retention_days=state_snapshot_retention_days,
+            telemetry_events_retention_days=telemetry_events_retention_days,
             batch_size=batch_size,
             max_batches=max_batches,
             statement_timeout_ms=statement_timeout_ms,
@@ -1578,6 +2149,7 @@ async def run_heartbeat_retention(
             require_controller_checkpoint=require_controller_checkpoint,
             readers=readers,
             infra_health_readers=infra_health_readers,
+            telemetry_events_readers=telemetry_events_readers,
             incident_cases_table=incident_cases_table,
             postmortems_table=postmortems_table,
             incident_store_paths=incident_store_paths,
@@ -1617,6 +2189,21 @@ async def rebuild_runtime_summaries_from_db(
             ORDER BY ingested_seq ASC
             """
         )
+        protected_ids = await resolve_protected_telemetry_event_ids(conn)
+        anchor_ids = await resolve_protected_telemetry_anchor_event_ids(conn)
+        prunable_rows = await conn.fetch(
+            f"""
+            SELECT e.event_id
+            FROM public.telemetry_events e
+            WHERE {_telemetry_events_14d_prunable_where_sql("e")}
+            """,
+            datetime(9999, 12, 31, tzinfo=timezone.utc),
+            9_223_372_036_854_775_807,
+            sorted(protected_ids | anchor_ids),
+            list(PERMANENT_TELEMETRY_EVENT_TYPES),
+            list(CANONICAL_FILL_AND_REJECTION_EVENT_TYPES),
+        )
+        prunable_transient_ids = {str(r["event_id"]) for r in prunable_rows if r["event_id"]}
     finally:
         if close_conn:
             await conn.close()
@@ -1626,33 +2213,76 @@ async def rebuild_runtime_summaries_from_db(
         heartbeat_stale_after_seconds=heartbeat_stale_after_seconds,
     )
     episode_store = TradeEpisodeProjectionStore()
+    retained_events: list[dict[str, Any]] = []
     for row in rows:
+        eid = str(row["event_id"])
+        if eid in prunable_transient_ids:
+            continue
         raw_payload = row["payload"]
         event = (
             json.loads(raw_payload)
             if isinstance(raw_payload, str)
             else dict(raw_payload)
         )
-        event.setdefault("event_id", str(row["event_id"]))
+        event.setdefault("event_id", eid)
         event.setdefault("event_type", str(row["event_type"]))
         event["ingested_seq"] = int(row["ingested_seq"])
+        retained_events.append(event)
         summary_store.project_event(event)
+        ev_type = str(event.get("event_type") or "")
+        meta = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        inner_payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+        reversal = meta.get("reversal") if isinstance(meta.get("reversal"), Mapping) else {}
         has_episode = (
-            event.get("trade_episode_id")
-            or (event.get("payload") or {}).get("trade_episode_id")
-            or (event.get("metadata") or {}).get("trade_episode_id")
+            ev_type.startswith(("trade_episode.", "trade_reflection.", "trade_lesson."))
+            or event.get("trade_episode_id")
+            or inner_payload.get("trade_episode_id")
+            or meta.get("trade_episode_id")
+            or reversal.get("closed_episode_id")
+            or reversal.get("opened_episode_id")
         )
         if has_episode:
             episode_store.project_event(event)
 
+    def _in_memory_binding_events(
+        binding_id: str,
+        *,
+        tenant_id: str | None = None,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        target_bid = str(binding_id or "").strip()
+        target_tid = str(tenant_id or "").strip()
+        matched: list[dict[str, Any]] = []
+        for ev in reversed(retained_events):
+            ev_meta = ev.get("metadata") if isinstance(ev.get("metadata"), Mapping) else {}
+            ev_bid = str(
+                ev.get("binding_id")
+                or ev.get("runtime_binding_id")
+                or ev_meta.get("binding_id")
+                or ev_meta.get("runtime_binding_id")
+                or ""
+            ).strip()
+            if ev_bid != target_bid:
+                continue
+            if target_tid:
+                ev_tid = str(
+                    ev.get("tenant_id") or ev_meta.get("tenant_id") or ""
+                ).strip()
+                if ev_tid != target_tid:
+                    continue
+            matched.append(ev)
+            if len(matched) >= limit:
+                break
+        return matched
+
     summary_store.backfill_open_position_costs(
-        CanonicalFillHistoryReader(episode_store, None)
+        CanonicalFillHistoryReader(episode_store, _in_memory_binding_events)
     )
     return summary_store, episode_store
 
 
 class HeartbeatRetentionJob:
-    """Periodic background job inside services/telemetry that enforces heartbeat and infrastructure_health retention."""
+    """Periodic background job inside services/telemetry that enforces heartbeat, infrastructure_health, state_snapshot, and 14d telemetry_events retention."""
 
     def __init__(
         self,
@@ -1660,7 +2290,8 @@ class HeartbeatRetentionJob:
         *,
         retention_days: float | None = None,
         infra_health_retention_days: float | None = None,
-    state_snapshot_retention_days: float | None = None,
+        state_snapshot_retention_days: float | None = None,
+        telemetry_events_retention_days: float | None = None,
         batch_size: int | None = None,
         max_batches_per_run: int | None = None,
         interval_seconds: float | None = None,
@@ -1674,6 +2305,9 @@ class HeartbeatRetentionJob:
         )
         self._state_snapshot_retention_days = parse_state_snapshot_retention_days(
             state_snapshot_retention_days
+        )
+        self._telemetry_events_retention_days = parse_telemetry_events_retention_days(
+            telemetry_events_retention_days
         )
         self._batch_size = max(
             1,
@@ -1715,6 +2349,8 @@ class HeartbeatRetentionJob:
         self._total_rows_deleted = 0
         self._total_heartbeat_rows_deleted = 0
         self._total_infra_health_rows_deleted = 0
+        self._total_state_snapshot_rows_deleted = 0
+        self._total_telemetry_events_rows_deleted = 0
         self._total_hours_summarized = 0
         self._last_run_at: str | None = None
         self._last_result: dict[str, Any] | None = None
@@ -1751,6 +2387,12 @@ class HeartbeatRetentionJob:
                     ref_now - timedelta(days=self._infra_health_retention_days)
                 )
                 or "",
+                state_snapshot_retention_days=self._state_snapshot_retention_days,
+                telemetry_events_retention_days=self._telemetry_events_retention_days,
+                telemetry_events_cutoff_at=_format_rfc3339(
+                    ref_now - timedelta(days=self._telemetry_events_retention_days)
+                )
+                or "",
             )
             self._last_result = result.to_dict()
             return result
@@ -1762,6 +2404,7 @@ class HeartbeatRetentionJob:
                 retention_days=self._retention_days,
                 infra_health_retention_days=self._infra_health_retention_days,
                 state_snapshot_retention_days=self._state_snapshot_retention_days,
+                telemetry_events_retention_days=self._telemetry_events_retention_days,
                 batch_size=self._batch_size,
                 max_batches=self._max_batches_per_run,
                 statement_timeout_ms=self._statement_timeout_ms,
@@ -1770,6 +2413,8 @@ class HeartbeatRetentionJob:
             self._total_rows_deleted += result.rows_deleted
             self._total_heartbeat_rows_deleted += result.heartbeat_rows_deleted
             self._total_infra_health_rows_deleted += result.infra_health_rows_deleted
+            self._total_state_snapshot_rows_deleted += result.state_snapshot_rows_deleted
+            self._total_telemetry_events_rows_deleted += result.telemetry_events_rows_deleted
             self._total_hours_summarized += result.hours_summarized
             self._last_run_at = _format_rfc3339(_utc_now())
             self._last_result = result.to_dict()
@@ -1794,9 +2439,11 @@ class HeartbeatRetentionJob:
         self._running = True
         self._task = asyncio.create_task(self._loop(), name="telemetry-heartbeat-retention")
         log.info(
-            "HeartbeatRetentionJob started (retention_days=%s, infra_health_retention_days=%s, batch_size=%s, interval=%ss, statement_timeout_ms=%s)",
+            "HeartbeatRetentionJob started (retention_days=%s, infra_health_retention_days=%s, state_snapshot_retention_days=%s, telemetry_events_retention_days=%s, batch_size=%s, interval=%ss, statement_timeout_ms=%s)",
             self._retention_days,
             self._infra_health_retention_days,
+            self._state_snapshot_retention_days,
+            self._telemetry_events_retention_days,
             self._batch_size,
             self._interval_seconds,
             self._statement_timeout_ms,
@@ -1835,6 +2482,7 @@ class HeartbeatRetentionJob:
             "retention_days": self._retention_days,
             "infra_health_retention_days": self._infra_health_retention_days,
             "state_snapshot_retention_days": self._state_snapshot_retention_days,
+            "telemetry_events_retention_days": self._telemetry_events_retention_days,
             "batch_size": self._batch_size,
             "max_batches_per_run": self._max_batches_per_run,
             "interval_seconds": self._interval_seconds,
@@ -1844,6 +2492,8 @@ class HeartbeatRetentionJob:
             "total_rows_deleted": self._total_rows_deleted,
             "total_heartbeat_rows_deleted": self._total_heartbeat_rows_deleted,
             "total_infra_health_rows_deleted": self._total_infra_health_rows_deleted,
+            "total_state_snapshot_rows_deleted": self._total_state_snapshot_rows_deleted,
+            "total_telemetry_events_rows_deleted": self._total_telemetry_events_rows_deleted,
             "total_hours_summarized": self._total_hours_summarized,
             "last_run_at": self._last_run_at,
             "last_result": self._last_result,

@@ -172,3 +172,58 @@ def test_single_block_followed_by_success_resets_counter_and_config_change_resum
     r5 = resumed_runner.run_source("collector-tw-threads", run_id="r5")
     assert r5.status == "complete"
     assert r5.state.paused is False
+
+
+def test_news_rss_one_route_error_does_not_abort_block_or_auto_pause_other_routes(
+    tmp_path: Path,
+    fixtures_dir: Path,
+    test_hasher: AuthorHasher,
+) -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    cna_xml = (fixtures_dir / "rsshub_cna.xml").read_bytes()
+    udn_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss version="2.0"><channel><title>UDN 財經</title>'
+        "<item><title>台積電2330法說會展望</title>"
+        "<description>台積電（2330）公布最新營收。</description>"
+        "<link>https://udn.com/news/story/7240/8381234</link>"
+        "<guid>https://udn.com/news/story/7240/8381234</guid>"
+        "<pubDate>Wed, 25 Nov 2026 06:40:00 GMT</pubDate></item>"
+        "</channel></rss>"
+    ).encode("utf-8")
+
+    # Even when one route returns 403/503 on three consecutive runs, the other routes are fetched
+    # and the source is never blocked or auto-paused.
+    transport = FixtureTransport(
+        {
+            "http://rsshub:1200/cna/aie": cna_xml,
+            "http://rsshub:1200/cna/asc": FetchResponse(
+                requested_url="http://rsshub:1200/cna/asc",
+                final_url="http://rsshub:1200/cna/asc",
+                http_status=403,
+                body=b"upstream route blocked",
+            ),
+            "http://rsshub:1200/udn/news/breakingnews/6": udn_xml,
+            "http://rsshub:1200/udn/news/breakingnews/11": FetchResponse(
+                requested_url="http://rsshub:1200/udn/news/breakingnews/11",
+                final_url="http://rsshub:1200/udn/news/breakingnews/11",
+                http_status=503,
+                body=b"upstream route 503",
+            ),
+        }
+    )
+    runner = CollectorRunner(config, root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    for idx in range(1, 4):
+        outcome = runner.run_source("collector-news-rss", run_id=f"news-run-{idx}")
+        assert outcome.status == "complete"
+        assert outcome.state.paused is False
+        assert outcome.state.consecutive_blocks == 0
+        manifest = verify_bundle_directory(outcome.bundle.bundle_dir)
+        assert [m["item_id"] for m in manifest["items"]] == [
+            "news-cna-202611250147-aspx",
+            "news-udn-8381234",
+        ]
+        assert manifest["route_errors"] == {
+            "/cna/asc": "http_403:http://rsshub:1200/cna/asc",
+            "/udn/news/breakingnews/11": "http_503",
+        }

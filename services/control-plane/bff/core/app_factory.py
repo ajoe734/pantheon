@@ -1051,12 +1051,27 @@ def mount_bff_routers(
         utc_now=_dep("utc_now"),
         normalize_lifecycle_state=_dep("_normalize_lifecycle_state"),
     )
+    # Persona display names: the same persona directory read the research task list uses.
+    from ..research.routes.tasks import _default_persona_directory_snapshot as _alpha_persona_snapshot
+    from ..strategies.routes.common import read_persona_state_lookup as _alpha_persona_lookup
+
+    def _alpha_persona_names(tenant_id: str, snapshot_at: str):
+        lookup = _alpha_persona_lookup(
+            directory_snapshot=_alpha_persona_snapshot,
+            projected_state=lambda _record: "unknown",
+            operational_states=(),
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        return dict(lookup.display_names_by_id) if lookup.available else None
+
     app.include_router(
         create_alpha_factory_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),
             read_strategy_state=lambda strategy_id: _alpha_strategies_service.get_strategy_registry_state(strategy_id),
+            read_persona_names=_alpha_persona_names,
         )
     )
 
@@ -1145,8 +1160,32 @@ def mount_bff_routers(
         )
     )
 
+    from ..personas.service import PersonaService
+    persona_service = _dep(
+        "persona_service",
+        lambda: PersonaService(
+            write_owner=app_deps.persona_write_owner,
+            read_store=app_deps.read_surface,
+            ranking_write_owner=app_deps.ranking_write_owner,
+            command_store=app_deps.command_store,
+        ),
+    )
+    from ..personas import service as _persona_service_module
+    _persona_service_module._composed_persona_service = persona_service
+    _persona_service_module._composed_command_adapter_service = command_adapter_service
+
     # 17: Research
     from ..research.router import create_research_router
+    from ..research.service import ResearchRouterService
+    research_service = ResearchRouterService(
+        port_getter=(lambda: app_deps.read_surface() if callable(app_deps.read_surface) else app_deps.read_surface),
+        utc_now=_dep("utc_now"),
+        snapshot_meta=_dep("_snapshot_meta"),
+        page_slice=_dep("_page_slice"),
+        bff_error=_dep("_bff_error"),
+        dataset_surface_status=_dep("_dataset_surface_status"),
+        persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),
+    )
     app.include_router(
         create_research_router(
             read_surface=app_deps.read_surface,
@@ -1169,6 +1208,7 @@ def mount_bff_routers(
                 **context,
             ),
             include_prepared_subrouters=True,
+            service=research_service,
         )
     )
 
@@ -1187,19 +1227,6 @@ def mount_bff_routers(
     )
 
     # 19: Runtime router
-    from ..personas.service import PersonaService
-    persona_service = _dep(
-        "persona_service",
-        lambda: PersonaService(
-            write_owner=app_deps.persona_write_owner,
-            read_store=app_deps.read_surface,
-            ranking_write_owner=app_deps.ranking_write_owner,
-            command_store=app_deps.command_store,
-        ),
-    )
-    from ..personas import service as _persona_service_module
-    _persona_service_module._composed_persona_service = persona_service
-    _persona_service_module._composed_command_adapter_service = command_adapter_service
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,

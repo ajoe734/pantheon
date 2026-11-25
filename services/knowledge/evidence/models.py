@@ -44,7 +44,23 @@ class EvidenceValidationError(ValueError):
 # Per-row metadata that is ~16 KB on real market rows (614 rows -> 10 MB list).
 # List responses omit them; the item-detail route still returns them.
 EVIDENCE_LIST_OMITTED_METADATA_KEYS = ("raw_storage_refs", "calendar_evidence")
-EVIDENCE_VERIFIED_CONFIDENCE_THRESHOLD = 0.8
+EVIDENCE_VERIFIED_CONFIDENCE_THRESHOLD = 0.8  # retained for importers; no longer decides "verified"
+
+
+def evidence_verification_record(metadata: Any) -> "Mapping[str, Any] | None":
+    """The recorded verification (``metadata.verification``) with a method and a time.
+
+    A connector confidence is a score, not a verification: an item is verified
+    only when this record exists. Returns ``None`` otherwise.
+    """
+    if not isinstance(metadata, Mapping):
+        return None
+    record = metadata.get("verification")
+    if not isinstance(record, Mapping):
+        return None
+    method = str(record.get("method") or "").strip()
+    verified_at = str(record.get("verified_at") or record.get("time") or "").strip()
+    return record if method and verified_at else None
 
 
 @dataclass(frozen=True)
@@ -329,7 +345,6 @@ def summarize_evidence_items_collection(
 ) -> dict[str, Any]:
     """Compute population-level summary counts across a collection of evidence items."""
     total = 0
-    verified_count = 0
     by_source_type: dict[str, int] = {}
     by_link_type: dict[str, int] = {}
     by_credibility_tier: dict[str, int] = {}
@@ -338,7 +353,7 @@ def summarize_evidence_items_collection(
         total += 1
         if isinstance(item, EvidenceItem):
             metadata = item.metadata
-            verified = float(item.confidence) >= EVIDENCE_VERIFIED_CONFIDENCE_THRESHOLD
+            verified = evidence_verification_record(metadata) is not None
             raw_source_type = metadata.get("source_class") or item.item_type or "internal"
             raw_link_type = metadata.get("link_type") or "supporting"
             raw_tier = metadata.get("credibility_tier") or ("verified" if verified else "unverified")
@@ -351,14 +366,8 @@ def summarize_evidence_items_collection(
                 verified = bool(cred.get("verified"))
             elif item.get("verified") is not None:
                 verified = bool(item.get("verified"))
-            elif item.get("confidence") is not None or is_owner_item:
-                try:
-                    conf_val = float(item.get("confidence") if item.get("confidence") is not None else 1.0)
-                except (TypeError, ValueError):
-                    conf_val = 0.0
-                verified = conf_val >= EVIDENCE_VERIFIED_CONFIDENCE_THRESHOLD
             else:
-                verified = False
+                verified = evidence_verification_record(metadata) is not None
             raw_source_type = (
                 source_doc.get("source_type")
                 or item.get("source_type")
@@ -381,8 +390,6 @@ def summarize_evidence_items_collection(
         else:
             continue
 
-        if verified:
-            verified_count += 1
         source_key = str(raw_source_type or "unknown").strip() or "unknown"
         link_key = str(raw_link_type or "unknown").strip() or "unknown"
         tier_key = str(raw_tier or "unknown").strip() or "unknown"
@@ -392,8 +399,6 @@ def summarize_evidence_items_collection(
 
     return {
         "total": total,
-        "verified_count": verified_count,
-        "verified_evidence": verified_count,
         "by_source_type": by_source_type,
         "by_link_type": by_link_type,
         "by_credibility_tier": by_credibility_tier,

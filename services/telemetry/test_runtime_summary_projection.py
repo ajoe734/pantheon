@@ -4693,3 +4693,59 @@ def test_rollback_release_summarises_reduced_snapshot_stream(tmp_path):
     reduced = _fold(tmp_path, "reduced.json", full)
     for key in ("member_virtual_books", "ledger_fill_count"):
         assert with_dup.get(key) == reduced.get(key), key
+
+
+def test_runtime_state_snapshot_account_and_policy_facts_are_bounded_and_replay_idempotent(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "idle_facts.json"))
+    snap1 = _state_event(
+        "runtime_state_snapshot",
+        1,
+        "2026-11-25T01:00:00Z",
+        {"status": "no_fills", "attempted_at": "2026-11-25T01:00:00Z"},
+        [],
+    )
+    snap1["metadata"]["account_facts"] = {"initial_cash": 100000.0, "cash": 100000.0, "fill_count": 0}
+    snap1["metadata"]["risk_policy_facts"] = {
+        "risk_policy_id": "rp-low",
+        "risk_policy_version": "2.0",
+        "risk_policy_digest": "a" * 64,
+        "gross_limit": 0.10,
+        "max_leverage": 1.0,
+        "drawdown_risk_off": 0.10,
+        "drawdown_warn": 0.05,
+    }
+    first = store.project_event(snap1)
+    assert first["ledger_fill_count"] == 0
+    assert first["positions"] == [] and first["position_count"] == 0
+    assert first["_pool_risk_account_facts"] == {
+        "initial_cash": 100000.0,
+        "cash": 100000.0,
+        "fill_count": 0,
+        "as_of": "2026-11-25",
+    }
+    assert first["_pool_risk_policy_facts"]["gross_limit"] == 0.10
+    assert first["_pool_risk_policy_facts"]["_basis"] == "runtime_state_snapshot"
+
+    # Replay is idempotent.
+    replayed = store.project_event(dict(snap1))
+    assert replayed["_pool_risk_account_facts"] == first["_pool_risk_account_facts"]
+    assert replayed["_pool_risk_policy_facts"] == first["_pool_risk_policy_facts"]
+
+    # Newer snapshot replaces both dicts in place without growing.
+    snap2 = _state_event(
+        "runtime_state_snapshot",
+        2,
+        "2026-11-25T06:00:00Z",
+        {"status": "no_fills", "attempted_at": "2026-11-25T06:00:00Z"},
+        [],
+    )
+    snap2["metadata"]["account_facts"] = {"initial_cash": 100000.0, "cash": 100000.0, "fill_count": 0}
+    snap2["metadata"]["risk_policy_facts"] = {"unavailable_reason": "RiskPolicyError"}
+    second = store.project_event(snap2)
+    assert second["_pool_risk_policy_facts"] == {
+        "unavailable_reason": "RiskPolicyError",
+        "_basis": "runtime_state_snapshot",
+    }
+    served = store.get("rt-paper-001")
+    assert served["pool_risk_snapshots"][0]["equity"] == 100000.0
+    assert served["pool_risk_snapshots"][0]["policy_ref"] == {"unavailable_reason": "RiskPolicyError"}
