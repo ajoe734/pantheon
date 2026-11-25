@@ -5702,7 +5702,7 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
+   "growth_driver": "owner-store or SQL table rows written by the owner service; BFF-EVIDENCE-DETAIL-AND-PAGING-20261125 adds partial index source_evidence_page_idx (evidence_tenant_id, append_id DESC) WHERE record_type='evidence_item': ~3.0 MB for 43000 rows (table total ~41 MB in the local measurement), built in ~0.08 s, one extra index entry per evidence write",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "schema_table",
    "name": "source_ingest.source_evidence",
