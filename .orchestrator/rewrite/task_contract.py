@@ -812,6 +812,17 @@ def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
     future delivery identity.
     """
 
+    dev_bridge = task.get("dev_bridge")
+    owner = str(task.get("owner") or "").strip()
+    if isinstance(dev_bridge, Mapping) and owner != "Human/Ops":
+        work_class = str(
+            dev_bridge.get("work_class")
+            or (dev_bridge.get("task_spec") or {}).get("work_class")
+            or ""
+        ).strip().lower()
+        if work_class and work_class not in {"read_only", "hosted", "reconcile_only"}:
+            return True
+
     required_artifacts = task.get("required_artifacts")
     if not isinstance(required_artifacts, list):
         return False

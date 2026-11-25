@@ -2699,6 +2699,34 @@ def test_require_valid_any_accepts_any_member_of_a_value_set_and_nothing_else():
         require_valid_any(Approval("reduce"), expected={**accepted, "target_id": "other"})
 
 
+def test_unavailable_approval_reader_is_not_reported_as_absence(monkeypatch, tmp_path):
+    """PAPER-IMAGES-CANNOT-READ-APPROVALS-20261125: a reader that cannot be built stays fail-closed but says why."""
+    import builtins
+
+    from services.capital import risk_policy as rp
+
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(tmp_path))
+    real_import = builtins.__import__
+
+    def failing_import(name, *args, **kwargs):
+        if name == "services.governance" or name.startswith("services.governance.approval_authority"):
+            raise ModuleNotFoundError("No module named 'pydantic' https://secret.example/token")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+    readers, diag, types = rp._build_approval_readers_with_diag(
+        approval_reader=None, capital_pool_reader=None, resolved_pool_id="pool-x", effective_tenant_id="tenant-dev")
+    assert readers == [] and diag == "approval_reader_unavailable"
+    assert types == ("ModuleNotFoundError",)
+    assert "secret.example" not in repr((readers, diag, types))
+    res = rp.discover_approved_profile_risk_policy(
+        resolved_pool_id="pool-x", effective_tenant_id="tenant-dev", clean_stage="paper", clean_profile="low",
+        base_pool={"pool_id": "pool-x", "metadata": {"tenant_id": "tenant-dev"}})
+    assert res.resolved is False
+    assert res.absence_source == "approval_reader_unavailable"
+    assert "ModuleNotFoundError" in res.reason and "secret.example" not in res.reason and "pydantic" not in res.reason
+
+
 def test_blueprint_limits_evaluator_missing_facts_reduce_only_and_configured_bounds() -> None:
     import json
     from services.capital.risk_policy import (
@@ -2855,4 +2883,3 @@ def test_blueprint_limits_evaluator_missing_facts_reduce_only_and_configured_bou
         bounds=parsed_bounds,
     )
     assert liq_err is not None and "max_order_pct_adv" in liq_err
-

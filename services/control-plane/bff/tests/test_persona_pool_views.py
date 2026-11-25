@@ -178,6 +178,48 @@ def test_real_route_returns_owner_values(world, path):
                for _, method, kwargs in world.calls)
 
 
+def _operator_bff_compose_env():
+    import yaml
+    compose = Path(__file__).resolve().parents[4] / "deploy/production/docker-compose.prod-control.yml"
+    env = yaml.safe_load(compose.read_text())["services"]["operator-bff-blue"]["environment"]
+    return {k: str(v) for k, v in env.items() if k.startswith(("PANTHEON_RESEARCH", "RESEARCH_"))}
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_open_demands_read_from_operator_bff_compose_research_url(world, monkeypatch, path):
+    """RC6: hosted sets only PANTHEON_RESEARCH_ORCHESTRATOR_API_URL; demands must still be read."""
+    for name in ("PANTHEON_RESEARCH_API_URL", "PANTHEON_RESEARCH_SERVICE_URL",
+                 "RESEARCH_ORCHESTRATOR_URL", "RESEARCH_ORCHESTRATOR_API_URL"):
+        monkeypatch.delenv(name, raising=False)
+    compose_env = _operator_bff_compose_env()
+    assert "PANTHEON_RESEARCH_API_URL" not in compose_env  # the hosted gap this test pins
+    for name, value in compose_env.items():
+        monkeypatch.setenv(name, value)
+    host = compose_env["PANTHEON_RESEARCH_ORCHESTRATOR_API_URL"].rstrip("/")
+    old = "http://research-owner/api/research/persona-demands?persona_id=" + PERSONA + "&status=open"
+    world.payloads[old.replace("http://research-owner", host)] = world.payloads.pop(old)
+    response = world.client().get(path, headers={"Authorization": "Bearer reader-token"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["data"]["strategyPool"]["openDemands"][0]["status"] == "open"
+    surface = result["meta"]["surfaces"]["open_demands"]
+    assert surface["status"] == "ok" and surface["reason"] is None
+    demand_calls = [c for c in world.calls if "persona-demands" in c[0]]
+    assert len(demand_calls) == 1 and demand_calls[0][0].startswith(host)
+    assert demand_calls[0][2]["tenant_id"] == TENANT
+    assert demand_calls[0][2]["auth_token"] == "Bearer reader-token"
+
+
+def test_demands_stay_visible_unavailable_when_research_owner_denies(world):
+    url = "http://research-owner/api/research/persona-demands?persona_id=" + PERSONA + "&status=open"
+    for code in (401, 403):
+        world.payloads[url] = HTTPError(url, code, "denied", None, io.BytesIO(b"secret"))
+        result = world.client().get(PATHS[0]).json()
+        assert result["data"]["strategyPool"]["openDemands"] is None
+        assert result["meta"]["surfaces"]["open_demands"]["status"] == "unavailable"
+        assert result["meta"]["surfaces"]["open_demands"]["reason"] == f"owner_http_{code}"
+
+
 @pytest.mark.parametrize("path", PATHS)
 def test_other_tenant_refused_before_pool_owner_reads(world, path):
     response = world.client("tenant-other").get(path)
