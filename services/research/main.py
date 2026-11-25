@@ -3113,46 +3113,21 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
-def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
-    """Load the governed dataset and policy authority for template search or fail closed."""
-    if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
-        dataset_path = (
-            os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH")
-            or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
-            or os.environ.get("PERSONA_POOL_CANONICAL_DATASET_PATH")
-        )
-        policy_path = (
-            os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH")
-            or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
-            or os.environ.get("PERSONA_POOL_THRESHOLD_POLICY_PATH")
-        )
-        if not dataset_path:
-            raise ValueError("governed_market_data_missing")
-        if not policy_path:
-            raise ValueError("governed_policy_authority_missing")
-        training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
-        sys.path.insert(0, training_dir)
-        try:
-            import evaluation_authority as _authority  # type: ignore
+def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any = None) -> Dict[str, Any]:
+    """Governed price dataset for template search, from the stored daily bars (read-only), or fail closed.
 
-            pinned = os.environ.get("RESEARCH_RETRAIN_TRUSTED_NOW")
-            trusted_now = (
-                datetime.fromisoformat(pinned.replace("Z", "+00:00"))
-                if pinned
-                else datetime.now(timezone.utc)
-            )
-            snapshot = _authority.load_evaluation_authority(
-                dataset_path,
-                policy_path,
-                trusted_now=trusted_now,
-                strategy_id=str(demand["demand_id"]),
-            )
-            return dict(snapshot.vectorbt_dataset)
-        except Exception as exc:
-            raise ValueError(f"governed_policy_authority_unavailable:{type(exc).__name__}:{exc}") from exc
-        finally:
-            if training_dir in sys.path:
-                sys.path.remove(training_dir)
+    DISCOVERY-GOVERNED-MARKET-DATASET-20261125: it no longer reads a DatasetVersion that only exists after
+    a persona candidate was evaluated. ``universe`` is the mandate's own symbol list; a symbol outside the
+    governed market boundary fails closed with its exclusion reason. The reason is the readable
+    ``<code>: <detail>`` of ``GovernedMarketDatasetError``. This runs in the run's worker thread."""
+    if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
+        from services.research import governed_market_dataset as _governed
+
+        try:
+            return _governed.resolve_governed_dataset(
+                symbols=list(universe) if universe else None, strategy_id=str(demand["demand_id"]))
+        except _governed.GovernedMarketDatasetError as exc:
+            raise ValueError(str(exc)) from exc
     dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
     if not dataset:
         raise ValueError("governed_market_data_missing")
@@ -3173,7 +3148,7 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
     universe = scope.get("symbols")
     if not universe:
         raise ValueError("mandate_universe_missing")
-    dataset = _load_template_search_governed_dataset(demand)
+    dataset = _load_template_search_governed_dataset(demand, universe)
     registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
     templates = _retrain_call(
         step="template_registry", service="registry", method="GET", tenant_id=tenant_id,

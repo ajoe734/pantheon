@@ -51,7 +51,7 @@ class GovernedMarketDatasetError(RuntimeError):
 class MarketPolicy:
     """Eligibility of the market boundary. Gate thresholds, survivorship and trial counting are elsewhere."""
 
-    window_days: int = 483  # stored trading days the dataset covers (about two years)
+    window_days: int = 800  # newest stored trading days the dataset covers: all of them, up to the reader's range limit
     min_history_days: int = 60  # fewer stored bars than this in the window = too short
     liquidity_days: int = 20  # liquidity is the median traded value of the newest stored days
     min_liquidity_observations: int = 10  # fewer observed traded values than this = unverifiable liquidity
