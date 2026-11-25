@@ -581,7 +581,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
-    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-512m}
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-768m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -631,6 +631,8 @@ services:
       REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
       REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       ALPHA_TEMPLATE_EVAL_ENABLED: ${ALPHA_TEMPLATE_EVAL_ENABLED:-1}
+      # State file of the cycle in progress; each cycle's research run records sit beside it under cycles/ (last 3 kept).
+      ALPHA_TEMPLATE_EVAL_STATE_PATH: /data/research-orchestrator/alpha-replication/template-evaluation/schedule_state.json
       ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS: ${ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS:-60}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro

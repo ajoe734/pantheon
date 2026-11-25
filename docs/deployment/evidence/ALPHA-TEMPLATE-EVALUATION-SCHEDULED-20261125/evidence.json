@@ -1,0 +1,46 @@
+{
+  "task": "ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125",
+  "register_class": "RC2",
+  "state": "source + focused tests + local scale measurement; hosted proof pending",
+  "design": {
+    "caller": "services/research/alpha_templates/schedule.py TemplateEvaluationScheduler, started as a thread by alpha_replication.replication_controller.main (alpha-replication-worker); no API route starts it",
+    "due_rule": "newest stored governed trading day is newer than the last evaluated day AND the last cycle started at least 7 days ago",
+    "resume": "cycle state (pinned governed snapshot, symbols, fixed batches, done batches) in schedule_state.json; a batch whose research run record already exists is not run again; a snapshot that no longer re-derives abandons the cycle",
+    "scope": "171 time_series templates evaluated; 11 cross_sectional skipped with reason 'cross_sectional_scope' recorded in the cycle summary",
+    "authority": "evaluation records metrics, evaluation_ref, status draft->evaluated and duplicate_of only; never active, approval or pool membership (test_evaluation_never_grants_active_or_pool_state)",
+    "result_record": "run_alpha_template_evaluation per batch; each template's registry metadata alpha_template_evaluation.evaluation_context carries governed_snapshot_id, window, symbol_count, history_depth, symbol_selection and horizons_without_enough_observations",
+    "synthetic": "unchanged: summarize_universe_provenance refuses synthetic_fixture data (test_synthetic_or_unprovenanced_data_is_refused_as_before)",
+    "config_changes": "alpha-replication-worker: REGISTRY_STORE_BACKEND/DSN, ALPHA_TEMPLATE_EVAL_* , mem_limit 512m -> 768m; research-orchestrator-svc: REGISTRY_STORE_BACKEND/DSN so GET /api/research/alpha-templates/evaluations can read the registry store on hosted"
+  },
+  "measurement": {
+    "method": "measure_hosted_scale.py in this directory: real DailyBarsStore parquet store (fixture random-walk prices, so it measures cost not signal), real DailyBarsReader/governed_market_dataset, real evaluator, memory registry, fresh subprocess; local machine, not the hosted container",
+    "run_300_symbols_800_days": {
+      "templates_evaluated": 171,
+      "steps": 19,
+      "wall_seconds": 378.3,
+      "peak_rss_mib": 395,
+      "symbols_evaluated": 60,
+      "symbol_selection": "60 most liquid of 300 boundary symbols (bounded: true, recorded in the result)",
+      "cycle_dir_bytes": 21644046,
+      "state_bytes_end": 2412
+    },
+    "run_1500_symbols_800_days_first_3_steps": {
+      "wall_seconds": 66.2,
+      "peak_rss_mib": 341,
+      "note": "boundary of 1500 symbols + dataset load + 2 batches of 10; about 22 s per batch, so a full cycle is about 7 minutes"
+    },
+    "limit": "peak 395 MiB fits the raised 768m worker limit with the controller process (about 50-100 MiB) beside it; the old 512m limit would have been marginal. Bound: ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS (default 60 = governed_market_dataset.MAX_DATASET_SYMBOLS)",
+    "hosted": "not measured here; the first hosted cycle's wall time and RSS (docker stats) are for the coordinator after deploy"
+  },
+  "tests": {
+    "command": "python -m pytest services/research/tests/test_alpha_template_schedule.py",
+    "result": "10 passed (full 171-template cycles on the real evaluator, registry memory store)",
+    "storage_manifest": "python3 scripts/check_storage_manifest.py passed; scripts.test_check_storage_manifest OK"
+  },
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer may be from the owner's family",
+  "residual_findings": [
+    "GET /api/research/alpha-templates/evaluations/{id} returns research_run null for scheduled evaluations: their run records live in the worker's per-cycle store (the research service's shared JSON maps are not safe for a second writing process), the evaluation itself is in registry metadata and in the list route",
+    "the existing POST /api/research/alpha-templates/evaluate still writes into the research service's local registry store configuration and the shared research store; unchanged by this task",
+    "each batch re-derives the 11 cross-sectional/active context from the registry (list_all_entries); fine at 182 entries, would need a filtered read if the library grows by an order of magnitude"
+  ]
+}

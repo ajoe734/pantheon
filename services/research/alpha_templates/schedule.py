@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+STATE_FILE = "schedule_state.json"
 SCHEMA = "alpha_template_evaluation_schedule.v1"
 CROSS_SECTIONAL_SKIP_REASON = "cross_sectional_scope: the per-symbol evaluator refuses cross-sectional templates"
 SOURCE = "governed_market_dataset:daily_bars"
@@ -52,8 +53,9 @@ class ScheduleConfig:
 
     @classmethod
     def from_env(cls, data_dir: Path) -> "ScheduleConfig":
+        state_path = os.getenv("ALPHA_TEMPLATE_EVAL_STATE_PATH")
         return cls(
-            data_dir=Path(os.getenv("ALPHA_TEMPLATE_EVAL_DIR") or data_dir / "template-evaluation"),
+            data_dir=(Path(state_path).parent if state_path else data_dir / "template-evaluation"),
             check_seconds=_env_int("ALPHA_TEMPLATE_EVAL_CHECK_SECONDS", 3600, 60),
             min_interval_days=_env_int("ALPHA_TEMPLATE_EVAL_MIN_INTERVAL_DAYS", 7),
             max_symbols=_env_int("ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS", 60),
@@ -127,7 +129,7 @@ class TemplateEvaluationScheduler:
     ) -> None:
         self.config = config
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path = config.data_dir / "schedule_state.json"
+        self.state_path = config.data_dir / STATE_FILE
         self._registry_service_factory = registry_service_factory
         self._research_store_factory = research_store_factory
         self._boundary_builder = boundary_builder

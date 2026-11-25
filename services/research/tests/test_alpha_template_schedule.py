@@ -248,3 +248,16 @@ def test_list_endpoint_returns_scheduled_evaluation(tmp_path):
     assert item["evaluation_ref"].startswith("rrun-alpha-eval-") and item["duplicate_of"] is None
     assert item["evaluation"]["evaluation_context"]["governed_snapshot_id"] == fake.boundary().snapshot_id
     assert item["status"] == "evaluated"
+
+
+def test_cycle_directories_beyond_keep_are_removed(tmp_path):
+    fake, now = FakeStore(), [datetime(2026, 5, 20, tzinfo=timezone.utc)]
+    scheduler, _ = make(tmp_path, fake, now=now, batch_size=200)
+    scheduler.config.keep_cycles = 2
+    for _ in range(3):
+        drive(scheduler)
+        fake.days += 1
+        now[0] += timedelta(days=8)
+    kept = sorted(p.name for p in (scheduler.config.data_dir / "cycles").iterdir())
+    assert len(kept) == 2 and kept[-1].startswith("2026-")
+    assert scheduler.load_state()["last_completed"]["cycle_id"] == kept[-1]
