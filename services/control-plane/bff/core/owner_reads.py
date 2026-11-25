@@ -263,10 +263,34 @@ def read_persona_pool_versions(persona_id: str, tenant_id: str) -> Any:
 
 
 def read_registry_entry(registry_id: str, tenant_id: str) -> Any:
-    """Registry owner entry through the existing member-baseline owner read."""
-    from services.evolution.approved_baselines import http_registry_entry_reader
+    """Registry owner entry as the caller through PANTHEON_REGISTRY_API_URL; ``{}`` if absent.
 
-    return http_registry_entry_reader(registry_id, tenant_id)
+    Same owner URL and caller principal the persona pool reads use on hosted; no
+    service credential is needed or read here.
+    """
+    from urllib.parse import quote
+
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    base = get_base_url("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL")
+    url = base + "/api/registry/entries/" + quote(registry_id, safe="")
+    token = auth.removeprefix("Bearer ")
+
+    def _fetch():
+        rem = remaining_management_read_budget(2.0)
+        try:
+            payload = http_request_json(url, auth_token=token, tenant_id=tenant_id, timeout=rem)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return {}
+            raise
+        entry = payload.get("entry") if isinstance(payload, dict) else None
+        if not isinstance(entry, dict) or entry.get("registry_id") != registry_id:
+            raise RuntimeError("registry returned a malformed or mismatched entry")
+        return entry
+
+    return cached_owner_call(("registry_entry", url, token, tenant_id), _fetch)
 
 
 def _evolution_http_get(url: str, caller_token: str, tenant_id: str) -> Any:

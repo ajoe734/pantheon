@@ -110,6 +110,15 @@ def test_fails_when_member_baselines_missing_or_unavailable():
     assert any(f.startswith("member_baselines_unavailable") for f in probe.check(fetcher(journal(), q))["failed"])
 
 
+def test_fails_when_every_member_baseline_is_unreadable():
+    for row in ({"status": "unavailable", "reason": "registry_entry_unreadable:RuntimeError"},
+                {"status": "no_approved_baseline", "reason": "registry_entry_unreadable:RuntimeError"}):
+        q = copy.deepcopy(QUALIFICATION)
+        q["data"]["member_baselines"][0].update(row)
+        assert any(f.startswith("every_member_baseline_unreadable")
+                   for f in probe.check(fetcher(journal(), q))["failed"])
+
+
 def test_skips_without_credentials(monkeypatch):
     for name in probe.REQUIRED:
         monkeypatch.delenv(name, raising=False)

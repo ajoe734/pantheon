@@ -12,7 +12,8 @@ memory and is never printed) and checks, with GET only:
     postmortem_draft is a separate integer; summary.mutation_review_count equals the decisions that
     really carry an approval_decision_id.
   * GET /bff/management/evolution-qualification: member_baselines is a list whose rows carry
-    persona_name, artifact_ref, status and reason, and member_baselines_surface is not unavailable.
+    persona_name, artifact_ref, status and reason, member_baselines_surface is not unavailable, and not
+    every row is unavailable or registry_entry_unreadable.
 Exit 0 passed, 1 failed, 77 skipped (a variable is missing).
 """
 from __future__ import annotations
@@ -97,6 +98,11 @@ def _qualification_failures(body):
         failures.append("member_baselines_unavailable:" + str(surface.get("reason")))
     if any(not all(r.get(k) for k in ("persona_name", "artifact_ref", "status")) for r in rows if isinstance(r, dict)):
         failures.append("member_baseline_row_incomplete")
+    dicts = [r for r in rows if isinstance(r, dict)]
+    unread = [r for r in dicts if r.get("status") == "unavailable"
+              or str(r.get("reason") or "").startswith("registry_entry_unreadable")]
+    if dicts and len(unread) == len(dicts):
+        failures.append("every_member_baseline_unreadable:" + str(unread[0].get("reason")))
     return failures
 
 

@@ -3808,7 +3808,7 @@ def test_subject_class_from_recorded_fields_and_include_system() -> None:
         _pv_decision("d-strategy", status="completed", linked_incident_id="inc-drift-1"),
         _pv_decision("d-deploy", status="completed", linked_incident_id="inc-deployment-comp-1"),
         _pv_decision("d-test", status="completed", target_type="persona", target_id="persona-test"),
-        # an infrastructure-looking name without any recorded infrastructure field stays strategy
+        # a linked incident that cannot be read is never presented as a confirmed class
         _pv_decision("d-name-only", status="completed", linked_incident_id="infra-bff-name-only"),
     ]
     personas = [_pv_persona("persona-test", metadata={"data_scope": "test"})]
@@ -3816,8 +3816,10 @@ def test_subject_class_from_recorded_fields_and_include_system() -> None:
                            incidents=[infra_incident, drift_incident, deploy_incident])
     default = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
     ids = {i["source_id"]: i["subject_class"] for i in default["data"]["items"] if i["entry_type"] == "evolution_decision"}
-    assert ids == {"d-strategy": "strategy", "d-deploy": "deployment", "d-name-only": "strategy"}
+    assert ids == {"d-strategy": "strategy", "d-deploy": "deployment", "d-name-only": "unclassified"}
     summary = default["data"]["summary"]
+    assert summary["unclassified_decision_count"] == 1
+    assert summary["incident_class_reads"]["unreadable"] == 1
     assert summary["hidden_system_counts"] == {"infrastructure": 2, "test": 1}
     assert default["page_info"]["total"] == 3
     shown = client.get("/bff/management/evolution-journal?view=history&include_system=true&page_size=50",
@@ -3856,3 +3858,57 @@ def test_auto_proposal_parts_add_up_and_each_decision_counts_once() -> None:
     assert summary["decision_count"] == 7
     # only the decision with its own review record counts as a mutation review
     assert summary["mutation_review_count"] == 1
+
+
+def test_journal_never_reads_the_full_incident_list_and_caps_incident_reads() -> None:
+    from services.control_plane.bff.evolution import service as evo_service
+
+    decisions = [
+        _pv_decision(f"d-{n}", status="completed", linked_incident_id=f"inc-x-{n}") for n in range(5)
+    ] + [_pv_decision("d-bound", status="completed", linked_incident_id="inc-b",
+                      metadata={"runtime_binding_id": "infra-subject-z"})]
+    client, ports = _pv_client(personas=[], decisions=decisions,
+                               incidents=[{"incident_id": f"inc-x-{n}", "incident_cluster_id": "deployment:p"}
+                                          for n in range(5)])
+    calls: List[str] = []
+    ports.list_incidents = lambda *a, **k: (_ for _ in ()).throw(AssertionError("full incident list read"))
+    real_get = ports.get_incident
+    ports.get_incident = lambda i: (calls.append(i), real_get(i))[1]
+    old_cap = evo_service.EVOLUTION_JOURNAL_MAX_INCIDENT_READS
+    import services.control_plane.bff.evolution.router as evo_router
+    evo_router.EVOLUTION_JOURNAL_MAX_INCIDENT_READS = 3
+    orig = evo_router.evolution_journal_incident_refs_to_read
+    evo_router.evolution_journal_incident_refs_to_read = lambda d, **kw: orig(d, cap=3, **kw)
+    try:
+        body = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    finally:
+        evo_router.EVOLUTION_JOURNAL_MAX_INCIDENT_READS = old_cap
+        evo_router.evolution_journal_incident_refs_to_read = orig
+    assert len(calls) == 3 and "inc-b" not in calls  # decided from runtime_binding_id, no incident read
+    classes = {i["source_id"]: i["subject_class"] for i in body["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert sorted(v for k, v in classes.items() if k != "d-bound") == ["deployment"] * 3 + ["unclassified"] * 2
+    reads = body["data"]["summary"]["incident_class_reads"]
+    assert reads["read"] == 3 and reads["beyond_cap"] == 2 and body["data"]["summary"]["unclassified_decision_count"] == 2
+
+
+def test_hosted_registry_entry_read_uses_caller_bearer_and_registry_api_url(monkeypatch) -> None:
+    from services.control_plane.bff.core import owner_reads
+
+    for name in ("PERSONA_REGISTRY_BASE_URL", "PERSONA_REGISTRY_SERVICE_TOKEN", "PAPER_RUNTIME_REGISTRY_READ_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal:9")
+    seen: Dict[str, Any] = {}
+
+    def fake_http(url, auth_token=None, tenant_id=None, timeout=None, **kw):
+        seen.update(url=url, token=auth_token, tenant=tenant_id)
+        return {"entry": {"registry_id": "artifact-a", "checksum": "c"}}
+
+    monkeypatch.setattr(owner_reads, "http_request_json", fake_http)
+    tok = owner_reads.authorization.set("Bearer caller-token")
+    try:
+        entry = owner_reads.read_registry_entry("artifact-a", PV_TENANT)
+    finally:
+        owner_reads.authorization.reset(tok)
+    assert entry["registry_id"] == "artifact-a"
+    assert seen == {"url": "http://registry.internal:9/api/registry/entries/artifact-a",
+                    "token": "caller-token", "tenant": PV_TENANT}

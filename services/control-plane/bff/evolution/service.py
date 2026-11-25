@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from services.control_plane.bff.research import discovery_projection
 from services.evolution.program_qualification import (
@@ -1091,31 +1091,27 @@ def _incident_subject_class(incident: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def evolution_journal_subject_class(
-    decision: Dict[str, Any],
-    *,
-    incidents_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
-    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> str:
-    """strategy | infrastructure | deployment | test from recorded owner fields.
+EVOLUTION_JOURNAL_UNCLASSIFIED = "unclassified"
+EVOLUTION_JOURNAL_MAX_INCIDENT_READS = 100
 
-    Uses the decision's own runtime_binding_id, its linked incident record and
-    the target persona's recorded data_scope.  Names and id patterns are never
-    consulted.
-    """
+
+def evolution_journal_incident_ref(decision: Dict[str, Any]) -> str:
+    meta = _meta_dict(decision)
+    return str(
+        decision.get("linked_incident_id") or decision.get("incident_ref") or meta.get("incident_id") or ""
+    ).strip()
+
+
+def _decision_own_subject_class(
+    decision: Dict[str, Any], personas_by_id: Optional[Dict[str, Dict[str, Any]]]
+) -> Optional[str]:
+    """Class decided from the decision's own recorded fields and its target persona; None if undecided."""
     from services.control_plane.bff.personas import fleet_classification
 
     meta = _meta_dict(decision)
     binding = str(meta.get("runtime_binding_id") or decision.get("runtime_binding_id") or "")
     if binding.startswith(_INFRA_BINDING_PREFIX):
         return "infrastructure"
-    incident_ref = str(
-        decision.get("linked_incident_id") or decision.get("incident_ref") or meta.get("incident_id") or ""
-    ).strip()
-    incident = (incidents_by_id or {}).get(incident_ref) if incident_ref else None
-    incident_class = _incident_subject_class(incident) if isinstance(incident, dict) else None
-    if incident_class:
-        return incident_class
     persona_id = ""
     if str(decision.get("target_type") or "").strip().lower() == "persona":
         persona_id = str(decision.get("target_id") or "").strip()
@@ -1127,6 +1123,50 @@ def evolution_journal_subject_class(
             return "test"
     if str(meta.get("data_scope") or decision.get("data_scope") or "").strip().lower() in _TEST_DATA_SCOPES:
         return "test"
+    return None
+
+
+def evolution_journal_incident_refs_to_read(
+    decisions: Sequence[Dict[str, Any]],
+    *,
+    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    cap: int = EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
+) -> Tuple[List[str], int]:
+    """Linked incident ids still needed after the decision's own fields; (ids within cap, beyond-cap count)."""
+    seen: List[str] = []
+    for dec in decisions:
+        if not isinstance(dec, dict) or _decision_own_subject_class(dec, personas_by_id):
+            continue
+        ref = evolution_journal_incident_ref(dec)
+        if ref and ref not in seen:
+            seen.append(ref)
+    return seen[:cap], max(0, len(seen) - cap)
+
+
+def evolution_journal_subject_class(
+    decision: Dict[str, Any],
+    *,
+    incidents_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    personas_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    unresolved_incident_ids: Optional[Collection[str]] = None,
+) -> str:
+    """strategy | infrastructure | deployment | test | unclassified from recorded owner fields.
+
+    The decision's own runtime_binding_id and target persona data_scope decide
+    first; only then the linked incident record read by id.  A linked incident
+    that could not be read (or was beyond the per request cap) is
+    ``unclassified``, never a confirmed class.  Names and id patterns are never
+    consulted.
+    """
+    own = _decision_own_subject_class(decision, personas_by_id)
+    if own:
+        return own
+    incident_ref = evolution_journal_incident_ref(decision)
+    incident = (incidents_by_id or {}).get(incident_ref) if incident_ref else None
+    if isinstance(incident, dict):
+        return _incident_subject_class(incident) or "strategy"
+    if incident_ref and (unresolved_incident_ids is None or incident_ref in unresolved_incident_ids):
+        return EVOLUTION_JOURNAL_UNCLASSIFIED
     return "strategy"
 
 

@@ -68,6 +68,9 @@ from .service import (
     evolution_journal_member_baselines,
     evolution_journal_pool_version_items,
     evolution_journal_subject_class,
+    evolution_journal_incident_refs_to_read,
+    evolution_journal_incident_ref,
+    EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
     EVOLUTION_JOURNAL_HIDDEN_SUBJECT_CLASSES,
     EVOLUTION_JOURNAL_MAX_POOL_PERSONAS,
     persona_record_tenant_id,
@@ -1275,26 +1278,48 @@ def create_evolution_router(
         rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
         journal_read_store = _JournalApprovalIsolatedReadStore(read_store)
 
-        # One persona list and one incident list serve subject classification
+        # One persona list serves subject classification
         # and the strategy pool reads (bounded; see _read_paper_owner_pools).
         try:
             all_personas = list(getattr(read_store, "list_personas", lambda **kw: [])() or [])
         except Exception:  # noqa: BLE001
             all_personas = []
-        try:
-            all_incidents = list(getattr(read_store, "list_incidents", lambda: [])() or [])
-        except Exception:  # noqa: BLE001
-            all_incidents = []
-        incidents_by_id = {
-            str(i.get("incident_id") or i.get("id") or ""): i for i in all_incidents if isinstance(i, dict)
-        }
         personas_by_id = {
             str(p.get("persona_id") or p.get("id") or ""): p for p in all_personas if isinstance(p, dict)
+        }
+        # No full incident list: classify from the decision's own fields first, then
+        # read only the linked incident by id, at most EVOLUTION_JOURNAL_MAX_INCIDENT_READS
+        # per request.  Anything unread stays "unclassified" and is counted.
+        refs_to_read, beyond_cap = evolution_journal_incident_refs_to_read(
+            decisions, personas_by_id=personas_by_id
+        )
+        incidents_by_id: Dict[str, Dict[str, Any]] = {}
+        unreadable_incident_ids: set = set()
+        get_incident = getattr(read_store, "get_incident", None)
+        for ref in refs_to_read:
+            try:
+                rec = get_incident(ref) if callable(get_incident) else None
+            except Exception:  # noqa: BLE001
+                rec = None
+            if isinstance(rec, dict) and rec:
+                incidents_by_id[ref] = rec
+            else:
+                unreadable_incident_ids.add(ref)
+        unresolved_incident_ids = {
+            ref for ref in {evolution_journal_incident_ref(d) for d in decisions if isinstance(d, dict)}
+            if ref and ref not in incidents_by_id
+        }
+        incident_class_reads = {
+            "cap": EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
+            "read": len(incidents_by_id),
+            "unreadable": len(unreadable_incident_ids),
+            "beyond_cap": beyond_cap,
         }
 
         def _subject_class(dec: Dict[str, Any]) -> str:
             return evolution_journal_subject_class(
-                dec, incidents_by_id=incidents_by_id, personas_by_id=personas_by_id
+                dec, incidents_by_id=incidents_by_id, personas_by_id=personas_by_id,
+                unresolved_incident_ids=unresolved_incident_ids,
             )
 
         pools = _read_paper_owner_pools(
@@ -1727,6 +1752,10 @@ def create_evolution_router(
             if it.get("entry_type") == "evolution_decision":
                 by_subject[str(it.get("subject_class"))] = by_subject.get(str(it.get("subject_class")), 0) + 1
         raw_summary["decision_subject_class_counts"] = by_subject
+        raw_summary["incident_class_reads"] = incident_class_reads
+        raw_summary["unclassified_decision_count"] = sum(
+            1 for it in filtered if it.get("entry_type") == "evolution_decision" and it.get("subject_class") == "unclassified"
+        )
         raw_summary["hidden_system_counts"] = hidden_counts
         raw_summary["include_system"] = bool(include_system)
         summary = _management_prune_camel_aliases(raw_summary)
