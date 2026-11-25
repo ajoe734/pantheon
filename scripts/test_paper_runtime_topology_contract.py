@@ -226,3 +226,22 @@ def test_producer_and_reconciler_mount_source_ingest_dataset_read_only_and_match
         assert Path(root_var) / NORMALIZED_DATASET_PATH == writer_dataset_dir
     assert "source-ingest-data" in compose["volumes"]
 
+
+
+def test_registry_read_principal_reaches_only_the_reconciler_and_only_as_a_file() -> None:
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    services = compose["services"]
+    issued = _issued_environment()
+    root = "/run/pantheon-registry-read"
+    assert issued["PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE"] == root + "/PAPER_RUNTIME_REGISTRY_READ_TOKEN"
+    assert CONSUMER_FILES["paper-registry-reader"] == ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",)
+    mount = "dev-paper-registry-reader-tokens:" + root + ":ro"
+    holders = [n for n, s in services.items() if mount in (s.get("volumes") or [])]
+    assert holders == ["paper-fleet-reconciler"]
+    assert "dev-paper-registry-reader-tokens:/issued/paper-registry-reader" in services[
+        "dev-paper-principal-issuer"]["volumes"]
+    env = services["paper-fleet-reconciler"]["environment"]
+    # No default credential: the file variable is empty unless the dev issuer exports it.
+    assert env["PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE"] == "${PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE:-}"
+    assert not any(k.startswith("PAPER_RUNTIME_REGISTRY_READ_TOKEN") and k != "PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE"
+                   for s in services.values() for k in (s.get("environment") or {}))

@@ -1,0 +1,53 @@
+name: Paper Risk Journey Daily (read-only)
+
+on:
+  schedule:
+    - cron: "30 11 * * 1-5"  # same weekday schedule as persona-day acceptance
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-risk-journey-daily-dev
+  cancel-in-progress: false
+
+jobs:
+  paper-risk-journey:
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 6
+    env:
+      ACCEPTANCE_BFF_URL: ${{ vars.DEV_BFF_URL }}
+      ACCEPTANCE_FE_URL: ${{ vars.DEV_FE_URL }}
+      ACCEPTANCE_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+      # Same pinned direct-SSH transport and existing dev values as the release stage (owner reads only).
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: scripts/dev_vm_ssh.sh prepare "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null
+      - name: Paper risk journey samples (GET only)
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          timeout 285s python3 -I acceptance/paper_risk_journey_day.py | tee paper-risk-journey-day.json
+      - name: Remove SSH transport credentials
+        if: always()
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: rm -rf "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paper-risk-journey-daily
+          path: paper-risk-journey-day.json
+          retention-days: 30

@@ -7070,6 +7070,13 @@ class LifecycleTelemetryOutbox:
             }
 
 
+def _member_baseline_refresh_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("PAPER_MEMBER_BASELINE_REFRESH_SECONDS", "300")))
+    except ValueError:
+        return 300.0
+
+
 class PaperRuntimeService:
     """Background execution loop plus HTTP-readable runtime state."""
 
@@ -7993,7 +8000,7 @@ class PaperRuntimeService:
     def _member_book_snapshot(self, **scope) -> list[dict[str, Any]]:
         """Member virtual books with each member's own approved baseline and comparison."""
         from services.evolution.approved_baselines import (
-            http_registry_entry_reader, resolve_member_baseline,
+            baseline_key, http_registry_entry_reader, resolve_member_baseline,
         )
 
         # Registry owner read by default; tests may inject a reader.
@@ -8001,12 +8008,30 @@ class PaperRuntimeService:
         persona_id = getattr(self._identity, "persona_id", None) or ""
         tenant_id = os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
 
+        # Report-only comparison input: one registry read per (artifact, checksum) per refresh
+        # interval (success, absence and failure alike), and one log record per failure per interval.
+        interval = _member_baseline_refresh_seconds()
+        cache = self.__dict__.setdefault("_member_baseline_cache", {})
+
         def resolve(artifact_id, checksum, symbols):
-            try:
-                entry = reader(artifact_id, tenant_id) if callable(reader) else None
-            except Exception:  # noqa: BLE001 - an unreadable owner record is a missing baseline
-                log.exception("member baseline registry read failed for %s", artifact_id)
-                entry = None
+            key = (tenant_id, artifact_id, checksum)
+            now = time.monotonic()
+            hit = cache.get(key)
+            if hit is None or now - hit[0] >= interval:
+                entry, failure = None, None
+                try:
+                    entry = reader(artifact_id, tenant_id) if callable(reader) else None
+                except Exception as exc:  # noqa: BLE001 - an unreadable owner record is a missing baseline
+                    failure = "registry_read_unavailable:" + type(exc).__name__
+                    log.warning(
+                        "member baseline registry read failed for %s (%s); next attempt in %ss",
+                        artifact_id, failure, int(interval),
+                    )
+                hit = cache[key] = (now, entry, failure)
+            _, entry, failure = hit
+            if failure:
+                return {"status": "no_approved_baseline", "reason": failure,
+                        "baseline_key": baseline_key(tenant_id, persona_id, artifact_id, checksum)}
             return resolve_member_baseline(
                 tenant_id=tenant_id, persona_id=persona_id, artifact_ref=artifact_id,
                 checksum=checksum, entry=entry, universe=symbols,

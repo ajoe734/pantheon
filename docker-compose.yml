@@ -47,6 +47,8 @@ services:
       - dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter
       # Capital reader principal only, for the paper producer and fleet reconciler.
       - dev-paper-capital-reader-tokens:/issued/paper-capital-reader
+      # Registry entry read principal, mounted only into the paper fleet reconciler.
+      - dev-paper-registry-reader-tokens:/issued/paper-registry-reader
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -2949,6 +2951,11 @@ services:
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
+      # Member baseline read (report-only comparison): Registry owner URL plus a registry-reader-only
+      # file exported by the dev principal issuer. Empty (no default credential) outside dev.
+      PERSONA_REGISTRY_BASE_URL: http://registry:8087
+      PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE: ${PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE:-}
+      PAPER_MEMBER_BASELINE_REFRESH_SECONDS: ${PAPER_MEMBER_BASELINE_REFRESH_SECONDS:-300}
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
       INTRADAY_STORE_ROOT: ${INTRADAY_STORE_ROOT:-/data/source-ingest}
       SOURCE_INGEST_STORE_ROOT: ${SOURCE_INGEST_STORE_ROOT:-/data/source-ingest}
@@ -2960,6 +2967,7 @@ services:
     volumes:
       - runtime-data:/data/runtime
       - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - dev-paper-registry-reader-tokens:/run/pantheon-registry-read:ro
       - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
@@ -3658,6 +3666,7 @@ volumes:
   dev-paper-agora-projector-tokens:
   dev-paper-openclaw-adapter-tokens:
   dev-paper-capital-reader-tokens:
+  dev-paper-registry-reader-tokens:
   broker-data:
   bff-data:
   capital-data:
