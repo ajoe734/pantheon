@@ -1,0 +1,132 @@
+{
+  "task_id": "BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125",
+  "title": "Persona and artifact rows say whether they are current or test or retired and a missing win rate is null",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "branch": "task/BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125",
+  "problem_register_class": "MGMT-REGISTRY-GROUP-AUDIT-20261125",
+  "delivery_state": "merged_pending_review",
+  "hosted_verification_note": "No VM or SSH access performed by worker per hard task rules; functional verification recorded from local contract and recorded-shape tests; hosted verification is owned by the downstream operator acceptance task.",
+  "acceptance_criteria": {
+    "ac1_persona_list_scope": {
+      "status": "verified",
+      "implementation": [
+        "services/control-plane/bff/personas/fleet_classification.py: added is_persona_test_scoped and classify_persona_list_scope returning 'current' | 'test' | 'retired' | 'research'.",
+        "services/control-plane/bff/personas/service.py: _project_persona_dto includes listScope.",
+        "services/control-plane/bff/personas/routes/collection.py: GET /bff/personas rows carry listScope while keeping the default row set, order, and paging unchanged."
+      ],
+      "rule": "'test' comes from classify_persona_data_scope(record) == 'test', strategy_family == 'dev_paper_baseline', or provisioning_idempotency_key starting with RELEASE_CASE_KEY_PREFIX ('dev-paper-release-'), and never from name."
+    },
+    "ac2_null_missing_or_zero_win_rate": {
+      "status": "verified",
+      "implementation": [
+        "services/control-plane/bff/personas/service.py: added _project_recorded_success_rate(*candidates) returning None when no value was recorded or when the recorded value is the filled-in 0.0.",
+        "Updated all four persona projections (_project_persona_dto, _persona_create_response, _project_persona_league_row, patch_persona) so successRate and league row success_rate agree and no win rate is computed.",
+        "Updated _persona_provisioning_metadata and patch_persona to write success_rate into metadata only when the caller explicitly sent successRate or success_rate."
+      ]
+    },
+    "ac3_artifact_list_scope_bounded_join": {
+      "status": "verified",
+      "implementation": [
+        "services/control-plane/bff/ports/research_knowledge_source.py: kept get_strategy_labels returning its exact {strategy_id: {'title': title, 'name': title}} shape; added get_strategy_persona_bindings sharing the single request-cached GET /api/registry/strategy-specs?view=persona_binding read.",
+        "services/control-plane/bff/research/routes/artifacts.py: _annotate_artifact_payload resolves the persona directory once per page and joins registry strategy_id -> bound persona_ids -> persona listScope to set list_scope ('current' | 'test' | 'retired' | 'unbound' for registry rows; 'research' for research_run_output rows)."
+      ]
+    },
+    "ac4_unknown_scope_on_persona_directory_failure": {
+      "status": "verified",
+      "implementation": [
+        "services/control-plane/bff/research/routes/artifacts.py: when the persona directory cannot be read, every returned row receives list_scope='unknown', meta.surfaces.persona_directory.status='unavailable' (and meta.persona_directory_status='unavailable'), and no row is dropped."
+      ]
+    },
+    "ac5_recorded_shapes_and_first_page_byte_limit": {
+      "status": "verified",
+      "recorded_shapes_tested": [
+        {
+          "shape": "older_release_probe_without_data_scope_baseline_family",
+          "persona_id": "persona-d57f6d76254c20418a9e",
+          "lifecycle_state": "retired",
+          "strategy_family": "dev_paper_baseline",
+          "expected_list_scope": "test"
+        },
+        {
+          "shape": "older_release_probe_without_data_scope_release_key",
+          "persona_id": "persona-21cdbed183c80cf371df",
+          "lifecycle_state": "retired",
+          "provisioning_idempotency_key": "dev-paper-release-34596927306-1-1776152936",
+          "expected_list_scope": "test"
+        },
+        {
+          "shape": "probe_with_data_scope",
+          "persona_id": "persona-d64835a203ce276b8fbb",
+          "lifecycle_state": "research_only",
+          "data_scope": "test",
+          "expected_list_scope": "test"
+        },
+        {
+          "shape": "advisory_persona_risk_officer",
+          "persona_id": "persona-risk-officer",
+          "lifecycle_state": "draft",
+          "consult_policy_id": "policy-consult-panel-v1",
+          "expected_list_scope": "current"
+        },
+        {
+          "shape": "agora_servant",
+          "persona_id": "agora-servant-fbeaee01e8f34c786555",
+          "lifecycle_state": "research_only",
+          "archetype": "agora_servant",
+          "expected_list_scope": "current"
+        },
+        {
+          "shape": "live_paper_owner",
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "lifecycle_state": "paper_owner",
+          "strategy_family": "daily_learning_paper_momentum",
+          "expected_list_scope": "current"
+        },
+        {
+          "shape": "retired_former_live_persona",
+          "persona_id": "persona-be19a1fac471247f2b2a",
+          "lifecycle_state": "retired",
+          "strategy_family": "daily_learning_paper_momentum",
+          "expected_list_scope": "retired"
+        },
+        {
+          "shape": "research_handoff_draft_persona",
+          "persona_id": "persona-strat-tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19-60f9c8a78715",
+          "lifecycle_state": "draft",
+          "expected_list_scope": "research"
+        }
+      ],
+      "first_page_bytes_limit": "test_artifact_catalog_registry first_page_bytes < 16384 holds with list_scope on all 20 rows in data and items."
+    },
+    "ac6_contract_docs_and_test_justification": {
+      "status": "verified",
+      "contract_updates": [
+        "services/control-plane/bff/BFF_API_CONTRACT.md line 570: documented list_scope on /bff/artifacts and /bff/artifacts/{artifact_id} rows and meta.surfaces.persona_directory.status='unavailable' degradation.",
+        "services/control-plane/bff/BFF_API_CONTRACT.md line 1114: documented listScope on GET /bff/personas rows and null successRate / success_rate when unrecorded or 0.0."
+      ],
+      "changed_test_assertions": [
+        {
+          "file": "services/control-plane/bff/tests/test_artifact_catalog_registry.py",
+          "change": "Added 'list_scope' to CATALOG_ROW_KEYS and wired port.list_personas = lambda: [] in seeded_catalog_env.",
+          "justification": "Every /bff/artifacts row now carries 'list_scope' by contract (AC 3), and CATALOG_ROW_KEYS asserts exact key-set equality on catalog rows while keeping the < 16384 byte first-page assertion intact."
+        }
+      ]
+    }
+  },
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_persistent_writers": 0,
+    "new_routes": 0,
+    "per_request_read_cost": "GET /bff/personas adds zero owner reads (pure in-memory classification). GET /bff/artifacts performs 1 bounded persona directory read per page via cached_owner_call/shared_persona_directory_list and reuses the single request-cached GET /api/registry/strategy-specs?view=persona_binding read already performed for strategy display names."
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_list_scope_classification.py -q",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_artifact_catalog_registry.py services/control-plane/bff/tests/test_artifact_catalog_indexed_paging.py services/control-plane/bff/tests/test_management_display_names.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/tests/test_persona_risk_profile_change.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py -q",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+      ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check"
+    ]
+  }
+}
