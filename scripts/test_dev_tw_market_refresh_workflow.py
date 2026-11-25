@@ -858,19 +858,31 @@ import json, os, sys, time
 cmd = sys.argv[1]
 args = sys.argv[2:]
 def opt(n): return args[args.index(n) + 1] if n in args else ''
+def atomic_write(path, text):
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(text)
+        f.flush()
+    os.replace(tmp, path)
 if cmd == 'verify':
     sys.exit(75 if os.environ.get('FAKE_LEASE_LOST') else 0)
 if cmd == 'verify-heartbeat-identity':
     sys.exit(0 if os.path.exists(opt('--identity-file')) else 1)
 if cmd == 'heartbeat-loop':
     if opt('--identity-json-out'):
-        open(opt('--identity-json-out'), 'w').write('{"pid": %d}' % os.getpid())
+        atomic_write(opt('--identity-json-out'), '{"pid": %d}' % os.getpid())
     # Like the real loop: sleep one interval BEFORE the first renewal, then rewrite state.json.
     time.sleep(float(opt('--interval-seconds')))
     if os.path.exists(opt('--state-file') + '.renew-fails'):
         sys.exit(1)
-    open(opt('--state-file'), 'w').write('{"leaseId":"x","heartbeatAt":"%f"}' % time.time())
-    open(opt('--state-file') + '.renewals', 'a').write(opt('--interval-seconds') + '\\n')
+    # Record the renewal counter before atomically replacing state.json: the re-arm step
+    # polls sha256sum(state.json) and sends SIGTERM to the 1s heartbeat-loop as soon as
+    # state.json changes (matching dev_environment_lease.py, where atomic_write_json(state_file)
+    # is the final step of a completed renewal).
+    with open(opt('--state-file') + '.renewals', 'a', encoding='utf-8') as f:
+        f.write(opt('--interval-seconds') + '\\n')
+        f.flush()
+    atomic_write(opt('--state-file'), '{"leaseId":"x","heartbeatAt":"%f"}' % time.time())
     time.sleep(30)
     sys.exit(0)
 sys.exit(2)
