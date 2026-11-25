@@ -422,7 +422,7 @@ def test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_
     default_body = resp_default.json()
     assert len(owner_http_calls) == 1
     assert owner_http_calls[0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&hide_stubs=true",
         20,
     )
     assert default_body["page_info"]["total"] == 4852
@@ -458,7 +458,7 @@ def test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_
     p1_body = resp_no_draft_p1.json()
     assert len(owner_http_calls) == 1
     assert owner_http_calls[0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=100&exclude_state=draft",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=100&exclude_state=draft&hide_stubs=true",
         100,
     )
     assert p1_body["page_info"]["total"] == 217

@@ -23,6 +23,18 @@ from .storage import (
 
 _SECRET = "lineage-read-test-secret"
 FD = "fd1281847a3b1c6a9735"
+LIVE_TOKEN = "a81b4fd15944698341aa"
+LIVE_PERSONA_ID = "persona-ee7112a829d38b9135ac"
+LIVE_STRATEGY_ID = f"strategy-persona-{LIVE_TOKEN}"
+LIVE_POOL_ID = f"pool-persona-paper-{LIVE_TOKEN}"
+LIVE_ARTIFACT_ID = f"artifact-persona-pool-{LIVE_TOKEN}-v2"
+LIVE_STRATEGY_TITLE = "衡岳｜0050 台股 Paper 學習 R2"
+LIVE_RECORDED_ROOTS = (
+    LIVE_STRATEGY_ID,
+    LIVE_PERSONA_ID,
+    LIVE_ARTIFACT_ID,
+    LIVE_POOL_ID,
+)
 
 
 def _entry(registry_id, artifact_type, strategy_id, *, lineage=None, metadata=None,
@@ -36,7 +48,7 @@ def _entry(registry_id, artifact_type, strategy_id, *, lineage=None, metadata=No
 
 
 def persona_family_entries(tenant="tenant-a"):
-    meta = {"persona_id": f"persona-{FD}", "capital_pool_id": f"pool-{FD}"}
+    meta = {"persona_id": f"persona-{FD}", "capital_pool_id": f"pool-{FD}", "title": "Baseline Persona Strategy"}
     return [
         _entry(f"reg-strategy-spec-persona-baseline-{FD}", "strategy_spec", f"strategy-persona-{FD}",
                lineage={"source_run_ids": [f"persona-provisioning-forward-{FD}"]}, tenant=tenant,
@@ -54,6 +66,43 @@ def persona_family_entries(tenant="tenant-a"):
                         "parent_registry_ids": [f"artifact-persona-paper-baseline-{FD}"],
                         "source_strategy_spec_id": f"reg-strategy-spec-persona-{FD}"},
                state="approved", tenant=tenant, metadata=meta, created_at="2026-11-01T03:00:00Z"),
+    ]
+
+
+def live_persona_family_entries(tenant="tenant-a"):
+    meta = {
+        "persona_id": LIVE_PERSONA_ID,
+        "capital_pool_id": LIVE_POOL_ID,
+        "title": LIVE_STRATEGY_TITLE,
+        "strategy_spec": {
+            "strategy_id": LIVE_STRATEGY_ID,
+            "spec_version": "1.0.1",
+            "title": LIVE_STRATEGY_TITLE,
+            "persona_ids": [LIVE_PERSONA_ID],
+            "lifecycle_state": "approved",
+        },
+    }
+    return [
+        _entry(f"reg-strategy-spec-persona-baseline-{LIVE_TOKEN}", "strategy_spec", LIVE_STRATEGY_ID,
+               lineage={"source_run_ids": [f"persona-provisioning-forward-{LIVE_TOKEN}"]},
+               tenant=tenant, metadata=meta, version="1.0.0", created_at="2026-11-10T00:00:00Z"),
+        _entry(f"reg-strategy-spec-persona-{LIVE_TOKEN}", "strategy_spec", LIVE_STRATEGY_ID,
+               lineage={"source_run_ids": [f"persona-provisioning-forward-{LIVE_TOKEN}"],
+                        "parent_registry_ids": [f"reg-strategy-spec-persona-baseline-{LIVE_TOKEN}"]},
+               state="approved", tenant=tenant, metadata=meta, version="1.0.1", created_at="2026-11-10T01:00:00Z"),
+        _entry(f"artifact-persona-paper-baseline-{LIVE_TOKEN}", "execution_bundle", LIVE_STRATEGY_ID,
+               lineage={"source_run_ids": [f"persona-provisioning-forward-artifact-{LIVE_TOKEN}"],
+                        "source_strategy_spec_id": f"reg-strategy-spec-persona-baseline-{LIVE_TOKEN}"},
+               tenant=tenant, metadata=meta, version="1.0.0", created_at="2026-11-10T02:00:00Z"),
+        _entry(f"artifact-persona-paper-{LIVE_TOKEN}", "execution_bundle", LIVE_STRATEGY_ID,
+               lineage={"source_run_ids": [f"persona-provisioning-forward-artifact-{LIVE_TOKEN}"],
+                        "parent_registry_ids": [f"artifact-persona-paper-baseline-{LIVE_TOKEN}"],
+                        "source_strategy_spec_id": f"reg-strategy-spec-persona-{LIVE_TOKEN}"},
+               state="approved", tenant=tenant, metadata=meta, version="1.0.0", created_at="2026-11-10T03:00:00Z"),
+        _entry(LIVE_ARTIFACT_ID, "execution_bundle", LIVE_STRATEGY_ID,
+               lineage={"source_run_ids": [f"persona-pool-publish-pool-{LIVE_TOKEN}-v2"],
+                        "parent_registry_ids": [f"artifact-persona-paper-{LIVE_TOKEN}"]},
+               state="approved", tenant=tenant, metadata=meta, version="1.2.0", created_at="2026-11-10T04:00:00Z"),
     ]
 
 
@@ -100,8 +149,34 @@ def test_persona_family_chain_from_real_shape():
     assert types[f"persona-{FD}"] == "Persona" and types[f"pool-{FD}"] == "CapitalPool"
     assert types[f"persona-provisioning-forward-{FD}"] == "Experiment"
     node = next(n for n in g["nodes"] if n["id"] == art)
-    assert node["state"] == "approved" and "risk" not in node  # owner has no risk: none invented
+    assert node["label"] == art and node["state"] == "approved" and "risk" not in node  # owner has no risk: none invented
+    assert node["strategy_id"] == f"strategy-persona-{FD}" and node["version"] == "1.0.0"
+    spec_node = next(n for n in g["nodes"] if n["id"] == spec)
+    assert spec_node["strategy_id"] == f"strategy-persona-{FD}" and spec_node["version"] == "1.0.1"
     assert g["has_more"] is False
+
+
+def test_live_persona_four_recorded_roots_return_same_connected_graph():
+    rows = [lineage_row(e) for e in persona_family_entries() + live_persona_family_entries()]
+    by_root = {
+        root: build_lineage_graph(rows, root_id=root, depth=3, limit=200)
+        for root in LIVE_RECORDED_ROOTS
+    }
+    first = by_root[LIVE_STRATEGY_ID]
+    expected_nodes = {n["id"] for n in first["nodes"]}
+    expected_edges = _edge_set(first)
+    assert expected_nodes >= {LIVE_PERSONA_ID, LIVE_ARTIFACT_ID, LIVE_POOL_ID}
+    assert {n.get("strategy_id") for n in first["nodes"]} >= {LIVE_STRATEGY_ID}
+    assert not any(FD in nid for nid in expected_nodes)
+    for root, graph in by_root.items():
+        assert {n["id"] for n in graph["nodes"]} == expected_nodes, root
+        assert _edge_set(graph) == expected_edges, root
+    nodes_by_id = {n["id"]: n for n in first["nodes"]}
+    assert nodes_by_id[LIVE_ARTIFACT_ID]["strategy_id"] == LIVE_STRATEGY_ID
+    assert nodes_by_id[LIVE_ARTIFACT_ID]["version"] == "1.2.0"
+    assert nodes_by_id[LIVE_ARTIFACT_ID]["label"] == LIVE_ARTIFACT_ID
+    assert nodes_by_id[f"reg-strategy-spec-persona-{LIVE_TOKEN}"]["strategy_id"] == LIVE_STRATEGY_ID
+    assert nodes_by_id[f"reg-strategy-spec-persona-{LIVE_TOKEN}"]["version"] == "1.0.1"
 
 
 def test_null_and_absent_lineage_fields_produce_no_edges():
