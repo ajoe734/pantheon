@@ -1,0 +1,57 @@
+{
+  "task_id": "BFF-EVIDENCE-CITED-NAMES-LINKS-20261125",
+  "title": "Cited strategies show their name and open a page that exists",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC6",
+  "delivery_state": "implemented_pending_review",
+  "operator_approval": "2026-11-25 conversation 52a1dacf (照建議 全部處理好); feature freeze does not apply to this scope.",
+  "hosted_verification_note": "No VM or SSH access of any kind; no operator keys read. Functional evidence only, using the hosted facts recorded in the task brief (2026-11-25 20:55Z, BFF b3f93d448) and the recorded owner shapes. Hosted verification belongs to the operator acceptance task.",
+  "root_cause": "cited_evidence.py (#7867) used the artifact id as a strategy id: _route_for linked registry_artifact / member_virtual_book rows to /management/strategies/<artifact> (hosted 404) and _name_for looked the artifact id up in the strategy label directory, which get_strategy_labels keys by strategy id (so artifact-persona-paper-* never got a name). The previous test fixture keyed get_strategy_labels by the artifact id, which hid the defect.",
+  "acceptance_as_delivered": [
+    "1. registry_artifact and member_virtual_book rows link to /management/artifacts/{artifact} (_artifact_href). test_routes_only_point_at_existing_management_pages asserts no cited href starts with /management/strategies/artifact- and every artifact-kind row links under /management/artifacts/artifact-. Pool (/management/personas/{persona}), evidence (/management/evidence/{id}), meeting/approval/evolution/demand/cycle links and null links are unchanged (asserted in test_artifact_named_by_registry_strategy_one_read_per_distinct_artifact).",
+    "2. label_parts = {artifact_id, strategy_id}; strategy_id is the recorded strategy_id of the Registry entry read through the existing owner read behind GET /bff/artifacts/{id} (store.read_registry_strategy_artifact_detail -> GET /api/registry/entries/{artifact}); label is names.strategy(strategy_id). No text rule: test_strategy_id_is_read_from_the_owner_never_derived_from_the_id records strategy-carry-basket-0042 for the artifact while the directory also holds the text-derivable strategy-persona-<hex> under a different name, and the row takes the recorded one; test_failed_artifact_read_keeps_row_unnamed_and_counted shows that with the owner failing the row stays unnamed even though the directory could name the derivable id.",
+    "3. Artifact reads run only for non-redacted rows on the visible page, one per distinct artifact id (REG_B, bare ART_B and BOOK_B -> one read), on the existing _ITEM_READ_EXECUTOR via submit_owner_read (request context: caller token + X-Tenant-Id), inside the existing visible-page read wait and the shared MAX_ITEM_READS=20 budget in page order. Failed (owner 503), slow (past the read deadline, cancelled), not-found, other-tenant (tenant_id/owner_tenant not the caller's tenant or __builtin__) or over-budget reads keep label = ref_id, name_missing true, strategy_id null and are counted in meta.item_reads {attempted, resolved, failed, truncated}. Tests: one-read-per-distinct, failed, slow, other-tenant, caller-tenant header, shared cap (30 artifacts -> 20 reads, truncated, unread rows unnamed), redacted rows get no read.",
+    "4. An approval cited_by whose parts.target_id is an artifact answered by that same page read carries parts.target_display_name; label stays null. No extra read is made for approval targets (test_approval_targeting_an_artifact_carries_its_strategy_name: still exactly one read per distinct artifact; unanswered artifact target and persona target get no name).",
+    "5. The fixture label directory is keyed by strategy id only ({strategy-persona-a81b4fd15944698341aa: Carry Basket B}); the Registry answers the recorded RegistryEntryView shape {entry{registry_id, artifact_type: execution_bundle, strategy_id, version, artifact_state, lineage, storage_ref, checksum, metadata, owner_tenant, created_at}, deployment_stage} through the real DefaultResearchKnowledgeSourcePort with only urlopen replaced. Reference shapes are the recorded ones: artifact-persona-paper-<hex>, facts:registry_entry:artifact-persona-paper-<hex>, facts:member_virtual_book:artifact-persona-paper-<hex>, facts:strategy_pool:persona-<hex>@4, evidence:search_excerpt:ko-evi-<hex>-<hex>, mem-<hex>. BFF_API_CONTRACT.md states the new link, label and read-bound rule."
+  ],
+  "implementation": {
+    "services/control-plane/bff/management_read_models/cited_evidence.py": "_strategy_href -> _artifact_href; _ARTIFACT_KINDS; _name_for takes the owner-recorded strategy id (no id -> unnamed, label_parts.strategy_id null); compose_cited_evidence(artifact_reader=...) adds distinct-artifact Registry reads to the visible-page read batch (shared cap, executor and deadline); _artifact_strategy validates (detail, status), tenant and artifact identity; _with_target_name adds approval parts.target_display_name.",
+    "services/control-plane/bff/management_read_models/service.py": "get_cited_evidence passes store.read_registry_strategy_artifact_detail (ReadSurfacePorts delegates to the research knowledge source Registry read) as artifact_reader.",
+    "services/control-plane/bff/BFF_API_CONTRACT.md": "cited evidence: artifact name rule, label_parts {artifact_id, strategy_id}, approval target_display_name, /management/artifacts/{artifact} link, shared 20-read visible-page budget.",
+    "services/control-plane/bff/tests/test_cited_evidence_list.py": "strategy-keyed directory, real Registry read with urlopen transport, 8 new tests, 3 assertions changed (justified below).",
+    "services/control-plane/bff/tests/bff_test_architecture_inventory.json": "adds the missing test_cited_evidence_list.py entry (router, DECOUPLED, never imports main)."
+  },
+  "cost_per_request": {
+    "formula": "previous formula + at most one Registry entry read per distinct artifact id on the visible page; artifact and evidence item reads together are at most 20 (MAX_ITEM_READS), run 4 at a time on the existing item-read executor within the existing read deadline.",
+    "default_fixture": "visible page with 2 distinct artifacts + 1 ko-evi item -> meta.item_reads.attempted 3"
+  },
+  "tests_run": {
+    "cited": "services/control-plane/bff/tests/test_cited_evidence_list.py: 27 passed (19 existing + 8 new), run 3 times, 0 failures",
+    "architecture_plus_cited": "test_bff_test_architecture.py + test_cited_evidence_list.py: 66 passed",
+    "evidence_neighbours": "test_event_loop_owner_reads_guard, test_bff_b3_management_evidence, test_evidence_owner_list_bounded, test_evidence_redaction_fail_closed, test_evidence_source_backend, test_case_file_views: 105 passed",
+    "management_read_models": "test_management_read_budget, test_management_read_models_router, test_management_read_timeout_and_capacity: 54 passed",
+    "interpreter": ".venv-pantheon (scripts/dev/provision_python_distribution.py, dependencies from PANTHEON_DEPENDENCY_PYTHON), 2026-11-25"
+  },
+  "justified_changed_assertions": [
+    "test_cited_rows_carry_owner_label_link_and_cited_by: reg resolved_link route_href /management/strategies/{ART_B} -> /management/artifacts/{ART_B}. The old value was the defect: hosted GET /bff/strategies/artifact-persona-paper-a81b4fd15944698341aa answers 404, GET /bff/artifacts/ for the same id answers 200 (task brief, 2026-11-25 20:55Z). The label assertion 'Carry Basket B' is kept but now holds only through the Registry strategy id, because the fixture directory was re-keyed by strategy id (it was keyed by the artifact id, a shape get_strategy_labels never answers).",
+    "test_reference_cap_and_item_reads_bounded_to_visible_page: len(store.item_reads) == 20 -> registry reads == {ART_A, ART_B} and evidence item reads == 20 - 2 == 18 and meta.item_reads.attempted == 20. Acceptance 3 puts artifact reads inside the same 20-read budget, so two of the 20 go to the two distinct artifacts on that page; the bound is asserted on the combined total, which is stricter than before (it now also pins how the budget is spent).",
+    "test_routes_only_point_at_existing_management_pages: the allowed-page regex gains 'artifacts' (strategies kept), and new assertions forbid any /management/strategies/artifact- href. Additive; nothing removed."
+  ],
+  "added_assertions": [
+    "test_redaction_reused_for_caller_without_capability: no Registry read for redacted rows",
+    "test_artifact_named_by_registry_strategy_one_read_per_distinct_artifact",
+    "test_strategy_id_is_read_from_the_owner_never_derived_from_the_id",
+    "test_failed_artifact_read_keeps_row_unnamed_and_counted",
+    "test_slow_artifact_read_is_abandoned_at_the_read_deadline",
+    "test_artifact_of_another_tenant_is_never_used",
+    "test_artifact_read_carries_caller_tenant",
+    "test_artifact_reads_share_the_item_read_cap",
+    "test_approval_targeting_an_artifact_carries_its_strategy_name"
+  ],
+  "residual_findings": [
+    "Frontend src/App.tsx is not in this repository; the /management/artifacts/:id page is taken from the hosted fact in the brief (GET /bff/artifacts/{id} 200 and the page named there). The operator acceptance task should open one cited artifact link on hosted.",
+    "Registry read for a missing entry: the real port maps 404/403 to (None, 'ok'), so a not-found artifact counts as attempted but neither resolved nor failed in meta.item_reads.",
+    "Approval targets that are artifacts but not themselves cited on the visible page are not read (acceptance 4: only when the same read answered it), so they carry no target_display_name."
+  ]
+}

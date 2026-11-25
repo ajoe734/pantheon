@@ -1,0 +1,41 @@
+{
+  "task_id": "ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126",
+  "class": "RC1 WP1.2 acceptance stage and verdict",
+  "change": "After the identity check and the release probes, scripts/dev_acceptance_stage.py run (with --crawl-frontend-dir) runs the existing execute-plans crawl scripts/accept-management-hosted-production.mjs at the deployed frontend commit against the served pair as the read-only viewer and adds one required check, check:management-crawl (passed / failed with failedRoutes / skipped with reason). nonprod-deploy.yml dev-acceptance-stage gains two credential-free steps before the lease (checkout of ajoe734/execute-plans at frontend_sha; npm ci + Chromium install, 20 min timeout) and uploads acceptance-crawl.json beside the verdict.",
+  "verdict_rules": {
+    "passed": "no effect on the verdict (the crawl's own result.pass is true)",
+    "failed": "verdict failed; detail and failedRoutes name each route, its status and the render error",
+    "skipped": "verdict pending, never passed; reasons stack_not_verified, frontend_not_prepared, crawl_script_missing, viewer_credential_missing, viewer_login_failed, crawl_deadline, crawl_no_report, crawl_internal_error",
+    "deploy_job": "unchanged in all cases: the stage exits 0, the job is continue-on-error, nothing rolls back"
+  },
+  "start_condition": "the job needs coordinate-dev-release success (switch done, stack verified); the crawl also requires check:deployed-pair-identity passed, otherwise skipped: stack_not_verified",
+  "time_limit": {
+    "crawl_deadline_seconds": 720,
+    "basis": "pre-switch crawl step 'Management hosted production acceptance' in execute-plans gate runs on 2026-11-24 that minted a credential: 45364275324 421 s, 45401183199 361 s, 45428583657 373 s, 45453849299 328 s, 45472712064 334 s, 45500113085 374 s; longest 421 s plus about 70 % margin",
+    "on_expiry": "process group (node and Chromium) killed; skipped: crawl_deadline",
+    "install_timeout_minutes": 20
+  },
+  "read_only": {
+    "identity": "existing viewer (vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID / secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET), still only in the 'Run acceptance checks and probes' step env; the crawl process receives only the short-lived token",
+    "requests": "browser GET only; PANTHEON_ACCEPT_CLICK_WRITE_CTAS=0; the one POST is the existing /bff/auth/dev-login exchange that release probes already use; any non-GET BFF request seen is listed in the artifact",
+    "hosted_writer": "none new; latest.json beside the release store stays one replaced document"
+  },
+  "runtime_budget": {
+    "added_per_release": "about 7 to 8 min: checkout ~2 s, install ~36 s (same step shape in Root 45684275970, 20:36:12Z-20:36:48Z), crawl 5.5 to 7 min; bounded at 20 min install + 12 min crawl",
+    "releases_per_day": "Dev release dispatches 2026-11-20..25: 7, 9, 16, 8, 8, 4 (mean 8.7)",
+    "runner_minutes_per_day": "about 65 typical (8.7 x 7.5), about 130 on a 16-release day; ceiling 16 x 32.5 = 520 if every bound were hit",
+    "artifact": "acceptance-crawl.json 15 KB for 109 passing routes, 70 KB if all 109 routes fail; added to the existing dev-acceptance-verdict-<run>-<attempt> artifact, 30-day retention; verdict grows by at most ~21 KB (failedRoutes capped at 50, error text at 240 characters)"
+  },
+  "replay": "Root 45684275970 (BFF b3f93d448 + FE 38e5337d1) was passed with 12 checks; a crawl report with /management/evolution-journal status crash and 'TypeError: L.target.version.toLowerCase is not a function' now yields verdict failed naming that route (test_replay_45684275970_journal_error_boundary_makes_verdict_failed)",
+  "unchanged": [
+    "pre-switch FE-BFF Integration Gate crawl (execute-plans) and its advisory status",
+    "coordinate-dev-release job: no crawl reference",
+    "release probes and run_stage; without --crawl-frontend-dir the verdict is as before",
+    "no rollback, no new blocking gate on the deploy path, no new dispatch input"
+  ],
+  "observed_gap_not_owned_here": "the pre-switch gate crawl did not run in gate runs 45614024472, 45690103912 and 45697974269 (credential mint step skipped; 'A short-lived BFF_AUTH_TOKEN is required'); recorded in the register row for its owner",
+  "tests": [
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_acceptance_workflows_truthful.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_cross_repo_release_controller.py scripts/test_dev_acceptance_stage.py -> 679 passed"
+  ],
+  "hosted_acceptance": "pending: the next Dev release verdict (dev-acceptance-verdict artifact and acceptance/latest.json) shows check:management-crawl"
+}
