@@ -141,6 +141,10 @@ def _build_fixture_transport(fixtures_dir: Path) -> FixtureTransport:
 
     # §5.5 News via RSSHub
     transport.register(
+        "http://rsshub:1200/cna/aie",
+        (fixtures_dir / "rsshub_cna.xml").read_bytes(),
+    )
+    transport.register(
         "http://rsshub:1200/cna/aall",
         (fixtures_dir / "rsshub_cna.xml").read_bytes(),
     )
@@ -211,7 +215,13 @@ def test_every_section_5_source_runs_on_captured_fixture_with_no_network_call(
         finished_at="2026-11-10T09:00:10Z",
         allow_disabled=True,
         collect_kwargs=(
-            {"video_id": "fixture_vid_001"} if source_id == "collector-youtube-gemini-notes" else None
+            {"video_id": "fixture_vid_001"}
+            if source_id == "collector-youtube-gemini-notes"
+            else (
+                {"routes": (config.get_source("collector-news-rss").raw_config["routes"][0],)}
+                if source_id == "collector-news-rss"
+                else None
+            )
         ),
     )
     assert outcome.status == "complete"
@@ -651,15 +661,16 @@ def test_rsshub_news_pubdate_is_emitted_as_canonical_utc_iso_and_raw_bytes_keep_
         + "</channel></rss>"
     )
     transport = FixtureTransport()
-    transport.register(f"{base}/cna/aall", xml.encode())
+    transport.register(f"{base}/cna/aie", xml.encode())
     news = RssHubNewsPoller(config.get_source("collector-news-rss"), transport=transport)
-    got = {i.item_id: i for i in news.collect(fetched_at="2026-11-12T00:00:00Z")}
+    got = {i.item_id: i for i in news.collect(routes=("/cna/aie",), fetched_at="2026-11-12T00:00:00Z")}
     assert got["news-cna-a"].published_at == "2026-11-11T04:37:00Z"
     assert got["news-cna-b"].published_at == "2026-11-11T04:37:00Z"
     assert got["news-cna-c"].published_at == "2026-11-11T04:37:00Z"
     # no provable zone: left as-is so the verified reader keeps failing truthfully
     assert got["news-cna-d"].published_at == "Wed, 11 Nov 2026 04:37:00"
     assert b"Wed, 11 Nov 2026 04:37:00 GMT" in got["news-cna-a"].raw_bytes
+    assert got["news-cna-a"].metrics["route"] == "/cna/aie"
 
 
 def test_rss_pub_iso_rejects_malformed_offsets_and_trailing_text_unchanged() -> None:

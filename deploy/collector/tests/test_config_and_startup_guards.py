@@ -247,3 +247,49 @@ def test_taifex_vix_refuses_unsafe_policy_before_fetch(tmp_path, test_hasher, fi
     with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
         runner.run_source('collector-tw-taifex-vix', run_id='unsafe')
     assert transport.calls == []
+
+
+def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits() -> None:
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    news = config.get_source("collector-news-rss")
+    routes = news.raw_config["routes"]
+    assert "/cna/aall" not in routes
+    assert routes == [
+        "/cna/aie",
+        "/cna/asc",
+        "/udn/news/breakingnews/6",
+        "/udn/news/breakingnews/11",
+        "/chinatimes/money",
+        "/cw/master/8",
+    ]
+    assert len(routes) <= news.max_requests_per_run == 10
+    assert news.cadence == "hourly"
+    assert news.cadence_seconds == 3600
+    assert news.min_interval_seconds == 1.0
+    assert news.fetcher == "http"
+    assert news.respect_robots is True
+    assert news.robots_decision == "not_applicable_api"
+    assert news.terms_ref == "https://github.com/DIYgod/RSSHub (read 2026-11-10)"
+    assert news.attribution_required is False
+    assert news.logged_in is False
+    assert news.enabled is True
+    assert news.raw_config["rsshub_image"] == "diygod/rsshub:chromium-bundled-2026-11-01"
+    served = news.raw_config["served_categories"]
+    assert set(served) == set(routes)
+    assert "產經" in served["/cna/aie"]
+    assert "證券" in served["/cna/asc"]
+    assert "財經" in served["/udn/news/breakingnews/6"]
+    assert "股市" in served["/udn/news/breakingnews/11"]
+    assert "財經" in served["/chinatimes/money"]
+    assert "財經" in served["/cw/master/8"]
+    dropped = news.raw_config["dropped_routes"]
+    assert set(dropped) == {
+        "/cna/aall",
+        "/udn/news/breakingnews/2",
+        "/ltn/news/business",
+        "/chinatimes/realtimenews/260410",
+        "/cw/master",
+    }
+    compose_text = (DEFAULT_POLICY_PATH.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    assert news.raw_config["rsshub_image"] in compose_text
+
