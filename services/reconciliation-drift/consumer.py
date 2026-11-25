@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 from services.background_worker_health import (
     healthcheck as check_worker_health,
     write_health,
@@ -594,6 +595,7 @@ class ConsumerWorkerState:
         self.lease_token: str | None = None
         self.lease_expires_at: str | None = None
         self.load_error: str | None = None
+        self._temp_swept = False
         self._held_lease_owner: str | None = None
         self._held_lease_token: str | None = None
         self._held_lease_seconds: float | None = None
@@ -711,12 +713,11 @@ class ConsumerWorkerState:
             return
         temporary_name: str | None = None
         try:
-            fd, temporary_name = tempfile.mkstemp(
-                dir=str(self.path.parent),
-                prefix=f".{self.path.name}.",
-                suffix=".tmp",
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if not self._temp_swept:
+                self._temp_swept = True
+                sweep_stale_temp_siblings(self.path, keep_newer=True)
+            temporary_name = str(atomic_temp_path(self.path))
+            with open(temporary_name, "w", encoding="utf-8") as handle:
                 json.dump(
                     self._document(),
                     handle,

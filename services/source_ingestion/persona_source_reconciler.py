@@ -776,7 +776,15 @@ class SourceProvisioningReconciler:
         legacy_adoptable = existing_owner is None and _without_reconciliation(existing.connector) == _without_reconciliation(
             plan.connector
         )
-        if existing_owner == self.controller_name or (legacy_adoptable and fetch_matches):
+        # A bounded refresh registers the bare contract of a connector this reconciler provisions;
+        # it differs only in the run-bounded request window and record budget, never in the
+        # provider adapter. That is the same connector, so the reconciler adopts and repairs it.
+        refresh_bounded = (
+            legacy_adoptable
+            and connector_id in self.provider_factories
+            and _same_fetch_adapter(existing.fetch, desired_fetch)
+        )
+        if existing_owner == self.controller_name or (legacy_adoptable and fetch_matches) or refresh_bounded:
             if dry_run:
                 return "would_repair", {
                     "connector_id": connector_id,
@@ -860,6 +868,11 @@ def _reconciliation_owner(connector: SourceConnector) -> str | None:
         return None
     owner = str(marker.get("managed_by") or "").strip()
     return owner or None
+
+
+def _same_fetch_adapter(stored: Mapping[str, Any], desired: Mapping[str, Any]) -> bool:
+    keys = ("mode", "adapter", "adapter_config")
+    return all(stored.get(key) == desired.get(key) for key in keys) and bool(stored.get("adapter"))
 
 
 def _without_reconciliation(connector: SourceConnector) -> dict[str, Any]:

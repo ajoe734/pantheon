@@ -169,9 +169,12 @@ supply fresh samples. The companion browser observation and served service
 version inventory remain task evidence; probe success alone does not assert
 that the browser or every service was verified.
 
-Exit 0 means all probe checks passed; 1 means failed, including zero eligible
-samples, unresolved policy or unavailable owner reads; 77 means missing
-initial release/auth configuration. Run `timeout 245s acceptance/probes/paper-risk-journey`.
+Exit 0 means all probe checks passed; 1 means failed, including unresolved policy,
+identity, binding, history, source reads or a changed served pair; 77 means missing
+initial release/auth configuration, or pending (`verdict: pending`, `pending: [...]`):
+the findings are a non-empty subset of exactly `no_fresh_governed_decision:<persona>`,
+`no_fresh_pre_broker_rejection_with_amounts` and
+`no_fresh_broker_position_cash_reconciled_fill`. Any other finding alongside them exits 1. Run `timeout 245s acceptance/probes/paper-risk-journey`.
 All product reads use GET; only existing dev-login token exchanges use POST.
 No trades, policy activation, repair or replay are performed. Dev probes remain
 post-switch and do not introduce a deploy gate.
@@ -188,6 +191,30 @@ Tests: `acceptance/test_paper_risk_journey.py` and
 `acceptance/test_paper_risk_policy_binding.py`. Positive fresh events are
 explicit synthetic fixtures, never represented as hosted acceptance.
 
+## Daily paper risk journey check (`acceptance/paper_risk_journey_day.py`)
+
+Task: PAPER-RISK-JOURNEY-DAILY-RUNS-20261125 (after PAPER-RISK-JOURNEY-PENDING-AND-DAILY-20261125), run by
+`.github/workflows/paper-risk-journey-daily.yml`. Reuses the release probe's `check` unchanged (its pending/failed
+split stays) and adds the deadline. Trading sessions are the distinct trade days of decisions released for the
+configured personas, read from `GET /bff/management/trade-journeys` (list and detail) and the immutable
+`trade_decision` event through the existing telemetry owner read; there is no calendar route and no weekday
+arithmetic. The workflow prepares the same pinned SSH transport as the release stage with the existing dev
+secrets and variables and removes it afterwards. Only decisions whose `decision_time` is after the cutoff are
+judged; older parked decisions released later are ignored and listed (`ignored_before_cutoff`).
+
+Operator HOLD rule (2026-11-25):
+
+- a decision the strategy itself held (`flat_view`, `already_at_target`, no directional view) is neither pass nor failure;
+- a directional view (LONG/SHORT) without `pre_trade_sizing` (or sizing not bound to the persona's policy), or a HOLD with
+  `candidates_unavailable` / `budget_unavailable`, fails at once, naming persona, decision and reason;
+- five trading days after the cutoff without any judgeable (sized) decision for a persona fail;
+- five trading days without a refusal or reconciled fill fail (unchanged);
+- seven calendar days without any released decision, or with unreadable journey reads, fail; before that they are pending.
+
+Exit 0 passed or pending, 1 failed, 77 missing configuration. Reads: at most 72 + 3 x 13 + 2 requests, 280 seconds.
+Tests: `acceptance/test_paper_risk_journey_day.py` (fixed clock, recorded hosted shapes, route/read registration) and
+`scripts/test_dev_acceptance_stage.py`. Accepted only after the coordinator runs the workflow once against hosted.
+
 ## mgmt-strategy-meeting-research-readable probe (`acceptance/probes/mgmt-strategy-meeting-research-readable`)
 
 Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at `/bff/auth/dev-login` with
@@ -195,8 +222,10 @@ Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at
 when either (or `ACCEPTANCE_BFF_URL`) is absent. GET only. Fails when `GET /bff/strategies?exclude_state=draft` (all pages)
 lists a `SIMULATION paper-only`, `TW official` / `strat-tw-official` row or a retired/unbound `Pantheon Dev Paper Release`
 row, or lacks `meta.hidden_unbound_stub_strategy_count` / `meta.hidden_test_persona_strategy_count`; when
-`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks` lists an `is_non_real`
-row or lacks `meta.hidden_non_real_count`. Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
+`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks?view=research` lists an `is_non_real`
+row, lacks `meta.hidden_non_real_count`, reports `meta.surfaces.research_demands` other than `ok` (BFF-RESEARCH-DEMAND-READ-20261125:
+open persona demands unreadable from the Research owner), or lists a row whose `persona_ids` are all test-scope personas
+(`GET /bff/management/persona-fleet?data_scope=test`). Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
 `fixtures/hosted_mgmt_strategy_meeting_research_20261120.json`.
 
 ## meeting-action-followthrough probe (`acceptance/probes/meeting-action-followthrough`)

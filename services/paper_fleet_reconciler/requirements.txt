@@ -5,3 +5,4 @@ redis>=5.0.4
 # Loop 9 controller writer (services/loop-control store).
 asyncpg>=0.29.0
 jsonschema>=4.21.0
+pydantic

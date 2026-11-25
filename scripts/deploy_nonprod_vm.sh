@@ -3624,18 +3624,24 @@ desired_requirement = {
     "priority": priority,
     "enabled": True,
 }
-conn_meta = dict(conn_dict.get("metadata") or {})
-if is_finmind:
-    # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
-    # metadata marker the persona reconciler's require_connector_approved gate reads for
-    # registered custom connectors (TAIFEX precedent). The gate stays enforced.
-    conn_meta["approval_status"] = "approved"
-    conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
-conn_meta["persona_source_reconciliation"] = {
-    "managed_by": "persona_source_provisioning_reconciler",
-    "desired_state": desired_requirement,
-}
-conn_dict["metadata"] = conn_meta
+if not is_fund:
+    conn_meta = dict(conn_dict.get("metadata") or {})
+    if is_finmind:
+        # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
+        # metadata marker the persona reconciler's require_connector_approved gate reads for
+        # registered custom connectors (TAIFEX precedent). The gate stays enforced.
+        conn_meta["approval_status"] = "approved"
+        conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
+    conn_meta["persona_source_reconciliation"] = {
+        "managed_by": "persona_source_provisioning_reconciler",
+        "desired_state": desired_requirement,
+    }
+    conn_dict["metadata"] = conn_meta
+# FinMind fundamentals connectors (monthly revenue, quarterly statements, valuation) are provider
+# allowlisted in the persona source reconciler, which is the single writer of their
+# persona_source_reconciliation marker and decides require_connector_approved from that allowlist.
+# The refresh registers the bare adapter contract so a repeated run can never differ from what the
+# reconciler stored (RC2: "Connector already registered with different contract").
 
 
 def request_json(url: str, *, method: str = "GET", payload: dict | None = None, timeout: float = 30.0) -> dict:

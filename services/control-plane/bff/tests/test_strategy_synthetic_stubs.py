@@ -126,6 +126,40 @@ def test_stub_reason_is_pure_classification():
     assert strategy_stub_reason({"strategy_id": "s", "title": "Pantheon Dev Paper Release 1"}, lookup) is None
 
 
+def _bff_row_for_vector(vector):
+    """The BFF summary-row shape of one shared vector."""
+    row = {
+        "strategy_id": vector["strategy_id"],
+        "title": vector["title"],
+        "persona_ids": list(vector["persona_ids"]),
+    }
+    if vector["data_scope"]:
+        row["metadata"] = {"data_scope": vector["data_scope"]}
+    return row
+
+
+def test_bff_and_registry_classify_the_shared_vectors_identically():
+    """REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125: one hide rule. The Registry
+    runs the same vectors in test_strategy_summary_page_bounded.py."""
+    from services.registry.storage import strategy_stub_reason_for_fields
+    from services.registry.test_strategy_summary_page_bounded import (
+        STUB_RULE_TEST_PERSONA_IDS,
+        STUB_RULE_VECTORS,
+    )
+
+    lookup = PersonaStateLookup(available=True, test_persona_ids=STUB_RULE_TEST_PERSONA_IDS)
+    for vector in STUB_RULE_VECTORS:
+        bff = strategy_stub_reason(_bff_row_for_vector(vector), lookup)
+        registry = strategy_stub_reason_for_fields(
+            strategy_id=vector["strategy_id"],
+            title=vector["title"],
+            persona_ids=vector["persona_ids"],
+            data_scope=vector["data_scope"],
+            test_persona_ids=STUB_RULE_TEST_PERSONA_IDS,
+        )
+        assert bff == registry == vector["expected"], vector["id"]
+
+
 # --- AC4: meetings include_failed forward ---------------------------------------
 
 PERSONA = "persona-6507750312870d03a241"

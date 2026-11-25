@@ -1217,3 +1217,41 @@ def test_persistent_breach_counts_instrument_class_governed_breaches_by_mark_dat
     assert observed["result"] == "passed"
     assert observed["observed"]["distinct_breach_days"] == 3
     assert observed["observed"]["mark_dates"] == ["2026-11-02", "2026-11-03", "2026-11-04"]
+
+
+# -- EVOLUTION-SWEEP-SKIP-INFRA-20261125: stored infrastructure proposals are excluded --
+
+def infra_bound_decision(decision_id: str) -> EvolutionDecision:
+    return replace(
+        infra_flag_decision(),
+        decision_id=decision_id,
+        capital_pool_id="infra-tenant-tenant-dev",
+        metadata={
+            "runtime_binding_id": "infra-subject-tenant-dev-control-plane-bff",
+            "runtime_id": "infra-endpoint-control-plane-bff",
+        },
+    )
+
+
+def test_infrastructure_bound_proposals_are_counted_not_evaluated_or_cancelled(rig):
+    infra = infra_bound_decision("evo-sweep-infra-bff-0001")
+    strategy = retrain_decision()
+    rig.decisions.put(infra)
+    rig.decisions.put(strategy)
+
+    report = rig.qualifier.run(tenant_id=TENANT)
+
+    assert report["excluded_infrastructure"] == 1
+    assert report["evaluated"] == 1
+    assert [d["decision_id"] for d in report["decisions"]] == [strategy.decision_id]
+    assert sum(report["counts_by_first_failing_criterion"].values()) <= 1
+    assert report["qualified"] == 0
+    stored = next(d for d in rig.decisions.list_all() if d.decision_id == infra.decision_id)
+    assert str(getattr(stored.decision_state, "value", stored.decision_state)) == "proposed"
+
+
+def test_report_without_infrastructure_proposals_excludes_none(rig):
+    rig.decisions.put(retrain_decision())
+    report = rig.qualifier.run(tenant_id=TENANT)
+    assert report["excluded_infrastructure"] == 0
+    assert report["evaluated"] == 1

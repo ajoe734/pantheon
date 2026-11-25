@@ -1,0 +1,12 @@
+{
+  "task": "POOL-RISK-SNAPSHOT-DAILY-CHECK-READS-REAL-SOURCES-20261125",
+  "root_cause_class": "RC2",
+  "defect": "daily check read a non-existent calendar route and judged the date from pool health (unknown until 20 rows)",
+  "fix": "reads served pool_risk_snapshots via GET /api/v1/telemetry/{runtime_id}/summary; session from released decisions on /bff/management/trade-journeys, else other pools' mark dates; pending (exit 0) under 20 rows",
+  "tests": "acceptance/test_pool_risk_snapshot_day.py: 16 passed (1/19/20 rows, missing session row, null equity, unreadable sources, no trading persona, fallback, registered routes)",
+  "hosted_proof": "pending: coordinator runs the check once against hosted after the next deploy",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residuals": [
+    "acceptance/paper_risk_journey_day.py is owned by PAPER-RISK-JOURNEY-DAILY-RUNS-20261125 and unchanged"
+  ]
+}

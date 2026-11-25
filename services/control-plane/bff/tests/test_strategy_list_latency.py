@@ -1004,7 +1004,7 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
     # Verify owner boundary: 1 call to view=strategy_summary_page returning 20 rows (< 30 KB, not 5031 rows / 12 MB)
     assert len(owner_http_calls) == 1
     call_path, call_rows, call_bytes = owner_http_calls[0]
-    assert call_path == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20"
+    assert call_path == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&hide_stubs=true"
     assert call_rows == 20
     assert call_bytes < 30_000
 
@@ -1024,7 +1024,7 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
     assert body_approved["page_info"]["total"] == 133
     assert len(body_approved["data"]) == 20
     assert all(item["state"] == "approved" for item in body_approved["data"])
-    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=approved"
+    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=approved&hide_stubs=true"
     assert owner_http_calls[0][1] == 20
 
     # 3. Owner-filtered state=draft (exact total 4764)
@@ -1035,7 +1035,7 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
     assert body_draft["page_info"]["total"] == 4764
     assert len(body_draft["data"]) == 20
     assert all(item["state"] == "draft" for item in body_draft["data"])
-    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=draft"
+    assert owner_http_calls[0][0] == "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&state=draft&hide_stubs=true"
     assert owner_http_calls[0][1] == 20
 
     # 4. Owner-filtered state=review (exact total 1)
@@ -1054,7 +1054,7 @@ def test_real_5031_row_4898_strategy_scale_list_owner_boundary_bytes_rows_filter
     assert body_persona["page_info"]["total"] == 1
     assert [item["id"] for item in body_persona["data"]] == ["strategy-persona-0001"]
     assert owner_http_calls[0][0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&persona_id=persona-scale-0001"
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&persona_id=persona-scale-0001&hide_stubs=true"
     )
     assert owner_http_calls[0][1] == 1
 
@@ -1170,7 +1170,7 @@ def test_strategies_service_equivalent_named_wrapper_and_lambda_both_use_bounded
         body = resp.json()
         assert body["page_info"]["total"] == 1, label
         assert [item["id"] for item in body["data"]] == ["strat-equiv-0001"], label
-        assert owner_http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=20"], label
+        assert owner_http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&hide_stubs=true"], label
 
 
 def test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_closed_503(
@@ -1228,3 +1228,38 @@ def test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_clos
     assert resp.status_code == 503, resp.text
 
 
+
+
+def test_scale_7500_default_page_bounded_overlapped_reads_within_sla() -> None:
+    """BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125: 7,500 rows (7,329
+    drafts + 171 non-drafts) with test-scoped Personas present read the default
+    first page in <= 2 overlapped owner calls (vs 38 sequential 200-row pages),
+    inside the 1,200 ms SLA even with a 300 ms per-call owner latency."""
+    import time
+
+    from services.control_plane.bff.tests.test_strategy_list_test_scope import (
+        _scale_service,
+    )
+
+    svc, kwargs, calls, _rows = _scale_service()
+    store = svc._read_surface
+    original = store.list_strategy_summaries_page
+
+    def _slow(**kw):
+        time.sleep(0.3)
+        return original(**kw)
+
+    store.list_strategy_summaries_page = _slow
+    prefetched = original(page_size=20)
+    calls.clear()
+    started = time.perf_counter()
+    result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+        page_size=20, hide_retired=False, first_page_fn=lambda: prefetched, **kwargs
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    assert len(calls) <= 3, calls  # 1 draft-excluded read + <=1 continuation page
+    assert len(calls) < 38
+    assert elapsed_ms < 1200, elapsed_ms
+    assert len(result["page_summaries"]) == 20
+    assert result["total"] == 7500 - result["hidden_test_persona_strategy_count"]
+    assert result["hidden_test_persona_strategy_count"] == 2

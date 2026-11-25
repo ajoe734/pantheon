@@ -1,0 +1,2316 @@
+{
+ "period": "2026-11-12..2026-11-25",
+ "provenance": "Real hosted records (400 random drafts since 2026-11-12: 342 collector-news-rss, 31 collector-tw-ptt-stock, 27 paper), titles only; bodies are licensed publisher text and are not committed. Labels were assigned by hand from the title (relevant = market/price move, listed-company earnings or capital action, monetary/macro/trade policy, industry supply chain, securities rules, finance papers). Duplicate titles removed. 'tuning' rows were used to tune the vocabulary; 'heldout' rows (every third row) were never used for tuning and are the only rows precision/recall is reported on.",
+ "records": [
+  {
+   "source_type": "news",
+   "title": "輝達財測緩解黃仁勳去職疑慮 帶動AI股反彈",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "賴瑞隆問捐選舉補助款 柯志恩反酸：我沒拿雲豹錢",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "桌球世青少台灣U19男團奪銀 教練：後續個人賽添信心",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 早買不一定有用？Anthropic即將上市，FTX",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "貝爾威勒前3季每股賺34.61元 看好AIDC新技術升級趨勢",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞]黃仁勳卸任後再爆新調查！美方追查黃樂與",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "三商家購股臨會通過轉型更名眾聯投控",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "立法院紀念品中心揭牌 韓國瑜：補上參訪重要拼圖",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "沈伯洋22日辦大洋流嘉年華 盼傳遞台北文化底蘊",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "韋德齊5度當選捷克參議長 布拉格副市長接任市長",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "丹麥指控俄涉暗殺案 將驅逐俄國防武官並研議簽證禁令",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "俄烏戰爭影響身分認同？ 愛沙尼亞近6000俄裔更改族裔",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川普親自與輝達董事會溝通 促成黃仁勳回鍋",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "研華參展德國SPS 聚焦工業AI助製造業轉型",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "賴清德贈水滴寶劍 盼市民相挺把沈伯洋送進北市府",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "許承傑拍「雙囍」摘金馬最佳導演 告白老婆嗨翻台下",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[情報] 1118 違約交割 創意等4檔",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台積電進駐 卓榮泰：嘉義將成為「農業科技大縣」",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "歐盟提議供烏克蘭1.6兆元貸款 由俄未來戰爭賠款償還",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "When Food Stamps Became Free: Impacts and Implications of Removing the Purchase Requirement",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "尼坦雅胡幕僚涉干預選舉 對手艾森科特痛批：一分鐘都不能再留任",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳回歸華爾街振奮 身家單日暴增逾兆元",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[情報] 盤前美股科技類大漲",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Megaspeed：黃樂已於去年8月離職 現未擔任任何職務",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "各國同意朝研議邁進 以管制致命性自主武器",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台灣戰隊CFO舉辦分享會 帶領學生深入了解電競產業",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "AI需求發酵 第3季製造業產值年增43.09%、連11紅",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "土耳其軍方直升機訓練時墜毀 導致5名官兵喪命",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "榮邦經貿辦事處揭牌 公私合作引進友邦優質商品",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "曾之喬：低潮時陷入睡不飽 對表演失去熱情",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [新聞] 輝達代理 CEO，曾被黃仁勳批評只會看報表",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "巴菲特感恩節捐55億美元股票 稱善意會產生複利",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "沈伯洋直播馬拉松陪伴 預告27日市民之夜有驚喜",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川普稱與習近平對AI監管有共識 將合作制定安全規範",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "綠委提修法：嚴懲中共跨國鎮壓、鼓吹武統可罰百萬",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "潘孟安竹市陪莊競程車掃 允協調中央地方合作",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川普關稅陰影籠罩APEC峰會 地緣政治角力阻礙合作",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "高雄某里長參選人涉藉宮廟活動行賄 15萬交保",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "The Main Monetary Policy Shock",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "酈英傑：140億美元對台軍售可能分案處理 最終可望通過",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "陳吉寧環保部長任內 曾讚揚中國獨立記者霧霾紀錄片",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "總統：推動青年百億海外圓夢計畫 助年輕人一臂之力",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳辭輝達執行長 專家：AI發展趨健康、台產業鏈不受影響",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "景安捷運站外口角噴辣椒水 嫌犯3小時落網傷害罪送辦",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "北市府3年投入1.4億元 推動校園廚房修繕與設備改善",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳復職 柯文哲：1人影響全球股票是危機",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "LINE網頁版明年1/26正式退場 替代方式一次看",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳重掌輝達各方反應一次看 馬斯克叫好、民主黨參議員批魯莽",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "巴林防空警報大作 伊朗革命衛隊稱攻擊美軍雷達系統",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "澎湖農漁局野放8綠蠵龜 盼海洋資源永續駐點",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中共14機艦船台海周邊活動 國軍嚴密監控應處",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 玉山金法說1》談明年股利 黃男州承諾",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "選前最後黃金週日 何欣純、江啟臣各自啟動車掃",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台灣8校4企業赴印度攬才 串連升學與就業機會",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳返輝達總部員工熱烈歡迎 承諾「第二次會做更好」",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "吳宗憲要求辯論 林國漳：對手想假借機會抹黑",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Deep Hedging: Continuous Reinforcement Learning for Hedging of General Portfolios across Multiple Risk Aversions",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "亞洲醫療科技創新論壇12/2登場 鎖定2027投資標的",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "藍營「三子」合體挺李四川 韓國瑜稱讚是公務員最閃亮名片",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "AI as Shared Business Infrastructure: Firm Growth and the Distribution of Gains",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "法國近15萬人再上街 商家看不到示威盡頭暫不修破櫥窗",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "香港短片「三隻小豬」獲金馬 團隊：要讓牢獄的人看到",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中國男子攀登富士山失蹤 父懸賞250萬尋人引疑慮",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "日本硫磺島火山噴發 在南岸形成大片新陸地",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台股2天跌3583點 證交所：信用交易擔保維持率充足",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台股早盤跌逾1300點跌破43000點 台積電跌55元",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "蕭副總統挺陳素月 籲戒慎恐懼催出每一票",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "教育部補助3674萬元 助縣市汰換23輛身障學生交通車",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "安全單位示警 中國粉專藉將領故事蒐集國軍臉書帳號",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "沙烏地首都最高摩天大樓被擊中 一週內2度遇襲",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "TaskNet: Building Occupational Task Inventories from Worker Interviews at Scale",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "美中俄領袖峰會結束 塔斯社：持續一個半小時",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "亞洲大學訪大阪大學 深化量子AI與智慧醫療合作",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "中石化決停產小港廠CPL產線並除役 台灣CPL產量將歸零",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "泰國促中緬追查污染礦場 籲中國追溯稀土來源",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 憂中國記憶體大廠擴大市佔！美參議員致函",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "地理推廣週16日起全台接力 用多元活動看台灣",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "亞洲女性國會議員論壇 聚焦參政與實質決策權",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "藍拚普發2萬20日三讀 政院：財政規劃不應受選舉左右",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "美駐中大使：兩國關係不平穩 輝達事件將構成考驗",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台中歌劇院2027藝想春天系列 精選9部國內外作品",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "蔣萬安發放「光榮台北」明信片 引支持者力挺",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "江啟臣合體柯文哲盼爭取最大支持 何欣純：利益結盟非市民關心",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台灣批北京人士頻遭施暴 美學者憂中共跨國鎮壓升級",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[情報] 台股前十大漲點紀錄(今天第六名)",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 黃仁勳下台留爛攤？金融時報：傳輝達缺",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "北市警察局確保選前治安 專案臨檢黑幫活動處所",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "經部：沙拉油供應至年底無虞 提前部署農曆年前貨源",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "用戶帳單金額傳暴增 中華電：將重發正確簡訊內容",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "陸戰隊作戰計畫實彈射擊12月登場 勁蜂一型無人機參訓",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "登豐擬12月中旬上櫃 搶進GB10微型超級電腦供應鏈",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "九合一選舉可以穿PUMA、林安可球衣去投票嗎？投票日穿著與攜帶物品規範一次看",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "紐時：川普不滿范斯未力挺對伊朗開戰 私下盛讚盧比歐",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "比利時工會不滿政府財政緊縮 發動全國罷工逾5萬人上街",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "孫理蓮來台百年紀念活動 彭政閔攜手芥菜種會傳愛",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "今彩539第115273期 頭獎槓龜",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "又傳飛機接獲假炸彈威脅 俄客機載69人安抵土耳其",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "南投市親子輪動場啟用 能玩滑板滑步車直排輪",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "用打擊樂連結台美 朱宗慶率團14度赴美展品牌實力",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "新北石碇清晨13.6度 吳德榮：21日晨還會更冷",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "埃及開放醫療撤離 提供加薩傷病患一道生機",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "AI教父黃仁勳重磅回歸 輝達創紀錄單日拉抬市場2兆美元",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "亞太天主教大學運動會 輔大男籃以賽代訓備戰UBA",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "路透：台積電評估德州設廠 房產稅減免成關鍵條件",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "高市早苗擬提成立亞洲版國際能源總署 日本收費替東南亞儲石油",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Unconventional Monetary Policy and Deposit Retention",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "(In)Credible Development RCTs: False Discoveries, Low Power, and a Solution",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "陳亭妃持續鐵馬催票 盼南科周邊建設與產業同步到位",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "世新口傳系畢展 結合AI影片打造互動故事",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "頭份中山市場拆危樓重建動土 預計116年底前完工",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台中市長選舉政見會 何欣純首推交通、江啟臣主打智慧安全",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Vigilance, Risk Vulnerability, and the Precautionary Augment",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "重啟北高航線 陳世凱：尚未有業者申請",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "涉以每票1000元賄選 苗縣鄉民代表參選人父母遭羈押",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "警選前掃蕩幫派查獲320人 防在地協力跨國鎮壓",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "共同社民調：逾6成日本民眾認為消費稅減稅效果有限",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "英日「警戒島嶼」軍演 汲取烏克蘭戰場經驗、強化印太安全",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "林柏佑開低走高U23世界盃奪防禦率王 證明有投長局數能力",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "花蓮議會民進黨團：為救游淑貞選情 觸法舉債普發2萬元",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中選會調增投開票所工作人員支給額 盼提高擔任誘因",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "義大利學校收恐嚇信 外交部：已通報檢調合作追查",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "退伍軍人節演說 川普稱伊朗戰爭快結束、矢言取得全面勝利",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中研院攜手法國科研中心 擬設國際聯合研究實驗室",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川普抵深圳出席APEC 習近平親自接機",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[創作］改編網路送孟浩然之廣陵",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Unraveling the Cobweb of Global Imbalances: Drivers, Vulnerabilities and Adjustment Scenarios",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "施吉生技23日登錄興櫃 明年底拚進30家醫療院所",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [新聞] 黃仁勳坦承與中國女間諜有婚外情 輝達",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "不滿重劃爭議捷運縱火 二審維持緩刑改須賠北捷",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台南第19例登革熱境外移入 自越南返國入境發病",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台菲聯手打擊網路詐騙 菲律賓移民局再逮4台男",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "CAPITAL ASSET PRICES: A THEORY OF MARKET EQUILIBRIUM UNDER CONDITIONS OF RISK*",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "輝達恢復黃仁勳職務全文聲明 重申調查工作持續進行",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "涉辦餐會送白米現金賄選 宜蘭市民代表參選人收押",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Saving for the Machines",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[情報] 6474 華豫寧 更名為 維夫拉克控股",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "Hedging option books using neural-SDE market models",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川普：司法部指黃仁勳無涉罪行 失去國家級腦力才是國安威脅",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "海地總統摩依士遇刺案 美聯邦陪審團裁定海地裔美籍牧師有罪",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "日本土佐和紙特展21日成大登場 見識千年工藝瑰寶",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "虞戡平獲金馬終身成就獎 讚年輕人是撐起台灣電影動力",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "AI疑慮升溫拖累科技股續挫 韓股收跌逾3%",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "美中俄領袖首度三方峰會 分析指不會是「新版雅爾達會議」",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "自小客衝撞台南麻善大橋護欄翻落河床 駕駛受傷送醫",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "嘉義後花園蘭潭後山步道景觀橋啟用 邀9旬市民見證",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "南投林保分署招森林護管員 專業背景姊弟同錄取",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "西班牙選前電視辯論8黨激戰 左右陣營正面交鋒",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Demand-Driven Inflation",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "川普：若舒默出任參院多數黨領袖 合作將有困難",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "HBL松山闖複賽拚3連霸 基商、錦和搭晉級末班車",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [新聞] 美財長貝森特：輝達須「從公司外部」尋找",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "德國漢莎航空擬裁員千人 燃料成本高漲營運承壓",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "南投信義鄉同富長照場館動土 提升原鄉老幼照顧",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "APEC深圳峰會結束 深圳寶安機場多個航班延誤",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "漁業釣繩回收變高科技產業複合材料 提升循環價值",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "卓榮泰喊「在政院等你」陳其邁：因為要列席院會",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "選舉公報相片落差惹議 內政部：將研議更周延作法",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "吳德榮：本週2波東北季風 19日起低溫探12度",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Last-Mile Delivery and the Future of Aid",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "輝達所引發AI類股大漲回吐 美股開低",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "威力彩第115094期 頭獎槓龜",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "日本防衛預算恐縮水 擬大砍武器採購保AI無人機",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "川習三會習近平指中美經貿加強溝通 川普稱雙方對AI監管有共識",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "竹市華德福學校疑遭掩埋廢棄物 已清運1446噸",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中國股市AI熱潮逆轉上演大逃亡 科技類指數市值蒸發56兆",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[公告] hoothoot UpMe fkman0831 分身仔 水桶",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "故宮推「梯航星集」特展 辛丑條約、南京條約等展出",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "勞動部找黑嘉嘉當老師 鼓勵勞退自提",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "法界籲東協強化環境治理 避免法律淪為破壞工具",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "大樂透第115108期 頭獎槓龜",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "網紅李子柒當選四川文聯副主席 「被收編」引關注",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "卓榮泰：持續整合健康、運動等政策 預防慢性病發生",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "中國中央部委幹部收境外經費洩情報 犯間諜罪遭判死刑",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [新聞] 美國眾議院回應黃仁勳請辭",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "以色列空襲加薩釀7死 哈瑪斯內部安全首長喪生",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "The Impact of Climate Change on Fisheries",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "國1台南麻豆段多車連環撞 釀2死1傷",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "How Will the 340B Rebate Model Pilot Affect Covered Entity Finances?",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳重掌輝達 美媒警告風波未息、川普恐要求回報",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "梅根父親涉持兒少性虐影像 陪審團追加起訴新罪名",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "選前獻祝福 宋楚瑜期勉蔣萬安、戴錫欽和秦慧珠",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "新加坡列依托咪酯管制毒品 新法起訴首男判監加鞭刑",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "沙國首都摩天大樓再度遇襲11人傷 聯軍譴責恐怖攻擊",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [新聞] 連鎖效應？輝達5千億美元融資計畫恐喊卡",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "Target What? The Foundations of Poverty Targeting",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "橫跨雲嘉歷史建築復興鐵橋啟用 耗資2億餘元修復",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "北市推自動駕駛公車 賴士葆將提案助地方政府發揮",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳重掌輝達 AI概念股應聲飆漲、費半大漲14%",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "蚊子機場一籮筐 中國7成機場靠財政補貼維持",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "涉現金賄選 台東鄭姓議員候選人遭聲押禁見",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "輝達與Megaspeed關係受檢視 傳黃仁勳女兒參與危機應對",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "陳吉寧落馬 上海市長朱忠明視察基層反貪腐",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "桌球世青少錦標賽 台灣U19男團不敵中國奪銀改制後最佳",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "網友稱在車廂交流洋流飄帶遭關切 北捷：不實指控",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "水庫設光電引議 太陽能七大公協會盼以科學評估、勿污名化",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "全球科技股拋售潮延燒 亞股持續跌勢",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "花蓮地震營建棄土10.7萬公噸 內政部補助2.8億元去化",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "平溪十分瀑布虎頭蜂攻擊 18團客遭螫2人傷勢較重",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "金融時報：輝達尋找新掌門人 安謀執行長哈斯列接班名單",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "衛福部訂6/3全國長照日 頒金顧獎表揚績優照服員",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 看好黃仁勳穩住大位！ 郭哲榮逆風喊1句",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "參與COP31 國泰金李長庚：讓重建信任成為氣候轉型力量",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台北動物園首辦「企鵝走路趣」 19日登場",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "謝國樑提政績盼求連任 童子瑋允諾提升清潔隊福利",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台南建置43處優先號誌路口 爭取傷病患救援時間",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[情報] 4763材料－KY 115年 Q3：0 累積:1.85",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "金馬63收視出爐 周佳聖獲頒台灣傑出電影工作者最高亮點",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "全國中正盃滑冰錦標賽 團體花式「皮克敏的一天」成焦點",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "因應春節旅運 台灣虎航期間限定飛高雄羽田包機",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 黃仁勳婚外情再爆一樁 紐時稱對象是輝達女副總裁",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "劉俊緯參與軟銀秋訓、打亞冠收穫豐 盼提升揮棒速度",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台股遭血洗新台幣抗跌尾盤翻揚 央行：亂流後市場會恢復",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "新北國中生持剪刀傷人案 被害高中生救治無效死亡",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "資策會明年推後量子密碼遷移指引修訂版 助產業掌握規範",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "陳亭妃鐵馬催票逾770公里 謝龍介重申拆水庫光電板",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "紐時：內部對中政策分歧檯面化 川普搖擺不定",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "CNN：疑中國間諜利用大量假徵才網址 誘騙美公務員洩漏情報",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "從秦陵兵馬俑解析歷史 唐獎漢學獎得主探地下之國【書摘】",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "空軍官校流感群聚95人有症狀 未通報最高罰1.5萬元",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳回歸熱情消退 科技股受AI疑慮拖累下挫",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "世界擊劍總會頒獎 林雨潔獲青少年組女子銳劍世界第1寫新頁",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[公告] 4-6-1罰則將在1/22開始到年底加重至30天",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "承載飲食文化與生活記憶 台南糕餅文化雙書發表",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "10月新增房貸創逾1年半新高 央行鬆綁管制效應待觀察",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Global Entrepreneurial Talent Flows: Widely Funded, Selectively Successful?",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中國足球排名不振 足協推紅圖計畫拚2035年抗衡強隊",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "北美台商齊聚田納西州 新任州長當選人：台美往來更緊密",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "The Hidden Sharpe Ratio",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "APEC深圳峰會歡迎宴 我代表團：施與13名領袖互動",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "梁育慈籲返鄉投票吃美食 周佳琪推吉祥寓意小物",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "BTS「海龜式追星」爆紅 盤點台灣特色追星文化",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "美國國家情報總監：正對與黃仁勳有染疑似中國間諜進行調查",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "新加坡總理APEC談話 籲亞太自由貿易避經濟集團對立",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "香港成「國際人用藥品註冊技術協調會」監管機構成員",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "國光高中備援廠商菜色惹議 高雄教育局要求檢討調整",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "蔡英文竹市香山漁場挺莊競程 林智堅現身同框",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "號誌故障影響 台鐵大肚至追分間列車延誤",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "藍營質疑後援會人員涉土地利益 賴瑞隆競總批烏賊戰術",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "玉山金前10月賺贏去年 黃男州：適度提高現金股利",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "翡翠水庫光電議題 沈伯洋尊重經濟部、蔣萬安稱應說明立場",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "侯友宜合體張善政八德大湳市場掃街拜票 籲桃園鄉親力挺",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "論文遭質疑抄襲 童子瑋競辦：相似度27％低於海大標準",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "今彩539第115283期開獎",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "今彩539第115284期開獎",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳喊迫不及待復工 社群帳號改回輝達創辦人暨執行長",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳向輝達員工致歉 坦承違反行為準則、接受心理治療",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳回任輝達執行長 民主黨高層矢言全面調查",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "加拿大總理：已與川普談話 美加貿易協議取得進展",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "加拿大媒體專家訪台 讚台灣以小搏大世界典範",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台中某大學課堂衝突 學生持刀走向教師遭壓制送辦",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[創作] 五萬勒 （雨夜花）",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "桃機東方宇逸貴賓室取得國際驗證 強化永續管理",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "新華社指「美國不支持台獨」 陸委會：初步查證不是事實",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳婚外情又有新爆料 路透揭他與另一員工曾有親密關係",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "無人機採購增例外條款 白：承認百分之百國產不可行",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳醜聞早有跡象 紐時去年揭黃樂關係企業疑助晶片轉運中國",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "品德教育重實踐 教部次長：AI難取代",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "新北嘉市台南花蓮6案中央社宅招租 採先抽後審新制",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "越南綠色轉型壓力升溫 台商導入技術帶動供應鏈減碳",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "若無撥補12月電價漲？經濟部：爭取支持追加預算案",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "前高雄市議員涉藉赴中落地招待助選 3人交保",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台股開低走低 跌2393.60點",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "民主黨重掌美國會 前白宮官員提5大建議籲保留美中委員會",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "守護台灣本土文化 林正盛：別因政治鬥爭污名化文化補助",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "彰化村長夫婦昏迷送醫不治 新興村長選舉將依法停止",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "川普啟程赴亞洲拋震撼彈 訪中國時可能會晤金正恩",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 快訊／黃仁勳恐被罷免！ 輝達最快今天開",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "經部：從未強制要求故宮設置太陽光電 文資一律排除",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "蔣萬安、沈伯洋連3天車掃 警：彈性調整號誌並籲民眾站人行道",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "沈有忠：兩岸訊息透過短影音包裝 可能影響年輕人判斷",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "漢測深化合作ficonTEC 擴大布局矽光子測試",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "美期中選舉過後 康貝爾：華府將重新致力維繫盟友夥伴關係",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Decoding Success: Phonics-based Instruction and Student Achievement",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 共犯結構超龐大！彭博：黃樂聯手丈夫及手",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "直擊歐盟最古老「許願池印刷廠」 教宗、總理愛用",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "屏檢查獲千元買票 2樁腳遭羈押禁見",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "COP31給台灣的啟示 學者：應建立災險機制",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "氣象署發布豪雨特報 高雄屏東有局部大雨機率",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "賴總統授勳片山和之 表彰對台日關係卓越貢獻",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "習近平川普普丁APEC合影 美中俄三方峰會前同框",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "11月台股期指漲706點",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中共21機艦船台海周邊活動 國軍嚴密監控應處",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "威力彩第115093期 頭獎槓龜",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "中國第3度主辦 APEC深圳峰會看點一次看",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "APEC峰會期間深圳9條主要道路交管 美團外送員超時免責",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "張政禹談葉君璋卸任不捨泛淚：沒有他 我可能已不在棒球圈",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "沈伯洋推城市縫合 三策略盼高架橋下空間還給市民",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "媒體：川普貿易顧問警告勿打中國牌 稱加拿大正遭生吞",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "受美國關稅消息拖累 歐洲股市收盤下跌",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "Re: [心得] 畢業了",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "2架疑似俄機闖日本領空後 南下通過台灣東部外海",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "歐盟預算草案砍國防經費近3成 德總理籲安全優先",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "高鐵新世代列車首度正線測試 時速170公里達標",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "APEC深圳倡議 推進亞太自貿區、支持WTO改革",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "童子瑋：論文待專業認定 不需要政治口水",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 路透：黃仁勳傳與中國女商人黃樂婚外情",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "美財長貝森特：輝達須「從公司外部」尋找新執行長",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 美股開盤「費半重挫」！AI股倒一片…輝達",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "加拿大軍事基地大火再添1死 累計5名士兵罹難",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "油輪撞擊紐奧良港河輪約130名乘客受困 已展開救援行動",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "賴總統挺林國漳批對手空降為官位 吳宗憲陣營：經初選產生",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "1115-1121一週大事",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "賴總統力薦何欣純 沈伯洋再返台中洋流車掃人潮爆",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "湄公河委員會河內召開 缺乏強制力恐難解聖嬰旱象隱憂",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "鄭麗文質疑司法介選 竹檢：辦案客觀公正",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "國發會通過嘉義海淡廠計畫 估121年產水強化供水韌性",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "Universities as Incubators of Mass Uprising",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "英國教育大臣訪中 出席9年來首場英中教育峰會",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "族裔與政治衝突升高 南蘇丹首次全國大選延至2027年2月舉行",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "何欣純盼延續台中巨蛋等建設 江啟臣：升級盧秀燕多項政策",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台中7旬翁田間遭蜂群攻擊 被螫37處住院觀察",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "日本稱2架疑似俄羅斯飛機侵犯領空 已緊急出動戰機升空應對",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "亞馬遜抗衡輝達 傳砸2470億收購AI新銳Decart",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "美情報總監示警 系統汰舊換新恐釀更多科技當機",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "證交所：明年7/5起千金股升降單位5元降為1元",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "拉美館開幕 陳明祺盼民眾認識友邦咖啡、可可等豐富產品",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "後黃仁勳時代輝達結盟供應鏈 穩主導地位宣示AI訂單無虞",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "鄭麗文站台蘇清泉喊全壘打 周春米無畏雨勢屏北車掃",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "冬戀蘭陽溫泉季 12/4日起宜蘭礁溪登場",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台股跌1926.92點",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "高市早苗出席APEC歡迎規模縮水 日媒評外交陷入困境",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "左流右新破800萬劑 COVID-19疫苗快用罄116年補貨",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "林佳緯要打冬盟漏看訊息 林岳平：人有到就好",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "輝達董事會通過 恢復黃仁勳總裁、執行長及董事職務",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "中國供應鏈疑慮衝擊超微 股價重挫8%",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台北市長選舉政見會 蔣萬安稱說到做到盼市民續支持",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "男子稱遭人剪刀刺傷腹部 瑞芳警調查偵辦",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "世足商機助攻 遠東新、新纖前3季賺贏去年全年",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "上百輛小黃占據勞動部前 抗議70歲不能開計程車",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "華航奪APEX兩大獎 連11年獲全球五星航空肯定",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "柯文哲台中車掃 將與江啟臣合體直播",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "展示黃珊珊簽名書 沈伯洋：盼延續政策、推動創新",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "駐巴紐技術團標售資產 外交部：已規劃撤離",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[創作] 體面",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "Common risk factors in the returns on stocks and bonds",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "產假陪產假延長等修法三讀 卓榮泰感謝立院充分溝通",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "博來科技擬1月中旬上櫃 搶攻邊緣AI商機",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "國民黨凱道選前之夜 北市中正區26至28日交管",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "輝達共同創辦人員工大會哽咽 批黃仁勳「背叛公司核心價值」",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "新加坡金融科技節 台灣館創新技術秀國際競爭力",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "藍批評拿中央政策當擋箭牌 黃世杰：當選絕不推埤塘光電",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "郵展限量開賣寶可夢周邊 頭香排逾20小時搶全套",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 黃仁勳如何打造讓北京留在AI競賽中的後門",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "舒淇「女孩」奪金馬最佳新導演 淚謝侯孝賢鼓勵：努力就能做到",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "西瓜卡新吉祥物撞臉書包妖精 日網笑稱失散兄弟",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "高雄增2例本土登革熱 前鎮男子3度就醫確診",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "[閒聊] 2026/11/11 盤後閒聊",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "無圍牆醫院盼成日常 陳志鴻提出5大照護轉型解方",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "農業部次長胡忠一：台灣米具競爭力 估115年出口日本近7千噸",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "paper",
+   "title": "A Beckerian Theory of Taxation",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "兩岸和平倡議話題 澎湖藍綠縣長候選人多不回應",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[新聞] 伊朗稱無人機襲美軍基地 巴林急發2次警",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "鄭麗文竹縣為徐欣瑩站台 籲藍營團結爭取支持",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "訪賓接待預算增1.5億 外交部：因應中國滲透及交流需求",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "華碩捐贈66套地端AI軟體 助東海大學打造實作基地",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "上海國際童書展 台灣作品多元活潑獲青睞",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "The Effects of Monetary Policy on Macroeconomic Expectations: High-Frequency Evidence from Prediction Markets",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "國民黨團提案普發現金2萬元 盼11/20順利三讀",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台股創史上第2大跌點 外資匯出趨緩新台幣小貶4.8分",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "[公告] 股票板板規 v4.9",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "以色列防長稱伊朗研發化武 誓言阻止德黑蘭取得",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "離岸風電作業船現身馬公港引疑慮 港務公司：僅暫時靠泊",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "期貨公會：台灣資本市場健康 持續穩定成長",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "烏克蘭連2天攻擊克里米亞大橋 CNN確認部分橋面坍塌",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "港股持續抵迷 下挫1.95%",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "paper",
+   "title": "An Odd Approximation of Inflation for State Dependent Pricing Models",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "捷克棒球隊逛大稻埕 霞海城隍廟祈求12強賽事順利",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "美股費半重挫10% 投顧：關注禁空令與國安基金護盤",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "美301調查將出爐 台美經貿人士：估最終稅率15%不疊加",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "赴宜蘭挺林國漳 賴總統：333億「東風」備妥缺好縣長",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "台中11/20藍綠拚場 何欣純沈伯洋車掃、江啟臣合體漢子燕子",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台灣Google Play年度榜單揭曉 得獎App一次看",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "上櫃5檔違約交割達揭露門檻 今年單日最多",
+   "relevant": true,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "調查：台政師學生租金中位數達1萬元 僅4成領到補助",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "航空業加速減碳 新加坡2030年永續燃料占比拚5%",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "泰國11月天燈節 新住民李美秋暢談台泰天燈同異文化",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "黃仁勳辭執行長並退出董事會 AI巨擘輝達前景添變數",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "民團發起兒少十大承諾書 34名縣市長候選人簽署",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "台南啟動考古遺址體驗 帶學童認識腳下歷史寶藏",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "川普APEC行程公布 川習會後舉行美中俄領袖峰會",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "美國會：黃仁勳12/1赴眾議院委員會接受約談",
+   "relevant": false,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "Megaspeed遭美列黑名單 涉助中取得輝達AI晶片",
+   "relevant": false,
+   "split": "heldout"
+  },
+  {
+   "source_type": "news",
+   "title": "Anthropic掛牌掀AI熱潮 歐股仍收低",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "彭博：沙烏地10月原油產量大增 創中東戰事爆發前以來新高",
+   "relevant": true,
+   "split": "tuning"
+  },
+  {
+   "source_type": "news",
+   "title": "花蓮2村長參選人涉現金、送禮行賄 1起訴1交保",
+   "relevant": false,
+   "split": "heldout"
+  }
+ ]
+}

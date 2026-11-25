@@ -392,6 +392,14 @@ def _result(criterion: str, result: str, *, observed: Any = None, threshold: Any
 # Report persistence
 # ---------------------------------------------------------------------------
 
+_INFRASTRUCTURE_SUBJECT_PREFIX = "infra-subject-"
+
+
+def _is_infrastructure_decision(decision) -> bool:
+    binding = str((getattr(decision, "metadata", None) or {}).get("runtime_binding_id") or "").strip()
+    return binding.startswith(_INFRASTRUCTURE_SUBJECT_PREFIX)
+
+
 class QualificationReportStore:
     """Last qualification report per tenant, durable across restarts."""
 
@@ -482,11 +490,15 @@ class ProgramQualifier:
             self._reports.save(tenant_id, report)
             return report
 
-        proposed = [
+        proposed_all = [
             d for d in self._decisions.list_all()
             if str(getattr(d, "tenant_id", "") or "") == tenant_id
             and str(_enum_value(d.decision_state)) == "proposed"
         ]
+        # Stored proposals bound to an infrastructure subject are not strategy
+        # decisions: count them, never evaluate, never rewrite or cancel them.
+        proposed = [d for d in proposed_all if not _is_infrastructure_decision(d)]
+        excluded_infrastructure = len(proposed_all) - len(proposed)
         decisions_by_id = {d.decision_id: d for d in self._decisions.list_all() if str(getattr(d, "tenant_id", "") or "") == tenant_id}
         programs = self._programs.list_programs(tenant_id=tenant_id)
 
@@ -535,6 +547,7 @@ class ProgramQualifier:
             "policy_version": policy.policy_version,
             "evaluated_at": evaluated_at,
             "evaluated": len(rows),
+            "excluded_infrastructure": excluded_infrastructure,
             "qualified": sum(1 for r in rows if r["qualified"]),
             "drafted": drafted,
             "counts_by_first_failing_criterion": counts,
@@ -552,6 +565,7 @@ class ProgramQualifier:
             "policy_version": policy_version,
             "evaluated_at": evaluated_at,
             "evaluated": 0,
+            "excluded_infrastructure": 0,
             "qualified": 0,
             "drafted": 0,
             "counts_by_first_failing_criterion": {},

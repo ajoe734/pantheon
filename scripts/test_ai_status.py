@@ -10769,6 +10769,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(binding_fe["kind"], "artifact_contract")
         self.assertEqual(binding_fe["artifacts"], ["support/sidecars/evidence.json"])
 
+    def test_dev_bridge_source_task_requires_pr_delivery_binding_at_handoff(self) -> None:
+        source_task = {
+            "id": "BRIDGE-SRC-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["pantheon:services/control-plane/bff/main.py"],
+            "acceptance": ["Supervisor PR to dev"],
+            "dev_bridge": {"work_class": "functional"},
+        }
+        self.assertTrue(ai_status.requires_pr_delivery_binding(source_task))
+        with self.assertRaisesRegex(SystemExit, "requires a PR delivery binding at handoff"):
+            ai_status.resolve_handoff_delivery_binding(source_task, {})
+
+        readonly_task = {
+            "id": "BRIDGE-RO-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["docs/review.md"],
+            "acceptance": ["Read-only verification"],
+            "dev_bridge": {"work_class": "read_only"},
+        }
+        self.assertFalse(ai_status.requires_pr_delivery_binding(readonly_task))
+
     def test_command_handoff_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
         self.state["tasks"][0]["status"] = "in_progress"
         self.state["tasks"][0]["owner"] = "Codex"
