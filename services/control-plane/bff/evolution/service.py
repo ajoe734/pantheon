@@ -546,7 +546,8 @@ def evolution_journal_target(
     return {
         "type": resolved_type or None,
         "id": resolved_id,
-        "version": target_version,
+        # target.version is always text or null (the frontend lower-cases it).
+        "version": None if target_version is None else str(target_version),
     }
 
 
@@ -1251,7 +1252,7 @@ def evolution_journal_pool_version_items(
             updated_at=version.get("created_at"),
             occurred_at=version.get("created_at"),
             action_type=action,
-            target={"type": "persona", "id": persona_id, "version": number},
+            target={"type": "persona", "id": persona_id, "version": str(number)},
             route=f"/management/evolution-journal?persona={persona_id}",
         )
         item.update(
