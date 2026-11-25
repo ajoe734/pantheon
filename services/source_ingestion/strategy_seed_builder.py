@@ -198,10 +198,15 @@ class StrategySpecSeedBuilder:
         evidence_item_ids = _unique_strings(bundle.evidence_item_ids)
         citation_refs = _unique_strings(bundle.citation_refs)
         trace_refs = _unique_strings((*bundle.trace_refs, *[record.trace_id for record in records]))
-        hypothesis = _metadata_text(strategy_metadata, ("hypothesis", "strategy_hypothesis")) or _infer_hypothesis(
-            bundle.summary,
-            text,
-        )
+        hypothesis = _metadata_text(strategy_metadata, ("hypothesis", "strategy_hypothesis"))
+        if not hypothesis:
+            # RC2: external text has no inferred hypothesis; only a verified
+            # hypothesis card (merged into strategy_seed) can supply one.
+            if any(_source_type_value(record) in _EXTERNAL_TEXT_SOURCE_TYPES for record in records):
+                raise StrategySpecSeedError(
+                    "hypothesis_card_required: external text has no hypothesis without a verified card"
+                )
+            hypothesis = _infer_hypothesis(bundle.summary, text)
         asset_class = _extract_list(
             strategy_metadata,
             contexts,
@@ -699,6 +704,14 @@ def _flatten_strings(value: Any) -> tuple[str, ...]:
             values.extend(_flatten_strings(item))
         return tuple(values)
     return (str(value).strip(),) if str(value).strip() else ()
+
+
+_EXTERNAL_TEXT_SOURCE_TYPES = frozenset({"paper", "news", "social", "filing", "macro"})
+
+
+def _source_type_value(record: Any) -> str:
+    value = getattr(record, "source_type", "")
+    return str(getattr(value, "value", value)).lower()
 
 
 def _infer_hypothesis(summary: str, text: str) -> str:
