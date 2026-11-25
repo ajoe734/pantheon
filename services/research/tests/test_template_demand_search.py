@@ -20,7 +20,9 @@ from services.registry.factor_rule import evaluate_factor_expression
 from services.registry.strategy_artifact import validate_strategy_artifact
 from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 from services.research.research_demand import ResearchDemandStore
-from services.research.template_demand_search import TemplateDemandSearch, compile_template, inputs_available
+from services.research.template_demand_search import (
+    TemplateDemandSearch, compile_template, inputs_available, usable_symbols,
+)
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 FIXTURE = Path(__file__).with_name('fixtures') / 'template_demand_tw_bars.json'
@@ -34,10 +36,37 @@ def configured_owners(monkeypatch):
     for name in ('RESEARCH_PERSONA_SERVICE_TOKEN', 'RESEARCH_REGISTRY_SERVICE_TOKEN'):
         monkeypatch.delenv(name + '_FILE', raising=False)
         monkeypatch.setenv(name, 'local-owner-recording-token')
+    # The pytest runner holds the whole service suite in one process; the 384 MiB container memory guard is tested
+    # directly on both sides in test_evaluation_memory_guard_tests_both_sides_cgroup_fallback_and_unreadable_limit.
+    monkeypatch.setenv('RESEARCH_TEMPLATE_SEARCH_MEMORY_LIMIT_BYTES', str(2 * 1024**3))
+
+
+# The persona owner's recorded hosted shape: no marketScope symbols, one instrument in traits.
+HOSTED_PERSONA = {'tenant_id': 'tenant-a', 'persona_id': BODY['persona_id'], 'marketScope': {},
+                  'traits': {'instruments': ['0050.TWSE']}}
+
+
+def _use_recorded_market(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from services.research import governed_market_dataset as gmd
+    from services.research.tests.test_governed_market_dataset import store_from_records
+    monkeypatch.setenv('GOVERNED_MARKET_STORE_ROOT',
+                       str(store_from_records(tmp_path / 'market_data_store', recorded()['records'])))
+    monkeypatch.setattr(gmd, '_as_of', lambda now: datetime(2026, 11, 2, tzinfo=timezone.utc))
 
 
 def recorded():
     return json.loads(FIXTURE.read_text())['dataset']
+
+
+def governed_view():
+    """The recorded bars as the governed dataset presents them: traded_value (close * volume) and the stored
+    available_time (08:00Z of the day) are the fixture-store conventions of test_governed_market_dataset."""
+    ds = copy.deepcopy(recorded())
+    for r in ds['records']:
+        r['traded_value'] = r['close'] * r['volume']
+        r['available_time'] = r['date'] + 'T08:00:00Z'
+    return ds
 
 
 def entries(*ids):
@@ -51,15 +80,18 @@ def entries(*ids):
     return result
 
 
-def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, gate=None):
+def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, gate=None,
+                 memory_limit_bytes=2 * 1024**3):
     store = ResearchDemandStore(tmp_path / 'demands.json')
     demand = store.open('tenant-a', BODY)
     gate = gate or SharedReplicationGate(trial_counter_path=tmp_path / 'trials.json',
                                          backtest_run_store=SharedBacktestRunStore(tmp_path / 'runs.json'))
-    context = {'dataset': recorded(), 'universe': ['2330'],
+    context = {'dataset': governed_view(), 'universe': ['2330.TW', '0050.TW'],
                'templates': templates if templates is not None else entries('qlib_alpha158:KMID')}
     search = TemplateDemandSearch(store=store, gate=gate, context_loader=lambda d: context,
-                                  lock_path=tmp_path / 'search.lock', family_budget=family_budget, run_budget=run_budget)
+                                  lock_path=tmp_path / 'search.lock', family_budget=family_budget,
+                                  run_budget=run_budget, memory_limit_bytes=memory_limit_bytes,
+                                  cgroup_memory_max_path=tmp_path / 'no-cgroup-memory.max')
     return search, store, demand, context
 
 
@@ -120,6 +152,7 @@ def test_missing_universe_fields_and_vwap_are_excluded_without_imputation(tmp_pa
     t = copy.deepcopy(t)
     t['inputs'][0]['field'] = 'vwap'
     assert not inputs_available(t, ['2330'], context['dataset'])
+    context['universe'] = ['2330']  # the boundary under test is 2330 alone: its missing field excludes the template
     context['dataset'] = missing
     result = search.run(demand)['discovery']['template_search']
     assert result['attempts'] == {} and result['excluded'][0]['reason'] == 'template_inputs_missing'
@@ -223,6 +256,7 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
                        'JWT_ISSUER': ISSUER, 'JWT_AUDIENCE': AUDIENCE,
                        'MFA_REQUIRED': 'false'}.items():
         monkeypatch.setenv('PANTHEON_RESEARCH_' + key, value)
+    _use_recorded_market(monkeypatch, tmp_path)
     module = _load_service_module(data_dir=str(tmp_path / 'research'))
     monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
     monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
@@ -235,12 +269,10 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
         if kw['service'] == 'persona':
             entered.set()
             assert release.wait(90), 'test did not release the slow owner'
-            return {'tenant_id': TENANT, 'persona_id': BODY['persona_id'],
-                    'metadata': {'market_scope': {'symbols': ['2330']}}}
+            return {**HOSTED_PERSONA, 'tenant_id': TENANT}
         return entries('qlib_alpha158:KMID')
 
     monkeypatch.setattr(module, '_retrain_call', owners)
-    monkeypatch.setattr(module, '_RETRAIN_DATASET_LOADER', lambda *a: recorded())
     def forbidden(*a, **kw):
         raise AssertionError('synthetic market data / fallback artifact used')
     monkeypatch.setattr(adapter, 'build_governed_tw_replication_dataset', forbidden)
@@ -289,16 +321,15 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
     assert receipt['demand_ref'] == demand['demand_id'] and receipt['paper_only']
     bt = next(r for r in receipt['gate']['results'] if r['criterion_id'] == 'real_backtest_validation')
     assert 'Check failed with error' not in bt['evidence'], bt
-    assert bt['details']['status'] in ('passed', 'failed'), bt
-    assert bt['details']['history_check']['sufficient']
-    assert bt['details']['history_check']['calendar_days'] >= 730
-    assert bt['details']['out_of_sample_round_trips'] >= 20
-    print('Recorded default-gate result:', receipt['status'],
-          'OOS Sharpe:', bt['details']['out_of_sample_sharpe_ratio'],
-          'round trips:', bt['details']['out_of_sample_round_trips'])
+    # The template now carries the whole_governed_tw_boundary.v1 screen. The governed dataset supplies no
+    # survivorship attestation, so the real gate refuses before any backtest: a correct, recorded refusal.
+    assert bt['details']['status'] == 'survivorship_limited', bt
+    assert bt['details']['source_dataset_refs'][0].startswith('daily_bars:gmd-')
+    assert receipt['status'] != 'admitted' and receipt['dataset_id'].startswith('gmd-')
+    assert receipt['boundary_symbols'] == 2
+    assert row['discovery']['template_search']['reason'] == 'search_completed'
     assert receipt['gate']['metadata']['mechanism_status'] == 'mechanism_untested'
     assert receipt['family_trial_count'] == 1
-    assert (tmp_path / 'alpha' / 'backtest_runs.json').exists()
     # A repeat cycle may record the outcome again, but cannot re-evaluate this candidate.
     ports.reconcile_demands(persona, [])
     for t in threading.enumerate():
@@ -407,10 +438,10 @@ def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeyp
     assert result['attempts'] == {}
 
 
-from services.research.tests.test_governed_market_dataset import store_from_records  # noqa: E402
-
-
 def _recorded_store(root):
+    pytest.importorskip("pyarrow")
+    from services.research.tests.test_governed_market_dataset import store_from_records
+
     return store_from_records(root, recorded()['records'])
 
 
@@ -498,3 +529,200 @@ def test_search_reaches_the_gate_from_an_empty_authority_directory(tmp_path, mon
     assert len(ts['attempts']) == 1, ts
     assert list(authority.iterdir()) == []
 
+
+
+def test_partial_boundary_evaluates_on_complete_symbols_and_names_the_rest_without_imputation(tmp_path):
+    search, store, demand, context = setup_search(tmp_path)
+    template = context['templates'][0]['entry']['metadata']['alpha_template']
+    partial = copy.deepcopy(context['dataset'])
+    del next(r for r in partial['records'] if r['instrument'] == '2330.TW')['open']
+    usable, dropped = usable_symbols(template, ['2330.TW', '0050.TW'], partial)
+    assert usable == ['0050.TW'] and dropped == {'2330.TW': 'field_incomplete:open'}
+    assert inputs_available(template, ['2330.TW', '0050.TW'], partial)
+    assert usable_symbols(template, ['2330.TW', '9999.TW'], partial)[0] == []
+    assert usable_symbols(template, ['2330.TW', '9999.TW'], partial)[1]['9999.TW'] == 'no_bars'
+    # a template whose input dataset is not served is excluded with the same reason as before
+    other = copy.deepcopy(template)
+    other['inputs'][0]['dataset'] = 'tw_fundamentals'
+    assert not inputs_available(other, ['2330.TW'], context['dataset'])
+    context['dataset'] = partial
+    result = search.run(demand)['discovery']['template_search']
+    receipt = next(iter(result['attempts'].values()))
+    assert receipt['boundary_symbols'] == 1 and receipt['symbols_without_inputs'] == 1
+    assert next(iter(result['attempts']))  # evaluated, not rejected as missing inputs
+    assert not [e for e in result['excluded'] if e.get('reason') == 'template_inputs_missing']
+
+
+def test_compiled_artifact_carries_the_shared_default_screen_and_the_unchanged_signal():
+    from services.source_ingestion.hypothesis_compiler import attach_default_market_screen
+    dataset = governed_view()
+    view = entries('qlib_alpha158:KMID')[0]['entry']
+    template = view['metadata']['alpha_template']
+    artifact = compile_template(template, universe=['2330.TW', '0050.TW'], demand={'tenant_id': 't', 'demand_id': 'rd-1'},
+                                source_ref='registry:' + view['registry_id'], dataset=dataset)
+    validate_strategy_artifact(artifact)
+    reference_logic, reference_params, reference_controls = {'inputs': []}, {}, []
+    attach_default_market_screen(reference_logic, reference_params, reference_controls)
+    assert artifact['strategy_logic']['screen'] == reference_logic['screen']
+    for key, value in reference_params.items():
+        if key != 'market':
+            assert artifact['parameters'][key] == value
+    assert artifact['parameters']['symbols'] == ['0050.TW', '2330.TW']
+    assert {c['parameter_key'] for c in reference_controls} <= {c['parameter_key'] for c in artifact['mutation_surface']['controls']}
+
+
+def test_a_new_daily_snapshot_never_reevaluates_a_template_and_the_trial_count_rises_once(tmp_path):
+    search, store, demand, context = setup_search(tmp_path, templates=entries('qlib_alpha158:KMID', 'qlib_alpha158:KLEN'))
+    first = search.run(demand)['discovery']['template_search']
+    assert len(first['attempts']) == 2
+    counts = {fam: search.gate.get_family_total_trial_count(fam) for fam in {a['family_id'] for a in first['attempts'].values()}}
+    assert sum(counts.values()) == 2  # one trial per template
+    # the next trading day: another snapshot id (so another artifact id) over the same boundary
+    context['dataset'] = {**context['dataset'], 'dataset_id': 'gmd-2026-10-31-' + '0' * 40,
+                          'source_dataset_refs': ['daily_bars:gmd-2026-10-31-' + '0' * 40]}
+    second = search.run(demand)['discovery']['template_search']
+    assert second['attempts'] == first['attempts']
+    assert {fam: search.gate.get_family_total_trial_count(fam) for fam in counts} == counts
+
+
+def test_failed_or_partial_runs_record_a_reason_and_never_satisfy_the_demand(tmp_path):
+    search, store, demand, context = setup_search(tmp_path, templates=entries('qlib_alpha158:KMID', 'qlib_alpha158:KLEN'),
+                                                   run_budget=1)
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == 'run_budget_exhausted' and row['status'] == 'open'
+    def broken(d):
+        raise ValueError('market_boundary_empty: no symbol passes the boundary of 1950 stored symbols')
+    search.context_loader = broken
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'].startswith('template_search_unavailable:ValueError:market_boundary_empty')
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+    assert len(row['discovery']['template_search']['attempts']) == 1  # the earlier receipt is kept
+
+
+def test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their_receipts(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    search, store, demand, context = setup_search(tmp_path)
+    receipts = search.run(demand)['discovery']['template_search']['attempts']
+    aid = next(iter(receipts))
+    full = len(json.dumps(store.list('tenant-a')))
+    assert 'gate' in store.list('tenant-a')[0]['discovery']['template_search']['attempts'][aid]
+    later = ResearchDemandStore(store.path, now=lambda: datetime.now(timezone.utc) + timedelta(days=30 + 61))
+    row = later.list('tenant-a')[0]
+    attempt = row['discovery']['template_search']['attempts'][aid]
+    assert row['status'] == 'expired' and attempt['compacted'] and 'gate' not in attempt and 'artifact' not in attempt
+    assert attempt['status'] == receipts[aid]['status'] and attempt['family_trial_count'] == receipts[aid]['family_trial_count']
+    assert len(json.dumps(later.list('tenant-a'))) < full / 4
+
+
+def test_evaluation_over_the_cost_limit_is_refused_before_any_trial_and_never_truncated(tmp_path):
+    from services.research.template_demand_search import MAX_EVALUATION_SYMBOL_DAYS, evaluation_cost
+    search, store, demand, context = setup_search(tmp_path)
+    symbols, days = evaluation_cost(['2330.TW', '0050.TW'], context['dataset'])
+    assert symbols == 2 and days > 0
+    search.max_symbol_days = symbols * days - 1
+    row = search.run(demand)
+    reason = f'market_evaluation_over_limit:{symbols}x{days}:{symbols * days - 1}'
+    assert row['discovery']['template_search']['reason'] == reason
+    assert row['discovery']['template_search']['attempts'] == {}  # no evaluation, no family trial spent
+    assert search.gate.get_family_total_trial_count('template:qlib_alpha158:' + 'KMID') == 0
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+    with pytest.raises(ValueError, match='invalid_template_search_evaluation_limit'):
+        TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
+                             lock_path=tmp_path / 'l', max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS + 1)
+
+
+def test_evaluation_memory_guard_tests_both_sides_cgroup_fallback_and_unreadable_limit(tmp_path, monkeypatch):
+    import os
+    from services.research.template_demand_search import (
+        DEFAULT_MEMORY_LIMIT_BYTES,
+        EVALUATION_MEMORY_INCREMENT_BYTES,
+        process_rss_bytes,
+    )
+    search, store, demand, context = setup_search(tmp_path)
+    page_size = int(os.sysconf('SC_PAGE_SIZE'))
+    statm = tmp_path / 'statm'
+    cgroup = tmp_path / 'memory.max'
+    search.statm_path = statm
+    search.cgroup_memory_max_path = cgroup
+
+    # 1. In research-orchestrator-svc (384 MiB cgroup memory.max), the service baseline after loading the governed
+    #    dataset (192 MiB) plus the measured 246 MiB evaluation increment (438 MiB) exceeds 90% of 384 MiB (345.6 MiB).
+    rss_192 = (192 * 1024 * 1024 // page_size) * page_size
+    statm.write_text(f'{rss_192 // page_size} {rss_192 // page_size} 0 0 0 0 0\n', encoding='utf-8')
+    cgroup.write_text(f'{DEFAULT_MEMORY_LIMIT_BYTES}\n', encoding='utf-8')
+    row = search.run(demand)
+    expected = f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{DEFAULT_MEMORY_LIMIT_BYTES}'
+    assert row['discovery']['template_search']['reason'] == expected
+    assert row['discovery']['template_search']['attempts'] == {}
+    assert search.gate.get_family_total_trial_count('template:qlib_alpha158:kbar') == 0
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+
+    # 2. Exact 90% boundary via cgroup memory.max: one byte below required limit refuses; at the 90% limit it passes.
+    exact_allow_limit = ((rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 + 8) // 9
+    refuse_limit = (rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 // 9
+    if (rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 == refuse_limit * 9:
+        refuse_limit -= 1
+    cgroup.write_text(f'{refuse_limit}\n', encoding='utf-8')
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{refuse_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # 3. Unreadable limits (corrupt cgroup file, non-positive cgroup value, unbounded cgroup with missing/invalid
+    #    fallback configured limit, or unreadable RSS) all fail closed before spending any trial.
+    for bad_cgroup, bad_fallback, expected_tail in [
+        ('corrupt\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('0\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('-1\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', None, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', 'not-a-number', f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', 0, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+    ]:
+        cgroup.write_text(bad_cgroup, encoding='utf-8')
+        search.memory_limit_bytes = bad_fallback
+        row = search.run(demand)
+        assert row['discovery']['template_search']['reason'] == 'market_evaluation_over_memory:' + expected_tail
+        assert row['discovery']['template_search']['attempts'] == {}
+        assert row['status'] == 'open'
+
+    # Missing cgroup file falls back to configured limit (both sides: refuse when over 90%, allow when within 90%).
+    cgroup.unlink()
+    search.memory_limit_bytes = refuse_limit
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{refuse_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # Unreadable RSS (missing statm) also refuses.
+    statm.unlink()
+    search.memory_limit_bytes = exact_allow_limit
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:unreadable+{EVALUATION_MEMORY_INCREMENT_BYTES}:{exact_allow_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # 4. Within 90% of the limit (first via cgroup memory.max, and also with the real live process RSS), the memory
+    #    guard passes and the symbol-day guard remains enforced as a second bound, then the real evaluation runs.
+    live_rss = process_rss_bytes()
+    assert live_rss is not None and live_rss > 0
+    search.statm_path = Path('/proc/self/statm')
+    allow_live_limit = ((live_rss + EVALUATION_MEMORY_INCREMENT_BYTES) * 10) // 9 + 64 * 1024 * 1024
+    cgroup.write_text(f'{allow_live_limit}\n', encoding='utf-8')
+    search.max_symbol_days = 1
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'].startswith('market_evaluation_over_limit:')
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    search.max_symbol_days = 5200
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == 'search_completed'
+    assert len(row['discovery']['template_search']['attempts']) == 1
+    assert row['status'] == 'open'
+
+    with pytest.raises(ValueError, match='invalid_template_search_memory_increment'):
+        TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
+                             lock_path=tmp_path / 'l',
+                             memory_increment_bytes=EVALUATION_MEMORY_INCREMENT_BYTES - 1)

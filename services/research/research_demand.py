@@ -25,6 +25,13 @@ from services.research.retrieval_influence import (
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "research_demand.v1.schema.json"
 DEMAND_TTL = timedelta(days=30)
+# A closed (expired or satisfied) demand keeps its readable receipts, but the heavy gate and artifact bodies
+# of its template attempts are dropped after this long. One attempt is about 17 KB with them, under 1 KB without.
+CLOSED_COMPACT_AFTER = timedelta(days=60)
+_COMPACTED_ATTEMPT_KEYS = ("template_id", "family_id", "family_trial_count", "template_checksum", "demand_ref",
+                           "persona_id", "tenant_id", "paper_only", "dataset_id", "boundary_symbols",
+                           "symbols_without_inputs", "status", "registration", "registry_id", "baseline_ref",
+                           "mechanism_status")
 
 
 class DemandError(ValueError):
@@ -120,6 +127,19 @@ class ResearchDemandStore:
         for row in rows:
             if row["status"] == "open" and _parse(row["expires_at"]) <= now:
                 row["status"] = "expired"
+                changed = True
+            if row["status"] != "open" and _parse(row["expires_at"]) + CLOSED_COMPACT_AFTER <= now:
+                changed = self._compact_attempts(row) or changed
+        return changed
+
+    @staticmethod
+    def _compact_attempts(row: dict[str, Any]) -> bool:
+        """Drop the gate and artifact bodies of a long closed demand's attempts; keep the readable receipt."""
+        attempts = ((row.get("discovery") or {}).get("template_search") or {}).get("attempts")
+        changed = False
+        for key, attempt in (attempts or {}).items():
+            if isinstance(attempt, dict) and ("gate" in attempt or "artifact" in attempt):
+                attempts[key] = {**{k: attempt[k] for k in _COMPACTED_ATTEMPT_KEYS if k in attempt}, "compacted": True}
                 changed = True
         return changed
 

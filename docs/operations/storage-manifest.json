@@ -6169,6 +6169,22 @@
    "writer": "RuntimeSummaryProjectionStore.project_event -> pool_risk_snapshot.apply_event; no new file, table, queue or job"
   },
   {
+   "bound_proof": {
+    "contains": "CLOSED_COMPACT_AFTER = timedelta(days=60)",
+    "file": "services/research/research_demand.py"
+   },
+   "cadence": "one receipt per template evaluated (run budget 1 template per run, at most one run per demand per persona cycle) plus one record per run end",
+   "cap": "an attempt is kept per template at most once per demand (re-evaluation rule), so at most the 171 registered time-series templates per demand: 171 x 17 KB = 2.9 MB (3.8 MB if every attempt passed); a demand lives 30 days (DEMAND_TTL); the per-run excluded list is replaced on each run, not accumulated (about 100 B x 171 = 17 KB)",
+   "cleanup": "ResearchDemandStore._expire: a closed (expired or satisfied) demand drops the gate and artifact bodies of its attempts 60 days after expires_at (CLOSED_COMPACT_AFTER) and keeps the readable receipt fields; demand rows themselves are not deleted (a few hundred bytes each without attempts)",
+   "count_at_hosted_scale": "3 personas x 1 open demand; the hosted file was not read in this task",
+   "growth_per_day": "daily persona cycle: about 1 attempt per open demand per day = about 17 KB per demand per day, at most 30 days x 17 KB = 0.5 MB per demand life before compaction; 3 enrolled personas with one open demand each: about 51 KB per day, steady state about 1.5 MB",
+   "name": "research_demands.json (template search receipts)",
+   "owner": "research",
+   "size_per_attempt": "about 17 KB with the gate response (measured on a recorded KMID evaluation refused at the survivorship check: 16,960 B); a passing attempt adds the compiled artifact (about 6 to 10 KB) and the registration receipt; under 1 KB after compaction",
+   "task": "TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125",
+   "writer": "services/research/research_demand.py ResearchDemandStore.record_template_search (one atomic rewrite of the file per recorded receipt)"
+  },
+  {
    "name": "research_demands.json case file (research-orchestrator-svc: /data/research-orchestrator/research_demands.json)",
    "owner": "research-orchestrator-svc (services/research/research_demand.py ResearchDemandStore._attach_case_file)",
    "writer": "ResearchDemandStore.open: one case_file + retrieval_influence snapshot attached per created demand, whole-file atomic rewrite (_save); duplicate opens and every list/reconcile read compose nothing and rewrite no case file",
