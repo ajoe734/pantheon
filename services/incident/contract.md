@@ -97,6 +97,14 @@ transitioning to `resolved` or `closed`.
 
 ## 5. Postmortem Object
 
+> **Infrastructure incidents (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125)**: a resolved incident accepted by
+> `is_infrastructure_health_incident` or `is_monitor_agent_finding_incident` creates no Postmortem.
+> `POST /api/postmortems/consume-resolved-incident` answers HTTP 200
+> `{"skipped": true, "reason": "infrastructure_incident"}` and reserves no inbox row; the producer treats 200 as delivered.
+> An already stored Postmortem is left unchanged. `GET /api/postmortems` hides `draft` rows that match the same
+> predicates (applied to the stored `incident_evidence_summary`) unless `include_infrastructure=true` or `incident_id`
+> is given, and returns `hidden_infrastructure_count`; `total` is exact: `list_postmortem_page` filters, counts and pages in the store (Postgres: a narrow column projection, only the page's payloads loaded; no `HISTORY_READ_ROW_CAP`).
+
 ### 5.1 Required fields
 
 | Field | Type | Description |
