@@ -564,7 +564,16 @@ class SourceIngestionRuntime:
         existing = self.manager.get_connector(connector.connector_id)
         if existing is None:
             return self.manager.register_connector(connector)
-        if existing.to_dict() != connector.to_dict():
+        incoming = connector.to_dict()
+        stored = existing.to_dict()
+        if RECONCILIATION_METADATA_KEY not in (incoming.get("metadata") or {}):
+            # The persona source reconciler is the only writer of its ownership marker. A caller
+            # that registers the bare contract is compared against the stored contract minus that
+            # marker; every other field, including all other metadata, must still match exactly.
+            stored_metadata = dict(stored.get("metadata") or {})
+            stored_metadata.pop(RECONCILIATION_METADATA_KEY, None)
+            stored = {**stored, "metadata": stored_metadata}
+        if stored != incoming:
             raise SourceEvidenceError(f"Connector already registered with different contract: {connector.connector_id}")
         return existing
 

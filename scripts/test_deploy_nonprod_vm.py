@@ -2677,7 +2677,13 @@ def test_finmind_readback_rejects_partial_coverage_and_accepts_union_of_batches(
     assert "bounded source refresh accepted" in complete.stdout
 
 
-def _prepare_finmind_dataset(symbol_count: int, extra_env: dict[str, str] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _prepare_finmind_dataset(
+    symbol_count: int,
+    extra_env: dict[str, str] | None = None,
+    *,
+    connector_id: str = "tw-finmind-broker-daily-report",
+    dataset: str = "tw_broker_top",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run the real PREPARE_DATASET_PY against a stub API that applies the real config validator."""
     import http.server
     import os
@@ -2731,7 +2737,7 @@ def _prepare_finmind_dataset(symbol_count: int, extra_env: dict[str, str] | None
     try:
         proc = subprocess.run(
             ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
-             "tw-finmind-broker-daily-report", "tw_broker_top", ",".join(symbols)],
+             connector_id, dataset, ",".join(symbols)],
             cwd=ROOT,
             env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
                  "SOURCE_INGEST_CONTROLLER_TOKEN": "t", **env_in},
