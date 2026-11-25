@@ -405,6 +405,16 @@ hand after each of three rollbacks until 13a08deaa was served. The first
 container limits also capped hindsight at 94 percent and persona at 90 percent
 of their limits within an hour.
 
+PERSONA-CASE-FILE-OUTCOMES-NOOP-WRITE-20261125: `CaseFileOutcomes._mutate`
+committed unconditionally, so the cron reconciliation rewrote each trading
+Persona about every 125 s (about 2,000 writes per day for three Personas) with
+only `updated_at` changed, and the Trading Pulse release QA reported
+`roster_changed_during_read`. `try_metadata_cas` gained opt-in
+`skip_unchanged`; the outcome reducer now writes only when decisions or outbox
+changed, and never creates an empty state row. Other `try_metadata_cas`
+callers (training-target generation, trade-reflection idempotency, harness) are
+operator/request driven, not timers; listed in the task evidence.
+
 ## RC4. Nobody looks at the whole design
 
 | Work package | Task | State |

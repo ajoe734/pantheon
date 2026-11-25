@@ -213,3 +213,79 @@ def test_production_lifespan_wires_owner_reconciliation_and_routes(outcome, monk
     asyncio.run(run())
     assert reports and reports[0]["failures"] == [], reports
     assert list(o.per.require(o.learned.memory_id).usefulness_marks.values())[0]["outcome"] == "helped"
+
+
+def _stamp(o):
+    return copy.deepcopy(o.owner._records.get("persona-1"))
+
+
+def test_unchanged_reconcile_pass_performs_no_persona_write(outcome):
+    o = outcome
+    reviewed(o)  # captures the decision: one real change
+    before = _stamp(o)
+    writes = []
+    real = o.owner._records.compare_and_set
+    o.owner._records.compare_and_set = lambda *a, **k: (writes.append(a), real(*a, **k))[1]
+    for _ in range(3):
+        o.tracker.reconcile("persona-1", o.packets)
+    assert not writes
+    assert _stamp(o) == before  # updated_at / updated_by / record byte-identical
+
+
+def test_each_state_change_commits_exactly_once(outcome):
+    o = outcome
+    writes = []
+    real = o.owner._records.compare_and_set
+    o.owner._records.compare_and_set = lambda *a, **k: (writes.append(a), real(*a, **k))[1]
+    reviewed(o)
+    assert len(writes) == 1  # decision capture
+    window(o)
+    writes.clear()
+    reviewed(o)
+    assert len(writes) == 2  # observation + delivery attempt
+    writes.clear()
+    reviewed(o)
+    assert not writes
+
+
+def test_failed_delivery_attempt_commits_once_per_attempt(outcome):
+    o = outcome
+    window(o)
+    o.tracker.sender = lambda payload: (_ for _ in ()).throw(OSError("down"))
+    reviewed(o)
+    writes = []
+    real = o.owner._records.compare_and_set
+    o.owner._records.compare_and_set = lambda *a, **k: (writes.append(a), real(*a, **k))[1]
+    o.tracker.reconcile("persona-1", o.packets)
+    assert len(writes) == 1
+
+
+def test_first_pass_with_nothing_to_record_creates_no_state_row(outcome):
+    o = outcome
+    before = _stamp(o)
+    assert STATE_KEY not in before.get("metadata", {})
+    o.tracker.reconcile("persona-1", {})
+    assert _stamp(o) == before
+
+
+def test_active_paper_owner_refusal_kept(outcome):
+    o = outcome
+    raw = o.owner._records.get("persona-1")
+    assert o.owner._records.compare_and_set("persona-1", raw, {**raw, "lifecycle_state": "frozen"})[0]
+    with pytest.raises(ValueError, match="active_paper_owner_required"):
+        o.tracker.reconcile("persona-1", {})
+
+
+def test_concurrent_writer_is_retried_never_overwritten(outcome):
+    o = outcome
+    real = o.owner._records.compare_and_set
+    interleaved = []
+    def racing(pid, current, updated):
+        if not interleaved:
+            interleaved.append(1)
+            assert real(pid, current, {**current, "metadata": {**current["metadata"], "other": "kept"}})[0]
+        return real(pid, current, updated)
+    o.owner._records.compare_and_set = racing
+    reviewed(o)
+    metadata = o.owner.get("persona-1").metadata
+    assert metadata["other"] == "kept" and metadata[STATE_KEY]["decisions"]
