@@ -3113,19 +3113,22 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
-def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any = None) -> Dict[str, Any]:
-    """Governed price dataset for template search, from the stored daily bars (read-only), or fail closed.
+def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Governed market dataset for template search, from the stored daily bars (read-only), or fail closed.
 
-    DISCOVERY-GOVERNED-MARKET-DATASET-20261125: it no longer reads a DatasetVersion that only exists after
-    a persona candidate was evaluated. ``universe`` is the mandate's own symbol list; a symbol outside the
-    governed market boundary fails closed with its exclusion reason. The reason is the readable
-    ``<code>: <detail>`` of ``GovernedMarketDatasetError``. This runs in the run's worker thread."""
+    TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125: the symbol boundary is the governed market boundary
+    (``governed_market_dataset.build_market_boundary``), not a persona list. The result carries
+    ``market_boundary`` (counts and exclusion reasons) and ``boundary_exclusions`` (symbol -> reason).
+    Readable ``<code>: <detail>`` reasons of ``GovernedMarketDatasetError`` are re-raised as ValueError.
+    This runs in the run's worker thread, never on an API event loop."""
     if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
         from services.research import governed_market_dataset as _governed
 
         try:
-            return _governed.resolve_governed_dataset(
-                symbols=list(universe) if universe else None, strategy_id=str(demand["demand_id"]))
+            boundary = _governed.build_market_boundary()
+            dataset = _governed.dataset_for(boundary, strategy_id=str(demand["demand_id"]))
+            dataset["boundary_exclusions"] = dict(boundary.exclusions)
+            return dataset
         except _governed.GovernedMarketDatasetError as exc:
             raise ValueError(str(exc)) from exc
     dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
@@ -3135,7 +3138,10 @@ def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any
 
 
 def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
-    """Read the mandate universe and registered templates from their owners."""
+    """Read the persona identity, the governed market boundary and the registered templates from their owners.
+
+    The persona owner read only proves the tenant and persona identity; ``market_scope`` and
+    ``traits.instruments`` are never read as a boundary (SD_STRATEGY_SCREEN_ENTRY_EXIT 2026-11-12 section 2)."""
     tenant_id = demand["tenant_id"]
     persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
     persona = _retrain_call(
@@ -3144,11 +3150,8 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
         url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
     if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
         raise ValueError("template_mandate_owner_mismatch")
-    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
-    universe = scope.get("symbols")
-    if not universe:
-        raise ValueError("mandate_universe_missing")
-    dataset = _load_template_search_governed_dataset(demand, universe)
+    dataset = _load_template_search_governed_dataset(demand)
+    universe = sorted({str(r["instrument"]) for r in dataset.get("records") or []})
     registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
     templates = _retrain_call(
         step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
