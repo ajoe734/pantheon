@@ -224,3 +224,143 @@ def test_unauthorized_request_does_not_retrieve(demand_route):
     _, client, owners = demand_route
     assert client.post(BASE, headers=_headers(), json=BODY).status_code == 403
     assert not owners.calls
+
+
+# ---- RC2: the real issued, read-only, per-owner principals ---------------------------------------------------
+
+OWNER_OF_PATH = (("/api/registry", "registry"), ("/api/personas", "persona"), ("/api/memory", "memory"),
+                 ("/api/search", "search"), ("/api/telemetry", "telemetry"))
+ISSUED = {"registry": "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN", "persona": "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
+          "memory": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN", "search": "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN",
+          "telemetry": "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN"}
+WRITE_ROLES = {"service", "operator", "admin", "registry-writer", "consultation-svc", "training-service"}
+
+
+@pytest.fixture
+def issued_route(demand_route, monkeypatch, tmp_path):
+    """demand_route with identity/credentials exactly as compose delivers them; owners verify like the real ones."""
+    import os
+    from scripts.issue_dev_paper_principals import issue_environment
+    from services.runtime_auth_inbound import _verify_jwt_hs256
+
+    module, client, server = demand_route
+    issued = issue_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev", "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": SECRET, "PANTHEON_DEV_BFF_JWT_ISSUER": ISSUER,
+        "PANTHEON_DEV_BFF_JWT_AUDIENCE": AUDIENCE})
+    directory = tmp_path / "principals"
+    directory.mkdir()
+    for owner, variable in ISSUED.items():
+        path = directory / variable
+        path.write_text(issued[variable])
+        os.chmod(path, 0o600)
+        monkeypatch.setenv(f"PANTHEON_{owner.upper() if owner != 'persona' else 'PERSONA'}_SERVICE_TOKEN_FILE", str(path))
+        monkeypatch.delenv(f"PANTHEON_{owner.upper()}_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", server.endpoint.base_url)
+    monkeypatch.setenv("RESEARCH_CASE_FILE_ACTOR_ID", issued["RESEARCH_CASE_FILE_ACTOR_ID"])
+    monkeypatch.setenv("RESEARCH_CASE_FILE_ACTOR_ROLES", issued["RESEARCH_CASE_FILE_ACTOR_ROLES"])
+    seen = []
+    original = cf.http_json
+
+    def verifying(endpoint, path, *, tenant_id, **kwargs):
+        owner = next(name for prefix, name in OWNER_OF_PATH if path.startswith(prefix))
+        token = (endpoint.token if endpoint else "") or ""
+        if not token:
+            raise cf.OwnerUnavailable("http_401:credential_missing")
+        try:
+            claims = _verify_jwt_hs256(token, secret=SECRET, issuer=ISSUER, audience=AUDIENCE)
+        except Exception:
+            raise cf.OwnerUnavailable("http_401:credential_invalid")
+        if tenant_id not in claims["allowed_tenants"] or claims["tenant_id"] != tenant_id:
+            raise cf.OwnerUnavailable("http_403:tenant_denied")
+        seen.append((owner, claims["sub"], tuple(claims["roles"]), claims["scope"]))
+        if owner == "memory":
+            params = dict(kwargs.get("params") or [])
+            assert params["actor_id"] == claims["sub"]  # memory matches actor id to the verified identity
+        return original(endpoint, path, tenant_id=tenant_id, **kwargs)
+
+    monkeypatch.setattr(cf, "http_json", verifying)
+    return module, client, server, issued, directory, seen
+
+
+BASELINE = [("telemetry", "persona_capital_binding_id_not_supplied"), ("memory:persona_private", "caller_is_not_the_persona")]
+
+
+def refused_owners(demand):
+    """{owner: {reasons}} for every owner read that was refused/unavailable, excluding the two explicit boundaries."""
+    out = {}
+    for group in demand["case_file"]["groups"].values():
+        for u in group["unavailable"]:
+            if (u["owner"], u["reason"]) in BASELINE:
+                continue
+            key = ("registry" if u["owner"].startswith("registry") else "persona" if u["owner"].startswith("persona_pool")
+                   else "memory" if u["owner"].startswith("memory") else "search" if u["owner"] == "search_gateway" else u["owner"])
+            out.setdefault(key, set()).add(u["reason"])
+    return out
+
+
+def test_issued_principals_compose_case_file_through_real_route_with_read_only_roles(issued_route):
+    _, client, _, issued, _, seen = issued_route
+    demand = post(client)
+    assert demand["case_file_id"] and demand["case_file_digest"] == demand["case_file"]["digest"]
+    assert demand["case_file_unavailable_reason"] is None
+    assert demand["case_file"]["caller"]["actor_id"] == "pantheon-dev-research-case-file-memory-reader" \
+        == issued["RESEARCH_CASE_FILE_ACTOR_ID"]
+    owners = {owner for owner, *_ in seen}
+    assert {"registry", "persona", "memory", "search"} <= owners
+    for owner, subject, roles, scope in seen:
+        assert subject.startswith("pantheon-dev-research-case-file-"), (owner, subject)
+        assert scope == "pantheon:dev-owner-read" and not WRITE_ROLES & set(roles)
+    assert {s for o, s, *_ in seen if o == "memory"} == {issued["RESEARCH_CASE_FILE_ACTOR_ID"]}
+
+
+@pytest.mark.parametrize("owner", ["registry", "persona", "memory", "search"])
+def test_each_missing_owner_credential_gives_its_own_reason_and_demand_still_opens(issued_route, owner):
+    module, client, _, _, directory, _ = issued_route
+    (directory / ISSUED[owner]).unlink()
+    demand = post(client)
+    assert demand["created"] and demand["status"] == "open"
+    assert refused_owners(demand) == {owner: {"http_401:credential_missing"}}  # only that owner, with its own reason
+    assert demand["case_file_id"] and demand["case_file_digest"]
+    assert demand["retrieval_influence"]["selected_memory_refs"] == ([] if owner == "memory" else ["prior-failure"])
+    assert module.research_demand_store.list(TENANT)[0]["demand_id"] == demand["demand_id"]
+
+
+def test_wrong_tenant_is_refused_by_the_issued_principals_and_nothing_is_fabricated(issued_route):
+    module, _, _, _, _, seen = issued_route
+    demand = module.research_demand_store.open("tenant-other", BODY)
+    assert not seen  # no owner accepted a tenant-dev credential for another tenant
+    assert demand["status"] == "open"
+    assert refused_owners(demand) == {o: {"http_403:tenant_denied"} for o in ("registry", "persona", "memory", "search")}
+    assert demand["retrieval_influence"]["selected_memory_refs"] == []
+    assert demand["retrieval_influence"]["selected_evidence_refs"] == []
+    assert demand["case_file"]["groups"]["lessons"]["items"] == []
+
+
+def test_empty_sources_yield_no_fabricated_items(issued_route):
+    _, client, owners, *_ = issued_route
+    owners.routes["/api/memory/retrieve"]["hits"] = []
+    owners.routes["/api/search/v2/query"]["results"] = []
+    demand = post(client)
+    groups = demand["case_file"]["groups"]
+    assert groups["lessons"]["items"] == [] and groups["evidence"]["items"] == []
+    assert demand["retrieval_influence"]["selected_memory_refs"] == []
+    assert demand["retrieval_influence"]["selected_evidence_refs"] == []
+
+
+def test_existing_rows_are_not_rewritten_and_keep_their_original_reason(issued_route, monkeypatch):
+    module, client, _, _, _, _ = issued_route
+    store = module.research_demand_store
+    with monkeypatch.context() as m:  # an old-shape row: composed before the identity existed
+        m.delenv("RESEARCH_CASE_FILE_ACTOR_ROLES")
+        old = post(client, {**BODY, "persona_id": "p-old"})
+    assert old["case_file_unavailable_reason"] == "case_file_caller_context_missing"
+    before = json.loads(store.path.read_text())
+    new = post(client, {**BODY, "persona_id": "p-new"})
+    assert new["case_file_id"] and new["case_file_unavailable_reason"] is None
+    after = {r["demand_id"]: r for r in store.list(TENANT)}
+    assert after[old["demand_id"]]["case_file_unavailable_reason"] == "case_file_caller_context_missing"
+    assert after[old["demand_id"]]["case_file"] is None
+    flat = json.dumps(before, sort_keys=True)
+    assert json.dumps(after[old["demand_id"]], sort_keys=True) in flat
+    assert ResearchDemandStore(store.path).list(TENANT) == store.list(TENANT)  # reading never rewrites

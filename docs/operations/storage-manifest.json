@@ -6141,6 +6141,50 @@
    "size_per_day": "about 4.7 KB/day for 3 pools",
    "task": "PAPER-POOL-RISK-SNAPSHOT-20261125",
    "writer": "RuntimeSummaryProjectionStore.project_event -> pool_risk_snapshot.apply_event; no new file, table, queue or job"
+  },
+  {
+   "name": "research_demands.json case file (research-orchestrator-svc: /data/research-orchestrator/research_demands.json)",
+   "owner": "research-orchestrator-svc (services/research/research_demand.py ResearchDemandStore._attach_case_file)",
+   "writer": "ResearchDemandStore.open: one case_file + retrieval_influence snapshot attached per created demand, whole-file atomic rewrite (_save); duplicate opens and every list/reconcile read compose nothing and rewrite no case file",
+   "task": "RESEARCH-CASE-FILE-READ-IDENTITY-20261125",
+   "register_class": "RC2",
+   "cadence": "one composition per newly created demand; at most one open demand per (tenant, persona, short_measure), so about 3 enrolled personas x at most 4 measures = 12 open demands, re-created at most once per 30-day DEMAND_TTL",
+   "reads_per_demand": "owner GETs per composition = 2 persona pool (current + versions) + 1 registry per tried family + 3 memory (institutional, persona, negative_memory) + 1 search; telemetry is not read for demands (no capital binding). 8 reads for 2 families (measured), 6 + families in general, each with a 15 s timeout, once per created demand",
+   "size": "measured with the real route and issued principals: case_file 3,599 B, retrieval_influence snapshot 1,834 B, whole demand row 8,680 B (research_demands.json 9,237 B with one row); hard design cap: items <= 12,000 chars (Budgets.max_total_chars) plus per-item JSON fields, estimated <= 30 KB per row",
+   "size_per_day": "at most 12 rows per 30 days: about 0.4 rows/day, about 3.5 KB/day measured shape, <= 12 KB/day at the estimated cap",
+   "growth": "before this task the hosted rows stored a null case file (about 1-2 KB per row); with a read identity each created row carries the stored case file, so a row grows from about 1-2 KB to about 9 KB measured (<= 30 KB cap). About 144 rows per year = 1.3 MB per year measured, <= 4.3 MB per year at the cap",
+   "cap": "per-row cap by services/knowledge/case_file.py Budgets (12,000 chars of items, 8 per group); the number of rows is bounded only by the one-open-demand-per-persona-measure rule because expired and satisfied rows are retained in the file",
+   "cleanup": "none verified: expired and satisfied rows stay (status change only) and the file is rewritten whole on each write; existing rows are never rewritten by this task and keep their original case_file_unavailable_reason; the bound is unchanged in kind, a row-retention sweep remains open follow-up if the file approaches 5 MB",
+   "readers": [
+    "services/research/main.py",
+    "services/research/research_demand.py",
+    "services/research/retrieval_influence.py"
+   ],
+   "bound_proof": {
+    "file": "services/knowledge/case_file.py",
+    "contains": "max_total_chars: int = 12000"
+   }
+  },
+  {
+   "name": "RESEARCH_CASE_FILE_{MEMORY,TELEMETRY,REGISTRY,PERSONA_POOL,SEARCH}_READ_TOKEN (dev-paper-research-tokens:/run/pantheon-principals/)",
+   "owner": "research-orchestrator-svc (issued by dev-paper-principal-issuer via scripts/issue_dev_paper_principals.py)",
+   "writer": "scripts/issue_dev_paper_principals.py refresh_files (_atomic_private into /issued/research-orchestrator-svc/); token files under /run/pantheon-principals have no discovered suffix",
+   "task": "RESEARCH-CASE-FILE-READ-IDENTITY-20261125",
+   "register_class": "RC2",
+   "cadence": "refreshed once per hour (REFRESH_SECONDS = 3600) in place with os.replace; no new job or service",
+   "cap": "5 files in the existing dev-paper-research-tokens volume (10 files with the 5 existing RESEARCH_* ones), each about 500 bytes HS256 JWT (<= 16384 enforced by services/service_token_file.py)",
+   "size": "about 500 bytes per file, about 2.5 KB for the five",
+   "size_per_day": "0 bytes net growth (in-place replacement)",
+   "growth": "0 bytes/day net growth",
+   "cleanup": "atomic replacement on every refresh and explicit unlink on --revoke (revoke_files); RESEARCH_CASE_FILE_ACTOR_ID/ROLES are emptied on revoke",
+   "readers": [
+    "services/knowledge/case_file.py",
+    "services/service_token_file.py"
+   ],
+   "bound_proof": {
+    "file": "scripts/issue_dev_paper_principals.py",
+    "contains": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN"
+   }
   }
  ]
 }

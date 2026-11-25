@@ -1,0 +1,55 @@
+{
+ "task_id": "RESEARCH-CASE-FILE-READ-IDENTITY-20261125",
+ "owner": "Claude2",
+ "reviewer": "Claude",
+ "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer is from the owner family (Claude). Recorded per the task brief.",
+ "operator_decision": "2026-11-25, conversation 5724fc3b: option 'give a read-only identity' - dev only, read only, issued by the existing dev principal issuer. Covers no other identity, role or service.",
+ "claim_scope": "Functional evidence only (local tests with the real issuer, real compose file, real demand route, real composer and real evolution executor). No hosted verification, no VM/SSH access; the operator acceptance task verifies hosted behaviour.",
+ "delivered": [
+  "scripts/issue_dev_paper_principals.py",
+  "docker-compose.yml",
+  "scripts/test_issue_dev_paper_principals.py",
+  "services/research/tests/test_retrieval_influence_case_file.py",
+  "services/research/alpha_replication/test_evolution_executor_case_file.py",
+  "docs/operations/storage-manifest.json"
+ ],
+ "identity": {
+  "actor_id": "pantheon-dev-research-case-file-memory-reader (equals the memory credential subject)",
+  "actor_roles": "consultation_session",
+  "principals": {
+   "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": ["pantheon-dev-research-case-file-memory-reader", ["consultation_session"]],
+   "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ["pantheon-dev-research-case-file-telemetry-reader", ["viewer", "reviewer"]],
+   "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ["pantheon-dev-research-case-file-registry-reader", ["registry-reader"]],
+   "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ["pantheon-dev-research-case-file-persona-pool-reader", ["persona_pool_reader"]],
+   "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN": ["pantheon-dev-research-case-file-search-reader", ["researcher", "persona_session"]]
+  },
+  "scope": "pantheon:dev-owner-read for all five; tenant-dev only",
+  "delivery": "files only (<OWNER>_SERVICE_TOKEN_FILE under /run/pantheon-principals, read-only mount of dev-paper-research-tokens) on research-orchestrator-svc only; RESEARCH_CASE_FILE_ACTOR_ID/ROLES are ${VAR:-} with no default, so nothing is granted unless the issuer ran. Staging, production and the other compose files carry no RESEARCH_CASE_FILE_ reference.",
+  "research_owner_not_wired": "Owners.from_env also has a research owner (PANTHEON_RESEARCH_API_URL). The brief lists memory, telemetry, registry, persona pool and search only, and the only existing research-owner readers are other services' principals, so research-orchestrator-svc leaves it unset. The composer records owner_unconfigured for that source when it needs it; nothing is fabricated."
+ },
+ "acceptance": {
+  "1_identity_and_credentials": "test_research_case_file_principals_are_read_only_file_delivered_and_mounted_to_research_only: every role is an existing read-only role, the actor id equals the memory subject, the five jtis are distinct.",
+  "2_no_write_no_sharing": "Same test: no service/operator/admin/automated_gate/approval/registry-writer/consultation-svc/persona-svc/training-service/capital-reader/risk_owner/runtime/system role; scope is owner-read; the five variables appear only in CONSUMER_FILES['research-orchestrator-svc']; no other compose service, compose file or deploy file mentions RESEARCH_CASE_FILE_; the owner token variables are _FILE only and none points at a write-capable RESEARCH_* file.",
+  "3_real_route": "test_issued_principals_compose_case_file_through_real_route_with_read_only_roles (case_file_id and digest, each owner call verified against its own issued JWT, memory actor_id equals the verified subject); test_each_missing_owner_credential_gives_its_own_reason_and_demand_still_opens[registry|persona|memory|search] (each owner's own http_401:credential_missing reason, demand still opens, only that owner refused); test_wrong_tenant_is_refused_by_the_issued_principals_and_nothing_is_fabricated; test_empty_sources_yield_no_fabricated_items. Owner HTTP bodies are fixtures with the real row shapes of the existing test; the JWT verification emulates the owner check (_verify_jwt_hs256 + tenant), it is not the owner service.",
+  "4_evolution_executor": "test_evolution_executor_composes_with_the_issued_read_only_identity and test_evolution_refusal_reasons_are_unchanged_when_a_credential_is_missing: same variables, same identity; a missing memory credential keeps the existing 'case_file_unavailable:' refusal; the existing missing-caller test is untouched and passes.",
+  "5_existing_rows": "test_existing_rows_are_not_rewritten_and_keep_their_original_reason: a row opened without identity keeps case_file_unavailable_reason=case_file_caller_context_missing and a null case_file after a new demand is composed; reading never rewrites rows. No migration or backfill exists in this change.",
+  "6_budget": "docs/operations/storage-manifest.json runtime_budgets: research_demands.json case file (measured 3,599 B case file, 1,834 B influence, 8,680 B row; cap 12,000 chars of items, estimated <= 30 KB per row; 8 owner reads for 2 families, 6 + families in general; about 144 rows/year) and the five token files. scripts/check_storage_manifest.py passes."
+ },
+ "changed_assertion": {
+  "test": "scripts/test_issue_dev_paper_principals.py::test_research_retrain_executor_principals_are_exact_and_mounted_read_only",
+  "before": "CONSUMER_FILES['research-orchestrator-svc'] == the five existing RESEARCH_* variables",
+  "after": "the same five in the same order followed by exactly the five RESEARCH_CASE_FILE_*_READ_TOKEN variables",
+  "why": "The consumer's file list is the delivery contract; this task adds five files to it by design. The original five and their order, and every role/scope assertion in that test, are unchanged; the new five are asserted separately. No test was deleted or weakened otherwise."
+ },
+ "tests_run": {
+  "passed": [
+   "scripts/test_issue_dev_paper_principals.py, scripts/test_dev_paper_principal_renewal.py, scripts/test_current_l12_compose_wiring.py, scripts/test_paper_runtime_topology_contract.py, scripts/test_check_storage_manifest.py, scripts/test_dev_storage_budget_workflow.py, services/research/tests/test_retrieval_influence_case_file.py, services/research/alpha_replication/test_evolution_executor_case_file.py, services/research/tests/test_research_demand.py: 212 passed",
+   "scripts/test_persona_cycle_owner_ports_compose_contract.py, tests/integration/test_product_functional_compose_contract.py: 17 passed",
+   "python scripts/check_storage_manifest.py: passed, no failures"
+  ],
+  "not_run": [
+   "tests/deployment/test_staging_release.py and test_production_release.py: exceeded the 2-minute bounded batch twice (not counted as passed); they cover the staging/production compose, which this change does not touch.",
+   "scripts/test_validate_profile_topology.py: listed among the task's files but does not exist in the repository; scripts/test_paper_runtime_topology_contract.py (passed) is the existing topology contract test."
+  ]
+ }
+}

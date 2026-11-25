@@ -275,3 +275,62 @@ def test_real_executor_checks_each_child_before_gate_or_registration(world, owne
                 register_child=lambda *_: pytest.fail("invalid child registered"), case_file=case,
                 declare_lessons=proposal)
     assert case == original
+
+
+# ---- RC2: the same issued read-only identity drives the evolution executor ---------------------------------
+
+@pytest.fixture()
+def issued_identity(monkeypatch, tmp_path, owners):
+    import os
+    from scripts.issue_dev_paper_principals import issue_environment
+    from services.knowledge import case_file as cf
+    from services.runtime_auth_inbound import _verify_jwt_hs256
+
+    secret, issuer, audience = "evolution-case-file-secret-0123456789abcdef", "evo-issuer", "evo-audience"
+    issued = issue_environment({
+        "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": TENANT, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true",
+        "PANTHEON_DEV_BFF_JWT_SECRET": secret, "PANTHEON_DEV_BFF_JWT_ISSUER": issuer, "PANTHEON_DEV_BFF_JWT_AUDIENCE": audience})
+    files = {"REGISTRY": "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN", "PERSONA": "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
+             "MEMORY": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN", "SEARCH": "RESEARCH_CASE_FILE_SEARCH_READ_TOKEN"}
+    for owner, variable in files.items():
+        path = tmp_path / variable
+        path.write_text(issued[variable])
+        os.chmod(path, 0o600)
+        monkeypatch.setenv(f"PANTHEON_{owner}_SERVICE_TOKEN_FILE", str(path))
+    monkeypatch.setenv("RESEARCH_CASE_FILE_ACTOR_ID", issued["RESEARCH_CASE_FILE_ACTOR_ID"])
+    monkeypatch.setenv("RESEARCH_CASE_FILE_ACTOR_ROLES", issued["RESEARCH_CASE_FILE_ACTOR_ROLES"])
+    seen, original = [], cf.http_json
+
+    def verifying(endpoint, path, *, tenant_id, **kwargs):
+        token = (endpoint.token if endpoint else "") or ""
+        if not token:
+            raise cf.OwnerUnavailable("http_401:credential_missing")
+        claims = _verify_jwt_hs256(token, secret=secret, issuer=issuer, audience=audience)
+        if tenant_id not in claims["allowed_tenants"]:
+            raise cf.OwnerUnavailable("http_403:tenant_denied")
+        seen.append((path.split("/")[2], claims["sub"], tuple(claims["roles"]), claims["scope"]))
+        return original(endpoint, path, tenant_id=tenant_id, **kwargs)
+
+    monkeypatch.setattr(cf, "http_json", verifying)
+    return issued, tmp_path, seen
+
+
+def test_evolution_executor_composes_with_the_issued_read_only_identity(research, world, issued_identity, monkeypatch):
+    issued, _, seen = issued_identity
+    run, _ = dispatch(research, world, monkeypatch, {"lesson_ids": [LESSON]})
+    assert run["outcome"] == "candidate_created", run
+    assert run["evolution_case_file"]["caller"]["actor_id"] == issued["RESEARCH_CASE_FILE_ACTOR_ID"]
+    assert {owner for owner, *_ in seen} >= {"registry", "personas", "memory", "search"}
+    for _, subject, roles, scope in seen:
+        assert subject.startswith("pantheon-dev-research-case-file-") and scope == "pantheon:dev-owner-read"
+        assert not {"service", "operator", "admin", "registry-writer", "consultation-svc"} & set(roles)
+
+
+def test_evolution_refusal_reasons_are_unchanged_when_a_credential_is_missing(research, world, issued_identity, monkeypatch):
+    _, directory, _ = issued_identity
+    (directory / "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN").unlink()
+    run, _ = dispatch(research, world, monkeypatch, {"none_applicable": True, "reason": "No lessons"})
+    assert run["outcome"] == "no_candidate", run
+    assert run["outcome_reason"].startswith("case_file_unavailable:")  # same refusal shape as an unreadable memory owner
+    assert run["evolution_case_file"]["groups"]["lessons"]["status"] == "unavailable"
+    assert not world.registered
