@@ -228,6 +228,21 @@ def run_retention_sweep(*, api_url: str, controller_token: str | None, timeout_s
             "mode": result.get("mode")}
 
 
+def run_daily_bars_completion(*, api_url: str, controller_token: str | None, timeout_seconds: float = 60.0) -> dict[str, Any]:
+    """DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125: the source-ingest owner completes stored days on the controller
+    tick (bounded per call by days, seconds and memory; resumable). A failure is data, never a failed tick."""
+    try:
+        result = _request_json(
+            api_url.rstrip("/") + "/api/source-ingest/daily-bars/complete",
+            method="POST", payload={}, bearer_token=controller_token, timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"called": True, "ok": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"called": True, "ok": True, **{k: result.get(k) for k in (
+        "completed_days", "filled_rows", "conflicts", "stopped", "pending_days", "unretained_count",
+        "elapsed_seconds", "peak_rss_mb")}}
+
+
 def _load_bearer_token() -> str | None:
     token_file = str(os.getenv("SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN_FILE") or "").strip()
     if token_file:
@@ -2413,6 +2428,8 @@ def run_controller_tick(
         store.save(state)
         retention = run_retention_sweep(
             api_url=config.api_url, controller_token=config.controller_token, timeout_seconds=config.timeout_seconds)
+        daily_bars_completion = run_daily_bars_completion(
+            api_url=config.api_url, controller_token=config.controller_token, timeout_seconds=config.timeout_seconds)
         continuation_pending = False
         if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
             # A pull just persisted: pending newest-session or ordered history rows
@@ -2440,6 +2457,7 @@ def run_controller_tick(
             "schedule_summary": schedule.get("summary"),
             "actual_readback": state.actual_readback,
             "retention": retention,
+            "daily_bars_completion": daily_bars_completion,
         }
     except Exception as exc:
         error = exc if isinstance(exc, ControllerTickError) else ControllerTickError("controller", f"{type(exc).__name__}: {exc}")

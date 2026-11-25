@@ -1,0 +1,99 @@
+{
+ "task": "DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125",
+ "measured_hosted_facts_before_fix": {
+  "source": "task acceptance 1, read-only 2026-11-25 07:45Z",
+  "stored_days": 484,
+  "days_with_null_traded_value_on_every_row": 481,
+  "days_with_values": [
+   "2026-11-20",
+   "2026-11-23",
+   "2026-11-24"
+  ],
+  "rows_with_values_on_those_days": "about 97 to 100",
+  "2330_rows": 411,
+  "2330_rows_with_volume": 4,
+  "collector_normalized_row_metadata": [
+   "volume_shares",
+   "turnover_twd"
+  ]
+ },
+ "defect_reproduction": {
+  "method": "old DailyBarsStore.extract_rows (dev) vs fixed, one collector shaped row 2330 2026-11-20 close 2010, volume_shares 88179393, turnover_twd 177284650683",
+  "before_fix": {
+   "volume": null,
+   "traded_value": null
+  },
+  "after_fix": {
+   "volume": 88179393.0,
+   "traded_value": 177284650683.0
+  }
+ },
+ "unit_check": {
+  "rule": "traded_value / (close * volume) must lie in [1/3, 3]; volume and value both zero is accepted; negative or one-sided zero refused",
+  "reasons": [
+   "value_unit_mismatch",
+   "negative_volume_or_value",
+   "volume_value_zero_mismatch"
+  ],
+  "official_row": "2330 2026-11-20 volume 88179393 value 177284650683 ratio 1.0 at close 2010 (shares and TWD)",
+  "test": "services/source_ingestion/tests/test_daily_bars_completion.py"
+ },
+ "tick_measurement": {
+  "kind": "synthetic hosted shape on this worker (not the hosted host)",
+  "stored_days": 6,
+  "rows_per_day": 15333,
+  "run_file_copies_per_day": 3,
+  "run_file_gz_bytes_per_day": 391946,
+  "ticks_to_finish": 3,
+  "max_tick_seconds": 7.76,
+  "max_tick_peak_rss_mb": 240.0,
+  "process_peak_rss_mb": 259.9,
+  "seconds_per_completed_day": "about 2.6",
+  "stored_bytes_per_day_before": 112364,
+  "stored_bytes_per_day_after": 741723,
+  "generation_after": 2,
+  "day_limits": "target 4,000,000 B, alarm 6,000,000 B (unchanged; 741,723 B on incompressible synthetic floats)"
+ },
+ "bounds": {
+  "per_call": {
+   "max_days": 3,
+   "max_seconds": 20,
+   "max_rss_mb": 768,
+   "max_partitions": 40
+  },
+  "env": [
+   "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS",
+   "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_SECONDS",
+   "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_RSS_MB",
+   "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_PARTITIONS"
+  ],
+  "memory_model": "one trade date of copies in memory plus one parquet day; run files are streamed line by line",
+  "hosted_scale_estimate": "484 days at 3 days a call is 162 calls; at the measured 2.6 s a day about 21 minutes of completion work spread over ticks, plus one read of the 14 GB of run files for the index (bounded by 20 s and 40 partitions a call, resumable)",
+  "not_measured": "the real 14 GB read speed on the hosted host"
+ },
+ "storage": {
+  "new_file": "daily_bars_completion_state.json under the market data root, tens of bytes per stored day plus run file paths",
+  "daily_bars_growth": "no new rows or days; one extra generation per completed day replaces the previous one",
+  "manifest": "docs/operations/storage-manifest.json runtime_budgets entry added; scripts/check_storage_manifest.py passed"
+ },
+ "semantics": {
+  "fill_only": "a non-null stored value is never overwritten",
+  "conflicts": "a source whose open/high/low/close or non-null value differs from the stored one is refused and counted (conflicts)",
+  "conflicting_duplicate": "copies of one key that disagree on prices are refused in extract_rows and counted",
+  "not_traded": "stays null",
+  "zero": "is a value",
+  "unretained": "a day with no retained source row is listed (unretained_days), not guessed",
+  "eligibility": "a stored day is processed once every run-file partition with write date >= the trade date is indexed (a run file cannot hold a later trade date than its write date)"
+ },
+ "acceptance_probe": "acceptance/probes/daily-bars-volume, GET /api/source-ingest/daily-bars/volume; fails above zero for days newer than the fix date; the stage does not pass ACCEPTANCE_SOURCE_INGEST_URL yet so it skips (77) until it does",
+ "tests": [
+  "services/source_ingestion/tests/test_daily_bars_completion.py",
+  "acceptance/test_daily_bars_volume.py",
+  "services/source_ingestion/tests/test_daily_bars_store.py (two fixtures made coherent with the unit check)"
+ ],
+ "residual_findings": [
+  "The acceptance stage needs ACCEPTANCE_SOURCE_INGEST_URL (and a token if required) to run the probe.",
+  "Existing store tests used traded values unrelated to close x volume; the unit check now rejects such rows.",
+  "Hosted 14 GB read speed and the real tick time are not measured; the bounds make them safe, not fast."
+ ]
+}
