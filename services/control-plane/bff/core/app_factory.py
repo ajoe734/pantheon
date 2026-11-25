@@ -1051,12 +1051,27 @@ def mount_bff_routers(
         utc_now=_dep("utc_now"),
         normalize_lifecycle_state=_dep("_normalize_lifecycle_state"),
     )
+    # Persona display names: the same persona directory read the research task list uses.
+    from ..research.routes.tasks import _default_persona_directory_snapshot as _alpha_persona_snapshot
+    from ..strategies.routes.common import read_persona_state_lookup as _alpha_persona_lookup
+
+    def _alpha_persona_names(tenant_id: str, snapshot_at: str):
+        lookup = _alpha_persona_lookup(
+            directory_snapshot=_alpha_persona_snapshot,
+            projected_state=lambda _record: "unknown",
+            operational_states=(),
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        return dict(lookup.display_names_by_id) if lookup.available else None
+
     app.include_router(
         create_alpha_factory_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),
             read_strategy_state=lambda strategy_id: _alpha_strategies_service.get_strategy_registry_state(strategy_id),
+            read_persona_names=_alpha_persona_names,
         )
     )
 

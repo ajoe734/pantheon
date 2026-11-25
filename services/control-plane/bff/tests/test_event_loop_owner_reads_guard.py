@@ -337,11 +337,29 @@ def _hosted_four_entries_for_wiring():
             "admission_status": "admitted",
             "status": "admitted",
             "queue_status": "completed",
+            "experiment_run_ids": ["run-wire"],
             "attempt_count": 0,
             "last_error": None,
         }
         for idx, strategy_id in enumerate(_WIRING_STATES)
     ]
+
+
+def _wiring_owner_answer(url: str):
+    if "/alpha-replication/entries" in url:
+        return _hosted_four_entries_for_wiring()
+    if "/research-orchestrator/runs" in url:
+        return [
+            {
+                "run_id": "run-wire",
+                "tenant_id": "tenant-dev",
+                "status": "completed",
+                "metadata": {"replication_gate": {"passed": True}},
+            }
+        ]
+    if "/persona-demands" in url:
+        return {"demands": []}
+    return []
 
 
 def test_real_app_alpha_factory_reads_state_through_registry_strategy_reader(monkeypatch) -> None:
@@ -357,7 +375,7 @@ def test_real_app_alpha_factory_reads_state_through_registry_strategy_reader(mon
     monkeypatch.setattr(
         alpha_module,
         "http_request_json_with_headers",
-        lambda url, **kw: (200, {}, _hosted_four_entries_for_wiring()),
+        lambda url, **kw: (200, {}, _wiring_owner_answer(url)),
     )
     state_calls: List[str] = []
 
