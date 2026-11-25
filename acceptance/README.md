@@ -194,7 +194,7 @@ explicit synthetic fixtures, never represented as hosted acceptance.
 ## Daily paper risk journey check (`acceptance/paper_risk_journey_day.py`)
 
 Task: PAPER-RISK-JOURNEY-DAILY-RUNS-20261125 (after PAPER-RISK-JOURNEY-PENDING-AND-DAILY-20261125), run by
-`.github/workflows/persona-day-acceptance.yml`. Reuses the release probe's `check` unchanged (its pending/failed
+`.github/workflows/paper-risk-journey-daily.yml`. Reuses the release probe's `check` unchanged (its pending/failed
 split stays) and adds the deadline. Trading sessions are the distinct trade days of decisions released for the
 configured personas, read from `GET /bff/management/trade-journeys` (list and detail) and the immutable
 `trade_decision` event through the existing telemetry owner read; there is no calendar route and no weekday

@@ -2113,6 +2113,54 @@ def _grading_attempt_id(decision_id: str, bar_day: "date") -> str:
     return f"{decision_id}#grading-attempt@{bar_day.isoformat()}"
 
 
+def _grading_carry_id(decision_id: str, bar_day: "date") -> str:
+    """Immutable record: this parked decision (on ``bar_day``) carries the rows of ``decision_id``."""
+    return f"{decision_id}#grading-carry@{bar_day.isoformat()}"
+
+
+def _carrier_still_holds(store: Any, carrier_id: str, graded_id: str) -> bool:
+    """True while a parked carrier can still release ``graded_id``'s rows to grading.
+
+    A carrier that has no pending record (dropped before the park completed or
+    superseded), whose settlement expired, or whose pending record no longer lists
+    the row, has released it back to grading.
+    """
+    from services.execution.lean_runtime.intraday_settlement import (
+        ENQUEUED_RECORD_SUFFIX,
+        PENDING_RECORD_SUFFIX,
+        SETTLEMENT_RECORD_SUFFIX,
+        STATUS_EXPIRED,
+    )
+
+    get = store.get_decision_record
+    if get(carrier_id + ENQUEUED_RECORD_SUFFIX) is not None:
+        return True  # the carrying order was admitted; its release marks the row
+    pending = get(carrier_id + PENDING_RECORD_SUFFIX)
+    if not isinstance(pending, Mapping):
+        return False
+    if not any(str(m[0]) == graded_id for m in pending.get("grading_marks") or ()):
+        return False
+    settled = get(carrier_id + SETTLEMENT_RECORD_SUFFIX)
+    return not (isinstance(settled, Mapping) and settled.get("status") == STATUS_EXPIRED)
+
+
+def _carried_by_parked_decision(
+    store: Any, graded_id: str, *, bar_day: "date", grading_day: "date", carrier_decision_id: str
+) -> bool:
+    """Whether an earlier parked decision (not this one) still carries ``graded_id``'s rows."""
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
+    day = grading_day
+    while day <= bar_day:
+        if is_trading_day(day):
+            record = store.get_decision_record(_grading_carry_id(graded_id, day))
+            carrier = str(record.get("carrier_decision_id") or "") if isinstance(record, Mapping) else ""
+            if carrier and carrier != carrier_decision_id and _carrier_still_holds(store, carrier, graded_id):
+                return True
+        day += timedelta(days=1)
+    return False
+
+
 def _bar_date(event_time: Any) -> "date | None":
     """Calendar date of an admitted bar's ``event_time`` in its own offset."""
     text = str(event_time or "").strip()
@@ -2242,7 +2290,10 @@ def _grade_one_decision(
         )
     ):
         return GRADING_NOT_GRADABLE, "replay_diverged_from_recorded_decision", []
-    return GRADING_DONE, None, expression_replay.counterfactual_rows(record, result)
+    rows = expression_replay.counterfactual_rows(record, result)
+    # Deterministic per decision: the event time of a row is its grading session, never the
+    # time of whichever signal happens to carry it.
+    return GRADING_DONE, None, [{**row, "graded_session": grading_day.isoformat()} for row in rows]
 
 
 def collect_counterfactual_grading(
@@ -2253,6 +2304,7 @@ def collect_counterfactual_grading(
     symbol_underlying: str,
     now_iso: str,
     decision_id_for_bar: Callable[[str], str],
+    carrier_decision_id: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[str, dict[str, Any]]]]:
     """Rows for every recorded decision that becomes gradable on this bar.
 
@@ -2290,6 +2342,13 @@ def collect_counterfactual_grading(
             continue
         stored = getter(decision_id)
         if not isinstance(stored, Mapping):
+            continue
+        # Rows parked on an earlier decision are graded once: they are collected again only if
+        # that decision was dropped, expired or superseded without releasing them.
+        if _carried_by_parked_decision(
+            store, decision_id, bar_day=bar_day, grading_day=earlier,
+            carrier_decision_id=carrier_decision_id,
+        ):
             continue
         try:
             status, reason, decision_rows = _grade_one_decision(
@@ -2474,6 +2533,11 @@ class PaperSignalProducer:
                 break
             slot += 1
         if existing_pending is None:
+            # Carry first, pending second: a carry without a pending record holds nothing.
+            bar_day = _bar_date((out.get("metadata") or {}).get("market_input_event_time"))
+            for graded_id, _state in grading_marks:
+                if bar_day is not None:
+                    putter(_grading_carry_id(graded_id, bar_day), {"carrier_decision_id": decision_id})
             putter(decision_id + PENDING_RECORD_SUFFIX, record)
         log.info("intraday decision %s parked as pending_settlement for %s", decision_id, binding_id)
         return 0
@@ -2530,8 +2594,10 @@ class PaperSignalProducer:
                 decision_out = pending.get("decision_out")
                 if not isinstance(decision_out, Mapping):
                     continue
+                release_out = json.loads(json.dumps(decision_out))
+                self._drop_already_graded_rows(store, release_out)
                 count = self._enqueue_output(
-                    binding, now_iso, json.loads(json.dumps(decision_out)), settled_fill=settled["fill"]
+                    binding, now_iso, release_out, settled_fill=settled["fill"]
                 )
                 if count:
                     for graded_id, graded_state in pending.get("grading_marks") or ():
@@ -2545,6 +2611,26 @@ class PaperSignalProducer:
                 )
                 released += count
         return released
+
+    @staticmethod
+    def _drop_already_graded_rows(store: Any, out: dict[str, Any]) -> None:
+        """Strip counterfactual rows another signal already carried (rows parked before the carry fix)."""
+        metadata = out.get("metadata")
+        rows = metadata.get(COUNTERFACTUAL_ROWS_KEY) if isinstance(metadata, dict) else None
+        if not isinstance(rows, list):
+            return
+        kept = []
+        for row in rows:
+            done = store.get_decision_record(_grading_record_id(str(row.get("decision_id") or ""))) \
+                if isinstance(row, Mapping) else None
+            carried_by = done.get("carried_by_signal_id") if isinstance(done, Mapping) else None
+            if carried_by and carried_by != out.get("signal_id"):
+                continue
+            kept.append(row)
+        if kept:
+            metadata[COUNTERFACTUAL_ROWS_KEY] = kept
+        else:
+            metadata.pop(COUNTERFACTUAL_ROWS_KEY, None)
 
     def produce(self, binding: Any, now_iso: str) -> int:
         """Emit + enqueue signals for one binding; return the count enqueued."""
@@ -2799,6 +2885,7 @@ class PaperSignalProducer:
                     symbol_underlying=grading_underlying,
                     now_iso=now_iso,
                     decision_id_for_bar=grading_input["decision_id_for_bar"],
+                    carrier_decision_id=str(out.get("decision_id") or ""),
                 )
                 if grading_rows:
                     out["metadata"][COUNTERFACTUAL_ROWS_KEY] = grading_rows

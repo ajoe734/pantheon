@@ -1,0 +1,25 @@
+{
+  "task": "RECONCILIATION-EVENT-REASON-SCHEMA-20261125",
+  "class": "RC2",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "cause": "reconciliation_completed/failed events carried reason_code/reason_detail at the top level; services/telemetry/telemetry_event.schema.json has additionalProperties:false and no such properties, so ingest refused every event from 2026-11-23.",
+  "refused_events_per_day": {"before": "about 530", "after": "0 expected; coordinator verifies on hosted dev after deploy"},
+  "fix": [
+    "services/reconciliation-drift/main.py: reason_code/reason_detail only in metadata; reason_detail bounded to 20 entries and 500 characters per string",
+    "services/reconciliation-drift/main.py: _repeated_refusal stops sending identical refused content after 3 refusals, receipt keeps the refusal reason (reason telemetry_refused_identical_event, http_status, error, refusal_count), one probe per 3600 s, changed content is sent immediately",
+    "Readers unchanged: LifecycleProjector reads source/metadata for reason_code and reason_detail; BFF _reconciliation_analysis reads the projected event"
+  ],
+  "tests": {
+    "new": "services/reconciliation-drift/tests/test_reconciliation_event_schema.py (7 tests; real TelemetryIngestService validator against the real schema; real LifecycleProjector and BFF _reconciliation_analysis; scheduler suppression/resume)",
+    "fails_on_previous_head": ["emitted failed event validates", "booking-checked event validates", "reason_detail bounded", "refused event stops repeating and resumes"],
+    "regression": "services/reconciliation-drift (ex flask-dependent modules) + trade_journey/test_lifecycle_projector.py: 457 passed, 1 skipped",
+    "not_run_locally": "services/telemetry/test_ingest_schema_fail_closed.py and test_telemetry_client_auth.py need flask, absent from the local venv"
+  },
+  "dead_letter": "A 202 later dead-lettered is not treated as stored: the existing accepted-append visibility check reads committed telemetry (fetch_accepted_event); missing for 1800 s becomes accepted_lifecycle_append_missing_terminal and a new event is built on the next pass. Unchanged by this task.",
+  "recovery": "No manual hosted write: the next normal scheduler pass builds the schema-valid event for the two open journeys; coordinator verifies.",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family.",
+  "residual_findings": [
+    "The suppression window is bounded by evaluations listed for the binding; a store that prunes old evaluations resets the count.",
+    "Top-level reason fields in older tests/fixtures of other services (trade_journey) still model the pre-fix shape; readers accept both."
+  ]
+}

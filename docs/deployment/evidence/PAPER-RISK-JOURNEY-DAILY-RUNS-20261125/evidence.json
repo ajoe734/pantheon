@@ -7,12 +7,13 @@
     "acceptance/test_paper_risk_journey_day.py",
     "acceptance/README.md",
     ".github/workflows/persona-day-acceptance.yml",
-    "scripts/test_dev_acceptance_stage.py",
+    ".github/workflows/paper-risk-journey-daily.yml",
+    "scripts/test_paper_risk_journey_daily_workflow.py",
     "docs/operations/problem-register.md"
   ],
   "rule": "sessions = distinct trade days of released decisions (trade-journey route); strategy HOLD neither pass nor failure; directional view without pre_trade_sizing or candidates_unavailable/budget_unavailable fails at once; 5 trading days without a judgeable decision per persona fails; 7 days without any released decision fails; release probe pending/failed split unchanged",
-  "tests": "acceptance/test_paper_risk_journey_day.py, acceptance/test_paper_risk_journey.py, scripts/test_dev_acceptance_stage.py",
+  "tests": "acceptance/test_paper_risk_journey_day.py, acceptance/test_paper_risk_journey.py, scripts/test_paper_risk_journey_daily_workflow.py",
   "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family",
-  "hosted_acceptance": "pending: coordinator runs persona-day-acceptance once after merge and records the artifact",
+  "hosted_acceptance": "pending: coordinator runs paper-risk-journey-daily once after merge and records the artifact",
   "residual_findings": []
 }

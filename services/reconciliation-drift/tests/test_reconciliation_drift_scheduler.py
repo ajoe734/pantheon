@@ -4099,10 +4099,10 @@ def test_runtime_unhealthy_stamps_failed_after_sixty_minutes() -> None:
     degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
     event, _ = _scheduled_event(degraded, "2026-07-15T11:00:00Z")
     assert event["event_type"] == "reconciliation_failed"
-    assert event["reason_code"] == "runtime_unhealthy_at_reconciliation"
-    names = {d["check"] for d in event["reason_detail"]}
+    assert event["metadata"]["reason_code"] == "runtime_unhealthy_at_reconciliation"
+    names = {d["check"] for d in event["metadata"]["reason_detail"]}
     assert names == {"runtime_state", "runtime_health_summary"}
-    assert {"detail", "observed", "threshold"} <= set(event["reason_detail"][0])
+    assert {"detail", "observed", "threshold"} <= set(event["metadata"]["reason_detail"][0])
 
 
 def test_identity_and_other_check_failures_have_reason_codes() -> None:
@@ -4111,7 +4111,7 @@ def test_identity_and_other_check_failures_have_reason_codes() -> None:
     ident = json.loads(json.dumps(base))
     ident["reconciliation_checks"][0]["status"] = "degraded"
     event, _ = _scheduled_event(ident, "2026-07-15T10:05:00Z")
-    assert event["reason_code"] == "reconciliation_identity_unverified"
+    assert event["metadata"]["reason_code"] == "reconciliation_identity_unverified"
     other = json.loads(json.dumps(base))
     for c in other["reconciliation_checks"]:
         if c["check"] == "queue_lag_ms":
@@ -4122,7 +4122,7 @@ def test_identity_and_other_check_failures_have_reason_codes() -> None:
         {"check": "position_vs_fill", "status": "critical", "detail": "x"}
     )
     event, _ = _scheduled_event(other, "2026-07-15T10:05:00Z")
-    assert event["reason_code"] == "reconciliation_check_failed"
+    assert event["metadata"]["reason_code"] == "reconciliation_check_failed"
 
 
 def _critical_drawdown_check(observed: float = 9.609309450237793):
@@ -4590,7 +4590,7 @@ def test_witness_prebroker_order_rejection_not_classified_in_flight_across_conse
             assert len(appended_events) == 1
             assert appended_events[0]["binding_id"] == other_binding
             assert appended_events[0]["event_type"] == "reconciliation_completed"
-            assert all(c["status"] == "passed" for c in appended_events[0]["reason_detail"])
+            assert all(c["status"] == "passed" for c in appended_events[0]["metadata"]["reason_detail"])
             fetch_order.assert_called_once()
 
             # Projector catches up for the independent fill binding while witness binding remains at order_rejection
@@ -4681,8 +4681,8 @@ def test_independent_binding_genuine_accounting_variance_still_emits_reconciliat
         assert len(appended) == 1
         assert appended[0]["binding_id"] == variance_summary["binding_id"]
         assert appended[0]["event_type"] == "reconciliation_failed"
-        assert appended[0]["reason_code"] == "cash_variance"
-        cash_check = next(c for c in appended[0]["reason_detail"] if c["check"] == "cash_change")
+        assert appended[0]["metadata"]["reason_code"] == "cash_variance"
+        cash_check = next(c for c in appended[0]["metadata"]["reason_detail"] if c["check"] == "cash_change")
         assert cash_check["status"] == "failed"
         assert cash_check["delta"] == pytest.approx(-45.0)
 

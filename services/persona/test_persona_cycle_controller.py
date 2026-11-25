@@ -1805,3 +1805,13 @@ def test_turn_input_size_is_recorded_and_gateway_overflow_is_a_named_failure(sys
     refused = controller.consume_run(owner.list_json()[0], "job-1", run(3))
     assert refused["persona_cycle"]["failure_reason"] == "turn_context_overflow"
     controller.turn_runner = base
+
+
+def test_observe_gives_the_cycle_at_most_the_last_twenty_pool_observation_rows(system):
+    controller, state, owner, _ = system
+    persona = next(p for p in owner.list_json() if p["persona_id"] == "persona-cycle-test")
+    days = [(date(2026, 9, 1) + timedelta(days=i)).isoformat() for i in range(30)]
+    state["obs"]["pcb-cycle"] = [{"date": d, "source_ref": "pool_risk_snapshot:pool-cycle:" + d, "gross_notional": 0.5,
+                                  "gross_limit": 2.0, "drawdown": 0.0, "drawdown_limit": 0.1} for d in days]
+    bundle = controller.owners.observe(persona)
+    assert [r["date"] for r in bundle["observations"]] == days[-20:]

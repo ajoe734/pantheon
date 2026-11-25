@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Protocol, Sequence
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 
 
 class GovernanceRecordStore(Protocol):
@@ -100,6 +101,7 @@ class JsonGovernanceRecordStore:
         self._flock_path = self.storage_path.with_name(f".{self.storage_path.name}.flock")
         self._lock = threading.RLock()
         self._records: Dict[str, Dict[str, Any]] = {}
+        self._temp_swept = False
         if self.storage_path.exists():
             self._load()
 
@@ -228,9 +230,17 @@ class JsonGovernanceRecordStore:
         # ambient umask atomically as part of creation; this never reads or
         # mutates the process-global umask, so it cannot race with an
         # unrelated thread's file creation in this process.
-        temporary_path = self.storage_path.with_name(
-            f".{self.storage_path.name}.{uuid.uuid4().hex}.tmp"
-        )
+        # Called under the exclusive flock: one deterministic temp name, legacy
+        # random-name leftovers swept once per store instance, and the previous
+        # deterministic temp (ours, regenerable from memory) is replaced.
+        if not self._temp_swept:
+            self._temp_swept = True
+            sweep_stale_temp_siblings(self.storage_path, keep_newer=True)
+        temporary_path = atomic_temp_path(self.storage_path)
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
         fd = os.open(
             str(temporary_path),
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,

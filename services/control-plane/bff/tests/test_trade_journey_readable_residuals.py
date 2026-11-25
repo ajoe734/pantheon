@@ -843,7 +843,7 @@ def test_producer_to_projector_to_bff_omitted_or_invalid_fee_and_tax():
         (producer_event, reason), _ = _run_booking(summary, order=BROKER_ORDER)
         assert reason is None and producer_event is not None
         assert producer_event["event_type"] == "reconciliation_failed"
-        assert producer_event["reason_code"] == "reconciliation_evidence_incomplete"
+        assert producer_event["metadata"]["reason_code"] == "reconciliation_evidence_incomplete"
         projected_stage = LifecycleProjector._journey_events(
             {
                 "event": producer_event,

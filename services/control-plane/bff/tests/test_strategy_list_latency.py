@@ -1228,3 +1228,38 @@ def test_strategy_summary_page_rejects_unexpected_raw_list_owner_shape_fail_clos
     assert resp.status_code == 503, resp.text
 
 
+
+
+def test_scale_7500_default_page_bounded_overlapped_reads_within_sla() -> None:
+    """BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125: 7,500 rows (7,329
+    drafts + 171 non-drafts) with test-scoped Personas present read the default
+    first page in <= 2 overlapped owner calls (vs 38 sequential 200-row pages),
+    inside the 1,200 ms SLA even with a 300 ms per-call owner latency."""
+    import time
+
+    from services.control_plane.bff.tests.test_strategy_list_test_scope import (
+        _scale_service,
+    )
+
+    svc, kwargs, calls, _rows = _scale_service()
+    store = svc._read_surface
+    original = store.list_strategy_summaries_page
+
+    def _slow(**kw):
+        time.sleep(0.3)
+        return original(**kw)
+
+    store.list_strategy_summaries_page = _slow
+    prefetched = original(page_size=20)
+    calls.clear()
+    started = time.perf_counter()
+    result = svc.list_strategy_summaries_hide_retired_unfiltered_page(
+        page_size=20, hide_retired=False, first_page_fn=lambda: prefetched, **kwargs
+    )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    assert len(calls) <= 3, calls  # 1 draft-excluded read + <=1 continuation page
+    assert len(calls) < 38
+    assert elapsed_ms < 1200, elapsed_ms
+    assert len(result["page_summaries"]) == 20
+    assert result["total"] == 7500 - result["hidden_test_persona_strategy_count"]
+    assert result["hidden_test_persona_strategy_count"] == 2

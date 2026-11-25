@@ -32,11 +32,10 @@ def test_piped_probe_steps_enable_pipefail():
     assert not offenders, offenders
 
 
-def test_persona_day_uses_existing_secrets_only():
+def test_persona_day_uses_existing_viewer_identity_only():
     text = (WORKFLOWS / "persona-day-acceptance.yml").read_text()
     assert "DEV_ACCEPTANCE_READ_TOKEN" not in text
     assert "secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in text
     secrets = set(re.findall(r"secrets\.([A-Z0-9_]+)", text))
-    # Existing dev secrets only: viewer login + the release stage's pinned SSH key (no new secret).
-    assert secrets == {"DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "DEV_DEPLOY_SSH_PRIVATE_KEY"}
+    assert secrets == {"DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET"}
     assert "cron:" in text and '"30 11 * * 1-5"' in text

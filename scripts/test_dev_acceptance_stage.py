@@ -1,5 +1,4 @@
 import json
-import re
 import os
 import stat
 import subprocess
@@ -203,20 +202,3 @@ def test_probe_environment_carries_viewer_identity(tmp_path):
 
 def test_plan_declares_redaction():
     assert stage.plan([], [])["redacts_output"] is True
-
-
-def test_daily_journey_workflow_uses_the_release_ssh_transport_and_removes_it():
-    root = Path(__file__).resolve().parent.parent
-    text = (root / ".github/workflows/persona-day-acceptance.yml").read_text()
-    prepare = text.index("Prepare pinned direct SSH transport")
-    check = text.index("acceptance/paper_risk_journey_day.py")
-    remove = text.index("rm -rf")
-    assert prepare < check < remove
-    assert text.count("scripts/dev_vm_ssh.sh prepare") == 1
-    for needed in ("secrets.DEV_DEPLOY_SSH_PRIVATE_KEY", "vars.DEV_DEPLOY_SSH_KNOWN_HOSTS", "vars.DEV_DEPLOY_SSH_HOST",
-                   "vars.NONPROD_REMOTE_USER", "DEV_DEPLOY_SSH_KEY_FILE", "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE"):
-        assert needed in text
-    declared = set(re.findall(r"(?:secrets|vars)\.([A-Z0-9_]+)", text))
-    release = (root / ".github/workflows/nonprod-deploy.yml").read_text()
-    assert all(name in release for name in declared), declared  # no new secret or variable
-    assert "always()" in text[remove - 200:remove]

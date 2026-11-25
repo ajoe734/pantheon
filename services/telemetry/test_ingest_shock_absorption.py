@@ -799,9 +799,9 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             async def prepare(self, query):
                 return FakePreparedStatement(query)
 
-            async def fetchval(self, query, *columns):
+            async def fetch(self, query, *columns):
                 captured["duplicate_query"] = query
-                return None
+                return []
 
             async def execute(self, query, *args):
                 if "pg_notify" in query:
@@ -825,24 +825,21 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertIn("IS DISTINCT FROM t.payload::jsonb", captured["duplicate_query"])
         self.assertTrue(captured["closed"])
 
-    async def test_postgres_writer_rolls_back_conflicting_duplicate(self):
-        captured: dict[str, object] = {"notified": False, "fetchrow_calls": 0}
+    async def test_postgres_writer_isolates_conflicting_duplicate(self):
+        captured: dict[str, object] = {"notified": False}
 
         class FakeTransaction:
             async def __aenter__(self):
-                captured["transaction_open"] = True
+                return None
 
             async def __aexit__(self, exc_type, exc, traceback):
-                captured["transaction_open"] = False
                 captured["transaction_committed"] = exc_type is None
-                captured["rolled_back"] = exc_type is not None
 
         class FakePreparedStatement:
             def __init__(self, query):
                 self.query = query
 
             async def fetch(self, *columns):
-                captured["fetchrow_calls"] += 1
                 return [{"event_id": "postgres-new-before-conflict", "ingested_seq": 18}]
 
         class FakeConnection:
@@ -852,8 +849,8 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             async def prepare(self, query):
                 return FakePreparedStatement(query)
 
-            async def fetchval(self, query, *columns):
-                return "postgres-conflicting-duplicate"
+            async def fetch(self, query, *columns):
+                return [{"event_id": "postgres-conflicting-duplicate", "ordinality": 0}]
 
             async def execute(self, query, *args):
                 if "pg_notify" in query:
@@ -873,12 +870,14 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 ]
             )
 
-        self.assertFalse(result.success)
-        self.assertFalse(result.retryable)
-        self.assertIn("conflicting duplicate event_id=postgres-conflicting-duplicate", result.error)
-        self.assertEqual(captured["fetchrow_calls"], 1)
-        self.assertTrue(captured["rolled_back"])
-        self.assertFalse(captured["notified"])
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.count, 1)
+        self.assertEqual(len(result.rejected), 1)
+        index, reason = result.rejected[0]
+        self.assertEqual(index, 1)
+        self.assertIn("conflicting duplicate event_id=postgres-conflicting-duplicate", reason)
+        self.assertTrue(captured["transaction_committed"])
+        self.assertTrue(captured["notified"])
         self.assertTrue(captured["closed"])
 
     async def test_postgres_writer_lock_hold_statement_count_is_constant(self):
@@ -919,9 +918,9 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 async def execute(self, query, *args):
                     statements.append(query)
 
-                async def fetchval(self, query, *columns):
+                async def fetch(self, query, *columns):
                     statements.append(query)
-                    return None
+                    return []
 
                 async def close(self):
                     pass

@@ -16,49 +16,27 @@ jobs:
   persona-day:
     runs-on: ubuntu-latest
     environment: dev
-    timeout-minutes: 12
+    timeout-minutes: 10
     env:
       ACCEPTANCE_BFF_URL: ${{ vars.DEV_BFF_URL }}
       # Read-only viewer dev-login identity (existing dev secret); exchanged in memory, never printed.
       ACCEPTANCE_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
       ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
-      # Same pinned direct-SSH transport and existing dev values as the release stage (owner reads only).
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
-      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
     steps:
       - uses: actions/checkout@v4
       - name: Probe (GET only; writes nothing on hosted)
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: python3 -I acceptance/persona_day.py | tee persona-day.json
       # Separate verdict: one failing check never hides the other. Pending exits 0; failed exits 1.
-      - name: Prepare pinned direct SSH transport
-        id: ssh_transport
+      - name: Pool risk snapshot present and pool health known (GET only; viewer identity)
         if: always()
-        env:
-          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
-          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: scripts/dev_vm_ssh.sh prepare "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null
-      - name: Paper risk journey samples (GET only; deadline judgement for the served release)
-        if: always()
-        env:
-          ACCEPTANCE_FE_URL: ${{ vars.DEV_FE_URL }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if [[ -f "${credentials_dir}/deploy_key" ]]; then
-            export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
-          fi
-          timeout 285s python3 -I acceptance/paper_risk_journey_day.py | tee paper-risk-journey-day.json
-      - name: Remove SSH transport credentials
-        if: always()
-        shell: /bin/bash --noprofile --norc -uo pipefail {0}
-        run: rm -rf "${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        run: timeout 120s python3 -I acceptance/pool_risk_snapshot_day.py | tee pool-risk-snapshot-day.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: persona-day-acceptance
           path: |
             persona-day.json
-            paper-risk-journey-day.json
+            pool-risk-snapshot-day.json
           retention-days: 30
