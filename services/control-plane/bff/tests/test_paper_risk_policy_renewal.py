@@ -140,6 +140,11 @@ def test_t0_renewal_t17_resolved_t25_one_decision_per_12h(world, clock):
     for key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest", "risk_officer_draft"):
         assert new["metadata"]["subject"][key] == old["metadata"]["subject"][key], key
     assert new["expires_at"] > old["expires_at"]
+    assert old["expires_at"] > clock.now.isoformat()
+    overlap_owner = coordinator._owner_get("capital", f"/api/capital-pools/{POOL}/risk-policy?stage=paper")
+    assert overlap_owner["resolved"] is True and overlap_owner["allow_new_or_increased_risk"] is True
+    assert overlap_owner["profile_mapping_approval_id"] == second
+    assert _resolved(world)
 
     # Same instant, later the same hour, and a replica restart: one decision only.
     for minutes in (0, 5, 40):
