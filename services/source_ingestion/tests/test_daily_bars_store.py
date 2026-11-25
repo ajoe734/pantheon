@@ -243,7 +243,7 @@ def test_columns_follow_the_source_fields_and_null_is_never_zero(tmp_path):
     store.write_records([
         record("2330.TW", DAY, 10.0, volume=100.0, value=1234.5, available_time="2026-11-13T15:05:06.123456+08:00",
                trading_status="traded"),
-        record("2317.TW", DAY, 20.0, volume=50.0, value_thousands=7.0, available_time=DAY),
+        record("2317.TW", DAY, 20.0, volume=50.0, value_thousands=1.0, available_time=DAY),
         record("2454.TW", DAY, 30.0, volume=0.0, value=0.0, available_time=DAY),   # a real zero stays zero
         record("2603.TW", DAY, 40.0, volume=5.0),                                     # the source gave nothing
     ], ingest_run_id="r1")
@@ -251,7 +251,7 @@ def test_columns_follow_the_source_fields_and_null_is_never_zero(tmp_path):
     a, b, c, d = (got[s][0] for s in ("2330.TW", "2317.TW", "2454.TW", "2603.TW"))
     assert a["traded_value"] == 1234.5 and a["trading_status"] == "traded"
     assert a["available_time"] == datetime(2026, 11, 13, 7, 5, 6, 123456, tzinfo=timezone.utc)
-    assert b["traded_value"] == 7000.0 and b["trading_status"] is None
+    assert b["traded_value"] == 1000.0 and b["trading_status"] is None
     assert b["available_time"] == datetime(2026, 11, 13, 6, 30, tzinfo=timezone.utc)  # date only: 14:30 +08:00
     assert c["traded_value"] == 0.0
     assert d["traded_value"] is None and d["available_time"] is None and d["trading_status"] is None
@@ -266,7 +266,7 @@ def test_copies_follow_the_evaluator_rule_and_conflicts_are_rejected(tmp_path):
     store.write_records([
         record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=100.0, value=1000.0, available_time="2026-11-13T14:00:00+08:00"),
         record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=300.0, value=3000.0, available_time="2026-11-13T13:00:00+08:00"),
-        record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=200.0, value=9999.0, available_time="2026-11-13T15:00:00+08:00"),
+        record("2330.TW", DAY, 10.0, open=9.0, high=11.0, low=8.0, volume=200.0, value=2000.0, available_time="2026-11-13T15:00:00+08:00"),
         record("2317.TW", DAY, 10.0, open=9.0, volume=1.0),
         record("2317.TW", DAY, 11.0, open=9.0, volume=1.0),
     ], ingest_run_id="r1")
