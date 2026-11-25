@@ -1415,24 +1415,202 @@ def test_real_governance_accepts_nested_risk_proposal_and_gate_decides(tmp_path,
         assert not auto_res.resolved and not bound.resolved and bound.allow_new_or_increased_risk is False
 
 
-def test_real_governance_legacy_v1_proposal_stays_readable_and_gate_closure_is_stated(tmp_path, monkeypatch):
-    """Stored v1.0 proposals (risk_level medium, string-only subject, no draft) remain readable; the gate's
-    closure of them on the real app is recorded here (see contract.md for the operator action when refused)."""
-    client, store, issued = _governance_world(
-        tmp_path, monkeypatch, "enabled;risk_policy=paper_pool;risk_proposer=pantheon-dev-persona-enrollment-proposer")
-    did = "apv-risk-v1"
-    body = _coordinator_risk_proposal(did, _LOW_POLICY)
-    body["risk_level"] = "medium"
-    body["subject"] = {"pool_id": POOL, "risk_direction": "increase", "requested_risk": "medium",
-                       "risk_policy_id": "rp-pool", "risk_policy_version": "1.0"}
-    proposer = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"],
-                "Idempotency-Key": "p-" + did}
-    assert client.post("/api/governance/approvals", json=body, headers=proposer).status_code == 201
-    gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
-    assert client.get(f"/api/governance/approvals/{did}", headers=gate).status_code == 200
-    reviewed = client.post(f"/api/governance/approvals/{did}/review", headers={**gate, "Idempotency-Key": "r-v1"},
-                           json={"actor_role": "automated_gate", "actor_id": "pantheon-dev-paper-provisioner",
-                                 "expected_version": 1})
-    # The paper gate is confined to low-risk decisions: it cannot close a medium v1.0 proposal.
-    assert reviewed.status_code == 403 and "low-risk" in reviewed.text
-    assert client.get(f"/api/governance/approvals/{did}", headers=gate).json()["decision_state"] == "proposed"
+# ---------------------------------------------------------------------------
+# PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125: close-only authority, through the real Governance application
+# ---------------------------------------------------------------------------
+
+_RISK_GRANT = "enabled;risk_policy=paper_pool;risk_proposer=pantheon-dev-persona-enrollment-proposer"
+_ENROLLMENT = "pantheon-dev-persona-enrollment-proposer"
+
+
+class _Risk:
+    """One real Governance app with a stale v1.0 proposal and (optionally) a gate-approved v2.0."""
+
+    def __init__(self, client, store, issued):
+        self.client, self.store, self.issued = client, store, issued
+        self.proposer = {"Authorization": "Bearer " + issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"]}
+        self.gate = {"Authorization": "Bearer " + issued["RESEARCH_GOVERNANCE_GATE_TOKEN"]}
+        self.n = 0
+
+    def key(self):
+        self.n += 1
+        return {"Idempotency-Key": f"k-{self.n}"}
+
+    def propose(self, decision_id, *, policy=None, version="1.0", risk_level="low", target_id=POOL,
+                target_type="capital_pool_activation", tenant=TENANT, owner=_ENROLLMENT, headers=None, **extra):
+        body = _coordinator_risk_proposal(decision_id, policy or _LOW_POLICY)
+        body.update({"risk_level": risk_level, "target_id": target_id, "capital_pool_id": target_id,
+                     "target_type": target_type, "tenant_id": tenant, "owner_user_id": owner, **extra})
+        body["subject"]["pool_id"] = target_id
+        body["subject"]["risk_policy_version"] = version
+        body["subject"].setdefault("risk_direction", "increase")
+        if version == "1.0":
+            body["candidate_digest"] = body["target_version"] = "1" * 64
+        else:
+            body["candidate_digest"] = body["target_version"] = "2" * 64
+        return self.client.post("/api/governance/approvals", json=body, headers={**(headers or self.proposer), **self.key()})
+
+    def backdate(self, decision_id, hours=2):
+        row = self.store.rows[decision_id]
+        row["created_at"] = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def gate_decide(self, decision_id, outcome="approved"):
+        version = self.get(decision_id)["version"]
+        review = self.client.post(f"/api/governance/approvals/{decision_id}/review", headers={**self.gate, **self.key()},
+                                  json={"actor_role": "automated_gate", "actor_id": DEV_PAPER_PROVISIONER_SUBJECT,
+                                        "expected_version": version})
+        assert review.status_code == 200, review.text
+        done = self.client.post(f"/api/governance/approvals/{decision_id}/decide", headers={**self.gate, **self.key()},
+                                json={"actor_role": "automated_gate", "actor_id": DEV_PAPER_PROVISIONER_SUBJECT,
+                                      "expected_version": version + 1, "outcome": outcome, "rationale": "ok"})
+        assert done.status_code == 200, done.text
+
+    def get(self, decision_id):
+        return self.client.get(f"/api/governance/approvals/{decision_id}", headers=self.gate).json()
+
+    def close(self, decision_id, headers=None, role="automated_gate", actor=DEV_PAPER_PROVISIONER_SUBJECT):
+        return self.client.post(
+            f"/api/governance/approvals/{decision_id}/close-superseded", headers={**(headers or self.gate), **self.key()},
+            json={"actor_role": role, "actor_id": actor, "expected_version": self.get(decision_id).get("version", 1)})
+
+
+@pytest.fixture
+def risk(tmp_path, monkeypatch):
+    client, store, issued = _governance_world(tmp_path, monkeypatch, _RISK_GRANT)
+    return _Risk(client, store, issued)
+
+
+def _stale_and_bound(risk, *, stale_risk="medium", under_review_vote=True):
+    assert risk.propose("apv-v1", risk_level=stale_risk).status_code == 201
+    risk.backdate("apv-v1")
+    if under_review_vote:
+        row = risk.store.rows["apv-v1"]
+        row["decision_state"], row["actor_role"], row["actor_id"] = "under_review", "governance_reviewer", "human-1"
+        row["metadata"]["approvals"] = [{"actor_id": "human-1", "actor_role": "governance_reviewer",
+                                         "conditions": [], "expires_at": None}]
+    assert risk.propose("apv-v2", version="2.0").status_code == 201
+    risk.gate_decide("apv-v2")
+
+
+def test_gate_closes_a_medium_risk_proposal_superseded_by_the_bound_gate_approved_policy(risk):
+    _stale_and_bound(risk)
+    votes_before = risk.get("apv-v1")["metadata"]["approvals"]
+    bound_before = risk.get("apv-v2")
+    closed = risk.close("apv-v1")
+    assert closed.status_code == 200, closed.text
+    body = closed.json()
+    assert body["decision_state"] == "superseded" and body["superseded_by"] == "apv-v2"
+    assert "apv-v2" in body["rationale"] and body["actor_id"] == DEV_PAPER_PROVISIONER_SUBJECT
+    assert body["actor_role"] == "automated_gate" and body["decision"] in (None, "")
+    assert body["metadata"]["approvals"] == votes_before and risk.store.get("apv-v1") is not None
+    assert risk.get("apv-v2") == bound_before
+    pending = risk.client.get("/api/governance/approvals", headers=risk.gate,
+                              params={"decision_state": "proposed,under_review"}).json()
+    assert [d["decision_id"] for d in pending] == []
+    # A fresh command on the closed proposal is refused: one transition per stale proposal.
+    assert risk.close("apv-v1").status_code == 409
+
+
+def test_close_replay_with_the_same_idempotency_key_returns_the_receipt(risk):
+    _stale_and_bound(risk, under_review_vote=False)
+    payload = {"actor_role": "automated_gate", "actor_id": DEV_PAPER_PROVISIONER_SUBJECT, "expected_version": 1}
+    path, headers = "/api/governance/approvals/apv-v1/close-superseded", {**risk.gate, "Idempotency-Key": "same"}
+    first, replay = (risk.client.post(path, json=payload, headers=headers) for _ in range(2))
+    assert first.status_code == replay.status_code == 200 and first.json() == replay.json()
+
+
+def test_close_is_refused_without_a_newer_gate_approved_policy(risk):
+    assert risk.propose("apv-v1", risk_level="medium").status_code == 201
+    risk.backdate("apv-v1")
+    assert risk.close("apv-v1").status_code == 403           # nothing supersedes it
+    assert risk.propose("apv-v2", version="2.0").status_code == 201
+    assert risk.close("apv-v1").status_code == 403           # newer but only pending
+    risk.gate_decide("apv-v2", outcome="rejected")
+    assert risk.close("apv-v1").status_code == 403           # newer but rejected
+    assert risk.get("apv-v1")["decision_state"] == "proposed"
+
+
+def test_close_is_refused_when_the_approved_decision_is_older_expired_revoked_or_unstamped(risk):
+    assert risk.propose("apv-v2", version="2.0").status_code == 201
+    risk.gate_decide("apv-v2")
+    assert risk.propose("apv-v3", version="3.0").status_code == 201          # created after the approved decision
+    assert risk.close("apv-v3").status_code == 403
+    assert risk.propose("apv-v1", risk_level="medium").status_code == 201
+    risk.backdate("apv-v1", hours=3)
+    risk.backdate("apv-v2", hours=1)
+    base = dict(risk.store.rows["apv-v2"])
+    for change in ({"expires_at": "2020-01-01T00:00:00Z"}, {"revoked_at": "2026-01-01T00:00:00Z"},
+                   {"superseded_by": "x"}, {"conditions": ["c"]}, {"authorization_scope": None},
+                   {"actor_id": "someone-else"}, {"owner_user_id": "other-proposer"},
+                   {"metadata": {"subject": {"pool_id": POOL}}}):
+        risk.store.rows["apv-v2"] = {**base, **change}
+        assert risk.close("apv-v1").status_code == 403, change
+    risk.store.rows["apv-v2"] = base
+    assert risk.close("apv-v1").status_code == 200
+
+
+def test_close_never_acts_outside_dev_paper_pool_scope(risk, monkeypatch):
+    _stale_and_bound(risk, under_review_vote=False)
+    risk.propose("apv-other-pool", target_id="pool-other")
+    risk.backdate("apv-other-pool")
+    assert risk.close("apv-other-pool").status_code == 403          # no approved decision on that pool
+    for stage_field in ("stage", "target_stage", "execution_context"):
+        for stage in ("canary", "live", "broker_sandbox"):
+            row = risk.store.rows["apv-v1"]
+            saved = dict(row["metadata"]["subject"])
+            row["metadata"]["subject"][stage_field] = stage
+            assert risk.close("apv-v1").status_code == 403, (stage_field, stage)
+            row["metadata"]["subject"] = saved
+    risk.store.rows["apv-v1"]["authorization_scope"] = {
+        "environment": "dev", "allowed_target_stages": ["paper", "live"], "max_capital_scale_pct": 0}
+    assert risk.close("apv-v1").status_code in (400, 403)
+    risk.store.rows["apv-v1"]["authorization_scope"] = None
+    monkeypatch.setenv("PANTHEON_ENV", "prod")
+    assert risk.close("apv-v1").status_code == 403
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    assert risk.get("apv-v1")["decision_state"] == "proposed"
+    assert risk.close("apv-v1").status_code == 200
+
+
+def test_close_never_acts_on_other_targets_tenants_proposers_or_the_bound_decision(risk):
+    _stale_and_bound(risk, under_review_vote=False)
+    bound = risk.close("apv-v2")                                   # the decision currently bound to the pool
+    assert bound.status_code in (403, 409) and risk.get("apv-v2")["decision_state"] == "decided"
+    for change in ({"target_type": "registry_entry"}, {"owner_user_id": "pantheon-dev-research-card-proposer"},
+                   {"owner_user_id": DEV_PAPER_PROVISIONER_SUBJECT}, {"tenant_id": "tenant-other"}):
+        saved = dict(risk.store.rows["apv-v1"])
+        risk.store.rows["apv-v1"] = {**saved, **change}
+        assert risk.close("apv-v1").status_code in (403, 404), change
+        risk.store.rows["apv-v1"] = saved
+    # a pending re-proposal of the very policy that is bound is not "superseded" by it
+    same = dict(risk.store.rows["apv-v1"], decision_id="apv-same", candidate_digest=risk.get("apv-v2")["candidate_digest"])
+    risk.store.rows["apv-same"] = same
+    assert risk.close("apv-same").status_code == 403
+
+
+def test_close_authority_belongs_to_the_paper_gate_only_and_never_approves(risk):
+    _stale_and_bound(risk, under_review_vote=False)
+    assert risk.close("apv-v1", headers=risk.proposer, role="governance_reviewer",
+                      actor=_ENROLLMENT).status_code == 403
+    reader = {"Authorization": "Bearer " + risk.issued["CAPITAL_GOVERNANCE_SERVICE_TOKEN"]}
+    assert risk.close("apv-v1", headers=reader, role="automated_gate",
+                      actor=DEV_PAPER_PROVISIONER_SUBJECT).status_code == 403
+    # a body that does not match the verified principal is refused
+    assert risk.close("apv-v1", role="governance_reviewer").status_code == 403
+    assert risk.close("apv-v1", actor="someone").status_code == 403
+    # the same principal and path cannot approve: the close route never accepts an outcome and never decides
+    extra = risk.client.post("/api/governance/approvals/apv-v1/close-superseded", headers={**risk.gate, **risk.key()},
+                             json={"actor_role": "automated_gate", "actor_id": DEV_PAPER_PROVISIONER_SUBJECT,
+                                   "expected_version": 1, "outcome": "approved"})
+    assert extra.status_code == 422
+    # without the risk-policy grant clause the same call is refused
+    assert risk.get("apv-v1")["decision_state"] == "proposed" and risk.get("apv-v1")["decision"] in (None, "")
+    risk.close("apv-v1")
+    assert risk.get("apv-v1")["decision"] in (None, "")
+
+
+def test_close_without_the_risk_policy_grant_clause_is_refused(tmp_path, monkeypatch):
+    client, store, issued = _governance_world(tmp_path, monkeypatch, "enabled")
+    risk = _Risk(client, store, issued)
+    risk.propose("apv-v1")
+    assert risk.close("apv-v1").status_code in (403, 404)
