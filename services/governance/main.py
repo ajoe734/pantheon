@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional
 import threading
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -63,12 +64,14 @@ from services.governance.promotion_readiness.signoff_api import (
 )
 from services.governance.paper_approval_scope import (
     PaperApprovalDenied,
+    RISK_POLICY_TARGET,
     PaperCandidateUnavailable,
     configured_paper_registry_reader,
     configured_persona_paper_binding_verifier,
     is_persona_lifecycle_decision,
     is_risk_policy_decision,
     require_paper_risk_policy_decision,
+    require_superseded_risk_policy_close,
     risk_policy_candidate_failure,
     require_paper_lifecycle_decision,
     require_card_admission_decision,
@@ -1536,6 +1539,8 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             raise HTTPException(422, '; '.join(rule_errors))
     elif role not in ctx.roles or body.actor_id != ctx.actor_id:
         raise HTTPException(403, 'Body actor and role must match verified principal')
+    if operation == 'close_superseded' and (grant is None or role != 'automated_gate'):
+        raise HTTPException(403, 'Only the paper automated gate may close a superseded proposal')
     now = datetime.now(timezone.utc)
     if grant is not None:
         if operation == 'revoke':
@@ -1546,7 +1551,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             except PaperApprovalDenied as exc:
                 raise HTTPException(exc.status_code, str(exc)) from exc
     command = {
-        'operation': operation, 'decision_id': decision_id,
+        # The close shares the review audit/receipt shape (state change, actor = the gate); `close_superseded`
+        # keeps its command identity distinct from a review.
+        'operation': 'review' if operation == 'close_superseded' else operation,
+        **({'close_superseded': True} if operation == 'close_superseded' else {}),
+        'decision_id': decision_id,
         'tenant_id': ctx.claims['tenant_id'], 'actor_id': ctx.actor_id, 'actor_role': role,
         'expected_version': body.expected_version, 'idempotency_key': idempotency_key,
         'body': body.model_dump(mode='json'),
@@ -1574,6 +1583,23 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             return proposed
         if decision is None:
             raise ApprovalCommandNotFound('Approval decision not found')
+        if operation == 'close_superseded':
+            # Close-only authority: every precondition is read from Governance's own records here.
+            current = decision.to_dict()
+            evidence = require_superseded_risk_policy_close(
+                current, grant=grant, now=now,
+                pool_decisions=[d.to_dict() for d in store.list_all(
+                    tenant_id=ctx.claims['tenant_id'], target_type=RISK_POLICY_TARGET, target_id=decision.target_id)])
+            decision.superseded_by = evidence['superseded_by']
+            decision.decision_state = DecisionState.SUPERSEDED
+            decision.rationale = evidence['reason']
+            decision.actor_role = ActorRole.AUTOMATED_GATE
+            decision.actor_id = ctx.actor_id
+            decision.authorization_scope = grant.authorization_scope
+            errors = decision.validate()
+            if errors:
+                raise ValueError('; '.join(errors))
+            return decision
         if grant is not None:
             # Owner reads run inside the CAS mutate callback: after auth/claim
             # admission and after the durable replay short-circuit, so an
@@ -1815,6 +1841,25 @@ def record_decision(decision_id: str, body: DecideRequest,
                  idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
     return _approval_command('decide', decision_id, body, authorization, idempotency_key)
 
+
+
+class CloseSupersededRequest(BaseModel):
+    """Close-only command: the superseding decision and the reason are derived by Governance, never supplied."""
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    actor_role: ActorRole
+    actor_id: str
+
+
+@app.post(
+    "/api/governance/approvals/{decision_id}/close-superseded",
+    response_model=ApprovalDecisionResponse,
+    summary="Close a paper risk-policy proposal superseded by the pool's bound gate-approved policy",
+)
+def close_superseded_proposal(decision_id: str, body: CloseSupersededRequest,
+                 authorization: Optional[str] = Header(None),
+                 idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    return _approval_command('close_superseded', decision_id, body, authorization, idempotency_key)
 
 
 @app.post(
