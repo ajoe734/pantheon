@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 import pytest
-from test_paper_risk_policy_binding import evidence
+from test_paper_risk_policy_binding import _renewal_overlap_payload, evidence
 
 ROOT = Path(__file__).parent
 loader = importlib.machinery.SourceFileLoader("risk_journey_probe", str(ROOT / "probes/paper-risk-journey"))
@@ -218,3 +218,13 @@ def test_real_mixed_findings_exit_1():
 def test_complete_run_exits_0():
     report = run(fixture())
     assert report["verdict"] == "passed" and report["exit_code"] == 0
+
+
+def test_overlapping_renewed_and_previous_approvals_pass_in_journey_probe():
+    state = fixture()
+    overlap = _renewal_overlap_payload()
+    state[0]["/api/v1/approval-decisions"] = overlap["/api/v1/approval-decisions"]
+    state[0]["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["profile_mapping_approval_id"] = "apv-risk-renew-next"
+    report = run(state)
+    assert report["passed"] and report["verdict"] == "passed" and report["exit_code"] == 0, report["failed"]
+    assert report["policy_readbacks"]["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
