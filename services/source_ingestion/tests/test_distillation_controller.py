@@ -716,12 +716,14 @@ def test_controller_redrives_transient_dead_letters_after_registry_recovers(tmp_
     monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
     monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
 
+    # Retry pending: delivery is degraded (a failed tick).
     with pytest.raises(Exception, match="degraded"):
         run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
 
-    # Registry outage persists: still degraded, nothing redriven.
-    with pytest.raises(Exception, match="degraded"):
-        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    # Retries exhausted: only a dead letter remains, which is working with an
+    # unresolved dead letter, not a failed tick; nothing is redriven.
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
 
     registry["up"] = True
     res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
@@ -1552,8 +1554,8 @@ def test_controller_converges_hosted_shape_auth_dead_letters(tmp_path, monkeypat
     monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
 
     # Credential still rejected: nothing is redriven, no write reaches the Registry.
-    with pytest.raises(Exception, match="degraded"):
-        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
     assert queue.dead_letter_count() == 260
     assert registry["posts"] == 0
 
@@ -1571,7 +1573,7 @@ def test_controller_converges_hosted_shape_auth_dead_letters(tmp_path, monkeypat
         except Exception:
             res = None
         per_tick_calls.append(registry["gets"] + registry["posts"] - before)
-        if res is not None and res["status"] == "success":
+        if res is not None and res["status"] == "success" and not queue.dead_letter_count():
             break
     assert res is not None and res["status"] == "success", per_tick_calls
     assert queue.dead_letter_count() == 0
@@ -1610,8 +1612,8 @@ def test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected(tmp_
     )
     store = ControllerStateStore(state_path)
     store.save(state)
-    with pytest.raises(Exception, match="degraded"):
-        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
     assert queue.dead_letter_count() == 260
 
 
@@ -1653,3 +1655,62 @@ def test_controller_bounded_admission_and_truthful_total_across_ticks(tmp_path, 
         assert "205 eligible" in writer.successes[-1]["desired_state"]["summary"]
     assert len(queue.list_all()) == 205
     assert config.alive_path.exists()
+
+
+def test_lease_expired_dead_letters_wait_for_normal_work_and_status_is_truthful(
+    tmp_path, monkeypatch
+) -> None:
+    from services.source_ingestion import distillation_controller as ctl
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+    queue.enqueue_source_record(_normalized_source("src-oom-1", tenant_id="test"))
+    job = queue.claim_due(worker_id="w", lease_seconds=30, limit=1, tenant_id="test")[0]
+    queue.begin_job(job, lease_seconds=30)
+    queue.mark_retry_or_dead_letter(
+        job, error="lease_expired_repeatedly: 5 lease expiries",
+        base_delay_seconds=0, permanent=True,
+    )
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    monkeypatch.setattr(
+        "services.source_ingestion.distillation_controller._get_registry_entry",
+        lambda url, registry_id: (_ for _ in ()).throw(RuntimeError("registry down")),
+    )
+
+    # No normal work yet in this process: the dead letter is kept, the tick
+    # is working-with-dead-letters (not failed), health file and marker agree.
+    first = run_controller_tick(
+        config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue,
+    )
+    assert first["controller_status"] == "working_with_unresolved_dead_letters"
+    assert first["reconcile"]["lease_expired_redriven"] == 0
+    assert queue.dead_letter_count() == 1
+    assert state.consecutive_failures == 0 and state.last_failure_stage is None
+    assert config.alive_path.read_text().splitlines()[1] == "working_with_unresolved_dead_letters"
+
+    # After normal work completed in this process, it is redriven (bounded).
+    ctl._NORMAL_WORK_SEEN[str(config.job_queue_path)] = True
+    second = run_controller_tick(
+        config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue,
+    )
+    assert second["reconcile"]["lease_expired_redriven"] == 1
+    assert queue.dead_letter_count() == 0
+    import sqlite3
+    with sqlite3.connect(config.job_queue_path) as conn:
+        assert conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0] == 1

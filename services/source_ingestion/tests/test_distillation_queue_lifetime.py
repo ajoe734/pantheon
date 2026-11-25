@@ -578,3 +578,147 @@ def test_compaction_returns_pruned_payload_space_to_the_filesystem(tmp_path):
     assert pruned["payloads"] == 2000 and pruned["bytes"] >= 2000 * 2900
     queue.compact()
     assert queue.path.stat().st_size < before / 3
+
+
+# --- DISTILLATION-DEAD-LETTER-RECOVERY-R2-20261125 -------------------------
+
+def _tenant_src(source_id: str, tenant: str | None) -> SourceRecord:
+    record = _src(source_id)
+    if tenant:
+        record.metadata["tenant_id"] = tenant
+    return record
+
+
+def _dead_letter_via_lease_expiry(queue, clock, source_id, tenant="t1"):
+    queue.enqueue_source_record(_tenant_src(source_id, tenant))
+    for _ in range(queue._max_lease_expiries):
+        job = queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id=tenant)[0]
+        queue.begin_job(job, lease_seconds=10)
+        clock[0] += 11
+        queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id=tenant)
+        clock[0] += 3600
+
+
+def test_139_lease_expired_dead_letters_redrive_bounded_without_starving_new_work(tmp_path):
+    clock = [1_000_000.0]
+    worker, queue = _worker(tmp_path, clock, max_lease_expiries=1)
+    for i in range(139):
+        queue.enqueue_source_record(_tenant_src(f"old{i:03d}", "t1"))
+    for _ in range(139):
+        job = queue.claim_due(worker_id="w", lease_seconds=10, limit=1, tenant_id="t1")[0]
+        queue.begin_job(job, lease_seconds=10)
+        clock[0] += 11
+        with queue._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            queue._recover_expired(conn, now=clock[0])
+            conn.execute("COMMIT")
+    assert queue.dead_letter_count() == 139
+    queue.enqueue_source_record(_tenant_src("fresh", "t1"))
+
+    ticks = 0
+    while queue.dead_letter_count() or queue.metrics()["pending"]:
+        ticks += 1
+        assert ticks < 40
+        redriven = queue.redrive_lease_expired_dead_letters(
+            requested_by="t", limit=10, tenant_id="t1",
+        )
+        assert len(redriven) <= 10
+        result = worker.run_pending(limit=100, tenant_id="t1")
+        if ticks == 1:
+            # New work is processed in the same tick as the first redrive batch.
+            assert queue.get("fresh").status == "done"
+            assert result.processed == 11
+    assert queue.metrics()["done"] == 140
+    assert ticks == 14
+
+
+def test_lease_expired_job_that_exhausts_again_stays_dead_lettered_with_count(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(
+        tmp_path / "queue.sqlite3", now=lambda: clock[0], max_lease_expiries=2,
+    )
+    _dead_letter_via_lease_expiry(queue, clock, "stuck")
+    for expected in (1, 2):
+        assert queue.redrive_lease_expired_dead_letters(requested_by="t", max_redrives=2) != []
+        for _ in range(2):
+            job = queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id="t1")[0]
+            queue.begin_job(job, lease_seconds=10)
+            clock[0] += 11
+            queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id="t1")
+            clock[0] += 3600
+        dead = queue.list_dead_letters(include_payload=False)
+        assert dead[0]["redrive_count"] == expected and dead[0]["resolved_at"] is None
+    # Budget spent: not redriven a third time.
+    assert queue.redrive_lease_expired_dead_letters(requested_by="t", max_redrives=2) == []
+    assert queue.get("stuck").status == "dead_letter"
+
+
+def _insert_conflict_dead_letter(queue, source_id, reason):
+    queue.enqueue_source_record(_tenant_src(source_id, "t1"))
+    job = queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id="t1")[0]
+    queue.begin_job(job, lease_seconds=10)
+    queue.mark_retry_or_dead_letter(job, error=reason, base_delay_seconds=0, permanent=True)
+    return job.job_id
+
+
+def test_lineage_conflict_is_replayed_once_then_closed_terminally_without_registry_io(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0])
+    reason = (
+        "registry_sync_failed: Registry artifact reg-x exists with conflicting "
+        "distillation lineage/content for source c1"
+    )
+    job_id = _insert_conflict_dead_letter(queue, "c1", reason)
+    first = queue.settle_lineage_conflict_dead_letters(requested_by="t", tenant_id="t1")
+    assert first == {"replayed": [job_id], "closed": []}
+    # Replay still conflicts: dead-lettered again with its redrive count.
+    job = queue.claim_due(worker_id="w", lease_seconds=10, limit=5, tenant_id="t1")[0]
+    queue.begin_job(job, lease_seconds=10)
+    queue.mark_retry_or_dead_letter(job, error=reason, base_delay_seconds=0, permanent=True)
+    second = queue.settle_lineage_conflict_dead_letters(requested_by="t", tenant_id="t1")
+    assert second == {"replayed": [], "closed": [job_id]}
+    closed = queue.get("c1")
+    assert closed.status == "skipped"
+    assert closed.skip_reason.startswith("registry_lineage_conflict_unresolved: ")
+    assert "reg-x" in closed.skip_reason
+    assert queue.dead_letter_count() == 0
+    assert queue.metrics()["dead_letter"] == 0
+    # Nothing left to settle; an unrelated dead letter is never touched.
+    other = _insert_conflict_dead_letter(queue, "o1", "registry_sync_failed: HTTP Error 500")
+    assert queue.settle_lineage_conflict_dead_letters(requested_by="t", tenant_id="t1") == {
+        "replayed": [], "closed": [],
+    }
+    assert queue.get("o1").status == "dead_letter" and other
+
+
+def test_retired_tenant_pending_rows_close_out_of_scope_only_with_proof(tmp_path):
+    clock = [1_000_000.0]
+    queue = storage.DistillationJobQueue(tmp_path / "queue.sqlite3", now=lambda: clock[0])
+    for i in range(5):
+        queue.enqueue_source_record(_tenant_src(f"r{i}", "retired"))
+    window_end = clock[0] + 100
+    clock[0] += 200
+    queue.enqueue_source_record(_tenant_src("live", "t1"))
+    # Active tenant is refused.
+    refused = queue.close_retired_tenant_pending(
+        retired_tenant_ids=["t1"], active_tenant_id="t1",
+        enqueued_from=0, enqueued_to=window_end, requested_by="t",
+    )
+    assert refused["closed"] == [] and refused["refused"] == {"t1": "tenant_is_active"}
+    result = queue.close_retired_tenant_pending(
+        retired_tenant_ids=["retired"], active_tenant_id="t1",
+        enqueued_from=0, enqueued_to=window_end, requested_by="t",
+    )
+    assert len(result["closed"]) == 5
+    assert queue.get("r0").skip_reason.startswith("out_of_scope_retired_runtime: tenant=retired")
+    assert queue.metrics()["pending"] == 1  # only the live tenant's row
+    assert queue.get("live").status == "pending"
+    # A tenant that enqueued after the window is not retired.
+    clock[0] += 10
+    queue.enqueue_source_record(_tenant_src("late", "retired"))
+    again = queue.close_retired_tenant_pending(
+        retired_tenant_ids=["retired"], active_tenant_id="t1",
+        enqueued_from=0, enqueued_to=window_end, requested_by="t",
+    )
+    assert again["closed"] == [] and again["refused"] == {"retired": "tenant_enqueued_after_window"}
+    assert queue.get("late").status == "pending"

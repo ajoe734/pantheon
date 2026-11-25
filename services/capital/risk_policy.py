@@ -470,10 +470,13 @@ class RiskPolicyEvaluator:
         self._check_scalar_limit("gross_exposure", resolved_policy.gross_limit, resolved_context.gross_exposure, checks)
         self._check_scalar_limit("net_exposure", resolved_policy.net_limit, resolved_context.net_exposure, checks)
         self._check_scalar_limit("leverage", resolved_policy.max_leverage, resolved_context.leverage, checks)
-        self._check_scalar_limit("turnover", resolved_policy.turnover_limit, resolved_context.turnover, checks)
-        self._check_exposure_map("sector_exposure", resolved_policy.max_sector_exposure, resolved_context.sector_exposures, checks)
+        if resolved_context.runtime_action != "order_reduce":
+            if resolved_context.runtime_action == "order_increase":
+                self._check_runtime_increase_fact_availability(resolved_policy, resolved_context, facts, checks)
+            self._check_scalar_limit("turnover", resolved_policy.turnover_limit, resolved_context.turnover, checks)
+            self._check_exposure_map("sector_exposure", resolved_policy.max_sector_exposure, resolved_context.sector_exposures, checks)
+            self._check_liquidity(resolved_policy, resolved_context, checks)
         self._check_exposure_map("factor_exposure", resolved_policy.max_factor_exposure, resolved_context.factor_exposures, checks)
-        self._check_liquidity(resolved_policy, resolved_context, checks)
         self._check_order_controls(resolved_policy, resolved_context, checks)
         self._check_canary_scale(resolved_policy, resolved_context, checks)
         self._check_cash_reserve(resolved_policy, resolved_context, checks)
@@ -690,6 +693,38 @@ class RiskPolicyEvaluator:
             )
         )
 
+    def _check_runtime_increase_fact_availability(
+        self,
+        policy: RiskPolicy,
+        context: RiskPolicyEvaluationContext,
+        facts: Mapping[str, Any],
+        checks: list[RiskPolicyCheck],
+    ) -> None:
+        missing_sector_symbols = context.metadata.get("missing_sector_symbols") or context.metadata.get(
+            "missing_sector_underlyings"
+        )
+        for limit, fact, check_name in (
+            ("turnover_limit", "turnover", "turnover"),
+            ("max_sector_exposure", "sector_exposures", "sector_exposure"),
+            ("liquidity_constraints", "liquidity", "liquidity"),
+        ):
+            configured = getattr(policy, limit)
+            if configured in (None, (), {}):
+                continue
+            fact_missing = _is_obs_missing(limit, configured, facts.get(fact))
+            if limit == "max_sector_exposure" and bool(missing_sector_symbols):
+                fact_missing = True
+            if fact_missing:
+                checks.append(
+                    _failed(
+                        check_name,
+                        f"{fact}_unavailable",
+                        f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable",
+                        limit=dict(configured) if isinstance(configured, Mapping) else configured,
+                        observed=facts.get(fact),
+                    )
+                )
+
     def _check_exposure_map(
         self,
         name: str,
@@ -699,6 +734,8 @@ class RiskPolicyEvaluator:
     ) -> None:
         if limit is None or not observed_map:
             return
+        evaluated = False
+        breached = False
         for key, raw_observed in observed_map.items():
             observed = _optional_float(raw_observed)
             if observed is None:
@@ -706,7 +743,9 @@ class RiskPolicyEvaluator:
             allowed = _limit_for_key(limit, str(key))
             if allowed is None:
                 continue
-            if abs(observed) > allowed:
+            evaluated = True
+            if abs(observed) > allowed + 1e-12:
+                breached = True
                 checks.append(
                     _failed(
                         name,
@@ -716,6 +755,15 @@ class RiskPolicyEvaluator:
                         observed={key: observed},
                     )
                 )
+        if evaluated and not breached and not any(c.check_name == name and c.status == "failed" for c in checks):
+            checks.append(
+                _passed(
+                    name,
+                    f"{name} is within RiskPolicy limit",
+                    dict(observed_map),
+                    limit=dict(limit) if isinstance(limit, Mapping) else limit,
+                )
+            )
 
     def _check_liquidity(
         self,
@@ -725,32 +773,51 @@ class RiskPolicyEvaluator:
     ) -> None:
         if not policy.liquidity_constraints or not context.liquidity:
             return
+        evaluated = False
+        breached = False
         min_adv = _optional_float(policy.liquidity_constraints.get("min_avg_daily_volume"))
         observed_adv = _optional_float(context.liquidity.get("avg_daily_volume"))
-        if min_adv is not None and observed_adv is not None and observed_adv < min_adv:
-            checks.append(
-                _failed(
-                    "liquidity",
-                    "liquidity_min_adv_breach",
-                    f"avg_daily_volume {observed_adv:.6g} is below RiskPolicy minimum {min_adv:.6g}",
-                    limit=min_adv,
-                    observed=observed_adv,
+        if min_adv is not None and observed_adv is not None:
+            evaluated = True
+            if observed_adv + 1e-12 < min_adv:
+                breached = True
+                checks.append(
+                    _failed(
+                        "liquidity",
+                        "liquidity_min_adv_breach",
+                        f"avg_daily_volume {observed_adv:.6g} is below RiskPolicy minimum {min_adv:.6g}",
+                        limit=min_adv,
+                        observed=observed_adv,
+                    )
                 )
-            )
         max_order_pct_adv = _optional_float(policy.liquidity_constraints.get("max_order_pct_adv"))
         observed_order_pct_adv = _optional_float(context.liquidity.get("order_pct_adv"))
-        if (
-            max_order_pct_adv is not None
-            and observed_order_pct_adv is not None
-            and observed_order_pct_adv > max_order_pct_adv
-        ):
+        if observed_order_pct_adv is None and observed_adv is not None and observed_adv > 0.0:
+            order_vol = _optional_float(
+                context.liquidity.get("order_volume", context.liquidity.get("order_quantity"))
+            )
+            if order_vol is not None:
+                observed_order_pct_adv = abs(order_vol) / observed_adv
+        if max_order_pct_adv is not None and observed_order_pct_adv is not None:
+            evaluated = True
+            if observed_order_pct_adv > max_order_pct_adv + 1e-12:
+                breached = True
+                checks.append(
+                    _failed(
+                        "liquidity",
+                        "liquidity_order_pct_adv_breach",
+                        f"order_pct_adv {observed_order_pct_adv:.6g} exceeds RiskPolicy limit {max_order_pct_adv:.6g}",
+                        limit=max_order_pct_adv,
+                        observed=observed_order_pct_adv,
+                    )
+                )
+        if evaluated and not breached and not any(c.check_name == "liquidity" and c.status == "failed" for c in checks):
             checks.append(
-                _failed(
+                _passed(
                     "liquidity",
-                    "liquidity_order_pct_adv_breach",
-                    f"order_pct_adv {observed_order_pct_adv:.6g} exceeds RiskPolicy limit {max_order_pct_adv:.6g}",
-                    limit=max_order_pct_adv,
-                    observed=observed_order_pct_adv,
+                    "liquidity is within RiskPolicy limit",
+                    dict(context.liquidity),
+                    limit=dict(policy.liquidity_constraints),
                 )
             )
 
@@ -1054,8 +1121,15 @@ def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
     if limit == "liquidity_constraints":
         if not isinstance(obs, Mapping):
             return True
-        required = (("min_avg_daily_volume", "avg_daily_volume"), ("max_order_pct_adv", "order_pct_adv"))
-        if any(_optional_float(obs.get(o)) is None for k, o in required if k in limit_value):
+        obs_adv = _optional_float(obs.get("avg_daily_volume"))
+        obs_pct = _optional_float(obs.get("order_pct_adv"))
+        if obs_pct is None and obs_adv is not None and obs_adv > 0.0:
+            order_vol = _optional_float(obs.get("order_volume", obs.get("order_quantity")))
+            if order_vol is not None:
+                obs_pct = abs(order_vol) / obs_adv
+        if "min_avg_daily_volume" in limit_value and obs_adv is None:
+            return True
+        if "max_order_pct_adv" in limit_value and obs_pct is None:
             return True
     values = obs.values() if isinstance(obs, Mapping) else [obs]
     return any(_optional_float(v) is None for v in values)
@@ -1063,7 +1137,14 @@ def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
 
 def _limit_for_key(limit: Mapping[str, float] | float, key: str) -> float | None:
     if isinstance(limit, Mapping):
-        return _optional_float(limit.get(key, limit.get("*")))
+        if key in limit:
+            return _optional_float(limit.get(key))
+        text = str(key).strip()
+        if text.isdigit():
+            for alias in (f"{int(text):02d}", str(int(text))):
+                if alias in limit:
+                    return _optional_float(limit.get(alias))
+        return _optional_float(limit.get("*"))
     return _optional_float(limit)
 
 
@@ -1348,6 +1429,19 @@ def compare_risk_policies(
         if name not in cand and name not in cur:
             continue
         comparison[name] = _compare_limit("min" if name in _MIN_LIMITS else "max", cand.get(name), cur.get(name))
+    if "liquidity_constraints" in cand or "liquidity_constraints" in cur:
+        cand_liq = cand.get("liquidity_constraints") if isinstance(cand.get("liquidity_constraints"), Mapping) else {}
+        cur_liq = cur.get("liquidity_constraints") if isinstance(cur.get("liquidity_constraints"), Mapping) else {}
+        liq_results: list[str] = []
+        for sub_name, sub_kind in (("min_avg_daily_volume", "min"), ("max_order_pct_adv", "max")):
+            if sub_name in cand_liq or sub_name in cur_liq:
+                liq_results.append(_compare_limit(sub_kind, cand_liq.get(sub_name), cur_liq.get(sub_name)))
+        if "looser" in liq_results:
+            comparison["liquidity_constraints"] = "looser"
+        elif "stricter" in liq_results:
+            comparison["liquidity_constraints"] = "stricter"
+        elif liq_results:
+            comparison["liquidity_constraints"] = "equal"
     values = set(comparison.values())
     direction = "increase" if "looser" in values else ("reduce" if "stricter" in values else "neutral")
     return {"risk_direction": direction, "risk_comparison": comparison}
@@ -4611,9 +4705,21 @@ DEFAULT_PROFILE_OUTER_BOUNDS: Mapping[str, Mapping[str, float]] = {
         "min_cash_reserve_pct": 0.10,
     },
 }
-PROFILE_OUTER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
+PROFILE_OUTER_BOUND_KEYS = (
+    "gross_limit",
+    "max_leverage",
+    "max_single_name_weight",
+    "min_cash_reserve_pct",
+    "max_sector_exposure",
+    "turnover_limit",
+    "max_order_pct_adv",
+    "min_avg_daily_volume",
+    "liquidity_constraints",
+)
 _PROFILE_UPPER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight")
 DRAFT_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
+DRAFT_BLUEPRINT_LIMITS = ("max_sector_exposure", "turnover_limit", "liquidity_constraints")
+_LIQUIDITY_CONSTRAINT_KEYS = ("min_avg_daily_volume", "max_order_pct_adv")
 
 
 def profile_outer_bounds(env: Mapping[str, str] | None = None) -> dict[str, dict[str, float]]:
@@ -4627,7 +4733,26 @@ def profile_outer_bounds(env: Mapping[str, str] | None = None) -> dict[str, dict
     for profile, limits in loaded.items():
         if not isinstance(limits, Mapping) or set(limits) - set(PROFILE_OUTER_BOUND_KEYS):
             raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}] has unsupported bounds")
-        bounds[str(profile).strip().lower()] = {k: float(v) for k, v in limits.items()}
+        normalized_limits: dict[str, float] = {}
+        for k, v in limits.items():
+            if k == "liquidity_constraints":
+                if not isinstance(v, Mapping) or not v or set(v) - set(_LIQUIDITY_CONSTRAINT_KEYS):
+                    raise RiskPolicyError(
+                        f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}].liquidity_constraints has unsupported bounds"
+                    )
+                for lk, lv in v.items():
+                    num = _optional_float(lv)
+                    if num is None or num <= 0.0:
+                        raise RiskPolicyError(
+                            f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}].liquidity_constraints[{lk!r}] must be positive"
+                        )
+                    normalized_limits[lk] = float(num)
+                continue
+            num = _optional_float(v)
+            if num is None or num <= 0.0:
+                raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}][{k!r}] must be a positive number")
+            normalized_limits[k] = float(num)
+        bounds[str(profile).strip().lower()] = normalized_limits
     return bounds
 
 
@@ -4635,13 +4760,27 @@ def validate_drafted_pool_risk_policy(
     policy: Mapping[str, Any],
     *,
     profile: str,
-    bounds: Mapping[str, Mapping[str, float]] | None = None,
+    bounds: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[RiskPolicy | None, str | None]:
     """Validate a risk-officer drafted policy. Returns ``(model, None)`` or ``(None, reason)``.
 
-    Requires gross/net/leverage, a single-name cap strictly inside (0, 1) and a positive cash reserve < 1, and
-    enforces the configured operator outer bounds for ``profile`` as hard validation.
+    Requires gross/net/leverage, a single-name cap strictly inside (0, 1) and a positive cash reserve < 1,
+    validates any drafted blueprint limits (``max_sector_exposure``, ``turnover_limit``,
+    ``liquidity_constraints``), and enforces the configured operator outer bounds for ``profile`` as hard
+    validation without inventing unconfigured bounds.
     """
+    if not isinstance(policy, Mapping):
+        return None, "risk_policy_draft_malformed: expected a mapping"
+    raw_sector = policy.get("max_sector_exposure")
+    if isinstance(raw_sector, Mapping) and not raw_sector:
+        return None, "risk_policy_draft_empty_limit:max_sector_exposure"
+    raw_liq = policy.get("liquidity_constraints")
+    if raw_liq is not None:
+        if not isinstance(raw_liq, Mapping) or not raw_liq:
+            return None, "risk_policy_draft_empty_limit:liquidity_constraints"
+        unsupported_liq = sorted(set(raw_liq) - set(_LIQUIDITY_CONSTRAINT_KEYS))
+        if unsupported_liq:
+            return None, f"risk_policy_draft_unsupported_liquidity_constraints:{','.join(unsupported_liq)}"
     try:
         model = normalize_risk_policy(policy)
     except (RiskPolicyError, TypeError, ValueError) as exc:
@@ -4656,15 +4795,93 @@ def validate_drafted_pool_risk_policy(
         return None, f"risk_policy_draft_single_name_not_below_1:max_single_name_weight={model.max_single_name_weight!r}"
     if not float(model.min_cash_reserve_pct) < 1.0:
         return None, f"risk_policy_draft_cash_reserve_not_below_1:min_cash_reserve_pct={model.min_cash_reserve_pct!r}"
+
+    if model.turnover_limit is not None and float(model.turnover_limit) <= 0.0:
+        return None, f"risk_policy_draft_limit_not_positive:turnover_limit={model.turnover_limit!r}"
+
+    if model.max_sector_exposure is not None:
+        sector_items = (
+            tuple(model.max_sector_exposure.items())
+            if isinstance(model.max_sector_exposure, Mapping)
+            else (("*", float(model.max_sector_exposure)),)
+        )
+        if not sector_items:
+            return None, "risk_policy_draft_empty_limit:max_sector_exposure"
+        for sec_key, sec_val in sector_items:
+            if float(sec_val) <= 0.0 or float(sec_val) > 1.0:
+                return None, f"risk_policy_draft_invalid_sector_exposure:max_sector_exposure[{sec_key}]={sec_val!r}"
+
+    if model.liquidity_constraints:
+        if "min_avg_daily_volume" in model.liquidity_constraints:
+            min_adv = float(model.liquidity_constraints["min_avg_daily_volume"])
+            if min_adv <= 0.0:
+                return None, f"risk_policy_draft_limit_not_positive:min_avg_daily_volume={min_adv!r}"
+        if "max_order_pct_adv" in model.liquidity_constraints:
+            max_pct = float(model.liquidity_constraints["max_order_pct_adv"])
+            if max_pct <= 0.0 or max_pct > 1.0:
+                return None, f"risk_policy_draft_invalid_order_pct_adv:max_order_pct_adv={max_pct!r}"
+
+    draft_meta = model.metadata.get("risk_officer_draft") if isinstance(model.metadata, Mapping) else None
+    if isinstance(draft_meta, Mapping) and "omitted_limits" in draft_meta:
+        omitted = draft_meta.get("omitted_limits")
+        if not isinstance(omitted, Mapping):
+            return None, "risk_policy_draft_malformed:omitted_limits must be a mapping"
+        for omit_key, omit_reason in omitted.items():
+            if not _optional_text(omit_reason):
+                return None, f"risk_policy_draft_missing_omission_reason:{omit_key}"
+
     limits = (profile_outer_bounds() if bounds is None else bounds).get(str(profile or "").strip().lower())
     if limits:
         for name in _PROFILE_UPPER_BOUND_KEYS:
-            cap = limits.get(name)
+            cap = _optional_float(limits.get(name))
             if cap is not None and float(getattr(model, name)) > cap + 1e-12:
                 return None, (f"risk_policy_draft_outside_bounds:{name}="
                               f"{getattr(model, name)!r} exceeds {profile} bound {cap!r}")
-        reserve = limits.get("min_cash_reserve_pct")
+        reserve = _optional_float(limits.get("min_cash_reserve_pct"))
         if reserve is not None and float(model.min_cash_reserve_pct) + 1e-12 < reserve:
             return None, (f"risk_policy_draft_outside_bounds:min_cash_reserve_pct="
                           f"{model.min_cash_reserve_pct!r} below {profile} bound {reserve!r}")
+        sector_cap = _optional_float(limits.get("max_sector_exposure"))
+        if sector_cap is not None:
+            if model.max_sector_exposure in (None, {}):
+                return None, (f"risk_policy_draft_outside_bounds:max_sector_exposure=None "
+                              f"exceeds {profile} bound {sector_cap!r}")
+            sec_vals = (
+                tuple(float(v) for v in model.max_sector_exposure.values())
+                if isinstance(model.max_sector_exposure, Mapping)
+                else (float(model.max_sector_exposure),)
+            )
+            if any(v > sector_cap + 1e-12 for v in sec_vals):
+                return None, (f"risk_policy_draft_outside_bounds:max_sector_exposure="
+                              f"{model.max_sector_exposure!r} exceeds {profile} bound {sector_cap!r}")
+        turnover_cap = _optional_float(limits.get("turnover_limit"))
+        if turnover_cap is not None:
+            if model.turnover_limit is None or float(model.turnover_limit) > turnover_cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:turnover_limit="
+                              f"{model.turnover_limit!r} exceeds {profile} bound {turnover_cap!r}")
+        liq_bound_map = limits.get("liquidity_constraints") if isinstance(limits.get("liquidity_constraints"), Mapping) else {}
+        max_pct_adv_cap = _optional_float(
+            limits.get("max_order_pct_adv", liq_bound_map.get("max_order_pct_adv"))
+        )
+        if max_pct_adv_cap is not None:
+            draft_pct = (
+                _optional_float(model.liquidity_constraints.get("max_order_pct_adv"))
+                if isinstance(model.liquidity_constraints, Mapping)
+                else None
+            )
+            if draft_pct is None or draft_pct > max_pct_adv_cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:max_order_pct_adv="
+                              f"{draft_pct!r} exceeds {profile} bound {max_pct_adv_cap!r}")
+        min_adv_floor = _optional_float(
+            limits.get("min_avg_daily_volume", liq_bound_map.get("min_avg_daily_volume"))
+        )
+        if min_adv_floor is not None:
+            draft_adv = (
+                _optional_float(model.liquidity_constraints.get("min_avg_daily_volume"))
+                if isinstance(model.liquidity_constraints, Mapping)
+                else None
+            )
+            if draft_adv is None or draft_adv + 1e-12 < min_adv_floor:
+                return None, (f"risk_policy_draft_outside_bounds:min_avg_daily_volume="
+                              f"{draft_adv!r} below {profile} bound {min_adv_floor!r}")
     return model, None

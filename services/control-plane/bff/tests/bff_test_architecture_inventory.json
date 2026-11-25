@@ -1121,7 +1121,7 @@
       "layer": "router",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "rationale": "BFF-PROVISIONING-ROUTE-SECURITY-TESTS-CI-20261125: standalone router security harness with in-memory strategy persona binding count double and fail-closed 503 strategy_store_unavailable regression coverage; wired into branch-ci.yml and never imports main"
     },
     {
       "file": "test_persona_provisioning_store.py",

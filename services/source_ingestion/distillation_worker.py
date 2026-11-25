@@ -80,6 +80,16 @@ PRUNED_PAYLOAD_JSON = '{"_pruned":true}'
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400
 DEFAULT_DEAD_LETTER_RETENTION_SECONDS = 30 * 86400
 LEASE_EXPIRED_REASON = "lease_expired_repeatedly"
+# A lease-expired dead letter is redriven at most this many times; a job that
+# exhausts its leases again afterwards stays dead-lettered with its count.
+DEFAULT_MAX_LEASE_REDRIVES = 2
+DEFAULT_LEASE_REDRIVE_LIMIT = 10
+LINEAGE_CONFLICT_MARKERS = (
+    "exists with conflicting distillation lineage/content",
+    "readback mismatched distillation lineage/content",
+)
+LINEAGE_CONFLICT_DISPOSITION = "registry_lineage_conflict_unresolved"
+OUT_OF_SCOPE_RETIRED_RUNTIME_REASON = "out_of_scope_retired_runtime"
 
 
 # Statuses where re-distillation is allowed (seed is still a mutable draft).
@@ -303,6 +313,17 @@ def is_auth_registry_failure(reason: str) -> bool:
     return any(m in text for m in _REGISTRY_FAILURE_MARKERS) and any(
         m in text for m in _AUTH_FAILURE_MARKERS
     )
+
+
+def is_lease_expired_failure(reason: str) -> bool:
+    """True for a dead letter caused by repeatedly expired leases (e.g. an OOM burst)."""
+    return str(reason or "").startswith(LEASE_EXPIRED_REASON)
+
+
+def is_lineage_conflict_failure(reason: str) -> bool:
+    """True for a Registry lineage/content conflict that a replay cannot fix."""
+    text = str(reason or "")
+    return any(m in text for m in LINEAGE_CONFLICT_MARKERS)
 
 
 class DistillationJobStatus(str, Enum):
@@ -2074,6 +2095,283 @@ class DistillationJobQueue:
                 connection.execute("ROLLBACK")
                 raise
         return {"redriven": redriven, "superseded": superseded}
+
+    def _redrive_dead_letter_row(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        *,
+        requested_by: str,
+        note: str,
+        now: float,
+    ) -> bool:
+        changed = connection.execute(
+            """
+            UPDATE distillation_outbox
+               SET status = 'pending', available_at = ?,
+                   processed_at = NULL, attempts = 0,
+                   lease_owner = NULL, lease_token = NULL,
+                   lease_expires_at = NULL, lease_expiries = 0,
+                   lease_started = 0, updated_at = ?
+             WHERE job_id = ? AND status = 'dead_letter'
+            """,
+            (now, now, job_id),
+        ).rowcount
+        if changed != 1:
+            return False
+        connection.execute(
+            """UPDATE distillation_inbox SET status = 'retry_wait', updated_at = ?
+                WHERE job_id = ? AND status = 'dead_letter'""",
+            (now, job_id),
+        )
+        connection.execute(
+            """
+            UPDATE distillation_dead_letters
+               SET redrive_count = redrive_count + 1,
+                   last_redrive_actor = ?, last_redrive_note = ?,
+                   resolved_at = ?
+             WHERE job_id = ? AND resolved_at IS NULL
+            """,
+            (requested_by, note, now, job_id),
+        )
+        return True
+
+    def _close_row_skipped(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        *,
+        from_status: str,
+        skip_reason: str,
+        now: float,
+    ) -> bool:
+        changed = connection.execute(
+            """
+            UPDATE distillation_outbox
+               SET status = 'skipped', processed_at = ?, skip_reason = ?,
+                   lease_owner = NULL, lease_token = NULL,
+                   lease_expires_at = NULL, updated_at = ?
+             WHERE job_id = ? AND status = ?
+            """,
+            (now, skip_reason, now, job_id, from_status),
+        ).rowcount
+        if changed != 1:
+            return False
+        connection.execute(
+            """UPDATE distillation_inbox SET status = 'skipped', updated_at = ?
+                WHERE job_id = ? AND status IN ('dead_letter', 'retry_wait', 'pending')""",
+            (now, job_id),
+        )
+        return True
+
+    def redrive_lease_expired_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        note: str = "worker completed normal work after restart; lease-expired redrive",
+        max_redrives: int = DEFAULT_MAX_LEASE_REDRIVES,
+        limit: int = DEFAULT_LEASE_REDRIVE_LIMIT,
+        tenant_id: str | None = None,
+    ) -> list[str]:
+        """Re-queue ``lease_expired_repeatedly`` dead letters, bounded.
+
+        At most ``limit`` jobs per call and ``max_redrives`` per job. The caller
+        only invokes this once the worker completed normal work after a
+        restart, so a still-crashing worker does not churn the queue. A job
+        that exhausts its leases again is dead-lettered again by
+        ``_recover_expired`` with its ``redrive_count`` kept. Only the newest
+        outbox version of a source is redriven; an older one is left alone.
+        """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
+        budget, cap = max(0, int(max_redrives)), max(0, int(limit))
+        now = self._now()
+        redriven: list[str] = []
+        tenant_clause, params = "", (budget,)
+        if tenant is not None:
+            tenant_clause = """
+               AND EXISTS (
+                   SELECT 1 FROM distillation_outbox AS outbox
+                     JOIN distillation_source_versions AS source_version
+                       ON source_version.source_id = outbox.source_id
+                      AND source_version.source_digest = outbox.source_digest
+                    WHERE outbox.job_id = distillation_dead_letters.job_id
+                      AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?)
+            """
+            params = (budget, tenant)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    f"""
+                    SELECT job_id, source_id, reason
+                      FROM distillation_dead_letters
+                     WHERE resolved_at IS NULL AND redrive_count < ?
+                       AND reason LIKE '{LEASE_EXPIRED_REASON}%'
+                       {tenant_clause}
+                     ORDER BY redrive_count, created_at, job_id
+                     LIMIT ?
+                    """,
+                    (*params, cap * 4 + 1),
+                ).fetchall()
+                for row in rows:
+                    if len(redriven) >= cap:
+                        break
+                    latest = connection.execute(
+                        """SELECT job_id FROM distillation_outbox WHERE source_id = ?
+                            ORDER BY enqueued_at DESC, rowid DESC LIMIT 1""",
+                        (str(row["source_id"]),),
+                    ).fetchone()
+                    if latest is None or str(latest["job_id"]) != str(row["job_id"]):
+                        continue
+                    if self._redrive_dead_letter_row(
+                        connection, str(row["job_id"]),
+                        requested_by=requested_by, note=note, now=now,
+                    ):
+                        redriven.append(str(row["job_id"]))
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return redriven
+
+    def settle_lineage_conflict_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        limit: int = DEFAULT_LEASE_REDRIVE_LIMIT,
+        tenant_id: str | None = None,
+    ) -> dict[str, list[str]]:
+        """Give Registry lineage-conflict dead letters a terminal, readable end.
+
+        A conflict dead-lettered before the replay-provenance fix is replayed
+        once (the fix may now accept it). A conflict that is dead-lettered
+        again after that replay is a genuine disagreement: the outbox row is
+        closed ``skipped`` with ``registry_lineage_conflict_unresolved`` and
+        the Registry entry id, the dead letter is resolved with the same note.
+        No Registry entry is read for overwrite, written or checksummed here.
+        Returns ``{"replayed": [...], "closed": [...]}``.
+        """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
+        cap = max(0, int(limit))
+        now = self._now()
+        replayed: list[str] = []
+        closed: list[str] = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    """SELECT d.job_id, d.reason, d.redrive_count, d.payload_json
+                         FROM distillation_dead_letters AS d
+                        WHERE d.resolved_at IS NULL ORDER BY d.created_at, d.job_id"""
+                ).fetchall()
+                for row in rows:
+                    if len(replayed) + len(closed) >= cap:
+                        break
+                    reason = str(row["reason"])
+                    if not is_lineage_conflict_failure(reason):
+                        continue
+                    job_id = str(row["job_id"])
+                    if tenant is not None:
+                        try:
+                            scope = (json.loads(row["payload_json"]).get("metadata") or {}).get("tenant_id")
+                        except (ValueError, AttributeError):
+                            scope = None
+                        if scope != tenant:
+                            continue
+                    if int(row["redrive_count"]) < 1:
+                        if self._redrive_dead_letter_row(
+                            connection, job_id, requested_by=requested_by,
+                            note="lineage conflict replayed once under replay-provenance fix",
+                            now=now,
+                        ):
+                            replayed.append(job_id)
+                        continue
+                    text = f"{LINEAGE_CONFLICT_DISPOSITION}: {reason}"[:1000]
+                    if self._close_row_skipped(
+                        connection, job_id, from_status="dead_letter",
+                        skip_reason=text, now=now,
+                    ):
+                        connection.execute(
+                            """UPDATE distillation_dead_letters
+                                  SET last_redrive_actor = ?, last_redrive_note = ?,
+                                      resolved_at = ?
+                                WHERE job_id = ? AND resolved_at IS NULL""",
+                            (requested_by, text, now, job_id),
+                        )
+                        closed.append(job_id)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {"replayed": replayed, "closed": closed}
+
+    def close_retired_tenant_pending(
+        self,
+        *,
+        retired_tenant_ids: Sequence[str],
+        active_tenant_id: str,
+        enqueued_from: float,
+        enqueued_to: float,
+        requested_by: str,
+        limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Close pending rows of a retired runtime as out of scope.
+
+        Refuses unless the tenant is provably retired in this queue: it is not
+        the active tenant, and no row of it was enqueued after ``enqueued_to``
+        (a tenant still producing work is not retired). Only ``pending`` rows
+        enqueued inside ``[enqueued_from, enqueued_to]`` are closed, as
+        ``skipped`` with ``out_of_scope_retired_runtime``; leased, retry and
+        dead-letter rows and every other tenant are untouched.
+        """
+        retired = sorted({str(t).strip() for t in retired_tenant_ids if str(t).strip()})
+        active = str(active_tenant_id or "").strip()
+        result: dict[str, Any] = {"closed": [], "refused": {}}
+        now = self._now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for tenant in retired:
+                    if tenant == active:
+                        result["refused"][tenant] = "tenant_is_active"
+                        continue
+                    later = connection.execute(
+                        """SELECT COUNT(*) FROM distillation_outbox AS o
+                             JOIN distillation_source_versions AS v
+                               ON v.source_id = o.source_id AND v.source_digest = o.source_digest
+                            WHERE json_extract(v.payload_json, '$.metadata.tenant_id') = ?
+                              AND o.enqueued_at > ?""",
+                        (tenant, float(enqueued_to)),
+                    ).fetchone()[0]
+                    if later:
+                        result["refused"][tenant] = "tenant_enqueued_after_window"
+                        continue
+                    rows = connection.execute(
+                        """SELECT o.job_id FROM distillation_outbox AS o
+                             JOIN distillation_source_versions AS v
+                               ON v.source_id = o.source_id AND v.source_digest = o.source_digest
+                            WHERE o.status = 'pending'
+                              AND json_extract(v.payload_json, '$.metadata.tenant_id') = ?
+                              AND o.enqueued_at BETWEEN ? AND ?
+                            ORDER BY o.enqueued_at LIMIT ?""",
+                        (tenant, float(enqueued_from), float(enqueued_to), max(0, int(limit))),
+                    ).fetchall()
+                    reason = f"{OUT_OF_SCOPE_RETIRED_RUNTIME_REASON}: tenant={tenant} by {requested_by}"
+                    for row in rows:
+                        if self._close_row_skipped(
+                            connection, str(row["job_id"]), from_status="pending",
+                            skip_reason=reason, now=now,
+                        ):
+                            result["closed"].append(str(row["job_id"]))
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return result
 
     def count(self) -> int:
         with self._connect() as connection:

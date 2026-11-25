@@ -3376,6 +3376,219 @@ class TestLoop9ControllerWriter(unittest.TestCase):
         self.assertFalse([k for k in env if k.startswith("PANTHEON_CONTROLLER_")])
 
 
+class TestPaperFleetReconcilerDynamicBearerAuth(unittest.TestCase):
+    """PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125: dynamic HS256 JWT minting and token_file re-reads."""
+
+    def test_reconciler_mints_fresh_hs256_tokens_across_clock_advances_past_ttl(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+        secret = "reconciler-dynamic-bearer-test-secret-2026!"
+        issuer = "pantheon-dev-control-plane"
+        audience = "pantheon-runtime-manager"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+            "PANTHEON_RUNTIME_JWT_ISSUER": issuer,
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": audience,
+        }
+        clock_now = [1_700_400_000.0]
+        captured_auth_headers: List[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            auth_hdr = req.get_header("Authorization") or ""
+            captured_auth_headers.append(auth_hdr)
+            validate_request_auth(
+                authorization=auth_hdr,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+
+            class _Resp:
+                status = 200
+
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    if "/transition" in req.full_url:
+                        return json.dumps({"binding_id": "b-001", "status": "paused"}).encode("utf-8")
+                    return json.dumps(
+                        {"bindings": [_make_binding("b-001")], "excluded": []}
+                    ).encode("utf-8")
+
+            return _Resp()
+
+        reconciler_env = {
+            **strict_env,
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://rm:8081",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+            "PANTHEON_RUNTIME_MANAGER_ACTOR_ID": "paper-fleet-reconciler",
+            "PANTHEON_RUNTIME_MANAGER_ROLES": "operator",
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "PANTHEON_RUNTIME_MANAGER_JWT_TTL_SECONDS": "30",
+        }
+        with patch.dict(os.environ, reconciler_env, clear=False), patch(
+            "time.time", side_effect=lambda: clock_now[0]
+        ), patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            recon = PaperFleetReconciler(
+                runtime_manager_url="http://rm:8081",
+                poll_interval_seconds=999,
+                leader_store=_unit_leader_store(),
+            )
+            state_t0 = recon._fetch_fleet_state()
+            self.assertIsNotNone(state_t0)
+            self.assertEqual(len(state_t0[0]), 1)
+            first_hdr = captured_auth_headers[-1]
+
+            # Advance clock past initial 30s TTL; first header is now expired.
+            clock_now[0] = 1_700_400_045.0
+            with self.assertRaises(AuthError) as expired:
+                validate_request_auth(
+                    authorization=first_hdr,
+                    required_roles=("operator",),
+                    env=strict_env,
+                    allow_shared_secret=True,
+                )
+            self.assertEqual(expired.exception.code, "AUTH_JWT_EXPIRED")
+
+            # Both _fetch_fleet_state and _transition_binding mint fresh tokens and pass strict auth.
+            state_t1 = recon._fetch_fleet_state()
+            self.assertIsNotNone(state_t1)
+            second_hdr = captured_auth_headers[-1]
+            self.assertNotEqual(second_hdr, first_hdr)
+
+            clock_now[0] = 1_700_400_120.0
+            self.assertTrue(recon._transition_binding("b-001", "paused"))
+            third_hdr = captured_auth_headers[-1]
+            self.assertNotEqual(third_hdr, second_hdr)
+            ctx = validate_request_auth(
+                authorization=third_hdr,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            self.assertEqual(ctx.actor_id, "paper-fleet-reconciler")
+
+    def test_reconciler_rereads_rotated_token_file_across_clock_advances(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+        from services.runtime_auth_inbound import (
+            AuthError,
+            encode_jwt_hs256,
+            validate_request_auth,
+        )
+
+        secret = "reconciler-token-file-rotation-secret-2026!"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+        }
+        clock_now = [1_700_450_000.0]
+
+        def _mint(sub: str, issued: int) -> str:
+            return encode_jwt_hs256(
+                {
+                    "sub": sub,
+                    "roles": ["operator"],
+                    "iat": issued,
+                    "nbf": issued - 5,
+                    "exp": issued + 30,
+                },
+                secret=secret,
+            )
+
+        captured_actors: List[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            ctx = validate_request_auth(
+                authorization=req.get_header("Authorization") or "",
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            captured_actors.append(ctx.actor_id)
+
+            class _Resp:
+                status = 200
+
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return json.dumps({"bindings": [], "excluded": []}).encode("utf-8")
+
+            return _Resp()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            token_file = Path(tmp_dir) / "rm.token"
+            tok1 = _mint("reconciler-file-v1", int(clock_now[0]))
+            token_file.write_text(tok1, encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "PANTHEON_RUNTIME_MANAGER_URL": "http://rm:8081",
+                    "PANTHEON_RUNTIME_MANAGER_TOKEN_FILE": str(token_file),
+                },
+                clear=False,
+            ), patch("time.time", side_effect=lambda: clock_now[0]), patch(
+                "urllib.request.urlopen", side_effect=_fake_urlopen
+            ):
+                recon = PaperFleetReconciler(
+                    runtime_manager_url="http://rm:8081",
+                    poll_interval_seconds=999,
+                    leader_store=_unit_leader_store(),
+                )
+                self.assertIsNotNone(recon._fetch_fleet_state())
+                self.assertEqual(captured_actors, ["reconciler-file-v1"])
+
+                clock_now[0] = 1_700_450_045.0
+                with self.assertRaises(AuthError):
+                    validate_request_auth(
+                        authorization=f"Bearer {tok1}",
+                        required_roles=("operator",),
+                        env=strict_env,
+                        allow_shared_secret=True,
+                    )
+                tok2 = _mint("reconciler-file-v2", int(clock_now[0]))
+                token_file.write_text(tok2, encoding="utf-8")
+
+                self.assertIsNotNone(recon._fetch_fleet_state())
+                self.assertEqual(captured_actors, ["reconciler-file-v1", "reconciler-file-v2"])
+
+    def test_reconciler_token_property_setter_supports_uninitialized_new_instances(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        recon = PaperFleetReconciler.__new__(PaperFleetReconciler)
+        recon._extra_env = {}
+        recon._reconciler_id = "rec-test"
+        recon._fence_token = 1
+        recon._url = None
+        recon._token = None
+        recon._source_ingest_url = None
+        recon._performance_mark_max_age_seconds = 60
+        recon._performance_state_root = Path("/tmp")
+
+        self.assertEqual(recon._token, "")
+        self.assertEqual(recon._runtime_manager_headers(), {})
+        env = recon._build_worker_env({"binding_id": "b-test"})
+        self.assertEqual(env["PANTHEON_RUNTIME_BINDING_ID"], "b-test")
+
+        recon._token = "custom-static-token"
+        self.assertEqual(recon._token, "custom-static-token")
+        self.assertEqual(
+            recon._runtime_manager_headers(),
+            {"Authorization": "Bearer custom-static-token"},
+        )
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))

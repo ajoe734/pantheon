@@ -12,7 +12,7 @@ from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from .bundle import BundleWriter, CollectedItem, WrittenBundle, utc_iso
+from .bundle import BundleWriter, CollectedItem, WrittenBundle, _atomic_write_json, utc_iso
 from .config import CollectorConfig, CollectorConfigError, SourceFetchPolicy
 from .fetchers import FetchAccessBlockedError, FetchBackendUnavailableError, FetchTransport, LiveScraplingTransport
 from .pollers import (
@@ -488,20 +488,31 @@ class CollectorRunner:
             return RunOutcome(source_id=source_id, run_id=run_id, status="partial", bundle=written, state=current_state)
 
         skipped = _skipped_count(collector)
-        updated_state = self.state_store.record_run_outcome(
-            source_id=source_id,
-            run_id=run_id,
-            finished_at=finished_iso,
-            policy_hash=policy.policy_hash,
-            block_reason=None,
-        )
+        route_errors = dict(getattr(collector, "route_errors", None) or {})
+        all_routes_failed = bool(getattr(collector, "all_routes_failed", False))
         requests = _request_count(collector)
         reason: str | None = None
         if requests is not None and requests == 0:
             reason = "no_targets"  # nothing was requested, so nothing can be called complete
+        elif all_routes_failed:
+            reason = _all_routes_failed_reason(route_errors)
         elif requests is not None and not items:
             reason = _zero_item_reason(collector)
         bundle_status = "partial" if reason else "complete"
+        if all_routes_failed:
+            current_state.last_run_id = run_id
+            current_state.last_run_at = finished_iso
+            current_state.last_status = "partial"
+            self.state_store.save_source_state(current_state)
+            updated_state = current_state
+        else:
+            updated_state = self.state_store.record_run_outcome(
+                source_id=source_id,
+                run_id=run_id,
+                finished_at=finished_iso,
+                policy_hash=policy.policy_hash,
+                block_reason=None,
+            )
         written = self.bundle_writer.write_bundle(
             policy=policy,
             run_id=run_id,
@@ -513,6 +524,25 @@ class CollectorRunner:
             skipped_count=skipped,
             reason=reason,
         )
+        if route_errors:
+            manifest_with_errors = dict(written.manifest)
+            manifest_with_errors["route_errors"] = dict(route_errors)
+            _atomic_write_json(written.manifest_path, manifest_with_errors)
+            written = WrittenBundle(
+                source_id=written.source_id,
+                date=written.date,
+                run_id=written.run_id,
+                bundle_dir=written.bundle_dir,
+                manifest_path=written.manifest_path,
+                items_path=written.items_path,
+                manifest=manifest_with_errors,
+            )
+            for status_path in (self.root_dir / "status.json", self.bundle_writer.bundles_dir / "status.json"):
+                if status_path.is_file():
+                    status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+                    if isinstance(status_payload.get("sources"), dict) and source_id in status_payload["sources"]:
+                        status_payload["sources"][source_id]["route_errors"] = dict(route_errors)
+                        _atomic_write_json(status_path, status_payload)
         if isinstance(collector, GdeltRawFeedPoller):
             collector.acknowledge_bundle()
         if isinstance(collector, TaifexVixSpider) and bundle_status == "complete":
@@ -525,6 +555,12 @@ class CollectorRunner:
             state=updated_state,
             skipped_count=skipped,
         )
+
+
+def _all_routes_failed_reason(route_errors: Mapping[str, str]) -> str:
+    if route_errors and all(str(err).startswith("invalid_xml") for err in route_errors.values()):
+        return "parse_failed"
+    return "fetch_failed"
 
 
 def _first_request_url(collector: Any) -> str | None:
