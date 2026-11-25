@@ -263,11 +263,15 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
             else None
         )
+        # The walk sends the same owner hide input as the page read, so the
+        # owner hides and counts test / stub rows and returns the visible
+        # counts on its first page (no extra owner call).
         owner_walk = (
             ctx.service.list_all_strategy_summary_pages(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
+                **owner_hide_kwargs,
             )
             if (ctx.service and walk_for_hiding and bounded_hide is None)
             else None
@@ -340,7 +344,21 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             precomputed_operational_counts = bounded_hide["operational_counts"]
         elif owner_walk is not None:
             candidates = list(owner_walk["items"])
-            if hide_test:
+            walk_hidden = owner_walk.get("hidden")
+            if hide_test and owner_walk.get("owner_hid") and isinstance(walk_hidden, dict):
+                # The owner already excluded and counted the test / stub rows
+                # over the whole candidate set.
+                by_reason = walk_hidden.get("by_reason") or {}
+                hidden_test_persona_strategy_count = int(
+                    by_reason.get(STUB_TEST_PERSONA_PROBE) or 0
+                )
+                hidden_unbound_stub_strategy_count = sum(
+                    int(v) for k, v in by_reason.items() if k != STUB_TEST_PERSONA_PROBE
+                )
+                visible_state_counts = owner_walk.get("visible_state_counts")
+            elif hide_test:
+                # Older owner without the hide answer: classify here, counts
+                # stay null (never fabricated).
                 candidates = _hide_test_and_stubs(candidates)
             for summary in candidates:
                 strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
