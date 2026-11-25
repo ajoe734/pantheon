@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import math
@@ -16,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 from services.background_worker_health import (
     healthcheck as check_worker_health,
     write_health,
@@ -128,6 +131,7 @@ class IncidentListenerState:
         self.last_failure_at: str | None = None
         self.last_failure_error: str | None = None
         self.load_error: str | None = None
+        self._temp_swept = False
         self.reload()
 
     def reload(self) -> None:
@@ -174,12 +178,19 @@ class IncidentListenerState:
                 f"refusing to overwrite unreadable listener state: {self.load_error}"
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(
+            str(self.path.parent / f".{self.path.name}.lock"),
+            os.O_CREAT | os.O_RDWR,
+            0o644,
+        )
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
         temp_name: str | None = None
         try:
-            fd, temp_name = tempfile.mkstemp(
-                dir=str(self.path.parent), prefix=f".{self.path.name}.", suffix=".tmp"
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if not self._temp_swept:
+                self._temp_swept = True
+                sweep_stale_temp_siblings(self.path, keep_newer=True)
+            temp_name = str(atomic_temp_path(self.path))
+            with open(temp_name, "w", encoding="utf-8") as handle:
                 json.dump(self._document(), handle, sort_keys=True)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -191,6 +202,8 @@ class IncidentListenerState:
                     os.unlink(temp_name)
                 except FileNotFoundError:
                     pass
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def record_delivery_failure(
         self,

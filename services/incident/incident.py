@@ -46,6 +46,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Set, Tuple
 
+from services.foundation.reliable_delivery import sweep_stale_temp_siblings
+
 try:  # pragma: no cover - Linux production and CI provide fcntl.
     import fcntl
 except ImportError:  # pragma: no cover
@@ -902,29 +904,15 @@ class IncidentStore:
     def _sweep_stale_temp_files(self) -> List[Path]:
         """Remove partial atomic-write leftovers; call only under the write lock.
 
-        Rule: the only temp sibling a live writer owns is the deterministic
-        ``.<name>.tmp``; every other ``.<name>.*.tmp`` is a legacy random-name
-        leftover from a killed write.  Writers hold the exclusive flock, so no
-        in-flight write can be removed.  Cap: at most one temp file (the
-        deterministic one) can exist between writes, bounded by one store size.
+        Shared rule (``sweep_stale_temp_siblings``): the deterministic
+        ``.<name>.tmp`` and legacy random-name siblings of this store only, regular
+        files only, and a temp newer than the real file is kept and reported.
+        At most one temp file exists between writes, bounded by one store size.
         """
 
-        removed: List[Path] = []
         if self._path is None:
-            return removed
-        prefix = f".{self._path.name}."
-        try:
-            entries = list(os.scandir(self._path.parent))
-        except OSError:
-            return removed
-        for entry in entries:
-            if entry.name.startswith(prefix) and entry.name.endswith(".tmp") and entry.is_file(follow_symlinks=False):
-                try:
-                    os.unlink(entry.path)
-                    removed.append(Path(entry.path))
-                except OSError:
-                    continue
-        return removed
+            return []
+        return sweep_stale_temp_siblings(self._path, keep_newer=True)
 
     # ---- IncidentCase reads ----
 
