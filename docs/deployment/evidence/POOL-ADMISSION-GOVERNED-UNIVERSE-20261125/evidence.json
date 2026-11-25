@@ -27,7 +27,8 @@
     "bff_publisher_publish_route_pool_dataset_authority": "46 passed 7 skipped",
     "persona_cycle_demand_integration_open_demand_reconcile": "passed after boundary injection",
     "research_suite_full": "services/research on this branch (python 3.12 venv per branch-ci research job, pytest -n 8): 1263 passed, 38 skipped, 0 failed (2026-11-25)",
-    "research_pool_evolution_and_demand_integration": "test_pool_evolution_integration.py + test_persona_cycle_demand_integration.py: 10 passed"
+    "research_pool_evolution_and_demand_integration": "test_pool_evolution_integration.py + test_persona_cycle_demand_integration.py: 10 passed",
+    "research_suite_full_after_dev_merge": "After merging dev (cb3fed99a), services/research in 3 bounded batches (load avg ~32 on 12 cores, pytest -n 8): 1269 passed + 3 failed under xdist load (test_vectorbt_intraday flatten_closes_actual_position_when_cash_limited[days0], test_retrain_oos_gate real_search_then_rejected_oos_window, one more in those two files) which pass when the two files are rerun serially (51 passed); total 1272 passed, 38 skipped. Those files are not touched by this task."
   },
   "changed_assertions": [
     "test_empty_pool_keeps_its_last_approved_universe...: outside reason now candidate_outside_governed_market_boundary (paper rule changed by operator decision); approved_universe assertion replaced by universe_rule assertions",
