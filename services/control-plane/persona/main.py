@@ -263,7 +263,12 @@ async def persona_lifespan(app):
             auth_mark = authorization.set("Bearer " + token)
             tenant_mark = selected_tenant.set(persona["tenant_id"])
             try:
-                return client.list_all()
+                # Bounded background read (own per-page and total budget, not the 2 s interactive limit).
+                return client.read_match_pages(
+                    page_size=int(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_SIZE", "100")),
+                    max_pages=int(os.getenv("PERSONA_DISCOVERY_SEED_MAX_PAGES", "20")),
+                    page_timeout_seconds=float(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_TIMEOUT_SECONDS", "10")),
+                    budget_seconds=float(os.getenv("PERSONA_DISCOVERY_SEED_BUDGET_SECONDS", "60")))
             finally:
                 selected_tenant.reset(tenant_mark)
                 authorization.reset(auth_mark)

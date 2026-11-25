@@ -179,7 +179,7 @@ class PoolAutonomyCycle:
                 actions = [self._execute_match(persona, demand, m) for m in found["matches"]
                            if (m["match_id"], m["recommended_action"]["type"]) not in done]
                 backfill = list(found.get("backfill_datasets") or [])
-                if backfill and not found["matches"] and (None, "request_data_backfill") not in done:
+                if backfill and not found["matches"] and not found.get("partial") and (None, "request_data_backfill") not in done:
                     actions.append(self._execute_match(persona, demand, {
                         "match_id": None, "matched_object_id": None, "matched_object_type": "demand", "score": None,
                         "recommended_action": {"type": "request_data_backfill", "reason": found.get("reason") or "required_data_unavailable"},
@@ -187,6 +187,9 @@ class PoolAutonomyCycle:
                 record = {"run_at": self.now(), "matched": len(found["matches"]), "excluded": found["excluded"],
                           "candidates_considered": found["candidates_considered"], "reason": found.get("reason"),
                           "actions": actions}
+                if found.get("partial"):
+                    record.update(partial=True, seeds_seen=found.get("seeds_seen"), seed_pages=found.get("seed_pages"),
+                                  partial_reason=found.get("partial_reason"))
             except Exception as exc:  # noqa: BLE001 - fail closed, record why
                 record = {"run_at": self.now(), "matched": 0, "excluded": [], "candidates_considered": 0,
                           "reason": f"discovery_unavailable:{type(exc).__name__}: {str(exc)[:160]}", "actions": []}
@@ -530,11 +533,19 @@ class HttpPoolCyclePorts(PoolPublishPort):
         sources = self.discovery_loader(persona)
         # Negative memory is the seed store's own verdict (carried on each seed); the persona's
         # own failed families arrive through the demand's tried_families.
-        return module.discover_for_demand(
+        seeds = sources.get("seeds") or []
+        found = module.discover_for_demand(
             persona, demand, route_policy=sources.get("route_policy"), capability_snapshot=sources.get("capability_snapshot"),
-            strategy_seeds=sources.get("seeds") or [],
+            strategy_seeds=seeds,
             strategy_specs=(self.read_strategy_specs(persona) if sources.get("specs") is None else sources["specs"]),
             created_at=self.now_iso(), discovery_session_id="psd-demand-" + demand["demand_id"])
+        if getattr(seeds, "partial", False):
+            # The seed read stopped at its cap: say so, with how much was seen, and never report "no match".
+            found = {**found, "partial": True, "seeds_seen": len(seeds), "seed_pages": getattr(seeds, "pages", None),
+                     "partial_reason": getattr(seeds, "stop_reason", None)}
+            if not found["matches"]:
+                found["reason"] = f"partial_seed_read:{len(seeds)}_seeds_seen_no_match_yet"
+        return found
 
     @staticmethod
     def now_iso():

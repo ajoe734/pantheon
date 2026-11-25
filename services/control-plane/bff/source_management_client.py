@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import time
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -104,6 +105,16 @@ def _safe_json(raw: str) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {"data": loaded}
 
 
+class SeedMatchRead(list):
+    """Seed rows read for discovery plus how complete the read was."""
+
+    def __init__(self, rows: Any = (), *, pages: int = 0, partial: bool = False, stop_reason: Optional[str] = None) -> None:
+        super().__init__(rows)
+        self.pages = pages
+        self.partial = partial
+        self.stop_reason = stop_reason
+
+
 class SourceManagementClient:
     """Client for source-ingest management and command routes (SD-SRCM-03)."""
 
@@ -160,6 +171,7 @@ class SourceManagementClient:
         idempotency_key: Optional[str] = None,
         require_auth: bool = False,
         headers_override: Optional[Dict[str, str]] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not self._base_url:
             raise SourceManagementClientError(
@@ -183,7 +195,7 @@ class SourceManagementClient:
             method=method,
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_seconds if timeout_seconds is not None else self._timeout) as resp:
                 raw_text = resp.read().decode("utf-8").strip()
                 return _safe_json(raw_text)
         except urllib.error.HTTPError as exc:
@@ -331,10 +343,10 @@ class SourceManagementClient:
             headers["X-Idempotency-Key"] = idempotency_key
         return headers
 
-    def _seed_request(self, method: str, path: str, *, body: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+    def _seed_request(self, method: str, path: str, *, body: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None, params: Optional[Dict[str, Any]] = None, timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
         headers = self._seed_headers(idempotency_key=idempotency_key)
         try:
-            return self._http_request(method, path, body=body, headers_override=headers)
+            return self._http_request(method, path, body=body, params=params, headers_override=headers, timeout_seconds=timeout_seconds)
         except SourceManagementClientError as exc:
             if exc.error_code in _SEED_REVIEW_ERROR_CODES:
                 raise StrategySpecSeedReviewError(exc.error_code, exc.message) from exc
@@ -345,6 +357,42 @@ class SourceManagementClient:
     def list_all(self) -> List[StrategySpecSeed]:
         resp = self._seed_request("GET", "/api/source-ingest/management/strategy-seeds")
         return [StrategySpecSeed.from_dict(item) for item in (resp.get("items") or []) if isinstance(item, Mapping)]
+
+    def read_match_pages(
+        self,
+        *,
+        page_size: int = 100,
+        max_pages: int = 20,
+        page_timeout_seconds: float = 10.0,
+        budget_seconds: float = 60.0,
+        clock: Any = time.monotonic,
+    ) -> "SeedMatchRead":
+        """Background read of the match projection, one bounded page at a time.
+
+        Separate from the 2 s interactive limit: each page gets ``page_timeout_seconds`` and the
+        whole read ``budget_seconds`` / ``max_pages``. Stopping on either cap leaves ``partial``
+        set with the number of seeds seen; a page that fails raises, so an unreachable or denied
+        owner is never mistaken for an empty store.
+        """
+        started = clock()
+        rows: List[Dict[str, Any]] = []
+        token: Optional[str] = None
+        pages = 0
+        while True:
+            if pages >= max_pages:
+                return SeedMatchRead(rows, pages=pages, partial=True, stop_reason="page_cap")
+            if pages and clock() - started >= budget_seconds:
+                return SeedMatchRead(rows, pages=pages, partial=True, stop_reason="time_budget")
+            resp = self._seed_request(
+                "GET", "/api/source-ingest/management/strategy-seeds",
+                params={"page_size": page_size, "page_token": token, "fields": "match"},
+                timeout_seconds=page_timeout_seconds,
+            )
+            pages += 1
+            rows.extend(item for item in (resp.get("items") or []) if isinstance(item, Mapping))
+            token = resp.get("next_page_token")
+            if not token:
+                return SeedMatchRead(rows, pages=pages, partial=False, stop_reason=None)
 
     def get(self, seed_id: str) -> Optional[StrategySpecSeed]:
         encoded = urllib.parse.quote(seed_id, safe="")
