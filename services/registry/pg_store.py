@@ -1000,6 +1000,44 @@ class PostgresRegistryStore:
         )
         return items, total, token
 
+    def list_card_admission_drafts(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[RegistryEntry]:
+        """At most ``limit`` admissible card drafts, filtered inside Postgres (never the draft table).
+
+        Predicate: strategy_spec, draft, ``metadata.strategy_spec.metadata.card_wiring.status
+        == 'gate_ready'`` and ``metadata.tenant_id``; ordered by ``registry_id`` with a keyset
+        cursor. Non-matching drafts are neither fetched nor decoded. Legacy JSON-string payloads
+        are not card drafts and are excluded by the object-type guard.
+        """
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, "strategy_spec")
+        where = [
+            "jsonb_typeof(payload) = 'object'",
+            f"({visible_sql})",
+            "payload ->> 'artifact_state' = 'draft'",
+            "payload #>> '{metadata,strategy_spec,metadata,card_wiring,status}' = 'gate_ready'",
+            "payload #>> '{metadata,tenant_id}' = %s",
+        ]
+        args: list[Any] = list(params) + [tenant_id]
+        if after_registry_id:
+            where.append("payload ->> 'registry_id' > %s")
+            args.append(after_registry_id)
+        sql = (
+            f"SELECT (payload)::text FROM {self._entries.table} WHERE {' AND '.join(where)} "
+            f"ORDER BY payload ->> 'registry_id' ASC LIMIT {int(limit)}"
+        )
+        with self._entries._use_conn(None) as conn:
+            rows = conn.execute(sql, tuple(args)).fetchall()
+        return [
+            RegistryEntry.from_dict(json.loads(r[0] if not isinstance(r, dict) else next(iter(r.values()))))
+            for r in rows
+        ]
+
     def _has_legacy_string_payloads(self) -> bool:
         with self._entries._use_conn(None) as conn:
             cur = conn.execute(
