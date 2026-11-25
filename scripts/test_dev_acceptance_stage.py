@@ -151,6 +151,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
     # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
     assert [r["id"] for r in results] == [
         "check:deployed-pair-identity",
+        "probe:daily-bars-volume",
         "probe:meeting-action-followthrough",
         "probe:meeting-review-disposition",
         "probe:mgmt-strategy-meeting-research-readable",
