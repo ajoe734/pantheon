@@ -44,12 +44,14 @@ import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from services.telemetry.heartbeat_retention import (
+    CANONICAL_FILL_AND_REJECTION_EVENT_TYPES,
     CANONICAL_TELEMETRY_TABLE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_INCIDENT_CASES_TABLE,
     DEFAULT_INFRA_HEALTH_RETENTION_DAYS,
     DEFAULT_POSTMORTEMS_TABLE,
     DEFAULT_RAW_RETENTION_DAYS,
+    DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS,
     HEARTBEAT_EVENT_TYPE,
     HEARTBEAT_READERS,
     HEARTBEAT_SUMMARY_TABLE,
@@ -57,15 +59,22 @@ from services.telemetry.heartbeat_retention import (
     INFRA_HEALTH_EVENT_TYPE,
     INFRA_HEALTH_RETENTION_DAYS_ENV,
     INGESTED_SEQ_CONSUMERS,
+    PERMANENT_TELEMETRY_EVENT_TYPES,
     RAW_RETENTION_DAYS_ENV,
+    TELEMETRY_EVENTS_READERS,
+    TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
     HeartbeatRetentionError,
     HeartbeatRetentionReaderBlocker,
+    _telemetry_events_14d_prunable_where_sql,
     check_infra_health_readers_against_retention_window,
     check_readers_against_retention_window,
+    check_telemetry_events_readers_against_retention_window,
     ensure_heartbeat_summary_schema,
     parse_infra_health_retention_days,
     parse_retention_days,
+    parse_telemetry_events_retention_days,
     resolve_protected_infrastructure_health_event_ids,
+    resolve_protected_telemetry_anchor_event_ids,
     resolve_safe_ingested_seq_ceiling,
     run_heartbeat_retention_on_connection,
 )
@@ -218,11 +227,16 @@ async def _inspect_telemetry_events_plan(
     infra_cutoff_dt: datetime,
     infra_cutoff_iso: str,
     effective_infra_days: float,
+    telemetry_cutoff_dt: datetime,
+    telemetry_cutoff_iso: str,
+    effective_telemetry_days: float,
     safe_seq: int,
     protected_ids: list[str],
+    anchor_ids: set[str],
     ceiling_info: Mapping[str, Any],
     reader_check: Mapping[str, Any],
     infra_reader_check: Mapping[str, Any],
+    telemetry_reader_check: Mapping[str, Any],
     disk_info: Mapping[str, Any],
 ) -> dict[str, Any]:
     size_row = await conn.fetchrow(
@@ -239,58 +253,78 @@ async def _inspect_telemetry_events_plan(
     dead_tuples_before = max(0, int(size_row["dead_tuples"] or 0)) if size_row else 0
     toast_bytes_before = max(0, table_bytes_before - heap_bytes_before - index_bytes_before)
 
+    all_protected_14d_ids = sorted(set(protected_ids) | set(anchor_ids))
+    prunable_14d_sql = _telemetry_events_14d_prunable_where_sql(
+        "e",
+        cutoff_param="$5",
+        safe_seq_param="$2",
+        protected_ids_param="$6",
+        permanent_types_param="$7",
+        canonical_fill_types_param="$8",
+    )
+
     counts_row = await conn.fetchrow(
-        """
+        f"""
         SELECT COUNT(*)::bigint AS rows_total,
-               COUNT(*) FILTER (WHERE event_type = 'heartbeat')::bigint AS heartbeat_rows_total,
-               COUNT(*) FILTER (WHERE event_type = 'infrastructure_health')::bigint AS infra_health_rows_total,
+               COUNT(*) FILTER (WHERE e.event_type = 'heartbeat')::bigint AS heartbeat_rows_total,
+               COUNT(*) FILTER (WHERE e.event_type = 'infrastructure_health')::bigint AS infra_health_rows_total,
                COUNT(*) FILTER (
-                   WHERE event_type = 'heartbeat'
-                     AND created_at < $1
-                     AND ingested_seq <= $2
+                   WHERE e.event_type = 'heartbeat'
+                     AND e.created_at < $1
+                     AND e.ingested_seq <= $2
                )::bigint AS heartbeat_rows_to_delete,
                COUNT(*) FILTER (
-                   WHERE event_type = 'infrastructure_health'
-                     AND created_at < $3
-                     AND ingested_seq <= $2
-                     AND NOT (event_id = ANY($4::text[]))
+                   WHERE e.event_type = 'infrastructure_health'
+                     AND e.created_at < $3
+                     AND e.ingested_seq <= $2
+                     AND NOT (e.event_id = ANY($4::text[]))
                )::bigint AS infra_health_rows_to_delete,
-               COALESCE(SUM(octet_length(payload::text)), 0)::bigint AS payload_bytes_total,
+               COUNT(*) FILTER (
+                   WHERE {prunable_14d_sql}
+               )::bigint AS telemetry_events_rows_to_delete,
+               COALESCE(SUM(octet_length(e.payload::text)), 0)::bigint AS payload_bytes_total,
                COALESCE(
-                   SUM(octet_length(payload::text)) FILTER (
+                   SUM(octet_length(e.payload::text)) FILTER (
                        WHERE (
-                           event_type = 'heartbeat'
-                           AND created_at < $1
-                           AND ingested_seq <= $2
+                           e.event_type = 'heartbeat'
+                           AND e.created_at < $1
+                           AND e.ingested_seq <= $2
                        )
                        OR (
-                           event_type = 'infrastructure_health'
-                           AND created_at < $3
-                           AND ingested_seq <= $2
-                           AND NOT (event_id = ANY($4::text[]))
+                           e.event_type = 'infrastructure_health'
+                           AND e.created_at < $3
+                           AND e.ingested_seq <= $2
+                           AND NOT (e.event_id = ANY($4::text[]))
+                       )
+                       OR (
+                           {prunable_14d_sql}
                        )
                    ),
                    0
                )::bigint AS payload_bytes_to_delete,
                COUNT(
                    DISTINCT CASE
-                       WHEN event_type = 'heartbeat' AND created_at < $1 AND ingested_seq <= $2 THEN
+                       WHEN e.event_type = 'heartbeat' AND e.created_at < $1 AND e.ingested_seq <= $2 THEN
                            COALESCE(
-                               NULLIF(trim(payload->>'runtime_id'), ''),
-                               NULLIF(trim(payload->'metadata'->>'runtime_id'), ''),
+                               NULLIF(trim(e.payload->>'runtime_id'), ''),
+                               NULLIF(trim(e.payload->'metadata'->>'runtime_id'), ''),
                                'unknown'
-                           ) || '|' || (date_trunc('hour', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::text
+                           ) || '|' || (date_trunc('hour', e.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::text
                        ELSE NULL
                    END
                )::bigint AS hours_to_summarize,
-               MIN(created_at) AS min_created_at,
-               MAX(created_at) AS max_created_at
-        FROM public.telemetry_events
+               MIN(e.created_at) AS min_created_at,
+               MAX(e.created_at) AS max_created_at
+        FROM public.telemetry_events e
         """,
         cutoff_dt,
         safe_seq,
         infra_cutoff_dt,
         protected_ids,
+        telemetry_cutoff_dt,
+        all_protected_14d_ids,
+        list(PERMANENT_TELEMETRY_EVENT_TYPES),
+        list(CANONICAL_FILL_AND_REJECTION_EVENT_TYPES),
     )
 
     rows_total = int(counts_row["rows_total"] or 0) if counts_row else 0
@@ -300,7 +334,14 @@ async def _inspect_telemetry_events_plan(
     infra_health_rows_to_delete = (
         int(counts_row["infra_health_rows_to_delete"] or 0) if counts_row else 0
     )
-    rows_to_delete = heartbeat_rows_to_delete + infra_health_rows_to_delete
+    telemetry_events_rows_to_delete = (
+        int(counts_row["telemetry_events_rows_to_delete"] or 0) if counts_row else 0
+    )
+    rows_to_delete = (
+        heartbeat_rows_to_delete
+        + infra_health_rows_to_delete
+        + telemetry_events_rows_to_delete
+    )
     rows_to_retain = max(0, rows_total - rows_to_delete)
     heartbeat_rows_to_retain = max(0, heartbeat_rows_total - heartbeat_rows_to_delete)
     infra_health_rows_to_retain = max(0, infra_health_rows_total - infra_health_rows_to_delete)
@@ -369,21 +410,26 @@ async def _inspect_telemetry_events_plan(
         "summary_table": HEARTBEAT_SUMMARY_TABLE,
         "retention_days": effective_days,
         "infra_health_retention_days": effective_infra_days,
+        "telemetry_events_retention_days": effective_telemetry_days,
         "cutoff_at": cutoff_iso,
         "infra_health_cutoff_at": infra_cutoff_iso,
+        "telemetry_events_cutoff_at": telemetry_cutoff_iso,
         "safe_ingested_seq": safe_seq,
         "consumer_checkpoints": dict(ceiling_info["consumer_checkpoints"]),
         "ingested_seq_consumers": list(INGESTED_SEQ_CONSUMERS),
         "reader_check": dict(reader_check),
         "infra_health_reader_check": dict(infra_reader_check),
+        "telemetry_events_reader_check": dict(telemetry_reader_check),
         "protected_infra_health_event_ids_count": len(protected_ids),
         "protected_infra_health_event_ids": list(protected_ids),
+        "protected_telemetry_anchor_event_ids_count": len(anchor_ids),
         "rows_total": rows_total,
         "heartbeat_rows_total": heartbeat_rows_total,
         "infra_health_rows_total": infra_health_rows_total,
         "rows_to_delete": rows_to_delete,
         "heartbeat_rows_to_delete": heartbeat_rows_to_delete,
         "infra_health_rows_to_delete": infra_health_rows_to_delete,
+        "telemetry_events_rows_to_delete": telemetry_events_rows_to_delete,
         "rows_to_retain": rows_to_retain,
         "heartbeat_rows_to_retain": heartbeat_rows_to_retain,
         "infra_health_rows_to_retain": infra_health_rows_to_retain,
@@ -517,6 +563,7 @@ async def inspect_reclaim_plan(
     now: datetime | None = None,
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
+    telemetry_events_retention_days: float | None = None,
     disk_path: str | Path | None = None,
     free_disk_bytes_override: int | None = None,
     projection_schema: str = "trade_journey_projection",
@@ -524,6 +571,7 @@ async def inspect_reclaim_plan(
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
     infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    telemetry_events_readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
     incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
     postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
     incident_store_paths: Sequence[str | Path] | None = None,
@@ -534,16 +582,25 @@ async def inspect_reclaim_plan(
     selected_tables = await _resolve_effective_reclaim_tables(conn, tables)
     effective_days = parse_retention_days(retention_days)
     effective_infra_days = parse_infra_health_retention_days(infra_health_retention_days)
+    effective_telemetry_days = parse_telemetry_events_retention_days(
+        telemetry_events_retention_days
+    )
     reference_now = _coerce_utc(now) if now is not None else _utc_now()
     cutoff_dt = reference_now - timedelta(days=effective_days)
     cutoff_iso = _format_rfc3339(cutoff_dt) or ""
     infra_cutoff_dt = reference_now - timedelta(days=effective_infra_days)
     infra_cutoff_iso = _format_rfc3339(infra_cutoff_dt) or ""
+    telemetry_cutoff_dt = reference_now - timedelta(days=effective_telemetry_days)
+    telemetry_cutoff_iso = _format_rfc3339(telemetry_cutoff_dt) or ""
 
     reader_check = check_readers_against_retention_window(effective_days, readers=readers)
     infra_reader_check = check_infra_health_readers_against_retention_window(
         effective_infra_days,
         readers=infra_health_readers,
+    )
+    telemetry_reader_check = check_telemetry_events_readers_against_retention_window(
+        effective_telemetry_days,
+        readers=telemetry_events_readers,
     )
     ceiling_info = await resolve_safe_ingested_seq_ceiling(
         conn,
@@ -563,6 +620,9 @@ async def inspect_reclaim_plan(
             extra_protected_event_ids=extra_protected_event_ids,
         )
     )
+    anchor_ids: set[str] = set()
+    if CANONICAL_TELEMETRY_TABLE in selected_tables:
+        anchor_ids = await resolve_protected_telemetry_anchor_event_ids(conn)
 
     disk_info = resolve_disk_usage(
         disk_path,
@@ -580,11 +640,16 @@ async def inspect_reclaim_plan(
                 infra_cutoff_dt=infra_cutoff_dt,
                 infra_cutoff_iso=infra_cutoff_iso,
                 effective_infra_days=effective_infra_days,
+                telemetry_cutoff_dt=telemetry_cutoff_dt,
+                telemetry_cutoff_iso=telemetry_cutoff_iso,
+                effective_telemetry_days=effective_telemetry_days,
                 safe_seq=safe_seq,
                 protected_ids=protected_ids,
+                anchor_ids=anchor_ids,
                 ceiling_info=ceiling_info,
                 reader_check=reader_check,
                 infra_reader_check=infra_reader_check,
+                telemetry_reader_check=telemetry_reader_check,
                 disk_info=disk_info,
             )
         elif tbl == CANONICAL_EVENT_RECEIPTS_TABLE:
@@ -710,6 +775,7 @@ async def run_reclaim_on_connection(
     now: datetime | None = None,
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
+    telemetry_events_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = None,
     statement_timeout_ms: int = 30000,
@@ -723,6 +789,7 @@ async def run_reclaim_on_connection(
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
     infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    telemetry_events_readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
     incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
     postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
     incident_store_paths: Sequence[str | Path] | None = None,
@@ -738,6 +805,7 @@ async def run_reclaim_on_connection(
         now=now,
         retention_days=retention_days,
         infra_health_retention_days=infra_health_retention_days,
+        telemetry_events_retention_days=telemetry_events_retention_days,
         disk_path=disk_path,
         free_disk_bytes_override=free_disk_bytes_override,
         projection_schema=projection_schema,
@@ -745,6 +813,7 @@ async def run_reclaim_on_connection(
         require_controller_checkpoint=require_controller_checkpoint,
         readers=readers,
         infra_health_readers=infra_health_readers,
+        telemetry_events_readers=telemetry_events_readers,
         incident_cases_table=incident_cases_table,
         postmortems_table=postmortems_table,
         incident_store_paths=incident_store_paths,
@@ -799,6 +868,7 @@ async def run_reclaim_on_connection(
                 now=now,
                 retention_days=plan["retention_days"],
                 infra_health_retention_days=plan["infra_health_retention_days"],
+                telemetry_events_retention_days=plan["telemetry_events_retention_days"],
                 batch_size=batch_size,
                 max_batches=max_batches,
                 statement_timeout_ms=statement_timeout_ms,
@@ -807,6 +877,7 @@ async def run_reclaim_on_connection(
                 require_controller_checkpoint=require_controller_checkpoint,
                 readers=readers,
                 infra_health_readers=infra_health_readers,
+                telemetry_events_readers=telemetry_events_readers,
                 incident_cases_table=incident_cases_table,
                 postmortems_table=postmortems_table,
                 incident_store_paths=incident_store_paths,
@@ -875,6 +946,9 @@ async def run_reclaim_on_connection(
                 "infra_health_rows_deleted_actual": (
                     retention_dict["infra_health_rows_deleted"] if retention_dict else 0
                 ),
+                "telemetry_events_rows_deleted_actual": (
+                    retention_dict["telemetry_events_rows_deleted"] if retention_dict else 0
+                ),
                 "hours_summarized_actual": (
                     retention_dict["hours_summarized"] if retention_dict else 0
                 ),
@@ -936,6 +1010,7 @@ async def run_reclaim(
     now: datetime | None = None,
     retention_days: float | None = None,
     infra_health_retention_days: float | None = None,
+    telemetry_events_retention_days: float | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_batches: int | None = None,
     statement_timeout_ms: int = 30000,
@@ -949,6 +1024,7 @@ async def run_reclaim(
     require_controller_checkpoint: bool = False,
     readers: Sequence[Mapping[str, Any]] = HEARTBEAT_READERS,
     infra_health_readers: Sequence[Mapping[str, Any]] = INFRASTRUCTURE_HEALTH_READERS,
+    telemetry_events_readers: Sequence[Mapping[str, Any]] = TELEMETRY_EVENTS_READERS,
     incident_cases_table: str = DEFAULT_INCIDENT_CASES_TABLE,
     postmortems_table: str = DEFAULT_POSTMORTEMS_TABLE,
     incident_store_paths: Sequence[str | Path] | None = None,
@@ -971,6 +1047,7 @@ async def run_reclaim(
             now=now,
             retention_days=retention_days,
             infra_health_retention_days=infra_health_retention_days,
+            telemetry_events_retention_days=telemetry_events_retention_days,
             batch_size=batch_size,
             max_batches=max_batches,
             statement_timeout_ms=statement_timeout_ms,
@@ -984,6 +1061,7 @@ async def run_reclaim(
             require_controller_checkpoint=require_controller_checkpoint,
             readers=readers,
             infra_health_readers=infra_health_readers,
+            telemetry_events_readers=telemetry_events_readers,
             incident_cases_table=incident_cases_table,
             postmortems_table=postmortems_table,
             incident_store_paths=incident_store_paths,
@@ -1009,7 +1087,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     mode_group.add_argument(
         "--apply",
         action="store_true",
-        help="Summarize hours, delete expired raw heartbeats and unreferenced infrastructure_health rows in batches, and reclaim disk space.",
+        help="Summarize hours, delete expired raw heartbeats, infrastructure_health, and >14d prunable telemetry_events rows in batches, and reclaim disk space.",
     )
     parser.add_argument(
         "--dsn",
@@ -1042,6 +1120,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=f"Raw infrastructure_health retention window in days (defaults to {INFRA_HEALTH_RETENTION_DAYS_ENV} or {int(DEFAULT_INFRA_HEALTH_RETENTION_DAYS)}).",
+    )
+    parser.add_argument(
+        "--telemetry-events-retention-days",
+        type=float,
+        default=None,
+        help=f"Unreferenced non-permanent telemetry_events retention window in days (defaults to {TELEMETRY_EVENTS_RETENTION_DAYS_ENV} or {int(DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS)}).",
     )
     parser.add_argument(
         "--batch-size",
@@ -1117,6 +1201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 now=now_dt,
                 retention_days=args.retention_days,
                 infra_health_retention_days=args.infra_health_retention_days,
+                telemetry_events_retention_days=args.telemetry_events_retention_days,
                 batch_size=args.batch_size,
                 max_batches=args.max_batches,
                 statement_timeout_ms=args.statement_timeout_ms,

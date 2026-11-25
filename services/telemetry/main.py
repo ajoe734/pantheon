@@ -249,6 +249,8 @@ from .heartbeat_retention import (
     INFRA_HEALTH_RETENTION_DAYS_ENV,
     RAW_RETENTION_DAYS_ENV,
     RETENTION_ENABLED_ENV,
+    STATE_SNAPSHOT_RETENTION_DAYS_ENV,
+    TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
 )
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
@@ -919,13 +921,15 @@ def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
 
 
 def _build_retention_job() -> HeartbeatRetentionJob:
-    """Build the periodic raw heartbeat and infrastructure_health retention job for canonical Postgres."""
+    """Build the periodic raw heartbeat, infrastructure_health, state_snapshot, and 14d telemetry_events retention job for canonical Postgres."""
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     enabled = _env_bool(RETENTION_ENABLED_ENV, default=True) and bool(db_dsn)
     return HeartbeatRetentionJob(
         db_dsn,
         retention_days=os.getenv(RAW_RETENTION_DAYS_ENV) or None,
         infra_health_retention_days=os.getenv(INFRA_HEALTH_RETENTION_DAYS_ENV) or None,
+        state_snapshot_retention_days=os.getenv(STATE_SNAPSHOT_RETENTION_DAYS_ENV) or None,
+        telemetry_events_retention_days=os.getenv(TELEMETRY_EVENTS_RETENTION_DAYS_ENV) or None,
         enabled=enabled,
     )
 
