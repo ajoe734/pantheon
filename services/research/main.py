@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import copy
 import asyncio
 import hashlib
+import heapq
 import json
 import json as _json
 import logging
@@ -3513,6 +3515,56 @@ def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> Li
         if (not task_id or r.get("task_id") == task_id)
         and (not status or str(r.get("status") or "").lower() == status.lower())
     ]
+
+
+RUN_PAGE_MAX = 200
+
+
+def _run_page_key(run: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(run.get("created_at") or ""), str(run.get("run_id") or run.get("id") or ""))
+
+
+def _encode_run_cursor(key: Tuple[str, str]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(list(key)).encode("utf-8")).decode("ascii")
+
+
+def _decode_run_cursor(cursor: str) -> Tuple[str, str]:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+        if isinstance(value, list) and len(value) == 2 and all(isinstance(v, str) for v in value):
+            return value[0], value[1]
+    except (ValueError, UnicodeError):
+        pass
+    raise HTTPException(status_code=422, detail="invalid cursor")
+
+
+@app.get("/api/research-orchestrator/run-page")
+def list_tenant_run_page(
+    limit: int = Query(default=50, ge=1, le=RUN_PAGE_MAX),
+    cursor: Optional[str] = None,
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> Dict[str, Any]:
+    """Runs of the caller's tenant, newest first (created_at, run_id), at most ``RUN_PAGE_MAX``.
+
+    Only runs stamped with this tenant are returned. ``GET .../runs`` keeps its
+    unscoped list for its existing callers.
+    """
+    after = _decode_run_cursor(cursor) if cursor else None
+    mine = (
+        r for r in store.list_runs()
+        if str(r.get("tenant_id") or "").strip() == tenant_id
+        and (after is None or _run_page_key(r) < after)
+    )
+    window = heapq.nlargest(limit + 1, mine, key=_run_page_key)
+    items = window[:limit]
+    return {
+        "tenant_id": tenant_id,
+        "items": items,
+        "count": len(items),
+        "limit": limit,
+        "order": "created_at_desc",
+        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > limit else None,
+    }
 
 
 @app.get("/api/research-orchestrator/runs/{run_id}")
