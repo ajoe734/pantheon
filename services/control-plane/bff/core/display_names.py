@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from .owner_reads import cached_owner_call, selected_tenant, shared_persona_directory_list
 
@@ -93,6 +93,8 @@ class DisplayNameResolver:
         self._strategy_loader = strategy_loader
         self._personas: Optional[Dict[str, str]] = None
         self._strategies: Optional[Dict[str, str]] = None
+        self._persona_error: Optional[str] = None
+        self._strategy_error: Optional[str] = None
 
     # -- directory reads (each at most once per resolver) --------------------
     def _persona_names(self) -> Dict[str, str]:
@@ -108,6 +110,7 @@ class DisplayNameResolver:
                         if pid and label:
                             names[pid] = label
                 except Exception as exc:  # noqa: BLE001 - names degrade to ids, rows stay visible
+                    self._persona_error = f"{type(exc).__name__}: {exc}"
                     log.warning("persona display-name read failed: %s", exc)
             self._personas = names
         return self._personas
@@ -118,17 +121,46 @@ class DisplayNameResolver:
             if self._strategy_loader is not None:
                 try:
                     for sid, label in (self._strategy_loader() or {}).items():
+                        clean_sid = _text(sid)
                         text = _text(
                             (label.get("title") or label.get("name"))
                             if isinstance(label, Mapping)
                             else label
                         )
-                        if _text(sid) and text:
-                            names[_text(sid)] = text
+                        if clean_sid and text:
+                            names[clean_sid] = text
                 except Exception as exc:  # noqa: BLE001
+                    self._strategy_error = f"{type(exc).__name__}: {exc}"
                     log.warning("strategy display-name read failed: %s", exc)
             self._strategies = names
         return self._strategies
+
+    @property
+    def errors(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        if self._persona_error:
+            out["personas"] = self._persona_error
+        if self._strategy_error:
+            out["strategies"] = self._strategy_error
+        return out
+
+    @property
+    def failed(self) -> bool:
+        return bool(self._persona_error or self._strategy_error)
+
+    def surface(self) -> Dict[str, Any]:
+        errors = self.errors
+        if errors:
+            return {
+                "status": "degraded",
+                "source": "display_name_resolver",
+                "reason": "; ".join(f"{k}: {v}" for k, v in sorted(errors.items())),
+                "errors": errors,
+            }
+        return {
+            "status": "ok",
+            "source": "display_name_resolver",
+        }
 
     def _binding_ids(self) -> Dict[str, Tuple[str, str]]:
         """``binding_id -> (persona_id, strategy_id)`` from one runtime-binding read."""
@@ -232,6 +264,86 @@ class DisplayNameResolver:
             if not missing:
                 out = re.sub(re.escape(clean), lambda _m, n=name: n, out)
         return out if out != text else None
+
+    def annotate_lineage_nodes(
+        self,
+        nodes: Iterable[Any],
+        edges: Iterable[Any] = (),
+    ) -> List[Dict[str, Any]]:
+        """Annotate lineage nodes with ``display_name`` and ``name_missing``.
+
+        * ``Persona``, ``Strategy`` and ``Artifact`` nodes resolve through the
+          persona/strategy directory (one bounded read per directory per request).
+        * A ``CapitalPool`` or run (``Experiment``) node connected to exactly one
+          owning strategy gets ``"{strategy_name} ({kind})"``.
+        * Any node the resolver cannot name has ``display_name: None`` and
+          ``name_missing: True``; ``label`` always stays the node ``id``.
+        """
+        node_list: List[Dict[str, Any]] = [
+            dict(n) for n in (nodes or ()) if isinstance(n, Mapping)
+        ]
+        direct_strategy_by_node: Dict[str, str] = {}
+        owning_strategies: Dict[str, Set[str]] = {}
+        for node in node_list:
+            nid = _text(node.get("id") or node.get("artifact_id"))
+            if not nid:
+                continue
+            raw_type = _text(node.get("type") or node.get("artifact_type"))
+            kind = raw_type.lower()
+            sid = _text(node.get("strategy_id"))
+            if not sid and kind in ("strategy", "strategy_spec") and not nid.startswith("reg-"):
+                sid = nid
+            if sid:
+                direct_strategy_by_node[nid] = sid
+                owning_strategies.setdefault(nid, set()).add(sid)
+
+        for edge in edges or ():
+            if not isinstance(edge, Mapping):
+                continue
+            frm = _text(edge.get("from") or edge.get("from_artifact_id"))
+            to = _text(edge.get("to") or edge.get("to_artifact_id"))
+            if not frm or not to:
+                continue
+            if frm in direct_strategy_by_node:
+                owning_strategies.setdefault(to, set()).add(direct_strategy_by_node[frm])
+            if to in direct_strategy_by_node:
+                owning_strategies.setdefault(frm, set()).add(direct_strategy_by_node[to])
+
+        for node in node_list:
+            nid = _text(node.get("id") or node.get("artifact_id"))
+            if nid:
+                node.setdefault("id", nid)
+                node["label"] = nid
+            raw_type = _text(node.get("type") or node.get("artifact_type"))
+            kind = raw_type.lower()
+            display_name: Optional[str] = None
+            name_missing = True
+            if kind == "persona":
+                pid = _text(node.get("persona_id") or nid)
+                if pid:
+                    resolved, missing = self.persona(pid)
+                    if not missing and resolved and resolved != pid:
+                        display_name = resolved
+                        name_missing = False
+            elif kind in ("strategy", "strategy_spec", "artifact", "execution_bundle", "strategy_bundle"):
+                sid = _text(node.get("strategy_id") or nid)
+                if sid:
+                    resolved, missing = self.strategy(sid)
+                    if not missing and resolved and resolved != sid:
+                        display_name = resolved
+                        name_missing = False
+            elif kind in ("capitalpool", "capital_pool", "experiment", "run", "source_run"):
+                owners = owning_strategies.get(nid, set())
+                if len(owners) == 1:
+                    sid = next(iter(owners))
+                    resolved, missing = self.strategy(sid)
+                    if not missing and resolved and resolved != sid:
+                        kind_label = raw_type or ("CapitalPool" if "pool" in kind else "Experiment")
+                        display_name = f"{resolved} ({kind_label})"
+                        name_missing = False
+            node["display_name"] = display_name
+            node["name_missing"] = name_missing
+        return node_list
 
 
 def annotate_subject_row(names: "DisplayNameResolver", row: Any, *, title_key: str = "title") -> Any:

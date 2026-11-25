@@ -173,3 +173,15 @@ def test_bff_lineage_requires_read_auth() -> None:
     client = _seeded_client()
     response = client.get("/bff/lineage")
     assert response.status_code == 401
+
+
+def test_bff_lineage_unresolvable_nodes_keep_id_label_and_mark_name_missing() -> None:
+    client = _seeded_client()
+    response = client.get("/bff/lineage", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200
+    nodes = response.json()["data"]["nodes"]
+    assert len(nodes) == 3
+    for node in nodes:
+        assert node["label"] == node["artifact_id"]
+        assert node["display_name"] is None
+        assert node["name_missing"] is True
