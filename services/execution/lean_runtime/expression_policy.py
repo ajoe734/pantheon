@@ -132,7 +132,10 @@ def _resolve_sizing_state(
     budget: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Compute effective account/per-name exposures, reservations and constraint caps."""
-    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+    from services.execution.lean_runtime.instrument_candidates import (
+        _sector_limit_for_key,
+        normalize_underlying_code,
+    )
 
     try:
         norm_underlying = normalize_underlying_code(underlying) if underlying else ""
@@ -289,14 +292,26 @@ def _resolve_sizing_state(
         signed_net_used = pos_signed_net + res_signed_net
 
     budget_u_map = budget.get("underlying_exposures")
-    existing_u_from_budget = Decimal(0)
-    if isinstance(budget_u_map, Mapping) and norm_underlying in budget_u_map and budget_u_map[norm_underlying] is not None:
-        existing_u_from_budget = _dec(budget_u_map[norm_underlying])
-    pos_u = underlying_gross_by_code.get(norm_underlying, Decimal(0))
-    res_u = res_underlying_gross.get(norm_underlying, Decimal(0))
-    folded_u = res_u if reservations_folded_in_budget else min(res_u, _dec(folded_res_u_map.get(norm_underlying) or 0))
-    unfolded_u = max(res_u - folded_u, Decimal(0))
-    existing_underlying_gross = max(existing_u_from_budget + unfolded_u, pos_u + res_u)
+    all_underlying_gross_by_code: dict[str, Decimal] = {}
+    if isinstance(budget_u_map, Mapping):
+        for k, v in budget_u_map.items():
+            if v is not None:
+                try:
+                    k_code = normalize_underlying_code(str(k)) if str(k).strip() else ""
+                except Exception:
+                    k_code = str(k).strip()
+                if k_code:
+                    all_underlying_gross_by_code[k_code] = _dec(v)
+    all_u_codes = set(all_underlying_gross_by_code.keys()) | set(underlying_gross_by_code.keys()) | set(res_underlying_gross.keys())
+    for u_code in all_u_codes:
+        pos_u_val = underlying_gross_by_code.get(u_code, Decimal(0))
+        res_u_val = res_underlying_gross.get(u_code, Decimal(0))
+        bud_u_val = all_underlying_gross_by_code.get(u_code, Decimal(0))
+        fold_u_val = res_u_val if reservations_folded_in_budget else min(res_u_val, _dec(folded_res_u_map.get(u_code) or 0))
+        unfold_u_val = max(res_u_val - fold_u_val, Decimal(0))
+        all_underlying_gross_by_code[u_code] = max(bud_u_val + unfold_u_val, pos_u_val + res_u_val)
+
+    existing_underlying_gross = all_underlying_gross_by_code.get(norm_underlying, Decimal(0))
 
     equity_raw = budget.get("equity")
     equity = _dec(equity_raw) if equity_raw is not None and _dec(equity_raw) > 0 else None
@@ -353,6 +368,125 @@ def _resolve_sizing_state(
         single_name_limit_dec = None
         remaining_by_single_name = None
 
+    # Sector exposure limit (max_sector_exposure)
+    max_sector_raw = budget.get("max_sector_exposure")
+    sector_by_u_raw = budget.get("sector_by_underlying")
+    sector_by_u: dict[str, str] = {}
+    if isinstance(sector_by_u_raw, Mapping):
+        for raw_u, raw_sec in sector_by_u_raw.items():
+            if raw_sec in (None, ""):
+                continue
+            try:
+                u_key = normalize_underlying_code(str(raw_u)) if str(raw_u).strip() else ""
+            except Exception:
+                u_key = str(raw_u).strip()
+            if u_key:
+                sector_by_u[u_key] = str(raw_sec).strip()
+    missing_sec_list = list(budget.get("missing_sector_underlyings") or budget.get("missing_sector_symbols") or [])
+    sector_code: str | None = sector_by_u.get(norm_underlying) if norm_underlying else None
+    sector_unavailable = False
+    max_sector_exposure_weight: Decimal | None = None
+    sector_limit_dec: Decimal | None = None
+    existing_sector_gross = Decimal(0)
+    remaining_by_sector: Decimal | None = None
+    if max_sector_raw not in (None, {}):
+        unclassified_held = [
+            u for u, n in all_underlying_gross_by_code.items() if n > 0 and u not in sector_by_u
+        ]
+        if (
+            bool(missing_sec_list)
+            or bool(unclassified_held)
+            or (norm_underlying and sector_code is None)
+            or equity is None
+        ):
+            sector_unavailable = True
+            sector_limit_dec = Decimal(0)
+            remaining_by_sector = Decimal(0)
+        else:
+            max_sector_exposure_weight = _sector_limit_for_key(max_sector_raw, sector_code)
+            if max_sector_exposure_weight is not None:
+                sector_limit_dec = max_sector_exposure_weight * equity
+                sec_from_u = sum(
+                    (
+                        notional
+                        for u, notional in all_underlying_gross_by_code.items()
+                        if sector_code is not None and sector_by_u.get(u) == sector_code
+                    ),
+                    Decimal(0),
+                )
+                sec_exp_map = budget.get("sector_exposures")
+                sec_from_budget = Decimal(0)
+                if (
+                    isinstance(sec_exp_map, Mapping)
+                    and sector_code is not None
+                    and sector_code in sec_exp_map
+                    and sec_exp_map[sector_code] is not None
+                ):
+                    sec_from_budget = _dec(sec_exp_map[sector_code]) * equity
+                existing_sector_gross = max(sec_from_u, sec_from_budget)
+                remaining_by_sector = max(sector_limit_dec - existing_sector_gross, Decimal(0))
+
+    # Turnover limit (turnover_limit / turnover_limit_notional)
+    turnover_limit_raw = budget.get("turnover_limit")
+    turnover_limit_notional_raw = budget.get("turnover_limit_notional")
+    turnover_unavailable = False
+    turnover_limit_mult: Decimal | None = None
+    turnover_limit_dec: Decimal | None = None
+    turnover_used_dec = Decimal(0)
+    remaining_by_turnover: Decimal | None = None
+    if turnover_limit_raw is not None or turnover_limit_notional_raw is not None:
+        if (
+            bool(budget.get("turnover_unavailable"))
+            or (
+                "turnover_used" in budget
+                and budget.get("turnover_used") is None
+                and budget.get("turnover_used_notional") is None
+            )
+            or (turnover_limit_notional_raw is None and (turnover_limit_raw is None or equity is None))
+        ):
+            turnover_unavailable = True
+            turnover_limit_mult = _dec(turnover_limit_raw) if turnover_limit_raw is not None else None
+            turnover_limit_dec = Decimal(0)
+            remaining_by_turnover = Decimal(0)
+        else:
+            turnover_limit_dec = (
+                _dec(turnover_limit_notional_raw)
+                if turnover_limit_notional_raw is not None
+                else (_dec(turnover_limit_raw) * equity)  # type: ignore[operator]
+            )
+            turnover_limit_mult = (
+                _dec(turnover_limit_raw)
+                if turnover_limit_raw is not None
+                else ((turnover_limit_dec / equity) if (equity is not None and equity > 0) else None)
+            )
+            if budget.get("turnover_used_notional") is not None:
+                base_t_used = _dec(budget["turnover_used_notional"])
+            elif budget.get("turnover_used") is not None and equity is not None:
+                base_t_used = _dec(budget["turnover_used"]) * equity
+            else:
+                base_t_used = Decimal(0)
+            turnover_used_dec = base_t_used + unfolded_res_gross
+            remaining_by_turnover = max(turnover_limit_dec - turnover_used_dec, Decimal(0))
+
+    raw_liq = budget.get("liquidity_constraints")
+    liquidity_constraints = dict(raw_liq) if isinstance(raw_liq, Mapping) and raw_liq else {}
+    raw_adv_map = budget.get("avg_daily_volume_by_underlying")
+    avg_daily_volume_by_underlying: dict[str, Decimal] = {}
+    if isinstance(raw_adv_map, Mapping):
+        for raw_u, raw_adv in raw_adv_map.items():
+            if raw_adv is None or isinstance(raw_adv, bool):
+                continue
+            try:
+                u_key = normalize_underlying_code(str(raw_u)) if str(raw_u).strip() else ""
+            except Exception:
+                u_key = str(raw_u).strip()
+            try:
+                adv_dec = _dec(raw_adv)
+            except Exception:
+                continue
+            if u_key and adv_dec > 0:
+                avg_daily_volume_by_underlying[u_key] = adv_dec
+
     has_cash_field = any(k in budget and budget.get(k) is not None for k in ("available_cash", "available_buying_power", "raw_cash"))
     if has_cash_field:
         avail_field = budget.get("available_buying_power")
@@ -402,7 +536,7 @@ def _resolve_sizing_state(
         spendable_cash = None
 
     effective_remaining_notional = remaining_by_gross_limit
-    for opt_rem in (remaining_by_leverage, remaining_by_net, remaining_by_single_name):
+    for opt_rem in (remaining_by_leverage, remaining_by_net, remaining_by_single_name, remaining_by_sector):
         if opt_rem is not None:
             effective_remaining_notional = min(effective_remaining_notional, opt_rem)
 
@@ -440,6 +574,19 @@ def _resolve_sizing_state(
         "max_single_name_weight": max_single_name_weight,
         "existing_underlying_gross": existing_underlying_gross,
         "underlying_same_dir_notional": underlying_same_dir_notional,
+        "sector_code": sector_code,
+        "sector_unavailable": sector_unavailable,
+        "sector_limit": sector_limit_dec,
+        "max_sector_exposure_weight": max_sector_exposure_weight,
+        "existing_sector_gross": existing_sector_gross,
+        "remaining_by_sector": remaining_by_sector,
+        "turnover_unavailable": turnover_unavailable,
+        "turnover_limit": turnover_limit_dec,
+        "turnover_limit_multiple": turnover_limit_mult,
+        "turnover_used": turnover_used_dec,
+        "remaining_by_turnover": remaining_by_turnover,
+        "liquidity_constraints": liquidity_constraints,
+        "avg_daily_volume_by_underlying": avg_daily_volume_by_underlying,
         "remaining_by_gross_limit": remaining_by_gross_limit,
         "remaining_by_leverage": remaining_by_leverage,
         "remaining_by_net": remaining_by_net,
@@ -543,6 +690,60 @@ def budget_unavailable_no_trade(
     return _no_trade(view, [], "candidates_unavailable", text)
 
 
+def _candidate_adv(
+    candidate: Mapping[str, Any],
+    sizing_state: Mapping[str, Any],
+    budget: Mapping[str, Any] | None = None,
+) -> Decimal | None:
+    liq = candidate.get("liquidity")
+    if isinstance(liq, Mapping):
+        raw_adv = liq.get("avg_daily_volume")
+        if raw_adv is None and candidate.get("kind") == "stock_future":
+            raw_adv = liq.get("volume")
+        if raw_adv is not None and not isinstance(raw_adv, bool):
+            try:
+                dec = _dec(raw_adv)
+                if dec > 0:
+                    return dec
+            except Exception:
+                pass
+    adv_map = sizing_state.get("avg_daily_volume_by_underlying")
+    u_code = str(sizing_state.get("underlying") or "")
+    if isinstance(adv_map, Mapping) and u_code in adv_map and adv_map[u_code] is not None:
+        return _dec(adv_map[u_code])
+    if isinstance(budget, Mapping) and budget.get("avg_daily_volume") is not None:
+        try:
+            dec = _dec(budget["avg_daily_volume"])
+            if dec > 0:
+                return dec
+        except Exception:
+            pass
+    return None
+
+
+def _candidate_liquidity_status(
+    candidate: Mapping[str, Any],
+    units: int,
+    sizing_state: Mapping[str, Any],
+    budget: Mapping[str, Any] | None = None,
+) -> str | None:
+    liq_constraints = sizing_state.get("liquidity_constraints")
+    if not isinstance(liq_constraints, Mapping) or not liq_constraints:
+        return None
+    adv = _candidate_adv(candidate, sizing_state, budget)
+    if adv is None or adv <= 0:
+        return "liquidity_unavailable"
+    min_adv = liq_constraints.get("min_avg_daily_volume")
+    if min_adv is not None and adv + Decimal("1e-9") < _dec(min_adv):
+        return "liquidity_min_adv_breach"
+    max_pct_adv = liq_constraints.get("max_order_pct_adv")
+    if max_pct_adv is not None and units > 0:
+        pct_adv = Decimal(int(units)) / adv
+        if pct_adv > _dec(max_pct_adv) + Decimal("1e-9"):
+            return "liquidity_order_pct_adv_breach"
+    return None
+
+
 def _candidate_risk_unit_caps(
     candidate: Mapping[str, Any],
     sizing_state: Mapping[str, Any],
@@ -556,6 +757,7 @@ def _candidate_risk_unit_caps(
             "max_leverage": 0,
             "net_limit": 0,
             "max_single_name_weight": 0,
+            "max_sector_exposure": 0 if sizing_state.get("remaining_by_sector") is not None else None,
             "available_cash_pre_fee": 0,
             "initial_margin": 0,
             "effective_risk_max_units": 0,
@@ -577,6 +779,11 @@ def _candidate_risk_unit_caps(
         if sizing_state.get("remaining_by_single_name") is not None
         else None
     )
+    u_sector = (
+        max(int(sizing_state["remaining_by_sector"] // per_unit), 0)
+        if sizing_state.get("remaining_by_sector") is not None
+        else None
+    )
     spendable = sizing_state.get("spendable_cash")
     is_cash_long = candidate.get("kind") == "cash_share" and sizing_state.get("direction") == "LONG"
     if is_cash_long and spendable is not None:
@@ -592,7 +799,7 @@ def _candidate_risk_unit_caps(
 
     active_caps = [
         u
-        for u in (u_cand, u_gross, u_lev, u_net, u_single, u_cash_pre_fee, u_margin)
+        for u in (u_cand, u_gross, u_lev, u_net, u_single, u_sector, u_cash_pre_fee, u_margin)
         if u is not None
     ]
     eff_max = min(active_caps) if active_caps else 0
@@ -602,6 +809,7 @@ def _candidate_risk_unit_caps(
         "max_leverage": u_lev,
         "net_limit": u_net,
         "max_single_name_weight": u_single,
+        "max_sector_exposure": u_sector,
         "available_cash_pre_fee": u_cash_pre_fee,
         "initial_margin": u_margin,
         "effective_risk_max_units": eff_max,
@@ -636,6 +844,10 @@ def _satisfies_post_fee_equity_limits(
     if max_single_w is not None:
         if (sizing_state["existing_underlying_gross"] + notional) > max_single_w * equity_after + eps:
             return False
+    max_sector_w = sizing_state.get("max_sector_exposure_weight")
+    if max_sector_w is not None:
+        if (sizing_state.get("existing_sector_gross", Decimal(0)) + notional) > max_sector_w * equity_after + eps:
+            return False
     gross_mult = sizing_state.get("gross_limit_multiple")
     if gross_mult is not None:
         if (sizing_state["gross_used"] + notional) > gross_mult * equity_after + eps:
@@ -669,10 +881,21 @@ def _binding_constraint(
     min_unit = _unit_notional(best)
     u_code = underlying or str(best.get("underlying") or str(best.get("instrument_id") or "").split(":", 1)[-1])
     state = _resolve_sizing_state(u_code, direction, candidates, book, budget)
+    if state.get("sector_unavailable"):
+        return "sector_exposures_unavailable"
+    if state.get("turnover_unavailable"):
+        return "turnover_unavailable"
+    liq_one_status = _candidate_liquidity_status(best, 1, state, budget)
+    if liq_one_status is not None:
+        return liq_one_status
 
     failing_notional_limits: list[tuple[Decimal, int, str]] = []
     if state["remaining_by_single_name"] is not None and state["remaining_by_single_name"] < min_unit:
         failing_notional_limits.append((state["remaining_by_single_name"], 0, "single_name_limit"))
+    if state.get("remaining_by_sector") is not None and state["remaining_by_sector"] < min_unit:
+        failing_notional_limits.append((state["remaining_by_sector"], 0, "max_sector_exposure"))
+    if state.get("remaining_by_turnover") is not None and state["remaining_by_turnover"] < min_unit:
+        failing_notional_limits.append((state["remaining_by_turnover"], 0, "turnover_limit"))
     if state["remaining_by_gross_limit"] < min_unit:
         failing_notional_limits.append((state["remaining_by_gross_limit"], 1, "gross_limit"))
     if (
@@ -712,6 +935,11 @@ def _binding_constraint(
                 return "insufficient_initial_margin"
 
     if not _satisfies_post_fee_equity_limits(best, 1, state):
+        if state.get("max_sector_exposure_weight") is not None and (
+            state["max_single_name_weight"] is None
+            or (state.get("remaining_by_sector") or Decimal(0)) <= (state.get("remaining_by_single_name") or Decimal(0))
+        ):
+            return "max_sector_exposure"
         if state["max_single_name_weight"] is not None:
             return "single_name_limit"
         if state["net_limit_multiple"] is not None:
@@ -1055,6 +1283,10 @@ def decide(
 
     # Step 3: feasible set.
     state = _resolve_sizing_state(underlying, direction, candidates, book, budget)
+    if state.get("sector_unavailable"):
+        return _no_trade(view, candidates, "no_feasible_instrument", "sector_exposures_unavailable")
+    if state.get("turnover_unavailable"):
+        return _no_trade(view, candidates, "no_feasible_instrument", "turnover_unavailable")
     feasible = feasible_candidates(direction, candidates)
     if not feasible:
         unavailable = any(
@@ -1078,14 +1310,16 @@ def decide(
 
     # Step 4: target notional.
     target = target_notional(direction, strength, feasible, params, budget)
-    desired_delta = (
-        min(target, state["remaining_by_single_name"])
-        if state["remaining_by_single_name"] is not None
-        else target
-    )
+    desired_delta = target
+    if state["remaining_by_single_name"] is not None:
+        desired_delta = min(desired_delta, state["remaining_by_single_name"])
+    if state.get("remaining_by_sector") is not None:
+        desired_delta = min(desired_delta, state["remaining_by_sector"])
 
     # Step 5: size and score every feasible candidate.
     scored: list[tuple[Decimal, Decimal, str, Mapping[str, Any], int]] = []
+    turnover_breached = False
+    liquidity_rejection: str | None = None
     for c in feasible:
         per_unit = _unit_notional(c)
         risk_caps = _candidate_risk_unit_caps(c, state)
@@ -1109,13 +1343,25 @@ def decide(
                 units -= 1
             if units < 1:
                 continue
+        if state.get("remaining_by_turnover") is not None and units * per_unit > state["remaining_by_turnover"] + Decimal("1e-9"):
+            turnover_breached = True
+            continue
+        liq_status = _candidate_liquidity_status(c, units, state, budget)
+        if liq_status is not None:
+            liquidity_rejection = liq_status
+            continue
         score = abs(units * per_unit - desired_delta) + units * round_trip_cost_per_unit(c)
         scored.append((score, per_unit, str(c["instrument_id"]), c, units))
     scored.sort(key=lambda item: (item[0], item[1], item[2]))
     if not scored:
-        detail = _binding_constraint(direction, candidates, budget, book, underlying)
-        if detail == "max_units_by_risk":
-            detail = "insufficient_cash_for_commission"
+        if turnover_breached:
+            detail = "turnover_limit"
+        elif liquidity_rejection is not None:
+            detail = liquidity_rejection
+        else:
+            detail = _binding_constraint(direction, candidates, budget, book, underlying)
+            if detail == "max_units_by_risk":
+                detail = "insufficient_cash_for_commission"
         return _no_trade(
             view, candidates, "no_feasible_instrument", detail
         )
@@ -1279,6 +1525,35 @@ def allocate_targets(views, budget, parameters):
         if per_name_cap is not None and t_val > per_name_cap:
             t_val = per_name_cap
         targets[s] = float(t_val)
+    max_sec_raw = budget.get("max_sector_exposure")
+    sec_by_u_raw = budget.get("sector_by_underlying")
+    if max_sec_raw not in (None, {}) and equity is not None and isinstance(sec_by_u_raw, Mapping):
+        from services.execution.lean_runtime.instrument_candidates import (
+            _sector_limit_for_key,
+            normalize_underlying_code,
+        )
+
+        sec_groups: dict[str, list[str]] = {}
+        for s in sorted(targets):
+            if targets[s] <= 0:
+                continue
+            try:
+                u_code = normalize_underlying_code(s)
+            except Exception:
+                u_code = str(s).strip()
+            sec = sec_by_u_raw.get(u_code) or sec_by_u_raw.get(str(s))
+            if sec is not None and str(sec).strip():
+                sec_groups.setdefault(str(sec).strip(), []).append(s)
+        for sec_key, syms in sec_groups.items():
+            sec_cap_w = _sector_limit_for_key(max_sec_raw, sec_key)
+            if sec_cap_w is None:
+                continue
+            sec_cap_notional = float(sec_cap_w * equity)
+            sec_sum = sum(targets[s] for s in syms)
+            if sec_sum > sec_cap_notional > 0:
+                sec_scale = sec_cap_notional / sec_sum
+                for s in syms:
+                    targets[s] = round(targets[s] * sec_scale, 6)
     return {"policy_kind": TARGET_POLICY_KIND, "gross_budget": float(limit),
             "raw_targets": {s: float(n) for s, n in raw.items()},
             "scale": float(scale), "targets": targets,
@@ -1326,6 +1601,10 @@ def decide_target_position(view, candidates, book, budget, parameters):
         if state["single_name_limit"] is not None
         else target
     )
+    if state.get("sector_limit") is not None and not state.get("sector_unavailable"):
+        other_sector_gross = max(state["existing_sector_gross"] - state["existing_underlying_gross"], Decimal(0))
+        sector_room_for_name = max(state["sector_limit"] - other_sector_gross, Decimal(0))
+        effective_target = min(effective_target, sector_room_for_name)
     exposure = Decimal(0)
     for p in positions:
         candidate = by_id.get(str(p["instrument_id"]))
@@ -1354,15 +1633,23 @@ def decide_target_position(view, candidates, book, budget, parameters):
             units=min(held, units), reason_code="close_leg",
             reason_text="target position liquidation" if liquidate else "target position reduction",
             target_notional=target))
-    if direction == "FLAT" or effective_target == 0:
+    if direction == "FLAT" or (effective_target == 0 and target == 0):
         return no("flat_view", "zero target with no holdings")
+    if state.get("sector_unavailable"):
+        return no("no_feasible_instrument", "sector_exposures_unavailable")
+    if state.get("turnover_unavailable"):
+        return no("no_feasible_instrument", "turnover_unavailable")
     delta = effective_target - exposure
     if positions and delta <= band:
         return no("already_at_target", "target within rebalance band")
     if delta <= 0:
+        if state.get("sector_limit") is not None and target > exposure:
+            return no("no_feasible_instrument", "max_sector_exposure")
         return no("already_at_target", "no additional exposure required")
     feasible = feasible_candidates(direction, candidates)
     scored = []
+    turnover_breached = False
+    liquidity_rejection: str | None = None
     for c in feasible:
         unit = _unit_notional(c)
         risk_caps = _candidate_risk_unit_caps(c, state)
@@ -1378,9 +1665,20 @@ def decide_target_position(view, candidates, book, budget, parameters):
                 units -= 1
         if units < 1:
             continue
+        if state.get("remaining_by_turnover") is not None and units * unit > state["remaining_by_turnover"] + Decimal("1e-9"):
+            turnover_breached = True
+            continue
+        liq_status = _candidate_liquidity_status(c, units, state, budget)
+        if liq_status is not None:
+            liquidity_rejection = liq_status
+            continue
         score = abs(units * unit - delta) + units * round_trip_cost_per_unit(c)
         scored.append((score, unit, str(c["instrument_id"]), c, units))
     if not scored:
+        if turnover_breached:
+            return no("no_feasible_instrument", "turnover_limit")
+        if liquidity_rejection is not None:
+            return no("no_feasible_instrument", liquidity_rejection)
         return no("no_feasible_instrument", _binding_constraint(direction, candidates, budget, book, underlying))
     _, _, instrument_id, winner, units = min(scored, key=lambda row: row[:3])
     reason = "long_cash" if instrument_id.startswith("eq:") else (
@@ -1456,6 +1754,9 @@ def evaluate_pre_trade_sizing(
         if state["single_name_limit"] is not None and raw_target > 0
         else raw_target
     )
+    if state.get("sector_limit") is not None and not state.get("sector_unavailable") and raw_target > 0:
+        other_sec = max(state["existing_sector_gross"] - state["existing_underlying_gross"], Decimal(0))
+        effective_target = min(effective_target, max(state["sector_limit"] - other_sec, Decimal(0)))
     has_existing_offset = policy_kind == TARGET_POLICY_KIND or (
         state["underlying_same_dir_notional"] > 0 and params.get("allow_pyramiding")
     )
@@ -1505,6 +1806,7 @@ def evaluate_pre_trade_sizing(
 
     constraint_unit_caps: dict[str, int | None] = {}
     u_single_eff: int | None = None
+    u_sector_eff: int | None = None
     u_lev_eff: int | None = None
     u_net_eff: int | None = None
     u_gross_eff: int | None = None
@@ -1534,6 +1836,11 @@ def evaluate_pre_trade_sizing(
         u_single_eff = _post_fee_cap(
             risk_caps["max_single_name_weight"], state["max_single_name_weight"], state["existing_underlying_gross"]
         )
+        u_sector_eff = _post_fee_cap(
+            risk_caps.get("max_sector_exposure"),
+            state.get("max_sector_exposure_weight"),
+            state.get("existing_sector_gross", Decimal(0)),
+        )
         u_lev_eff = _post_fee_cap(risk_caps["max_leverage"], state["max_leverage"], state["gross_used"])
         u_net_eff = _post_fee_cap(
             risk_caps["net_limit"], state["net_limit_multiple"], state["signed_net_used"], directional_net=True
@@ -1545,6 +1852,11 @@ def evaluate_pre_trade_sizing(
             "max_leverage": risk_caps["max_leverage"],
             "net_limit": risk_caps["net_limit"],
             "max_single_name_weight": risk_caps["max_single_name_weight"],
+            **(
+                {"max_sector_exposure": risk_caps["max_sector_exposure"]}
+                if risk_caps.get("max_sector_exposure") is not None
+                else {}
+            ),
             "raw_cash_pre_fee": u_raw_cash,
             "unreserved_cash_pre_fee": u_unreserved_cash,
             "spendable_cash_pre_fee": risk_caps["available_cash_pre_fee"],
@@ -1567,6 +1879,7 @@ def evaluate_pre_trade_sizing(
         if winner is not None and per_unit > 0:
             u_t = constraint_unit_caps.get("target_notional")
             u_single = constraint_unit_caps.get("max_single_name_weight")
+            u_sector = constraint_unit_caps.get("max_sector_exposure")
             u_net = constraint_unit_caps.get("net_limit")
             u_lev = constraint_unit_caps.get("max_leverage")
             u_gross = constraint_unit_caps.get("gross_limit")
@@ -1577,6 +1890,11 @@ def evaluate_pre_trade_sizing(
             u_margin = constraint_unit_caps.get("initial_margin")
 
             candidates_binding: list[tuple[int, int, str]] = []
+            if u_sector is not None and permitted_units in (u_sector, u_sector_eff) and (u_t is None or permitted_units <= u_t):
+                if u_single is None or (u_sector_eff if u_sector_eff is not None else u_sector) < (u_single_eff if u_single_eff is not None else u_single):
+                    candidates_binding.append((permitted_units, -1, "max_sector_exposure"))
+                else:
+                    candidates_binding.append((permitted_units, 0, "max_sector_exposure"))
             if u_single is not None and permitted_units in (u_single, u_single_eff) and (u_t is None or permitted_units <= u_t):
                 candidates_binding.append((permitted_units, 0, "max_single_name_weight"))
             if u_cash_fee is not None and permitted_units == u_cash_fee:
