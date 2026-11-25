@@ -618,6 +618,121 @@ def require_paper_risk_policy_decision(decision: Mapping[str, Any], *, grant: De
             "risk_direction": subject.get("risk_direction")}
 
 
+_STAGE_MARKER_KEYS = ("stage", "target_stage", "execution_context", "environment")
+_OPEN_PROPOSAL_STATES = frozenset({"proposed", "under_review"})
+
+
+def _stage_markers_paper_only(decision: Mapping[str, Any]) -> bool:
+    """Every stage marker the proposal itself carries must say paper; a stamped scope must be the paper scope."""
+    metadata = decision.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    for source in (subject, metadata):
+        if not isinstance(source, Mapping):
+            continue
+        for key in _STAGE_MARKER_KEYS:
+            value = source.get(key)
+            if value not in (None, "") and value not in ("paper", DEV_PAPER_ENVIRONMENT):
+                return False
+    scope = decision.get("authorization_scope")
+    if scope is not None:
+        try:
+            if normalize_authorization_scope(scope)["allowed_target_stages"] != ["paper"]:
+                return False
+        except AuthorizationScopeError:
+            return False
+    return True
+
+
+def _superseding_failure(candidate: Mapping[str, Any], *, target: Mapping[str, Any], grant: DevPaperGrant,
+                         now: datetime) -> str | None:
+    """Why ``candidate`` is not a valid superseding decision for ``target`` (None when it is)."""
+    widening = grant.risk_policy
+    if candidate.get("decision_id") == target.get("decision_id"):
+        return "is the proposal itself"
+    if (candidate.get("tenant_id") != target.get("tenant_id")
+            or _enum_text(candidate.get("target_type")) != RISK_POLICY_TARGET
+            or candidate.get("target_id") != target.get("target_id")
+            or candidate.get("capital_pool_id") != target.get("capital_pool_id")):
+        return "is not for the same tenant and pool"
+    if _enum_text(candidate.get("decision_state")) != "decided" or _enum_text(candidate.get("decision")) != "approved":
+        return "is not an approved decided decision"
+    if candidate.get("conditions") or candidate.get("revoked_at") or candidate.get("superseded_by"):
+        return "is conditional, revoked or superseded"
+    if candidate.get("actor_id") != grant.subject or _enum_text(candidate.get("actor_role")) != "automated_gate":
+        return "was not decided by the paper automated gate"
+    if candidate.get("owner_user_id") != widening.proposer_subject:
+        return "was not proposed by the paper proposer"
+    try:
+        if normalize_authorization_scope(candidate.get("authorization_scope")) != grant.authorization_scope:
+            return "is not stamped with the paper scope"
+        if parse_rfc3339(candidate.get("expires_at"), "expires_at") <= now:
+            return "is expired"
+        if (parse_rfc3339(candidate.get("created_at"), "created_at")
+                <= parse_rfc3339(target.get("created_at"), "created_at")):
+            return "is not newer than the proposal"
+    except (AuthorizationScopeError, ValueError):
+        return "has a malformed scope or timestamp"
+    metadata = candidate.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    draft = subject.get("risk_officer_draft") if isinstance(subject, Mapping) else None
+    if (not isinstance(draft, Mapping) or not isinstance(draft.get("provenance"), Mapping)
+            or not draft["provenance"] or not isinstance(draft.get("policy"), Mapping) or not draft["policy"]):
+        return "carries no risk-officer draft provenance"
+    if not _stage_markers_paper_only(candidate):
+        return "is not a paper-stage decision"
+    candidate_digest = candidate.get("candidate_digest")
+    if candidate_digest and candidate_digest == target.get("candidate_digest"):
+        return "binds the same policy as the proposal"
+    return None
+
+
+def require_superseded_risk_policy_close(
+    target: Mapping[str, Any], *, pool_decisions: list[Mapping[str, Any]], grant: DevPaperGrant,
+    now: datetime, env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Admit the gate on closing one open paper pool risk-policy proposal superseded by the pool's bound policy.
+
+    Close-only authority, verified on Governance's own records (never the caller's word): dev, a
+    capital_pool_activation of a paper pool, same tenant, proposed by the known paper proposer, still open, and a
+    newer, approved, unexpired, unrevoked decision by the paper automated gate with risk-officer provenance on the
+    same pool.  Returns the superseding decision id and the reason; raises :class:`PaperApprovalDenied` otherwise.
+    """
+    widening = grant.risk_policy
+    if widening is None:
+        raise PaperApprovalDenied("Dev paper grant does not authorise pool risk-policy proposal closing")
+    if current_environment(env) != DEV_PAPER_ENVIRONMENT:
+        raise PaperApprovalDenied("Superseded risk-policy close is limited to the dev paper environment")
+    if _enum_text(target.get("target_type")) != RISK_POLICY_TARGET:
+        raise PaperApprovalDenied("Superseded close may only act on capital_pool_activation proposals")
+    if target.get("tenant_id") != grant.tenant_id:
+        raise PaperApprovalDenied("Dev paper decision tenant is outside authority")
+    owner = target.get("owner_user_id")
+    if owner != widening.proposer_subject or owner == grant.subject:
+        raise PaperApprovalDenied("Superseded close may only act on proposals from the named paper proposer")
+    pool_id = target.get("target_id")
+    if not isinstance(pool_id, str) or not pool_id.strip() or target.get("capital_pool_id") != pool_id:
+        raise PaperApprovalDenied("Pool risk-policy decision pool identity is inconsistent")
+    if not _stage_markers_paper_only(target):
+        raise PaperApprovalDenied("Superseded close may only act on paper-stage proposals")
+    if _enum_text(target.get("decision_state")) not in _OPEN_PROPOSAL_STATES:
+        raise PaperApprovalDenied("Only an open (proposed or under_review) proposal can be closed as superseded", 409)
+    failures: list[str] = []
+    best: Mapping[str, Any] | None = None
+    for candidate in pool_decisions:
+        failure = _superseding_failure(candidate, target=target, grant=grant, now=now)
+        if failure is not None:
+            failures.append(f"{candidate.get('decision_id')}: {failure}")
+            continue
+        if best is None or (parse_rfc3339(candidate["created_at"], "created_at")
+                            > parse_rfc3339(best["created_at"], "created_at")):
+            best = candidate
+    if best is None:
+        raise PaperApprovalDenied("Proposal is not superseded by a gate-approved decision of the same paper pool")
+    superseding_id = str(best["decision_id"])
+    return {"grant_id": widening.grant_id, "pool_id": pool_id, "superseded_by": superseding_id,
+            "reason": f"Superseded by gate-approved paper risk policy decision {superseding_id}; closed without a human vote"}
+
+
 def require_card_admission_decision(decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime,
                                     env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Admit the gate on one research-proposed hypothesis-card spec admission or raise (paper only).

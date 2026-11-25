@@ -289,6 +289,16 @@ def _build_app(
                 persona_id=qs["persona_id"][0] if "persona_id" in qs else None,
                 page_token=qs["page_token"][0] if "page_token" in qs else None,
                 page_size=int(qs["page_size"][0]) if "page_size" in qs else 20,
+                **(
+                    {
+                        "hide_stubs": True,
+                        "hide_persona_ids": [
+                            p for p in qs.get("hide_persona_ids", [""])[0].split(",") if p
+                        ],
+                    }
+                    if qs.get("hide_stubs") == ["true"]
+                    else {}
+                ),
             )
             world.owner_summary_calls.append((f"{parsed.path}?{parsed.query}", len(payload.get("items") or [])))
             return payload
@@ -876,9 +886,11 @@ def test_detail_failed_directory_read_is_unknown_but_detail_is_200(
 def test_default_list_overlaps_persona_directory_and_registry_page_reads(
     monkeypatch: pytest.MonkeyPatch, world: _World
 ) -> None:
-    """The Persona directory and the registry summary page are independent
-    owner reads. They must overlap, each be read exactly once, and the page
-    must be unchanged."""
+    """With nothing to hide (``include_test_personas=true``) the Persona
+    directory and the registry summary page are independent owner reads. They
+    must overlap, each be read exactly once, and the page must be unchanged.
+    The default view cannot overlap them: its owner-side hide input carries
+    the directory's test Persona ids (see the next test)."""
     import threading
     import time
 
@@ -908,13 +920,30 @@ def test_default_list_overlaps_persona_directory_and_registry_page_reads(
     owner_http = adapter_base.http_request_json
     monkeypatch.setattr(adapter_base, "http_request_json", _slow_owner)
     with TestClient(app) as c:
-        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+        resp = c.get("/bff/strategies?page_size=20&include_test_personas=true", headers=HEADERS)
     assert resp.status_code == 200, resp.text
     first_page_reads = [c for c in world.owner_summary_calls if "page_size=20" in c[0] and "page_size=200" not in c[0]]
     assert len(first_page_reads) == 1
     assert len(world.directory_reads) == 1
     (r0, r1), (d0, d1) = spans["registry"], spans["directory"]
     assert max(r0, d0) < min(r1, d1), "registry page and persona directory reads did not overlap"
+
+
+def test_default_list_sends_one_owner_page_with_the_hide_input_after_the_directory(
+    monkeypatch: pytest.MonkeyPatch, world: _World
+) -> None:
+    """The default view needs the test Persona ids for its owner-side hide
+    input, so no page is prefetched ahead of the directory: exactly one owner
+    page call, carrying the hide input."""
+    app, _ = _build_app(monkeypatch, world)
+    with TestClient(app) as c:
+        resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    # One page call; the candidate set fits one owner page, so exactly one more
+    # read supplies operational_counts (contract: at most two owner calls).
+    assert 1 <= len(world.owner_summary_calls) <= 2
+    assert all("hide_stubs=true" in call[0] for call in world.owner_summary_calls)
+    assert world.directory_reads == [TENANT]
 
 
 def test_default_list_owner_page_failure_is_read_once_and_not_retried(
@@ -983,7 +1012,11 @@ def test_default_list_pool_contention_fails_truthfully_within_request_deadline(
         timer.start()
         with TestClient(app, raise_server_exceptions=False) as c:
             started = time.monotonic()
-            resp = c.get("/bff/strategies?page_size=20", headers=HEADERS)
+            # include_test_personas keeps the page prefetched on the pool; the
+            # default view sends its page after the directory, not via the pool.
+            resp = c.get(
+                "/bff/strategies?page_size=20&include_test_personas=true", headers=HEADERS
+            )
             elapsed = time.monotonic() - started
     finally:
         release.set()

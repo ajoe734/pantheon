@@ -535,6 +535,8 @@ class ResearchKnowledgeSourcePort:
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -2661,6 +2663,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2686,6 +2690,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 page_token=page_token,
                 page_size=page_size,
                 **({"query": query} if query is not None else {}),
+                **(
+                    {"hide_stubs": True, "hide_persona_ids": hide_persona_ids}
+                    if hide_stubs
+                    else {}
+                ),
             )
 
         offset = 0
@@ -3107,6 +3116,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, registry_url
@@ -3137,6 +3148,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
         norm_query = str(query).strip() if query is not None and str(query).strip() != "" else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+        norm_hide_ids: Optional[tuple] = (
+            tuple(sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()}))
+            if hide_stubs
+            else None
+        )
 
         def read_page() -> Dict[str, Any]:
             def fetch() -> Dict[str, Any]:
@@ -3144,6 +3160,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     state=norm_state, exclude_state=norm_exclude_state,
                     persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
                     **({"query": norm_query} if norm_query is not None else {}),
+                    **(
+                        {"hide_stubs": True, "hide_persona_ids": list(norm_hide_ids or ())}
+                        if hide_stubs
+                        else {}
+                    ),
                 )
 
             auth = authorization.get()
@@ -3158,6 +3179,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     tenant, hashlib.sha256(auth.encode()).digest(),
                     registry_url("/api/registry/strategy-specs"),
                     norm_state, norm_exclude_state, norm_persona, norm_query, norm_token, int(page_size),
+                    norm_hide_ids,
                 ),
                 fetch,
             )
@@ -3173,6 +3195,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_query,
                 norm_token,
                 int(page_size),
+                norm_hide_ids,
             ),
             read_page,
         )
@@ -3186,6 +3209,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -3213,6 +3238,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             query_params.append(("query", query))
         if page_token:
             query_params.append(("page_token", page_token))
+        if hide_stubs:
+            query_params.append(("hide_stubs", "true"))
+            hide_ids = sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()})
+            if hide_ids:
+                query_params.append(("hide_persona_ids", ",".join(hide_ids)))
         path = "/api/registry/strategy-specs?" + urllib.parse.urlencode(query_params)
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
@@ -3325,12 +3355,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             validated_state_counts = {
                 str(k).strip(): int(v) for k, v in raw_state_counts.items()
             }
-        return {
+        page_out: Dict[str, Any] = {
             "items": validated_items,
             "total": total,
             "next_page_token": next_page_token,
             "state_counts": validated_state_counts,
         }
+        if hide_stubs:
+            # Owner-side hide answer. A missing or malformed answer is carried
+            # as ``None`` (never as zeros): the caller treats the owner as one
+            # that did not hide and falls back to its own classification.
+            raw_visible = raw.get("visible_state_counts")
+            raw_hidden = raw.get("hidden")
+            by_reason = raw_hidden.get("by_reason") if isinstance(raw_hidden, dict) else None
+
+            def _counts_ok(value: Any) -> bool:
+                return (
+                    isinstance(value, dict)
+                    and bool(value)
+                    and all(
+                        isinstance(k, str)
+                        and k.strip()
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v >= 0
+                        for k, v in value.items()
+                    )
+                )
+
+            if _counts_ok(raw_visible) and _counts_ok(by_reason):
+                page_out["visible_state_counts"] = {
+                    str(k).strip(): int(v) for k, v in raw_visible.items()
+                }
+                page_out["hidden"] = {
+                    "by_reason": {str(k).strip(): int(v) for k, v in by_reason.items()},
+                    "total": sum(int(v) for v in by_reason.values()),
+                }
+        return page_out
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""

@@ -68,7 +68,7 @@ def _normalized_source(
     return SourceRecord(
         source_id=source_id,
         connector_id="conn-papers",
-        source_type="paper",
+        source_type="internal_note",
         title=title,
         content_ref=f"https://doi.org/10.1000/{source_id}",
         status="normalized",
@@ -334,7 +334,7 @@ class TestVersionedAdmission:
         rejected = SourceRecord(
             source_id="src-rejected-001",
             connector_id="conn-papers",
-            source_type="paper",
+            source_type="internal_note",
             title="Rejected paper",
             content_ref="https://doi.org/rejected",
             status="rejected",

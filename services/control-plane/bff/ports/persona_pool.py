@@ -33,7 +33,13 @@ class PersonaPoolViewsPort:
         self.authorization = authorization
 
     def _get(self, owner: str, path: str, tenant: str) -> Any:
-        base = get_base_url(f"PANTHEON_{owner}_API_URL", f"PANTHEON_{owner}_SERVICE_URL")
+        # The operator BFF on hosted carries the Research owner URL only as
+        # PANTHEON_RESEARCH_ORCHESTRATOR_API_URL; the older names stay fallbacks.
+        names = [f"PANTHEON_{owner}_API_URL", f"PANTHEON_{owner}_SERVICE_URL"]
+        if owner == "RESEARCH":
+            names = ["PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", *names,
+                     "RESEARCH_ORCHESTRATOR_URL", "RESEARCH_ORCHESTRATOR_API_URL"]
+        base = get_base_url(*names)
         return http_request_json(
             base + path, auth_token=self.authorization, tenant_id=tenant,
             timeout=remaining_management_read_budget(2.0),

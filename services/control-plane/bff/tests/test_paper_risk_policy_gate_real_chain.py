@@ -241,3 +241,157 @@ def test_pending_proposal_is_reused_and_decided_not_duplicated(world):
     after = _proposals(world)
     assert len(after) == 1 and after[0]["decision_id"] == pending[0]["decision_id"]
     assert after[0]["decision"] == "approved"
+
+
+# ---------------------------------------------------------------------------
+# PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125: the hosted state (v1.0 under_review with one approve vote,
+# gate-approved v2.0 bound) is closed by the coordinator through the real Governance close-only authority.
+# ---------------------------------------------------------------------------
+
+def _inject_stale_v1(world, decision_id, *, risk_level="medium", hours_old=48):
+    """A v1.0 proposal as hosted: medium risk, under_review, one human approve vote, older than the bound v2.0."""
+    from datetime import datetime, timedelta, timezone
+
+    from services.governance import main as gov_main
+
+    bound = next(d for d in _proposals(world) if d["decision"] == "approved")
+    row = json.loads(json.dumps(bound))
+    created = (datetime.now(timezone.utc) - timedelta(hours=hours_old)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    row.update({
+        "decision_id": decision_id, "risk_level": risk_level, "decision_state": "under_review", "decision": None,
+        "created_at": created, "decided_at": None, "actor_role": "governance_reviewer", "actor_id": "human-1",
+        "rationale": None, "authority_status": None, "controller_record_ref": None, "recorded_at": None,
+        "candidate_digest": "1" * 64, "target_version": "1" * 64, "version": 2, "authorization_scope": None})
+    row["metadata"] = {"subject": {**bound["metadata"]["subject"], "risk_policy_version": "1.0",
+                                   "requested_risk": "medium", "risk_policy_digest": "1" * 64},
+                       "approvals": [{"actor_id": "human-1", "actor_role": "governance_reviewer",
+                                      "conditions": [], "expires_at": None}]}
+    row["metadata"]["subject"].pop("risk_officer_draft", None)
+    gov_main.store.rows[decision_id] = row
+    return row
+
+
+def _pending(world):
+    return [d["decision_id"] for d in _proposals(world) if d["decision_state"] in {"proposed", "under_review"}]
+
+
+def _resolution(result):
+    after = dict(result["after_resolution"])
+    return {k: after.get(k) for k in ("resolved", "policy", "approval_decision_id", "profile_mapping_status",
+                                      "allow_new_or_increased_risk", "risk_policy_ref")}
+
+
+def test_stale_v1_proposals_are_closed_on_repair_without_changing_the_resolved_policy(world):
+    assert _repair()["owner_decision_request"]["paper_gate_status"] == "decided_approved_by_automated_gate"
+    assert _repair()["repaired"] is True
+    bound = next(d for d in _proposals(world) if d["decision"] == "approved")
+    before = _repair()
+    assert before["idempotent_noop"] is True
+    for name in ("apv-v1-a", "apv-v1-b", "apv-v1-c"):
+        _inject_stale_v1(world, name)
+    assert sorted(_pending(world)) == ["apv-v1-a", "apv-v1-b", "apv-v1-c"]
+    transitions = [m for m in world.seen if m[0] == "POST"]
+    after = _repair()
+    assert after["idempotent_noop"] is True
+    assert _pending(world) == []
+    closed = sorted(after["approval_renewal"]["superseded_proposals"]["closed"])
+    assert closed == ["apv-v1-a", "apv-v1-b", "apv-v1-c"]
+    posts = [m for m in world.seen if m[0] == "POST"][len(transitions):]
+    assert sorted(p for _, p in posts if p.endswith("/close-superseded")) == [
+        f"/api/governance/approvals/{n}/close-superseded" for n in closed] and len(posts) == 3
+    for name in closed:
+        row = next(d for d in _proposals(world) if d["decision_id"] == name)
+        assert row["decision_state"] == "superseded" and row["superseded_by"] == bound["decision_id"]
+        assert bound["decision_id"] in row["rationale"] and row["actor_id"] == GATE
+        assert len(row["metadata"]["approvals"]) == 1 and row["metadata"]["approvals"][0]["actor_id"] == "human-1"
+    assert _resolution(after) == _resolution(before)
+    again = _repair()
+    assert _resolution(again) == _resolution(before) and len(_proposals(world)) == 4
+    assert [m for m in world.seen if m[0] == "POST" and m[1].endswith("/close-superseded")][3:] == []
+
+
+def test_renewal_and_reconcile_pass_close_stale_proposals_and_a_failed_close_is_reported_not_raised(world):
+    from datetime import datetime, timezone
+
+    _repair()
+    _repair()
+    _inject_stale_v1(world, "apv-v1-a")
+    coordinator = service._chain_paper_capital_coordinator(TENANT)
+    world.faults["/close-superseded"] = (403, "forced refusal")
+    refused = coordinator.renew_paper_risk_policy_approval(
+        tenant_id=TENANT, persona_id=PERSONA, pool_id=POOL, now=datetime.now(timezone.utc))
+    assert refused["status"] == "not_due"
+    assert refused["superseded_proposals"]["closed"] == []
+    assert refused["superseded_proposals"]["failed"][0]["http_status"] == 403
+    assert _pending(world) == ["apv-v1-a"]
+    assert _repair()["idempotent_noop"] is True                     # the failed close never breaks the repair
+    world.faults.clear()
+    renewed = coordinator.renew_paper_risk_policy_approval(
+        tenant_id=TENANT, persona_id=PERSONA, pool_id=POOL, now=datetime.now(timezone.utc))
+    assert renewed["superseded_proposals"]["closed"] == ["apv-v1-a"] and _pending(world) == []
+    quiet = coordinator.renew_paper_risk_policy_approval(
+        tenant_id=TENANT, persona_id=PERSONA, pool_id=POOL, now=datetime.now(timezone.utc))
+    assert "superseded_proposals" not in quiet
+
+
+def test_a_proposal_newer_than_the_bound_policy_is_never_closed(world):
+    _repair()
+    _repair()
+    _inject_stale_v1(world, "apv-newer", hours_old=-1)
+    coordinator = service._chain_paper_capital_coordinator(TENANT)
+    outcome = coordinator.close_superseded_risk_policy_proposals(tenant_id=TENANT, pool_id=POOL)
+    assert outcome["closed"] == [] and outcome["failed"][0]["http_status"] == 403
+    assert _pending(world) == ["apv-newer"]
+
+
+# ---------------------------------------------------------------------------
+# PAPER-IMAGES-CANNOT-READ-APPROVALS-20261125: the deployed decision path (producer expression inputs and the
+# order-time runtime) resolves the gate-approved v2.0 through the real Capital and Governance apps.  The pool
+# requires an approved mapping, so a missing or unreadable approval would leave no budget.  No fake approval reader.
+# ---------------------------------------------------------------------------
+
+def _bind_v2(world):
+    assert _repair()["owner_decision_request"]["paper_gate_status"] == "decided_approved_by_automated_gate"
+    assert _repair()["repaired"] is True
+
+
+def _capital_reader_env(world, monkeypatch) -> dict[str, str]:
+    # The issued capital reader principal is verified by Capital with the deployed verifier configuration.
+    monkeypatch.setenv("CAPITAL_JWT_SECRET", "g" * 40)
+    monkeypatch.setenv("CAPITAL_JWT_ISSUER", "iss-test")
+    monkeypatch.setenv("CAPITAL_JWT_AUDIENCE", "aud-test")
+    monkeypatch.setenv("CAPITAL_ALLOWED_READER_SERVICES", "runtime-manager")
+    issued = world.issued
+    return {
+        "PANTHEON_CAPITAL_API_URL": "http://capital.test",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": issued["DEPLOYMENT_CAPITAL_SERVICE_TOKEN"],
+        "PANTHEON_TENANT_ID": TENANT,
+    }
+
+
+def test_expression_inputs_provider_budget_carries_the_gate_approved_v2(world, monkeypatch):
+    from services.execution.lean_runtime.expression_inputs import (
+        ExpressionInputsProvider,
+        capital_pool_reader_from_env,
+    )
+
+    _bind_v2(world)
+    reader = capital_pool_reader_from_env(_capital_reader_env(world, monkeypatch))
+    assert reader is not None
+    provider = ExpressionInputsProvider(capital_pool_reader=reader, runtime_summary_reader=lambda _rid: {})
+    budget = provider({"capital_pool_id": POOL, "runtime_id": "rt-1"})["risk_budget"]
+    assert budget["risk_policy_id"] == DRAFT["risk_policy_id"]
+    assert str(budget["risk_policy_version"]) == "2.0"
+    assert len(str(budget["risk_policy_digest"])) == 64
+
+
+def test_order_time_active_risk_policy_is_the_gate_approved_v2(world, monkeypatch):
+    from services.execution.lean_runtime.expression_inputs import capital_pool_reader_from_env
+    from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+
+    _bind_v2(world)
+    reader = capital_pool_reader_from_env(_capital_reader_env(world, monkeypatch))
+    algo = PaperExecutionAlgorithm(
+        initial_cash=100_000.0, capital_pool_id=POOL, capital_pool_reader=reader, in_process_broker=True)
+    policy = algo._resolve_active_risk_policy()
+    assert policy.risk_policy_id == DRAFT["risk_policy_id"] and str(policy.version) == "2.0"

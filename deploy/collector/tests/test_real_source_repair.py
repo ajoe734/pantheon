@@ -309,3 +309,83 @@ def test_parse_error_writes_partial_bundle_with_parse_failed_and_url(tmp_path: P
     assert outcome.bundle.manifest["source_url"] == "https://www.ptt.cc/bbs/Stock/index.html"
     status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
     assert status["sources"]["collector-tw-ptt-stock"]["reason"] == "parse_failed"
+
+
+def test_cna_finance_and_securities_recorded_feeds_parse_and_exclude_aall(
+    fixtures_dir: Path, tmp_path: Path, test_hasher
+) -> None:
+    from collector_stack.bundle import verify_bundle_directory
+    from collector_stack.pollers import RssHubNewsPoller
+
+    cna_aie_xml = (fixtures_dir / "rsshub_cna.xml").read_bytes()
+    cna_aie_text = cna_aie_xml.decode("utf-8")
+    assert "<title>產經 | 中央社 CNA</title>" in cna_aie_text
+    assert "<link>https://www.cna.com.tw/list/aie.aspx</link>" in cna_aie_text
+    assert "/cna/aall" not in cna_aie_text
+    assert "list/aall.aspx" not in cna_aie_text
+
+    cna_asc_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">'
+        "<channel>"
+        "<title>證券 | 中央社 CNA</title>"
+        "<link>https://www.cna.com.tw/list/asc.aspx</link>"
+        '<atom:link href="http://rsshub:1200/cna/asc" rel="self" type="application/rss+xml"></atom:link>'
+        "<description>最新股市動態、國內外債市、債券、基金、期貨等資訊，都在中央社證券新聞。 - Powered by RSSHub</description>"
+        "<generator>RSSHub</generator>"
+        "<lastBuildDate>Wed, 25 Nov 2026 07:01:54 GMT</lastBuildDate>"
+        "<item>"
+        "<title>建通預估明年獲利續成長 銅價成最大變數</title>"
+        "<description>&lt;p&gt;（中央社記者曾仁凱台北25日電）建通精密（2460）今天舉行法人說明會，總經理林育民表示，隨著公司新型銅材業務持續擴張，明年相關營收有機會超越老本行端子事業。&lt;/p&gt;</description>"
+        "<link>https://www.cna.com.tw/news/afe/202611250156.aspx</link>"
+        '<guid isPermaLink="false">https://www.cna.com.tw/news/afe/202611250156.aspx</guid>'
+        "<pubDate>Wed, 25 Nov 2026 06:37:00 GMT</pubDate>"
+        "<dc:creator>曾仁凱</dc:creator>"
+        "<category>建通精密</category>"
+        "<category>證券</category>"
+        "</item>"
+        "</channel>"
+        "</rss>"
+    ).encode("utf-8")
+
+    policy = _config().get_source("collector-news-rss")
+    cna_routes = tuple(r for r in policy.raw_config["routes"] if r.startswith("/cna/"))
+    assert cna_routes == ("/cna/aie", "/cna/asc")
+
+    transport = FixtureTransport(
+        {
+            "http://rsshub:1200/cna/aie": cna_aie_xml,
+            "http://rsshub:1200/cna/asc": cna_asc_xml,
+        }
+    )
+    sleeps: list[float] = []
+    poller = RssHubNewsPoller(policy, transport=transport)
+    poller.fetcher.sleep_fn = sleeps.append
+    items = poller.collect(routes=cna_routes, fetched_at="2026-11-25T07:05:00Z")
+    assert len(items) == 2
+    assert sleeps == [1.0]
+    assert [c["url"] for c in transport.calls] == [
+        "http://rsshub:1200/cna/aie",
+        "http://rsshub:1200/cna/asc",
+    ]
+    by_route = {i.metrics["route"]: i for i in items}
+    assert set(by_route) == {"/cna/aie", "/cna/asc"}
+    assert by_route["/cna/aie"].item_id == "news-cna-202611250147-aspx"
+    assert by_route["/cna/aie"].published_at == "2026-11-25T06:08:00Z"
+    assert "1519" in by_route["/cna/aie"].extra_fields["symbols"]
+    assert by_route["/cna/asc"].item_id == "news-cna-202611250156-aspx"
+    assert by_route["/cna/asc"].published_at == "2026-11-25T06:37:00Z"
+    assert "2460" in by_route["/cna/asc"].extra_fields["symbols"]
+
+    runner = CollectorRunner(_config(), root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    outcome = runner.run_source(
+        "collector-news-rss",
+        run_id="cna-finance-securities",
+        started_at="2026-11-25T07:05:00Z",
+        finished_at="2026-11-25T07:05:05Z",
+        collect_kwargs={"routes": cna_routes},
+    )
+    assert outcome.status == "complete"
+    manifest = verify_bundle_directory(outcome.bundle.bundle_dir)
+    assert len(manifest["items"]) == 2
+

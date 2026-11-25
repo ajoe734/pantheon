@@ -2452,12 +2452,12 @@ jobs:
               "schemaVersion": 1,
               "mode": mode,
               "deployment": "deployed",
-              "acceptance": "failed" if failed else ("passed" if results else "pending"),
+              "advisoryStatus": "failed" if failed else ("passed" if results else "pending"),
               "failedChecks": failed,
               "checks": [results[k] for k in sorted(results)],
           }
           (advisory_dir / "summary.json").write_text(json.dumps(doc, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-          lines = ["## Dev functional checks (" + mode + ")", "- deployment: deployed; acceptance: " + doc["acceptance"]]
+          lines = ["## Dev functional checks (" + mode + ")", "- deployment: deployed; advisoryChecks: " + doc["advisoryStatus"]]
           for k in sorted(results):
               v = results[k]
               reason = f" ({v.get('reason')})" if v.get("reason") else ""

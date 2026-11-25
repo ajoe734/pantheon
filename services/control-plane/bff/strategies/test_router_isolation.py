@@ -391,11 +391,11 @@ def test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_340
     # never 17 pages of 200 rows across all 3,379 strategies!
     assert len(owner_summary_calls) == 2, f"Expected 2 registry reads, got {len(owner_summary_calls)}: {owner_summary_calls}"
     assert owner_summary_calls[0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200&hide_stubs=true",
         200,
     )
     assert owner_summary_calls[1] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200&exclude_state=draft",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200&exclude_state=draft&hide_stubs=true",
         162,
     )
     assert len(body["items"]) == 20

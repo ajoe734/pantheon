@@ -1,0 +1,7 @@
+{
+  "task_id": "SD-PAPER-RISK-MANAGEMENT-20261124",
+  "scope": "docs only; no code, test, workflow or task change",
+  "delivered": ["SD_PAPER_RISK_MANAGEMENT_2026-11-24.md byte-identical to d3b562c37299dfb7849e4742a66e631fed7131e2", "Q6 clarification sentence added at two places in SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md (limit = outer envelope set by operator; in-envelope policy drafted by risk officer, paper decided by automated gate P-4; canary/live/real capital stay with operator)"],
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from owner's family",
+  "post_merge": "close PR #7784 as delivered by this task's PR, with a comment naming the PR number"
+}

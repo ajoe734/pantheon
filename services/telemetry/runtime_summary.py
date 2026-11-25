@@ -20,6 +20,7 @@ from services.execution.lean_runtime.performance_telemetry import (
     quarter_equity_observation,
 )
 from services.execution.market_snapshot_admission import is_taiwan_symbol
+from services.telemetry import pool_risk_snapshot as _pool_risk_snapshot
 
 
 log = logging.getLogger(__name__)
@@ -2058,6 +2059,10 @@ class RuntimeSummaryProjectionStore:
             if executed:
                 current["total_trades"] = max(int(current.get("total_trades") or 0), executed)
 
+            _pool_risk_snapshot.apply_event(
+                current, event, observation=observation,
+                metadata=metadata if isinstance(metadata, dict) else {},
+            )
             current["health_summary"] = self._health_summary(current)
             self._summaries[summary_key] = current
             self._persist_summary_change(summary_key, prior_summary, current)
@@ -2703,7 +2708,7 @@ class RuntimeSummaryProjectionStore:
         *,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        projected = _clone_json_value(summary)
+        projected = _clone_json_value(_pool_risk_snapshot.served_view(summary))
         if (
             now is not None
             and isinstance(projected.get("_positions_by_symbol"), dict)
