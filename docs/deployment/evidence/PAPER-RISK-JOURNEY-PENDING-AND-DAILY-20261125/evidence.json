@@ -1,0 +1,11 @@
+{
+  "task_id": "PAPER-RISK-JOURNEY-PENDING-AND-DAILY-20261125",
+  "class": "RC2",
+  "claim": "source and focused tests only; no hosted result claimed",
+  "tests": ["acceptance/test_paper_risk_journey.py", "acceptance/test_paper_risk_journey_day.py", "acceptance/test_paper_risk_policy_binding.py", "scripts/test_dev_acceptance_stage.py"],
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family",
+  "residual_findings": [
+    "No viewer-readable governed trading-calendar endpoint was found in the repo; the daily check reads a configurable path (default /bff/market/trading-calendar) and degrades to pending then failed after 7 days.",
+    "GitHub runner has no owner telemetry/capital read (ACCEPTANCE_TELEMETRY_URL/TOKEN, ACCEPTANCE_CAPITAL_OWNER_*); fresh samples there fail as source_read_failed."
+  ]
+}

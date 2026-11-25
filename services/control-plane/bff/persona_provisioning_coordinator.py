@@ -2731,6 +2731,11 @@ class PersonaProvisioningCoordinator:
         remaining = expires - now
         base = {"approval_id": previous_id, "approval_expires_at": _format_owner_time(expires),
                 "remaining_seconds": int(remaining.total_seconds())}
+        # The pool has a bound gate-approved policy: anything older it superseded is closed by Governance
+        # (idempotent, never raised into the renewal result).
+        stale = self.close_superseded_risk_policy_proposals(tenant_id=tenant_id, pool_id=pool_id, keep_id=previous_id)
+        if stale["closed"] or stale["failed"]:
+            base["superseded_proposals"] = stale
         if remaining >= threshold and not force:
             return out("not_due", **base)
         renewed_id = self._renewal_decision_id(previous_id)
@@ -2895,28 +2900,57 @@ class PersonaProvisioningCoordinator:
         self, *, tenant_id: str, pool_id: str, keep_id: str, requested_profile: str,
         matches_request: Callable[[Mapping[str, Any]], bool], decision_req: dict[str, Any],
     ) -> None:
-        """Close the pool's other pending paper policy proposals (e.g. v1.0) through the same gate."""
+        """Close the pool's other open paper policy proposals (e.g. v1.0) that the bound policy superseded."""
+        outcome = self.close_superseded_risk_policy_proposals(tenant_id=tenant_id, pool_id=pool_id, keep_id=keep_id)
+        if outcome["closed"]:
+            decision_req["superseded_proposals_closed"] = outcome["closed"]
+        if outcome["failed"]:
+            decision_req["superseded_proposals_close_failed"] = outcome["failed"]
+
+    def close_superseded_risk_policy_proposals(
+        self, *, tenant_id: str, pool_id: str, keep_id: str | None = None,
+    ) -> dict[str, list[Any]]:
+        """Ask Governance to close every open paper policy proposal of the pool that its bound policy superseded.
+
+        Governance verifies supersession on its own records (close-only authority, never an approval), so this
+        only names the candidates.  At most one transition per stale proposal; an already closed proposal is not
+        listed as open and costs nothing.  A failed close is reported in ``failed`` and never raised.
+        """
+        outcome: dict[str, list[Any]] = {"closed": [], "failed": []}
+        if self.transport is None or not self.governance_actor_id:
+            return outcome
         try:
             items = self._governance_approval_reader().list_for_target(
                 target_type="capital_pool_activation", target_id=pool_id, decision_state=None,
                 max_items=MAX_PENDING_SUPERSEDE, history=True)
         except Exception:
-            return
-        closed: list[str] = []
+            return outcome
         for item in items:
-            if (item.get("decision_id") == keep_id or item.get("tenant_id") != tenant_id
+            decision_id = str(item.get("decision_id") or "")
+            if (not decision_id or decision_id == keep_id or item.get("tenant_id") != tenant_id
                     or str(item.get("decision_state") or "") not in {"proposed", "under_review"}):
                 continue
-            meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
-            subj = meta.get("subject") if isinstance(meta.get("subject"), Mapping) else {}
-            if subj.get("requested_risk") != requested_profile:
-                continue
-            probe: dict[str, Any] = {}
-            self._apply_paper_gate_to_risk_policy_proposal(item, probe, requested_profile=requested_profile)
-            if probe.get("paper_gate_status", "").startswith("decided_"):
-                closed.append(str(item.get("decision_id")))
-        if closed:
-            decision_req["superseded_proposals_closed"] = closed
+            path = f"/api/governance/approvals/{_path_id(decision_id)}"
+            try:
+                current = self._owner_get("governance", path)
+                if not isinstance(current, Mapping) or str(current.get("decision_state") or "") not in {
+                        "proposed", "under_review"}:
+                    continue
+                self.transport.post("governance", f"{path}/close-superseded", {
+                    "actor_role": "automated_gate", "actor_id": self.governance_actor_id,
+                    "expected_version": int(current.get("version") or 0)})
+                after = self._owner_get("governance", path)
+                if isinstance(after, Mapping) and str(after.get("decision_state") or "") == "superseded":
+                    outcome["closed"].append(decision_id)
+                else:
+                    outcome["failed"].append({"decision_id": decision_id, "reason": "readback is not superseded"})
+            except Exception as exc:  # noqa: BLE001 - reported, retried on the next pass
+                from .persona_paper_enrollment import _error_detail, _error_status
+
+                outcome["failed"].append({
+                    "decision_id": decision_id, "http_status": _error_status(exc),
+                    "reason": str(_error_detail(exc) or exc.__class__.__name__)[:200]})
+        return outcome
 
     @staticmethod
     def _verified_requested_profile(*sources: tuple[str, str | None]) -> str:
