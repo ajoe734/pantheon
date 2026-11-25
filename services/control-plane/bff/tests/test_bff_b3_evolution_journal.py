@@ -3712,10 +3712,8 @@ def _pv_client(*, personas, decisions=None, incidents=None, pool_reader=None, re
     from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
     ports = create_in_memory_read_surface_ports(
-        persona_capital_runtime_kwargs={
-            "personas": personas, "evolution_decisions": decisions or [],
-            "persona_pool_versions_reader": pool_reader, "registry_entry_reader": registry_reader,
-        },
+        persona_capital_runtime_kwargs={"personas": personas, "evolution_decisions": decisions or []},
+        persona_pool_versions_reader=pool_reader, registry_entry_reader=registry_reader,
         lifecycle_telemetry_governance_kwargs={"incidents": {i["incident_id"]: i for i in incidents or []}},
     )
     app = FastAPI()

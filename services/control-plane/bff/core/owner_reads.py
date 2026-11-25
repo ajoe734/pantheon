@@ -517,8 +517,6 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         evolution_port=EvolutionProjectionPort(
             evolution_programs_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/programs", "items"),
             evolution_qualification_reader=lambda query: read_evolution_object(evolution_url, "/api/evolution/program-qualification", query),
-            persona_pool_versions_reader=read_persona_pool_versions,
-            registry_entry_reader=read_registry_entry,
             evolution_decisions_reader=lambda: persona_store.list_evolution_decisions() if hasattr(persona_store, "list_evolution_decisions") and not os.getenv("PANTHEON_EVOLUTION_API_URL", "").strip() else read_evolution_records(evolution_url, "/api/evolution/proposals"),
         ),
     )

@@ -11,13 +11,13 @@
     "qualification": "data.member_baselines per live member via approved_baselines.resolve_member_baseline on the Registry owner entry; reason passed through; unreadable entry unavailable; no number defaulted or written",
     "probe": "mgmt-evolution-pages-readable"
   },
-  "no_new_route": "no BFF route, no writer, no cache; added optional readers on the existing persona-capital-runtime port",
+  "no_new_route": "no BFF route, no writer, no cache; optional readers added on ReadSurfacePorts (read_surface_ports.py) wired to core/owner_reads.py",
   "runtime_budget": "journal: at most 20 persona-owner GET /strategy-pool/versions reads per request (persona and incident lists already read once, reused); qualification: 1 persona list + at most 20 pool-version reads + at most 50 Registry entry reads; each owner GET bounded by the management read budget (default 2.0 s)",
   "tests": {
     "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py": "recorded persona-ee7112a829d38b9135ac versions v1 initial, v2/v3 refused virtual_book_source_missing, v4/v5 refused virtual_book_history_missing, v6 refused virtual_book_high_water_history_missing; owner failure; 20-read bound and tenant scoping; subject classes incl. name-only decision stays strategy; parts add up; review count",
     "services/control-plane/bff/tests/test_evolution_qualification_read.py": "member baselines: resolver reason pass-through, missing entry, unreadable entry, pool owner failure, removed member and other tenant never read",
     "acceptance/test_mgmt_evolution_pages_readable.py": "probe passes on recorded shapes and fails on parts mismatch, refused-as-applied, strategy_pools unavailable, system entries by default, double-counted reviews, missing baselines",
-    "scripts/test_dev_acceptance_stage.py": "expected probe list gains probe:mgmt-evolution-pages-readable (outside the artifact list, required by the new probe)"
+    "scripts/test_dev_acceptance_stage.py": "NOT changed (outside the artifact contract): its hard-coded probe list must gain probe:mgmt-evolution-pages-readable between probe:meeting-review-disposition and probe:mgmt-strategy-meeting-research-readable; reported as a contract blocker"
   },
   "changed_assertions": [
     "test_bff_b3_evolution_journal.py exact auto_proposal_counts dicts gained threshold/other/infrastructure keys; where a proposed threshold decision exists threshold=1 and total is +1 (acceptance item 4 requires threshold as a part of total)",

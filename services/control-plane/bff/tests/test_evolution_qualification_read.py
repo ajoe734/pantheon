@@ -229,9 +229,9 @@ def _baseline_client(registry_reader, members=None, tenant="tenant-dev"):
                 {"persona_id": PB_PERSONA, "name": "Paper One", "lifecycle_state": "paper_owner", "tenant_id": tenant},
                 {"persona_id": "persona-other-tenant", "name": "Other", "lifecycle_state": "paper_owner", "tenant_id": "tenant-x"},
             ],
-            "persona_pool_versions_reader": lambda pid, tid: {"versions": [_pool_version(members)]},
-            "registry_entry_reader": registry_reader,
-        }
+        },
+        persona_pool_versions_reader=lambda pid, tid: {"versions": [_pool_version(members)]},
+        registry_entry_reader=registry_reader,
     )
     app = FastAPI()
     app.include_router(create_evolution_router(read_surface=ports, extract_identity=lambda authorization=None: _Ident()))
@@ -277,9 +277,9 @@ def test_member_baselines_pool_owner_failure_is_unavailable_not_empty_success() 
         persona_capital_runtime_kwargs={
             "evolution_qualification_reader": lambda q: dict(OWNER_REPORT),
             "personas": [{"persona_id": PB_PERSONA, "name": "P", "lifecycle_state": "paper_owner", "tenant_id": "tenant-dev"}],
-            "persona_pool_versions_reader": lambda pid, tid: (_ for _ in ()).throw(RuntimeError("down")),
-            "registry_entry_reader": lambda rid, tid: {},
-        }
+        },
+        persona_pool_versions_reader=lambda pid, tid: (_ for _ in ()).throw(RuntimeError("down")),
+        registry_entry_reader=lambda rid, tid: {},
     )
     app = FastAPI()
     app.include_router(create_evolution_router(read_surface=ports, extract_identity=lambda authorization=None: _Ident()))

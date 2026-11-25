@@ -863,11 +863,7 @@ class EvolutionProjectionPort:
         evolution_programs_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         evolution_decisions_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         evolution_qualification_reader: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
-        persona_pool_versions_reader: Optional[Callable[[str, str], Any]] = None,
-        registry_entry_reader: Optional[Callable[[str, str], Any]] = None,
     ) -> None:
-        self._persona_pool_versions_reader = persona_pool_versions_reader
-        self._registry_entry_reader = registry_entry_reader
         self._evolution_programs_reader = evolution_programs_reader
         self._evolution_decisions_reader = evolution_decisions_reader
         self._evolution_qualification_reader = evolution_qualification_reader
@@ -948,22 +944,6 @@ class EvolutionProjectionPort:
         if not isinstance(report, dict):
             raise ActionUnavailableError("Evolution qualification report is malformed", downstream_status=503)
         return _deep_copy(report)
-
-    def read_persona_pool_versions(self, persona_id: str, tenant_id: str) -> List[Dict[str, Any]]:
-        """Owner strategy pool versions of one persona (read-only, one owner read)."""
-        if self._persona_pool_versions_reader is None:
-            raise ActionUnavailableError("Persona pool versions reader is unconfigured", downstream_status=503)
-        payload = self._persona_pool_versions_reader(persona_id, tenant_id)
-        versions = payload.get("versions") if isinstance(payload, dict) else payload
-        if not isinstance(versions, list) or any(not isinstance(v, dict) for v in versions):
-            raise ActionUnavailableError("Persona pool versions payload is malformed", downstream_status=503)
-        return _deep_copy(versions)
-
-    def read_registry_entry(self, registry_id: str, tenant_id: str) -> Any:
-        """Registry owner entry of one artifact; ``{}`` when the owner has none."""
-        if self._registry_entry_reader is None:
-            raise ActionUnavailableError("Registry entry reader is unconfigured", downstream_status=503)
-        return self._registry_entry_reader(registry_id, tenant_id)
 
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         clean_id = str(program_id or "").strip()
@@ -1140,12 +1120,6 @@ class PersonaCapitalRuntimeDomainPort:
     def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
         return self.evolution.get_evolution_qualification(**kwargs)
 
-    def read_persona_pool_versions(self, persona_id: str, tenant_id: str) -> List[Dict[str, Any]]:
-        return self.evolution.read_persona_pool_versions(persona_id, tenant_id)
-
-    def read_registry_entry(self, registry_id: str, tenant_id: str) -> Any:
-        return self.evolution.read_registry_entry(registry_id, tenant_id)
-
     # Ranking delegates
     def list_rankings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ranking.list_rankings(**kwargs)
@@ -1257,8 +1231,6 @@ def create_in_memory_persona_capital_runtime_port(
     evolution_programs: Optional[List[Dict[str, Any]]] = None,
     evolution_decisions: Optional[List[Dict[str, Any]]] = None,
     evolution_qualification_reader: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
-    persona_pool_versions_reader: Optional[Callable[[str, str], Any]] = None,
-    registry_entry_reader: Optional[Callable[[str, str], Any]] = None,
     **kwargs: Any,
 ) -> PersonaCapitalRuntimeDomainPort:
     """Create an in-memory PersonaCapitalRuntimeDomainPort for testing."""
@@ -1281,8 +1253,6 @@ def create_in_memory_persona_capital_runtime_port(
         evolution_programs_reader=lambda: list(evolution_programs or []),
         evolution_decisions_reader=lambda: list(evolution_decisions or []),
         evolution_qualification_reader=evolution_qualification_reader,
-        persona_pool_versions_reader=persona_pool_versions_reader,
-        registry_entry_reader=registry_entry_reader,
     )
     return PersonaCapitalRuntimeDomainPort(
         persona_port=persona_p,
