@@ -26,13 +26,24 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 
-def _durable_receipt_id(event: dict[str, Any]) -> str:
+def _durable_receipt_id(
+    event: dict[str, Any],
+    *,
+    replay_key: Optional[str] = None,
+) -> str:
     """Return a tenant- and content-bound broker idempotency key.
 
     ``event_id`` remains the canonical Postgres idempotency key. The broker
     receipt additionally binds the complete immutable payload so a conflicting
     retry after an ingest-process restart is retained for canonical conflict
     handling instead of being silently suppressed by JetStream deduplication.
+
+    When ``replay_key`` is supplied (for example a dead-letter entry's
+    ``rejected_at`` timestamp), the broker message ID binds both the canonical
+    payload digest and the replay key so JetStream does not suppress a
+    dead-letter replay inside the original publish's duplicate window, while
+    replaying the same dead-letter entry twice inside the window is still
+    deduplicated.
     """
 
     payload = json.dumps(
@@ -41,7 +52,56 @@ def _durable_receipt_id(event: dict[str, Any]) -> str:
         sort_keys=True,
         allow_nan=False,
     ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    content_digest = hashlib.sha256(payload).hexdigest()
+    if replay_key:
+        replay_material = f"sha256:{content_digest}:replay:{replay_key}".encode("utf-8")
+        return f"sha256:{hashlib.sha256(replay_material).hexdigest()}"
+    return f"sha256:{content_digest}"
+
+
+class PutResult:
+    """Typed result returned by buffer ``put()``.
+
+    Evaluates truthy when the broker accepted the publish (either newly
+    enqueued or acknowledged as an idempotent duplicate) and falsy when
+    rejected, preserving boolean ``if await buffer.put(event):`` semantics
+    while exposing ``.enqueued`` and ``.duplicate`` to callers.
+    """
+
+    __slots__ = ("accepted", "enqueued", "duplicate", "receipt_id")
+
+    def __init__(
+        self,
+        accepted: bool,
+        *,
+        enqueued: bool = False,
+        duplicate: bool = False,
+        receipt_id: Optional[str] = None,
+    ) -> None:
+        self.accepted = bool(accepted)
+        self.enqueued = bool(enqueued)
+        self.duplicate = bool(duplicate)
+        self.receipt_id = receipt_id
+
+    def __bool__(self) -> bool:
+        return self.accepted
+
+    def __eq__(self, other: object) -> object:
+        if isinstance(other, bool):
+            return self.accepted is other
+        if isinstance(other, PutResult):
+            return (
+                self.accepted == other.accepted
+                and self.enqueued == other.enqueued
+                and self.duplicate == other.duplicate
+            )
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        return (
+            f"PutResult(accepted={self.accepted}, enqueued={self.enqueued}, "
+            f"duplicate={self.duplicate}, receipt_id={self.receipt_id!r})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -543,10 +603,37 @@ class NatsJetStreamBuffer(DurableBuffer):
         self._pending: dict[str, deque[Any]] = defaultdict(deque)
         self._estimated_depth = 0
         self._total_enqueued = 0
+        self._total_duplicates = 0
         self._total_dequeued = 0
         self._total_acked = 0
         self._total_released = 0
         self._total_rejected = 0
+
+    @staticmethod
+    def _consumer_pending_depth(consumer_info: Any) -> int:
+        return max(
+            0,
+            int(
+                getattr(consumer_info, "num_pending", 0)
+                + getattr(consumer_info, "num_ack_pending", 0)
+            ),
+        )
+
+    async def sync_depth(self) -> int:
+        """Resynchronise ``_estimated_depth`` from the broker consumer info when available."""
+        consumer_info_fn = getattr(self._subscription, "consumer_info", None)
+        if callable(consumer_info_fn):
+            try:
+                consumer_info = await consumer_info_fn()
+                self._estimated_depth = self._consumer_pending_depth(consumer_info)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("NatsJetStreamBuffer.sync_depth skipped: %s", exc)
+        return self._estimated_depth
+
+    async def _resync_depth_on_empty_poll(self) -> None:
+        in_flight = sum(len(q) for q in self._pending.values())
+        if self._estimated_depth != in_flight:
+            await self.sync_depth()
 
     async def start(self) -> None:
         if self._closed:
@@ -603,10 +690,7 @@ class NatsJetStreamBuffer(DurableBuffer):
         )
         consumer_info = await self._subscription.consumer_info()
         self._validate_consumer(consumer_info.config, api)
-        self._estimated_depth = int(
-            getattr(consumer_info, "num_pending", 0)
-            + getattr(consumer_info, "num_ack_pending", 0)
-        )
+        self._estimated_depth = self._consumer_pending_depth(consumer_info)
 
     def _validate_stream(self, config: Any, api: Any) -> None:
         subjects = set(getattr(config, "subjects", None) or [])
@@ -633,17 +717,23 @@ class NatsJetStreamBuffer(DurableBuffer):
         if self._subscription is None:
             await self.start()
 
-    async def put(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
+    async def put(
+        self,
+        event: dict[str, Any],
+        timeout: Optional[float] = None,
+        *,
+        replay_key: Optional[str] = None,
+    ) -> PutResult:
         if self._closed:
             self._total_rejected += 1
-            return False
+            return PutResult(accepted=False)
         await self._ensure_started()
         event_id = str(event.get("event_id") or "").strip()
         tenant_id = str(event.get("tenant_id") or "").strip()
         if not event_id or not tenant_id:
             self._total_rejected += 1
             log.error("JetStream buffer requires event_id and tenant_id")
-            return False
+            return PutResult(accepted=False)
         try:
             payload = json.dumps(
                 event,
@@ -651,9 +741,9 @@ class NatsJetStreamBuffer(DurableBuffer):
                 sort_keys=True,
                 allow_nan=False,
             ).encode("utf-8")
-            receipt_id = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+            receipt_id = _durable_receipt_id(event, replay_key=replay_key)
             publish_timeout = max(float(timeout), 0.001) if timeout is not None else 5.0
-            await self._js.publish(
+            pub_ack = await self._js.publish(
                 self._subject,
                 payload,
                 timeout=publish_timeout,
@@ -666,10 +756,23 @@ class NatsJetStreamBuffer(DurableBuffer):
         except Exception as exc:  # noqa: BLE001
             self._total_rejected += 1
             log.error("NatsJetStreamBuffer.put failed: %s", exc)
-            return False
+            return PutResult(accepted=False)
+        if bool(getattr(pub_ack, "duplicate", False)):
+            self._total_duplicates += 1
+            return PutResult(
+                accepted=True,
+                enqueued=False,
+                duplicate=True,
+                receipt_id=receipt_id,
+            )
         self._total_enqueued += 1
         self._estimated_depth += 1
-        return True
+        return PutResult(
+            accepted=True,
+            enqueued=True,
+            duplicate=False,
+            receipt_id=receipt_id,
+        )
 
     async def get(self, timeout: Optional[float] = None) -> Optional[dict[str, Any]]:
         await self._ensure_started()
@@ -681,8 +784,11 @@ class NatsJetStreamBuffer(DurableBuffer):
         except Exception as exc:  # nats.errors.TimeoutError is an expected empty poll
             if type(exc).__name__ != "TimeoutError":
                 log.error("NatsJetStreamBuffer.get failed: %s", exc)
+            else:
+                await self._resync_depth_on_empty_poll()
             return None
         if not messages:
+            await self._resync_depth_on_empty_poll()
             return None
         message = messages[0]
         try:
@@ -774,6 +880,7 @@ class NatsJetStreamBuffer(DurableBuffer):
             "size": self.size(),
             "capacity": self.capacity(),
             "total_enqueued": self._total_enqueued,
+            "total_duplicates": self._total_duplicates,
             "total_dequeued": self._total_dequeued,
             "total_acked": self._total_acked,
             "total_released": self._total_released,

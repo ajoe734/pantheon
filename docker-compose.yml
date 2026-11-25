@@ -1022,6 +1022,24 @@ services:
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
+      # Case-file composition (research demands + evolution executor): narrow read-only owner principals
+      # issued by scripts/issue_dev_paper_principals.py and delivered as files only. Identity is empty unless
+      # issued; actor id equals the memory credential subject. No write-capable RESEARCH_* token is used here.
+      RESEARCH_CASE_FILE_ACTOR_ID: ${RESEARCH_CASE_FILE_ACTOR_ID:-}
+      RESEARCH_CASE_FILE_ACTOR_ROLES: ${RESEARCH_CASE_FILE_ACTOR_ROLES:-}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      PANTHEON_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
       # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
       RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
       # Template search dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
