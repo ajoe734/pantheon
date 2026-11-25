@@ -6793,7 +6793,7 @@ class PoolMemberBaselineRuntimeTest(unittest.TestCase):
                                "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
                 bar_frequency="1d")
         [book] = service.snapshot()["paper_state"]["member_virtual_books"]
-        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertEqual(book["baseline"]["reason"], "registry_read_unavailable:RuntimeError")
         self.assertEqual(book["baseline_comparison"]["status"], "no_approved_baseline")
 
 
