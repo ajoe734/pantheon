@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, Header, Query
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
+from ..fleet_classification import classify_persona_list_scope
 from ..service import (
     PersonaProvisioningCoordinationError,
     ProvisioningConflict,
@@ -191,6 +192,12 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         catalog_default_total = len(directory.catalog_defaults_by_id)
         page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
         page_items = _project_persona_list_records(page_raw)
+        for raw_rec, item in zip(page_raw, page_items):
+            if isinstance(item, dict) and "listScope" not in item:
+                item["listScope"] = classify_persona_list_scope(
+                    raw_rec if isinstance(raw_rec, dict) else item,
+                    projected_state=str(item.get("state") or ""),
+                )
         return {
             "data": page_items,
             "items": page_items,

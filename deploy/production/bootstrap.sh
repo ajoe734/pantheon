@@ -44,10 +44,31 @@ run_priv_env() {
   fi
 }
 
+: "${PROD_SECRETS_ENV_FILE=${PROD_DATA_MOUNT:-}/secrets/prod.secrets.env}"
+: "${PROD_POSTGRES_PASSWORD_FILE=${PROD_DATA_MOUNT:-}/secrets/postgres_password}"
+: "${PROD_COMPOSE_ENV_FILE=${PROD_DATA_MOUNT:-}/config/compose.env}"
 for v in PROD_ROOT PROD_DATA_MOUNT PROD_BFF_HOST PROD_FE_HOST PROD_IDP_ISSUER \
          PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_COMPOSE_ENV_FILE PROD_TENANT_ID; do
   [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required env ${v} is missing"
 done
+
+PROD_MACHINE_TYPE="${PROD_MACHINE_TYPE:-e2-standard-8}"
+PROD_INSTANCE_TEMPLATE_MACHINE_TYPE="${PROD_INSTANCE_TEMPLATE_MACHINE_TYPE:-${PROD_MACHINE_TYPE}}"
+python3 - "${SCRIPT_DIR}" "$PROD_MACHINE_TYPE" "$PROD_INSTANCE_TEMPLATE_MACHINE_TYPE" "${PROD_INSTANCE_TEMPLATE_FILE:-${PROD_INSTANCE_TEMPLATE_JSON:-}}" "${PROD_OBSERVED_VCPUS:-}" <<'PY' \
+  || fail VM_SIZE_BELOW_GATE "control VM or instance template is below the e2-standard-8 (8 vCPU) minimum gate"
+import sys
+from pathlib import Path
+sys.path[:0] = [sys.argv[1], str(Path(sys.argv[1]).parents[1] / "scripts" / "deploy")]
+import prod_preflight
+
+mt, tpl_mt, tpl_input, vcpus_raw = sys.argv[2:6]
+prod_preflight.check_control_vm_machine_type(mt)
+prod_preflight.check_control_vm_machine_type(tpl_mt)
+if tpl_input.strip():
+    prod_preflight.check_instance_template(tpl_input.strip())
+if vcpus_raw.strip():
+    prod_preflight.check_control_vm_vcpus(vcpus_raw.strip())
+PY
 
 check_runtime_binaries() {
   local b
@@ -70,6 +91,40 @@ check_runtime_binaries || fail RUNTIME_BINARY_MISSING "required runtime binaries
 
 run_priv "$MOUNTPOINT" -q "$PROD_DATA_MOUNT" \
   || fail DATA_DISK_NOT_MOUNTED "${PROD_DATA_MOUNT} is not a mounted data disk; bootstrap never formats or attaches disks"
+
+umask 077
+run_priv mkdir -p \
+  "${PROD_ROOT}/bin" \
+  "${PROD_DATA_MOUNT}"/{secrets,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
+  "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" "${PROD_DATA_MOUNT}/signal-store" \
+  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" "${PROD_DATA_MOUNT}/product" \
+  || fail MKDIR "cannot create tree"
+run_priv chmod 0700 "${PROD_DATA_MOUNT}/secrets" "${PROD_DATA_MOUNT}/state" || fail MKDIR "cannot secure data-disk dirs"
+
+# Decouple secrets, release state, baselines, journals, manifests, config, proxy and FE bundles from the boot disk
+# onto PROD_DATA_MOUNT and link PROD_ROOT/<dir> -> PROD_DATA_MOUNT/<dir> so fresh-boot VM replacement retains them.
+if [[ "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  for _d in secrets manifests state fe proxy config; do
+    if run_priv test -d "${PROD_ROOT}/${_d}" && ! run_priv test -L "${PROD_ROOT}/${_d}"; then
+      run_priv tar -C "${PROD_ROOT}/${_d}" -cf - . | run_priv tar -C "${PROD_DATA_MOUNT}/${_d}" -xpf - \
+        || fail DATA_MIGRATE "cannot migrate ${PROD_ROOT}/${_d} onto ${PROD_DATA_MOUNT}/${_d}"
+      run_priv rm -rf "${PROD_ROOT}/${_d}" || fail DATA_MIGRATE "cannot replace boot-disk ${PROD_ROOT}/${_d}"
+    fi
+    run_priv ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}" \
+      || fail DATA_LINK "cannot symlink ${PROD_ROOT}/${_d} -> ${PROD_DATA_MOUNT}/${_d}"
+  done
+fi
+run_priv mkdir -p \
+  "${PROD_DATA_MOUNT}"/{secrets,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
+  "$(dirname "$PROD_SECRETS_ENV_FILE")" "$(dirname "$PROD_POSTGRES_PASSWORD_FILE")" "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
+  || fail MKDIR "cannot create tree"
+
+if ! run_priv test -e "$PROD_SECRETS_ENV_FILE" && run_priv test -s "${PROD_DATA_MOUNT}/secrets/prod.secrets.env"; then
+  PROD_SECRETS_ENV_FILE="${PROD_DATA_MOUNT}/secrets/prod.secrets.env"
+fi
+if ! run_priv test -e "$PROD_POSTGRES_PASSWORD_FILE" && run_priv test -s "${PROD_DATA_MOUNT}/secrets/postgres_password"; then
+  PROD_POSTGRES_PASSWORD_FILE="${PROD_DATA_MOUNT}/secrets/postgres_password"
+fi
 
 for f in "$PROD_SECRETS_ENV_FILE" "$PROD_POSTGRES_PASSWORD_FILE"; do
   run_priv test -s "$f" || fail SECRET_MISSING "secret file ${f} missing or empty (supplied from PROD_SECRETS_REF, never generated here)"
@@ -274,19 +329,15 @@ PY
 [[ "$PROD_FE_HOST" != "$PROD_BFF_HOST" ]] || fail HOST_COLLISION "FE and BFF hosts must differ"
 [[ "$PROD_IDP_ISSUER" == https://* ]] || fail IDP_NOT_HTTPS "IdP issuer must be https"
 
-umask 077
-run_priv mkdir -p \
-  "${PROD_ROOT}"/{bin,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config} \
-  "${PROD_DATA_MOUNT}/postgres" "${PROD_DATA_MOUNT}/nats" "${PROD_DATA_MOUNT}/signal-store" \
-  "${PROD_DATA_MOUNT}/bff" "${PROD_DATA_MOUNT}/runtime" "${PROD_DATA_MOUNT}/governance" "${PROD_DATA_MOUNT}/product" \
-  "$(dirname "$PROD_COMPOSE_ENV_FILE")" \
-  || fail MKDIR "cannot create tree"
-
 if [[ -f "${SCRIPT_DIR}/Caddyfile" ]]; then
-  run_priv cp -f "${SCRIPT_DIR}/Caddyfile" "${PROD_ROOT}/proxy/Caddyfile" || fail INSTALL_CADDYFILE "cannot install Caddyfile"
+  [[ "$(readlink -f "${SCRIPT_DIR}/Caddyfile" 2>/dev/null)" == "$(readlink -f "${PROD_ROOT}/proxy/Caddyfile" 2>/dev/null)" ]] \
+    || run_priv cp -f "${SCRIPT_DIR}/Caddyfile" "${PROD_ROOT}/proxy/Caddyfile" || fail INSTALL_CADDYFILE "cannot install Caddyfile"
 fi
 if [[ -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" ]]; then
-  run_priv cp -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" "${PROD_ROOT}/docker-compose.prod-control.yml" || fail INSTALL_COMPOSE "cannot install compose file"
+  [[ "$(readlink -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" 2>/dev/null)" == "$(readlink -f "${PROD_DATA_MOUNT}/docker-compose.prod-control.yml" 2>/dev/null)" ]] \
+    || run_priv cp -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" "${PROD_DATA_MOUNT}/docker-compose.prod-control.yml" || fail INSTALL_COMPOSE "cannot install compose file"
+  [[ "$(readlink -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" 2>/dev/null)" == "$(readlink -f "${PROD_ROOT}/docker-compose.prod-control.yml" 2>/dev/null)" ]] \
+    || run_priv cp -f "${SCRIPT_DIR}/docker-compose.prod-control.yml" "${PROD_ROOT}/docker-compose.prod-control.yml" || fail INSTALL_COMPOSE "cannot install compose file"
 fi
 
 # Placeholder upstream: explicit 503 until the first controller switch replaces it.
@@ -347,8 +398,8 @@ if ! run_priv test -f "$PROD_COMPOSE_ENV_FILE"; then
   tmp_ce="$(mktemp)"
   cat > "$tmp_ce" <<EOF
 PROD_DATA_MOUNT=${PROD_DATA_MOUNT}
-PROD_SECRETS_ENV_FILE=${PROD_SECRETS_ENV_FILE}
-PROD_POSTGRES_PASSWORD_FILE=${PROD_POSTGRES_PASSWORD_FILE}
+PROD_SECRETS_ENV_FILE=${PROD_DATA_MOUNT}/secrets/prod.secrets.env
+PROD_POSTGRES_PASSWORD_FILE=${PROD_DATA_MOUNT}/secrets/postgres_password
 PROD_POSTGRES_USER=${PROD_POSTGRES_USER:-pantheon_prod}
 PROD_POSTGRES_DB=${PROD_POSTGRES_DB:-pantheon_production}
 PROD_JWT_ISSUER=${PROD_JWT_ISSUER:-${PROD_IDP_ISSUER}}
@@ -451,6 +502,20 @@ except BaseException:
     raise
 PY
 
+# Persist validated secrets onto PROD_DATA_MOUNT/secrets so fresh-boot VM replacement never depends on boot-disk paths.
+if [[ "$(readlink -f "$PROD_SECRETS_ENV_FILE" 2>/dev/null)" != "$(readlink -f "${PROD_DATA_MOUNT}/secrets/prod.secrets.env" 2>/dev/null)" ]]; then
+  run_priv install -m 0600 "$PROD_SECRETS_ENV_FILE" "${PROD_DATA_MOUNT}/secrets/prod.secrets.env" \
+    || fail SECRET_SYNC "cannot persist prod.secrets.env to ${PROD_DATA_MOUNT}/secrets"
+fi
+if [[ "$(readlink -f "$PROD_POSTGRES_PASSWORD_FILE" 2>/dev/null)" != "$(readlink -f "${PROD_DATA_MOUNT}/secrets/postgres_password" 2>/dev/null)" ]]; then
+  run_priv install -m 0600 "$PROD_POSTGRES_PASSWORD_FILE" "${PROD_DATA_MOUNT}/secrets/postgres_password" \
+    || fail SECRET_SYNC "cannot persist postgres_password to ${PROD_DATA_MOUNT}/secrets"
+fi
+
+if [[ -z "${RELEASE_MANIFEST_PATH:-}" && -f "${PROD_DATA_MOUNT}/state/active_manifest.json" ]]; then
+  RELEASE_MANIFEST_PATH="${PROD_DATA_MOUNT}/state/active_manifest.json"
+fi
+
 # Resolve the EFFECTIVE stateful refs exactly as compose will (shell env wins over --env-file), including an
 # existing compose.env, so the pulled refs always equal the refs compose.up needs (pull_policy: never).
 for _v in PANTHEON_POSTGRES_IMAGE PANTHEON_NATS_IMAGE; do
@@ -534,6 +599,11 @@ PY
   done <<< "$IMAGE_LIST"
 fi
 
+if [[ "$(readlink -f "$PROD_COMPOSE_ENV_FILE" 2>/dev/null)" != "$(readlink -f "${PROD_DATA_MOUNT}/config/compose.env" 2>/dev/null)" ]]; then
+  run_priv install -m 0600 "$PROD_COMPOSE_ENV_FILE" "${PROD_DATA_MOUNT}/config/compose.env" \
+    || fail COMPOSE_ENV "cannot persist compose.env to ${PROD_DATA_MOUNT}/config"
+fi
+
 if [[ "${PROD_BOOTSTRAP_SKIP_STATEFUL:-false}" != "true" ]]; then
   # Compose interpolates every service (profiles do not skip required-variable checks), so the exact
   # manifest-owned release/image values must be present before the first stateful invocation.
@@ -577,4 +647,19 @@ PY
     --env-file "$PROD_COMPOSE_ENV_FILE" --profile stateful up -d --no-build \
     || fail STATEFUL_START "stateful services failed to start"
 fi
-printf '{"status":"bootstrapped","first_release_requires":"PROD_BOOTSTRAP_FIRST_RELEASE=true","rollback_target":null}\n'
+python3 - "${PROD_ROOT}/state/baseline.json" <<'PY'
+import json, sys
+from pathlib import Path
+bp = Path(sys.argv[1])
+target = None
+if bp.is_file():
+    try:
+        target = json.loads(bp.read_text(encoding="utf-8")).get("release_id") or None
+    except Exception:
+        target = None
+print(json.dumps({
+    "status": "bootstrapped",
+    "first_release_requires": "PROD_BOOTSTRAP_FIRST_RELEASE=true",
+    "rollback_target": target,
+}))
+PY

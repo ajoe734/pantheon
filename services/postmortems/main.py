@@ -105,6 +105,9 @@ try:
         IncidentStore,
         Postmortem,
         PostmortemStatus,
+        is_infrastructure_health_incident,
+        is_infrastructure_postmortem,
+        is_monitor_agent_finding_incident,
         validate_postmortem,
     )
     from services.incident.pg_store import build_incident_store  # type: ignore
@@ -116,6 +119,9 @@ except ImportError:
         IncidentStore,
         Postmortem,
         PostmortemStatus,
+        is_infrastructure_health_incident,
+        is_infrastructure_postmortem,
+        is_monitor_agent_finding_incident,
         validate_postmortem,
     )
     from incident.pg_store import build_incident_store  # type: ignore
@@ -360,17 +366,31 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
     return _to_response(pm)
 
 
+SKIP_INFRASTRUCTURE_REASON = "infrastructure_incident"
+
+
+def _is_skipped_infrastructure_incident(incident: Optional[IncidentCase]) -> bool:
+    return incident is not None and (
+        is_infrastructure_health_incident(incident)
+        or is_monitor_agent_finding_incident(incident)
+    )
+
+
 @app.post(
     "/api/postmortems/consume-resolved-incident",
-    response_model=PostmortemResponse,
     status_code=201,
     summary="Consume a resolved IncidentCase into an idempotent Postmortem draft",
 )
 def consume_resolved_incident(
     response: Response,
     body: Dict[str, Any] = Body(...),
-) -> PostmortemResponse:
-    """Create or refresh a draft Postmortem from a resolved IncidentCase."""
+) -> Any:
+    """Create or refresh a draft Postmortem from a resolved IncidentCase.
+
+    Infrastructure-health and monitor-agent incidents are skipped: no draft,
+    no inbox row, HTTP 200 ``{"skipped": true, "reason": "infrastructure_incident"}``
+    (the producer treats 200 as delivered). An existing postmortem is untouched.
+    """
     event: EventEnvelope | None = None
     reservation: Dict[str, Any] | None = None
     raw_event = body.get("event")
@@ -393,6 +413,13 @@ def consume_resolved_incident(
                 status_code=422,
                 detail="incident delivery envelope does not match the requested incident_id",
             )
+        if _is_skipped_infrastructure_incident(store.get_incident(incident_id)):
+            response.status_code = 200
+            return {
+                "skipped": True,
+                "reason": SKIP_INFRASTRUCTURE_REASON,
+                "incident_id": incident_id,
+            }
         existing_result = store.find_postmortem_for_incident(incident_id)
         result_ref = (
             existing_result.postmortem_id
@@ -426,6 +453,18 @@ def consume_resolved_incident(
                 )
             response.status_code = 200
             return _to_response(existing)
+
+    if event is None:
+        plain_id = str(body.get("incident_id") or "").strip()
+        if not plain_id and isinstance(body.get("incident"), dict):
+            plain_id = str(body["incident"].get("incident_id") or "").strip()
+        if plain_id and _is_skipped_infrastructure_incident(store.get_incident(plain_id)):
+            response.status_code = 200
+            return {
+                "skipped": True,
+                "reason": SKIP_INFRASTRUCTURE_REASON,
+                "incident_id": plain_id,
+            }
 
     consumer = ResolvedIncidentPostmortemDraftConsumer(incident_store=store)
     try:
@@ -522,38 +561,27 @@ def list_postmortems(
     q: Optional[str] = Query(None, description="Case-insensitive text search across postmortem fields"),
     page_size: Optional[int] = Query(None, ge=1, le=200, description="Bounded page size (1..200)"),
     page_token: Optional[str] = Query(None, description="Pagination offset token"),
+    include_infrastructure: bool = Query(
+        False,
+        description="Include draft infrastructure/monitor-agent postmortems (hidden by default)",
+    ),
 ) -> Any:
-    """List Postmortems with optional filters and bounded paging.  Most-recent first."""
-    postmortems = store.list_postmortems()
+    """List Postmortems with optional filters and bounded paging.  Most-recent first.
 
-    if incident_id:
-        postmortems = [p for p in postmortems if _postmortem_attr(p, "incident_id") == incident_id]
-    if binding_id:
-        postmortems = [p for p in postmortems if _postmortem_attr(p, "binding_id") == binding_id]
-    if status:
-        requested_statuses = {s.strip().lower() for s in status.split(",") if s.strip()}
-        if requested_statuses:
-            postmortems = [
-                p
-                for p in postmortems
-                if str(_postmortem_attr(p, "status") or "").strip().lower() in requested_statuses
-            ]
-    if q is not None and q.strip():
-        needle = q.strip().lower()
-        postmortems = [p for p in postmortems if _postmortem_matches_query(p, needle)]
-
-    postmortems.sort(
-        key=lambda p: (
-            str(_postmortem_attr(p, "created_at") or ""),
-            str(_postmortem_attr(p, "postmortem_id") or ""),
-        ),
-        reverse=True,
+    Draft postmortems of infrastructure-health / monitor-agent incidents are
+    hidden unless include_infrastructure=true or incident_id is given; the
+    hidden count is reported. Reviewed/approved/published rows are never hidden.
+    ``total`` is exact: it comes from the uncapped store read.
+    """
+    requested_statuses = (
+        {s.strip().lower() for s in status.split(",") if s.strip()} if status else set()
     )
-    total = len(postmortems)
-    response.headers["X-Total-Count"] = str(total)
+    needle = q.strip().lower() if q is not None and q.strip() else None
+    hide_infrastructure = not include_infrastructure and not incident_id
 
-    if page_size is not None or page_token is not None:
-        start = 0
+    paged = page_size is not None or page_token is not None
+    start = 0
+    if paged:
         if page_token is not None and str(page_token).strip() != "":
             raw_token = str(page_token).strip()
             if raw_token.startswith("offset:"):
@@ -564,8 +592,26 @@ def list_postmortems(
                 raise HTTPException(status_code=400, detail=f"Invalid page_token: {page_token!r}") from exc
             if start < 0:
                 raise HTTPException(status_code=400, detail="page_token must be non-negative")
-        effective_page_size = page_size if page_size is not None else 50
-        page_slice = postmortems[start : start + effective_page_size]
+    effective_page_size = (page_size if page_size is not None else 50) if paged else None
+
+    # The store filters, counts (total and hidden) and pages exactly; the
+    # Postgres store does so over a streamed narrow projection and loads only
+    # the page's payloads (no HISTORY_READ_ROW_CAP, no full-table load).
+    postmortems, total, hidden_infrastructure_count = store.list_postmortem_page(
+        incident_id=incident_id or None,
+        binding_id=binding_id or None,
+        statuses=requested_statuses or None,
+        matcher=(lambda p: _postmortem_matches_query(p, needle)) if needle else None,
+        q_sql_needle=needle,
+        hide_infrastructure=hide_infrastructure,
+        offset=start,
+        limit=effective_page_size,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Hidden-Infrastructure-Count"] = str(hidden_infrastructure_count)
+
+    if paged:
+        page_slice = postmortems
         next_page_token = str(start + effective_page_size) if (start + effective_page_size) < total else None
         if next_page_token is not None:
             response.headers["X-Next-Page-Token"] = next_page_token
@@ -577,6 +623,7 @@ def list_postmortems(
             "items": items,
             "data": items,
             "total": total,
+            "hidden_infrastructure_count": hidden_infrastructure_count,
             "page_size": effective_page_size,
             "next_page_token": next_page_token,
             "page_info": {

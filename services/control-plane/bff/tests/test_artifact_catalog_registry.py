@@ -65,6 +65,7 @@ CATALOG_ROW_KEYS = {
     "owner",
     "updatedAt",
     "source_kind",
+    "list_scope",
 }
 
 
@@ -360,6 +361,7 @@ def seeded_catalog_env(monkeypatch: pytest.MonkeyPatch):
         registry_service_url="http://registry.test",
         research_write_owner=research_owner,
     )
+    port.list_personas = lambda: []  # type: ignore[attr-defined]
 
     bff_app = FastAPI()
     bff_app.include_router(
