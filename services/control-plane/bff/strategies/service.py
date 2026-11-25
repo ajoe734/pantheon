@@ -486,12 +486,23 @@ class StrategiesService:
     ) -> Optional[Dict[str, Any]]:
         """Walk every owner summary page of one candidate set (page_size 200).
 
-        Returns ``{"items", "total", "state_counts"}`` or ``None`` when the
-        owner has no paged view. The registry paging is by offset token, so a
-        repeated or non-advancing token is a broken owner and fails closed.
+        Returns ``{"items", "total", "state_counts", "owner_hid", "hidden",
+        "visible_state_counts"}`` or ``None`` when the owner has no paged
+        view. The registry paging is by offset token, so a repeated or
+        non-advancing token is a broken owner and fails closed.
+
+        With ``hide_stubs`` the owner answers the hide input on every page of
+        the same candidate set; ``owner_hid`` / ``hidden`` /
+        ``visible_state_counts`` are taken from the first page, so the counts
+        cost no extra owner call. An owner that does not take the hide input
+        answers without the marker (``owner_hid`` False, counts ``None``) and
+        the caller classifies the rows itself.
         """
         items: List[Dict[str, Any]] = []
         state_counts: Optional[Dict[str, int]] = None
+        visible_state_counts: Optional[Dict[str, int]] = None
+        hidden: Optional[Dict[str, Any]] = None
+        owner_hid = False
         total = 0
         page_token: Optional[str] = None
         seen_tokens: Set[str] = set()
@@ -511,12 +522,34 @@ class StrategiesService:
             if not isinstance(page_items, list):
                 raise self._candidate_walk_error("Invalid strategy list payload")
             items.extend(page_items)
+            page_hid = isinstance(page.get("hidden"), dict) and isinstance(
+                page.get("visible_state_counts"), dict
+            )
             if page_number == 0:
                 total = int(page.get("total") or 0)
                 state_counts = self.resolve_strategy_state_counts(owner_page=page)
+                if hide_stubs and page_hid:
+                    owner_hid = True
+                    hidden = dict(page["hidden"])
+                    visible_state_counts = self.resolve_visible_state_counts(
+                        owner_page=page
+                    )
+            elif hide_stubs and page_hid != owner_hid:
+                # Pages of one walk that disagree on hiding cannot be joined
+                # into one exact candidate set.
+                raise self._candidate_walk_error(
+                    "Strategy list pages disagree on the hide input"
+                )
             next_token = page.get("next_page_token")
             if not next_token:
-                return {"items": items, "total": total, "state_counts": state_counts}
+                return {
+                    "items": items,
+                    "total": total,
+                    "state_counts": state_counts,
+                    "owner_hid": owner_hid,
+                    "hidden": hidden,
+                    "visible_state_counts": visible_state_counts,
+                }
             next_token = str(next_token)
             if next_token in seen_tokens or next_token == page_token:
                 raise self._candidate_walk_error("Strategy list paging did not advance")
