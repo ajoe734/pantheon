@@ -1301,6 +1301,37 @@ class BootstrapTests(OpsHarness):
         self.assertIn("PANTHEON_GOVERNANCE_JWT_SECRET=s2", sec_out)
         self.assertIn("PANTHEON_PERSONA_PROVISIONING_STORE_DSN=postgresql://u:p@127.0.0.1:5432/db", sec_out)
 
+    def test_bootstrap_enforces_e2_standard_8_gate_and_migrates_boot_disk_dirs_to_data_mount(self):
+        for bad_env in (
+            {"PROD_MACHINE_TYPE": "e2-standard-2"},
+            {"PROD_INSTANCE_TEMPLATE_MACHINE_TYPE": "e2-standard-4"},
+            {"PROD_OBSERVED_VCPUS": "2"},
+            {"PROD_INSTANCE_TEMPLATE_JSON": json.dumps({"properties": {"machineType": "e2-standard-2"}})},
+            {"PROD_INSTANCE_TEMPLATE_JSON": json.dumps({"properties": {"machineType": "e2-standard-8", "scheduling": {"preemptible": True}}})},
+        ):
+            r = self._run(**bad_env)
+            self.assertNotEqual(r.returncode, 0, bad_env)
+            self.assertIn("VM_SIZE_BELOW_GATE", r.stderr, bad_env)
+
+        # Legacy boot-disk layout: real directories under PROD_ROOT before bootstrap runs.
+        for d in prod_preflight.DATA_DISK_CONTROL_DIRS:
+            p = self.root / d
+            if p.is_symlink():
+                p.unlink()
+            p.mkdir(parents=True, exist_ok=True)
+        (self.root / "state" / "legacy-marker.json").write_text('{"migrated":true}')
+        (self.root / "manifests" / "rel-0.json").write_text('{"release_id":"rel-0"}')
+        r = self._run(PROD_MACHINE_TYPE="e2-standard-8", PROD_INSTANCE_TEMPLATE_MACHINE_TYPE="e2-standard-8")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data_mount = self.tmp / "data"
+        decoupled = prod_preflight.check_boot_disk_decoupling(self.root, data_mount)
+        self.assertEqual(set(decoupled.keys()), set(prod_preflight.DATA_DISK_CONTROL_DIRS))
+        self.assertTrue((data_mount / "state" / "legacy-marker.json").is_file())
+        self.assertTrue((data_mount / "manifests" / "rel-0.json").is_file())
+        self.assertTrue((data_mount / "secrets" / "prod.secrets.env").is_file())
+        self.assertTrue((data_mount / "secrets" / "postgres_password").is_file())
+        self.assertTrue((data_mount / "config" / "compose.env").is_file())
+
 
 PROD_ENV = {
     "PROD_GCP_PROJECT_ID": "acme-trading-prod-01",
@@ -1507,6 +1538,78 @@ class ControlVmSizeTests(unittest.TestCase):
             self.assertRegex(n, r"^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$")
         # snapshot record still keys on the release id and carries the real snapshot name
         self.assertIn('"snapshot": sys.argv[3]', wf)
+
+    def test_machine_type_and_instance_template_gate(self):
+        for bad in ("e2-standard-2", "e2-standard-4", "n2-standard-4", "e2-medium", "f1-micro", "", "custom-4-8192"):
+            with self.assertRaises(prod_preflight.PreflightError, msg=bad):
+                prod_preflight.check_control_vm_machine_type(bad)
+        self.assertEqual(prod_preflight.check_control_vm_machine_type("e2-standard-8"), ("e2-standard-8", 8))
+        self.assertEqual(
+            prod_preflight.check_control_vm_machine_type(
+                "https://www.googleapis.com/compute/v1/projects/p/zones/asia-east1-b/machineTypes/n2-standard-16"
+            ),
+            ("n2-standard-16", 16),
+        )
+        self.assertEqual(prod_preflight.check_control_vm_machine_type("e2-custom-8-32768"), ("e2-custom-8-32768", 8))
+        stg_tpl = REPO_ROOT / "deploy/staging/instance-template.json"
+        self.assertEqual(prod_preflight.check_instance_template(stg_tpl)["vcpus"], 8)
+        for bad_tpl in (
+            {"properties": {"machineType": "e2-standard-2"}},
+            {"properties": {"machineType": "e2-standard-4"}},
+            {"properties": {"machineType": "e2-standard-8", "scheduling": {"preemptible": True}}},
+            {"properties": {"machineType": "e2-standard-8", "scheduling": {"provisioningModel": "SPOT"}}},
+        ):
+            with self.assertRaises(prod_preflight.PreflightError, msg=bad_tpl):
+                prod_preflight.check_instance_template(bad_tpl)
+        for env_key in ("PROD_MACHINE_TYPE", "PROD_INSTANCE_TEMPLATE_MACHINE_TYPE", "STAGING_MACHINE_TYPE"):
+            with self.assertRaises(prod_preflight.PreflightError, msg=env_key):
+                prod_preflight.check_config({**PROD_ENV, env_key: "e2-standard-2"})
+            self.assertEqual(
+                prod_preflight.check_config({**PROD_ENV, env_key: "e2-standard-8"})["PROD_GCP_PROJECT_ID"],
+                PROD_ENV["PROD_GCP_PROJECT_ID"],
+            )
+        cli = lambda *args: subprocess.run(
+            [sys.executable, "-I", str(REPO_ROOT / "scripts/deploy/prod_preflight.py"), "vm-size", *args],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(cli("--machine-type", "e2-standard-2").returncode, 0)
+        self.assertEqual(cli("--machine-type", "e2-standard-8", "--instance-template", str(stg_tpl)).returncode, 0)
+
+    def test_boot_disk_decoupling_check_and_cli(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            root = tmp / "prod-root"
+            data = tmp / "prod-data"
+            root.mkdir()
+            data.mkdir()
+            with self.assertRaises(prod_preflight.PreflightError):
+                prod_preflight.check_boot_disk_decoupling(root, root)
+            for d in prod_preflight.DATA_DISK_CONTROL_DIRS:
+                (root / d).mkdir()
+            with self.assertRaises(prod_preflight.PreflightError):
+                prod_preflight.check_boot_disk_decoupling(root, data)
+            for d in prod_preflight.DATA_DISK_CONTROL_DIRS:
+                shutil.rmtree(root / d)
+                (data / d).mkdir()
+                os.symlink(data / d, root / d)
+            res = prod_preflight.check_boot_disk_decoupling(root, data)
+            self.assertEqual(set(res.keys()), set(prod_preflight.DATA_DISK_CONTROL_DIRS))
+            cli = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                    "boot-disk",
+                    "--prod-root",
+                    str(root),
+                    "--data-mount",
+                    str(data),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(cli.returncode, 0, cli.stderr)
 
 
 class PreflightTests(unittest.TestCase):
@@ -2351,6 +2454,82 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
         r = self._rollback_mode(m2["release_id"], PROD_ROLLBACK_BUDGET_SECONDS="-1")
         self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
         self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["status"], "rollback_over_budget")
+
+    def test_fresh_boot_vm_replacement_retains_all_data_disk_state_restores_active_release_and_rolls_back(self):
+        m1, m2 = self._switch_second_release()
+        data_mount = self.tmp / "data"
+        decoupled = prod_preflight.check_boot_disk_decoupling(self.root, data_mount)
+        self.assertEqual(set(decoupled.keys()), set(prod_preflight.DATA_DISK_CONTROL_DIRS))
+        # All durable release state, secrets, baselines, journals, manifests, config, proxy, and FE bundles live on PROD_DATA_MOUNT.
+        for rel_path in (
+            "secrets/prod.secrets.env",
+            "secrets/postgres_password",
+            "config/compose.env",
+            "config/runtime-config.js",
+            "proxy/bff_upstream.caddy",
+            "state/baseline.json",
+            "state/active_manifest.json",
+            f"state/journal/{m2['release_id']}/baseline_release.json",
+            f"state/journal/{m2['release_id']}/prev_baseline.json",
+            f"manifests/{m1['release_id']}.json",
+            f"manifests/{m2['release_id']}.json",
+            f"fe/releases/{m1['release_id']}/deployment.json",
+            f"fe/releases/{m2['release_id']}/deployment.json",
+            f"fe/artifacts/{m2['release_id']}.tar.gz",
+        ):
+            self.assertTrue((data_mount / rel_path).exists(), rel_path)
+
+        # Simulate replacing the VM with a fresh boot disk: wipe PROD_ROOT and ephemeral container runtime markers,
+        # while keeping PROD_DATA_MOUNT intact.
+        shutil.rmtree(self.root)
+        self.assertFalse(self.root.exists())
+        for p in list(self.state.glob("image_cid-*")) + [
+            self.state / "singleton_up",
+            self.state / "product_ups",
+            self.state / "cred_checked",
+        ]:
+            if p.exists():
+                p.unlink()
+
+        # On the replaced VM, bootstrap runs using only PROD_DATA_MOUNT (no boot-disk secrets or compose.env).
+        fresh_env = self.env(
+            PROD_SECRETS_ENV_FILE=str(data_mount / "secrets" / "prod.secrets.env"),
+            PROD_POSTGRES_PASSWORD_FILE=str(data_mount / "secrets" / "postgres_password"),
+            PROD_COMPOSE_ENV_FILE=str(data_mount / "config" / "compose.env"),
+            RELEASE_MANIFEST_PATH=str(data_mount / "state" / "active_manifest.json"),
+        )
+        boot = subprocess.run([str(BOOTSTRAP)], env=fresh_env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(boot.returncode, 0, boot.stderr)
+        self.assertEqual(json.loads(boot.stdout)["rollback_target"], m2["release_id"])
+        self.assertEqual(
+            set(prod_preflight.check_boot_disk_decoupling(self.root, data_mount).keys()),
+            set(prod_preflight.DATA_DISK_CONTROL_DIRS),
+        )
+
+        # Restore active release containers and verify public + local identities from PROD_DATA_MOUNT.
+        restore = subprocess.run(
+            [str(OPS), "restore_active_release", m2["release_id"]],
+            env={**fresh_env, "FAKE_READY_PORTS": "8001 8002"},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(restore.returncode, 0, restore.stderr)
+        restored_id = json.loads(restore.stdout.strip().splitlines()[-1])
+        self.assertEqual(restored_id["release_id"], m2["release_id"])
+        self.assertTrue(restored_id["public_fe_deployment_verified"])
+        self.assertTrue(restored_id["public_bff_version_verified"])
+
+        # Protected rollback after VM replacement succeeds using the retained data-disk journal and baseline.
+        rb = self._rollback_mode(
+            m2["release_id"],
+            PROD_COMPOSE_ENV_FILE=str(data_mount / "config" / "compose.env"),
+        )
+        self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+        rb_out = json.loads(rb.stdout.strip().splitlines()[-1])
+        self.assertEqual(rb_out["status"], "rolled_back")
+        self.assertEqual(rb_out["from_release"], m2["release_id"])
+        self.assertEqual(rb_out["to_release"], m1["release_id"])
 
     def test_paper_owners_must_reuse_training_session_image_and_are_singletons(self):
         svc = yaml.safe_load(COMPOSE.read_text())["services"]

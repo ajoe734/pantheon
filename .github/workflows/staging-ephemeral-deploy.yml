@@ -129,6 +129,9 @@ jobs:
               exit 1
             fi
           done
+          python3 -I scripts/deploy/prod_preflight.py vm-size \
+            --machine-type "${STAGING_MACHINE_TYPE:-e2-standard-8}" \
+            --instance-template deploy/staging/instance-template.json
           if [[ "${STAGING_DRY_RUN}" != "true" ]]; then
             for live_req in STAGING_WIF_PROVIDER STAGING_DEPLOY_SERVICE_ACCOUNT STAGING_FE_ARTIFACT_URI STAGING_FE_BASELINE_ARTIFACT_URI STAGING_PUBLIC_GCP_IDENTITY_API_KEY STAGING_PUBLIC_GCP_IDENTITY_PROJECT_ID STAGING_PUBLIC_GCP_IDENTITY_AUTH_DOMAIN; do
               if [[ -z "${!live_req:-}" ]]; then
