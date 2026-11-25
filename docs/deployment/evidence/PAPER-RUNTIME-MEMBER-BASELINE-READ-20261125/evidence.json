@@ -1,0 +1,30 @@
+{
+  "task_id": "PAPER-RUNTIME-MEMBER-BASELINE-READ-20261125",
+  "class": "RC2/RC3",
+  "cause": "paper-fleet-reconciler had no Registry URL or read principal; every member baseline read raised inside the snapshot path and was logged with a traceback (about 170 tracebacks a minute), and the read repeated per snapshot",
+  "change": {
+    "credential": "new dev-only registry-reader principal PAPER_RUNTIME_REGISTRY_READ_TOKEN (sub pantheon-dev-paper-runtime-registry-reader, role registry-reader, tenant-dev) in its own issuer consumer dir paper-registry-reader, mounted read-only at /run/pantheon-registry-read into paper-fleet-reconciler only; env var is `${...:-}` so staging/production have no default credential; no write-capable or wider token handed over",
+    "strip": "reconciler removes the registry URL and token file variables from any worker env without a persona id",
+    "read_bound": "one Registry read per (tenant, artifact, checksum) per PAPER_MEMBER_BASELINE_REFRESH_SECONDS (default 300), successes, absences and failures cached alike",
+    "log_bound": "an unreadable baseline logs one WARNING without traceback per key per interval; snapshot baseline reason is registry_read_unavailable:<ExceptionType>",
+    "report_only": "resolver output still only feeds baseline/baseline_comparison in the snapshot; no signal, sizing, order or pool path reads it"
+  },
+  "runtime_budget_per_hour_per_member": {
+    "before": {"registry_read_attempts": "about 10800 (3 per second, all failing before any request)", "log_records": "about 10200 with traceback (about 170 per minute)"},
+    "after": {"registry_reads": "at most 12", "log_records": "at most 12 on failure, 0 on success"}
+  },
+  "tests": [
+    "services/execution/lean_runtime/test_member_baseline_read.py",
+    "services/execution/lean_runtime/test_paper_runtime.py -k Baseline",
+    "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py -k registry_read",
+    "scripts/test_paper_runtime_topology_contract.py",
+    "scripts/test_dev_paper_principal_renewal.py",
+    "scripts/test_issue_dev_paper_principals.py",
+    "scripts/test_run_isolated_l12_runtime_e2e.py"
+  ],
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residuals": [
+    "services/paper_fleet_reconciler test_idle_cycle_is_admissible_after_projection fails locally only because services/loop-control is not importable in this venv (pre-existing, unrelated)",
+    "hosted proof pending: after deploy reconciler logs show no member baseline tracebacks and snapshots show baseline status approved or a named reason"
+  ]
+}
