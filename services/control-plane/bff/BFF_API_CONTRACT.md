@@ -446,7 +446,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `lane` | string | — | Filter cards to one lane: `discovered`, `scaffolded`, or `replicated` |
+| `lane` | string | — | Filter items to one lane: `discovered`, `scaffolded`, `replicated`, or `document_checked` |
 | `page` | int | 1 | Page number (min 1) |
 | `page_size` | int | 20 | Items per page (min 1, max 100) |
 
@@ -458,16 +458,16 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
     "id": "alpha-factory",
     "snapshotAt": "<RFC3339>",
     "snapshot_at": "<RFC3339>",
-    "reason": "no_candidate_source",
-    "discovered_reason": "no_candidate_source",
     "lanes": [
-      { "id": "discovered", "label": "Discovered", "reason": "no_candidate_source", "items": [] },
+      { "id": "discovered", "label": "Discovered", "items": [ { "id": "dem-1", "kind": "research_demand", "display_name": "<persona>", "lacking": { "short_measure": "...", "missing_datasets": [] }, "since": "<RFC3339>", "latest_outcome": { "reason_code": "mandate_universe_missing" } } ] },
       { "id": "scaffolded", "label": "Scaffolded", "items": [] },
       { "id": "replicated", "label": "Replicated", "items": [ { "id": "adm-001", "lane": "replicated", "strategy_id": "...", "strategy_spec_id": "...", "status": "admitted", "queue_status": "completed" } ] }
     ],
-    "discovered": [],
+    "discovered": [ { "...": "..." } ],
     "scaffolded": [],
     "replicated": [ { "...": "..." } ],
+    "document_checked": [ { "id": "adm-002", "document_check_reason": "no_passing_gate_result" } ],
+    "counts": { "collected_text_records": { "value": 7, "status": "ok" }, "dropped_irrelevant": { "value": null, "status": "unavailable", "reason": "owner_route_not_exposed" } },
     "items": [ { "id": "adm-001", "lane": "replicated", "strategy_id": "...", "strategy_spec_id": "...", "status": "admitted", "queue_status": "completed" } ]
   },
   "items": [ { "...": "..." } ],
@@ -475,8 +475,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
   "meta": {
     "snapshot_at": "<RFC3339>",
     "surfaces": { "alpha_factory": { "status": "ok", "source": "research_orchestrator" } },
-    "filters": { "lane": null },
-    "discovered": { "reason": "no_candidate_source" }
+    "filters": { "lane": null }
   }
 }
 ```
@@ -498,8 +497,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
         "staleness": { "served_from": "unverifiable", "last_known_at": "<RFC3339>" }
       }
     },
-    "filters": { "lane": null },
-    "discovered": { "reason": "no_candidate_source" }
+    "filters": { "lane": null }
   }
 }
 ```
@@ -509,7 +507,13 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 - Auth/CORS re-uses the existing BFF token/JWT and CORS middleware; caller auth and verified tenant are forwarded to `GET /api/research-orchestrator/alpha-replication/entries`.
 - Cards are built over HTTP from `GET /api/research-orchestrator/alpha-replication/entries` via `PANTHEON_RESEARCH_ORCHESTRATOR_API_URL`.
 - BFF-EVO-ALPHA-PAGE-TRUTH-20261107: the owner route returns `last_error` from the queue record's `failure_reason` (null when absent) and passes `replay_count`, `last_replayed_at` and `revalidation_count` through exactly as the queue records them (null when absent). `attempt_count` means failures since the last replay, because a replay resets it to 0. Each card carries `last_error`, `replay_count`, `last_replayed_at`, `revalidation_count` and `strategy_state`.
-- `strategy_state` is the current registry state of the card's `strategy_id` (for example `approved` or `retired`), read through the same registry strategy reader (`StrategiesService`, same read surface) as `GET /bff/strategies/{strategy_id}` (`StrategiesService.get_strategy_registry_state`), at most once per distinct `strategy_id` per request and never through a second registry client. A strategy the registry does not know has `strategy_state: null` with the surface `ok`. When a state read fails, `strategy_state` is `null` on the affected cards, `meta.surfaces.alpha_factory_strategy_state.status` is `unavailable`, and every card and lane is still returned. Lane rules are unchanged: no card is hidden or moved because of `strategy_state`, and the `discovered` lane keeps reason `no_candidate_source`. The route is a plain `def` handler and writes no owner state.
+- `strategy_state` is the current registry state of the card's `strategy_id` (for example `approved` or `retired`), read through the same registry strategy reader (`StrategiesService`, same read surface) as `GET /bff/strategies/{strategy_id}` (`StrategiesService.get_strategy_registry_state`), at most once per distinct `strategy_id` per request and never through a second registry client. A strategy the registry does not know has `strategy_state: null` with the surface `ok`. When a state read fails, `strategy_state` is `null` on the affected cards, `meta.surfaces.alpha_factory_strategy_state.status` is `unavailable`, and every card and lane is still returned. Lane rules are unchanged: no card is hidden or moved because of `strategy_state`, and the lane rules do not depend on `strategy_state` (the discovered lane no longer carries a hardcoded reason, see the next note). The route is a plain `def` handler and writes no owner state.
+- BFF-ALPHA-FACTORY-PIPELINE-TRUTH-20261125 (RC6/RC2): the board reads the real pipeline. The hardcoded `no_candidate_source` reason (`data.reason`, `data.discovered_reason`, lane `reason`, `meta.discovered`) is removed; an empty lane means the owners answered with none, and a failed owner read is shown in `meta.surfaces`, never as an empty lane. Owner reads, at most four per request, all with the caller's credentials and verified tenant and none writing: replication entries, alpha-template evaluations, `GET /api/research/persona-demands` (the same research demand read as `GET /bff/research/tasks`; no second owner client), `GET /api/research-orchestrator/runs` (only runs stamped with the caller tenant), the run list is capped to the newest 200 rows of the caller tenant (`meta.surfaces.alpha_factory_runs.runs_seen`, `truncated`; the owner route has no limit parameter and returned about 570 KB on hosted on 2026-11-25, growing with every run). The board never requests `GET /api/source-ingest/source-records` or `GET /api/source-ingest/management/strategy-seeds` (unbounded: every tenant row); `hypothesis_cards`, `collected_text_records` and `dropped_irrelevant` are unavailable with reason `no_bounded_owner_read` until bounded owner reads exist.
+  - `discovered`: open demands (`kind: research_demand`; `display_name` from the persona directory, `lacking` = `short_measure`, `missing_datasets`, `tried_families`; `since`; `latest_outcome.reason_code`) and hypothesis cards (`kind: hypothesis_card`; `claim`, `source_id`, `since`, `status`). A demand whose tenant differs from the caller marks `meta.surfaces.alpha_factory_demands` unavailable (`demand_scope_mismatch`).
+  - `scaffolded`: template searches (`kind: template_search`; `attempt_count`, `latest_run_id`, `latest_at`, `outcome`, typed `reason_code`) joined to the caller's demands, plus gate attempts (admissions not completed; `reason_code` from `last_error`). `reason_code` is one of `mandate_universe_missing`, `survivorship_limited`, `below_threshold`, `dataset_unavailable`, else the leading token of the owner text, else `reason_not_recorded`.
+  - `replicated`: only admissions whose experiment run the owner recorded as `completed` with `metadata.replication_gate.passed == true` (or an entry carrying `replication_gate.passed == true`). Completed admissions without it go to `data.document_checked` (not in `items`, filter with `lane=document_checked`), each with `document_check_reason` from owner facts: `retired` (registry strategy state), `test_scope` (`data_scope == test`), `simulation_or_raw_market_seed` (`mode`/`datasets`/`lineage` say simulation or raw market), else `no_passing_gate_result`; when the runs read fails the reason is `gate_result_unavailable` and nothing is promoted. Names are never the classifier.
+  - `data.counts`: `collected_text_records`, `dropped_irrelevant`, `hypothesis_cards`, `templates_registered`, `templates_evaluated`, `searches`, `passes`, each `{value, status}` or `{value: null, status: "unavailable", reason}`; never 0 for a failed read. `hypothesis_cards`, `collected_text_records` and `dropped_irrelevant` are unavailable (`no_bounded_owner_read`) until bounded owner reads exist; the discovered lane then holds demands only.
+  - New surfaces: `alpha_factory_demands`, `alpha_factory_runs`, `alpha_factory_hypothesis_cards`, `alpha_factory_source_records`, `alpha_factory_persona_names`.
 
 ### 9.10 Automation Registry BFF Surfaces (AR-01–AR-02)
 
