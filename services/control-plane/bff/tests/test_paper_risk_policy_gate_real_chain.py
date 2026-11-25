@@ -342,3 +342,56 @@ def test_a_proposal_newer_than_the_bound_policy_is_never_closed(world):
     outcome = coordinator.close_superseded_risk_policy_proposals(tenant_id=TENANT, pool_id=POOL)
     assert outcome["closed"] == [] and outcome["failed"][0]["http_status"] == 403
     assert _pending(world) == ["apv-newer"]
+
+
+# ---------------------------------------------------------------------------
+# PAPER-IMAGES-CANNOT-READ-APPROVALS-20261125: the deployed decision path (producer expression inputs and the
+# order-time runtime) resolves the gate-approved v2.0 through the real Capital and Governance apps.  The pool
+# requires an approved mapping, so a missing or unreadable approval would leave no budget.  No fake approval reader.
+# ---------------------------------------------------------------------------
+
+def _bind_v2(world):
+    assert _repair()["owner_decision_request"]["paper_gate_status"] == "decided_approved_by_automated_gate"
+    assert _repair()["repaired"] is True
+
+
+def _capital_reader_env(world, monkeypatch) -> dict[str, str]:
+    # The issued capital reader principal is verified by Capital with the deployed verifier configuration.
+    monkeypatch.setenv("CAPITAL_JWT_SECRET", "g" * 40)
+    monkeypatch.setenv("CAPITAL_JWT_ISSUER", "iss-test")
+    monkeypatch.setenv("CAPITAL_JWT_AUDIENCE", "aud-test")
+    monkeypatch.setenv("CAPITAL_ALLOWED_READER_SERVICES", "runtime-manager")
+    issued = world.issued
+    return {
+        "PANTHEON_CAPITAL_API_URL": "http://capital.test",
+        "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": issued["DEPLOYMENT_CAPITAL_SERVICE_TOKEN"],
+        "PANTHEON_TENANT_ID": TENANT,
+    }
+
+
+def test_expression_inputs_provider_budget_carries_the_gate_approved_v2(world, monkeypatch):
+    from services.execution.lean_runtime.expression_inputs import (
+        ExpressionInputsProvider,
+        capital_pool_reader_from_env,
+    )
+
+    _bind_v2(world)
+    reader = capital_pool_reader_from_env(_capital_reader_env(world, monkeypatch))
+    assert reader is not None
+    provider = ExpressionInputsProvider(capital_pool_reader=reader, runtime_summary_reader=lambda _rid: {})
+    budget = provider({"capital_pool_id": POOL, "runtime_id": "rt-1"})["risk_budget"]
+    assert budget["risk_policy_id"] == DRAFT["risk_policy_id"]
+    assert str(budget["risk_policy_version"]) == "2.0"
+    assert len(str(budget["risk_policy_digest"])) == 64
+
+
+def test_order_time_active_risk_policy_is_the_gate_approved_v2(world, monkeypatch):
+    from services.execution.lean_runtime.expression_inputs import capital_pool_reader_from_env
+    from services.execution.lean_runtime.paper_runtime import PaperExecutionAlgorithm
+
+    _bind_v2(world)
+    reader = capital_pool_reader_from_env(_capital_reader_env(world, monkeypatch))
+    algo = PaperExecutionAlgorithm(
+        initial_cash=100_000.0, capital_pool_id=POOL, capital_pool_reader=reader, in_process_broker=True)
+    policy = algo._resolve_active_risk_policy()
+    assert policy.risk_policy_id == DRAFT["risk_policy_id"] and str(policy.version) == "2.0"
