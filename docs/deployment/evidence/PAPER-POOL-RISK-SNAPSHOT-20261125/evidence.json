@@ -1,0 +1,41 @@
+{
+  "task": "PAPER-POOL-RISK-SNAPSHOT-20261125",
+  "root_cause_class": "RC2",
+  "phase": "1 of SD_PAPER_RISK_MANAGEMENT_2026-11-24 section 3.1",
+  "defect": "pool_observations was never written, so pool health (utilisation, drawdown utilisation, idle share) was always unknown for every paper pool and the O-21 risk_budget_factor had no input.",
+  "fix": [
+    "services/telemetry/pool_risk_snapshot.py: one PoolRiskSnapshot per (pool, governed trading day) built from owner facts; upsert keyed by (pool, day) with digest, previous_digest and revision; history dependent fields recomputed from the retained series after every write; null with reason, never zero; vol/CVaR null under 20 consecutive returns; retention 400 days per pool deleted on write; served_view exposes only the last 20 rows as pool_risk_snapshots and pool_observations",
+    "services/telemetry/runtime_summary.py: apply_event hook after event projection (never raises into ingest); served rows trimmed in get/list",
+    "services/execution/lean_runtime/paper_runtime.py + performance_telemetry.py: valuation event metadata now carries position_facts (closing positions at marks) and risk_policy_facts (bound policy id/version/digest, gross_limit, drawdown risk_off); read-only, fails to {unavailable_reason}",
+    "services/persona/persona_cycle_controller.py: observations capped at the last 20 rows (existing consumer, read only)",
+    "acceptance/pool_risk_snapshot_day.py + .github/workflows/persona-day-acceptance.yml: read-only viewer-identity daily check; fails on no snapshot for the last completed governed session or unknown pool health"
+  ],
+  "unchanged": "No order, sizing, admission, allocation, approval or policy behaviour. risk_budget_factor (min(1, mean 20d gross_utilisation / budget_full), same definition as persona-evaluator pool_health_factors) is recorded with inputs and applied=false; a test proves the allocation consumer ignores it and a source scan proves no non-telemetry reader.",
+  "tests": {
+    "services/telemetry/test_pool_risk_snapshot.py": "13 passed: replay, duplicate, out-of-order, restart, binding rollover, late correction, before-close and holiday skips, null reasons, <20 day nulls, 22-day vol/CVaR/factor, retention, bounded payload, real pool_health driven from a real summary (active and idle), unvalued position, measurement-only",
+    "acceptance/test_pool_risk_snapshot_day.py": "7 passed, includes the recorded hosted unknown-health shape (hosted_persona_pool_20261119.json)",
+    "services/persona/test_persona_cycle_controller.py": "new 20-row cap test passes; 2 lifespan tests need asyncpg and are environment-only (fail identically without this change)",
+    "services/execution/lean_runtime": "test_paper_runtime.py + test_performance_telemetry.py 192 passed, with new assertions on the emitted position_facts / risk_policy_facts",
+    "services/telemetry": "579 passed; test_main_routes.py errors only for a missing asyncpg database module in the local venv",
+    "scripts/test_acceptance_workflows_truthful.py (viewer identity test unchanged), scripts/test_check_storage_manifest.py, acceptance": "236 passed; scripts/check_storage_manifest.py passed"
+  },
+  "runtime_budget": {
+    "row_bytes_measured": 1552,
+    "note": "SD estimated about 1 KB; the measured row with every null reason is 1.55 KB",
+    "retained_per_pool_400_days_bytes": 623342,
+    "rows_per_year_three_pools": 750,
+    "retained_cap_three_pools_bytes": "about 1.9 MB",
+    "served_growth": "20 rows = 30.8 KB (pool_risk_snapshots) + 3.8 KB (pool_observations) per runtime summary response; never the retained 400 rows",
+    "writer": "no new file; rows live in the existing runtime_summaries store; registered under runtime_budgets in docs/operations/storage-manifest.json",
+    "daily_cycle_prompt": "at most the last 20 observation rows"
+  },
+  "residuals": [
+    "effective_bets, turnover_20d, ladder_state and breaches are null with a stated reason on every row (pool health owns effective_bets from member books; fills and pre-trade rejections are not on the valuation event; ladder is phase 2)",
+    "Pool health needs 20 rows: pools that never filled are backfilled as idle from the ledger start; a pool with fills reads unknown until 20 trading days of rows exist",
+    "Idle rows (no valuation event that day) reuse the last valuation-stamped policy limits and say so (policy_ref.basis)",
+    "quarter_equity_observations in the runtime summary is unbounded and dominates the served summary size (about 0.7 MB at 450 days); outside this task, for the telemetry owner",
+    "Trading calendar uses the holidays carried on the marks' governed calendar evidence plus the existing weekday rule (is_trading_day); only the TW close (13:30 Asia/Taipei) is configured",
+    "No hosted proof yet: coordinator runs acceptance/pool_risk_snapshot_day.py once against hosted after deploy"
+  ],
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; the reviewer may be from the owner's family."
+}

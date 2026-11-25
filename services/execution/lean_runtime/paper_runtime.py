@@ -8610,7 +8610,7 @@ class PaperRuntimeService:
             "mark_refs": mark_refs,
             "risk_policy_facts": self._performance_risk_policy_facts(),
             "position_facts": position_facts_from(
-                ledger["positions"], {mark.symbol: mark.price for mark in sample.marks}
+                ledger["positions"], {symbol: mark.price for symbol, mark in provider_marks.items()}
             ),
         }
         common_metrics = {

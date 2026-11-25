@@ -984,6 +984,19 @@ class PaperRuntimeServiceTest(unittest.TestCase):
                     "observed_at",
                     telemetry.attempts[0]["metadata"]["mark_refs"][0],
                 )
+                # PoolRiskSnapshot inputs ride the real valuation event: closing positions at their marks and
+                # the bound policy in force. Measurement only; nothing here feeds a gate.
+                facts = telemetry.attempts[0]["metadata"]["position_facts"]
+                self.assertEqual([f["symbol"] for f in facts], ["AAPL"])
+                self.assertEqual(facts[0]["mark_price"], 105.0)
+                self.assertAlmostEqual(
+                    facts[0]["notional"], facts[0]["quantity"] * 105.0, places=6
+                )
+                policy_facts = telemetry.attempts[0]["metadata"]["risk_policy_facts"]
+                self.assertTrue(
+                    policy_facts.get("risk_policy_digest")
+                    or policy_facts.get("unavailable_reason")
+                )
 
                 # Now the same mark carries newly available governed provenance without any new fill or price change.
                 mark_with_prov = MarketMark(

@@ -149,6 +149,8 @@ def _base_row(day: date, valuation: Mapping[str, Any], metadata: Mapping[str, An
     ref = {k: policy.get(k) for k in ("risk_policy_id", "risk_policy_version", "risk_policy_digest")}
     if not all(ref.values()):
         ref = {"unavailable_reason": policy.get("unavailable_reason") or "risk_policy_facts_missing"}
+    elif policy.get("_basis"):
+        ref["basis"] = policy["_basis"]
     gross_limit = _finite(policy.get("gross_limit"))
     gross_limit = gross_limit if gross_limit and gross_limit > 0 else None
     if gross_limit is None:
@@ -268,16 +270,16 @@ def finalize(rows: list[dict[str, Any]], *, holidays: Optional[set[date]] = None
             row["cvar_95"] = round(sum(pnls[:tail]) / tail, 6)
         else:
             row["realized_vol_20d"] = row["cvar_95"] = None
-            nulls["realized_vol_20d"] = nulls["cvar_95"] = "fewer_than_20_consecutive_trading_day_returns"
+            nulls["realized_vol_20d"] = nulls["cvar_95"] = "under_20_consecutive_returns"
         # Not derivable from the valuation event alone; named honestly rather than zero-filled.
         row["effective_bets"] = None
-        nulls["effective_bets"] = "computed_by_pool_health_from_member_virtual_books"
+        nulls["effective_bets"] = "owned_by_pool_health_member_books"
         row["turnover_20d"] = None
-        nulls["turnover_20d"] = "fill_notional_not_on_valuation_event"
+        nulls["turnover_20d"] = "no_fill_notional_on_event"
         row["ladder_state"] = None
-        nulls["ladder_state"] = "ladder_not_active_phase_1_measurement_only"
+        nulls["ladder_state"] = "ladder_is_phase_2"
         row["breaches"] = None
-        nulls["breaches"] = "pre_trade_rejections_not_retained_by_telemetry"
+        nulls["breaches"] = "no_rejections_retained"
         row["nulls"] = nulls
         row["digest"] = _digest(row)
         row["schema_version"] = SCHEMA_VERSION
@@ -363,6 +365,7 @@ def observations(rows: Sequence[Mapping[str, Any]], *, limit: int = OBSERVATION_
 
 ROWS_KEY = "_pool_risk_snapshot_rows"          # retained store, <= 400 days per pool, never served whole
 HOLIDAYS_KEY = "_pool_risk_holidays"
+POLICY_KEY = "_pool_risk_policy_facts"       # last bound-policy facts a valuation event stamped
 LAST_WRITE_KEY = "_pool_risk_snapshot_last_write"
 
 
@@ -408,6 +411,9 @@ def _apply_event(current, event, *, observation, metadata) -> None:
     if (event_type == "pnl_snapshot" and observation and observation.get("status") == "known"):
         new_holidays, _ = holidays_from_marks(observation.get("mark_refs") or [])
         holidays |= new_holidays
+        facts = metadata.get("risk_policy_facts")
+        if isinstance(facts, Mapping) and facts.get("risk_policy_digest"):
+            current[POLICY_KEY] = dict(facts)
         base, reason = build_base(valuation=observation, metadata=metadata, pool_id=pool_id,
                                   binding=binding, event_created_at=event.get("created_at"))
         if base is not None:
@@ -421,6 +427,11 @@ def _apply_event(current, event, *, observation, metadata) -> None:
             r["as_of"] == day.isoformat() and r["pool_id"] == str(pool_id) for r in rows):
         known = [o for o in current.get("quarter_equity_observations") or [] if o.get("status") == "known"]
         valuation = known[-1] if known else None
+        stored = current.get(POLICY_KEY)
+        if isinstance(stored, Mapping):
+            # Heartbeats carry no policy. The limits in force are the last bound policy a valuation stamped;
+            # the row says so rather than presenting it as stamped at this close.
+            metadata = {**metadata, "risk_policy_facts": {**stored, "_basis": "last_valuation_event"}}
         flat = current.get("position_count") == 0 and isinstance(current.get("positions"), list)
         never_filled = not current.get("ledger_fill_count") and not current.get("executed_trade_count")
         if flat and (valuation is not None):

@@ -34,6 +34,10 @@ jobs:
           ACCEPTANCE_FE_URL: ${{ vars.DEV_FE_URL }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: timeout 245s python3 -I acceptance/paper_risk_journey_day.py | tee paper-risk-journey-day.json
+      - name: Pool risk snapshot present and pool health known (GET only; viewer identity)
+        if: always()
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: timeout 120s python3 -I acceptance/pool_risk_snapshot_day.py | tee pool-risk-snapshot-day.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -41,4 +45,5 @@ jobs:
           path: |
             persona-day.json
             paper-risk-journey-day.json
+            pool-risk-snapshot-day.json
           retention-days: 30

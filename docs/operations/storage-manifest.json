@@ -6099,6 +6099,30 @@
    "size": "trading-pulse-readonly-qa.json (<=16 KiB) + trading-pulse-summary.json + <=2 masked PNG screenshots; CLI-enforced total <=5 MiB per release (summary included)",
    "task": "TRADING-PULSE-BROWSER-ACCEPTANCE-IN-RELEASE-20261124",
    "writer": "scripts/run_dev_trading_pulse_readonly_qa.py (viewer GET reads only, plus the viewer login POST)"
+  },
+  {
+   "bound_proof": {
+    "contains": "RETENTION_TRADING_DAYS = 400",
+    "file": "services/telemetry/pool_risk_snapshot.py"
+   },
+   "cadence": "one row per paper pool and governed trading day after the close; replays, duplicates, restarts and rollover upsert the same (pool, day) row; a late correction replaces it keeping previous_digest",
+   "cap": "RETENTION_TRADING_DAYS = 400 rows per pool, overflow deleted on every write (enforce_retention); the served summary carries at most the last 20 rows (OBSERVATION_ROWS) as pool_risk_snapshots and pool_observations, never the retained 400",
+   "cleanup": "enforce_retention on each write; rows leave with the summary on retirement",
+   "count_at_hosted_scale": "3 pools: about 750 rows per year, about 1.2 MB per year retained (cap 1,200 rows, 1.9 MB)",
+   "growth": "about 1.55 KB per pool per trading day, about 4.7 KB per day for three pools",
+   "growth_per_day": "about 4.7 KB/day for 3 pools; capped at 1.9 MB total",
+   "name": "PoolRiskSnapshot rows (key _pool_risk_snapshot_rows inside the telemetry runtime summary store runtime_summaries.json)",
+   "owner": "telemetry (services/telemetry/pool_risk_snapshot.py, written from RuntimeSummaryProjectionStore.project_event)",
+   "readers": [
+    "services/telemetry/runtime_summary.py",
+    "services/persona/persona_cycle_controller.py",
+    "acceptance/pool_risk_snapshot_day.py"
+   ],
+   "register_class": "RC2",
+   "size": "measured 1.55 KB per row with all null reasons (local recorded-shape run); retained 400 rows = 0.62 MB per pool; served 20 rows = 31 KB + pool_observations 3.8 KB",
+   "size_per_day": "about 4.7 KB/day for 3 pools",
+   "task": "PAPER-POOL-RISK-SNAPSHOT-20261125",
+   "writer": "RuntimeSummaryProjectionStore.project_event -> pool_risk_snapshot.apply_event; no new file, table, queue or job"
   }
  ]
 }

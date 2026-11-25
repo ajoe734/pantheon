@@ -1584,7 +1584,8 @@ class CycleOwners:
             bundle["telemetry_refs"] = [base + "/api/telemetry/runtime-summaries/" + quote(row["runtime_id"], safe="")]
             books = row.get("member_virtual_books") or []
             bundle["books"] = {b.get("member_id") or b["artifact_id"]: {**b, **b.get("net_of_costs", {})} for b in books}
-            bundle["observations"] = row.get("pool_observations") or []
+            # The snapshot owner already serves at most the last 20 rows; cap again so a prompt never gets more.
+            bundle["observations"] = (row.get("pool_observations") or [])[-20:]
             try:
                 incidents_url = self.env.get("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
                 if not incidents_url or not row.get("runtime_binding_id"):
