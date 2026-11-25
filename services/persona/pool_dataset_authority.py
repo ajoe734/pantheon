@@ -1,8 +1,9 @@
 """Pool admission inputs from the training service's source DatasetVersion authority.
 
-Direct paths are explicit test/dev overrides. The normal service path pins the
-source owner's bytes and validates the same evaluation policy as training; it
-never substitutes generated bars or a previous snapshot after rejection.
+Direct paths are explicit test/dev overrides. The normal service path reads the governed
+whole-market dataset from the stored daily bars (``services.research.governed_market_dataset``);
+it never substitutes generated bars or a previous snapshot after rejection. Non-price feature
+datasets still come from their source DatasetVersion authority.
 """
 from __future__ import annotations
 
@@ -94,6 +95,19 @@ def attach_feature_observations(dataset: dict, referenced: Mapping[str, list[str
                     f"for any of {len(instruments)} admission instruments"
                 )
     return {**dataset, "features_by_instrument": features}
+
+
+def _candidate_symbols(candidate: Mapping) -> list[str]:
+    artifact = candidate.get("strategy_artifact")
+    params = artifact.get("parameters") if isinstance(artifact, Mapping) else None
+    symbols = params.get("symbols") if isinstance(params, Mapping) else None
+    return [str(s) for s in symbols] if isinstance(symbols, (list, tuple)) else []
+
+
+def _mandate_symbols(persona: Mapping) -> list[str]:
+    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
+    symbols = scope.get("symbols") if isinstance(scope, Mapping) else None
+    return [str(s) for s in symbols] if isinstance(symbols, (list, tuple)) else []
 
 
 def governed_dataset_loader(
@@ -188,43 +202,23 @@ def governed_dataset_loader(
 
             return path_loader(source)(persona, candidate)
 
+        # DISCOVERY-GOVERNED-MARKET-DATASET-20261125: the price dataset is read from the stored daily bars
+        # (read-only), not from a DatasetVersion that exists only after a persona candidate was evaluated.
+        # The universe is the symbols the candidate's own rule trades, else the persona's mandate symbols;
+        # a missing or stale store, or a symbol outside the market boundary, rejects with its reason.
         authority = importlib.import_module("services.training-session.evaluation_authority")
-        source_authority = importlib.import_module("services.training-session.source_dataset_authority")
-        policy_path = str(source.get("PERSONA_POOL_THRESHOLD_POLICY_PATH") or source.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH") or "").strip()
-        source_url = str(source.get("SOURCE_INGEST_API_URL") or "").strip()
-        connector_id = str(source.get("PERSONA_POOL_SOURCE_CONNECTOR_ID") or "").strip()
-        dataset_id = str(source.get("PERSONA_POOL_SOURCE_DATASET_ID") or "").strip()
-        source_root = str(source.get("PERSONA_POOL_SOURCE_VOLUME_ROOT") or "").strip()
-        output_root = str(source.get("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT") or "").strip()
-        if not all((policy_path, source_url, connector_id, dataset_id, source_root, output_root)):
-            raise authority.AuthorityValidationError("source DatasetVersion authority configuration is incomplete")
-        trusted_now = now()
+        from services.research import governed_market_dataset as governed
+
+        symbols = _candidate_symbols(candidate) or _mandate_symbols(persona)
+        if not symbols:
+            raise authority.AuthorityValidationError(
+                "governed market dataset rejected: dataset_symbols_missing: neither the candidate rule nor the "
+                "persona mandate names the symbols to evaluate")
         try:
-            timeout = float(source.get("PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS", "5"))
-            headers = source_authority.source_read_headers(
-                source.get("PERSONA_POOL_SOURCE_READ_TOKEN_FILE"),
-                source.get("PERSONA_POOL_SOURCE_READ_TENANT_ID"),
-            )
-            materialized = source_authority.materialize_source_dataset_version(
-                http_get=lambda url: source_authority.urllib_json_get(url, timeout_seconds=timeout, headers=headers),
-                source_api_url=source_url,
-                connector_id=connector_id,
-                dataset_id=dataset_id,
-                source_volume_root=source_root,
-                output_root=output_root,
-                trusted_now=trusted_now,
-                clock=now,
-                policy_path=policy_path,
-            )
-        except (source_authority.SourceDatasetAuthorityError, ValueError) as exc:
-            raise authority.AuthorityValidationError(f"source DatasetVersion authority rejected: {exc}") from exc
-        snapshot = authority.load_evaluation_authority(
-            materialized.path,
-            policy_path,
-            trusted_now=now(),
-            strategy_id=str(candidate["artifact_ref"]),
-            authority_root=Path(materialized.path).parent,
-        )
-        return dict(snapshot.vectorbt_dataset)
+            return governed.resolve_governed_dataset(
+                symbols=symbols, strategy_id=str(candidate.get("artifact_ref") or "pool-admission"),
+                now=now, env=source)
+        except governed.GovernedMarketDatasetError as exc:
+            raise authority.AuthorityValidationError(f"governed market dataset rejected: {exc}") from exc
 
     return load

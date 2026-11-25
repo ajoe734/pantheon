@@ -10,3 +10,4 @@ asyncpg>=0.29.0
 # langchain-openai>=0.1.0     # add when LLM_BACKEND=openai is wired
 redis>=5.0.0
 cryptography
+pyarrow>=15,<30  # governed market dataset reads the daily_bars store (DailyBarsReader)
