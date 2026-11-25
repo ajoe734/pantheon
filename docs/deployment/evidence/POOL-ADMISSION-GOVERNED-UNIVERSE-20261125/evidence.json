@@ -8,7 +8,7 @@
   "operator_decision": "2026-11-25 conversation 5724fc3b: open it, paper only",
   "changed": [
     "services/control-plane/persona/persona_strategy_pool.py: paper decide uses governed boundary (market_boundary_provider, default governed_market_dataset.build_market_boundary); decision.universe_rule; non-paper path byte-identical",
-    "services/control-plane/persona/test_persona_strategy_pool.py, services/control-plane/bff/test_persona_pool_publisher.py, services/research/tests/test_persona_cycle_demand_integration.py: boundary provider injected; new tests",
+    "services/control-plane/persona/test_persona_strategy_pool.py, services/control-plane/bff/test_persona_pool_publisher.py, services/research/tests/test_persona_cycle_demand_integration.py, services/research/tests/test_pool_evolution_integration.py (lines 559-566 provider injection only, boundary contains 2330): boundary provider injected; new tests",
     "SD_PERSONA_STRATEGY_POOL_AUTONOMY_2026-11-12.md section 4.3 and 5.1b amended"
   ],
   "not_changed": [
@@ -25,14 +25,20 @@
   "tests": {
     "control_plane_persona_strategy_pool": "49 passed",
     "bff_publisher_publish_route_pool_dataset_authority": "46 passed 7 skipped",
-    "persona_cycle_demand_integration_open_demand_reconcile": "passed after boundary injection"
+    "persona_cycle_demand_integration_open_demand_reconcile": "passed after boundary injection",
+    "research_suite_full": "services/research on this branch (python 3.12 venv per branch-ci research job, pytest -n 8): 1263 passed, 38 skipped, 0 failed (2026-11-25)",
+    "research_pool_evolution_and_demand_integration": "test_pool_evolution_integration.py + test_persona_cycle_demand_integration.py: 10 passed"
   },
   "changed_assertions": [
     "test_empty_pool_keeps_its_last_approved_universe...: outside reason now candidate_outside_governed_market_boundary (paper rule changed by operator decision); approved_universe assertion replaced by universe_rule assertions",
     "test_empty_pool_end_to_end...: approved_universe == ['2330'] replaced by universe_rule assertions",
-    "test_persona_cycle_demand_integration open_demand_reconcile: only a boundary provider added (candidate trades 2883)"
+    "test_persona_cycle_demand_integration open_demand_reconcile: only a boundary provider added (candidate trades 2883)",
+    "test_pool_evolution_integration.py step-4 paper admit: only a governed boundary provider added to the pool store (boundary contains 2330); no assertion changed"
   ],
-  "preexisting_failures_not_caused_by_this_task": "6 tests in test_persona_cycle_demand_integration.py/test_pool_evolution_integration.py fail identically on dev without this change; test_persona_pool_views needs yaml and test_meeting_outputs needs flask (absent in the local venv)",
+  "preexisting_failures_not_caused_by_this_task": "Earlier local partial runs saw failures from missing deps (yaml/flask) in a thin venv; with the full branch-ci research venv the Research suite is green on this branch (1263 passed, 38 skipped, 0 failed).",
   "ac5_gap": "The admitted member in the publisher end-to-end test is a gate-minted always-long entry published through the real publisher/client; a screened (factor_rule screen) member was not admitted through the gate here (existing test_publisher_pins_screen_rules_without_enumerating_picks covers envelope build of a screen member). Stated, not claimed.",
-  "hosted_expectation": "First hosted result is one of two refusals, not a successful search: governed_market_boundary_unavailable (market_boundary_empty: traded_value null on 481 of 484 days until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 repairs it; listed stocks 406-411 bars of the 480 needed). Current momentum members have no approved baseline until the 2026-11-16 requalification runs. No VM/SSH access used; hosted verification belongs to the operator acceptance task."
+  "hosted_expectation": "First hosted result is one of two refusals, not a successful search: governed_market_boundary_unavailable (market_boundary_empty: traded_value null on 481 of 484 days until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 repairs it; listed stocks 406-411 bars of the 480 needed). Current momentum members have no approved baseline until the 2026-11-16 requalification runs. No VM/SSH access used; hosted verification belongs to the operator acceptance task.",
+  "residual_findings": [
+    "Pre-existing, out of scope: services/evolution/auto_consumer_runtime.py 352-353 and services/research/main.py 2809 raise RuntimeError on a refused requalified replacement admit instead of recording a refusal; follow-up REQUALIFY-REFUSAL-NOT-CRASH-20261125"
+  ]
 }
