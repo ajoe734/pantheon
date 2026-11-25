@@ -502,6 +502,19 @@ def build_production_config() -> ReplicationControllerConfig:
     return config
 
 
+def start_template_evaluation(config: ReplicationControllerConfig) -> Any:
+    """Run the scheduled AlphaTemplate evaluation beside the controller loop (own thread, never blocks a tick).
+
+    A failure to start is reported and never stops the controller."""
+    try:
+        from services.research.alpha_templates.schedule import start_background
+
+        return start_background(config.data_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"alpha template evaluation not started: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+
+
 def main() -> int:
     config = build_production_config()
     store = ControllerStateStore(config.state_path)
@@ -512,6 +525,7 @@ def main() -> int:
         writer = build_loop_writer(dsn=config.database_url, state=state)
         
     print(f"Starting Alpha Replication Controller loop, interval={config.interval_seconds}s")
+    start_template_evaluation(config)
     
     tick_count = 0
     while True:

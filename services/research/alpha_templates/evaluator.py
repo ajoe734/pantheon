@@ -1822,6 +1822,7 @@ def run_alpha_template_evaluation(
     strict_stepwise: bool = False,
     redundancy_threshold: float = REDUNDANCY_CORRELATION_THRESHOLD,
     actor: dict[str, Any] | None = None,
+    evaluation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run Taiwan point-in-time evaluation, persist a research run, and link ``evaluation_ref``.
 
@@ -1888,6 +1889,15 @@ def run_alpha_template_evaluation(
     }
     for ev in target_evaluations.values():
         ev["evaluation_ref"] = resolved_run_id
+        if evaluation_context is not None:
+            # Scope of the measurement: snapshot, symbols, history and the horizons that did not reach
+            # MIN_IC_OBSERVATIONS (listed, never estimated). Evaluation never sets active/approval state.
+            ev["evaluation_context"] = {
+                **copy.deepcopy(dict(evaluation_context)),
+                "horizons_without_enough_observations": sorted(
+                    k for k, short in (ev.get("insufficient_by_horizon") or {}).items() if short
+                ),
+            }
 
     # Update Registry entries so template.evaluation_ref points to resolved_run_id
     updated_registry_ids: dict[str, str] = {}

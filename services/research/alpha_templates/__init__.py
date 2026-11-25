@@ -19,6 +19,7 @@ from .evaluator import (
     load_taiwan_evaluation_universe,
     run_alpha_template_evaluation,
 )
+from .schedule import ScheduleConfig, TemplateEvaluationScheduler
 
 __all__ = [
     "DEFAULT_TAIWAN_BAR_COUNT",
@@ -37,4 +38,6 @@ __all__ = [
     "evaluate_template_point_in_time_symbol",
     "load_taiwan_evaluation_universe",
     "run_alpha_template_evaluation",
+    "ScheduleConfig",
+    "TemplateEvaluationScheduler",
 ]
