@@ -74,6 +74,7 @@ from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
+from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     mint_trade_envelope,
@@ -2950,8 +2951,9 @@ class PaperSignalProducer:
 
 def fetch_eligible_paper_bindings(
     runtime_manager_url: str,
-    token: str | None = None,
+    token: str | RuntimeManagerAuthConfig | None = None,
     *,
+    auth: RuntimeManagerAuthConfig | None = None,
     raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch active paper bindings from runtime-manager desired state."""
@@ -2962,13 +2964,24 @@ def fetch_eligible_paper_bindings(
     if not runtime_manager_url:
         return []
 
-    url = f"{runtime_manager_url.rstrip('/')}/api/runtime-fleet/desired-state?stage=paper"
-    headers = {"Accept": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth is not None:
+        resolved_auth = auth
+    elif isinstance(token, RuntimeManagerAuthConfig):
+        resolved_auth = token
+    elif token is not None and str(token).strip():
+        resolved_auth = resolve_runtime_manager_auth(token=token)
+    else:
+        resolved_auth = resolve_runtime_manager_auth()
 
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    def _request_headers() -> dict[str, str]:
+        hdrs = {"Accept": "application/json"}
+        if resolved_auth.configured or resolved_auth.source == "token_file":
+            hdrs.update(resolved_auth.headers())
+        return hdrs
+
+    url = f"{runtime_manager_url.rstrip('/')}/api/runtime-fleet/desired-state?stage=paper"
     try:
+        req = urllib.request.Request(url, headers=_request_headers(), method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         bindings = [
@@ -2987,7 +3000,7 @@ def fetch_eligible_paper_bindings(
             )
             detail_req = urllib.request.Request(
                 detail_url,
-                headers=headers,
+                headers=_request_headers(),
                 method="GET",
             )
             with urllib.request.urlopen(detail_req, timeout=10) as detail_resp:
@@ -3149,7 +3162,7 @@ def main() -> int:  # pragma: no cover
         raise SystemExit("SIGNAL_STORE_URL is required (redis://signal-store:6379)")
 
     runtime_manager_url = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip()
-    runtime_manager_token = os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip()
+    runtime_manager_auth = resolve_runtime_manager_auth()
 
     interval = float(os.getenv("PAPER_PRODUCER_INTERVAL_SECONDS", "60"))
     max_ticks = int(os.getenv("PAPER_PRODUCER_MAX_TICKS", "0"))
@@ -3199,7 +3212,7 @@ def main() -> int:  # pragma: no cover
             if runtime_manager_url:
                 bindings = fetch_eligible_paper_bindings(
                     runtime_manager_url,
-                    runtime_manager_token,
+                    runtime_manager_auth,
                     raise_on_error=True,
                 )
                 log.info(
