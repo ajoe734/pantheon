@@ -2,13 +2,36 @@
   "task_id": "BFF-STRATEGY-METRICS-RUNTIME-20261125",
   "kind": "functional_only_no_hosted_verification",
   "shared_helper": "management_read_models/service.py: _pulse_telemetry_index, _pulse_binding_telemetry, _pulse_performance, _pulse_operator_scope (Trading Pulse now uses the same index/join functions); read_strategy_runtime_truth serves list and detail",
-  "owner_calls_per_list_request": {"RuntimeBinding list": 1, "Telemetry summaries list": 1, "Persona directory": 1, "note": "constant, independent of strategy count; asserted in test_runtime_truth_replays_the_three_recorded_rows"},
+  "owner_calls_per_list_request": {
+    "RuntimeBinding list": 1,
+    "Telemetry summaries list": 1,
+    "Persona directory": "0 additional: read_strategy_runtime_truth reuses the records of the request's single read_persona_state_lookup directory read (PersonaStateLookup.records); falls back to one shared list_personas read only when that lookup is unavailable",
+    "note": "constant, independent of strategy count; added latency vs. the prior revision is negative (one persona directory deep-copy avoided per request); asserted in test_runtime_truth_replays_the_three_recorded_rows and test_runtime_truth_reuses_request_persona_directory_without_second_read"
+  },
   "replayed_rows": [
-    {"strategy": "strategy-persona-a81b4fd15944698341aa", "pnl": -9.988691250022384, "total_trades": 2},
-    {"strategy": "strategy-persona-06d4775a9b6a8f63b311", "pnl": -186.89087499999732, "total_trades": 2},
-    {"strategy": "strategy-persona-039ad01f8bcd2b4aa466", "pnl": null, "metricsReason": "no_fills", "total_trades": 0}
+    {
+      "strategy": "strategy-persona-a81b4fd15944698341aa",
+      "pnl": -9.988691250022384,
+      "total_trades": 2
+    },
+    {
+      "strategy": "strategy-persona-06d4775a9b6a8f63b311",
+      "pnl": -186.89087499999732,
+      "total_trades": 2
+    },
+    {
+      "strategy": "strategy-persona-039ad01f8bcd2b4aa466",
+      "pnl": null,
+      "metricsReason": "no_fills",
+      "total_trades": 0
+    }
   ],
-  "unchanged": ["ranking reducer", "operationalStatus", "OPERATIONAL_STATUSES", "_PERSONA_OPERATIONAL_LIFECYCLE_STATES"],
+  "unchanged": [
+    "ranking reducer",
+    "operationalStatus",
+    "OPERATIONAL_STATUSES",
+    "_PERSONA_OPERATIONAL_LIFECYCLE_STATES"
+  ],
   "tests": {
     "added": "5 tests in tests/test_strategy_metrics_truth.py (11 pass in file)",
     "regression_run": "strategy metrics/latency/operational/ranking/fanout/router_isolation, test_bff_b3_trading_pulse, test_bff_test_architecture",
@@ -18,5 +41,15 @@
     ],
     "assertions_changed_or_deleted": "none"
   },
-  "residual_findings": ["the two pre-existing failures above reproduce on HEAD without this change; outside scope"]
+  "residual_findings": [
+    "the two pre-existing failures above reproduce on HEAD without this change; outside scope"
+  ],
+  "review_fixes": {
+    "metrics_resolution": "project_strategy_dto: failed runtime read with ranking 'fresh' and null pnl -> unavailable + failure reason; no admitted binding with null pnl -> metricsReason no_admitted_binding (a ranking-owned missing/ambiguous label is left unchanged so existing assertions hold)",
+    "tests_added": [
+      "test_strategy_without_admitted_binding_is_missing_with_reason",
+      "test_runtime_truth_reuses_request_persona_directory_without_second_read"
+    ],
+    "tests_extended": "retired/failed/foreign test now includes a status=failed binding with telemetry pnl 555.0 that must not be joined"
+  }
 }

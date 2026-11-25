@@ -779,7 +779,11 @@ def test_retired_failed_and_foreign_tenant_bindings_are_never_joined(_tenant) ->
            "runtime_id": "rt-old", "status": "retired", "activated_at": "2026-11-20T00:00:00Z"}
     foreign = {**store.bindings[0], "id": "rb-x", "binding_id": "rb-x", "runtime_binding_id": "rb-x",
                "runtime_id": "rt-x", "tenant_id": "tenant-other", "activated_at": "2026-11-24T00:00:00Z"}
-    store.bindings += [old, foreign]
+    failed = {**store.bindings[0], "id": "rb-fail", "binding_id": "rb-fail", "runtime_binding_id": "rb-fail",
+              "runtime_id": "rt-fail", "status": "failed", "activated_at": "2026-11-24T12:00:00Z"}
+    store.bindings += [old, foreign, failed]
+    store.telemetry.append({**store.telemetry[0], "runtime_id": "rt-fail", "runtime_binding_id": "rb-fail",
+                            "binding_id": "rb-fail", "pnl": 555.0})
     store.telemetry.append({**store.telemetry[0], "runtime_id": "rt-old", "runtime_binding_id": "rb-old",
                             "binding_id": "rb-old", "pnl": 999.0})
     truth = read_strategy_runtime_truth(store, _SNAP)["by_strategy"]
@@ -806,8 +810,36 @@ def test_strategy_dto_applies_runtime_truth_and_keeps_pnl30d_sharpe_null(_tenant
         assert dto["runtimeStatus"] == "paused_operator"
     assert none["runtimeStatus"] == "none"
     # failed owner read: unknown, never idle/none
+    stale_fresh_null = {"items": [{
+        "persona_id": "p-x", "strategy_ids": [_REAL[0][1]],
+        "metrics": {"telemetry_resolution": "fresh", "pnl": None, "drawdown": None},
+    }]}
     broken = ctx.project_strategy_dto(
-        {"strategy_id": _REAL[0][1]}, ranking_snapshot=None,
+        {"strategy_id": _REAL[0][1]}, ranking_snapshot=stale_fresh_null,
         runtime_truth={"status": "unavailable", "reason": "runtime_bindings_unavailable", "by_strategy": {}},
     )
     assert broken["runtimeStatus"] == "unknown"
+
+    assert broken["metricsResolution"] == "unavailable"
+    assert broken["metricsReason"] == "runtime_bindings_unavailable"
+    assert broken["pnl"] is None
+
+
+def test_strategy_without_admitted_binding_is_missing_with_reason(_tenant) -> None:
+    from services.control_plane.bff.strategies.routes.common import StrategyRouteContext
+
+    ctx = StrategyRouteContext(get_read_store=lambda: _real_store())
+    dto = ctx.project_strategy_dto(
+        {"strategy_id": "strategy-without-binding"}, ranking_snapshot=None,
+        runtime_truth=ctx.read_strategy_runtime_truth(_SNAP),
+    )
+    assert dto["pnl"] is None and dto["metricsResolution"] == "missing"
+    assert dto["metricsReason"] == "no_admitted_binding"
+
+
+def test_runtime_truth_reuses_request_persona_directory_without_second_read(_tenant) -> None:
+    store = _real_store()
+    records = tuple({"id": b["persona_id"], "tenant_id": "tenant-test"} for b in store.bindings)
+    truth = read_strategy_runtime_truth(store, _SNAP, persona_directory=records)
+    assert truth["by_strategy"][_REAL[0][1]]["pnl"] == -9.988691250022384
+    assert store.calls["personas"] == 0

@@ -1739,7 +1739,7 @@ def _pulse_number(value: Any) -> Optional[float]:
     return number if number is not None and math.isfinite(number) else None
 
 
-def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]], directory: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     """Read one owner directory and admit identities before any aggregate/fanout."""
     tenant = selected_tenant.get()
     if authorization.get():
@@ -1760,7 +1760,8 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]]) -> Tuple[L
             if port is not None and _is_unpatched_port_method(store, method):
                 if port.get_surface_status().get("status") != "ok":
                     raise RuntimeError("operator roster owner unavailable")
-        directory = shared_persona_directory_list(store, lambda: store.list_personas())
+        if directory is None:
+            directory = shared_persona_directory_list(store, lambda: store.list_personas())
         if not isinstance(directory, list):
             raise ValueError("invalid persona directory")
     except Exception:
@@ -1923,11 +1924,12 @@ def _strategy_runtime_status(binding: Dict[str, Any]) -> Tuple[str, Optional[str
     return "unknown", f"binding_status_{status or 'missing'}"
 
 
-def read_strategy_runtime_truth(store: Any, snapshot_at: str) -> Dict[str, Any]:
+def read_strategy_runtime_truth(store: Any, snapshot_at: str, persona_directory: Optional[Any] = None) -> Dict[str, Any]:
     """Per-strategy cumulative paper result and runtime state, one owner read each.
 
     Owner calls: list_runtime_bindings, list_telemetry_summaries and the
-    persona directory (inside _pulse_operator_scope) - constant per request.
+    persona directory only when the caller did not pass the request's
+    already-read ``persona_directory`` records - constant per request.
     Returns {"status": "ok"|"unavailable", "reason", "by_strategy": {sid: {...}}}.
     """
     if store is None or not hasattr(store, "list_runtime_bindings"):
@@ -1943,7 +1945,9 @@ def read_strategy_runtime_truth(store: Any, snapshot_at: str) -> Dict[str, Any]:
             telemetry = list(res.values()) if isinstance(res, dict) else list(res) if isinstance(res, list) else []
         except Exception:
             telemetry = []
-    admitted, _personas, scope = _pulse_operator_scope(store, [b for b in bindings if isinstance(b, dict)])
+    admitted, _personas, scope = _pulse_operator_scope(
+        store, [b for b in bindings if isinstance(b, dict)],
+        list(persona_directory) if persona_directory is not None else None)
     if scope.get("status") == "unavailable":
         return {"status": "unavailable", "reason": scope.get("reason") or "scope_unavailable", "by_strategy": {}}
     index = _pulse_telemetry_index(telemetry)
