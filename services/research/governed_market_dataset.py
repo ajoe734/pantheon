@@ -34,9 +34,9 @@ from typing import Any, Callable, Mapping, Sequence
 STORE_ROOT_ENV = "GOVERNED_MARKET_STORE_ROOT"
 DEFAULT_STORE_ROOT = "/data/source-ingest/market_data_store"
 SUPPORTED_SCHEMAS = ("daily_bars_manifest.v1", "daily_bars_manifest.v2")
-MAX_DATASET_SYMBOLS = 200  # records are Python objects: bounded so a 256 MiB service holds one dataset
-_READ_CHUNK = 400  # DailyBarsReader allows 500 symbols per call
-_LISTING_BATCH_DAYS = 40  # list_symbols caches one symbol set per day; clear it between batches
+MAX_DATASET_SYMBOLS = 60  # records are Python objects (about 0.55 MiB per symbol over 483 days): one dataset must fit a 256 MiB service
+_READ_CHUNK = 100  # symbols per read; DailyBarsReader allows 500
+_LISTING_BATCH_DAYS = 8  # list_symbols caches one symbol set per day; clear it between batches
 
 
 class GovernedMarketDatasetError(RuntimeError):

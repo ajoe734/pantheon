@@ -79,6 +79,8 @@ psycopg-binary==3.3.6
     # via
     #   -c dependencies/constraints-core.txt
     #   psycopg
+pyarrow==26.0.1
+    # via -r services/control-plane/persona/requirements.txt
 pycparser==3.0
     # via
     #   -c dependencies/constraints-core.txt
