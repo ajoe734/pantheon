@@ -1,0 +1,29 @@
+{
+  "task": "PAPER-RISK-PROBE-OVERLAPPING-RENEWAL-20261125",
+  "root_cause_class": "RC2",
+  "defect": "On Root 45603700953 (c3164945a, dev-acceptance-verdict-45603700953-1, 2026-11-25T13:30Z), probe:paper-risk-policy-binding and probe:paper-risk-journey failed for 澄川 with required_profile_mapping_unresolved because its approval renewed at 10:53:15Z (apv-risk-renew-834705aab4d8a83ea0ba, expires 2026-11-26T10:48Z) while the previous approval (apv-risk-profile-1ad5639caae38e16d282, expires 2026-11-25T18:53Z) remained valid for 8 hours. approved_mapping ended with `len(matches) == 1`, treating two valid approvals of the same policy content as no approval for 8 hours every day per persona, whereas the owner resolver (resolve_pool_risk_policy_binding) resolved cleanly.",
+  "fix": [
+    "acceptance/probes/paper-risk-policy-binding: approved_mapping accepts multiple valid approvals when all of them bind the same pool target version and the same risk policy id, version and digest, returning the pool-bound decision id (pool metadata profile_mapping_approval_id) if it is among them, else the one decided last; still returns None when no approval matches or when valid approvals for the pool differ in any of those four values; all existing filters (tenant, target, digest, expiry, scope, authority, conditions, revoked, superseded) are unchanged",
+    "acceptance/test_paper_risk_policy_binding.py: added overlap tests (renewed + previous both valid passes and names pool-bound or last-decided; only previous valid passes; both expired fails; two valid approvals differing in policy digest, policy version, policy id or target version fails; revoked or superseded previous approval next to valid renewal passes with the renewal)",
+    "acceptance/test_paper_risk_journey.py: added test_overlapping_renewed_and_previous_approvals_pass_in_journey_probe covering the shared helper through paper-risk-journey",
+    "services/control-plane/bff/tests/test_paper_risk_policy_renewal.py: added assertion at T+17h (while the first approval is still unexpired) that Capital owner resolution and repair after_resolution are resolved and allow new or increased risk during the overlap",
+    "docs/operations/problem-register.md: registered the Root 45603700953 overlapping renewal probe failure under RC2"
+  ],
+  "tests": [
+    "acceptance/test_paper_risk_policy_binding.py: 61 passed",
+    "acceptance/test_paper_risk_journey.py: 38 passed",
+    "services/control-plane/bff/tests/test_paper_risk_policy_renewal.py: 13 passed"
+  ],
+  "fails_on_previous_head": [
+    "acceptance/test_paper_risk_policy_binding.py::test_overlapping_renewed_and_previous_approvals_pass_and_report_pool_bound_or_last_decided (failed with required_profile_mapping_unresolved on dev head 6ef1477d5)",
+    "acceptance/test_paper_risk_policy_binding.py::test_two_valid_approvals_with_different_policy_digests_or_binding_values_fail[other_digest|policy_version|policy_id|target_version] (falsely passed on dev head 6ef1477d5 because the second valid approval for the pool was skipped before ambiguity check)",
+    "acceptance/test_paper_risk_journey.py::test_overlapping_renewed_and_previous_approvals_pass_in_journey_probe (failed with fixture-persona:required_profile_mapping_unresolved on dev head 6ef1477d5)"
+  ],
+  "runtime_budget": {
+    "new_writer_or_job": "none; no new writer, job, file or owner read",
+    "probe_runtime": "unchanged; in-memory comparison over the already-fetched /api/v1/approval-decisions list (<=2000 rows)"
+  },
+  "review_independence": "The task brief notes that other model families are at terminal quota until 2026-11-27 10:03Z so a same-family review exception was authorized in the task acceptance; additionally, the task was reassigned to Antigravity2 (owner) with Claude (reviewer), satisfying cross-family review independence.",
+  "hosted_acceptance": "pending after deploy: probe:paper-risk-policy-binding and probe:paper-risk-journey pass on the next release while an approval renewal overlap exists, or when run on demand during one",
+  "residual_findings": []
+}
