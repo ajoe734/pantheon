@@ -18,6 +18,7 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -28,14 +29,69 @@ from services.source_ingestion.hypothesis_compiler import attach_default_market_
 
 FAMILY_TRIAL_BUDGET = 500
 RUN_BUDGET = 50
-# Hard guard on one template evaluation, in symbols x trading days (TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125).
-# The registry replays the screen once per trading day over the whole market and the gate replays it several
-# times, so cost grows with both. Measured (dev VM, one process, recorded TWSE series under synthetic codes,
-# cost only): the per-day screen replay took 43.6 s for 2x520, 161.6 s for 5x520 and 286.6 s for 10x520
-# symbols x days at about 90 MiB, and one whole evaluation of 2x680 took 294 s at a 364 MiB peak. 10x520 = 5200
-# is the largest point measured that stays under the 384 MiB of research-orchestrator-svc, so it is the limit.
-# A boundary above it is refused, never truncated; see docs/deployment/evidence/<task>/evidence.json.
+# Hard guards on one template evaluation (TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125):
+# 1. Memory guard: peak RSS of evaluate_template_candidate is not driven by symbols x days alone. Measured in a
+#    standalone Python 3.12 process on the dev VM over recorded TWSE series (KMID): the interpreter baseline before
+#    evaluation is 118 MiB (123,731,968 B), 2x680 peaked at 364 MiB (381,681,664 B, +246 MiB) and 10x520 peaked at
+#    316 MiB (+198 MiB). One evaluation therefore adds up to 246 MiB (257,949,696 B) over the process baseline.
+#    Before evaluating, we read process RSS (/proc/self/statm) and the container memory limit (/sys/fs/cgroup/memory.max,
+#    falling back to RESEARCH_TEMPLATE_SEARCH_MEMORY_LIMIT_BYTES or the 384 MiB compose limit of research-orchestrator-svc)
+#    and refuse with market_evaluation_over_memory:<rss>+<increment>:<limit> when RSS + 246 MiB exceeds 90% of the limit
+#    (or when RSS or the limit is unreadable).
+# 2. Symbol-day guard (second bound): the registry replays the screen once per trading day over the whole market
+#    (43.6 s for 2x520, 161.6 s for 5x520, 286.6 s for 10x520 at ~90 MiB). 10x520 = 5200 symbol-days remains the second
+#    bound; a boundary above either guard is refused before compiling or spending a family trial, never truncated.
+EVALUATION_MEMORY_INCREMENT_BYTES = 246 * 1024 * 1024
+DEFAULT_MEMORY_LIMIT_BYTES = 384 * 1024 * 1024
+MEMORY_LIMIT_ENV = "RESEARCH_TEMPLATE_SEARCH_MEMORY_LIMIT_BYTES"
+CGROUP_MEMORY_MAX_PATH = Path("/sys/fs/cgroup/memory.max")
+PROC_STATM_PATH = Path("/proc/self/statm")
 MAX_EVALUATION_SYMBOL_DAYS = 5200
+_UNSET = object()
+
+
+def process_rss_bytes(statm_path: Path = PROC_STATM_PATH) -> int | None:
+    """Resident set size of this process in bytes from /proc/self/statm, or None when unreadable."""
+    try:
+        rss_pages = int(Path(statm_path).read_text(encoding="utf-8").split()[1])
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        return rss_pages * page_size if rss_pages > 0 and page_size > 0 else None
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def container_memory_limit_bytes(
+    cgroup_path: Path = CGROUP_MEMORY_MAX_PATH,
+    configured_limit: Any = DEFAULT_MEMORY_LIMIT_BYTES,
+) -> int | None:
+    """Container memory limit in bytes from cgroup memory.max, falling back to configured_limit when unbounded/absent.
+
+    Returns None (fail closed) if cgroup memory.max has unreadable/invalid content or if fallback is needed and the
+    configured limit is missing or not a positive integer.
+    """
+    try:
+        raw = Path(cgroup_path).read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        raw = "max"
+    except OSError:
+        return None
+    if raw != "max":
+        try:
+            limit = int(raw)
+        except ValueError:
+            return None
+        return limit if limit > 0 else None
+    if configured_limit is None or isinstance(configured_limit, bool):
+        return None
+    if isinstance(configured_limit, str):
+        configured_limit = configured_limit.strip()
+        if not configured_limit:
+            return None
+    try:
+        limit = int(configured_limit)
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
 
 
 def _digest(value: Any) -> str:
@@ -207,7 +263,11 @@ class TemplateDemandSearch:
 
     def __init__(self, *, store, gate, context_loader, lock_path: Path,
                  registrar=None, family_budget=FAMILY_TRIAL_BUDGET, run_budget=RUN_BUDGET,
-                 max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS):
+                 max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS,
+                 memory_limit_bytes: Any = _UNSET,
+                 memory_increment_bytes: int = EVALUATION_MEMORY_INCREMENT_BYTES,
+                 cgroup_memory_max_path: Path = CGROUP_MEMORY_MAX_PATH,
+                 statm_path: Path = PROC_STATM_PATH):
         if not 0 < family_budget <= FAMILY_TRIAL_BUDGET or not 0 < run_budget <= RUN_BUDGET:
             raise ValueError("invalid_template_search_budget")
         self.store, self.gate, self.context_loader = store, gate, context_loader
@@ -217,6 +277,17 @@ class TemplateDemandSearch:
         if not 0 < max_symbol_days <= MAX_EVALUATION_SYMBOL_DAYS:
             raise ValueError("invalid_template_search_evaluation_limit")
         self.max_symbol_days = max_symbol_days
+        if not isinstance(memory_increment_bytes, int) or isinstance(memory_increment_bytes, bool) \
+                or memory_increment_bytes < EVALUATION_MEMORY_INCREMENT_BYTES:
+            raise ValueError("invalid_template_search_memory_increment")
+        self.memory_increment_bytes = memory_increment_bytes
+        if memory_limit_bytes is _UNSET:
+            env_limit = os.getenv(MEMORY_LIMIT_ENV)
+            self.memory_limit_bytes = env_limit if env_limit is not None else DEFAULT_MEMORY_LIMIT_BYTES
+        else:
+            self.memory_limit_bytes = memory_limit_bytes
+        self.cgroup_memory_max_path = Path(cgroup_memory_max_path)
+        self.statm_path = Path(statm_path)
 
     def run(self, demand):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -301,9 +372,23 @@ class TemplateDemandSearch:
                 if not usable:
                     record["excluded"].append({"template_id": tid, "reason": "template_inputs_missing"})
                     continue
+                if new_attempts >= self.run_budget:
+                    record["reason"] = "run_budget_exhausted"
+                    break
+                rss = process_rss_bytes(self.statm_path)
+                mem_limit = container_memory_limit_bytes(self.cgroup_memory_max_path, self.memory_limit_bytes)
+                if rss is None or mem_limit is None or (rss + self.memory_increment_bytes) * 10 > mem_limit * 9:
+                    # Fail closed before compiling or spending a trial when RSS + increment exceeds 90% of the limit
+                    # or when either RSS or the memory limit cannot be read.
+                    rss_label = "unreadable" if rss is None else str(rss)
+                    limit_label = "unreadable" if mem_limit is None else str(mem_limit)
+                    record["reason"] = (
+                        f"market_evaluation_over_memory:{rss_label}+{self.memory_increment_bytes}:{limit_label}"
+                    )
+                    break
                 n_symbols, n_days = evaluation_cost(usable, dataset)
                 if n_symbols * n_days > self.max_symbol_days:
-                    # Fail closed before compiling or spending a trial: the whole boundary is never truncated.
+                    # Second bound: fail closed before compiling or spending a trial; the boundary is never truncated.
                     record["reason"] = f"market_evaluation_over_limit:{n_symbols}x{n_days}:{self.max_symbol_days}"
                     break
                 artifact = compile_template(template, universe=usable, demand=demand,
@@ -311,9 +396,6 @@ class TemplateDemandSearch:
                 aid = artifact["artifact_id"]
                 if aid in previous:
                     continue
-                if new_attempts >= self.run_budget:
-                    record["reason"] = "run_budget_exhausted"
-                    break
                 new_attempts += 1
                 before = self.gate.get_family_total_trial_count(family)
                 response = evaluate_template_candidate(

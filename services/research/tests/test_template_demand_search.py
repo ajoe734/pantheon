@@ -36,6 +36,9 @@ def configured_owners(monkeypatch):
     for name in ('RESEARCH_PERSONA_SERVICE_TOKEN', 'RESEARCH_REGISTRY_SERVICE_TOKEN'):
         monkeypatch.delenv(name + '_FILE', raising=False)
         monkeypatch.setenv(name, 'local-owner-recording-token')
+    # The pytest runner holds the whole service suite in one process; the 384 MiB container memory guard is tested
+    # directly on both sides in test_evaluation_memory_guard_tests_both_sides_cgroup_fallback_and_unreadable_limit.
+    monkeypatch.setenv('RESEARCH_TEMPLATE_SEARCH_MEMORY_LIMIT_BYTES', str(2 * 1024**3))
 
 
 # The persona owner's recorded hosted shape: no marketScope symbols, one instrument in traits.
@@ -77,7 +80,8 @@ def entries(*ids):
     return result
 
 
-def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, gate=None):
+def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, gate=None,
+                 memory_limit_bytes=2 * 1024**3):
     store = ResearchDemandStore(tmp_path / 'demands.json')
     demand = store.open('tenant-a', BODY)
     gate = gate or SharedReplicationGate(trial_counter_path=tmp_path / 'trials.json',
@@ -85,7 +89,9 @@ def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, 
     context = {'dataset': governed_view(), 'universe': ['2330.TW', '0050.TW'],
                'templates': templates if templates is not None else entries('qlib_alpha158:KMID')}
     search = TemplateDemandSearch(store=store, gate=gate, context_loader=lambda d: context,
-                                  lock_path=tmp_path / 'search.lock', family_budget=family_budget, run_budget=run_budget)
+                                  lock_path=tmp_path / 'search.lock', family_budget=family_budget,
+                                  run_budget=run_budget, memory_limit_bytes=memory_limit_bytes,
+                                  cgroup_memory_max_path=tmp_path / 'no-cgroup-memory.max')
     return search, store, demand, context
 
 
@@ -623,3 +629,100 @@ def test_evaluation_over_the_cost_limit_is_refused_before_any_trial_and_never_tr
     with pytest.raises(ValueError, match='invalid_template_search_evaluation_limit'):
         TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
                              lock_path=tmp_path / 'l', max_symbol_days=MAX_EVALUATION_SYMBOL_DAYS + 1)
+
+
+def test_evaluation_memory_guard_tests_both_sides_cgroup_fallback_and_unreadable_limit(tmp_path, monkeypatch):
+    import os
+    from services.research.template_demand_search import (
+        DEFAULT_MEMORY_LIMIT_BYTES,
+        EVALUATION_MEMORY_INCREMENT_BYTES,
+        process_rss_bytes,
+    )
+    search, store, demand, context = setup_search(tmp_path)
+    page_size = int(os.sysconf('SC_PAGE_SIZE'))
+    statm = tmp_path / 'statm'
+    cgroup = tmp_path / 'memory.max'
+    search.statm_path = statm
+    search.cgroup_memory_max_path = cgroup
+
+    # 1. In research-orchestrator-svc (384 MiB cgroup memory.max), the service baseline after loading the governed
+    #    dataset (192 MiB) plus the measured 246 MiB evaluation increment (438 MiB) exceeds 90% of 384 MiB (345.6 MiB).
+    rss_192 = (192 * 1024 * 1024 // page_size) * page_size
+    statm.write_text(f'{rss_192 // page_size} {rss_192 // page_size} 0 0 0 0 0\n', encoding='utf-8')
+    cgroup.write_text(f'{DEFAULT_MEMORY_LIMIT_BYTES}\n', encoding='utf-8')
+    row = search.run(demand)
+    expected = f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{DEFAULT_MEMORY_LIMIT_BYTES}'
+    assert row['discovery']['template_search']['reason'] == expected
+    assert row['discovery']['template_search']['attempts'] == {}
+    assert search.gate.get_family_total_trial_count('template:qlib_alpha158:kbar') == 0
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+
+    # 2. Exact 90% boundary via cgroup memory.max: one byte below required limit refuses; at the 90% limit it passes.
+    exact_allow_limit = ((rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 + 8) // 9
+    refuse_limit = (rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 // 9
+    if (rss_192 + EVALUATION_MEMORY_INCREMENT_BYTES) * 10 == refuse_limit * 9:
+        refuse_limit -= 1
+    cgroup.write_text(f'{refuse_limit}\n', encoding='utf-8')
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{refuse_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # 3. Unreadable limits (corrupt cgroup file, non-positive cgroup value, unbounded cgroup with missing/invalid
+    #    fallback configured limit, or unreadable RSS) all fail closed before spending any trial.
+    for bad_cgroup, bad_fallback, expected_tail in [
+        ('corrupt\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('0\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('-1\n', exact_allow_limit, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', None, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', 'not-a-number', f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+        ('max\n', 0, f'{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:unreadable'),
+    ]:
+        cgroup.write_text(bad_cgroup, encoding='utf-8')
+        search.memory_limit_bytes = bad_fallback
+        row = search.run(demand)
+        assert row['discovery']['template_search']['reason'] == 'market_evaluation_over_memory:' + expected_tail
+        assert row['discovery']['template_search']['attempts'] == {}
+        assert row['status'] == 'open'
+
+    # Missing cgroup file falls back to configured limit (both sides: refuse when over 90%, allow when within 90%).
+    cgroup.unlink()
+    search.memory_limit_bytes = refuse_limit
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:{rss_192}+{EVALUATION_MEMORY_INCREMENT_BYTES}:{refuse_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # Unreadable RSS (missing statm) also refuses.
+    statm.unlink()
+    search.memory_limit_bytes = exact_allow_limit
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == (
+        f'market_evaluation_over_memory:unreadable+{EVALUATION_MEMORY_INCREMENT_BYTES}:{exact_allow_limit}'
+    )
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    # 4. Within 90% of the limit (first via cgroup memory.max, and also with the real live process RSS), the memory
+    #    guard passes and the symbol-day guard remains enforced as a second bound, then the real evaluation runs.
+    live_rss = process_rss_bytes()
+    assert live_rss is not None and live_rss > 0
+    search.statm_path = Path('/proc/self/statm')
+    allow_live_limit = ((live_rss + EVALUATION_MEMORY_INCREMENT_BYTES) * 10) // 9 + 64 * 1024 * 1024
+    cgroup.write_text(f'{allow_live_limit}\n', encoding='utf-8')
+    search.max_symbol_days = 1
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'].startswith('market_evaluation_over_limit:')
+    assert row['discovery']['template_search']['attempts'] == {}
+
+    search.max_symbol_days = 5200
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == 'search_completed'
+    assert len(row['discovery']['template_search']['attempts']) == 1
+    assert row['status'] == 'open'
+
+    with pytest.raises(ValueError, match='invalid_template_search_memory_increment'):
+        TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
+                             lock_path=tmp_path / 'l',
+                             memory_increment_bytes=EVALUATION_MEMORY_INCREMENT_BYTES - 1)

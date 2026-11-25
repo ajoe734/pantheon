@@ -232,6 +232,7 @@ class OwnerEnvironment:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv("ALPHA_REPLICATION_DATA_DIR", str(self.data_dir))
         monkeypatch.setenv("RESEARCH_REPLICATION_TRIAL_COUNTER_PATH", str(tmp_path / "trials.json"))
+        monkeypatch.setenv("RESEARCH_TEMPLATE_SEARCH_MEMORY_LIMIT_BYTES", str(2 * 1024**3))
         self.research = _load_service_module(data_dir=str(tmp_path / "research"))
         monkeypatch.setattr(self.research, "ALPHA_REPLICATION_DATA_DIR", self.data_dir)
 
