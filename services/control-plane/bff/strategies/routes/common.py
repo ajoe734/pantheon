@@ -685,6 +685,17 @@ class StrategyRouteContext:
             f"Strategy {strategy_id} does not exist",
         )
 
+    def read_strategy_runtime_truth(self, snapshot_at: str) -> Dict[str, Any]:
+        """One Telemetry + RuntimeBinding read for the whole request (shared with Trading Pulse)."""
+        from services.control_plane.bff.management_read_models.service import (
+            read_strategy_runtime_truth,
+        )
+
+        try:
+            return read_strategy_runtime_truth(self.get_read_store_port(), snapshot_at)
+        except Exception:  # noqa: BLE001 - a failed read is unknown, never idle
+            return {"status": "unavailable", "reason": "runtime_truth_read_failed", "by_strategy": {}}
+
     def project_strategy_dto(
         self,
         summary: Dict[str, Any],
@@ -694,6 +705,7 @@ class StrategyRouteContext:
         ranking_snapshot: Any = _UNSET,
         ranking_read_failed: bool = False,
         ranking_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        runtime_truth: Optional[Dict[str, Any]] = None,
         include_spec: bool = False,
         persona_lookup: Optional[PersonaStateLookup] = None,
     ) -> Dict[str, Any]:
@@ -799,6 +811,21 @@ class StrategyRouteContext:
             "lifecycleStatus": str(lifecycle_raw or ""),
             "symbols": _clean_str_list(market_scope.get("symbols")),
         }
+        if runtime_truth is not None:
+            truth = (runtime_truth.get("by_strategy") or {}).get(strategy_id)
+            if truth is not None:
+                # Admitted binding: the Telemetry summary owns the cumulative
+                # result. pnl30d / sharpe stay null (no single-day derivation).
+                for key in ("pnl", "drawdown", "totalTrades", "metricsAsOf", "metricsResolution"):
+                    dto[key] = truth[key]
+                dto["metricsReason"] = truth["metricsReason"]
+                dto["runtimeStatus"] = truth["runtimeStatus"]
+                dto["runtimeStatusReason"] = truth["runtimeStatusReason"]
+            elif runtime_truth.get("status") == "ok":
+                dto["runtimeStatus"], dto["runtimeStatusReason"] = "none", None
+            else:
+                dto["runtimeStatus"] = "unknown"
+                dto["runtimeStatusReason"] = runtime_truth.get("reason") or "runtime_truth_unavailable"
         if persona_lookup is not None:
             dto["personaStates"] = persona_lookup.persona_states(persona_ids)
             dto["operationalStatus"] = persona_lookup.operational_status(persona_ids)

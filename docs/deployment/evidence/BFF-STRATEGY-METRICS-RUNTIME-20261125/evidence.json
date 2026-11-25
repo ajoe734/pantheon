@@ -1,0 +1,22 @@
+{
+  "task_id": "BFF-STRATEGY-METRICS-RUNTIME-20261125",
+  "kind": "functional_only_no_hosted_verification",
+  "shared_helper": "management_read_models/service.py: _pulse_telemetry_index, _pulse_binding_telemetry, _pulse_performance, _pulse_operator_scope (Trading Pulse now uses the same index/join functions); read_strategy_runtime_truth serves list and detail",
+  "owner_calls_per_list_request": {"RuntimeBinding list": 1, "Telemetry summaries list": 1, "Persona directory": 1, "note": "constant, independent of strategy count; asserted in test_runtime_truth_replays_the_three_recorded_rows"},
+  "replayed_rows": [
+    {"strategy": "strategy-persona-a81b4fd15944698341aa", "pnl": -9.988691250022384, "total_trades": 2},
+    {"strategy": "strategy-persona-06d4775a9b6a8f63b311", "pnl": -186.89087499999732, "total_trades": 2},
+    {"strategy": "strategy-persona-039ad01f8bcd2b4aa466", "pnl": null, "metricsReason": "no_fills", "total_trades": 0}
+  ],
+  "unchanged": ["ranking reducer", "operationalStatus", "OPERATIONAL_STATUSES", "_PERSONA_OPERATIONAL_LIFECYCLE_STATES"],
+  "tests": {
+    "added": "5 tests in tests/test_strategy_metrics_truth.py (11 pass in file)",
+    "regression_run": "strategy metrics/latency/operational/ranking/fanout/router_isolation, test_bff_b3_trading_pulse, test_bff_test_architecture",
+    "preexisting_failures_on_unmodified_base": [
+      "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation",
+      "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies"
+    ],
+    "assertions_changed_or_deleted": "none"
+  },
+  "residual_findings": ["the two pre-existing failures above reproduce on HEAD without this change; outside scope"]
+}

@@ -552,6 +552,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         ranking_index = _build_ranking_strategy_index(
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None
         )
+        runtime_truth = ctx.read_strategy_runtime_truth(snapshot_at)
         page_items: List[Dict[str, Any]] = []
         for summary in page_summaries:
             strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
@@ -573,6 +574,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     ranking_read_failed=ranking_read_failed,
                     ranking_index=ranking_index,
                     persona_lookup=persona_lookup,
+                    runtime_truth=runtime_truth,
                 )
             )
         meta = dict(
