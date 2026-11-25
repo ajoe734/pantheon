@@ -1,8 +1,15 @@
 """Persona demand driven AlphaTemplate compilation and §10 admission.
 
 Only registered time-series templates are considered. Market observations and
-the mandate universe come from owners; this module never fills missing inputs.
-Passing artifacts remain paper research candidates, not approved pool members.
+the market boundary come from the governed market dataset owner (never from a
+persona symbol list); this module never fills missing inputs. Passing artifacts
+remain paper research candidates, not approved pool members.
+
+Re-evaluation rule (TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125): the artifact id
+digests the dataset snapshot, so it changes every trading day. A template is
+evaluated at most once per demand regardless: an attempt already recorded for
+its template_id is never repeated because a newer snapshot exists, so the
+family trial count rises once per template, not once per template per day.
 """
 from __future__ import annotations
 
@@ -17,6 +24,7 @@ from typing import Any, Mapping
 from services.execution.shioaji_adapter import normalize_taiwan_symbol
 from services.registry.alpha_template import alpha_template_checksum, validate_alpha_template
 from services.registry.strategy_artifact import validate_strategy_artifact
+from services.source_ingestion.hypothesis_compiler import attach_default_market_screen
 
 FAMILY_TRIAL_BUDGET = 500
 RUN_BUDGET = 50
@@ -28,9 +36,44 @@ def _digest(value: Any) -> str:
 
 def _symbols(universe):
     if not isinstance(universe, list) or not universe:
-        raise ValueError("mandate_universe_missing")
+        raise ValueError("market_boundary_symbols_missing")
     return sorted({f"{code}.{'TWO' if venue in ('TPEX', 'OTC') else 'TW'}"
                    for code, venue in map(normalize_taiwan_symbol, universe)})
+
+
+def market_from_dataset(dataset: Mapping) -> dict:
+    """``candidate_pool_market.v1`` of the governed boundary, from the dataset's own stored bars only.
+
+    The screen needs this payload. No survivorship attestation is made here: ``includes_delisted`` and
+    ``includes_suspended`` stay false, so the registry marks the pool ``survivorship_limited`` and the gate
+    refuses with that reason until the source owner's attestation exists (a correct refusal, never bypassed).
+    A bar without a stored ``available_time`` is left out; nothing is invented or imputed.
+    """
+    symbols: dict[str, dict] = {}
+    sessions: set[str] = set()
+    for r in dataset.get("records") or []:
+        close, available = r.get("close"), r.get("available_time")
+        if not isinstance(available, str) or not isinstance(close, (int, float)) or isinstance(close, bool) \
+                or not math.isfinite(close) or close <= 0:
+            continue
+        bar: dict[str, Any] = {"event_time": f"{r['date']}T13:30:00+08:00", "available_time": available, "close": close}
+        for field in ("open", "high", "low", "volume", "traded_value"):
+            v = r.get(field)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+                bar[field] = v
+        if "volume" in bar:
+            bar["suspended"] = bar["volume"] <= 0
+        sessions.add(r["date"])
+        symbols.setdefault(_symbols([r["instrument"]])[0], {"dataset": "tw_price_daily", "bars": []})["bars"].append(bar)
+    if not symbols:
+        raise ValueError("governed_market_data_missing")
+    for payload in symbols.values():
+        payload["bars"].sort(key=lambda b: b["event_time"])
+    ordered = sorted(sessions)
+    return {"schema_version": "candidate_pool_market.v1", "scope": "all_governed_tw",
+            "source_refs": list(dataset["source_dataset_refs"]), "trading_sessions": ordered,
+            "calendar_coverage_through": ordered[-1], "symbols": symbols,
+            "includes_delisted": False, "includes_suspended": False}
 
 
 def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
@@ -63,10 +106,17 @@ def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
     controls = [{"parameter_key": k, "value_type": "integer" if type(v) is int else "number",
                  "current_value": v, "allowed_range": {"min": v, "max": v}, "step": 1}
                 for k, v in params.items()]
+    # The existing whole_governed_tw_boundary.v1 screen, from the code hypothesis_compiler uses for its
+    # default (not a copy). Its constants join the declared controls; the template signal is untouched.
+    logic = {"inputs": copy.deepcopy(template["inputs"])}
+    screen_params: dict[str, Any] = {}
+    attach_default_market_screen(logic, screen_params, controls)
+    screen_params.pop("market")
+    params.update(screen_params)
     parameters = {**params, "market": "TW", "symbols": symbols, "bar_frequency": "1d",
                   "data_source": str(dataset["dataset_id"]), "order_quantity": 10, "quantity_type": "SHARES"}
     identity = _digest([demand["tenant_id"], demand["demand_id"], source_ref, template,
-                        symbols, dataset, parameters, signal, "positive_signal_long_v1"])[:24]
+                        symbols, dataset, parameters, signal, "positive_signal_long_v1", "whole_governed_tw_boundary.v1"])[:24]
     artifact = {
         "artifact_schema_version": "1.0", "artifact_id": "template-demand-" + identity,
         "strategy_id": "template-" + _digest([demand["tenant_id"], template["template_id"]])[:20],
@@ -81,7 +131,7 @@ def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
             "signal_schema_version": "1.0",
         },
         "strategy_logic": {
-            "kind": "factor_rule_v1", "inputs": copy.deepcopy(template["inputs"]), "signal": signal,
+            "kind": "factor_rule_v1", "inputs": logic["inputs"], "screen": logic["screen"], "signal": signal,
             "entry": {"long_when": {"op": "gt", "args": [{"ref": "signal"}, {"const_param": zero_key}]},
                       "short_when": None},
             "exit": {"max_holding_bars": None,
@@ -100,25 +150,41 @@ def compile_template(template: Mapping, *, universe: list[str], demand: Mapping,
     return artifact
 
 
-def inputs_available(template: Mapping, universe: list[str], dataset: Mapping) -> bool:
-    """Require observed finite fields for every mandate symbol, without OHLC/VWAP imputation."""
-    wanted = set(_symbols(universe))
-    by_symbol = {s: [] for s in wanted}
+def usable_symbols(template: Mapping, universe: list[str], dataset: Mapping) -> tuple[list[str], dict[str, str]]:
+    """Judge a template by the fields present over the eligible boundary (``universe``).
+
+    A boundary symbol is usable when it has rows and every input field is an observed finite number on
+    every row; a symbol that lacks the data stays out with its reason (nothing is imputed, no OHLC/VWAP
+    substitute). One incomplete symbol no longer rejects the template. Returns ``(usable, excluded)``;
+    ``usable`` is empty when the template's dataset is not served by this authority.
+    """
+    wanted = _symbols(universe)
+    if any(inp["dataset"] != "tw_price_volume" for inp in template["inputs"]):
+        return [], {s: "template_dataset_not_served" for s in wanted}  # this bar authority serves price-volume only
+    by_symbol: dict[str, list] = {s: [] for s in wanted}
     for row in dataset.get("records") or []:
         symbol = _symbols([row["instrument"]])[0]
         if symbol in by_symbol:
             by_symbol[symbol].append(row)
-    for rows in by_symbol.values():
+    usable: list[str] = []
+    excluded: dict[str, str] = {}
+    for symbol, rows in by_symbol.items():
         if not rows:
-            return False
-        for inp in template["inputs"]:
-            if inp["dataset"] != "tw_price_volume":
-                return False  # this governed bar authority supplies only price-volume observations
-            if any(not isinstance(r.get(inp["field"]), (int, float))
-                   or isinstance(r.get(inp["field"]), bool)
-                   or not math.isfinite(r[inp["field"]]) for r in rows):
-                return False
-    return True
+            excluded[symbol] = "no_bars"
+            continue
+        bad = next((inp["field"] for inp in template["inputs"]
+                    if any(not isinstance(r.get(inp["field"]), (int, float))
+                           or isinstance(r.get(inp["field"]), bool)
+                           or not math.isfinite(r[inp["field"]]) for r in rows)), None)
+        if bad is not None:
+            excluded[symbol] = "field_incomplete:" + bad
+        else:
+            usable.append(symbol)
+    return usable, excluded
+
+
+def inputs_available(template: Mapping, universe: list[str], dataset: Mapping) -> bool:
+    return bool(usable_symbols(template, universe, dataset)[0])
 
 
 class TemplateDemandSearch:
@@ -162,6 +228,7 @@ class TemplateDemandSearch:
                 raise ValueError("governed_market_data_missing")
             if dataset.get("data_frequency") not in ("daily", "1d"):
                 raise ValueError("template_search_requires_daily_bars")
+            gate_dataset = {**dataset, "candidate_pool_market": market_from_dataset(dataset)}
             entries = context["templates"]
             if self.registrar is not None:
                 for prev_aid, prev_receipt in previous.items():
@@ -206,10 +273,13 @@ class TemplateDemandSearch:
                     tried.add(family)
                     record["excluded"].append({"template_id": tid, "family_id": family, "reason": "family_tried"})
                     continue
-                if not inputs_available(template, universe, dataset):
+                if any(isinstance(r, Mapping) and r.get("template_id") == tid for r in previous.values()):
+                    continue  # evaluated once per demand: a newer daily snapshot never re-spends a family trial
+                usable, dropped = usable_symbols(template, universe, dataset)
+                if not usable:
                     record["excluded"].append({"template_id": tid, "reason": "template_inputs_missing"})
                     continue
-                artifact = compile_template(template, universe=universe, demand=demand,
+                artifact = compile_template(template, universe=usable, demand=demand,
                                             source_ref="registry:" + entry["registry_id"], dataset=dataset)
                 aid = artifact["artifact_id"]
                 if aid in previous:
@@ -220,7 +290,7 @@ class TemplateDemandSearch:
                 new_attempts += 1
                 before = self.gate.get_family_total_trial_count(family)
                 response = evaluate_template_candidate(
-                    gate=capturing_gate, artifact=artifact, dataset=dict(dataset), demand=demand,
+                    gate=capturing_gate, artifact=artifact, dataset=dict(gate_dataset), demand=demand,
                     family_id=family, source_ref="registry:" + entry["registry_id"], timestamp=timestamp)
                 # Incomplete histories / invalid backtests return before the gate's
                 # numeric trial check. They still consumed one compiled-template trial.
@@ -231,6 +301,8 @@ class TemplateDemandSearch:
                            "template_checksum": entry["checksum"],
                            "demand_ref": demand["demand_id"], "persona_id": demand["persona_id"],
                            "tenant_id": demand["tenant_id"], "paper_only": True,
+                           "dataset_id": dataset["dataset_id"], "boundary_symbols": len(usable),
+                           "symbols_without_inputs": len(dropped),
                            "status": response.admission_status.value, "gate": response.to_dict()}
                 if response.passed:
                     receipt.update(artifact=artifact, mechanism_status="mechanism_untested",

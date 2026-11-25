@@ -239,6 +239,36 @@ class ResearchDemandStore:
         finally:
             lock.close()
 
+    def record_pool_refusal(self, tenant_id: str, demand_id: str, artifact_ref: str, reason: str) -> dict[str, Any]:
+        """Record that the pool refused a passing candidate of this demand (for example
+        ``candidate_outside_pool_approved_universe``). The refusal is visible on the attempt; pool admission
+        itself is owned elsewhere and never changed here, and the demand is never satisfied by it."""
+        reason = str(reason or "").strip()[:160]
+        if not reason:
+            raise DemandError("pool refusal reason is required")
+        lock = self._locked()
+        try:
+            rows = self._load()
+            self._expire(rows)
+            for row in rows:
+                if (row["tenant_id"], row["demand_id"]) != (tenant_id, demand_id):
+                    continue
+                if row["status"] != "open":
+                    self._save(rows)
+                    raise DemandError(f"demand {demand_id} is {row['status']}, not open")
+                search = (row.get("discovery") or {}).get("template_search") or {}
+                hit = next((a for key, a in (search.get("attempts") or {}).items()
+                            if isinstance(a, dict) and artifact_ref in (key, a.get("registry_id"))), None)
+                if hit is None:
+                    raise DemandError(f"no template attempt of {demand_id} matches {artifact_ref}")
+                hit["pool_admission"] = {"status": "refused", "reason": reason, "recorded_at": _iso(self._now())}
+                validate_demand(row)
+                self._save(rows)
+                return dict(row)
+            raise DemandError(f"demand {demand_id} not found")
+        finally:
+            lock.close()
+
     def record_template_search(self, tenant_id: str, demand_id: str, record: Mapping[str, Any],
                                *, tried_families=()) -> dict[str, Any]:
         """Merge template receipts independently of external-text discovery actions."""

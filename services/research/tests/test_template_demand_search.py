@@ -20,7 +20,9 @@ from services.registry.factor_rule import evaluate_factor_expression
 from services.registry.strategy_artifact import validate_strategy_artifact
 from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
 from services.research.research_demand import ResearchDemandStore
-from services.research.template_demand_search import TemplateDemandSearch, compile_template, inputs_available
+from services.research.template_demand_search import (
+    TemplateDemandSearch, compile_template, inputs_available, usable_symbols,
+)
 from services.research.tests.test_research_orchestrator_http_service import _load_service_module
 
 FIXTURE = Path(__file__).with_name('fixtures') / 'template_demand_tw_bars.json'
@@ -36,8 +38,32 @@ def configured_owners(monkeypatch):
         monkeypatch.setenv(name, 'local-owner-recording-token')
 
 
+# The persona owner's recorded hosted shape: no marketScope symbols, one instrument in traits.
+HOSTED_PERSONA = {'tenant_id': 'tenant-a', 'persona_id': BODY['persona_id'], 'marketScope': {},
+                  'traits': {'instruments': ['0050.TWSE']}}
+
+
+def _use_recorded_market(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from services.research import governed_market_dataset as gmd
+    from services.research.tests.test_governed_market_dataset import store_from_records
+    monkeypatch.setenv('GOVERNED_MARKET_STORE_ROOT',
+                       str(store_from_records(tmp_path / 'market_data_store', recorded()['records'])))
+    monkeypatch.setattr(gmd, '_as_of', lambda now: datetime(2026, 11, 2, tzinfo=timezone.utc))
+
+
 def recorded():
     return json.loads(FIXTURE.read_text())['dataset']
+
+
+def governed_view():
+    """The recorded bars as the governed dataset presents them: traded_value (close * volume) and the stored
+    available_time (08:00Z of the day) are the fixture-store conventions of test_governed_market_dataset."""
+    ds = copy.deepcopy(recorded())
+    for r in ds['records']:
+        r['traded_value'] = r['close'] * r['volume']
+        r['available_time'] = r['date'] + 'T08:00:00Z'
+    return ds
 
 
 def entries(*ids):
@@ -56,7 +82,7 @@ def setup_search(tmp_path, *, templates=None, family_budget=500, run_budget=50, 
     demand = store.open('tenant-a', BODY)
     gate = gate or SharedReplicationGate(trial_counter_path=tmp_path / 'trials.json',
                                          backtest_run_store=SharedBacktestRunStore(tmp_path / 'runs.json'))
-    context = {'dataset': recorded(), 'universe': ['2330'],
+    context = {'dataset': governed_view(), 'universe': ['2330.TW', '0050.TW'],
                'templates': templates if templates is not None else entries('qlib_alpha158:KMID')}
     search = TemplateDemandSearch(store=store, gate=gate, context_loader=lambda d: context,
                                   lock_path=tmp_path / 'search.lock', family_budget=family_budget, run_budget=run_budget)
@@ -120,6 +146,7 @@ def test_missing_universe_fields_and_vwap_are_excluded_without_imputation(tmp_pa
     t = copy.deepcopy(t)
     t['inputs'][0]['field'] = 'vwap'
     assert not inputs_available(t, ['2330'], context['dataset'])
+    context['universe'] = ['2330']  # the boundary under test is 2330 alone: its missing field excludes the template
     context['dataset'] = missing
     result = search.run(demand)['discovery']['template_search']
     assert result['attempts'] == {} and result['excluded'][0]['reason'] == 'template_inputs_missing'
@@ -223,6 +250,7 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
                        'JWT_ISSUER': ISSUER, 'JWT_AUDIENCE': AUDIENCE,
                        'MFA_REQUIRED': 'false'}.items():
         monkeypatch.setenv('PANTHEON_RESEARCH_' + key, value)
+    _use_recorded_market(monkeypatch, tmp_path)
     module = _load_service_module(data_dir=str(tmp_path / 'research'))
     monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
     monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
@@ -235,12 +263,10 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
         if kw['service'] == 'persona':
             entered.set()
             assert release.wait(90), 'test did not release the slow owner'
-            return {'tenant_id': TENANT, 'persona_id': BODY['persona_id'],
-                    'metadata': {'market_scope': {'symbols': ['2330']}}}
+            return {**HOSTED_PERSONA, 'tenant_id': TENANT}
         return entries('qlib_alpha158:KMID')
 
     monkeypatch.setattr(module, '_retrain_call', owners)
-    monkeypatch.setattr(module, '_RETRAIN_DATASET_LOADER', lambda *a: recorded())
     def forbidden(*a, **kw):
         raise AssertionError('synthetic market data / fallback artifact used')
     monkeypatch.setattr(adapter, 'build_governed_tw_replication_dataset', forbidden)
@@ -289,16 +315,15 @@ def test_real_persona_reconcile_entry_drives_compilation_and_real_backtest_gate(
     assert receipt['demand_ref'] == demand['demand_id'] and receipt['paper_only']
     bt = next(r for r in receipt['gate']['results'] if r['criterion_id'] == 'real_backtest_validation')
     assert 'Check failed with error' not in bt['evidence'], bt
-    assert bt['details']['status'] in ('passed', 'failed'), bt
-    assert bt['details']['history_check']['sufficient']
-    assert bt['details']['history_check']['calendar_days'] >= 730
-    assert bt['details']['out_of_sample_round_trips'] >= 20
-    print('Recorded default-gate result:', receipt['status'],
-          'OOS Sharpe:', bt['details']['out_of_sample_sharpe_ratio'],
-          'round trips:', bt['details']['out_of_sample_round_trips'])
+    # The template now carries the whole_governed_tw_boundary.v1 screen. The governed dataset supplies no
+    # survivorship attestation, so the real gate refuses before any backtest: a correct, recorded refusal.
+    assert bt['details']['status'] == 'survivorship_limited', bt
+    assert bt['details']['source_dataset_refs'][0].startswith('daily_bars:gmd-')
+    assert receipt['status'] != 'admitted' and receipt['dataset_id'].startswith('gmd-')
+    assert receipt['boundary_symbols'] == 2
+    assert row['discovery']['template_search']['reason'] == 'search_completed'
     assert receipt['gate']['metadata']['mechanism_status'] == 'mechanism_untested'
     assert receipt['family_trial_count'] == 1
-    assert (tmp_path / 'alpha' / 'backtest_runs.json').exists()
     # A repeat cycle may record the outcome again, but cannot re-evaluate this candidate.
     ports.reconcile_demands(persona, [])
     for t in threading.enumerate():
@@ -498,3 +523,85 @@ def test_search_reaches_the_gate_from_an_empty_authority_directory(tmp_path, mon
     assert len(ts['attempts']) == 1, ts
     assert list(authority.iterdir()) == []
 
+
+
+def test_partial_boundary_evaluates_on_complete_symbols_and_names_the_rest_without_imputation(tmp_path):
+    search, store, demand, context = setup_search(tmp_path)
+    template = context['templates'][0]['entry']['metadata']['alpha_template']
+    partial = copy.deepcopy(context['dataset'])
+    del next(r for r in partial['records'] if r['instrument'] == '2330.TW')['open']
+    usable, dropped = usable_symbols(template, ['2330.TW', '0050.TW'], partial)
+    assert usable == ['0050.TW'] and dropped == {'2330.TW': 'field_incomplete:open'}
+    assert inputs_available(template, ['2330.TW', '0050.TW'], partial)
+    assert usable_symbols(template, ['2330.TW', '9999.TW'], partial)[0] == []
+    assert usable_symbols(template, ['2330.TW', '9999.TW'], partial)[1]['9999.TW'] == 'no_bars'
+    # a template whose input dataset is not served is excluded with the same reason as before
+    other = copy.deepcopy(template)
+    other['inputs'][0]['dataset'] = 'tw_fundamentals'
+    assert not inputs_available(other, ['2330.TW'], context['dataset'])
+    context['dataset'] = partial
+    result = search.run(demand)['discovery']['template_search']
+    receipt = next(iter(result['attempts'].values()))
+    assert receipt['boundary_symbols'] == 1 and receipt['symbols_without_inputs'] == 1
+    assert next(iter(result['attempts']))  # evaluated, not rejected as missing inputs
+    assert not [e for e in result['excluded'] if e.get('reason') == 'template_inputs_missing']
+
+
+def test_compiled_artifact_carries_the_shared_default_screen_and_the_unchanged_signal():
+    from services.source_ingestion.hypothesis_compiler import attach_default_market_screen
+    dataset = governed_view()
+    view = entries('qlib_alpha158:KMID')[0]['entry']
+    template = view['metadata']['alpha_template']
+    artifact = compile_template(template, universe=['2330.TW', '0050.TW'], demand={'tenant_id': 't', 'demand_id': 'rd-1'},
+                                source_ref='registry:' + view['registry_id'], dataset=dataset)
+    validate_strategy_artifact(artifact)
+    reference_logic, reference_params, reference_controls = {'inputs': []}, {}, []
+    attach_default_market_screen(reference_logic, reference_params, reference_controls)
+    assert artifact['strategy_logic']['screen'] == reference_logic['screen']
+    for key, value in reference_params.items():
+        if key != 'market':
+            assert artifact['parameters'][key] == value
+    assert artifact['parameters']['symbols'] == ['0050.TW', '2330.TW']
+    assert {c['parameter_key'] for c in reference_controls} <= {c['parameter_key'] for c in artifact['mutation_surface']['controls']}
+
+
+def test_a_new_daily_snapshot_never_reevaluates_a_template_and_the_trial_count_rises_once(tmp_path):
+    search, store, demand, context = setup_search(tmp_path, templates=entries('qlib_alpha158:KMID', 'qlib_alpha158:KLEN'))
+    first = search.run(demand)['discovery']['template_search']
+    assert len(first['attempts']) == 2
+    counts = {fam: search.gate.get_family_total_trial_count(fam) for fam in {a['family_id'] for a in first['attempts'].values()}}
+    assert sum(counts.values()) == 2  # one trial per template
+    # the next trading day: another snapshot id (so another artifact id) over the same boundary
+    context['dataset'] = {**context['dataset'], 'dataset_id': 'gmd-2026-10-31-' + '0' * 40,
+                          'source_dataset_refs': ['daily_bars:gmd-2026-10-31-' + '0' * 40]}
+    second = search.run(demand)['discovery']['template_search']
+    assert second['attempts'] == first['attempts']
+    assert {fam: search.gate.get_family_total_trial_count(fam) for fam in counts} == counts
+
+
+def test_failed_or_partial_runs_record_a_reason_and_never_satisfy_the_demand(tmp_path):
+    search, store, demand, context = setup_search(tmp_path, templates=entries('qlib_alpha158:KMID', 'qlib_alpha158:KLEN'),
+                                                   run_budget=1)
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'] == 'run_budget_exhausted' and row['status'] == 'open'
+    def broken(d):
+        raise ValueError('market_boundary_empty: no symbol passes the boundary of 1950 stored symbols')
+    search.context_loader = broken
+    row = search.run(demand)
+    assert row['discovery']['template_search']['reason'].startswith('template_search_unavailable:ValueError:market_boundary_empty')
+    assert row['status'] == 'open' and row.get('satisfied_by') is None
+    assert len(row['discovery']['template_search']['attempts']) == 1  # the earlier receipt is kept
+
+
+def test_pool_refusal_is_recorded_on_the_attempt_and_visible_on_the_demand(tmp_path):
+    search, store, demand, context = setup_search(tmp_path)
+    receipts = search.run(demand)['discovery']['template_search']['attempts']
+    aid = next(iter(receipts))
+    row = store.record_pool_refusal('tenant-a', demand['demand_id'], aid, 'candidate_outside_pool_approved_universe')
+    refused = row['discovery']['template_search']['attempts'][aid]['pool_admission']
+    assert refused['status'] == 'refused' and refused['reason'] == 'candidate_outside_pool_approved_universe'
+    assert row['status'] == 'open'
+    again = store.list('tenant-a')[0]
+    assert again['discovery']['template_search']['attempts'][aid]['pool_admission']['status'] == 'refused'
+    with pytest.raises(Exception):
+        store.record_pool_refusal('tenant-a', demand['demand_id'], 'nope', 'x')
