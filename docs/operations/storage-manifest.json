@@ -5983,6 +5983,21 @@
  "runtime_budgets": [
   {
    "bound_proof": {
+    "contains": "MAX_PARTITIONS",
+    "file": "services/source_ingestion/daily_bars_completion.py"
+   },
+   "cadence": "one bounded call on a daemon thread after a daily bars batch, single flight, at most once per 30 s (SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS 3 days, _MAX_SECONDS 20, _MAX_RSS_MB 768, _MAX_PARTITIONS 40); a day whose values are all present is never rewritten",
+   "cap": "state file daily_bars_completion_state.json: one entry per run-file write-date partition and per stored trade date plus the run-file paths of each trade date (about 484 days x a few paths, well under 1 MB); one new daily_bars generation per completed day (same bytes per day as write_day, superseded generation deleted after each manifest swap)",
+   "cleanup": "the state file is rebuilt from the run files when absent; completed days stop being revisited; superseded generations deleted by the manifest swap; run files are read only and stay under their own retention",
+   "growth": "zero net: values fill null columns of existing rows (about +8 B per row once volume and traded value are present); no new row, no new day",
+   "name": "daily_bars completion state (daily_bars_completion_state.json)",
+   "owner": "source_ingestion",
+   "size_per_day": "state: tens of bytes per stored day; parquet: unchanged row count, compression of filled floats measured in evidence.json",
+   "task": "DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125",
+   "writer": "services/source_ingestion/daily_bars_completion.py DailyBarsCompleter started by MarketDataStorageWriter (state via _atomic_write_bytes) and DailyBarsStore.complete_day_values (one manifest swap per completed day)"
+  },
+  {
+   "bound_proof": {
     "contains": "DAILY_BARS_TOTAL_CEILING_BYTES",
     "file": "services/source_ingestion/daily_bars_store.py"
    },
