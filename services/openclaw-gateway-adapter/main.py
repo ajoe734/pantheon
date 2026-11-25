@@ -917,6 +917,9 @@ class AssistantProviderStructuredInvokeRequest(BaseModel):
     session_id: Optional[str] = None
     messages: Optional[List[Dict[str, Any]]] = None
     extraction_schema: Dict[str, Any]
+    # Caller deadline for the whole turn (policy check + gateway call). It can
+    # only shorten the adapter's own timeout, never extend it.
+    timeout_seconds: Optional[float] = None
     tools: Optional[Any] = None
     tool_choice: Optional[Any] = None
     # See AssistantProviderInvokeRequest.model's comment -- no mounted route
@@ -1839,6 +1842,18 @@ def invoke_openclaw_provider(
     return JSONResponse(status_code=200, content=_invoke_upstream())
 
 
+def _structured_turn_budget_seconds(requested: Optional[float]) -> float:
+    """One deadline for the structured turn: the caller's, bounded by ours."""
+    ceiling = float(_OPENCLAW_AGENT_PROVIDER._timeout)
+    try:
+        value = float(requested) if requested is not None else ceiling
+    except (TypeError, ValueError):
+        value = ceiling
+    if not value > 0:  # also rejects NaN
+        value = ceiling
+    return min(ceiling, value)
+
+
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/structured")
 def invoke_openclaw_structured_provider(
     req: AssistantProviderStructuredInvokeRequest,
@@ -1908,7 +1923,7 @@ def invoke_openclaw_structured_provider(
     if req.session_id is not None:
         invoke_kwargs["session_id"] = req.session_id
     try:
-        deadline = time.monotonic() + _OPENCLAW_AGENT_PROVIDER._timeout
+        deadline = time.monotonic() + _structured_turn_budget_seconds(req.timeout_seconds)
         _assert_structured_gateway_policy(OPENCLAW_STRUCTURED_AGENT_ID, deadline=deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
