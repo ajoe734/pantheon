@@ -43,6 +43,8 @@ GOVERNANCE_GRANT_CONTENT = (
 GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-reader"
 GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"
 TTL_SECONDS = 24 * 60 * 60
+CASE_FILE_MEMORY_SUBJECT = "pantheon-dev-research-case-file-memory-reader"
+CASE_FILE_ACTOR_ROLES = "consultation_session"
 READERS = {
     # Paper runtimes (via the fleet reconciler) -> registry owner entry GET ONLY, for the report-only
     # member baseline comparison. registry-reader is the existing read-only role; dev tenant only.
@@ -99,6 +101,17 @@ READERS = {
     # PANTHEON_PERSONA_SERVICE_TOKEN is the persona owner's own service-token name, so it is never
     # exported into the shared deploy environment.
     "CONSULTATION_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-consultation-persona-pool-reader", "persona_pool_reader"),
+    # Research demand / evolution executor case-file composition (RC2) -> one narrow read-only principal per
+    # owner. Roles are existing read-only roles (no write/operator/admin/service). The memory subject is the
+    # actor id research-orchestrator-svc sends (RESEARCH_CASE_FILE_ACTOR_ID); files only, mounted to
+    # research-orchestrator-svc alone, and none of the existing write-capable RESEARCH_* tokens is used.
+    "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": (CASE_FILE_MEMORY_SUBJECT, "consultation_session"),
+    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", "viewer"),
+    "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", "registry-reader"),
+    "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", "persona_pool_reader"),
+    # No search reader is issued: every existing search read role can write (researcher is a memory write role;
+    # analyst writes Agora notes/signals), so the search owner stays unset and the case file records its own
+    # unavailable reason for search.
     # Meeting roster resolution -> persona owner directory (GET /api/personas) ONLY. viewer is the existing
     # read-only persona role (no write/admin/decide role); a file, never an env value.
     "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN": ("pantheon-dev-consultation-persona-directory-reader", "viewer"),
@@ -232,6 +245,7 @@ TELEMETRY_PRODUCERS = {
         "control-plane-bff-health-monitor", "service", ["control-plane-bff"]),
 }
 SEARCH_ACCESS_SCOPES = ["operator", "research", "public"]
+SEARCH_SCOPED_VARIABLES = frozenset({"PERSONA_SEARCH_SERVICE_TOKEN"})
 CONSUMER_FILES = {
     "deployment": (
         "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
@@ -293,6 +307,10 @@ CONSUMER_FILES = {
         "RESEARCH_BFF_SERVICE_TOKEN",
         "RESEARCH_PERSONA_SERVICE_TOKEN",
         "RESEARCH_CAPITAL_SERVICE_TOKEN",
+        "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
     ),
     "persona-evaluator-agent": (
         "PERSONA_EVALUATOR_BFF_TOKEN",
@@ -388,7 +406,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
             subject,
             role,
             "pantheon:dev-owner-read",
-            access_scopes=SEARCH_ACCESS_SCOPES if variable == "PERSONA_SEARCH_SERVICE_TOKEN" else None,
+            access_scopes=SEARCH_ACCESS_SCOPES if variable in SEARCH_SCOPED_VARIABLES else None,
         )
         for variable, (subject, role) in READERS.items()
     }
@@ -426,6 +444,8 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],
         "PANTHEON_SEARCH_SERVICE_TOKEN": values["PERSONA_SEARCH_SERVICE_TOKEN"],
         "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": values["PERSONA_POOL_SOURCE_READ_TOKEN"],
+        "RESEARCH_CASE_FILE_ACTOR_ID": CASE_FILE_MEMORY_SUBJECT,
+        "RESEARCH_CASE_FILE_ACTOR_ROLES": CASE_FILE_ACTOR_ROLES,
         "EVOLUTION_AUTH_TOKEN": evolution_service_token,
         "CONSULTATION_SERVICE_TOKEN": consultation_service_token,
         "CONSULTATION_API_TOKEN": consultation_api_token,
@@ -452,6 +472,8 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
         "PANTHEON_REGISTRY_SERVICE_TOKEN": "",
         "PANTHEON_SEARCH_SERVICE_TOKEN": "",
         "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": "",
+        "RESEARCH_CASE_FILE_ACTOR_ID": "",
+        "RESEARCH_CASE_FILE_ACTOR_ROLES": "",
         "EVOLUTION_AUTH_TOKEN": "",
         "CONSULTATION_SERVICE_TOKEN": "",
         "CONSULTATION_API_TOKEN": "",
@@ -543,7 +565,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                         "aud": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"].strip()}
             if variable in TELEMETRY_PRODUCERS:
                 expected["allowed_producers"] = producers
-            if variable == "PERSONA_SEARCH_SERVICE_TOKEN":
+            if variable in SEARCH_SCOPED_VARIABLES:
                 expected["access_scopes"] = SEARCH_ACCESS_SCOPES
             if variable == "PERSONA_ALLOCATION_TOKEN":
                 expected["azp"] = "control-plane-bff"

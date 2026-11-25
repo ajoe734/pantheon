@@ -118,6 +118,20 @@ class RepoManifestTests(unittest.TestCase):
                              ("latest_market_snapshots.jsonl", "502 MB"), ("/data/source-ingest/distill_job_queue.jsonl", "158 MB")):
             self.assertIn(needle, measured.get(name, ""), name)
 
+    def test_telemetry_events_14d_retention_bound_recorded(self):
+        manifest = json.loads(csm.MANIFEST_PATH.read_text())
+        by_name = {e.get("name"): e for e in manifest["entries"] if "name" in e}
+        for name in ("public.telemetry_events", "telemetry_events"):
+            entry = by_name.get(name)
+            self.assertIsNotNone(entry, name)
+            self.assertEqual(entry.get("bound_status"), "bounded", name)
+            self.assertEqual(entry.get("task"), "TELEMETRY-EVENTS-RETENTION-14D-20261125", name)
+            proof = entry.get("bound_proof") or {}
+            self.assertEqual(proof.get("file"), "services/telemetry/heartbeat_retention.py", name)
+            self.assertEqual(proof.get("contains"), "PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS", name)
+            self.assertIn("14 days", entry.get("cap", ""), name)
+            self.assertIn("PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS", entry.get("cleanup", ""), name)
+
 
 if __name__ == "__main__":
     unittest.main()
