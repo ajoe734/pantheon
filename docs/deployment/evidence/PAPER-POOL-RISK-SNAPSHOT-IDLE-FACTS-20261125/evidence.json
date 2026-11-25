@@ -1,0 +1,37 @@
+{
+  "task": "PAPER-POOL-RISK-SNAPSHOT-IDLE-FACTS-20261125",
+  "root_cause_class": "RC2",
+  "phase": "1 of SD_PAPER_RISK_MANAGEMENT_2026-11-24 section 3.1 (repair of PAPER-POOL-RISK-SNAPSHOT-20261125 #7817)",
+  "defect": [
+    "services/telemetry/pool_risk_snapshot.py gated idle row construction on `if flat and valuation is not None`, making `build_idle_base(never_filled=True)` unreachable for a pool that never traded (which has no valuation event and no initial_cash in its summary), so 澄川 (rt-3252fa75) produced a null-equity `owner_valuation_missing` row and failed `acceptance/pool_risk_snapshot_day.py`.",
+    "Policy facts reached telemetry only on `pnl_snapshot` metadata, so idle pools that emitted no `pnl_snapshot` since deploy had null `gross_limit`, `drawdown_limit` and `gross_utilisation` (`risk_policy_facts_missing`); additionally `PaperRuntimeService._performance_risk_policy_facts` called `self._resolve_active_risk_policy()` without delegating to `self._algo._resolve_active_risk_policy()`."
+  ],
+  "fix": [
+    "services/execution/lean_runtime/paper_runtime.py: `runtime_state_snapshot` carries `account_facts` (`initial_cash`, `cash`, `fill_count`) and `risk_policy_facts` (same shape as `_performance_risk_policy_facts`, delegating `_resolve_active_risk_policy` to `self._algo` and reporting unresolvable policies as `{\"unavailable_reason\": type(exc).__name__}`, never defaulted) inside existing metadata under the existing change digest; digest does not change when account and policy do not change, no new event type, no higher cadence.",
+    "services/telemetry/runtime_summary.py + services/telemetry/pool_risk_snapshot.py: telemetry summary keeps only the last `_pool_risk_account_facts` and `_pool_risk_policy_facts` (bounded, replaced in-place, never appended, cleared on binding rollover, replay-idempotent) and updates `ledger_fill_count`/positions from `account_facts`; when no owner valuation exists for the day, a never-filled flat pool gets `equity = initial_cash` with `equity_basis = flat_never_filled_initial_cash`, `gross = net = 0`, `cash = initial_cash`, and retention-bounded backfill of earlier trading days of that binding; a flat pool with fills gets `flat_cash_ledger` and writes no row for any day before the account facts existed; an open position without a mark stays null with its existing reason; `policy_ref.basis` states `runtime_state_snapshot` or `last_valuation_event`; a known equity later stamped by an owner valuation (`rank=2`) wins over the idle row (`rank=1`) for that day."
+  ],
+  "tests": {
+    "services/telemetry/test_pool_risk_snapshot.py": "18 passed (including never-filled runtime with only heartbeats and one runtime_state_snapshot passing acceptance/pool_risk_snapshot_day.py, backfill of earlier trading days and 400-day retention cap, replay idempotence and bounded in-place replacement, later owner valuation winning over idle row, flat pool with fills keeping flat_cash_ledger with no row written before account facts existed, and unmarked open position staying null)",
+    "acceptance/test_pool_risk_snapshot_day.py": "17 passed (including production apply_event / project_event path from never-filled runtime with heartbeats and one runtime_state_snapshot)",
+    "services/telemetry/test_runtime_summary_projection.py": "124 passed (including bounded replacement and replay idempotence test for runtime_state_snapshot account_facts and risk_policy_facts)",
+    "services/execution/lean_runtime/test_paper_runtime.py": "154 passed (including runtime_state_snapshot account_facts, risk_policy_facts, unresolvable policy exception type, and change-digest stability)",
+    "scripts/check_storage_manifest.py": "passed (0 failures)"
+  },
+  "runtime_budget": {
+    "added_bytes_per_runtime_state_snapshot": 332,
+    "manifest_2kb_threshold_exceeded": false,
+    "events_per_day_hosted_scale_3_runtimes": "0/hr when unchanged; <= 4/hr MTM cap per runtime (~3 to 75 events/day typical across 3 runtimes, <= 288 events/day theoretical 24h continuous MTM ceiling)",
+    "stored_bytes_added_per_runtime": 355,
+    "stored_bytes_breakdown": "~85 B for _pool_risk_account_facts (<= 4 keys) + ~270 B for _pool_risk_policy_facts (<= 9 keys) in existing runtime_summaries.json",
+    "cap_and_cleanup": "1 replaced dict each per runtime (never appended, cleared on binding rollover); never-filled backfill rows capped at existing RETENTION_TRADING_DAYS = 400 per pool by enforce_retention",
+    "new_writers": 0
+  },
+  "hosted_acceptance": "Pending deployment: acceptance/pool_risk_snapshot_day.py passes for all three pools on the next trading day, with gross_limit present.",
+  "review_independence": {
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "cross_family": true,
+    "recorded_task_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer may be from the owner's family; owner was reassigned to Antigravity with reviewer Claude (different model family)."
+  },
+  "residuals": []
+}

@@ -361,12 +361,15 @@ def _state_structural_digest(state: Mapping[str, Any]) -> str:
             str(u.get("symbol")) for u in (book.get("underlyings") or []) if isinstance(u, Mapping)
         )
         books.append(entry)
-    return _sha256_json(
-        {
-            "performance": _strip_volatile_state({k: perf.get(k) for k in _STRUCTURAL_PERFORMANCE_KEYS}),
-            "books": books,
-        }
-    )
+    payload: dict[str, Any] = {
+        "performance": _strip_volatile_state({k: perf.get(k) for k in _STRUCTURAL_PERFORMANCE_KEYS}),
+        "books": books,
+    }
+    if "account_facts" in state:
+        payload["account_facts"] = _strip_volatile_state(state.get("account_facts"))
+    if "risk_policy_facts" in state:
+        payload["risk_policy_facts"] = _strip_volatile_state(state.get("risk_policy_facts"))
+    return _sha256_json(payload)
 
 
 def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[str, Any]:
@@ -8977,6 +8980,8 @@ class PaperRuntimeService:
             state = {
                 "performance_telemetry": dict(self._performance_telemetry),
                 "member_virtual_books": self._member_book_snapshot(),
+                "account_facts": self._account_facts(),
+                "risk_policy_facts": self._performance_risk_policy_facts(),
             }
             digest = _state_change_digest(state)
             if digest == self._last_state_snapshot_digest:
@@ -9010,6 +9015,33 @@ class PaperRuntimeService:
             self._last_state_snapshot_digest = digest
             self._last_state_structural_digest = structural
             self._last_state_snapshot_monotonic = mono_now
+
+    def _resolve_active_risk_policy(self) -> RiskPolicy:
+        return self._algo._resolve_active_risk_policy()
+
+    def _account_facts(self) -> dict[str, Any]:
+        """Account facts (initial_cash, cash, fill_count) from the runtime performance ledger."""
+        ledger = self._algo.performance_ledger()
+        if (
+            ledger.get("state_load_error")
+            or ledger.get("state_binding_error")
+            or ledger.get("state_error")
+            or self._performance_state_restore_error
+        ):
+            return {"initial_cash": None, "cash": None, "fill_count": None}
+        initial_cash = _finite_number(ledger.get("initial_cash"))
+        cash = _finite_number(ledger.get("cash"))
+        if initial_cash is None or initial_cash <= 0:
+            initial_cash = None
+            cash = None
+        fill_count = ledger.get("fill_count")
+        if isinstance(fill_count, bool) or not isinstance(fill_count, int) or fill_count < 0:
+            fill_count = None
+        return {
+            "initial_cash": initial_cash,
+            "cash": cash,
+            "fill_count": fill_count,
+        }
 
     def _performance_risk_policy_facts(self) -> dict[str, Any]:
         """Bound-policy ids and limits in force at this valuation (measurement only).
