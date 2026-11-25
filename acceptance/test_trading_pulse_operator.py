@@ -184,7 +184,7 @@ def test_probe_rejects_corrupted_aggregate(mutation):
     assert not report["passed"] and report["failed"]
 
 
-@pytest.mark.parametrize("change", ["source_failure", "old_binding", "source_advanced", "missing_identity", "missing_refusal_evidence"])
+@pytest.mark.parametrize("change", ["source_failure", "old_binding", "missing_identity", "missing_refusal_evidence"])
 def test_lost_or_moving_sources_are_unverifiable(change):
     world = fixture()
     fetch = fetcher(world)
@@ -194,8 +194,6 @@ def test_lost_or_moving_sources_are_unverifiable(change):
             return {"data": [], "meta": {"status": "unavailable"}} if path == "/api/v1/personas" else base(path)
     elif change == "old_binding":
         world["raw"]["r-p2"]["binding_id"] = "old"
-    elif change == "source_advanced":
-        world["raw"]["r-p2"]["last_event_at"] = "2026-11-22T13:00:00Z"
     elif change == "missing_identity":
         world["people"] = world["people"][1:]
     elif change == "missing_refusal_evidence":
@@ -285,3 +283,69 @@ def test_live_journey_uses_viewer_allowed_binding_resolver(quantity):
             return {"data": {"items": [world["journey"]] if q["persona_id"] == ["p2"] else []}}
         return fetcher(world)(path)
     assert probe.check(fetch, "tenant-a")["passed"]
+
+
+def heartbeat_fetcher(world, advances):
+    """Fake source: the heartbeat moves raw timestamps `advances` times, each
+    right after the pulse was read (before the raw summaries), like the 15 s
+    heartbeat; the pulse always reports the raw value of its own read."""
+    base = fetcher(world)
+    state = {"left": advances, "ticks": 0, "pulse_calls": 0}
+
+    def fetch(path):
+        parsed = urlsplit(path)
+        if parsed.path == "/bff/management/trading-pulse":
+            state["pulse_calls"] += 1
+            snap = copy.deepcopy(world["pulse"])
+            for row in snap["runtime_rows"]:
+                raw = world["raw"][row["runtime_id"]]
+                row["performance_context"]["latest_report_at"] = raw["last_event_at"]
+            if state["left"] > 0:
+                state["left"] -= 1
+                state["ticks"] += 1
+                for raw in world["raw"].values():
+                    raw["last_event_at"] = f"2026-11-22T12:00:{state['ticks']:02d}Z"
+            return {"data": snap}
+        return copy.deepcopy(base(path))  # a real source returns fresh objects
+    fetch.state = state
+    return fetch
+
+
+def test_consistent_on_first_read():
+    world = fixture()
+    fetch = heartbeat_fetcher(world, 0)
+    report = probe.check(fetch, "tenant-a")
+    assert report["passed"] and fetch.state["pulse_calls"] == 1
+
+
+def test_consistent_on_a_later_attempt():
+    world = fixture()
+    fetch = heartbeat_fetcher(world, 3)
+    report = probe.check(fetch, "tenant-a")
+    assert report["passed"] and fetch.state["pulse_calls"] == 4
+
+
+def test_never_consistent_is_unverifiable_with_attempt_count():
+    world = fixture()
+    fetch = heartbeat_fetcher(world, 100)
+    with pytest.raises(probe.Unverifiable, match=r"source_changed_during_read:attempts=6"):
+        probe.check(fetch, "tenant-a")
+    assert fetch.state["pulse_calls"] == 6
+
+
+def test_stale_pulse_against_unchanged_source_fails():
+    world = fixture()
+    world["raw"]["r-p2"]["last_event_at"] = "2026-11-22T13:00:00Z"
+    fetch = fetcher(world)
+    calls = []
+    report = probe.check(lambda path: calls.append(path) or fetch(path), "tenant-a")
+    assert not report["passed"] and "pulse_stale_against_unchanged_source" in report["failed"]
+    assert sum(1 for c in calls if c == "/bff/management/trading-pulse") == 2
+
+
+def test_time_budget_stops_retries_without_sleeping():
+    world = fixture()
+    ticks = iter(range(0, 1000, 100))
+    fetch = heartbeat_fetcher(world, 100)
+    with pytest.raises(probe.Unverifiable, match="time_budget"):
+        probe.check(fetch, "tenant-a", clock=lambda: next(ticks), budget=240)

@@ -47,12 +47,16 @@ class CaseFileOutcomes:
             def update(persona):
                 if persona.lifecycle_state != "paper_owner" or persona.status != "active" or not persona.tenant_id:
                     raise ValueError("active_paper_owner_required")
-                state = copy.deepcopy(persona.metadata.get(STATE_KEY) or {"decisions": {}, "outbox": {}})
+                stored = persona.metadata.get(STATE_KEY)
+                state = copy.deepcopy(stored or {"decisions": {}, "outbox": {}})
                 result.update(reduce(persona, state))
+                if stored is None and not state["decisions"] and not state["outbox"]:
+                    return {}  # never create an empty state row
                 return {STATE_KEY: state}
             try:
                 self.personas.try_metadata_cas(persona_id, guard=lambda p: True,
-                                              metadata_updates=update, actor_id=ACTOR)
+                                              metadata_updates=update, actor_id=ACTOR,
+                                              skip_unchanged=True)
                 return result
             except PersonaConcurrentUpdate:
                 continue

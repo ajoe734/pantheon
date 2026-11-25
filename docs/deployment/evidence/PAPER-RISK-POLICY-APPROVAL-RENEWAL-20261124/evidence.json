@@ -1,0 +1,33 @@
+{
+  "task": "PAPER-RISK-POLICY-APPROVAL-RENEWAL-20261124",
+  "root_cause_class": "RC2",
+  "defect": "A gate-approved pool risk policy expires 24h after approval (paper gate cap); order-time resolution then refuses new risk (policy_approval_expired). A later repair proposed the same policy without the risk-officer draft, the paper gate refused it for the missing draft, and that refusal was treated as a permanent non-approval. Nothing renewed the approval.",
+  "fix": [
+    "PersonaProvisioningCoordinator.renew_paper_risk_policy_approval: proposes the same approved draft (same policy id/version/digest/draft/provenance, no limit change) through the same paper gate; new decision id apv-risk-renew-<hash(previous id)> (idempotent across retries, restarts, replicas); moves pool metadata profile_mapping_approval_id to it and reads the resolution back",
+    "policy that no longer validates inside the outer bounds: not renewed, status redraft_requested with reason; repair then forces the risk-officer redraft path (risk_officer_redraft_requested in owner_decision_request)",
+    "gate refusal caused only by a missing risk_officer_draft (automated_gate, rationale 'risk_officer_draft absent', no draft in subject) is retryable: repair re-proposes with the carried draft under a new id; human rejection or a refusal naming a limit stays final",
+    "repair_paper_pool_risk_policy runs the renewal first and returns approval_renewal (status, approval_id, approval_expires_at, remaining_seconds)",
+    "reconcile_paper_risk_policy_renewal wired into _reconcile_persona_provisioning_pass: lease-guarded, renews when <8h validity remains, one attempt per pool per hour, one decision per 12h (guard on previous decision age), pools without an approved draft are never drafted, governance unavailable leaves the old approval and retries after 1h"
+  ],
+  "tests": [
+    "services/control-plane/bff/tests/test_paper_risk_policy_renewal.py (13 tests): real-chain T+0 resolved, renewal at T+17h, resolved at T+25h, one decision per 12h, recovery of an expired approval carrying an earlier missing-draft rejection, missing-draft rejection not permanent, carried draft, limit rejection final, human rejection not retryable, redraft requested, governance unavailable retried, never-approved pool not drafted, reconcile pass with lease and no owner call above threshold",
+    "services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py, test_persona_provisioning_coordinator.py, test_persona_provisioning_readback.py, tests/test_persona_risk_profile_change.py, services/capital/test_risk_policy.py: 248 passed"
+  ],
+  "preexisting_failures": [
+    "services/capital/test_risk_policy.py::test_capital_owner_approval_transport_resolves_json_pool_in_compose_producer_and_reconciler_envs (ModuleNotFoundError: yaml in the worker venv; fails identically without this change)"
+  ],
+  "runtime_budget": {
+    "decisions": "hosted scale 3 trading pools, at most 2 decisions per pool per day (initial approval + one renewal at about T+16h; the next renewal is >=16h later) = 6 rows/day in governance.approval_decisions",
+    "row_size_measured": "2,965 bytes (initial) and 2,942 bytes (renewal) as JSON in the real-chain test, about 3 KB each: about 18 KB/day for 6 rows, plus one receipt and audit row per transition (review, decide) of similar order; within the ~24 KB/day estimate",
+    "reconcile_cost_per_pass": "one in-memory comparison of references.paper_risk_policy_renewal.next_check_at per succeeded record; no Governance or Capital call while validity is above the threshold (asserted: len(requests) unchanged). A due check costs one Capital GET + one Governance GET; a renewal adds propose, review, decide, readbacks and one Capital patch",
+    "superseded_renewals": "the previous approved decision is retained as an expired approved row (audit trail, not deleted or mutated); only the pool's profile_mapping_approval_id and the ledger reference move. A renewal left pending (gate unavailable) is reused and decided on the next due check, not duplicated",
+    "new_writer_or_job": "none; runs inside the existing BFF provisioning reconcile pass, state on the existing ledger record"
+  },
+  "readback": "repair response approval_renewal.approval_expires_at / remaining_seconds; ledger references.paper_risk_policy_renewal (status, next_check_at, last_attempt_at, last_decision_at)",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; the reviewer may be from the owner's family (Claude owner, Claude2 reviewer)",
+  "hosted_acceptance": "pending after deploy: 26 hours after the first approval the three pools are still resolved with allow_new_or_increased_risk true and show a renewed decision by the paper automated gate; probes paper-risk-journey and paper-risk-policy-binding pass",
+  "residual_findings": [
+    "Persona risk view does not yet show approval expiry; it is readable on the repair readback and the ledger reference only",
+    "Expired approved decisions accumulate (about 1 per pool per day) with no retention job; RC3 retention is out of scope"
+  ]
+}

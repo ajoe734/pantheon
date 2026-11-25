@@ -175,6 +175,9 @@ services:
       HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
       HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE: "4"
       HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE: "4"
+      # Observe/consult recalls must finish in ~1 s: the neural cross-encoder cost 5-10 s per recall on two
+      # CPU threads. 'rrf' keeps the fused semantic+BM25+graph+temporal order (no model call).
+      HINDSIGHT_API_RERANKER_PROVIDER: rrf
       OMP_NUM_THREADS: "2"
     networks: [memory-index, memory-index-storage, memory-llm-bridge]
     depends_on:
@@ -717,6 +720,7 @@ services:
     environment:
       SEARCH_API_URL: http://search-svc:8098
       SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
+      SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS: ${SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS:-120}
       SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
       SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
       SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
@@ -736,7 +740,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      start_period: 300s
 
   training-session-svc:
     profiles: ["research", "root"]

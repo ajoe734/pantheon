@@ -1423,6 +1423,9 @@ def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoord
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
         runtime_binding_reader=_runtime_bindings_for_case,
     )
 
@@ -5994,6 +5997,35 @@ def _reconcile_paper_enrollment_once() -> int:
     return enrolled
 
 
+def _reconcile_paper_risk_policy_renewal_once() -> int:
+    """Renew gate-approved paper risk-policy approvals before they lapse (no operator call).
+
+    A record whose next check time is in the future costs no owner call.  Lease-guarded inside the coordinator,
+    so safe under restart and concurrent replicas; an unavailable Governance leaves the old approval in place
+    and is retried on the next due check.
+    """
+
+    renewed = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper risk policy renewal could not list provisioning ledger: %s", exc)
+        return 0
+    now = datetime.now(timezone.utc)
+    for record in records:
+        if record.state != "succeeded" or not PersonaProvisioningCoordinator.paper_risk_renewal_due(
+            (record.references or {}).get("paper_risk_policy_renewal"), now
+        ):
+            continue
+        try:
+            coordinator = _chain_paper_capital_coordinator(record.tenant_id)
+            coordinator.reconcile_paper_risk_policy_renewal(record, now=now)
+            renewed += 1
+        except Exception as exc:
+            log.warning("Paper risk policy renewal failed for %s: %s", record.persona_id, exc)
+    return renewed
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
@@ -6051,6 +6083,7 @@ def _reconcile_persona_provisioning_pass() -> Any:
     with request_read_scope():
         result = _reconcile_persona_provisioning_once()
         _reconcile_paper_enrollment_once()
+        _reconcile_paper_risk_policy_renewal_once()
         return result
 
 

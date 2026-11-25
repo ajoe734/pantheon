@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 import pytest
+from services.control_plane.bff.persona_paper_enrollment import EnrollmentRefused
 
 try:
     from services.control_plane.bff.persona_provisioning import (
@@ -5121,12 +5122,19 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
         },
     }
     (policy_dir / "rp-route-low-1.json").write_text(json.dumps(revoked_route_pol), encoding="utf-8")
+    # The proposal is made by the enrolment proposer principal; a mismatched subject is now a visible 403.
+    _prior_subject = route_tx.governance_subject
+    route_tx.governance_subject = "pantheon-dev-persona-enrollment-proposer"
     resp_repair_revoked = route_client.post(
         f"/bff/personas/{created_pid}/provisioning/paper-capital/risk-policy",
         headers=AUTH_HEADERS,
         json={},
     )
-    assert resp_repair_revoked.status_code == 200, resp_repair_revoked.text
+    route_tx.governance_subject = _prior_subject
+    # The fake governance refuses the gate (403, subject mismatch): reported truthfully, never as approved.
+    assert resp_repair_revoked.status_code == 422, resp_repair_revoked.text
+    assert resp_repair_revoked.json()["error"]["code"] == "paper_gate_failed"
+    assert resp_repair_revoked.json()["error"]["paper_gate_error"]["http_status"] == 403
     repair_revoked_data = resp_repair_revoked.json()["data"]
     assert repair_revoked_data["repaired"] is False
     assert repair_revoked_data["after_resolution"]["resolved"] is False
@@ -5134,7 +5142,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
     assert repair_revoked_data["owner_decision_request"]["absence_source"] == "policy_approval_revoked"
     (policy_dir / "rp-route-low-1.json").unlink()
 
-    # 8e. Transport approval reader signals overflow when > 16 target decisions exist and repair fails closed
+    # 8e. Transport approval reader signals overflow when > 16 current target decisions (history never counts) exist and repair fails closed
     for idx in range(17):
         over_dec = approval_snapshot(
             decision_id=f"apv-route-over-{idx:02d}",
@@ -5142,7 +5150,7 @@ def test_coordinator_autoresolves_profile_policy_without_internal_ids_and_routes
             target_type="capital_pool_activation",
             target_id=created_pool_id,
             target_version="1.0",
-            decision="rejected",
+            decision="approved",
             owner_user_id="proposer",
             risk_level="medium",
         )
@@ -5412,6 +5420,32 @@ def test_pending_or_rejected_proposal_must_match_entire_request(state, mismatch)
     retry = coord.coordinate(record)
     assert retry.error["owner_decision_request"]["governance_proposal_id"] == proposal_id
     assert tx.mutations[("governance", "/api/governance/approvals")] == 2
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (EnrollmentRefused("governance_proposal_http_422"), "proposal_rejected:422"),
+    (EnrollmentRefused("governance_proposal_http_403"), "proposal_rejected:403"),
+    (EnrollmentRefused("governance_proposal_http_503", retryable=True), "proposal_unavailable:503"),
+    (TimeoutError("timed out"), "proposal_unavailable"),
+])
+def test_failed_governance_proposal_is_never_reported_as_success(failure, expected):
+    from services.control_plane.bff.personas.routes.provisioning import _failed_governance_proposal
+
+    class FailingProposer:
+        def post(self, owner, path, payload):
+            raise failure
+
+    store, record = _record_and_store({"risk": "medium"}, seed_pool_approval=False)
+    tx = FakeOwnerTransport(seed_pool_policy_approval=False,
+                            governance_subject="pantheon-dev-persona-enrollment-proposer",
+                            governance_roles=("approval_proposer",))
+    coord = PersonaProvisioningCoordinator(store=store, transport=tx, schedule_registrar=_schedule_receipt,
+                                          lease_owner="test-worker", governance_proposer=FailingProposer())
+    routed = coord.coordinate(record).error["owner_decision_request"]
+    assert routed["governance_proposal_status"] == expected
+    assert routed["governance_proposal_error"]["owner"] == "governance"
+    assert "governance_proposal_id" not in routed
+    assert _failed_governance_proposal({"after_resolution": {"owner_decision_request": routed}}) is routed
 
 
 @pytest.fixture
@@ -5704,4 +5738,15 @@ def test_paper_gate_unavailable_leaves_the_proposal_pending(monkeypatch):
     req: dict[str, Any] = {}
     coordinator._apply_paper_gate_to_risk_policy_proposal(
         _gate_proposal(_GATE_LOW_POLICY), req, requested_profile="low")
-    assert decided == [] and req["paper_gate_status"].startswith("unavailable:")
+    assert decided == [] and req["paper_gate_status"] == "gate_unavailable"
+
+
+@pytest.mark.parametrize("gate_status", ["gate_refused:403", "gate_unavailable", "gate_unavailable:503"])
+def test_failed_paper_gate_is_found_for_a_non_2xx_repair_response(gate_status):
+    from services.control_plane.bff.personas.routes.provisioning import _failed_governance_proposal
+
+    routed = {"governance_proposal_status": "reused_existing_pending_proposal", "paper_gate_status": gate_status}
+    assert _failed_governance_proposal({"after_resolution": {"owner_decision_request": routed}}) is routed
+    decided = {"governance_proposal_status": "reused_existing_pending_proposal",
+               "paper_gate_status": "decided_approved_by_automated_gate"}
+    assert _failed_governance_proposal({"owner_decision_request": decided}) is None

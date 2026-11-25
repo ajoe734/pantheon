@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_plane.bff.models import ErrorCode
@@ -68,6 +69,24 @@ class PaperPoolRiskPolicyRepairRequest(BaseModel):
     approval_decision_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
     require_approved_profile_mapping: bool = True
     dry_run: bool = False
+
+
+def _failed_governance_proposal(data: Any) -> Optional[Dict[str, Any]]:
+    """First owner decision request whose governance proposal failed (proposal_rejected/unavailable)."""
+    stack = [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            status = node.get("governance_proposal_status")
+            if isinstance(status, str) and status.startswith(("proposal_rejected", "proposal_unavailable")):
+                return node
+            gate = node.get("paper_gate_status")
+            if isinstance(gate, str) and gate.startswith(("gate_refused", "gate_unavailable")):
+                return node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None
 
 
 def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
@@ -266,6 +285,28 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
             )
         except PersonaProvisioningCoordinationError as exc:
             raise _chain_capital_failure(exc) from exc
+        failed = _failed_governance_proposal(data)
+        if failed is not None:
+            # Never report a failed proposal as success (RC2): surface owner status and reason.
+            http_status = 502 if (
+                str(failed.get("governance_proposal_status", "")).startswith("proposal_unavailable")
+                or str(failed.get("paper_gate_status", "")).startswith("gate_unavailable")
+            ) else 422
+            gate_failed = str(failed.get("paper_gate_status", "")).startswith(("gate_refused", "gate_unavailable"))
+            return JSONResponse(
+                status_code=http_status,
+                content={
+                    "data": data,
+                    "error": {
+                        "code": "paper_gate_failed" if gate_failed else "governance_proposal_failed",
+                        "governance_proposal_status": failed.get("governance_proposal_status"),
+                        "governance_proposal_error": failed.get("governance_proposal_error"),
+                        "paper_gate_status": failed.get("paper_gate_status"),
+                        "paper_gate_error": failed.get("paper_gate_error"),
+                    },
+                    "meta": {"snapshot_at": utc_now()},
+                },
+            )
         return {"data": data, "meta": {"snapshot_at": utc_now()}}
 
     return router

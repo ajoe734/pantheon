@@ -33,6 +33,74 @@ class BoundedApprovalList(list):
         self.overflow = bool(overflow)
 
 
+HISTORY_READ_CAP = 4096  # raw decisions of one target read in one list call (one HTTP response, no per-row reads)
+NON_CANDIDATE_DIAGNOSTIC_CAP = 16
+
+
+def _decision_mapping(item: Any) -> Mapping[str, Any] | None:
+    if isinstance(item, Mapping):
+        return item
+    dump = getattr(item, 'model_dump', None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:
+            return None
+    return None
+
+
+def is_current_candidate_decision(item: Any, now: datetime | None = None) -> bool:
+    """False for an expired, rejected, revoked or superseded decision: history, never a policy candidate.
+
+    A missing or malformed expiry is kept as a candidate so verification still fails closed on it.
+    """
+    d = _decision_mapping(item)
+    if d is None:
+        return True
+    state = str(d.get('decision_state') or '')
+    if state in {'revoked', 'superseded', 'rejected', 'expired'}:
+        return False
+    if d.get('revoked_at') not in (None, '') or d.get('superseded_by') not in (None, ''):
+        return False
+    if state == 'decided' and str(d.get('decision') or '') == 'rejected':
+        return False
+    raw_exp = d.get('expires_at')
+    if raw_exp:
+        try:
+            expiry = datetime.fromisoformat(str(raw_exp).replace('Z', '+00:00'))
+        except ValueError:
+            return True
+        if expiry.tzinfo is not None and expiry <= (now or datetime.now(timezone.utc)):
+            return False
+    return True
+
+
+def split_candidate_decisions(items: Any, now: datetime | None = None) -> tuple[list[Any], list[Any]]:
+    """(current candidates, historical decisions) in input order."""
+    current: list[Any] = []
+    history: list[Any] = []
+    for item in items or []:
+        (current if is_current_candidate_decision(item, now) else history).append(item)
+    return current, history
+
+
+def bound_candidate_history(items: list[Any], *, bound: int, now: datetime | None = None,
+                            history: bool = False) -> 'BoundedApprovalList':
+    """Apply the candidate bound to current decisions only; historical ones never count toward it.
+
+    ``history=True`` returns every raw decision (capped by ``HISTORY_READ_CAP``, overflow beyond it).
+    Otherwise at most ``bound`` current candidates are returned, followed by a few historical decisions kept
+    only so callers can still classify an absence reason; ``overflow`` is set only when current candidates
+    exceed the bound.
+    """
+    if history:
+        return BoundedApprovalList(items[:HISTORY_READ_CAP], overflow=len(items) > HISTORY_READ_CAP)
+    current, past = split_candidate_decisions(items, now)
+    overflow = len(current) > bound
+    return BoundedApprovalList(
+        [*current[:bound], *past[:NON_CANDIDATE_DIAGNOSTIC_CAP]], overflow=overflow)
+
+
 class ApprovalEvidence(BaseModel):
     model_config = ConfigDict(strict=True, extra='allow', frozen=True)
     decision_id: str = Field(min_length=1)
@@ -186,6 +254,8 @@ class ApprovalReader:
         target_id: str,
         decision_state: str | None = 'decided',
         max_items: int = 16,
+        history: bool = False,
+        now: datetime | None = None,
     ) -> list[ApprovalEvidence]:
         clean_type = str(target_type or '').strip()
         clean_id = str(target_id or '').strip()
@@ -233,11 +303,10 @@ class ApprovalReader:
                 continue
             if decision_state and evidence.decision_state != decision_state:
                 continue
-            if len(results) >= bound:
-                overflow = True
-                break
             results.append(evidence)
-        return BoundedApprovalList(results, overflow=overflow)
+        out = bound_candidate_history(results, bound=bound, now=now, history=history)
+        out.overflow = out.overflow or overflow
+        return out
 
 
 def configured_approval_reader(domain: str, *, base_url: str | None = None) -> ApprovalReader:

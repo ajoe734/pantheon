@@ -914,6 +914,7 @@ class PersistentPersonaOwner:
         guard: Callable[[PersonaBody], bool],
         metadata_updates: Mapping[str, Any] | Callable[[PersonaBody], Mapping[str, Any]],
         actor_id: str,
+        skip_unchanged: bool = False,
     ) -> tuple[bool, PersonaBody]:
         """One CAS attempt whose precondition is checked against the exact
         snapshot it commits against.
@@ -935,6 +936,10 @@ class PersistentPersonaOwner:
         a legitimate no-op (e.g. a stale generation), not a race. Raises
         ``PersonaConcurrentUpdate`` when the CAS itself loses a race, so the
         caller can retry with a fresh read.
+
+        With ``skip_unchanged=True`` a merge that leaves metadata equal to the
+        snapshot's performs no write (updated_at/updated_by untouched) and
+        returns ``(False, current)``; the decision uses the same snapshot.
         """
 
         current_raw = self._records.get(persona_id)
@@ -946,6 +951,8 @@ class PersistentPersonaOwner:
         updates = metadata_updates(current) if callable(metadata_updates) else metadata_updates
         merged_metadata = dict(current.metadata or {})
         merged_metadata.update(updates)
+        if skip_unchanged and merged_metadata == dict(current.metadata or {}):
+            return False, current
         updated = dict(current_raw)
         updated["metadata"] = merged_metadata
         updated["updated_at"] = _utc_now()
