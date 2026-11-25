@@ -169,9 +169,12 @@ supply fresh samples. The companion browser observation and served service
 version inventory remain task evidence; probe success alone does not assert
 that the browser or every service was verified.
 
-Exit 0 means all probe checks passed; 1 means failed, including zero eligible
-samples, unresolved policy or unavailable owner reads; 77 means missing
-initial release/auth configuration. Run `timeout 245s acceptance/probes/paper-risk-journey`.
+Exit 0 means all probe checks passed; 1 means failed, including unresolved policy,
+identity, binding, history, source reads or a changed served pair; 77 means missing
+initial release/auth configuration, or pending (`verdict: pending`, `pending: [...]`):
+the findings are a non-empty subset of exactly `no_fresh_governed_decision:<persona>`,
+`no_fresh_pre_broker_rejection_with_amounts` and
+`no_fresh_broker_position_cash_reconciled_fill`. Any other finding alongside them exits 1. Run `timeout 245s acceptance/probes/paper-risk-journey`.
 All product reads use GET; only existing dev-login token exchanges use POST.
 No trades, policy activation, repair or replay are performed. Dev probes remain
 post-switch and do not introduce a deploy gate.
