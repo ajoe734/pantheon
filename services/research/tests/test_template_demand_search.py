@@ -438,10 +438,10 @@ def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeyp
     assert result['attempts'] == {}
 
 
-from services.research.tests.test_governed_market_dataset import store_from_records  # noqa: E402
-
-
 def _recorded_store(root):
+    pytest.importorskip("pyarrow")
+    from services.research.tests.test_governed_market_dataset import store_from_records
+
     return store_from_records(root, recorded()['records'])
 
 
