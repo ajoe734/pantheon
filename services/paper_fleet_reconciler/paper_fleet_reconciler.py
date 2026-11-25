@@ -102,6 +102,11 @@ _LOOP_ACTUAL_SOURCE = "paper-fleet-reconciler.worker_inventory"
 # Env that must never reach a paper_runtime worker subprocess.
 _LOOP_WRITER_ENV_KEY = "RECONCILER_LOOP_CONTROLLER_DSN"
 _CONTROLLER_ENV_PREFIX = "PANTHEON_CONTROLLER_"
+_REGISTRY_READ_ENV_KEYS = (
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN",
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE",
+    "PERSONA_REGISTRY_BASE_URL",
+)
 
 
 def _build_loop_writer(
@@ -1386,6 +1391,10 @@ class PaperFleetReconciler:
         persona_id = _binding_persona_id(binding)
         if persona_id:
             env["PANTHEON_PERSONA_ID"] = persona_id
+        else:
+            # Only a persona-scoped worker has member books to compare; others get no registry read.
+            for key in _REGISTRY_READ_ENV_KEYS:
+                env.pop(key, None)
         if self._url:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
         if self._token:
