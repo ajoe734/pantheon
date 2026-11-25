@@ -1548,7 +1548,13 @@ def _management_portfolio_incident(metadata: Dict[str, Any]) -> Optional[Dict[st
 def _management_normalized_status(record: Optional[Dict[str, Any]]) -> str:
     if not isinstance(record, dict):
         return "unknown"
-    val = record.get("status") or record.get("state") or record.get("lifecycle_state") or "unknown"
+    val = (
+        record.get("status")
+        or record.get("state")
+        or record.get("lifecycle_state")
+        or record.get("validity")
+        or "unknown"
+    )
     return str(val).strip().lower()
 
 
@@ -1642,9 +1648,16 @@ def _management_portfolio_book_entry(
         if str(r.get("capital_pool_id") or r.get("pool_id") or "").strip() == pool_id
         or str(r.get("plan_id") or r.get("deployment_plan_id") or "").strip() in pool_plan_ids
     ]
+    pool_runtime_ids = list(
+        dict.fromkeys(
+            str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
+            for r in pool_runtimes
+            if str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
+        )
+    )
     telemetry_records = [
         telemetry_by_runtime_id[rid]
-        for rid in (str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip() for r in pool_runtimes)
+        for rid in pool_runtime_ids
         if rid in telemetry_by_runtime_id
     ]
     telemetry = _management_telemetry_rollup(telemetry_records)
@@ -1734,11 +1747,16 @@ def _management_portfolio_telemetry_snapshot(
     read_store: Any, runtime_bindings: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     """Read one owner collection for this portfolio projection, preserving lookup order."""
-    runtime_ids = [
-        _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        for runtime in runtime_bindings
-    ]
-    runtime_ids = [runtime_id for runtime_id in runtime_ids if runtime_id]
+    runtime_ids = list(
+        dict.fromkeys(
+            rid
+            for rid in (
+                _management_record_id(runtime, "runtime_id", "id", "binding_id")
+                for runtime in runtime_bindings
+            )
+            if rid
+        )
+    )
     if not runtime_ids:
         return {}
     list_summaries = getattr(read_store, "list_telemetry_summaries", None)
@@ -2124,31 +2142,83 @@ def _management_telemetry_is_explicit_flat(telemetry: Dict[str, Any]) -> bool:
 
 
 _SERVING_RUNTIME_BINDING_STATUSES = frozenset({"active", "running", "healthy", "bound"})
+_EXTRA_TERMINAL_RUNTIME_BINDING_STATUSES = frozenset(
+    {
+        "terminated",
+        "stopped",
+        "decommissioned",
+        "superseded",
+        "cancelled",
+        "archived",
+        "expired",
+        "revoked",
+    }
+)
+_TERMINAL_RUNTIME_BINDING_TIMESTAMP_FIELDS = (
+    "retired_at",
+    "ended_at",
+    "terminated_at",
+    "deleted_at",
+)
 
 
 def _management_runtime_is_terminal(runtime: Dict[str, Any]) -> bool:
     """Authoritative lifecycle: the telemetry owner intentionally omits these runtimes."""
-    return _management_normalized_status(runtime) in TERMINAL_RUNTIME_BINDING_STATUSES
+    if not isinstance(runtime, dict):
+        return False
+    status = _management_normalized_status(runtime)
+    if (
+        status in TERMINAL_RUNTIME_BINDING_STATUSES
+        or status in _EXTRA_TERMINAL_RUNTIME_BINDING_STATUSES
+    ):
+        return True
+    return any(
+        runtime.get(field) not in (None, "")
+        for field in _TERMINAL_RUNTIME_BINDING_TIMESTAMP_FIELDS
+    )
 
 
 def _management_runtime_binding_selection_key(
     runtime: Dict[str, Any],
     telemetry: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, int, float]:
+    telemetry_dict = telemetry if isinstance(telemetry, dict) else {}
+    telemetry_summary = (
+        telemetry_dict.get("summary")
+        if isinstance(telemetry_dict.get("summary"), dict)
+        else {}
+    )
+    runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+    telemetry_retired_binding_ids = {
+        str(val).strip()
+        for val in (telemetry_dict.get("_retired_binding_ids") or [])
+        if str(val or "").strip()
+    }
+    retired_single = _management_record_id(telemetry_dict, "retired_binding_id")
+    if retired_single:
+        telemetry_retired_binding_ids.add(retired_single)
+
     status = _management_normalized_status(runtime)
     if _management_runtime_is_terminal(runtime):
+        lifecycle_rank = 3
+    elif runtime_binding_id and runtime_binding_id in telemetry_retired_binding_ids:
         lifecycle_rank = 2
     elif status in _SERVING_RUNTIME_BINDING_STATUSES:
         lifecycle_rank = 0
     else:
         lifecycle_rank = 1
 
-    telemetry_dict = telemetry if isinstance(telemetry, dict) else {}
-    telemetry_binding_id = _management_record_id(telemetry_dict, "binding_id", "runtime_binding_id")
-    runtime_binding_id = _management_record_id(runtime, "runtime_binding_id", "binding_id", "id")
+    telemetry_binding_id = (
+        _management_record_id(telemetry_dict, "binding_id", "runtime_binding_id")
+        or _management_record_id(telemetry_summary, "binding_id", "runtime_binding_id")
+    )
     binding_mismatch = (
         0
-        if telemetry_binding_id and runtime_binding_id == telemetry_binding_id
+        if telemetry_binding_id
+        and (
+            runtime_binding_id == telemetry_binding_id
+            or _management_record_id(runtime, "persona_capital_binding_id") == telemetry_binding_id
+        )
         else 1
     )
 
@@ -2193,6 +2263,22 @@ def _management_select_serving_runtime_bindings(
     ]
 
 
+def _management_call_store_list(
+    read_store: Any,
+    method_name: str,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    fn = getattr(read_store, method_name, None)
+    if not callable(fn):
+        return []
+    if kwargs:
+        try:
+            return list(fn(**kwargs) or [])
+        except TypeError:
+            pass
+    return list(fn() or [])
+
+
 def _pm12_portfolio_book_holdings_response(
     read_store: Any,
     *,
@@ -2205,10 +2291,16 @@ def _pm12_portfolio_book_holdings_response(
     qp = query_params or {}
     snapshot_at = utc_now_fn() if utc_now_fn else _default_utc_now()
 
-    runtime_bindings = (read_store.list_runtime_bindings(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_runtime_bindings") else []
-    deployment_plans = (read_store.list_deployment_plans() or []) if hasattr(read_store, "list_deployment_plans") else []
-    bindings = (read_store.list_bindings(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_bindings") else []
-    capital_pools = (read_store.list_capital_pools(include_market_persona_defaults=True) or []) if hasattr(read_store, "list_capital_pools") else []
+    runtime_bindings = _management_call_store_list(
+        read_store, "list_runtime_bindings", include_market_persona_defaults=True
+    )
+    deployment_plans = _management_call_store_list(read_store, "list_deployment_plans")
+    bindings = _management_call_store_list(
+        read_store, "list_bindings", include_market_persona_defaults=True
+    )
+    capital_pools = _management_call_store_list(
+        read_store, "list_capital_pools", include_market_persona_defaults=True
+    )
 
     plans_by_id = {str(p.get("plan_id") or p.get("id") or "").strip(): p for p in deployment_plans}
     bindings_by_id = {str(b.get("binding_id") or b.get("id") or b.get("persona_capital_binding_id") or "").strip(): b for b in bindings}
@@ -2234,7 +2326,17 @@ def _pm12_portfolio_book_holdings_response(
             continue
         plan = plans_by_id.get(str(runtime.get("plan_id") or runtime.get("deployment_plan_id") or "").strip(), {})
         plan_binding_ids = [str(v).strip() for v in (plan.get("binding_ids") or []) if str(v).strip()]
-        persona_binding_id = str(runtime.get("persona_capital_binding_id") or (plan_binding_ids[0] if plan_binding_ids else "")).strip()
+        preferred_plan_binding_id = next(
+            (
+                bid
+                for bid in plan_binding_ids
+                if bid in bindings_by_id
+                and not _management_runtime_is_terminal(bindings_by_id[bid])
+                and _management_normalized_status(bindings_by_id[bid]) in _SERVING_RUNTIME_BINDING_STATUSES
+            ),
+            plan_binding_ids[0] if plan_binding_ids else "",
+        )
+        persona_binding_id = str(runtime.get("persona_capital_binding_id") or preferred_plan_binding_id).strip()
         persona_binding = bindings_by_id.get(persona_binding_id, {})
         pool_id = str(runtime.get("capital_pool_id") or plan.get("capital_pool_id") or plan.get("target_pool_id") or persona_binding.get("capital_pool_id") or "").strip()
         capital_pool = pools_by_id.get(pool_id, {})

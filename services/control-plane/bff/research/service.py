@@ -69,24 +69,38 @@ _CATALOG_CURSOR_PREFIX = "m1:"
 
 def _encode_catalog_cursor(state: Dict[str, Dict[str, Any]]) -> str:
     import base64
+    import zlib
 
     raw = json.dumps(state, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
-    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    compressed = zlib.compress(raw, level=9, wbits=-15)
+    payload = compressed if len(compressed) < len(raw) else raw
+    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
 def _decode_catalog_cursor(token: Optional[str]) -> Optional[Dict[str, Dict[str, Any]]]:
     """Per-owner ``{token, done, total}`` anchors; ``None`` for no token or one that is not a merge cursor."""
     import base64
+    import zlib
 
     text = str(token or "").strip()
     if not text.startswith(_CATALOG_CURSOR_PREFIX):
         return None
     body = text[len(_CATALOG_CURSOR_PREFIX):]
     try:
-        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+        raw_bytes = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
     except (ValueError, UnicodeError):
         return None
-    return decoded if isinstance(decoded, dict) else None
+    for wbits in (None, -15, 15):
+        if wbits is not None and raw_bytes.startswith(b"{"):
+            continue
+        try:
+            unpacked = raw_bytes if wbits is None else zlib.decompress(raw_bytes, wbits)
+            decoded = json.loads(unpacked.decode("ascii"))
+            if isinstance(decoded, dict):
+                return decoded
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
@@ -1144,6 +1158,21 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.get_persona(persona_id)
         return None
 
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_labels"):
+                return owner.get_strategy_labels()
+        raise AttributeError("Research port operation 'get_strategy_labels' not implemented")
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_persona_bindings"):
+                return owner.get_strategy_persona_bindings()
+            nested_ks = getattr(owner, "research_knowledge_source", None)
+            if nested_ks is not None and hasattr(nested_ks, "get_strategy_persona_bindings"):
+                return nested_ks.get_strategy_persona_bindings()
+        raise AttributeError("Research port operation 'get_strategy_persona_bindings' not implemented")
+
 
 
 @dataclass
@@ -1162,6 +1191,7 @@ class ResearchRouterService:
     build_knowledge_workbench: Optional[Callable[[], Any]] = None
     cross_entity_search_fn: Optional[Callable[..., Any]] = None
     persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None
     _experiment_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def _port(self) -> ResearchKnowledgeSourcePort:

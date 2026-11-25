@@ -558,7 +558,7 @@
     "collector-news-rss": {
       "source_id": "collector-news-rss",
       "section_ref": "5.5",
-      "description": "Taiwan finance and securities news feeds via unmodified RSSHub container (diygod/rsshub:chromium-bundled-2026-11-01): CNA 產經 (/cna/aie) & 證券 (/cna/asc), UDN 即時財經 (/udn/news/breakingnews/6) & 股市 (/udn/news/breakingnews/11), China Times 財經 (/chinatimes/money), CommonWealth 財經 (/cw/master/8); LTN /ltn/news/business dropped (no finance route in pinned RSSHub build); Yahoo and Anue/cnyes DISABLED_BY_BUILD",
+      "description": "Taiwan finance and securities news feeds via unmodified RSSHub container (diygod/rsshub:chromium-bundled-2026-11-01): active HTTP-200 verified routes CNA 產經 (/cna/aie) & 證券 (/cna/asc) and UDN 即時財經 (/udn/news/breakingnews/6) & 股市 (/udn/news/breakingnews/11); 503/404 routes (/chinatimes/money, /cw/master/8, /ltn/news/business, /chinatimes/realtimenews/260410, /cw/master) listed in disabled_routes; Yahoo and Anue/cnyes DISABLED_BY_BUILD",
       "base_urls": [
         "http://rsshub:1200/"
       ],
@@ -567,17 +567,20 @@
         "/cna/aie",
         "/cna/asc",
         "/udn/news/breakingnews/6",
-        "/udn/news/breakingnews/11",
-        "/chinatimes/money",
-        "/cw/master/8"
+        "/udn/news/breakingnews/11"
       ],
       "served_categories": {
-        "/cna/aie": "中央社 (CNA) 產經 (finance / industry & economy; RSSHub cna /:id? id=aie -> https://www.cna.com.tw/cna2018api/api/WNewsList category=aie)",
-        "/cna/asc": "中央社 (CNA) 證券 (securities / stock market; RSSHub cna /:id? id=asc -> https://www.cna.com.tw/cna2018api/api/WNewsList category=asc)",
-        "/udn/news/breakingnews/6": "聯合新聞網 (UDN) 即時新聞 財經 (finance; RSSHub udn /news/breakingnews/:id id=6 -> cate_id=6)",
-        "/udn/news/breakingnews/11": "聯合新聞網 (UDN) 即時新聞 股市 (stock market; RSSHub udn /news/breakingnews/:id id=11 -> cate_id=11)",
-        "/chinatimes/money": "中時新聞網 (China Times) 財經 (finance; RSSHub chinatimes /:category? category=money -> https://www.chinatimes.com/money/?chdtv)",
-        "/cw/master/8": "天下雜誌 (CommonWealth) 主頻道 財經 (finance; RSSHub cw /master/:channel channel=8 -> idMasterChannel=8)"
+        "/cna/aie": "中央社 (CNA) 產經 (finance / industry & economy; RSSHub cna /:id? id=aie -> https://www.cna.com.tw/cna2018api/api/WNewsList category=aie; verified HTTP 200 valid RSS)",
+        "/cna/asc": "中央社 (CNA) 證券 (securities / stock market; RSSHub cna /:id? id=asc -> https://www.cna.com.tw/cna2018api/api/WNewsList category=asc; verified HTTP 200 valid RSS)",
+        "/udn/news/breakingnews/6": "聯合新聞網 (UDN) 即時新聞 財經 (finance; RSSHub udn /news/breakingnews/:id id=6 -> cate_id=6; verified HTTP 200 valid RSS)",
+        "/udn/news/breakingnews/11": "聯合新聞網 (UDN) 即時新聞 股市 (stock market; RSSHub udn /news/breakingnews/:id id=11 -> cate_id=11; verified HTTP 200 valid RSS)"
+      },
+      "disabled_routes": {
+        "/chinatimes/money": "HTTP 503 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: upstream RSSHub URL concatenation bug in /app/dist/chinatimes-BOLqovDF.mjs (requests https://www.chinatimes.comhttps//www.chinatimes.com/...)",
+        "/cw/master/8": "HTTP 503 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: upstream www.cw.com.tw returns HTTP 403 Forbidden (Cloudflare challenge) to non-browser requests from RSSHub",
+        "/ltn/news/business": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace ltn in /app/dist/ltn-def-DRpP-Cva.mjs defines only /ltn/def/:channel{.+}? (自由軍武頻道, def.ltn.com.tw) and defines no business/finance route",
+        "/chinatimes/realtimenews/260410": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace chinatimes defines single-segment /:category? and returns HTTP 404 for two-segment /chinatimes/realtimenews/260410",
+        "/cw/master": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace cw in /app/dist/cw-master-iT1tcF7s.mjs defines /master/:channel (channel parameter required) and returns HTTP 404 for bare /cw/master"
       },
       "dropped_routes": {
         "/cna/aall": "Replaced by /cna/aie (產經) and /cna/asc (證券); /cna/aall is CNA 即時 (all news across politics, society, sports, entertainment, lottery, crime)",

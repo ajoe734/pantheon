@@ -865,7 +865,8 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         assert bff_payload["items"][0]["risk"] == "medium"
         assert bff_payload["items"][0]["personaIds"] == [persona_id]
         # Zero per-row detail fanout and zero local store reads even when risk_raw is absent
-        assert http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=1"]
+        # The default view sends the owner-side hide input (REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125).
+        assert http_paths == ["/api/registry/strategy-specs?view=strategy_summary_page&page_size=1&hide_stubs=true"]
         assert local_store_calls == []
 
         bff_detail = client.get(f"/bff/strategies/{strategy_id}", headers=dev_headers)
@@ -1154,7 +1155,7 @@ def test_bff_viewer_and_view_only_read_strategy_specs_and_persona_bindings_again
         assert forwarded_calls == [
             {
                 "method": "GET",
-                "path": "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+                "path": "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&hide_stubs=true",
                 "auth_token": viewer_token,
                 "tenant_id": "tenant-dev",
             }

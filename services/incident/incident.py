@@ -554,6 +554,70 @@ def is_monitor_agent_finding_incident(inc: IncidentCase) -> bool:
     )
 
 
+def is_infrastructure_postmortem(pm: Any) -> bool:
+    """Apply the incident predicates to a stored postmortem row.
+
+    A postmortem stores ``incident_evidence_summary`` where the predicates read
+    ``evidence_summary``; map it so real stored rows are classified correctly.
+    ``pm`` may be a Postmortem or a dict.
+    """
+    def attr(name: str) -> Any:
+        return pm.get(name) if isinstance(pm, dict) else getattr(pm, name, None)
+
+    shim = IncidentCase.__new__(IncidentCase)
+    for name in (
+        "incident_id", "binding_id", "deployment_plan_id",
+        "persona_capital_binding_id", "incident_cluster_id", "artifact_id",
+        "runtime_id",
+    ):
+        object.__setattr__(shim, name, attr(name))
+    object.__setattr__(
+        shim, "evidence_summary",
+        attr("incident_evidence_summary") or attr("evidence_summary"),
+    )
+    return is_infrastructure_health_incident(shim) or is_monitor_agent_finding_incident(shim)
+
+
+def page_postmortem_index(
+    index_rows: Any,
+    *,
+    incident_id: Optional[str] = None,
+    binding_id: Optional[str] = None,
+    statuses: Optional[set] = None,
+    hide_infrastructure: bool = True,
+    offset: int = 0,
+    limit: Optional[int] = None,
+) -> tuple:
+    """Filter, count and page narrow postmortem index rows (dicts).
+
+    Returns ``(page_rows, total, hidden_infrastructure_count)`` where ``total``
+    counts the visible rows exactly. Rows only need the fields the filters and
+    ``is_infrastructure_postmortem`` read, so callers may stream a narrow
+    projection instead of full payloads. ``index_rows`` may be any iterable.
+    """
+    visible: list = []
+    hidden = 0
+    for row in index_rows:
+        if incident_id and row.get("incident_id") != incident_id:
+            continue
+        if binding_id and row.get("binding_id") != binding_id:
+            continue
+        status = str(row.get("status") or "").strip().lower()
+        if statuses and status not in statuses:
+            continue
+        if hide_infrastructure and status == "draft" and is_infrastructure_postmortem(row):
+            hidden += 1
+            continue
+        visible.append(row)
+    visible.sort(
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("postmortem_id") or "")),
+        reverse=True,
+    )
+    total = len(visible)
+    end = None if limit is None else offset + limit
+    return visible[offset:end], total, hidden
+
+
 def normalize_infrastructure_component(value: str) -> str:
     """Normalize a downstream infrastructure component/service name."""
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
@@ -1796,6 +1860,36 @@ class IncidentStore:
     def list_postmortems(self) -> List[Postmortem]:
         self._refresh_from_disk()
         return list(self._postmortems.values())
+
+    @_serialized_store_read
+    def list_all_postmortems(self) -> List[Postmortem]:
+        """Every stored postmortem, never capped (exact-total read path)."""
+        self._refresh_from_disk()
+        return list(self._postmortems.values())
+
+    @_serialized_store_read
+    def list_postmortem_page(
+        self,
+        *,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+        statuses: Optional[set] = None,
+        matcher: Optional[Any] = None,
+        hide_infrastructure: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        q_sql_needle: Optional[str] = None,
+    ) -> tuple:
+        """``(page_postmortems, total, hidden_infrastructure_count)``, exact."""
+        self._refresh_from_disk()
+        rows = [pm.to_dict() for pm in self._postmortems.values()]
+        if matcher is not None:
+            rows = [r for r in rows if matcher(r)]
+        page, total, hidden = page_postmortem_index(
+            rows, incident_id=incident_id, binding_id=binding_id, statuses=statuses,
+            hide_infrastructure=hide_infrastructure, offset=offset, limit=limit,
+        )
+        return [self._postmortems[r["postmortem_id"]] for r in page], total, hidden
 
     @_serialized_store_read
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
