@@ -8026,6 +8026,263 @@ class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
         self.assertEqual(remaining_res[0]["reservation_id"], "competing-2330")
         self.assertAlmostEqual(remaining_res[0]["cash_reserved"], 40057.0, places=5)
 
+    def test_blueprint_limits_enforced_on_real_hosted_shaped_data_and_reduce_only(self) -> None:
+        """RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124: hosted-shaped regression for sector, turnover, liquidity & reduce-only."""
+        from services.execution.lean_runtime.instrument_candidates import clear_market_fact_cache
+
+        clear_market_fact_cache()
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        root = Path(tmp_dir.name)
+
+        # Write real hosted-shaped tw_industry_classification and 20-day tw_price_daily bars
+        ind_dir = root / "normalized" / "tw_industry_classification" / "date=2026-11-24"
+        ind_dir.mkdir(parents=True)
+        with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+            for sym, code_int, code_raw in (("2330", 24, "24"), ("2303", 24, "24"), ("2317", 25, "25")):
+                handle.write(
+                    json.dumps(
+                        {
+                            "source_id": "tw_official_industry_classification",
+                            "symbol": sym,
+                            "metadata": {
+                                "normalized_row": {
+                                    "symbol": sym,
+                                    "industry_code": code_int,
+                                    "industry_code_raw": code_raw,
+                                    "market": "TWSE",
+                                }
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+        price_dir = root / "normalized" / "tw_price_daily" / "date=2026-11-24"
+        price_dir.mkdir(parents=True)
+        with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+            for day_idx in range(1, 21):
+                d_str = f"2026-11-{day_idx:02d}"
+                for sym, vol in (("2330", 1_000.0), ("2303", 50_000.0), ("2317", 10_000.0)):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_price_daily",
+                                "symbol": sym,
+                                "event_time": f"{d_str}T06:00:00Z",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": sym,
+                                        "trade_date": d_str,
+                                        "close": 200.0,
+                                        "volume": vol,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+
+        pool_id = "pool-persona-paper-06d4775a9b6a8f63b311"
+        blueprint_policy = {
+            "risk_policy_id": "rp-blueprint-explicit-v2",
+            "version": "2.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "allowed_asset_classes": ["equity", "future"],
+            "gross_limit": 1.6,
+            "net_limit": 1.0,
+            "max_leverage": 1.6,
+            "max_single_name_weight": 0.20,
+            "min_cash_reserve_pct": 0.10,
+            "max_sector_exposure": {"24": 0.25, "25": 0.25},
+            "turnover_limit": 0.45,
+            "liquidity_constraints": {
+                "min_avg_daily_volume": 500.0,
+                "max_order_pct_adv": 0.05,
+            },
+            "metadata": {"tenant_id": "tenant-dev", "explicit_policy": True},
+        }
+        pool_record = {
+            "pool_id": pool_id,
+            "tenant_id": "tenant-dev",
+            "status": "active",
+            "currency": "TWD",
+            "budget": 100_000.0,
+            "single_runtime_enforced": True,
+            "metadata": {"tenant_id": "tenant-dev", "risk_policy": blueprint_policy, "risk_policy_explicit": True},
+        }
+        events: list[Any] = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-blueprint-1",
+            capital_pool_id=pool_id,
+            capital_pool_reader=lambda _pid: pool_record,
+            risk_policy=blueprint_policy,
+            in_process_broker=True,
+        )
+
+        # 1. Buy 95 shares of 2303.TW @ 200 TWD = 19,000 TWD (sector "24" exposure = 19%, turnover = 19%, order_pct_adv = 95/50000 = 0.19%).
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:30:00Z",
+                "market_price_source": "source-ingest://snapshots/2303",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2303.TW",
+            signal_id="sig-2303-open",
+            side="buy",
+            quantity=95.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 95.0)
+        # Verify the Capital evaluator recorded passed checks for sector_exposure, turnover, and liquidity
+        last_checks = {c["check_name"]: c["status"] for c in algo._last_risk_gate_result["evaluation"]["checks"]}
+        self.assertEqual(last_checks.get("sector_exposure"), "passed")
+        self.assertEqual(last_checks.get("turnover"), "passed")
+        self.assertEqual(last_checks.get("liquidity"), "passed")
+
+        # 2. Sector over the cap is reduced with max_sector_exposure named:
+        # Sector "24" has 19,000 TWD used against 25% cap (~24,993 TWD). Requesting 45 shares of 2330.TW @ 200 TWD (9,000 TWD, <= 5% of 1,000 ADV = 50 shares)
+        # is reduced to 29 shares (5,800 TWD) so sector "24" stays within 25% post-fee equity, naming binding_limit="max_sector_exposure".
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:31:00Z",
+                "market_price_source": "source-ingest://snapshots/2330",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-sector-reduced",
+            side="buy",
+            quantity=45.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["fill_quantity"], 29.0)
+        self.assertEqual(events[-1].metadata["resize_reason"], "max_sector_exposure")
+        self.assertEqual(events[-1].metadata["binding_limit"], "max_sector_exposure")
+
+        # 3. Sector over the cap with 0 room remaining is refused with max_sector_exposure named:
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-sector-refused",
+            side="buy",
+            quantity=10.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "max_sector_exposure")
+        self.assertEqual(events[-1].metadata["binding_limit"], "max_sector_exposure")
+
+        # 4. Illiquid order (> configured 5% share of ADV: 600 shares of 2317.TW vs 10,000 ADV = 6% > 5%, priced at 30 TWD so notional 18,000 <= 20% single-name)
+        # is refused with liquidity_order_pct_adv_breach.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 30.0,
+                "market_price_as_of": "2026-11-24T01:32:00Z",
+                "market_price_source": "source-ingest://snapshots/2317",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-illiquid",
+            side="buy",
+            quantity=600.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "liquidity_order_pct_adv_breach")
+
+        # 5. Turnover breach (24,800 TWD already traded in window; buying 105 shares of 2317.TW @ 200 TWD = 21,000 TWD -> 45,800 / ~100,000 > 0.45 turnover_limit,
+        # even when single-name cap is 0.25) is refused with turnover_limit.
+        algo.SetRiskPolicy({**blueprint_policy, "max_single_name_weight": 0.25})
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:33:00Z",
+                "market_price_source": "source-ingest://snapshots/2317",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-turnover-breach",
+            side="buy",
+            quantity=105.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "turnover_limit")
+
+        # 6. Missing fact on order increase fails closed naming the missing fact with Capital evaluator message.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:34:00Z",
+                "market_price_source": "source-ingest://snapshots/9999",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "9999.TW",
+            signal_id="sig-9999-missing-facts",
+            side="buy",
+            quantity=10.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "sector_exposures_unavailable")
+        self.assertEqual(
+            events[-1].metadata["diagnostic"],
+            "Risk policy limit max_sector_exposure cannot be evaluated: sector_exposures unavailable",
+        )
+
+        # 7. Reduce-only order (selling 29 held shares of 2330.TW) passes even when sector is at cap, turnover is high, and facts are marked unavailable.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:35:00Z",
+                "market_price_source": "source-ingest://snapshots/2330",
+                "as_of_trading_day": "2026-11-24",
+                "close_leg": True,
+                "reason_code": "close_leg",
+                "sector_exposures_unavailable": True,
+                "turnover_unavailable": True,
+                "liquidity_unavailable": True,
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-reduce-only",
+            side="sell",
+            quantity=29.0,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 29.0)
+
+
 
 
 

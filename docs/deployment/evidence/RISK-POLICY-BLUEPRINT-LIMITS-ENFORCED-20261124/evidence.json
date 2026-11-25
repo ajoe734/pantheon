@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon_task_evidence.v1",
+  "task_id": "RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124",
+  "title": "Enforce RiskPolicy sector, turnover and liquidity limits on paper orders",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_state": "in_review",
+  "hosted_proof_status": "pending_deploy",
+  "dependencies": [
+    {
+      "task_id": "PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
+      "status": "done",
+      "satisfied": true
+    },
+    {
+      "task_id": "PAPER-RISK-ENVELOPE-OPERATOR-DECISIONS-20261124",
+      "status": "done",
+      "satisfied": true
+    }
+  ],
+  "problem_register": {
+    "class": "RC2",
+    "file": "docs/operations/problem-register.md",
+    "reference": "docs/04/pantheon_paper_risk_management_2026-11-24/SD_PAPER_RISK_MANAGEMENT_2026-11-24.md §3.2 (phase 2) & §6 Q2"
+  },
+  "review_independence_exception": {
+    "applied": false,
+    "owner_family": "Antigravity",
+    "reviewer_family": "Claude",
+    "note": "Owner Antigravity2 and Reviewer Claude belong to distinct model families; task brief also records the fleet-wide Review Independence exception (other model families at terminal quota until 2026-11-27 10:03Z)."
+  },
+  "runtime_budget": {
+    "new_persistent_writers": 0,
+    "storage_manifest_check": "passed (0 failures, 374 entries)",
+    "in_memory_caches": [
+      {
+        "name": "_MARKET_FACT_CACHE",
+        "file": "services/execution/lean_runtime/instrument_candidates.py",
+        "cadence": "on-demand per expression / pre-order risk evaluation (cached for 300 s TTL per dataset partition mtime and symbol)",
+        "hosted_size_and_count": "<= 256 entries per process (~64 KB max RSS across 3 trading personas; 0 disk bytes)",
+        "growth_per_day": "0 bytes/day on disk; bounded in RAM by hard 256-entry cap",
+        "cap": "FACT_CACHE_MAX_ENTRIES = 256, FACT_CACHE_TTL_SECONDS = 300.0",
+        "cleanup": "expired entries evicted on every _fact_cache_get and oldest LRU entry evicted on _fact_cache_put"
+      },
+      {
+        "name": "_ledger_fill_history",
+        "file": "services/execution/lean_runtime/paper_runtime.py",
+        "cadence": "on paper fill commit (_commit_fill and _commit_futures_fill)",
+        "hosted_size_and_count": "<= 256 fill records per algorithm instance (~48 KB max RSS; 0 disk bytes, not persisted in paper_performance_ledger.v1)",
+        "growth_per_day": "0 bytes/day on disk; bounded in RAM by hard 256-entry cap",
+        "cap": "256 entries",
+        "cleanup": "ring-trimmed in place on append (self._ledger_fill_history[-256:])"
+      }
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "1_evaluator_and_preorder_facts": {
+      "status": "verified",
+      "details": [
+        "services/capital/risk_policy.py RiskPolicyEvaluator.evaluate enforces max_sector_exposure -> sector_exposures, turnover_limit -> turnover, and liquidity_constraints -> liquidity (avg_daily_volume and order_pct_adv) without introducing a second rule engine.",
+        "On runtime_action='order_increase', missing facts fail closed with 'Risk policy limit <limit> cannot be evaluated: <fact> unavailable' (codes: sector_exposures_unavailable, turnover_unavailable, liquidity_unavailable).",
+        "On runtime_action='order_reduce' (and pure reducing exits in EvaluateOrderRiskGate / close_leg in expression_policy.py), reduce-only orders are always allowed even when facts are absent or current exposures exceed policy limits."
+      ]
+    },
+    "2_risk_officer_draft_and_capital_validation": {
+      "status": "verified",
+      "details": [
+        "services/persona/risk_policy_draft.py requires max_sector_exposure, turnover_limit, and liquidity_constraints to be stated in the draft JSON (either valid ratios/constraints or explicit null / {'none': true, 'reason': '...'} with a non-empty omission reason stored in metadata.risk_officer_draft.omitted_limits).",
+        "services/capital/risk_policy.py validate_drafted_pool_risk_policy and profile_outer_bounds support configured outer bounds for max_sector_exposure, turnover_limit, max_order_pct_adv, min_avg_daily_volume, and liquidity_constraints while keeping DEFAULT_PROFILE_OUTER_BOUNDS unchanged (only the 4 operator-decided low bounds per SD §6 Q2; no invented numbers).",
+        "Existing policies without these three limits continue trading unchanged (missing limit = not applied)."
+      ]
+    },
+    "3_hosted_shaped_regression": {
+      "status": "verified",
+      "details": [
+        "test_blueprint_limits_enforced_on_real_hosted_shaped_data_and_reduce_only (services/execution/lean_runtime/test_paper_runtime.py) and test_blueprint_limits_sector_reduction_or_refusal_turnover_liquidity_and_reduce_only (services/execution/lean_runtime/test_expression_policy.py):",
+        "- Sector over cap with partial room: 2303.TW holds 19,000 TWD in Taiwan industry sector '24' against 25% cap (~25,000 TWD); new buy of 45 shares of 2330.TW @ 200 TWD is reduced to 29 shares (5,800 TWD) with resize_reason='max_sector_exposure' and binding_limit='max_sector_exposure'.",
+        "- Sector over cap with 0 room: subsequent buy of 10 shares of 2330.TW is refused with reason='max_sector_exposure'.",
+        "- Illiquid order (> 5% of 20-day ADV from tw_price_daily): 600 shares of 2317.TW against 10,000 ADV (6% > 5%) is refused with reason='liquidity_order_pct_adv_breach'.",
+        "- Turnover breach: 105 shares of 2317.TW @ 200 TWD (21,000 TWD) after 24,800 TWD prior window fills (45,800 / ~100,000 > 0.45 turnover_limit) is refused with reason='turnover_limit'.",
+        "- Missing fact on increase: buy on unclassified 9999.TW is refused with reason='sector_exposures_unavailable' and diagnostic='Risk policy limit max_sector_exposure cannot be evaluated: sector_exposures unavailable'.",
+        "- Reduce-only order: selling 29 held shares of 2330.TW with close_leg=True passes and fills 29 shares even with sector at cap and facts marked unavailable."
+      ]
+    },
+    "4_hosted_acceptance_after_deploy": {
+      "status": "pending_deploy",
+      "probe": "acceptance/probes/paper-risk-journey",
+      "daily_check": "acceptance/paper_risk_journey_day.py"
+    }
+  }
+}
