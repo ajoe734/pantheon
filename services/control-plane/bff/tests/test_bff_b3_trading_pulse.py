@@ -1249,6 +1249,8 @@ def test_risk_radar_queries_bounded_strategy_summary_page_and_never_calls_unpage
     store = _OperatorStore()
     store.bindings[0].update(strategy_id="strategy-p1", capital_pool_id="pool-1")
     store.bindings[1].update(strategy_id="strategy-p2", capital_pool_id="pool-1")
+    store.list_personas = lambda *_a, **_kw: list(store.people)
+    store.list_runtime_bindings = lambda *_a, **_kw: list(store.bindings)
 
     def http_read(url, *, method="GET", tenant_id=None, **kwargs):
         calls.append((url, method, tenant_id))
@@ -1299,3 +1301,13 @@ def test_risk_radar_queries_bounded_strategy_summary_page_and_never_calls_unpage
     assert "exclude_state=draft" in calls[0][0]
     assert calls[0][1] == "GET"
     assert calls[0][2] == "tenant-test"
+
+    calls.clear()
+    for b in store.bindings:
+        b.pop("strategy_id", None)
+    token = authorization.set("Bearer bounded:operator:tenant-test")
+    try:
+        ManagementService(read_store=store).get_risk_radar(tenant_id="tenant-test")
+    finally:
+        authorization.reset(token)
+    assert calls == []

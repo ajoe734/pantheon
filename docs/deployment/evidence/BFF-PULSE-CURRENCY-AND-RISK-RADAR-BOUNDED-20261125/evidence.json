@@ -3,7 +3,7 @@
   "owner": "Antigravity",
   "reviewer": "Claude2",
   "status": "ready_for_independent_review",
-  "base_commit": "a617c8a66",
+  "base_commit": "99b888f29",
   "work_package": {
     "class": "RC3 and RC6",
     "problem_register_ref": "docs/operations/problem-register.md",
@@ -20,7 +20,7 @@
   "change": {
     "risk_radar_bounded_strategy_reads": {
       "entry_point": "ManagementService.get_risk_radar",
-      "bounded_page_method": "list_strategy_summaries_page / list_strategy_specs_page (GET /api/registry/strategy-specs?view=strategy_summary_page&exclude_state=draft&page_size=<bounded>)",
+      "bounded_page_method": "list_strategy_summaries_page / list_strategy_specs_page (GET /api/registry/strategy-specs?view=strategy_summary_page&exclude_state=draft&page_size=<bounded>, skipped entirely when needed_strategy_ids is empty)",
       "targeted_detail_fallback": "get_strategy_spec_detail(strategy_id, version_selector='current') / get_strategy_spec(strategy_id) only for referenced strategy IDs not present in the bounded summary page",
       "unpaged_calls_removed": "Removed unpaged store.list_strategies(), store.list_strategy_summaries(), and store.list_strategy_specs() from get_risk_radar so the full historical/draft strategy table is never pulled into BFF memory."
     },

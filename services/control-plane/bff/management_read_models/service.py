@@ -5968,10 +5968,7 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_runtime_bindings"):
-                    try:
-                        runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
-                    except TypeError:
-                        runtime_bindings = list(store.list_runtime_bindings() or [])
+                    runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
                 elif hasattr(store, "list_runtimes"):
                     runtime_bindings = list(store.list_runtimes() or [])
             except Exception:
@@ -5987,10 +5984,7 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_bindings"):
-                    try:
-                        bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
-                    except TypeError:
-                        bindings = list(store.list_bindings() or [])
+                    bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
                 elif hasattr(store, "list_persona_capital_bindings"):
                     bindings = list(store.list_persona_capital_bindings() or [])
             except Exception:
@@ -5998,24 +5992,15 @@ class ManagementService:
 
             try:
                 if hasattr(store, "list_capital_pools"):
-                    try:
-                        capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
-                    except TypeError:
-                        capital_pools = list(store.list_capital_pools() or [])
+                    capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
             except Exception:
                 capital_pools = []
 
             try:
                 if hasattr(store, "list_personas"):
-                    try:
-                        personas = list(store.list_personas(clean_tenant or None) or [])
-                    except TypeError:
-                        personas = list(store.list_personas() or [])
+                    personas = list(store.list_personas(clean_tenant or None) or [])
                 elif hasattr(store, "list_persona_records"):
-                    try:
-                        personas = list(store.list_persona_records(clean_tenant or None) or [])
-                    except TypeError:
-                        personas = list(store.list_persona_records() or [])
+                    personas = list(store.list_persona_records(clean_tenant or None) or [])
             except Exception:
                 personas = []
 
@@ -6085,7 +6070,7 @@ class ManagementService:
         def _resolve_bounded_strategies(needed_ids: set[str]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
             by_id: Dict[str, Dict[str, Any]] = {}
             surface_ok = False
-            if store is None:
+            if store is None or not needed_ids:
                 return by_id, surface_ok
             bounded_page_size = min(max(int(page_size or 50), len(needed_ids), 50), 200)
             page_reader = (
