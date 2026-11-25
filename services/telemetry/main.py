@@ -1447,12 +1447,12 @@ def replay_dlq():
       tag — if provided, replay only entries with this tag.
             Default: replay only write-failure entries (safe).
 
-    Returns { replayed: <count> }.
+    Returns { replayed: <count>, suppressed: <count>, refused: <count> }.
     """
     tag = request.args.get("tag") or None
     svc = _get_service()
     try:
-        count = _run_async(
+        result = _run_async(
             svc.replay_dlq(
                 tag_filter=tag,
                 tenant_id=request_tenant_id(),
@@ -1462,7 +1462,11 @@ def replay_dlq():
         log.exception("Error during DLQ replay")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
-    return jsonify({"replayed": count}), 200
+    return jsonify({
+        "replayed": int(result),
+        "suppressed": int(getattr(result, "suppressed", 0)),
+        "refused": int(getattr(result, "refused", 0)),
+    }), 200
 
 
 @app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])
