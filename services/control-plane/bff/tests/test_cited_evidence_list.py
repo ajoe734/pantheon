@@ -9,6 +9,12 @@ packet ``persona_cycle.decisions[].cited_case_file_item_ids``) and the
 hosted reference ids observed 2026-11-25. Only the transport below each
 existing owner read is replaced; the BFF readers, withholding rules,
 redaction and composition run for real.
+
+BFF-EVIDENCE-CITED-NAMES-LINKS-20261125: a cited artifact is named through the
+real Registry owner read (``DefaultResearchKnowledgeSourcePort.
+read_registry_strategy_artifact_detail`` -> ``GET /api/registry/entries/{id}``,
+answering the recorded ``RegistryEntryView`` shape) and the strategy label
+directory is keyed by strategy id only, as ``get_strategy_labels`` answers.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -30,7 +37,10 @@ from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddlewa
 from services.control_plane.bff.management_read_models import cited_evidence
 from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.meetings.client import MeetingsOwnerClient, MeetingsOwnerUnavailableError
-from services.control_plane.bff.ports.research_knowledge_source import EvidenceReadResult
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+    EvidenceReadResult,
+)
 from services.control_plane.bff.research.client import ResearchServiceClient
 
 TENANT = "tenant-a"
@@ -56,6 +66,23 @@ GOV_URL = "http://governance.test"
 # approvals needs a write-authority, approval_reader/proposer or operator role.
 GOV_READ_ROLES = {"admin", "operator", "approver", "approval_reader", "approval_proposer"}
 MEETING = "mtg-6edaff7d0ff76275"
+# Hosted 2026-11-25: GET /bff/artifacts/{ART_B} answers this strategy_id.
+STRATEGY_B = "strategy-persona-a81b4fd15944698341aa"
+REGISTRY_URL = "http://registry.test"
+
+
+def registry_entry_view(registry_id: str, strategy_id: str, *, owner_tenant: str = TENANT) -> Dict[str, Any]:
+    """Registry GET /api/registry/entries/{id} shape (RegistryEntryView: entry + deployment_stage)."""
+    return {
+        "entry": {
+            "registry_id": registry_id, "artifact_type": "execution_bundle", "strategy_id": strategy_id,
+            "version": "4", "artifact_state": "approved", "lineage": {"parent_registry_id": None},
+            "storage_ref": {"uri": f"gs://artifacts/{registry_id}.tar"}, "checksum": "sha256:" + "0" * 64,
+            "metadata": {"persona_id": PERSONA}, "owner_tenant": owner_tenant,
+            "created_at": "2026-11-20T00:00:00Z",
+        },
+        "deployment_stage": "paper",
+    }
 
 
 def _case_item(item_id: str, **extra: Any) -> Dict[str, Any]:
@@ -138,6 +165,8 @@ class CitedStore:
     def __init__(self) -> None:
         self.ooda_management = _OodaManagement(_Ooda([cycle_packet()]))
         self.item_reads: List[str] = []
+        # Real Registry owner read; only urlopen below it is replaced (owners fixture).
+        self.registry = DefaultResearchKnowledgeSourcePort(registry_service_url=REGISTRY_URL)
         self.evolution: List[Dict[str, Any]] = [{
             "proposal_id": "evo-prop-1", "tenant_id": TENANT, "title": "Retire weak member",
             "created_at": "2026-11-24T09:00:00Z",
@@ -165,12 +194,16 @@ class CitedStore:
     def list_evolution_decisions(self) -> List[Dict[str, Any]]:
         return list(self.evolution)
 
+    def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
+        return self.registry.read_registry_strategy_artifact_detail(artifact_id)
+
     # Display-name directories.
     def list_personas(self) -> List[Dict[str, Any]]:
         return [{"persona_id": PERSONA, "display_name": "Macro Mia"}]
 
     def get_strategy_labels(self) -> Dict[str, Any]:
-        return {ART_B: {"title": "Carry Basket B"}}
+        # Keyed by strategy id only (hosted shape); no artifact id is a key here.
+        return {STRATEGY_B: {"title": "Carry Basket B"}}
 
     def dataset_source(self, dataset: str) -> str:
         return "service_backend"
@@ -201,6 +234,12 @@ def owners(monkeypatch):
                                               "evidence_refs": [{"kind": "research_note", "artifact_id": "note-222", "tenant_id": TENANT}]}}],
                     "page_info": {"next_page_token": None}},
     }
+    # Registry owner (GET /api/registry/entries/{id}); ART_A is unknown -> 404.
+    state["registry"] = {ART_B: registry_entry_view(ART_B, STRATEGY_B)}
+    state["registry_reads"] = []
+    state["registry_tenants"] = []
+    state["registry_fail"] = set()
+    state["registry_block"] = None
     lock = threading.Lock()
 
     def list_meetings(self, **kw):
@@ -230,6 +269,8 @@ def owners(monkeypatch):
 
     def governance_urlopen(req, timeout=None, *a, **kw):
         url = req.full_url if hasattr(req, "full_url") else str(req)
+        if url.startswith(REGISTRY_URL):
+            return registry_urlopen(req, url)
         if not url.startswith(GOV_URL):
             return real_urlopen(req, timeout=timeout, *a, **kw)
         assert url.startswith(GOV_URL + "/api/governance/approvals") and req.get_method() == "GET"
@@ -249,6 +290,32 @@ def owners(monkeypatch):
                 return False
 
         return _Resp(json.dumps(state["approvals"]).encode("utf-8"))
+
+    def registry_urlopen(req, url):
+        prefix = REGISTRY_URL + "/api/registry/entries/"
+        assert url.startswith(prefix) and req.get_method() == "GET", url
+        rid = urllib.parse.unquote(url[len(prefix):])
+        with lock:
+            state["registry_reads"].append(rid)
+            state["registry_tenants"].append(req.get_header("X-tenant-id"))
+        if state["registry_block"] is not None:
+            state["registry_block"].wait(5)
+        if rid in state["registry_fail"]:
+            raise urllib.error.HTTPError(url, 503, "Unavailable", {}, io.BytesIO(b"{}"))
+        view = state["registry"].get(rid)
+        if view is None:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b"{}"))
+
+        class _Resp(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Resp(json.dumps(view).encode("utf-8"))
 
     def read_records(url_builder, path, key=None):
         assert path == "/api/research/persona-demands" and key == "demands"
@@ -309,7 +376,10 @@ def test_cited_rows_carry_owner_label_link_and_cited_by(store, owners):
     assert reg["ref_kind"] == "registry_artifact" and reg["source_owner"] == "registry"
     assert reg["label"] == "Carry Basket B" and reg["name_missing"] is False
     assert reg["source_class"] == "registry_record"
-    assert reg["resolved_link"]["route_href"] == f"/management/strategies/{ART_B}"
+    # Hosted: /management/strategies/{artifact} is 404; the artifact page is the one that exists.
+    assert reg["resolved_link"]["route_href"] == f"/management/artifacts/{ART_B}"
+    # Named after the strategy the Registry records for the artifact.
+    assert reg["label_parts"] == {"artifact_id": ART_B, "strategy_id": STRATEGY_B}
     assert set(reg["cited_as"]) == {REG_B, ART_B}
     by = {(c["entity_type"], c["entity_ref"]) for c in reg["cited_by"]}
     assert ("meeting_position", f"{MEETING}#round-1/A") in by
@@ -334,6 +404,8 @@ def test_cited_rows_carry_owner_label_link_and_cited_by(store, owners):
     # An id no directory can name says name_missing.
     unnamed = rows[ART_A]
     assert unnamed["name_missing"] is True and unnamed["label"] == ART_A
+    assert unnamed["label_parts"] == {"artifact_id": ART_A, "strategy_id": None}
+    assert unnamed["route_href"] == f"/management/artifacts/{ART_A}"
 
     pool = rows[POOL]
     assert pool["label"] == "Macro Mia" and pool["source_owner"] == "persona"
@@ -343,6 +415,8 @@ def test_cited_rows_carry_owner_label_link_and_cited_by(store, owners):
 
     book = rows[BOOK_B]
     assert book["label"] == "Carry Basket B" and book["ref_kind"] == "member_virtual_book"
+    assert book["label_parts"] == {"artifact_id": ART_B, "strategy_id": STRATEGY_B}
+    assert book["route_href"] == f"/management/artifacts/{ART_B}"
     assert book["cited_by"][0]["entity_type"] == "persona_cycle_decision"
     assert book["cited_by"][0]["label"] is None
     assert book["cited_by"][0]["parts"] == {"persona_id": PERSONA, "persona_name": "Macro Mia",
@@ -455,7 +529,12 @@ def test_reference_cap_and_item_reads_bounded_to_visible_page(store, owners):
     assert summary["reference_total"] > 500 and summary["references_truncated"] is True
     assert body["page_info"]["total"] == 500 and summary["incomplete"] is True
     assert len(body["data"]["items"]) == 100
-    assert len(store.item_reads) == 20
+    # One shared budget of 20 owner reads for the visible page: the distinct
+    # artifacts on it (ART_A, ART_B: REG_B/BOOK_B/ART_B are one artifact) take
+    # one Registry read each and the evidence item reads take the rest.
+    assert sorted(owners["registry_reads"]) == sorted([ART_A, ART_B])
+    assert len(store.item_reads) == 20 - len(owners["registry_reads"]) == 18
+    assert body["meta"]["item_reads"]["attempted"] == 20
     assert body["meta"]["item_reads"]["truncated"] is True
     assert body["meta"]["cost"]["item_reads"] == 20
 
@@ -528,7 +607,7 @@ def test_memory_scope_proof_rules():
 def test_routes_only_point_at_existing_management_pages(store, owners):
     import re as _re
 
-    existing = _re.compile(r"^/management/(meetings|personas|strategies|evidence)/[^/?#]+$"
+    existing = _re.compile(r"^/management/(meetings|personas|strategies|artifacts|evidence)/[^/?#]+$"
                            r"|^/management/(approvals|evolution-journal)$")
     body = _cited(store, page_size=100)
     hrefs = []
@@ -538,6 +617,11 @@ def test_routes_only_point_at_existing_management_pages(store, owners):
     present = [h for h in hrefs if h is not None]
     assert present and all(existing.match(h) for h in present), present
     assert None in hrefs  # memory / research note / ticket refs have no page
+    # No artifact id is ever linked under the strategies page (hosted 404).
+    assert not [h for h in present if h.startswith("/management/strategies/artifact-")], present
+    for r in body["data"]["items"]:
+        if r["ref_kind"] in {"registry_artifact", "member_virtual_book"}:
+            assert r["route_href"].startswith("/management/artifacts/artifact-"), r
 
 
 def test_redaction_reused_for_caller_without_capability(store, owners):
@@ -547,6 +631,7 @@ def test_redaction_reused_for_caller_without_capability(store, owners):
     assert body["data"]["summary"]["redacted_count"] == len(rows)
     assert all(r["label"] == r["ref_id"] and r["resolved_link"] is None for r in rows)
     assert store.item_reads == []  # no item reads for withheld refs
+    assert owners["registry_reads"] == []  # nor artifact owner reads
 
 
 def test_without_scope_answer_is_unchanged_ingested_list(store, owners):
@@ -594,3 +679,127 @@ def test_parse_ref_recorded_shapes():
     assert cited_evidence.parse_ref({"kind": "research_note", "artifact_id": "note-1"}).ref_kind == "research_note"
     assert cited_evidence._ko_evidence_candidate("ko-evi-1217cd1c8ccc7274-94a73ebc0814") == EVI
     assert cited_evidence._ko_evidence_candidate("ko-evi-1217cd1c8ccc7274-000000000000") is None
+
+
+# ---------------------------------------------------------------------------
+# BFF-EVIDENCE-CITED-NAMES-LINKS-20261125: artifact names come from the
+# Registry owner's strategy id; artifact links go to the artifact page.
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_named_by_registry_strategy_one_read_per_distinct_artifact(store, owners):
+    body = _cited(store, page_size=100)
+    rows = _rows(body)
+    # ART_B is cited as REG_B, bare ART_B and BOOK_B (two rows), still one owner read.
+    assert sorted(owners["registry_reads"]) == sorted([ART_A, ART_B])
+    for ref in (ART_B, BOOK_B):
+        row = rows[ref]
+        assert row["label"] == "Carry Basket B" and row["name_missing"] is False
+        assert row["label_parts"] == {"artifact_id": ART_B, "strategy_id": STRATEGY_B}
+        assert row["route_href"] == row["resolved_link"]["route_href"] == f"/management/artifacts/{ART_B}"
+    # ART_A: the Registry answers 404 -> no strategy id, no name, link still to the artifact page.
+    assert rows[ART_A]["label"] == ART_A and rows[ART_A]["name_missing"] is True
+    assert rows[ART_A]["label_parts"]["strategy_id"] is None
+    reads = body["meta"]["item_reads"]
+    assert reads["attempted"] == 3 and reads["resolved"] == 2 and reads["failed"] == 0  # 2 artifacts + 1 ko-evi
+    assert body["meta"]["cost"]["item_reads"] == 3
+    # Other link kinds are unchanged.
+    assert rows[POOL]["route_href"] == f"/management/personas/{PERSONA}"
+    assert rows[KO]["route_href"] == f"/management/evidence/{EVI}"
+    assert rows[SHARED_MEM]["route_href"] is None and rows["note-111"]["route_href"] is None
+
+
+def test_strategy_id_is_read_from_the_owner_never_derived_from_the_id(store, owners, monkeypatch):
+    # The Registry records a strategy id that no text rule could derive from the artifact id.
+    owners["registry"][ART_B] = registry_entry_view(ART_B, "strategy-carry-basket-0042")
+    monkeypatch.setattr(store, "get_strategy_labels", lambda: {
+        STRATEGY_B: {"title": "Derived (wrong)"}, "strategy-carry-basket-0042": {"title": "Carry Basket Recorded"},
+    })
+    rows = _rows(_cited(store, page_size=100))
+    assert rows[ART_B]["label"] == "Carry Basket Recorded"
+    assert rows[ART_B]["label_parts"]["strategy_id"] == "strategy-carry-basket-0042"
+
+
+def test_failed_artifact_read_keeps_row_unnamed_and_counted(store, owners):
+    owners["registry_fail"] = {ART_B}
+    body = _cited(store, page_size=100)
+    rows = _rows(body)
+    # The directory could name STRATEGY_B, but without the owner answer nothing is guessed.
+    for ref in (ART_B, BOOK_B):
+        assert rows[ref]["label"] == ref and rows[ref]["name_missing"] is True
+        assert rows[ref]["label_parts"] == {"artifact_id": ART_B, "strategy_id": None}
+        assert rows[ref]["route_href"] == f"/management/artifacts/{ART_B}"
+    reads = body["meta"]["item_reads"]
+    assert reads["attempted"] == 3 and reads["failed"] == 1 and reads["resolved"] == 1
+    assert body["meta"]["surfaces"]["cited_evidence"]["status"] == "ok"  # the list itself is complete
+
+
+def test_slow_artifact_read_is_abandoned_at_the_read_deadline(store, owners, monkeypatch):
+    gate = threading.Event()
+    owners["registry_block"] = gate
+    real_budget = cited_evidence.remaining_management_read_budget
+
+    def budget(deadline=None, *, reserve_seconds=0.0):
+        # Only the visible-page read wait is shortened; source reads keep the real budget.
+        return 0.2 if reserve_seconds == 0.05 else real_budget(deadline, reserve_seconds=reserve_seconds)
+
+    monkeypatch.setattr(cited_evidence, "remaining_management_read_budget", budget)
+    try:
+        body = _cited(store, page_size=100)
+    finally:
+        gate.set()
+    rows = _rows(body)
+    assert rows[ART_B]["label"] == ART_B and rows[ART_B]["name_missing"] is True
+    assert rows[ART_B]["label_parts"]["strategy_id"] is None
+    assert body["meta"]["item_reads"]["failed"] >= 2  # both blocked Registry reads
+
+
+def test_artifact_of_another_tenant_is_never_used(store, owners):
+    owners["registry"][ART_B] = registry_entry_view(ART_B, STRATEGY_B, owner_tenant="tenant-b")
+    body = _cited(store, page_size=100)
+    row = _rows(body)[ART_B]
+    assert row["label"] == ART_B and row["name_missing"] is True and row["label_parts"]["strategy_id"] is None
+    assert body["meta"]["item_reads"]["failed"] == 1
+
+
+def test_artifact_read_carries_caller_tenant(store, owners):
+    _cited(store, headers={**ADMIN, "X-Tenant-Id": TENANT}, page_size=100)
+    assert owners["registry_tenants"] and set(owners["registry_tenants"]) == {TENANT}
+
+
+def test_artifact_reads_share_the_item_read_cap(store, owners):
+    arts = [f"artifact-persona-paper-{i:020x}" for i in range(30)]
+    owners["registry"].update({a: registry_entry_view(a, STRATEGY_B) for a in arts})
+    owners["meetings"] = [meeting_detail(citations=arts)]
+    body = _cited(store, page_size=100)
+    assert len(owners["registry_reads"]) == cited_evidence.MAX_ITEM_READS
+    assert len(owners["registry_reads"]) == len(set(owners["registry_reads"]))
+    assert body["meta"]["item_reads"]["truncated"] is True
+    assert body["meta"]["item_reads"]["attempted"] == cited_evidence.MAX_ITEM_READS
+    unread = [r for r in body["data"]["items"]
+              if r["ref_kind"] == "registry_artifact" and r["ref_id"] not in owners["registry_reads"]]
+    assert unread and all(r["name_missing"] is True and r["label"] == r["ref_id"] for r in unread)
+
+
+def test_approval_targeting_an_artifact_carries_its_strategy_name(store, owners):
+    owners["approvals"].extend([{
+        "decision_id": "apr-art", "tenant_id": TENANT, "decision_type": "StrategyArtifactPromotion",
+        "target_id": ART_B, "decided_at": "2026-11-25T14:00:00Z",
+        "evidence_refs": [{"ref_type": "registry_entry", "ref_id": ART_B}],
+    }, {
+        "decision_id": "apr-unknown", "tenant_id": TENANT, "decision_type": "StrategyArtifactPromotion",
+        "target_id": ART_A, "decided_at": "2026-11-25T14:00:00Z",
+        "evidence_refs": [{"ref_type": "registry_entry", "ref_id": ART_A}],
+    }])
+    rows = _rows(_cited(store, page_size=100))
+    apr = next(c for c in rows[ART_B]["cited_by"] if c["entity_ref"] == "apr-art")
+    assert apr["label"] is None  # contract: the recorded decision has no title
+    assert apr["parts"] == {"decision_type": "StrategyArtifactPromotion", "target_id": ART_B,
+                            "target_display_name": "Carry Basket B"}
+    # Unanswered artifact target and non-artifact target: no name added.
+    unknown = next(c for c in rows[ART_A]["cited_by"] if c["entity_ref"] == "apr-unknown")
+    assert "target_display_name" not in unknown["parts"]
+    persona_target = next(c for c in rows[ART_B]["cited_by"] if c["entity_ref"] == "apr-1")
+    assert "target_display_name" not in persona_target["parts"]
+    # Still one Registry read per distinct artifact.
+    assert sorted(owners["registry_reads"]) == sorted([ART_A, ART_B])

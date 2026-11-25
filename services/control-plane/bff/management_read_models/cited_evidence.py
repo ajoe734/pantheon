@@ -34,7 +34,11 @@ is withheld and counted unless the recorded case-file item it cites proves the
 shared ``persona_and_committee`` scope.
 
 Labels are recorded titles or display names only; the BFF composes no
-sentences. ``cited_by[].parts`` carries the structured pieces (meeting name,
+sentences. A registry artifact or member virtual book is named after the
+strategy that the Registry owner records for that artifact (one bounded owner
+read per distinct artifact id on the visible page) and links to
+``/management/artifacts/{artifact}``; an artifact id is never used as a
+strategy id or under ``/management/strategies/``. ``cited_by[].parts`` carries the structured pieces (meeting name,
 round, position, kind, persona) for the frontend to translate. Routes point
 only at management pages that exist (frontend ``src/App.tsx``); anything else
 is ``null``.
@@ -352,8 +356,9 @@ def _meeting_time(meeting: Mapping[str, Any]) -> Optional[str]:
 
 
 # Management pages that exist (frontend src/App.tsx, checked 2026-11-25):
-# meetings/:id, personas/:id, strategies/:id, evidence/:id, approvals,
-# evolution-journal. No page renders one memory entry, research note,
+# meetings/:id, personas/:id, artifacts/:id, evidence/:id, approvals,
+# evolution-journal. strategies/:id takes a strategy id; an artifact id there
+# answers 404 (hosted 2026-11-25), so artifacts link to artifacts/:id. No page renders one memory entry, research note,
 # committee memo or research ticket, so those links are null.
 _APPROVALS_PAGE = "/management/approvals"
 _EVOLUTION_JOURNAL_PAGE = "/management/evolution-journal"
@@ -367,8 +372,8 @@ def _persona_href(persona_id: str) -> Optional[str]:
     return f"/management/personas/{quote(persona_id, safe='')}" if persona_id else None
 
 
-def _strategy_href(strategy_id: str) -> Optional[str]:
-    return f"/management/strategies/{quote(strategy_id, safe='')}" if strategy_id else None
+def _artifact_href(artifact_id: str) -> Optional[str]:
+    return f"/management/artifacts/{quote(artifact_id, safe='')}" if artifact_id else None
 
 
 def _evidence_href(ref_id: str) -> Optional[str]:
@@ -824,11 +829,14 @@ def _ko_evidence_candidate(ko_id: str) -> Optional[str]:
     return candidate
 
 
+_ARTIFACT_KINDS = frozenset({"registry_artifact", "member_virtual_book"})
+
+
 def _route_for(parsed: ParsedRef, evidence_ref_id: Optional[str]) -> Optional[str]:
     """A route only when a management page shows this reference; otherwise ``None``."""
     k, sid = parsed.ref_kind, parsed.source_id
-    if k in {"registry_artifact", "member_virtual_book"}:
-        return _strategy_href(sid)
+    if k in _ARTIFACT_KINDS:
+        return _artifact_href(sid)
     if k == "strategy_pool":
         return _persona_href(sid.split("@", 1)[0])
     if evidence_ref_id:
@@ -849,20 +857,29 @@ _SOURCE_CLASS = {
 }
 
 
-def _name_for(parsed: ParsedRef, names: Any) -> Tuple[Optional[str], bool, Dict[str, Any]]:
-    """Display name only (no composed sentence) plus structured parts."""
+def _name_for(
+    parsed: ParsedRef, names: Any, artifact_strategy: Optional[str] = None
+) -> Tuple[Optional[str], bool, Dict[str, Any]]:
+    """Display name only (no composed sentence) plus structured parts.
+
+    An artifact is named by ``artifact_strategy``: the strategy id that the
+    Registry owner records for it. Without that owner answer the row has no
+    strategy id and no name (the id text is never parsed into a strategy id).
+    """
     k, sid = parsed.ref_kind, parsed.source_id
     parts: Dict[str, Any] = {}
     if k == "strategy_pool":
         persona, _, version = sid.partition("@")
         parts = {"persona_id": persona, "pool_version": version or None}
-    elif k in {"registry_artifact", "member_virtual_book"}:
-        parts = {"strategy_id": sid}
+    elif k in _ARTIFACT_KINDS:
+        parts = {"artifact_id": sid, "strategy_id": artifact_strategy or None}
     if names is None:
         return None, True, parts
     try:
-        if k in {"registry_artifact", "member_virtual_book"}:
-            n, missing = names.strategy(sid)
+        if k in _ARTIFACT_KINDS:
+            if not artifact_strategy:
+                return None, True, parts
+            n, missing = names.strategy(artifact_strategy)
             return (None, True, parts) if missing else (n, False, parts)
         if k == "strategy_pool":
             n, missing = names.persona(parts["persona_id"])
@@ -875,11 +892,54 @@ def _name_for(parsed: ParsedRef, names: Any) -> Tuple[Optional[str], bool, Dict[
     return None, True, parts
 
 
+# Registry entries visible to every tenant (services/registry/models.py BUILTIN_TENANT).
+_REGISTRY_BUILTIN_TENANT = "__builtin__"
+
+
+def _artifact_strategy(res: Any, artifact_id: str, tenant_id: str) -> Tuple[Optional[str], bool]:
+    """``(strategy_id, failed)`` from one Registry artifact detail read.
+
+    The owner port answers ``(detail, status)``; ``status`` other than ``ok``
+    is a failed read. The strategy id is the recorded ``strategy_id`` field of
+    that artifact only. The read runs with the caller's token and tenant
+    header (the Registry owner scopes it); a detail whose ``tenant_id`` or
+    ``owner_tenant`` is another tenant, or that names another artifact, is
+    treated as failed and never used.
+    """
+    detail, status = (res if isinstance(res, tuple) and len(res) == 2 else (res, "ok"))
+    if str(status or "ok") != "ok":
+        return None, True
+    if detail is None:
+        return None, False  # the owner has no such artifact
+    if not isinstance(detail, Mapping) or _other_tenant(detail, tenant_id):
+        return None, True
+    owner_tenant = str(detail.get("owner_tenant") or "").strip()
+    if owner_tenant and tenant_id and owner_tenant not in (tenant_id, _REGISTRY_BUILTIN_TENANT):
+        return None, True
+    answered = {str(detail.get(k) or "").strip() for k in ("artifact_id", "registry_id", "id")} - {""}
+    if answered and artifact_id not in answered:
+        return None, True
+    strategy_id = str(detail.get("strategy_id") or "").strip()
+    return (strategy_id or None), False
+
+
+def _with_target_name(citation: Dict[str, Any], artifact_names: Mapping[str, str]) -> Dict[str, Any]:
+    """Add ``parts.target_display_name`` to an approval whose target artifact was read."""
+    parts = citation.get("parts")
+    if citation.get("entity_type") != "approval" or not isinstance(parts, Mapping):
+        return citation
+    name = artifact_names.get(str(parts.get("target_id") or ""))
+    if not name:
+        return citation
+    return {**citation, "parts": {**parts, "target_display_name": name}}
+
+
 def compose_cited_evidence(
     ctx: CitedReadContext,
     *,
     readers: Optional[Mapping[str, SourceReader]] = None,
     item_reader: Optional[Callable[[str], Any]] = None,
+    artifact_reader: Optional[Callable[[str], Any]] = None,
     names: Any = None,
     redact: Optional[Callable[[List[Dict[str, Any]]], Tuple[List[Any], int]]] = None,
     page_token: Optional[str] = None,
@@ -973,50 +1033,81 @@ def compose_cited_evidence(
 
     page_rows, next_token = _page_slice(ordered, page_token, page_size) if ordered else ([], None)
 
-    # Bounded item reads for the visible page only.
+    # Bounded owner reads for the visible page only: ko-evi / evidence item
+    # reads and one Registry artifact read per distinct artifact id, sharing
+    # one MAX_ITEM_READS budget, one executor and the request read deadline.
     item_reads = {"attempted": 0, "resolved": 0, "failed": 0, "truncated": False}
     resolved_items: Dict[str, Any] = {}
-    if item_reader is not None:
-        wanted: List[Tuple[str, str]] = []
-        for r in page_rows:
-            p: ParsedRef = r["_parsed"]
-            if r.get("_redacted"):
-                continue
-            target = None
-            if p.ref_kind == "knowledge_object":
-                target = _ko_evidence_candidate(p.source_id)
-            elif p.ref_kind == "evidence_item":
-                target = p.source_id
-            if target:
-                wanted.append((p.ref_id, target))
-        if len(wanted) > MAX_ITEM_READS:
-            item_reads["truncated"] = True
-            wanted = wanted[:MAX_ITEM_READS]
-        futs = {rid: submit_owner_read(_ITEM_READ_EXECUTOR, (lambda t=target: item_reader(t))) for rid, target in wanted}
-        targets = dict(wanted)
-        if futs:
-            futures_wait(list(futs.values()), timeout=remaining_management_read_budget(None, reserve_seconds=0.05))
-        for rid, fut in futs.items():
-            item_reads["attempted"] += 1
-            if not fut.done():
-                fut.cancel()
+    artifact_strategies: Dict[str, str] = {}
+    wanted: List[Tuple[str, str, str]] = []  # (kind, key, target)
+    seen_artifacts: set = set()
+    for r in page_rows:
+        p: ParsedRef = r["_parsed"]
+        if r.get("_redacted"):
+            continue
+        if p.ref_kind in _ARTIFACT_KINDS:
+            if artifact_reader is not None and p.source_id and p.source_id not in seen_artifacts:
+                seen_artifacts.add(p.source_id)
+                wanted.append(("artifact", p.source_id, p.source_id))
+            continue
+        if item_reader is None:
+            continue
+        target = None
+        if p.ref_kind == "knowledge_object":
+            target = _ko_evidence_candidate(p.source_id)
+        elif p.ref_kind == "evidence_item":
+            target = p.source_id
+        if target:
+            wanted.append(("item", p.ref_id, target))
+    if len(wanted) > MAX_ITEM_READS:
+        item_reads["truncated"] = True
+        wanted = wanted[:MAX_ITEM_READS]
+    futs = []
+    for kind, key, target in wanted:
+        reader = artifact_reader if kind == "artifact" else item_reader
+        futs.append((kind, key, target, submit_owner_read(_ITEM_READ_EXECUTOR, (lambda f=reader, t=target: f(t)))))
+    if futs:
+        futures_wait([f for *_, f in futs], timeout=remaining_management_read_budget(None, reserve_seconds=0.05))
+    for kind, key, target, fut in futs:
+        item_reads["attempted"] += 1
+        if not fut.done():
+            fut.cancel()
+            item_reads["failed"] += 1
+            continue
+        try:
+            res = fut.result()
+        except Exception:  # noqa: BLE001
+            item_reads["failed"] += 1
+            continue
+        if kind == "artifact":
+            strategy_id, failed = _artifact_strategy(res, target, ctx.tenant_id)
+            if failed:
                 item_reads["failed"] += 1
-                continue
-            try:
-                res = fut.result()
-            except Exception:  # noqa: BLE001
-                item_reads["failed"] += 1
-                continue
-            items = list(getattr(res, "items", None) or []) if not isinstance(res, Mapping) else [res]
-            avail = getattr(res, "available", True)
-            if not avail:
-                item_reads["failed"] += 1
-                continue
-            match = next((i for i in items if isinstance(i, Mapping)
-                          and str(i.get("ref_id") or i.get("id") or "") == targets[rid]), None)
-            if match is not None:
+            elif strategy_id:
                 item_reads["resolved"] += 1
-                resolved_items[rid] = match
+                artifact_strategies[target] = strategy_id
+            continue
+        items = list(getattr(res, "items", None) or []) if not isinstance(res, Mapping) else [res]
+        avail = getattr(res, "available", True)
+        if not avail:
+            item_reads["failed"] += 1
+            continue
+        match = next((i for i in items if isinstance(i, Mapping)
+                      and str(i.get("ref_id") or i.get("id") or "") == target), None)
+        if match is not None:
+            item_reads["resolved"] += 1
+            resolved_items[key] = match
+
+    # Approvals whose target is an artifact answered above carry its strategy name.
+    artifact_names: Dict[str, str] = {}
+    if names is not None:
+        for aid, strategy_id in artifact_strategies.items():
+            try:
+                n, missing = names.strategy(strategy_id)
+            except Exception:  # noqa: BLE001
+                continue
+            if not missing and n:
+                artifact_names[aid] = n
 
     public: List[Dict[str, Any]] = []
     for r in page_rows:
@@ -1032,7 +1123,9 @@ def compose_cited_evidence(
             })
             continue
         ev = resolved_items.get(p.ref_id)
-        label, missing, label_parts = _name_for(p, names)
+        label, missing, label_parts = _name_for(
+            p, names, artifact_strategies.get(p.source_id) if p.ref_kind in _ARTIFACT_KINDS else None
+        )
         source_class = _SOURCE_CLASS.get(p.ref_kind, p.ref_kind)
         evidence_ref_id = None
         if ev is not None:
@@ -1052,7 +1145,8 @@ def compose_cited_evidence(
             "label": label if not missing else p.ref_id, "name_missing": bool(missing),
             "label_parts": label_parts, "source_class": source_class,
             "resolved_link": {"route_href": href, "evidence_ref_id": evidence_ref_id} if href else None,
-            "route_href": href, "cited_as": list(r["cited_as"]), "cited_by": list(r["cited_by"]),
+            "route_href": href, "cited_as": list(r["cited_as"]),
+            "cited_by": [_with_target_name(c, artifact_names) for c in r["cited_by"]],
             "citation_count": len(r["cited_by"]), "last_cited_at": r["_latest"] or None, "redacted": False,
         }
         public.append(row)
