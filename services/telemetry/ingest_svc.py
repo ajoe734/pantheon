@@ -842,7 +842,8 @@ def build_postgres_write_fn(
     followed by an equality check against the committed immutable row:
 
     * exact duplicates are successful no-ops;
-    * conflicting duplicates fail the whole batch as non-retryable;
+    * conflicting duplicates are returned in WriteResult.rejected (batch index
+      and reason) and nothing else in the batch is affected;
     * new rows receive database-owned ingested_seq / ingested_at values.
 
     When at least one new row is inserted, pg_notify is invoked inside the
@@ -893,15 +894,15 @@ def build_postgres_write_fn(
     # One statement returns the event_ids of skipped rows that are not exact
     # duplicates of the committed immutable row.
     conflicting_duplicate_sql = (
-        f"SELECT t.event_id "
-        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[]) "
-        f"AS t(event_id, event_type, created_at, payload) "
+        f"SELECT t.event_id, t.ordinality "
+        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[], $5::int[]) "
+        f"AS t(event_id, event_type, created_at, payload, ordinality) "
         f"LEFT JOIN {table} e ON e.event_id = t.event_id "
         f"WHERE e.event_id IS NULL "
         f"OR e.event_type IS DISTINCT FROM t.event_type "
         f"OR e.created_at IS DISTINCT FROM t.created_at "
         f"OR e.payload IS DISTINCT FROM t.payload::jsonb "
-        f"LIMIT 1"
+        f"ORDER BY t.ordinality"
     )
 
     async def _postgres_write(batch: list[dict[str, Any]]) -> WriteResult:
@@ -922,6 +923,7 @@ def build_postgres_write_fn(
                     for ev in batch
                 ]
                 inserted_sequences: list[int] = []
+                rejected: list[tuple[int, str]] = []
                 if not rows:
                     return WriteResult.ok(0)
                 insert_stmt = await conn.prepare(insert_sql)
@@ -942,19 +944,27 @@ def build_postgres_write_fn(
                     # any later in-batch copy is a skipped duplicate to verify.
                     pending_ids = {r["event_id"] for r in inserted_rows}
                     skipped = []
-                    for row in rows:
+                    skipped_index: list[int] = []
+                    for index, row in enumerate(rows):
                         if row[0] in pending_ids:
                             pending_ids.discard(row[0])
                         else:
                             skipped.append(row)
+                            skipped_index.append(index)
                     if skipped:
-                        conflict = await conn.fetchval(
+                        # Conflicting duplicates are isolated, not fatal: the
+                        # rows inserted above stay in this transaction.
+                        conflicts = await conn.fetch(
                             conflicting_duplicate_sql,
                             *(list(column) for column in zip(*skipped)),
+                            list(range(len(skipped))),
                         )
-                        if conflict is not None:
-                            raise ConflictingTelemetryEventError(
-                                f"conflicting duplicate event_id={conflict}"
+                        for conflict in conflicts:
+                            rejected.append(
+                                (
+                                    skipped_index[int(conflict["ordinality"])],
+                                    f"conflicting duplicate event_id={conflict['event_id']}",
+                                )
                             )
 
                     if inserted_sequences:
@@ -976,7 +986,7 @@ def build_postgres_write_fn(
                         )
             finally:
                 await conn.close()
-            return WriteResult.ok(len(inserted_sequences))
+            return WriteResult.ok(len(inserted_sequences), rejected=rejected)
         except ConflictingTelemetryEventError as exc:
             return WriteResult.fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
@@ -2763,6 +2773,27 @@ class TelemetryIngestService:
             deduplicated.append(event)
         return deduplicated
 
+    def _replay_candidates(self, tag: str) -> list[dict[str, Any]]:
+        """Events of one tag, minus the conflicting rows themselves.
+
+        An entry whose reason says ``conflicting duplicate event_id=X`` is a
+        conflict only when X is its own event_id; other events dead-lettered
+        with the same reason (the old whole-batch behaviour) are replayed.
+        """
+        events: list[dict[str, Any]] = []
+        for entry in self._dlq.get_entries(tag_filter=tag, limit=10_000):
+            event = entry.event
+            if not isinstance(event, dict):
+                continue
+            marker = "conflicting duplicate event_id="
+            reason = entry.reason or ""
+            if marker in reason:
+                conflict_id = reason.split(marker, 1)[1].strip()
+                if conflict_id and conflict_id == str(event.get("event_id")):
+                    continue
+            events.append(event)
+        return events
+
     async def replay_dlq(
         self,
         tag_filter: Optional[str] = None,
@@ -2805,7 +2836,7 @@ class TelemetryIngestService:
         """
         if tag_filter is not None:
             events = self._deduplicate_replay_events(
-                self._dlq.replay_entries(tag_filter=tag_filter)
+                self._replay_candidates(tag_filter)
             )
         else:
             # Collect write-failure entries only.

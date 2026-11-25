@@ -43,17 +43,28 @@ log = logging.getLogger(__name__)
 
 class WriteResult:
     """Result of a batch write operation."""
-    __slots__ = ("success", "count", "error", "retryable")
+    __slots__ = ("success", "count", "error", "retryable", "rejected")
 
-    def __init__(self, success: bool, count: int = 0, error: Optional[str] = None, retryable: bool = True):
+    def __init__(
+        self,
+        success: bool,
+        count: int = 0,
+        error: Optional[str] = None,
+        retryable: bool = True,
+        rejected: Optional[list[tuple[int, str]]] = None,
+    ):
         self.success = success
         self.count = count
         self.error = error
         self.retryable = retryable
+        # (index into the written batch, reason) of events the store refused
+        # individually (conflicting duplicates). The rest of the batch is
+        # committed; only these are dead-lettered.
+        self.rejected = rejected or []
 
     @classmethod
-    def ok(cls, count: int) -> "WriteResult":
-        return cls(success=True, count=count)
+    def ok(cls, count: int, rejected: Optional[list[tuple[int, str]]] = None) -> "WriteResult":
+        return cls(success=True, count=count, rejected=rejected)
 
     @classmethod
     def fail(cls, error: str, retryable: bool = True) -> "WriteResult":
@@ -340,10 +351,17 @@ class AsyncBatchWriter:
                     # Durable broker receipt remains pending until canonical
                     # write succeeds. Settle the broker receipts; if the broker
                     # ACK fails, retry with exponential backoff.
+                    rejected_idx = {
+                        i: reason for i, reason in result.rejected if 0 <= i < len(batch)
+                    }
+                    if rejected_idx:
+                        await self._dead_letter_rejected(batch, rejected_idx, attempt + 1)
+                    to_ack = [e for i, e in enumerate(batch) if i not in rejected_idx]
                     ack_delay = self._base_retry_delay
                     for ack_attempt in range(self._max_retries + 1):
                         try:
-                            await self._buffer.ack(batch)
+                            if to_ack:
+                                await self._buffer.ack(to_ack)
                             self._last_error = None
                             return
                         except Exception as ack_err:
@@ -441,6 +459,31 @@ class AsyncBatchWriter:
                         f"Batch write permanently failed after {self._max_retries} retries: {e}"
                     )
                     return
+
+    async def _dead_letter_rejected(
+        self,
+        batch: list[dict[str, Any]],
+        rejected: dict[int, str],
+        attempt_count: int,
+    ) -> None:
+        """Dead-letter only the events the store refused; the rest committed.
+
+        If a dead-letter write is not durable the receipt of that event is
+        released (redelivery is idempotent: committed events are exact
+        duplicates, the conflicting one conflicts again) instead of acked.
+        """
+        for index in sorted(rejected):
+            event = batch[index]
+            durable = self._dlq.reject(
+                event=event,
+                tags=[TAG_POISON_EVENT],
+                reason=f"Non-retryable write failure: {rejected[index]}",
+                original_attempt_count=attempt_count,
+            )
+            self._mark_dlq_write()
+            self._total_dlq += 1
+            self._total_failed += 1
+            await self._finalize_dead_lettered_batch([event], durable)
 
     async def _finalize_dead_lettered_batch(
         self,
