@@ -742,7 +742,8 @@ jobs:
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/control_plane \
-            services/control-plane/bff/pm12/test_holdings_serving_binding.py
+            services/control-plane/bff/pm12/test_holdings_serving_binding.py \
+            services/control-plane/bff/test_persona_provisioning_route_security.py
 
       - name: Run promotion service tests
         if: ${{ !cancelled() }}
