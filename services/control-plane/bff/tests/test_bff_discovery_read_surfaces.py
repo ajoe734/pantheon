@@ -91,10 +91,12 @@ def real_template_list() -> Dict[str, Any]:
 
 
 def test_alpha_factory_returns_templates_with_evaluation_metrics(monkeypatch, real_template_list) -> None:
+    base = af._owner_router(af._hosted_owner_entries(), gate_all_completed=True)
+
     def fake_get(url, **kw):
         if url.endswith("/alpha-templates/evaluations"):
             return 200, real_template_list
-        return 200, af._hosted_owner_entries()
+        return base(url, **kw)
 
     client = af._make_bff_client(monkeypatch, http_get=fake_get)
     resp = client.get("/bff/alpha-factory", headers=af._auth_headers("tenant-dev"))
@@ -109,10 +111,12 @@ def test_alpha_factory_returns_templates_with_evaluation_metrics(monkeypatch, re
 
 
 def test_alpha_factory_template_failure_degrades_without_dropping_cards(monkeypatch) -> None:
+    base = af._owner_router(af._hosted_owner_entries(), gate_all_completed=True)
+
     def fake_get(url, **kw):
         if url.endswith("/alpha-templates/evaluations"):
             return 503, None
-        return 200, af._hosted_owner_entries()
+        return base(url, **kw)
 
     client = af._make_bff_client(monkeypatch, http_get=fake_get)
     body = client.get("/bff/alpha-factory", headers=af._auth_headers("tenant-dev")).json()
@@ -133,12 +137,9 @@ def test_alpha_factory_card_passes_through_in_and_out_of_sample_metrics(monkeypa
         "trial_count": 5,
     }
 
-    def fake_get(url, **kw):
-        if url.endswith("/alpha-templates/evaluations"):
-            return 200, {"count": 0, "items": []}
-        return 200, entries
-
-    client = af._make_bff_client(monkeypatch, http_get=fake_get)
+    client = af._make_bff_client(
+        monkeypatch, http_get=af._owner_router(entries, gate_all_completed=True)
+    )
     body = client.get("/bff/alpha-factory", headers=af._auth_headers("tenant-dev")).json()
     card = next(c for c in body["items"] if c["admission_id"] == entries[0]["admission_id"])
     assert card["metrics"]["in_sample"]["sharpe_ratio"] == 1.4

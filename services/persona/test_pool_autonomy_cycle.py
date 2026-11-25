@@ -738,3 +738,25 @@ def test_bff_publish_principal_is_read_from_file_first_and_fails_closed(tmp_path
         HttpPoolCyclePorts(env=env)._urllib("POST", "bff", "/bff/x", "t1", {})
     with pytest.raises(RuntimeError, match="owner_credential_unconfigured:bff"):
         HttpPoolCyclePorts(env={})._urllib("POST", "bff", "/bff/x", "t1", {})
+
+
+def test_partial_seed_read_is_recorded_as_partial_never_as_no_match(tmp_path):
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+
+    class Seeds(list):
+        partial, pages, stop_reason = True, 20, "page_cap"
+
+    class Module:
+        @staticmethod
+        def discover_for_demand(*a, **k):
+            return {"matches": [], "excluded": [], "reason": "no_candidate_fits_persona", "candidates_considered": 3,
+                    "backfill_datasets": ["ohlcv"]}
+    import importlib
+    real = importlib.import_module
+    ports = HttpPoolCyclePorts(lambda *a, **k: {}, discovery_loader=lambda p: {"seeds": Seeds([{}, {}, {}]), "route_policy": {}, "capability_snapshot": {}},
+                               env={})
+    import unittest.mock as mock
+    with mock.patch("importlib.import_module", lambda n, *a: Module if n.endswith("persona_strategy_discovery") else real(n, *a)):
+        found = ports.discover_for_demand({"persona_id": "p", "tenant_id": "t"}, {"demand_id": "d1"})
+    assert found["partial"] and found["seeds_seen"] == 3 and found["partial_reason"] == "page_cap"
+    assert found["reason"].startswith("partial_seed_read:3_seeds_seen")

@@ -9,7 +9,7 @@ Verifies:
    and keeps missing values as null.
 3. Lanes are discovered, scaffolded, and replicated: completed queue entries land in
    replicated; non-completed or unqueued admissions land in scaffolded; discovered is
-   empty with reason 'no_candidate_source'.
+   empty only when the owners answered with none (BFF-ALPHA-FACTORY-PIPELINE-TRUTH-20261125).
 4. Owner read failure or unconfigured PANTHEON_RESEARCH_ORCHESTRATOR_API_URL returns
    meta.surfaces.alpha_factory.status == 'unavailable' with items == []; a healthy owner
    with no records returns status == 'ok' with empty lanes.
@@ -214,6 +214,58 @@ def _hosted_owner_entries() -> List[Dict[str, Any]]:
     ]
 
 
+def _gate_run(run_id: str, *, passed: bool = True, tenant: str = "tenant-dev") -> Dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "tenant_id": tenant,
+        "status": "completed",
+        "metadata": {"replication_gate": {"passed": passed, "status": "passed" if passed else "failed"}},
+    }
+
+
+def _owner_router(
+    entries: List[Dict[str, Any]],
+    *,
+    runs: Optional[List[Dict[str, Any]]] = None,
+    demands: Optional[List[Dict[str, Any]]] = None,
+    seeds: Optional[List[Dict[str, Any]]] = None,
+    records: Optional[List[Dict[str, Any]]] = None,
+    templates: Optional[List[Dict[str, Any]]] = None,
+    fail: Tuple[str, ...] = (),
+    gate_all_completed: bool = False,
+    calls: Optional[List[str]] = None,
+):
+    """Owner answers keyed by route; ``gate_all_completed`` gives every completed entry a passed gate run."""
+    eff_runs = list(runs or [])
+    if gate_all_completed:
+        for entry in entries:
+            if entry.get("queue_status") == "completed":
+                for rid in entry.get("experiment_run_ids") or []:
+                    eff_runs.append(_gate_run(rid, tenant=entry.get("tenant_id") or "tenant-dev"))
+
+    def fake(url: str, **_kw: Any) -> Tuple[int, Any]:
+        if calls is not None:
+            calls.append(url)
+        for marker in fail:
+            if marker in url:
+                return 503, None
+        if "/alpha-replication/entries" in url:
+            return 200, entries
+        if "/alpha-templates/evaluations" in url:
+            return 200, {"items": templates or []}
+        if "/persona-demands" in url:
+            return 200, {"demands": demands or [], "count": len(demands or [])}
+        if "/research-orchestrator/runs" in url:
+            return 200, eff_runs
+        if "/strategy-seeds" in url:
+            return 200, {"items": seeds or [], "count": len(seeds or [])}
+        if "/source-records" in url:
+            return 200, {"source_records": records or []}
+        return 404, None
+
+    return fake
+
+
 def _make_bff_client(
     monkeypatch,
     *,
@@ -241,30 +293,20 @@ def _make_bff_client(
 
 
 def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypatch) -> None:
-    observed_calls: List[Tuple[str, Optional[str], Optional[str]]] = []
-
-    def fake_http_get(
-        url: str,
-        *,
-        auth_header: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-    ) -> Tuple[int, Any]:
-        observed_calls.append((url, auth_header, tenant_id))
-        if url.endswith("/alpha-templates/evaluations"):
-            return 200, {"count": 0, "items": []}
-        return 200, _hosted_owner_entries()
-
-    client = _make_bff_client(monkeypatch, http_get=fake_http_get)
+    calls: List[str] = []
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=_owner_router(_hosted_owner_entries(), gate_all_completed=True, calls=calls),
+    )
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
-    # entries read + templates evaluation read (BFF-DISCOVERY-READ-SURFACES)
-    assert len(observed_calls) == 2
-    observed_calls = observed_calls[:1]
-    assert observed_calls[0][0] == (
+    # entries, templates, demands and runs: four owner reads; never source-records or strategy-seeds
+    assert len(calls) == 4
+    assert not any("/source-records" in c or "/strategy-seeds" in c for c in calls)
+    assert calls[0] == (
         "http://research-orchestrator.local/api/research-orchestrator/alpha-replication/entries"
     )
-    assert observed_calls[0][1] and observed_calls[0][1].startswith("Bearer ")
-    assert observed_calls[0][2] == "tenant-dev"
 
     payload = resp.json()
     assert payload["meta"]["snapshot_at"] == FIXED_NOW
@@ -275,13 +317,13 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
 
     data = payload["data"]
     assert data["id"] == "alpha-factory"
-    assert data["reason"] == "no_candidate_source"
-    assert data["discovered_reason"] == "no_candidate_source"
+    assert "reason" not in data and "discovered_reason" not in data
     assert data["discovered"] == []
+    assert data["document_checked"] == []
 
     lanes = {lane["id"]: lane for lane in data["lanes"]}
     assert list(lanes.keys()) == ["discovered", "scaffolded", "replicated"]
-    assert lanes["discovered"]["reason"] == "no_candidate_source"
+    assert "reason" not in lanes["discovered"]
     assert lanes["discovered"]["items"] == []
 
     replicated_cards = lanes["replicated"]["items"]
@@ -331,7 +373,7 @@ def test_alpha_factory_builds_cards_from_owner_route_with_hosted_shapes(monkeypa
 def test_alpha_factory_lane_filter_is_honoured(monkeypatch) -> None:
     client = _make_bff_client(
         monkeypatch,
-        http_get=lambda url, **kw: (200, _hosted_owner_entries()),
+        http_get=_owner_router(_hosted_owner_entries(), gate_all_completed=True),
     )
 
     rep_resp = client.get("/bff/alpha-factory?lane=replicated", headers=_auth_headers("tenant-dev"))
@@ -352,7 +394,7 @@ def test_alpha_factory_lane_filter_is_honoured(monkeypatch) -> None:
     assert disc_resp.status_code == 200
     disc_body = disc_resp.json()
     assert disc_body["items"] == []
-    assert disc_body["data"]["reason"] == "no_candidate_source"
+    assert "reason" not in disc_body["data"]
 
 
 def test_alpha_factory_unconfigured_url_returns_unavailable_envelope(monkeypatch) -> None:
@@ -387,7 +429,7 @@ def test_alpha_factory_owner_http_failure_returns_unavailable_envelope(monkeypat
 def test_alpha_factory_healthy_empty_owner_returns_ok_with_empty_lanes(monkeypatch) -> None:
     client = _make_bff_client(
         monkeypatch,
-        http_get=lambda url, **kw: (200, []),
+        http_get=_owner_router([]),
     )
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert resp.status_code == 200
@@ -397,7 +439,7 @@ def test_alpha_factory_healthy_empty_owner_returns_ok_with_empty_lanes(monkeypat
     assert payload["data"]["discovered"] == []
     assert payload["data"]["scaffolded"] == []
     assert payload["data"]["replicated"] == []
-    assert payload["data"]["reason"] == "no_candidate_source"
+    assert "reason" not in payload["data"]
     surface = payload["meta"]["surfaces"]["alpha_factory"]
     assert surface == {"status": "ok", "source": "research_orchestrator"}
 
@@ -559,8 +601,10 @@ def test_alpha_factory_two_tenant_isolation_across_owner_and_bff_with_real_auth(
     bff_dev = bff_client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
     assert bff_dev.status_code == 200
     bff_dev_body = bff_dev.json()
-    assert [c["strategy_spec_id"] for c in bff_dev_body["items"]] == [HOSTED_TW_OFFICIAL_SPEC_ID]
-    assert [c["id"] for c in bff_dev_body["data"]["replicated"]] == ["adm-5dc7be51a48996e4"]
+    assert [c["strategy_spec_id"] for c in bff_dev_body["data"]["document_checked"]] == [HOSTED_TW_OFFICIAL_SPEC_ID]
+    # the owner records no passing gate run for this admission: a document check, not a pass
+    assert bff_dev_body["data"]["replicated"] == []
+    assert [c["id"] for c in bff_dev_body["data"]["document_checked"]] == ["adm-5dc7be51a48996e4"]
     assert bff_dev_body["data"]["scaffolded"] == []
 
     bff_other = bff_client.get("/bff/alpha-factory", headers=_auth_headers("tenant-other"))
@@ -675,7 +719,9 @@ def test_alpha_factory_cards_carry_failure_replay_facts_and_strategy_state(monke
     entries[1]["attempt_count"] = 2
 
     client = _make_bff_client(
-        monkeypatch, http_get=lambda url, **kw: (200, entries), read_strategy_state=reader
+        monkeypatch,
+        http_get=_owner_router(entries, gate_all_completed=True),
+        read_strategy_state=reader,
     )
     payload = client.get("/bff/alpha-factory?page_size=100", headers=_auth_headers("tenant-dev")).json()
 
@@ -704,9 +750,7 @@ def test_alpha_factory_cards_carry_failure_replay_facts_and_strategy_state(monke
     lanes = {lane["id"]: lane for lane in payload["data"]["lanes"]}
     assert len(lanes["replicated"]["items"]) == 5
     assert lanes["scaffolded"]["items"] == []
-    assert lanes["discovered"] == {
-        "id": "discovered", "label": "Discovered", "reason": "no_candidate_source", "items": [],
-    }
+    assert lanes["discovered"] == {"id": "discovered", "label": "Discovered", "items": []}
 
 
 def test_alpha_factory_failed_strategy_state_read_keeps_cards_and_marks_surface(monkeypatch) -> None:
@@ -719,7 +763,7 @@ def test_alpha_factory_failed_strategy_state_read_keeps_cards_and_marks_surface(
 
     client = _make_bff_client(
         monkeypatch,
-        http_get=lambda url, **kw: (200, _hosted_four_entries()),
+        http_get=_owner_router(_hosted_four_entries(), gate_all_completed=True),
         read_strategy_state=reader,
     )
     resp = client.get("/bff/alpha-factory", headers=_auth_headers("tenant-dev"))
@@ -757,3 +801,283 @@ def test_strategies_service_state_reader_uses_registry_detail_and_degrades() -> 
     assert store.detail_calls == [_H12_A]
     assert svc.get_strategy_registry_state("missing") == (None, "ok")
     assert svc.get_strategy_registry_state("boom") == (None, "unavailable")
+
+
+# --------------------------------------------------------------------------- #
+# BFF-ALPHA-FACTORY-PIPELINE-TRUTH-20261125
+# --------------------------------------------------------------------------- #
+
+
+def _demand(demand_id: str, persona_id: str, **extra: Any) -> Dict[str, Any]:
+    return {
+        "demand_id": demand_id,
+        "tenant_id": "tenant-dev",
+        "persona_id": persona_id,
+        "status": "open",
+        "short_measure": "return_per_risk",
+        "missing_datasets": ["tw_price_daily"],
+        "tried_families": ["momentum"],
+        "created_at": "2026-11-20T01:00:00Z",
+        **extra,
+    }
+
+
+def _search_run(run_id: str, demand_id: str, created_at: str, *, reason: Optional[str], status: str = "failed") -> Dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "tenant_id": "tenant-dev",
+        "status": status,
+        "created_at": created_at,
+        "parameters": {"action_type": "template_search", "demand_id": demand_id, "persona_id": "persona-a"},
+        "rejection": {"detail": reason} if reason else {},
+    }
+
+
+def _get(client: TestClient, path: str = "/bff/alpha-factory?page_size=100") -> Dict[str, Any]:
+    resp = client.get(path, headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_discovered_lane_lists_open_demands_and_hypothesis_cards(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    seeds = [
+        {
+            "seed_id": "seed-1",
+            "source_id": "src-cna-1",
+            "created_at": "2026-11-21T00:00:00Z",
+            "status": "pending_review",
+            "metadata": {
+                "hypothesis_card": {"claim": "Earnings surprise drifts for 60 days", "cited_spans": []},
+            },
+        },
+        {"seed_id": "seed-nocard", "source_id": "src-2", "metadata": {}},
+    ]
+    demands = [_demand("dem-1", "persona-a", discovery={"template_search": {"reason": "mandate_universe_missing: no tickers"}})]
+    demands.append({**_demand("dem-closed", "persona-b"), "status": "closed"})
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=_owner_router([], demands=demands, seeds=seeds),
+        read_strategy_state=None,
+    )
+    body = _get(client)
+    discovered = body["data"]["discovered"]
+    assert [d["id"] for d in discovered] == ["dem-1"]
+    demand = discovered[0]
+    assert demand["kind"] == "research_demand"
+    assert demand["lacking"]["short_measure"] == "return_per_risk"
+    assert demand["lacking"]["missing_datasets"] == ["tw_price_daily"]
+    assert demand["since"] == "2026-11-20T01:00:00Z"
+    assert demand["latest_outcome"]["reason_code"] == "mandate_universe_missing"
+    # no bounded owner read for seeds yet: cards unavailable, never a scan, never 0
+    assert body["data"]["counts"]["hypothesis_cards"] == {
+        "value": None,
+        "status": "unavailable",
+        "reason": "no_bounded_owner_read",
+    }
+    assert body["data"]["counts"]["collected_text_records"]["reason"] == "no_bounded_owner_read"
+    assert body["data"]["counts"]["dropped_irrelevant"]["reason"] == "no_bounded_owner_read"
+
+
+def test_board_never_requests_unbounded_owner_routes(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    calls: List[str] = []
+    client = _make_bff_client(
+        monkeypatch, http_get=_owner_router([], demands=[_demand("dem-1", "persona-a")], calls=calls)
+    )
+    _get(client)
+    from services.control_plane.bff.console_gap import alpha_factory as af
+
+    for url in calls:
+        assert not any(p in url for p in af.FORBIDDEN_UNBOUNDED_PATHS), url
+
+
+def test_run_list_is_capped_and_marks_truncation(monkeypatch) -> None:
+    runs = [
+        {"run_id": f"r{i}", "tenant_id": "tenant-dev", "created_at": f"2026-11-{1 + i % 28:02d}T00:00:00Z"}
+        for i in range(260)
+    ]
+    client = _make_bff_client(monkeypatch, http_get=_owner_router([], runs=runs))
+    body = _get(client)
+    surface = body["meta"]["surfaces"]["alpha_factory_runs"]
+    assert surface["truncated"] is True and surface["runs_seen"] == 260
+
+
+def test_persona_display_name_comes_from_the_persona_directory(monkeypatch) -> None:
+    router = create_alpha_factory_router(
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        utc_now=lambda: FIXED_NOW,
+        http_get=_owner_router([], demands=[_demand("dem-1", "persona-a")]),
+        read_persona_names=lambda tenant, snap: {"persona-a": "Alpha Hunter"} if tenant == "tenant-dev" else {},
+    )
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-orchestrator.local")
+    app = FastAPI(middleware=[Middleware(OwnerReadContextMiddleware)])
+    app.include_router(router)
+    body = _get(TestClient(app))
+    assert body["data"]["discovered"][0]["display_name"] == "Alpha Hunter"
+    assert body["meta"]["surfaces"]["alpha_factory_persona_names"]["status"] == "ok"
+
+
+def test_empty_discovered_lane_means_owners_answered_none(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([])))
+    assert body["data"]["discovered"] == []
+    surfaces = body["meta"]["surfaces"]
+    assert surfaces["alpha_factory_demands"]["status"] == "ok"
+    assert surfaces["alpha_factory_hypothesis_cards"]["reason"] == "no_bounded_owner_read"
+    assert "no_candidate_source" not in json.dumps(body)
+
+
+def test_failed_demand_read_is_unavailable_not_empty(monkeypatch) -> None:
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], fail=("persona-demands",))))
+    assert body["meta"]["surfaces"]["alpha_factory_demands"]["status"] == "unavailable"
+    assert body["meta"]["surfaces"]["alpha_factory_demands"]["reason"] == "owner_read_failed"
+
+
+def test_demand_of_another_tenant_makes_the_demand_read_unavailable(monkeypatch) -> None:
+    other = {**_demand("dem-x", "persona-x"), "tenant_id": "tenant-other"}
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], demands=[other])))
+    assert body["data"]["discovered"] == []
+    assert body["meta"]["surfaces"]["alpha_factory_demands"]["reason"] == "demand_scope_mismatch"
+
+
+def test_scaffolded_lane_lists_template_searches_with_typed_reason(monkeypatch) -> None:
+    runs = [
+        _search_run("r1", "dem-1", "2026-11-22T00:00:00Z", reason="survivorship_limited"),
+        _search_run("r2", "dem-1", "2026-11-23T00:00:00Z", reason="dataset tw_price_daily unavailable"),
+        _search_run("r3", "dem-2", "2026-11-23T00:00:00Z", reason=None, status="completed"),
+        _search_run("r4", "dem-unknown", "2026-11-23T00:00:00Z", reason="below_threshold"),
+        {**_search_run("r5", "dem-1", "2026-11-24T00:00:00Z", reason="below_threshold"), "tenant_id": "tenant-other"},
+    ]
+    demands = [_demand("dem-1", "persona-a"), _demand("dem-2", "persona-b")]
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], runs=runs, demands=demands)))
+    searches = {i["demand_id"]: i for i in body["data"]["scaffolded"] if i["kind"] == "template_search"}
+    assert set(searches) == {"dem-1", "dem-2"}
+    assert searches["dem-1"]["attempt_count"] == 2
+    assert searches["dem-1"]["reason_code"] == "dataset_unavailable"
+    assert searches["dem-1"]["latest_run_id"] == "r2"
+    assert searches["dem-2"]["reason_code"] is None
+    assert body["data"]["counts"]["searches"] == {"value": 5 - 1, "status": "ok"}
+
+
+def test_gate_attempt_failure_reason_is_typed(monkeypatch) -> None:
+    entries = _hosted_owner_entries()
+    entries[2]["last_error"] = "below_threshold: oos sharpe 0.1"
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router(entries)))
+    failed = next(c for c in body["data"]["scaffolded"] if c.get("id") == "adm-failed-2454")
+    assert failed["reason_code"] == "below_threshold"
+    assert failed["attempt_count"] == 2
+
+
+def test_document_checked_admissions_never_reach_replicated(monkeypatch) -> None:
+    entries = _hosted_four_entries()
+    states = _HOSTED_STATES
+    # run-1 has a failed gate; nothing passes. Entry 1 is a raw-market seed, entry 3 a simulation.
+    entries[1]["datasets"] = ["raw_market"]
+    entries[3]["mode"] = "simulation"
+    client = _make_bff_client(
+        monkeypatch,
+        http_get=_owner_router(entries, runs=[_gate_run("run-1", passed=False)]),
+        read_strategy_state=lambda sid: (states[sid], "ok"),
+    )
+    body = _get(client)
+    assert body["data"]["replicated"] == []
+    checked = {c["admission_id"]: c["document_check_reason"] for c in body["data"]["document_checked"]}
+    assert checked == {
+        "adm-hosted-0": "no_passing_gate_result",
+        "adm-hosted-1": "simulation_or_raw_market_seed",
+        "adm-hosted-2": "retired",
+        "adm-hosted-3": "retired",
+    }
+    assert body["data"]["counts"]["passes"] == {"value": 0, "status": "ok"}
+    assert not any(c["lane"] == "replicated" for c in body["items"])
+    only = _get(client, "/bff/alpha-factory?lane=document_checked")
+    assert only["page_info"]["total"] == 4
+
+
+def test_passing_gate_run_recorded_by_owner_makes_a_replicated_card(monkeypatch) -> None:
+    entries = _hosted_four_entries()
+    client = _make_bff_client(monkeypatch, http_get=_owner_router(entries, runs=[_gate_run("run-1")]))
+    body = _get(client)
+    assert len(body["data"]["replicated"]) == 4
+    assert body["data"]["document_checked"] == []
+    assert body["data"]["counts"]["passes"] == {"value": 4, "status": "ok"}
+
+
+def test_failed_run_read_never_promotes_to_replicated(monkeypatch) -> None:
+    client = _make_bff_client(
+        monkeypatch, http_get=_owner_router(_hosted_four_entries(), fail=("research-orchestrator/runs",))
+    )
+    body = _get(client)
+    assert body["data"]["replicated"] == []
+    assert {c["document_check_reason"] for c in body["data"]["document_checked"]} == {"gate_result_unavailable"}
+    counts = body["data"]["counts"]
+    assert counts["passes"]["status"] == "unavailable" and counts["passes"]["value"] is None
+    assert counts["searches"]["status"] == "unavailable"
+    assert body["meta"]["surfaces"]["alpha_factory_runs"]["reason"] == "runs_read_failed"
+
+
+def test_counts_are_unavailable_with_reason_never_zero(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_API_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_URL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_SERVICE_URL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], fail=("alpha-templates",))))
+    counts = body["data"]["counts"]
+    assert counts["collected_text_records"] == {"value": None, "status": "unavailable", "reason": "no_bounded_owner_read"}
+    assert counts["hypothesis_cards"]["status"] == "unavailable"
+    assert counts["templates_registered"] == {"value": None, "status": "unavailable", "reason": "templates_read_failed"}
+    assert counts["dropped_irrelevant"]["status"] == "unavailable"
+    assert counts["dropped_irrelevant"]["value"] is None
+
+
+def test_counts_from_owner_reads(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    templates = [
+        {"template_id": "t1", "evaluation": {"pooled_ic": {}}},
+        {"template_id": "t2", "evaluation": None},
+        {"template_id": "t3"},
+    ]
+    records = [{"source_id": f"s{i}"} for i in range(7)]
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], templates=templates, records=records)))
+    counts = body["data"]["counts"]
+    assert counts["collected_text_records"]["status"] == "unavailable"
+    assert counts["templates_registered"] == {"value": 3, "status": "ok"}
+    assert counts["templates_evaluated"] == {"value": 1, "status": "ok"}
+    assert counts["searches"] == {"value": 0, "status": "ok"}
+
+
+def test_alpha_factory_route_is_plain_def_and_reads_only(monkeypatch) -> None:
+    import inspect
+
+    methods: List[str] = []
+    base = _owner_router([])
+
+    def recording(url: str, **kw: Any):
+        methods.append("GET")
+        return base(url, **kw)
+
+    client = _make_bff_client(monkeypatch, http_get=recording)
+    router = create_alpha_factory_router(
+        extract_identity=auth_policy.extract_identity,
+        require_read_role=auth_policy.require_read_role,
+        utc_now=lambda: FIXED_NOW,
+    )
+    route = next(r for r in router.routes if getattr(r, "path", "") == "/bff/alpha-factory")
+    assert not inspect.iscoroutinefunction(route.endpoint)
+    assert route.methods == {"GET"}
+    _get(client)
+    assert set(methods) == {"GET"}
+    assert len(methods) <= 6
+
+
+def test_reason_code_normalisation() -> None:
+    from services.control_plane.bff.console_gap.alpha_factory import reason_code
+
+    assert reason_code(None) == "reason_not_recorded"
+    assert reason_code("Mandate_Universe_Missing: x") == "mandate_universe_missing"
+    assert reason_code("dataset missing for X") == "dataset_unavailable"
+    assert reason_code("whole_boundary_control_failed:ValueError:boom") == "whole_boundary_control_failed"
