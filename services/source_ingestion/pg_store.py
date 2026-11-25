@@ -260,11 +260,12 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                     "payload->'metadata'->'verification'->>'time', ''))) > 0 THEN TRUE ELSE FALSE END"
                 )
                 marker = "verification-record-v2"
-                existing = conn.execute(
+                existing_rows = conn.execute(
                     "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
                     "WHERE a.attrelid = %s::regclass AND a.attname = 'evidence_verified' AND NOT a.attisdropped",
                     (self.table,),
-                ).fetchone()
+                ).fetchall()
+                existing = existing_rows[0] if existing_rows else None
                 rewrite_columns = existing is not None and (
                     existing[0] if isinstance(existing, tuple) else list(existing.values())[0]
                 ) != marker
