@@ -12,9 +12,12 @@ redaction and composition run for real.
 """
 from __future__ import annotations
 
+import io
+import json
 import threading
 import time
 import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -23,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.core import display_names, owner_reads
 from services.control_plane.bff.core.errors import register_error_handlers
+from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
 from services.control_plane.bff.management_read_models import cited_evidence
 from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.meetings.client import MeetingsOwnerClient, MeetingsOwnerUnavailableError
@@ -45,7 +49,12 @@ EVI = "evi-1217cd1c8ccc7274"
 PRIVATE_MEM = "lessons:memory_persona_private:mem-private-0001"
 SHARED_MEM = "lessons:memory_committee_shared:mem-shared-0002"
 SUPPLIED_ONLY = "facts:registry_entry:artifact-persona-paper-ffffffffffffffffffff"
+BARE_MEM = "mem-bare-0003"
 PERSONA = "persona-ee7112a829d38b9135ac"
+GOV_URL = "http://governance.test"
+# Governance owner rule (services/governance/main.py::_approval_reader): listing
+# approvals needs a write-authority, approval_reader/proposer or operator role.
+GOV_READ_ROLES = {"admin", "operator", "approver", "approval_reader", "approval_proposer"}
 MEETING = "mtg-6edaff7d0ff76275"
 
 
@@ -216,10 +225,30 @@ def owners(monkeypatch):
     def list_proposals(self, **kw):
         return {"items": list(state["proposals"])}
 
-    def approval_records():
+    state["gov_auth_seen"] = []
+    real_urlopen = urllib.request.urlopen
+
+    def governance_urlopen(req, timeout=None, *a, **kw):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if not url.startswith(GOV_URL):
+            return real_urlopen(req, timeout=timeout, *a, **kw)
+        assert url.startswith(GOV_URL + "/api/governance/approvals") and req.get_method() == "GET"
+        auth = req.get_header("Authorization") or ""
+        state["gov_auth_seen"].append(auth)
+        role = auth.rsplit(":", 1)[-1] if auth.startswith("Bearer op-cited:") else ""
         if state["approvals_exc"] is not None:
             raise state["approvals_exc"]
-        return list(state["approvals"])
+        if role not in GOV_READ_ROLES:
+            raise urllib.error.HTTPError(url, 403, "Approval read role required", {}, io.BytesIO(b"{}"))
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        return _Resp(json.dumps(state["approvals"]).encode("utf-8"))
 
     def read_records(url_builder, path, key=None):
         assert path == "/api/research/persona-demands" and key == "demands"
@@ -232,7 +261,8 @@ def owners(monkeypatch):
     monkeypatch.setattr(MeetingsOwnerClient, "list_meetings", list_meetings)
     monkeypatch.setattr(MeetingsOwnerClient, "get_meeting", get_meeting)
     monkeypatch.setattr(MeetingsOwnerClient, "list_proposals", list_proposals)
-    monkeypatch.setattr(owner_reads, "approval_records", approval_records)
+    monkeypatch.setattr(urllib.request, "urlopen", governance_urlopen)
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", GOV_URL)
     monkeypatch.setattr(owner_reads, "read_records", read_records)
     monkeypatch.setattr(ResearchServiceClient, "list_research_ticket_page", ticket_page)
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.test")
@@ -250,6 +280,8 @@ def store(monkeypatch):
 def _client(store: Any) -> TestClient:
     app = FastAPI()
     register_error_handlers(app)
+    # Same request context as the real app: caller authorization + request cache.
+    app.add_middleware(OwnerReadContextMiddleware)
     app.include_router(create_management_router(read_surface=store, tenant_payload_fn=lambda identity: {"id": TENANT}))
     return TestClient(app)
 
@@ -284,39 +316,54 @@ def test_cited_rows_carry_owner_label_link_and_cited_by(store, owners):
     assert ("meeting_proposal", "prop-1") in by
     assert ("approval", "apr-1") in by
     for c in reg["cited_by"]:
-        assert set(c) >= {"entity_type", "entity_ref", "label", "route_href", "time"}
-        assert c["label"] and c["route_href"] and c["time"]
+        assert set(c) >= {"entity_type", "entity_ref", "label", "parts", "route_href", "time"}
+        assert c["route_href"] and c["time"]
+    # Labels are recorded titles / display names only; structure goes in parts.
     pos = next(c for c in reg["cited_by"] if c["entity_type"] == "meeting_position")
-    assert "Macro Mia" in pos["label"] and PERSONA not in pos["label"]
+    assert pos["label"] == f"Pool evolution review for Macro Mia (2026-W48)"
+    assert pos["parts"] == {"meeting_id": MEETING, "meeting_name": pos["label"], "round": 1,
+                            "position": "A", "persona_id": PERSONA}
     assert pos["route_href"] == f"/management/meetings/{MEETING}"
+    prop = next(c for c in reg["cited_by"] if c["entity_type"] == "meeting_proposal")
+    assert prop["label"] == "Add Carry Basket B" and prop["parts"] == {"meeting_id": MEETING, "kind": "pool_change"}
+    apr = next(c for c in reg["cited_by"] if c["entity_type"] == "approval")
+    assert apr["label"] is None  # the recorded decision has no title; nothing is composed
+    assert apr["parts"] == {"decision_type": "PoolChange", "target_id": PERSONA}
+    assert apr["route_href"] == "/management/approvals"
 
     # An id no directory can name says name_missing.
     unnamed = rows[ART_A]
     assert unnamed["name_missing"] is True and unnamed["label"] == ART_A
 
     pool = rows[POOL]
-    assert pool["label"] == "Macro Mia strategy pool v4" and pool["source_owner"] == "persona"
+    assert pool["label"] == "Macro Mia" and pool["source_owner"] == "persona"
+    assert pool["label_parts"] == {"persona_id": PERSONA, "pool_version": "4"}
     assert pool["resolved_link"]["route_href"] == f"/management/personas/{PERSONA}"
     assert {c["entity_type"] for c in pool["cited_by"]} == {"meeting_position", "research_demand"}
 
     book = rows[BOOK_B]
-    assert book["label"] == "Carry Basket B virtual book"
+    assert book["label"] == "Carry Basket B" and book["ref_kind"] == "member_virtual_book"
     assert book["cited_by"][0]["entity_type"] == "persona_cycle_decision"
-    assert book["cited_by"][0]["label"] == "Macro Mia daily cycle decision (meeting_action)"
+    assert book["cited_by"][0]["label"] is None
+    assert book["cited_by"][0]["parts"] == {"persona_id": PERSONA, "persona_name": "Macro Mia",
+                                            "kind": "meeting_action", "decision_index": 0}
 
     # A ko-evi knowledge object resolves to its evidence item by one bounded item read.
     ko = rows[KO]
     assert ko["ref_kind"] == "knowledge_object"
     assert ko["label"] == "Fed minutes excerpt" and ko["source_class"] == "primary_source"
-    assert ko["resolved_link"] == {"route_href": f"/knowledge/evidence/{EVI}", "evidence_ref_id": EVI}
+    assert ko["resolved_link"] == {"route_href": f"/management/evidence/{EVI}", "evidence_ref_id": EVI}
     assert store.item_reads == [EVI]
 
+    # Shared memory is listed only because its recorded case item proves persona_and_committee.
     mem = rows[SHARED_MEM]
-    assert mem["source_owner"] == "memory" and mem["resolved_link"]["route_href"] == "/knowledge/memory/mem-shared-0002"
+    assert mem["source_owner"] == "memory"
+    assert mem["resolved_link"] is None and mem["route_href"] is None  # no page renders one memory entry
 
     assert rows["note-111"]["cited_by"][0]["entity_type"] == "research_ticket"
     assert rows["note-222"]["cited_by"][0]["time"] == "2026-11-24T11:00:00Z"
-    assert rows["note-111"]["resolved_link"]["route_href"] == "/knowledge/notes/note-111"
+    assert rows["note-111"]["resolved_link"] is None  # no research-note page exists
+    assert rows["note-111"]["cited_by"][0]["route_href"] is None  # nor a research-ticket page
     assert rows["telemetry-sum-001"]["cited_by"][0]["entity_type"] == "evolution_proposal"
 
 
@@ -413,6 +460,86 @@ def test_reference_cap_and_item_reads_bounded_to_visible_page(store, owners):
     assert body["meta"]["cost"]["item_reads"] == 20
 
 
+def test_viewer_without_approval_role_is_denied_by_real_owner_path(store, owners):
+    """No approval_records fake: owner_reads -> approval_owner -> HTTP with the caller's token."""
+    body = _cited(store, headers=VIEWER, page_size=100)
+    sources = body["data"]["sources"]
+    assert owners["gov_auth_seen"] == [VIEWER["Authorization"]]  # caller token forwarded, one call
+    assert sources["governance_approvals"]["status"] == "denied"
+    assert sources["governance_approvals"]["reason"] == "governance_owner_http_403"
+    others = {k: v["status"] for k, v in sources.items() if k != "governance_approvals"}
+    assert set(others) == set(cited_evidence.SOURCE_KEYS) - {"governance_approvals"}
+    assert set(others.values()) == {"ok"}, others
+    assert body["data"]["summary"]["incomplete"] is True
+    assert body["data"]["summary"]["sources_not_ok"] == ["governance_approvals"]
+    assert body["meta"]["surfaces"]["cited_evidence"]["status"] == "degraded"
+    assert body["data"]["items"]  # the other six sources still answer
+    assert all(c["entity_type"] != "approval" for r in body["data"]["items"] for c in r["cited_by"])
+
+
+def test_admin_reads_approvals_through_real_owner_path(store, owners):
+    body = _cited(store, page_size=100)
+    assert owners["gov_auth_seen"] == [ADMIN["Authorization"]]
+    assert body["data"]["sources"]["governance_approvals"]["status"] == "ok"
+    assert body["data"]["sources"]["governance_approvals"]["read_count"] == 1
+    assert ("approval", "apr-1") in {(c["entity_type"], c["entity_ref"]) for c in _rows(body)[ART_A]["cited_by"]}
+
+
+def test_memory_reference_withheld_unless_recorded_item_proves_shared_scope(store, owners):
+    # Bare mem-... in a proposal, a meeting position and a persona cycle decision.
+    owners["proposals"][0]["citations"] = [REG_B, BARE_MEM, SHARED_MEM]
+    detail = meeting_detail(citations=[REG_B, BARE_MEM])
+    detail["case_file_items"].append({"item_id": BARE_MEM, "source_owner": "memory", "excerpt": "x"})
+    owners["meetings"] = [detail]
+    packet = cycle_packet()
+    case = next(iter(packet["persona_cycle"]["case_files"].values()))
+    case["groups"]["lessons"]["items"].append({"item_id": BARE_MEM, "group": "lessons", "source_owner": "memory",
+                                               "kind": "memory_entry", "excerpt": "x"})
+    packet["persona_cycle"]["decisions"][0]["cited_case_file_item_ids"].append(BARE_MEM)
+    store.ooda_management.ooda.packets = [packet]
+    # Typed memory ref in an approval and a demand, no recorded item.
+    owners["approvals"][0]["evidence_refs"].append({"ref_type": "persona_memory", "ref_id": "lesson-xyz"})
+    owners["demands"][0]["retrieval_influence"]["metadata"]["cited_item_ids"].append(BARE_MEM)
+
+    body = _cited(store, page_size=100)
+    rows = _rows(body)
+    assert BARE_MEM not in rows and BARE_MEM not in str(body["data"]["items"])
+    assert "lesson-xyz" not in rows
+    assert PRIVATE_MEM not in rows
+    for key in ("meeting_proposals", "meeting_positions", "persona_cycles", "governance_approvals", "research_demands"):
+        assert body["data"]["sources"][key]["withheld_count"] >= 1, key
+    assert body["data"]["summary"]["excluded"]["memory_scope_unproven"] >= 5
+    # SHARED_MEM: the proposal citation has no recorded item and is withheld;
+    # the cycle citation's recorded item proves persona_and_committee.
+    assert {c["entity_type"] for c in rows[SHARED_MEM]["cited_by"]} == {"persona_cycle_decision"}
+
+
+def test_memory_scope_proof_rules():
+    shared = {"item_id": SHARED_MEM, "relevance_scope": "persona_and_committee"}
+    assert cited_evidence._memory_scope_proven_shared(shared) is True
+    assert cited_evidence._memory_scope_proven_shared(None) is False
+    assert cited_evidence._memory_scope_proven_shared({"item_id": BARE_MEM}) is False
+    assert cited_evidence._memory_scope_proven_shared(
+        {"relevance_scope": "persona_and_committee", "memory_layer": "persona_private"}) is False
+    for raw in (BARE_MEM, SHARED_MEM, PRIVATE_MEM, {"ref_type": "persona_memory", "ref_id": "x"}):
+        assert cited_evidence._is_memory_ref(cited_evidence.parse_ref(raw), None), raw
+
+
+def test_routes_only_point_at_existing_management_pages(store, owners):
+    import re as _re
+
+    existing = _re.compile(r"^/management/(meetings|personas|strategies|evidence)/[^/?#]+$"
+                           r"|^/management/(approvals|evolution-journal)$")
+    body = _cited(store, page_size=100)
+    hrefs = []
+    for r in body["data"]["items"]:
+        hrefs.append(r["route_href"])
+        hrefs.extend(c["route_href"] for c in r["cited_by"])
+    present = [h for h in hrefs if h is not None]
+    assert present and all(existing.match(h) for h in present), present
+    assert None in hrefs  # memory / research note / ticket refs have no page
+
+
 def test_redaction_reused_for_caller_without_capability(store, owners):
     body = _cited(store, headers=VIEWER, page_size=100)
     rows = body["data"]["items"]
@@ -462,6 +589,7 @@ def test_parse_ref_recorded_shapes():
     assert cited_evidence.parse_ref(POOL).source_id == "persona-ee7112a829d38b9135ac@4"
     assert cited_evidence.parse_ref(KO).ref_kind == "knowledge_object"
     assert cited_evidence.parse_ref(PRIVATE_MEM).private is True
+    assert cited_evidence.parse_ref(BARE_MEM).ref_kind == "memory"
     assert cited_evidence.parse_ref({"ref_type": "registry_entry", "ref_id": ART_A}).ref_id == ART_A
     assert cited_evidence.parse_ref({"kind": "research_note", "artifact_id": "note-1"}).ref_kind == "research_note"
     assert cited_evidence._ko_evidence_candidate("ko-evi-1217cd1c8ccc7274-94a73ebc0814") == EVI

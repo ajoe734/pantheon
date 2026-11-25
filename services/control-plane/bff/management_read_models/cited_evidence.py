@@ -28,7 +28,16 @@ A case-file item that was only supplied (never cited) is never listed. A
 ``facts:meeting_topic:*`` reference is the meeting itself, not evidence.
 Private persona memory and trader items are always withheld (the meetings
 withholding rule and the case-file projection), other-tenant rows are dropped,
-and every listed reference passes ``redact_evidence_refs``.
+and every listed reference passes ``redact_evidence_refs``. Memory fails
+closed: any memory reference (``lessons:*``, ``*:memory_*:*``, bare ``mem-*``)
+is withheld and counted unless the recorded case-file item it cites proves the
+shared ``persona_and_committee`` scope.
+
+Labels are recorded titles or display names only; the BFF composes no
+sentences. ``cited_by[].parts`` carries the structured pieces (meeting name,
+round, position, kind, persona) for the frontend to translate. Routes point
+only at management pages that exist (frontend ``src/App.tsx``); anything else
+is ``null``.
 
 Nothing is stored: no new store, writer, index or cross-request cache.
 """
@@ -96,7 +105,11 @@ class CitedReadContext:
 
 @dataclass
 class Citation:
-    """One recorded citation of ``ref`` by one entity."""
+    """One recorded citation of ``ref`` by one entity.
+
+    ``label`` is the citing entity's recorded title (or display name) only, or
+    ``None``; ``parts`` holds structured pieces for the frontend to render.
+    """
 
     ref: Any
     entity_type: str
@@ -105,6 +118,7 @@ class Citation:
     route_href: Optional[str]
     time: Optional[str]
     item: Optional[Mapping[str, Any]] = None
+    parts: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -201,6 +215,8 @@ def _parse_string_ref(raw: str, *, kind_hint: Optional[str] = None) -> Optional[
             return ParsedRef(text, "memory", "memory", source_id, text, private, trader)
         return ParsedRef(text, kind, None, source_id, text, private, trader)
     private, trader = _flags(text, kind_hint or "")
+    if "memory" in str(kind_hint or "").lower() or str(kind_hint or "").lower() == "lessons":
+        return ParsedRef(text, "memory", "memory", text, text, private, trader)
     if text.startswith("artifact-"):
         return ParsedRef(text, "registry_artifact", "registry", text, text, private, trader)
     if text.startswith("ko-"):
@@ -253,6 +269,30 @@ def _item_is_trader(item: Optional[Mapping[str, Any]]) -> bool:
     return _is_agora_or_trader_record(item)
 
 
+_SHARED_MEMORY_SCOPE = "persona_and_committee"
+
+
+def _is_memory_ref(parsed: ParsedRef, item: Optional[Mapping[str, Any]]) -> bool:
+    if parsed.ref_kind == "memory" or parsed.source_owner == "memory":
+        return True
+    if isinstance(item, Mapping):
+        if str(item.get("source_owner") or "").strip().lower() == "memory":
+            return True
+        if str(item.get("group") or "").strip().lower() == "lessons":
+            return True
+    return False
+
+
+def _memory_scope_proven_shared(item: Optional[Mapping[str, Any]]) -> bool:
+    """Only a recorded item carrying the committee-shared scope proves a memory ref is shareable."""
+    if not isinstance(item, Mapping) or _item_is_private(item):
+        return False
+    return any(
+        str(item.get(key) or "").strip().lower() == _SHARED_MEMORY_SCOPE
+        for key in ("relevance_scope", "memory_scope", "visibility_scope")
+    )
+
+
 def _other_tenant(record: Mapping[str, Any], tenant_id: str) -> bool:
     t = str(record.get("tenant_id") or "").strip()
     return bool(t and tenant_id and t != tenant_id)
@@ -284,11 +324,11 @@ def _meetings_client(ctx: CitedReadContext):
     return MeetingsOwnerClient(ctx.tenant_id, str(actor))
 
 
-def _meeting_label(meeting: Mapping[str, Any], names: Any) -> str:
+def _meeting_label(meeting: Mapping[str, Any], names: Any) -> Optional[str]:
     topic = str(meeting.get("topic") or meeting.get("title") or "").strip()
     mid = str(meeting.get("meeting_id") or meeting.get("id") or "").strip()
     if not topic:
-        return f"Meeting {mid}" if mid else "Meeting"
+        return None
     persona = meeting.get("subject_persona_id") or meeting.get("chair_persona_id")
     if not persona:
         m = re.search(r"(persona-[A-Za-z0-9_-]+)", topic)
@@ -311,8 +351,28 @@ def _meeting_time(meeting: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+# Management pages that exist (frontend src/App.tsx, checked 2026-11-25):
+# meetings/:id, personas/:id, strategies/:id, evidence/:id, approvals,
+# evolution-journal. No page renders one memory entry, research note,
+# committee memo or research ticket, so those links are null.
+_APPROVALS_PAGE = "/management/approvals"
+_EVOLUTION_JOURNAL_PAGE = "/management/evolution-journal"
+
+
 def _meeting_href(meeting_id: str) -> str:
     return f"/management/meetings/{quote(meeting_id, safe='')}"
+
+
+def _persona_href(persona_id: str) -> Optional[str]:
+    return f"/management/personas/{quote(persona_id, safe='')}" if persona_id else None
+
+
+def _strategy_href(strategy_id: str) -> Optional[str]:
+    return f"/management/strategies/{quote(strategy_id, safe='')}" if strategy_id else None
+
+
+def _evidence_href(ref_id: str) -> Optional[str]:
+    return f"/management/evidence/{quote(ref_id, safe='')}" if ref_id else None
 
 
 def read_meeting_proposals(ctx: CitedReadContext) -> SourceResult:
@@ -334,14 +394,14 @@ def read_meeting_proposals(ctx: CitedReadContext) -> SourceResult:
             continue
         pid = str(prop.get("proposal_id") or prop.get("id") or "").strip()
         mid = str(prop.get("meeting_id") or "").strip()
-        title = str(prop.get("title") or prop.get("summary") or "").strip()
-        kind = str(prop.get("kind") or "proposal").strip()
-        label = title or (f"Meeting proposal ({kind})")
+        title = str(prop.get("title") or prop.get("summary") or "").strip() or None
+        kind = str(prop.get("kind") or "").strip() or None
         for cit in prop.get("citations") or []:
             out.citations.append(Citation(
-                ref=cit, entity_type="meeting_proposal", entity_ref=pid, label=label,
+                ref=cit, entity_type="meeting_proposal", entity_ref=pid, label=title,
                 route_href=_meeting_href(mid) if mid else None,
                 time=str(prop.get("created_at") or prop.get("updated_at") or "") or None,
+                parts={"meeting_id": mid or None, "kind": kind},
             ))
     return out
 
@@ -394,7 +454,7 @@ def meeting_position_citations(raw: Mapping[str, Any], names: Any = None) -> Tup
             if not isinstance(pos, Mapping):
                 continue
             hidden = rnd_hidden or _is_private_memory_item(pos) or _is_agora_or_trader_record(pos)
-            pos_label = str(pos.get("label") or "position")
+            pos_label = str(pos.get("label") or "").strip() or None
             for cit in pos.get("citations") or []:
                 ids = _extract_item_ref_ids(cit) if isinstance(cit, Mapping) else [str(cit or "").strip()]
                 ids = [i for i in ids if i]
@@ -409,11 +469,13 @@ def meeting_position_citations(raw: Mapping[str, Any], names: Any = None) -> Tup
                 out.append(Citation(
                     ref=cit if isinstance(cit, Mapping) else ids[0],
                     entity_type="meeting_position",
-                    entity_ref=f"{mid}#round-{round_no}/{pos_label}",
-                    label=f"{label} — round {round_no} position {pos_label}",
+                    entity_ref=f"{mid}#round-{round_no}/{pos_label or ''}",
+                    label=label,
                     route_href=_meeting_href(mid) if mid else None,
                     time=str(pos.get("created_at") or rnd.get("completed_at") or "") or when,
                     item=item,
+                    parts={"meeting_id": mid or None, "meeting_name": label, "round": round_no,
+                           "position": pos_label, "persona_id": pos.get("persona_id")},
                 ))
     return out, withheld
 
@@ -509,12 +571,13 @@ def read_governance_approvals(ctx: CitedReadContext) -> SourceResult:
         did = str(rec.get("decision_id") or rec.get("id") or "").strip()
         dtype = str(rec.get("decision_type") or rec.get("target_type") or "approval").strip()
         target = str(rec.get("target_id") or "").strip()
-        label = str(rec.get("title") or "").strip() or (f"Approval: {dtype} {target}".strip())
+        label = str(rec.get("title") or "").strip() or None
         for ref in rec.get("evidence_refs") or []:
             out.citations.append(Citation(
                 ref=ref, entity_type="approval", entity_ref=did, label=label,
-                route_href=f"/management/approvals?approval={quote(did, safe='')}" if did else None,
+                route_href=_APPROVALS_PAGE,
                 time=_decision_time(rec),
+                parts={"decision_type": dtype or None, "target_id": target or None},
             ))
     return out
 
@@ -541,12 +604,13 @@ def read_evolution_proposals(ctx: CitedReadContext) -> SourceResult:
             out.withheld_count += 1
             continue
         pid = str(rec.get("proposal_id") or rec.get("decision_id") or rec.get("id") or "").strip()
-        label = str(rec.get("title") or rec.get("summary") or "").strip() or f"Evolution proposal {pid}"
+        label = str(rec.get("title") or rec.get("summary") or "").strip() or None
         for ref in rec.get("evidence_refs") or []:
             out.citations.append(Citation(
                 ref=ref, entity_type="evolution_proposal", entity_ref=pid, label=label,
-                route_href=f"/management/evolution-journal?decision={quote(pid, safe='')}" if pid else None,
+                route_href=_EVOLUTION_JOURNAL_PAGE,
                 time=_decision_time(rec),
+                parts={"persona_id": rec.get("persona_id"), "kind": rec.get("proposal_type") or rec.get("kind")},
             ))
     return out
 
@@ -573,12 +637,12 @@ def read_research_demands(ctx: CitedReadContext) -> SourceResult:
         did = str(d.get("demand_id") or "").strip()
         persona = str(d.get("persona_id") or "").strip()
         measure = str(d.get("short_measure") or "").strip()
-        label = f"Research demand: {measure}" if measure else f"Research demand {did}"
         for cit in cited:
             out.citations.append(Citation(
-                ref=cit, entity_type="research_demand", entity_ref=did, label=label,
-                route_href=f"/management/personas/{quote(persona, safe='')}" if persona else None,
+                ref=cit, entity_type="research_demand", entity_ref=did, label=measure or None,
+                route_href=_persona_href(persona),
                 time=str(d.get("created_at") or "") or None,
+                parts={"persona_id": persona or None, "short_measure": measure or None},
             ))
     return out
 
@@ -600,8 +664,8 @@ def read_research_tickets(ctx: CitedReadContext) -> SourceResult:
             out.withheld_count += 1
             continue
         tid = str(t.get("ticket_id") or t.get("action_id") or "").strip()
-        label = str(t.get("title") or "").strip() or f"Research ticket {tid}"
-        href = f"/research/tickets/{quote(tid, safe='')}" if tid else None
+        label = str(t.get("title") or "").strip() or None
+        href = None  # no management page renders one research ticket
         human = t.get("human_input") if isinstance(t.get("human_input"), Mapping) else {}
         for ref, when in [
             *((r, t.get("submitted_at")) for r in (t.get("evidence_refs") or [])),
@@ -613,6 +677,7 @@ def read_research_tickets(ctx: CitedReadContext) -> SourceResult:
             out.citations.append(Citation(
                 ref=ref, entity_type="research_ticket", entity_ref=tid, label=label, route_href=href,
                 time=str(when or t.get("updated_at") or "") or None,
+                parts={"status": t.get("status")},
             ))
     return out
 
@@ -632,23 +697,32 @@ def persona_cycle_citations(packet: Mapping[str, Any], tenant_id: str, names: An
     for cid, case in cases.items():
         view = project_case_file(case, tenant_id=tenant_id, private_persona_ids=frozenset())
         if view.get("status") == "ok" and (view.get("case_file") or {}).get("case_file_id") == cid:
-            for g in (view["case_file"].get("groups") or {}).values():
-                for it in g.get("items") or []:
-                    visible.setdefault(it["item_id"], it)
+            projected = {
+                it["item_id"]
+                for g in (view["case_file"].get("groups") or {}).values()
+                for it in g.get("items") or []
+            }
+            # The projection drops scope fields; keep the recorded item (it passed
+            # the projection) so memory scope can be proven downstream.
+            for g in (case.get("groups") or {}).values():
+                for it in (g.get("items") or []) if isinstance(g, Mapping) else []:
+                    if isinstance(it, Mapping) and it.get("item_id") in projected:
+                        visible.setdefault(str(it["item_id"]), it)
     pid = str(packet.get("packet_id") or "").strip()
     persona = next(iter(packet.get("persona_ids") or []), "") or ""
-    pname = persona
+    pname: Optional[str] = None
     if names is not None and persona:
         try:
-            pname = names.persona(persona)[0]
+            n, missing = names.persona(persona)
+            pname = None if missing else n
         except Exception:
-            pname = persona
+            pname = None
     out: List[Citation] = []
     withheld = 0
     for index, d in enumerate(cycle.get("decisions") or []):
         if not isinstance(d, Mapping):
             continue
-        kind = str(d.get("kind") or "decision")
+        kind = str(d.get("kind") or "").strip() or None
         for cid in dict.fromkeys(d.get("cited_case_file_item_ids") or []):
             item = visible.get(str(cid))
             if item is None:
@@ -656,10 +730,12 @@ def persona_cycle_citations(packet: Mapping[str, Any], tenant_id: str, names: An
                 continue
             out.append(Citation(
                 ref=str(cid), entity_type="persona_cycle_decision", entity_ref=f"{pid}#decisions/{index}",
-                label=f"{pname} daily cycle decision ({kind})",
-                route_href=f"/management/personas/{quote(persona, safe='')}" if persona else None,
+                label=None,
+                route_href=_persona_href(persona),
                 time=str(packet.get("updated_at") or packet.get("created_at") or "") or None,
                 item=item,
+                parts={"persona_id": persona or None, "persona_name": pname, "kind": kind,
+                       "decision_index": index},
             ))
     return out, withheld
 
@@ -749,24 +825,16 @@ def _ko_evidence_candidate(ko_id: str) -> Optional[str]:
 
 
 def _route_for(parsed: ParsedRef, evidence_ref_id: Optional[str]) -> Optional[str]:
+    """A route only when a management page shows this reference; otherwise ``None``."""
     k, sid = parsed.ref_kind, parsed.source_id
-    if k == "registry_artifact":
-        return f"/management/strategies/{quote(sid, safe='')}"
-    if k == "member_virtual_book":
-        return f"/management/strategies/{quote(sid, safe='')}"
+    if k in {"registry_artifact", "member_virtual_book"}:
+        return _strategy_href(sid)
     if k == "strategy_pool":
-        persona = sid.split("@", 1)[0]
-        return f"/management/personas/{quote(persona, safe='')}"
-    if k == "memory":
-        return f"/knowledge/memory/{quote(sid, safe='')}"
-    if k == "research_note":
-        return f"/knowledge/notes/{quote(sid, safe='')}"
-    if k == "committee_memo":
-        return f"/consultation/memos/{quote(sid, safe='')}"
+        return _persona_href(sid.split("@", 1)[0])
     if evidence_ref_id:
-        return f"/knowledge/evidence/{quote(evidence_ref_id, safe='')}"
-    if k == "evidence_item":
-        return f"/knowledge/evidence/{quote(sid, safe='')}"
+        return _evidence_href(evidence_ref_id)
+    if k == "evidence_item" and parsed.source_owner == "source_ingest":
+        return _evidence_href(sid)
     return None
 
 
@@ -781,29 +849,30 @@ _SOURCE_CLASS = {
 }
 
 
-def _name_for(parsed: ParsedRef, names: Any) -> Tuple[Optional[str], bool]:
-    if names is None:
-        return None, True
+def _name_for(parsed: ParsedRef, names: Any) -> Tuple[Optional[str], bool, Dict[str, Any]]:
+    """Display name only (no composed sentence) plus structured parts."""
     k, sid = parsed.ref_kind, parsed.source_id
+    parts: Dict[str, Any] = {}
+    if k == "strategy_pool":
+        persona, _, version = sid.partition("@")
+        parts = {"persona_id": persona, "pool_version": version or None}
+    elif k in {"registry_artifact", "member_virtual_book"}:
+        parts = {"strategy_id": sid}
+    if names is None:
+        return None, True, parts
     try:
-        if k == "registry_artifact":
+        if k in {"registry_artifact", "member_virtual_book"}:
             n, missing = names.strategy(sid)
-            return (None, True) if missing else (n, False)
-        if k == "member_virtual_book":
-            n, missing = names.strategy(sid)
-            return (None, True) if missing else (f"{n} virtual book", False)
+            return (None, True, parts) if missing else (n, False, parts)
         if k == "strategy_pool":
-            persona, _, version = sid.partition("@")
-            n, missing = names.persona(persona)
-            if missing:
-                return None, True
-            return (f"{n} strategy pool v{version}" if version else f"{n} strategy pool"), False
+            n, missing = names.persona(parts["persona_id"])
+            return (None, True, parts) if missing else (n, False, parts)
         if sid.startswith("persona-"):
             n, missing = names.persona(sid)
-            return (None, True) if missing else (n, False)
+            return (None, True, parts) if missing else (n, False, parts)
     except Exception:
-        return None, True
-    return None, True
+        return None, True, parts
+    return None, True, parts
 
 
 def compose_cited_evidence(
@@ -823,7 +892,7 @@ def compose_cited_evidence(
 
     rows: Dict[str, Dict[str, Any]] = {}
     sources: Dict[str, Dict[str, Any]] = {}
-    excluded = {"meeting_topic": 0, "private_or_trader": 0, "unparsed": 0}
+    excluded = {"meeting_topic": 0, "private_or_trader": 0, "memory_scope_unproven": 0, "unparsed": 0}
     total_calls = 0
     total_bytes = 0
     for key in readers:
@@ -853,6 +922,10 @@ def compose_cited_evidence(
                 excluded["private_or_trader"] += 1
                 entry["withheld_count"] += 1
                 continue
+            if _is_memory_ref(parsed, cit.item) and not _memory_scope_proven_shared(cit.item):
+                excluded["memory_scope_unproven"] += 1
+                entry["withheld_count"] += 1
+                continue
             entry["citation_count"] += 1
             row = rows.get(parsed.ref_id)
             if row is None:
@@ -870,7 +943,7 @@ def compose_cited_evidence(
             row["_keys"].add(ckey)
             row["cited_by"].append({
                 "entity_type": cit.entity_type, "entity_ref": cit.entity_ref, "label": cit.label,
-                "route_href": cit.route_href, "time": cit.time, "source": key,
+                "parts": dict(cit.parts), "route_href": cit.route_href, "time": cit.time, "source": key,
             })
             row["_latest"] = max(row["_latest"], str(cit.time or ""))
 
@@ -959,7 +1032,7 @@ def compose_cited_evidence(
             })
             continue
         ev = resolved_items.get(p.ref_id)
-        label, missing = _name_for(p, names)
+        label, missing, label_parts = _name_for(p, names)
         source_class = _SOURCE_CLASS.get(p.ref_kind, p.ref_kind)
         evidence_ref_id = None
         if ev is not None:
@@ -977,7 +1050,7 @@ def compose_cited_evidence(
         row = {
             "id": p.ref_id, "ref_id": p.ref_id, "ref_kind": p.ref_kind, "source_owner": source_owner,
             "label": label if not missing else p.ref_id, "name_missing": bool(missing),
-            "source_class": source_class,
+            "label_parts": label_parts, "source_class": source_class,
             "resolved_link": {"route_href": href, "evidence_ref_id": evidence_ref_id} if href else None,
             "route_href": href, "cited_as": list(r["cited_as"]), "cited_by": list(r["cited_by"]),
             "citation_count": len(r["cited_by"]), "last_cited_at": r["_latest"] or None, "redacted": False,
