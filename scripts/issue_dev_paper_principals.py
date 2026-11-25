@@ -37,11 +37,16 @@ CARD_PROPOSER_SUBJECT = "pantheon-dev-research-card-proposer"
 GOVERNANCE_GRANT_CONTENT = (
     "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
     + ";persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+    # Pool risk-policy proposals come from the same enrolment proposer (PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID).
+    + ";risk_policy=paper_pool;risk_proposer=" + ENROLLMENT_PROPOSER_SUBJECT
 )
 GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-reader"
 GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"
 TTL_SECONDS = 24 * 60 * 60
 READERS = {
+    # Paper runtimes (via the fleet reconciler) -> registry owner entry GET ONLY, for the report-only
+    # member baseline comparison. registry-reader is the existing read-only role; dev tenant only.
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN": ("pantheon-dev-paper-runtime-registry-reader", "registry-reader"),
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
     "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-deployment-approval-reader", "approval_reader"),
     "REGISTRY_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-registry-approval-reader", "approval_reader"),
@@ -191,6 +196,14 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Consultation meeting owner -> research owner meeting-action tickets (create + chair review). The
+    # research owner admits actor consultation-svc with role "service" for both; no operator/admin role,
+    # no signing secret is distributed and no other service subject is substituted.
+    "CONSULTATION_RESEARCH_SERVICE_TOKEN": (
+        "consultation-svc",
+        "service",
+        "pantheon:dev-owner-write",
+    ),
     # Persona paper enrolment (operator-bff) -> governance owner: propose-only, no decide.
     "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN": (
         ENROLLMENT_PROPOSER_SUBJECT,
@@ -292,15 +305,27 @@ CONSUMER_FILES = {
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
                          "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
-                         "CONSULTATION_TELEMETRY_READ_TOKEN"),
+                         "CONSULTATION_TELEMETRY_READ_TOKEN",
+                         "CONSULTATION_RESEARCH_SERVICE_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
     # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
     # reader principal, never the deployment volume's governance/registry files.
     "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),
+    # Fleet reconciler only (inherited by persona-scoped paper workers): registry entry read, nothing else.
+    "paper-registry-reader": ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
+
+
+# A consumer directory is normally mounted at /run/pantheon-principals; the paper registry reader is
+# mounted beside it so the services sharing the capital reader volume never see it.
+MOUNT_ROOT_OVERRIDES = {"paper-registry-reader": "/run/pantheon-registry-read"}
+
+
+def _mount_root(consumer: str) -> str:
+    return MOUNT_ROOT_OVERRIDES.get(consumer, "/run/pantheon-principals")
 
 
 def _roles(role: str | tuple[str, ...]) -> list[str]:
@@ -405,9 +430,9 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         "CONSULTATION_SERVICE_TOKEN": consultation_service_token,
         "CONSULTATION_API_TOKEN": consultation_api_token,
     })
-    for variables in CONSUMER_FILES.values():
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 
@@ -431,10 +456,10 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
         "CONSULTATION_SERVICE_TOKEN": "",
         "CONSULTATION_API_TOKEN": "",
     }
-    for variables in CONSUMER_FILES.values():
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
             values[variable] = ""
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 

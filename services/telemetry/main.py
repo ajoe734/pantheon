@@ -842,6 +842,7 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "spill_path": dlq_stats.get("spill_path"),
             "tag_counts": dlq_stats.get("tag_counts", {}),
             "write_failure_entries": write_failure_dlq_entries,
+            "trading_dead_letters": dlq_stats.get("trading_dead_letters", {}),
         }
         canonical_table_payload = _canonical_telemetry_table_dependency()
 

@@ -53,7 +53,29 @@ PERSONA_LIFECYCLE_GRANT_ID_PREFIX = "dev-paper-grant:persona-lifecycle-paper-lad
 # to an open persona demand; the paper automated gate decides it.  Explicit grant widening only.
 CARD_ADMISSION_GRANT_VALUE = "paper_research"
 CARD_ADMISSION_GRANT_ID_PREFIX = "dev-paper-grant:card-admission-paper-research:"
-_GRANT_KEYS = frozenset({"persona_lifecycle", "proposer", "card_admission", "card_proposer"})
+# Operator decision P-4 (2026-11-15, "paper 自動核准") applied to pool risk policy: inside paper, in dev, at
+# capital scale 0, the gate decides a pool risk-policy proposal that verifies against the operator outer
+# bounds and carries risk-officer draft provenance.  Explicit grant widening only; canary/live never.
+RISK_POLICY_GRANT_VALUE = "paper_pool"
+RISK_POLICY_GRANT_ID_PREFIX = "dev-paper-grant:risk-policy-paper-pool:"
+RISK_POLICY_TARGET = "capital_pool_activation"
+RISK_POLICY_BOUNDS_ENV = "PANTHEON_PAPER_RISK_PROFILE_BOUNDS"
+# Default operator outer bounds for the low profile (mirrors services/capital/risk_policy.py).
+RISK_POLICY_DEFAULT_BOUNDS: dict[str, dict[str, float]] = {
+    "low": {
+        # Operator decision 2026-11-07 (DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER Q3): gross and leverage <= 2.0x pool equity.
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        # Operator decision 2026-11-23: single name <= 20% of NAV, cash reserve >= 10% of NAV.
+        "max_single_name_weight": 0.20,
+        "min_cash_reserve_pct": 0.10,
+    },
+}
+_RISK_POLICY_UPPER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight")
+RISK_POLICY_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage",
+                               "max_single_name_weight", "min_cash_reserve_pct")
+_GRANT_KEYS = frozenset({"persona_lifecycle", "proposer", "card_admission", "card_proposer",
+                         "risk_policy", "risk_proposer"})
 _PROPOSER_SUBJECT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:@-")
 _ACTIVE_RUNTIME_STATES = frozenset({"active", "running", "ok"})
 PAPER_SIGNAL_INTERFACE = "services.execution.lean_runtime.paper_signal_producer:Strategy"
@@ -291,11 +313,20 @@ class CardAdmissionGrant:
 
 
 @dataclass(frozen=True)
+class RiskPolicyGrant:
+    """Explicit widening: the gate may decide a paper pool risk-policy proposal inside the outer bounds."""
+
+    proposer_subject: str
+    grant_id: str
+
+
+@dataclass(frozen=True)
 class DevPaperGrant:
     subject: str
     tenant_id: str
     persona_lifecycle: PersonaLifecycleGrant | None = None
     card_admission: CardAdmissionGrant | None = None
+    risk_policy: RiskPolicyGrant | None = None
 
     @property
     def authorization_scope(self) -> dict[str, Any]:
@@ -306,38 +337,41 @@ def _valid_proposer(value: str) -> bool:
     return bool(value) and value != DEV_PAPER_PROVISIONER_SUBJECT and set(value) <= _PROPOSER_SUBJECT_CHARS
 
 
-def _grant_widenings(
+def _grant_all(
     env: Mapping[str, str] | None,
-) -> tuple[PersonaLifecycleGrant | None, CardAdmissionGrant | None]:
+) -> tuple[PersonaLifecycleGrant | None, CardAdmissionGrant | None, RiskPolicyGrant | None]:
     """Parse the mounted grant file once.  Plain ``enabled`` and any malformed content widen nothing.
 
     Content is ``enabled`` followed by ``;key=value`` pairs.  ``persona_lifecycle=paper_ladder`` needs
-    ``proposer=<subject>``; ``card_admission=paper_research`` needs ``card_proposer=<subject>``.  An
+    ``proposer=<subject>``; ``card_admission=paper_research`` needs ``card_proposer=<subject>``;
+    ``risk_policy=paper_pool`` needs ``risk_proposer=<subject>``.  An
     unknown key, a half pair or an invalid subject makes the whole content a non-widening.
     """
     from services.service_token_file import configured_service_token
     source = env if env is not None else os.environ
     if not str(source.get("GOVERNANCE_DEV_PAPER_GRANT_FILE", "") or "").strip():
-        return None, None
+        return None, None, None
     try:
         content = configured_service_token("GOVERNANCE_DEV_PAPER_GRANT", source)
     except RuntimeError:
-        return None, None
+        return None, None, None
     parts = content.split(";")
     if parts[0] != "enabled" or len(parts) == 1:
-        return None, None
+        return None, None, None
     pairs: dict[str, str] = {}
     for part in parts[1:]:
         key, sep, value = part.partition("=")
         if not sep or key not in _GRANT_KEYS or key in pairs:
-            return None, None
+            return None, None, None
         pairs[key] = value
-    lifecycle = card = None
-    if ("persona_lifecycle" in pairs) != ("proposer" in pairs) or ("card_admission" in pairs) != ("card_proposer" in pairs):
-        return None, None
+    lifecycle = card = risk = None
+    if (("persona_lifecycle" in pairs) != ("proposer" in pairs)
+            or ("card_admission" in pairs) != ("card_proposer" in pairs)
+            or ("risk_policy" in pairs) != ("risk_proposer" in pairs)):
+        return None, None, None
     if "persona_lifecycle" in pairs:
         if pairs["persona_lifecycle"] != "paper_ladder" or not _valid_proposer(pairs["proposer"]):
-            return None, None
+            return None, None, None
         legacy = PERSONA_LIFECYCLE_GRANT_PREFIX + pairs["proposer"]
         # grant id digest of the lifecycle clause alone keeps ids stable for lifecycle-only content
         digest = hashlib.sha256(legacy.encode("utf-8")).hexdigest()[:16]
@@ -345,11 +379,23 @@ def _grant_widenings(
                                           grant_id=PERSONA_LIFECYCLE_GRANT_ID_PREFIX + digest)
     if "card_admission" in pairs:
         if pairs["card_admission"] != CARD_ADMISSION_GRANT_VALUE or not _valid_proposer(pairs["card_proposer"]):
-            return None, None
+            return None, None, None
         clause = f"card_admission={CARD_ADMISSION_GRANT_VALUE};card_proposer={pairs['card_proposer']}"
         digest = hashlib.sha256(clause.encode("utf-8")).hexdigest()[:16]
         card = CardAdmissionGrant(proposer_subject=pairs["card_proposer"], grant_id=CARD_ADMISSION_GRANT_ID_PREFIX + digest)
-    return lifecycle, card
+    if "risk_policy" in pairs:
+        if pairs["risk_policy"] != RISK_POLICY_GRANT_VALUE or not _valid_proposer(pairs["risk_proposer"]):
+            return None, None, None
+        clause = f"risk_policy={RISK_POLICY_GRANT_VALUE};risk_proposer={pairs['risk_proposer']}"
+        digest = hashlib.sha256(clause.encode("utf-8")).hexdigest()[:16]
+        risk = RiskPolicyGrant(proposer_subject=pairs["risk_proposer"], grant_id=RISK_POLICY_GRANT_ID_PREFIX + digest)
+    return lifecycle, card, risk
+
+
+def _grant_widenings(
+    env: Mapping[str, str] | None,
+) -> tuple[PersonaLifecycleGrant | None, CardAdmissionGrant | None]:
+    return _grant_all(env)[:2]
 
 
 def configured_persona_lifecycle_grant(env: Mapping[str, str] | None = None) -> PersonaLifecycleGrant | None:
@@ -362,13 +408,18 @@ def configured_card_admission_grant(env: Mapping[str, str] | None = None) -> Car
     return _grant_widenings(env)[1]
 
 
+def configured_risk_policy_grant(env: Mapping[str, str] | None = None) -> RiskPolicyGrant | None:
+    """The explicit pool risk-policy widening carried by the mounted grant file, else None."""
+    return _grant_all(env)[2]
+
+
 def dev_paper_feature_enabled(env: Mapping[str, str] | None = None) -> bool:
     from services.service_token_file import configured_dev_paper_grant_enabled
     source = env if env is not None else os.environ
     enabled = str(source.get("GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED", "") or "").strip().lower()
     return (enabled == "true" and current_environment(source) == DEV_PAPER_ENVIRONMENT
             and (configured_dev_paper_grant_enabled(source)
-                 or any(w is not None for w in _grant_widenings(source))))
+                 or any(w is not None for w in _grant_all(source))))
 
 
 def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -> DevPaperGrant | None:
@@ -400,7 +451,8 @@ def resolve_dev_paper_grant(ctx: Any, *, env: Mapping[str, str] | None = None) -
         raise PaperApprovalDenied("Dev paper approval principal roles must be exactly automated_gate")
     return DevPaperGrant(subject=DEV_PAPER_PROVISIONER_SUBJECT, tenant_id=DEV_PAPER_TENANT_ID,
                          persona_lifecycle=configured_persona_lifecycle_grant(env),
-                         card_admission=configured_card_admission_grant(env))
+                         card_admission=configured_card_admission_grant(env),
+                         risk_policy=configured_risk_policy_grant(env))
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +522,215 @@ def require_paper_owned_decision(decision: Mapping[str, Any], *, grant: DevPaper
     if normalized != grant.authorization_scope:
         raise PaperApprovalDenied("Dev paper decision authorization_scope does not match the grant")
     validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+
+
+def is_risk_policy_decision(decision: Mapping[str, Any], grant: DevPaperGrant | None = None) -> bool:
+    """A pool risk-policy proposal the gate is widened to decide: capital_pool_activation owned by the named proposer."""
+    if _enum_text(decision.get("target_type")) != RISK_POLICY_TARGET:
+        return False
+    widening = grant.risk_policy if grant is not None else None
+    return widening is None or decision.get("owner_user_id") == widening.proposer_subject
+
+
+def _outer_bounds(profile: str, env: Mapping[str, str] | None = None) -> Mapping[str, float]:
+    source = env if env is not None else os.environ
+    raw = str(source.get(RISK_POLICY_BOUNDS_ENV) or "").strip()
+    try:
+        loaded: Any = json.loads(raw) if raw else RISK_POLICY_DEFAULT_BOUNDS
+    except ValueError as exc:
+        raise PaperApprovalDenied(f"{RISK_POLICY_BOUNDS_ENV} is malformed; paper risk policy fails closed", 503) from exc
+    limits = loaded.get(profile) if isinstance(loaded, Mapping) else None
+    if not isinstance(limits, Mapping):
+        raise PaperApprovalDenied(f"No operator outer bounds configured for profile {profile!r}", 422)
+    return limits
+
+
+def risk_policy_candidate_failure(decision: Mapping[str, Any], env: Mapping[str, str] | None = None) -> str | None:
+    """None when the proposed policy verifies; else the named failing field and reason.
+
+    The candidate must be the risk-officer draft carried in the proposal subject (its provenance present,
+    every required limit finite and positive, single-name cap below 1, cash reserve below 1) and inside the
+    operator outer bounds for the requested profile.
+    """
+    metadata = decision.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    subject = subject if isinstance(subject, Mapping) else {}
+    draft = subject.get("risk_officer_draft")
+    draft = draft if isinstance(draft, Mapping) else {}
+    policy, provenance = draft.get("policy"), draft.get("provenance")
+    if not isinstance(policy, Mapping) or not policy:
+        return "risk_officer_draft.policy: absent; the candidate is not a risk-officer drafted policy"
+    if not isinstance(provenance, Mapping) or not provenance:
+        return "risk_officer_draft.provenance: absent"
+    profile = str(subject.get("requested_risk") or "").strip().lower()
+    limits = _outer_bounds(profile, env)
+    values: dict[str, float] = {}
+    for name in RISK_POLICY_REQUIRED_LIMITS:
+        raw = policy.get(name)
+        if raw is None and isinstance(policy.get("limits"), Mapping):
+            raw = policy["limits"].get(name)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw != raw or raw in (float("inf"), float("-inf")):
+            return f"{name}: missing or non-numeric"
+        if float(raw) <= 0.0:
+            return f"{name}: must be positive, got {raw!r}"
+        values[name] = float(raw)
+    for name in ("max_single_name_weight", "min_cash_reserve_pct"):
+        if not values[name] < 1.0:
+            return f"{name}: must be below 1, got {values[name]!r}"
+    for name in _RISK_POLICY_UPPER_BOUND_KEYS:
+        cap = limits.get(name)
+        if cap is not None and values[name] > float(cap) + 1e-12:
+            return f"{name}: {values[name]!r} exceeds {profile} bound {cap!r}"
+    reserve = limits.get("min_cash_reserve_pct")
+    if reserve is not None and values["min_cash_reserve_pct"] + 1e-12 < float(reserve):
+        return f"min_cash_reserve_pct: {values['min_cash_reserve_pct']!r} below {profile} bound {reserve!r}"
+    return None
+
+
+def require_paper_risk_policy_decision(decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime,
+                                       env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Admit the gate on one paper pool risk-policy proposal (identity only) or raise.
+
+    The proposal must come from the named proposer (never the gate), target a capital pool in the grant
+    tenant, be low risk (paper, capital scale 0) and carry a bounded expiry.  Whether the policy may be
+    approved is ``risk_policy_candidate_failure``; a rejection with a reason is always admissible.
+    """
+    widening = grant.risk_policy
+    if widening is None:
+        raise PaperApprovalDenied("Dev paper grant does not authorise pool risk-policy decisions")
+    if current_environment(env) != DEV_PAPER_ENVIRONMENT:
+        raise PaperApprovalDenied("Pool risk-policy paper grant is limited to the dev paper environment")
+    owner = decision.get("owner_user_id")
+    if owner != widening.proposer_subject or owner == grant.subject:
+        raise PaperApprovalDenied("Pool risk-policy proposal must come from the named proposer principal")
+    if decision.get("tenant_id") != grant.tenant_id:
+        raise PaperApprovalDenied("Dev paper decision tenant is outside authority")
+    if _enum_text(decision.get("risk_level")) != "low":
+        raise PaperApprovalDenied("Dev paper principal may only act on low-risk decisions")
+    metadata = decision.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    subject = subject if isinstance(subject, Mapping) else {}
+    pool_id = _text(subject, "pool_id")
+    if not pool_id or pool_id != decision.get("target_id") or pool_id != decision.get("capital_pool_id"):
+        raise PaperApprovalDenied("Pool risk-policy decision pool identity is inconsistent")
+    validate_paper_expiry(decision.get("expires_at"), created_at=decision.get("created_at"), now=now)
+    return {"grant_id": widening.grant_id, "pool_id": pool_id,
+            "risk_direction": subject.get("risk_direction")}
+
+
+_STAGE_MARKER_KEYS = ("stage", "target_stage", "execution_context", "environment")
+_OPEN_PROPOSAL_STATES = frozenset({"proposed", "under_review"})
+
+
+def _stage_markers_paper_only(decision: Mapping[str, Any]) -> bool:
+    """Every stage marker the proposal itself carries must say paper; a stamped scope must be the paper scope."""
+    metadata = decision.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    for source in (subject, metadata):
+        if not isinstance(source, Mapping):
+            continue
+        for key in _STAGE_MARKER_KEYS:
+            value = source.get(key)
+            if value not in (None, "") and value not in ("paper", DEV_PAPER_ENVIRONMENT):
+                return False
+    scope = decision.get("authorization_scope")
+    if scope is not None:
+        try:
+            if normalize_authorization_scope(scope)["allowed_target_stages"] != ["paper"]:
+                return False
+        except AuthorizationScopeError:
+            return False
+    return True
+
+
+def _superseding_failure(candidate: Mapping[str, Any], *, target: Mapping[str, Any], grant: DevPaperGrant,
+                         now: datetime) -> str | None:
+    """Why ``candidate`` is not a valid superseding decision for ``target`` (None when it is)."""
+    widening = grant.risk_policy
+    if candidate.get("decision_id") == target.get("decision_id"):
+        return "is the proposal itself"
+    if (candidate.get("tenant_id") != target.get("tenant_id")
+            or _enum_text(candidate.get("target_type")) != RISK_POLICY_TARGET
+            or candidate.get("target_id") != target.get("target_id")
+            or candidate.get("capital_pool_id") != target.get("capital_pool_id")):
+        return "is not for the same tenant and pool"
+    if _enum_text(candidate.get("decision_state")) != "decided" or _enum_text(candidate.get("decision")) != "approved":
+        return "is not an approved decided decision"
+    if candidate.get("conditions") or candidate.get("revoked_at") or candidate.get("superseded_by"):
+        return "is conditional, revoked or superseded"
+    if candidate.get("actor_id") != grant.subject or _enum_text(candidate.get("actor_role")) != "automated_gate":
+        return "was not decided by the paper automated gate"
+    if candidate.get("owner_user_id") != widening.proposer_subject:
+        return "was not proposed by the paper proposer"
+    try:
+        if normalize_authorization_scope(candidate.get("authorization_scope")) != grant.authorization_scope:
+            return "is not stamped with the paper scope"
+        if parse_rfc3339(candidate.get("expires_at"), "expires_at") <= now:
+            return "is expired"
+        if (parse_rfc3339(candidate.get("created_at"), "created_at")
+                <= parse_rfc3339(target.get("created_at"), "created_at")):
+            return "is not newer than the proposal"
+    except (AuthorizationScopeError, ValueError):
+        return "has a malformed scope or timestamp"
+    metadata = candidate.get("metadata")
+    subject = metadata.get("subject") if isinstance(metadata, Mapping) else None
+    draft = subject.get("risk_officer_draft") if isinstance(subject, Mapping) else None
+    if (not isinstance(draft, Mapping) or not isinstance(draft.get("provenance"), Mapping)
+            or not draft["provenance"] or not isinstance(draft.get("policy"), Mapping) or not draft["policy"]):
+        return "carries no risk-officer draft provenance"
+    if not _stage_markers_paper_only(candidate):
+        return "is not a paper-stage decision"
+    candidate_digest = candidate.get("candidate_digest")
+    if candidate_digest and candidate_digest == target.get("candidate_digest"):
+        return "binds the same policy as the proposal"
+    return None
+
+
+def require_superseded_risk_policy_close(
+    target: Mapping[str, Any], *, pool_decisions: list[Mapping[str, Any]], grant: DevPaperGrant,
+    now: datetime, env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Admit the gate on closing one open paper pool risk-policy proposal superseded by the pool's bound policy.
+
+    Close-only authority, verified on Governance's own records (never the caller's word): dev, a
+    capital_pool_activation of a paper pool, same tenant, proposed by the known paper proposer, still open, and a
+    newer, approved, unexpired, unrevoked decision by the paper automated gate with risk-officer provenance on the
+    same pool.  Returns the superseding decision id and the reason; raises :class:`PaperApprovalDenied` otherwise.
+    """
+    widening = grant.risk_policy
+    if widening is None:
+        raise PaperApprovalDenied("Dev paper grant does not authorise pool risk-policy proposal closing")
+    if current_environment(env) != DEV_PAPER_ENVIRONMENT:
+        raise PaperApprovalDenied("Superseded risk-policy close is limited to the dev paper environment")
+    if _enum_text(target.get("target_type")) != RISK_POLICY_TARGET:
+        raise PaperApprovalDenied("Superseded close may only act on capital_pool_activation proposals")
+    if target.get("tenant_id") != grant.tenant_id:
+        raise PaperApprovalDenied("Dev paper decision tenant is outside authority")
+    owner = target.get("owner_user_id")
+    if owner != widening.proposer_subject or owner == grant.subject:
+        raise PaperApprovalDenied("Superseded close may only act on proposals from the named paper proposer")
+    pool_id = target.get("target_id")
+    if not isinstance(pool_id, str) or not pool_id.strip() or target.get("capital_pool_id") != pool_id:
+        raise PaperApprovalDenied("Pool risk-policy decision pool identity is inconsistent")
+    if not _stage_markers_paper_only(target):
+        raise PaperApprovalDenied("Superseded close may only act on paper-stage proposals")
+    if _enum_text(target.get("decision_state")) not in _OPEN_PROPOSAL_STATES:
+        raise PaperApprovalDenied("Only an open (proposed or under_review) proposal can be closed as superseded", 409)
+    failures: list[str] = []
+    best: Mapping[str, Any] | None = None
+    for candidate in pool_decisions:
+        failure = _superseding_failure(candidate, target=target, grant=grant, now=now)
+        if failure is not None:
+            failures.append(f"{candidate.get('decision_id')}: {failure}")
+            continue
+        if best is None or (parse_rfc3339(candidate["created_at"], "created_at")
+                            > parse_rfc3339(best["created_at"], "created_at")):
+            best = candidate
+    if best is None:
+        raise PaperApprovalDenied("Proposal is not superseded by a gate-approved decision of the same paper pool")
+    superseding_id = str(best["decision_id"])
+    return {"grant_id": widening.grant_id, "pool_id": pool_id, "superseded_by": superseding_id,
+            "reason": f"Superseded by gate-approved paper risk policy decision {superseding_id}; closed without a human vote"}
 
 
 def require_card_admission_decision(decision: Mapping[str, Any], *, grant: DevPaperGrant, now: datetime,
@@ -1280,6 +1541,11 @@ __all__ = [
     "validate_paper_proposal",
     "require_paper_owned_decision",
     "require_card_admission_decision",
+    "RiskPolicyGrant",
+    "configured_risk_policy_grant",
+    "is_risk_policy_decision",
+    "require_paper_risk_policy_decision",
+    "risk_policy_candidate_failure",
     "verify_card_admission_candidate",
     "CardAdmissionGrant",
     "configured_card_admission_grant",

@@ -1,0 +1,23 @@
+{
+  "task": "PAPER-RISK-GATE-PRINCIPAL-END-TO-END-20261124",
+  "root_cause_class": "RC2",
+  "defect": "_chain_paper_capital_coordinator lacked governance_actor_id so the paper gate review/decide returned 403; repair reported decided_approved without readback; risk_direction compared the draft with itself.",
+  "fix": [
+    "service._chain_paper_capital_coordinator passes governance_actor_id",
+    "paper_gate_status decided_* only on decided readback with that outcome; else gate_refused:<http>/gate_unavailable + paper_gate_error",
+    "repair route returns 422 (refused) / 502 (unavailable) code paper_gate_failed",
+    "risk_direction/risk_comparison use baseline_policy (policy in effect before repair)"
+  ],
+  "tests": [
+    "services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py (9 tests; all fail on previous head, pass now)",
+    "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_failed_paper_gate_is_found_for_a_non_2xx_repair_response",
+    "test_persona_provisioning_coordinator.py 8d step now asserts 422 paper_gate_failed"
+  ],
+  "preexisting_failures": [
+    "test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads",
+    "::test_persona_list_projects_only_requested_page (503 strategy registry readback; fail identically on base)"
+  ],
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from owner's family",
+  "runtime_budget": "no new persistent writer or recurring job",
+  "hosted_acceptance": "pending after deploy: repair on three trading personas ends approved by paper automated gate, profile_mapping resolved, allow_new_or_increased_risk true; probes paper-risk-journey and paper-risk-policy-binding pass"
+}

@@ -323,6 +323,8 @@ def _install_owner_urllib_stub(
     runs: Optional[List[Dict[str, Any]]] = None,
     fail_tasks: bool = False,
     fail_runs: bool = False,
+    demands: Optional[Any] = None,
+    demands_http_status: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-orchestrator.internal:8101")
     task_records = deepcopy(
@@ -359,6 +361,11 @@ def _install_owner_urllib_stub(
         url = req.full_url
         headers = {k.lower(): v for k, v in req.header_items()}
         calls.append({"url": url, "headers": headers, "timeout": timeout})
+
+        if "/api/research/persona-demands" in url:
+            if demands_http_status is not None:
+                raise urllib.error.HTTPError(url, demands_http_status, "denied", hdrs=None, fp=io.BytesIO(b"{}"))
+            return _Resp(demands if demands is not None else {"demands": [], "count": 0})
 
         if url.endswith("/api/research-orchestrator/tasks"):
             if fail_tasks:
@@ -830,3 +837,230 @@ def test_detail_carries_non_real_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     assert d["data"]["display_summary"]["symbol"] == "2330.TW"
     d2 = client.get("/bff/research-tasks/rtask-20261023-008", headers=_auth_headers("tenant-dev")).json()
     assert d2["is_non_real"] is False and d2["name_is_fallback_id"] is False
+
+
+# ---- BFF-RESEARCH-DEMAND-READ-20261125: demands, demand join, persona-based non-real ----
+# Row shapes recorded read-only on hosted BFF adc027da9 (2026-11-25 06:20Z-06:40Z).
+
+DEMAND_PERSONA_A = "persona-ee7112a829d38b9135ac"
+DEMAND_PERSONA_B = "persona-6507750312870d03a241"
+
+
+def _owner_demand(demand_id: str, persona_id: str, **over: Any) -> Dict[str, Any]:
+    row = {
+        "schema_version": "research_demand.v1", "demand_id": demand_id, "tenant_id": "tenant-dev",
+        "persona_id": persona_id, "mandate": "meeting_research_demand", "missing_datasets": [],
+        "tried_families": ["momentum"], "short_measure": "effective_bets", "pool_version": 3,
+        "evidence_ref": "pool-health:" + persona_id, "status": "open",
+        "created_at": "2026-11-25T05:00:00Z", "expires_at": "2026-12-02T05:00:00Z",
+        "satisfied_at": None, "satisfied_by": None,
+    }
+    row.update(over)
+    return row
+
+
+HOSTED_DEMANDS = [
+    _owner_demand("rd-975bb89106f1c696a680", DEMAND_PERSONA_A, discovery={
+        "template_search": {"reason": "template_search_unavailable:ValueError:mandate_universe_missing"},
+        "last_run": {"reason": "no_external_match"}}),
+    _owner_demand("rd-796e24e24bf2055d3c42", DEMAND_PERSONA_B),
+]
+
+SEARCH_TASK = {
+    "id": "rtask-tmpl-1", "task_id": "rtask-tmpl-1", "tenant_id": "tenant-dev", "status": "failed",
+    "title": "Search registered templates for rd-975bb89106f1c696a680",
+    "objective": "Compile mandate-compatible templates through the replication gate",
+    "created_by": "persona-pool-cycle", "created_at": "2026-11-25T05:10:00Z", "updated_at": "2026-11-25T05:11:00Z",
+    "source_refs": [], "constraints": {"tenant_id": "tenant-dev", "persona_id": DEMAND_PERSONA_A},
+}
+
+
+def _search_run(run_id: str, created_at: str, detail: Optional[str]) -> Dict[str, Any]:
+    run = _make_hosted_run(run_id=run_id, task_id="rtask-tmpl-1", adapter="template_demand_gate",
+                           dispatch_mode="replication_gate", requested_mode="replication_gate",
+                           status="failed", created_at=created_at)
+    run["parameters"] = {"action_type": "template_search", "tenant_id": "tenant-dev",
+                         "persona_id": DEMAND_PERSONA_A, "demand_id": "rd-975bb89106f1c696a680"}
+    run["input_refs"] = []
+    run["rejection"] = {"reason": "retrain_failed", "step": "template_search", "detail": detail}
+    return run
+
+
+def _rapid_task(task_id: str) -> Dict[str, Any]:
+    return {"id": task_id, "task_id": task_id, "title": None, "task_type": "rapid_eval",
+            "tenant_id": "tenant-dev", "objective": "Rapid evaluation", "status": "ready",
+            "created_by": "training-session-svc", "created_at": "2026-10-24T10:00:00Z",
+            "updated_at": "2026-10-24T10:00:00Z", "source_refs": [], "constraints": {}}
+
+
+def _rapid_run(task_id: str, persona_ids: List[str]) -> Dict[str, Any]:
+    run = _make_hosted_run(run_id="rrun-" + task_id, task_id=task_id, adapter="imitation",
+                           dispatch_mode="real", requested_mode="real", status="completed",
+                           created_at="2026-10-24T10:01:00Z")
+    run["metadata"] = {"dataset_lineage": {"persona_ids": persona_ids, "version_id": "ds-v1"}}
+    return run
+
+
+ACCEPTANCE_PERSONA_1 = "persona-strat-hosted-all12-h12-claude-20261027-4923-src-106b4057d07a"
+ACCEPTANCE_PERSONA_2 = "persona-strat-hosted-all12-h12-01a11-20261023-9aeb-src-e018ff6d0eb8"
+RELEASE_PROBE_PERSONA = "persona-132519698e6199e80326"
+REAL_PERSONA = "persona-real-0001"
+
+RAPID_TASKS = [
+    "rtask-exp-sic-30bcef4d067e4c0111fc28cfe8101a7b",
+    "rtask-exp-sic-e2b9b58e0000000000000000000000aa",
+    "rtask-exp-sic-fdf12a210000000000000000000000bb",
+    "rtask-exp-sic-realreal0000000000000000000000cc",
+]
+
+
+def _persona_records() -> Dict[str, Dict[str, Any]]:
+    return {
+        ACCEPTANCE_PERSONA_1: {"id": ACCEPTANCE_PERSONA_1, "name": "Hosted all12 h12 claude", "dataScope": "test"},
+        ACCEPTANCE_PERSONA_2: {"id": ACCEPTANCE_PERSONA_2, "name": "Hosted all12 h12 01a11", "dataScope": "test"},
+        RELEASE_PROBE_PERSONA: {"id": RELEASE_PROBE_PERSONA, "dataScope": None, "lifecycle": "retired",
+                                "name": "Pantheon Dev Paper Release 38790003355 Attempt 1"},
+        DEMAND_PERSONA_A: {"id": DEMAND_PERSONA_A, "name": "Momentum Persona A", "dataScope": "regular"},
+        DEMAND_PERSONA_B: {"id": DEMAND_PERSONA_B, "name": "Momentum Persona B", "dataScope": "regular"},
+        REAL_PERSONA: {"id": REAL_PERSONA, "name": "Real Persona", "dataScope": "regular"},
+    }
+
+
+def _build_demand_client(directory: Any, monkeypatch: Any) -> Tuple[TestClient, List[Any]]:
+    snapshots: List[Any] = []
+
+    def snapshot(tenant_id: str, *, snapshot_at: Optional[str] = None) -> Any:
+        snapshots.append(tenant_id)
+        if isinstance(directory, Exception):
+            raise directory
+        return type("Snap", (), {"records_by_id": directory})()
+
+    app = build_bff_app()
+    app.include_router(create_research_router(
+        get_read_store=lambda: _FakeExperimentReadStore(),
+        extract_identity=auth_policy.extract_identity, require_read_role=auth_policy.require_read_role,
+        require_operator_role=auth_policy.require_operator_role, bff_error=auth_policy.bff_error,
+        utc_now=lambda: "2026-11-25T06:30:00Z"))
+    monkeypatch.setattr(tasks_route_module, "_default_persona_directory_snapshot", snapshot)
+    return TestClient(app), snapshots
+
+
+def _demand_world(monkeypatch, *, demands=None, **kw):
+    tasks = [SEARCH_TASK] + [_rapid_task(t) for t in RAPID_TASKS]
+    runs = [_search_run("rrun-tmpl-1", "2026-11-25T05:10:30Z", "template_search_unavailable:ValueError:mandate_universe_missing"),
+            _search_run("rrun-tmpl-2", "2026-11-25T05:40:30Z", "template_search_unavailable:ValueError:mandate_universe_missing"),
+            _rapid_run(RAPID_TASKS[0], [ACCEPTANCE_PERSONA_1]),
+            _rapid_run(RAPID_TASKS[1], [ACCEPTANCE_PERSONA_2]),
+            _rapid_run(RAPID_TASKS[2], [RELEASE_PROBE_PERSONA]),
+            _rapid_run(RAPID_TASKS[3], [REAL_PERSONA, ACCEPTANCE_PERSONA_1])]
+    return _install_owner_urllib_stub(
+        monkeypatch, tasks=tasks, runs=runs,
+        demands=demands if demands is not None else {"demands": HOSTED_DEMANDS, "count": 2}, **kw)
+
+
+def test_research_view_lists_open_demands_from_owner_with_forwarded_caller(monkeypatch) -> None:
+    calls = _demand_world(monkeypatch)
+    client, snapshots = _build_demand_client(_persona_records(), monkeypatch)
+    resp = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers("tenant-dev"))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    demands = {d["demand_id"]: d for d in body["open_demands"]}
+    assert set(demands) == {"rd-975bb89106f1c696a680", "rd-796e24e24bf2055d3c42"}
+    first = demands["rd-975bb89106f1c696a680"]
+    assert first == {
+        "demand_id": "rd-975bb89106f1c696a680", "persona_id": DEMAND_PERSONA_A,
+        "persona_display_name": "Momentum Persona A", "short_measure": "effective_bets",
+        "tried_families": ["momentum"], "missing_datasets": [], "mandate": "meeting_research_demand",
+        "created_at": "2026-11-25T05:00:00Z", "expires_at": "2026-12-02T05:00:00Z", "status": "open",
+        "evidence_ref": "pool-health:" + DEMAND_PERSONA_A,
+        "last_template_search_reason": "template_search_unavailable:ValueError:mandate_universe_missing",
+        "last_discovery_reason": "no_external_match"}
+    assert demands["rd-796e24e24bf2055d3c42"]["last_template_search_reason"] is None
+    assert body["meta"]["surfaces"]["research_demands"]["status"] == "ok"
+    demand_calls = [c for c in calls if "persona-demands" in c["url"]]
+    assert len(demand_calls) == 1
+    assert demand_calls[0]["headers"]["authorization"] == _auth_headers("tenant-dev")["Authorization"]
+    assert demand_calls[0]["headers"]["x-tenant-id"] == "tenant-dev"
+    assert len(snapshots) == 1  # distinct persona lookups share one directory read per request
+
+
+def test_non_research_views_do_not_read_demands(monkeypatch) -> None:
+    calls = _demand_world(monkeypatch)
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
+    body = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers()).json()
+    assert "open_demands" not in body and "research_demands" not in body["meta"]["surfaces"]
+    assert not [c for c in calls if "persona-demands" in c["url"]]
+
+
+@pytest.mark.parametrize("failure", [{"demands_http_status": 403}, {"demands_http_status": 401},
+                                     {"demands_http_status": 503}, {"demands": {"demands": "oops"}},
+                                     {"demands": {"demands": [dict(HOSTED_DEMANDS[0], tenant_id="tenant-b")]}}])
+def test_demand_owner_failure_is_visible_and_task_list_still_renders(monkeypatch, failure) -> None:
+    _demand_world(monkeypatch, **failure)
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
+    body = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers()).json()
+    assert body["open_demands"] == []
+    surface = body["meta"]["surfaces"]["research_demands"]
+    assert surface["status"] == "unavailable" and surface["reason"]
+    assert body["meta"]["surfaces"]["research_tasks"]["status"] == "ok"
+    assert [i["task_id"] for i in body["items"]]  # tasks render
+
+
+def test_template_search_task_carries_demand_joined_from_recorded_run(monkeypatch) -> None:
+    _demand_world(monkeypatch)
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
+    body = client.get("/bff/research-tasks", params={"view": "research"}, headers=_auth_headers()).json()
+    row = next(i for i in body["items"] if i["task_id"] == "rtask-tmpl-1")
+    assert row["title"] == SEARCH_TASK["title"] and row["name"] == SEARCH_TASK["title"]
+    assert row["demand"] == {
+        "demand_id": "rd-975bb89106f1c696a680", "persona_id": DEMAND_PERSONA_A, "attempt_count": 2,
+        "last_reason_code": "template_search_unavailable:ValueError:mandate_universe_missing",
+        "short_measure": "effective_bets", "status": "open"}
+    assert row["display_summary"]["subject_ref"] == "rd-975bb89106f1c696a680"
+    assert row["display_summary"]["task_kind"] == "template_search"
+    detail = client.get("/bff/research-tasks/rtask-tmpl-1", headers=_auth_headers()).json()
+    assert detail["demand"]["attempt_count"] == 2
+    assert detail["demand"]["last_reason_code"] == "template_search_unavailable:ValueError:mandate_universe_missing"
+    other = next(i for i in body["items"] if i["task_id"] == RAPID_TASKS[3])
+    assert other["demand"] is None
+
+
+def test_rapid_eval_on_test_or_probe_personas_is_non_real_from_owner_records(monkeypatch) -> None:
+    _demand_world(monkeypatch)
+    client, snapshots = _build_demand_client(_persona_records(), monkeypatch)
+    body = client.get("/bff/research-tasks", params={"include_non_real": "true"}, headers=_auth_headers()).json()
+    reasons = {i["task_id"]: i["non_real_reason"] for i in body["items"]}
+    assert [reasons[t] for t in RAPID_TASKS[:3]] == ["acceptance_test"] * 3
+    assert reasons[RAPID_TASKS[3]] is None  # a real persona in the lineage keeps the row real
+    assert len(snapshots) == 1
+    hidden = client.get("/bff/research-tasks", headers=_auth_headers()).json()
+    assert hidden["meta"]["hidden_non_real_count"] == 3
+    assert RAPID_TASKS[0] not in {i["task_id"] for i in hidden["items"]}
+    detail = client.get("/bff/research-tasks/" + RAPID_TASKS[2], headers=_auth_headers()).json()
+    assert detail["is_non_real"] is True
+
+
+@pytest.mark.parametrize("directory", [RuntimeError("persona owner down"), {}])
+def test_unreadable_persona_owner_leaves_rapid_eval_visible(monkeypatch, directory) -> None:
+    _demand_world(monkeypatch)
+    client, _ = _build_demand_client(directory, monkeypatch)
+    body = client.get("/bff/research-tasks", headers=_auth_headers()).json()
+    rows = {i["task_id"]: i for i in body["items"]}
+    assert all(rows[t]["non_real_reason"] is None and not rows[t]["is_non_real"] for t in RAPID_TASKS)
+
+
+def test_unwired_persona_directory_leaves_rapid_eval_visible(monkeypatch) -> None:
+    _demand_world(monkeypatch)
+    monkeypatch.setattr(tasks_route_module, "_default_persona_directory_snapshot",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no persona owner")))
+    body = _build_client().get("/bff/research-tasks", headers=_auth_headers()).json()
+    assert all(i["non_real_reason"] is None for i in body["items"] if i["task_id"] in RAPID_TASKS)
+
+
+def test_demand_read_denied_for_wrong_tenant_header(monkeypatch) -> None:
+    calls = _demand_world(monkeypatch)
+    client, _ = _build_demand_client(_persona_records(), monkeypatch)
+    resp = client.get("/bff/research-tasks", params={"view": "research"},
+                      headers=_auth_headers("tenant-dev", header_tenant_id="tenant-b"))
+    assert resp.status_code >= 400
+    assert not [c for c in calls if "persona-demands" in c["url"]]

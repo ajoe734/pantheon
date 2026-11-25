@@ -1,0 +1,31 @@
+Python 3.12.3; owner and BFF port import paths were checked against this task worktree.
+Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py.
+
+$ timeout 90s .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py tests/research_write_owner/test_research_write_owner.py --disable-warnings
+..........................                                               [100%]
+26 passed, 1 warning in 10.95s
+exit_code=0
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py --disable-warnings
+........................................................................ [ 53%]
+..............................................................           [100%]
+134 passed, 493 warnings in 108.86s (0:01:48)
+exit_code=0
+PostgreSQL test container stopped and automatically removed after terminal output collection.
+
+$ timeout 240s /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 scripts/ci_test_inventory.py run-shard --shard 3 --of 12 --jobs 3 --timeout 90 --results /tmp/research-meeting-ci-repair-shard3.json
+shard 3/12: 79 passed, 0 failed, wall 226s
+exit_code=0
+Complete per-file output: ci-repair-shard3.txt (existing environment-gated skips retained).
+
+$ /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest scripts.test_check_storage_manifest
+Ran 10 tests in 3.773s
+OK
+exit_code=0
+
+$ python3 scripts/check_storage_manifest.py
+passed=true, failures=[], entries=374, bounded=17, unbounded=21, unreviewed=336
+exit_code=0
+
+$ git diff --check
+exit_code=0

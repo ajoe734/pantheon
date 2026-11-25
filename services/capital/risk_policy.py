@@ -470,10 +470,13 @@ class RiskPolicyEvaluator:
         self._check_scalar_limit("gross_exposure", resolved_policy.gross_limit, resolved_context.gross_exposure, checks)
         self._check_scalar_limit("net_exposure", resolved_policy.net_limit, resolved_context.net_exposure, checks)
         self._check_scalar_limit("leverage", resolved_policy.max_leverage, resolved_context.leverage, checks)
-        self._check_scalar_limit("turnover", resolved_policy.turnover_limit, resolved_context.turnover, checks)
-        self._check_exposure_map("sector_exposure", resolved_policy.max_sector_exposure, resolved_context.sector_exposures, checks)
+        if resolved_context.runtime_action != "order_reduce":
+            if resolved_context.runtime_action == "order_increase":
+                self._check_runtime_increase_fact_availability(resolved_policy, resolved_context, facts, checks)
+            self._check_scalar_limit("turnover", resolved_policy.turnover_limit, resolved_context.turnover, checks)
+            self._check_exposure_map("sector_exposure", resolved_policy.max_sector_exposure, resolved_context.sector_exposures, checks)
+            self._check_liquidity(resolved_policy, resolved_context, checks)
         self._check_exposure_map("factor_exposure", resolved_policy.max_factor_exposure, resolved_context.factor_exposures, checks)
-        self._check_liquidity(resolved_policy, resolved_context, checks)
         self._check_order_controls(resolved_policy, resolved_context, checks)
         self._check_canary_scale(resolved_policy, resolved_context, checks)
         self._check_cash_reserve(resolved_policy, resolved_context, checks)
@@ -690,6 +693,38 @@ class RiskPolicyEvaluator:
             )
         )
 
+    def _check_runtime_increase_fact_availability(
+        self,
+        policy: RiskPolicy,
+        context: RiskPolicyEvaluationContext,
+        facts: Mapping[str, Any],
+        checks: list[RiskPolicyCheck],
+    ) -> None:
+        missing_sector_symbols = context.metadata.get("missing_sector_symbols") or context.metadata.get(
+            "missing_sector_underlyings"
+        )
+        for limit, fact, check_name in (
+            ("turnover_limit", "turnover", "turnover"),
+            ("max_sector_exposure", "sector_exposures", "sector_exposure"),
+            ("liquidity_constraints", "liquidity", "liquidity"),
+        ):
+            configured = getattr(policy, limit)
+            if configured in (None, (), {}):
+                continue
+            fact_missing = _is_obs_missing(limit, configured, facts.get(fact))
+            if limit == "max_sector_exposure" and bool(missing_sector_symbols):
+                fact_missing = True
+            if fact_missing:
+                checks.append(
+                    _failed(
+                        check_name,
+                        f"{fact}_unavailable",
+                        f"Risk policy limit {limit} cannot be evaluated: {fact} unavailable",
+                        limit=dict(configured) if isinstance(configured, Mapping) else configured,
+                        observed=facts.get(fact),
+                    )
+                )
+
     def _check_exposure_map(
         self,
         name: str,
@@ -699,6 +734,8 @@ class RiskPolicyEvaluator:
     ) -> None:
         if limit is None or not observed_map:
             return
+        evaluated = False
+        breached = False
         for key, raw_observed in observed_map.items():
             observed = _optional_float(raw_observed)
             if observed is None:
@@ -706,7 +743,9 @@ class RiskPolicyEvaluator:
             allowed = _limit_for_key(limit, str(key))
             if allowed is None:
                 continue
-            if abs(observed) > allowed:
+            evaluated = True
+            if abs(observed) > allowed + 1e-12:
+                breached = True
                 checks.append(
                     _failed(
                         name,
@@ -716,6 +755,15 @@ class RiskPolicyEvaluator:
                         observed={key: observed},
                     )
                 )
+        if evaluated and not breached and not any(c.check_name == name and c.status == "failed" for c in checks):
+            checks.append(
+                _passed(
+                    name,
+                    f"{name} is within RiskPolicy limit",
+                    dict(observed_map),
+                    limit=dict(limit) if isinstance(limit, Mapping) else limit,
+                )
+            )
 
     def _check_liquidity(
         self,
@@ -725,32 +773,51 @@ class RiskPolicyEvaluator:
     ) -> None:
         if not policy.liquidity_constraints or not context.liquidity:
             return
+        evaluated = False
+        breached = False
         min_adv = _optional_float(policy.liquidity_constraints.get("min_avg_daily_volume"))
         observed_adv = _optional_float(context.liquidity.get("avg_daily_volume"))
-        if min_adv is not None and observed_adv is not None and observed_adv < min_adv:
-            checks.append(
-                _failed(
-                    "liquidity",
-                    "liquidity_min_adv_breach",
-                    f"avg_daily_volume {observed_adv:.6g} is below RiskPolicy minimum {min_adv:.6g}",
-                    limit=min_adv,
-                    observed=observed_adv,
+        if min_adv is not None and observed_adv is not None:
+            evaluated = True
+            if observed_adv + 1e-12 < min_adv:
+                breached = True
+                checks.append(
+                    _failed(
+                        "liquidity",
+                        "liquidity_min_adv_breach",
+                        f"avg_daily_volume {observed_adv:.6g} is below RiskPolicy minimum {min_adv:.6g}",
+                        limit=min_adv,
+                        observed=observed_adv,
+                    )
                 )
-            )
         max_order_pct_adv = _optional_float(policy.liquidity_constraints.get("max_order_pct_adv"))
         observed_order_pct_adv = _optional_float(context.liquidity.get("order_pct_adv"))
-        if (
-            max_order_pct_adv is not None
-            and observed_order_pct_adv is not None
-            and observed_order_pct_adv > max_order_pct_adv
-        ):
+        if observed_order_pct_adv is None and observed_adv is not None and observed_adv > 0.0:
+            order_vol = _optional_float(
+                context.liquidity.get("order_volume", context.liquidity.get("order_quantity"))
+            )
+            if order_vol is not None:
+                observed_order_pct_adv = abs(order_vol) / observed_adv
+        if max_order_pct_adv is not None and observed_order_pct_adv is not None:
+            evaluated = True
+            if observed_order_pct_adv > max_order_pct_adv + 1e-12:
+                breached = True
+                checks.append(
+                    _failed(
+                        "liquidity",
+                        "liquidity_order_pct_adv_breach",
+                        f"order_pct_adv {observed_order_pct_adv:.6g} exceeds RiskPolicy limit {max_order_pct_adv:.6g}",
+                        limit=max_order_pct_adv,
+                        observed=observed_order_pct_adv,
+                    )
+                )
+        if evaluated and not breached and not any(c.check_name == "liquidity" and c.status == "failed" for c in checks):
             checks.append(
-                _failed(
+                _passed(
                     "liquidity",
-                    "liquidity_order_pct_adv_breach",
-                    f"order_pct_adv {observed_order_pct_adv:.6g} exceeds RiskPolicy limit {max_order_pct_adv:.6g}",
-                    limit=max_order_pct_adv,
-                    observed=observed_order_pct_adv,
+                    "liquidity is within RiskPolicy limit",
+                    dict(context.liquidity),
+                    limit=dict(policy.liquidity_constraints),
                 )
             )
 
@@ -1054,8 +1121,15 @@ def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
     if limit == "liquidity_constraints":
         if not isinstance(obs, Mapping):
             return True
-        required = (("min_avg_daily_volume", "avg_daily_volume"), ("max_order_pct_adv", "order_pct_adv"))
-        if any(_optional_float(obs.get(o)) is None for k, o in required if k in limit_value):
+        obs_adv = _optional_float(obs.get("avg_daily_volume"))
+        obs_pct = _optional_float(obs.get("order_pct_adv"))
+        if obs_pct is None and obs_adv is not None and obs_adv > 0.0:
+            order_vol = _optional_float(obs.get("order_volume", obs.get("order_quantity")))
+            if order_vol is not None:
+                obs_pct = abs(order_vol) / obs_adv
+        if "min_avg_daily_volume" in limit_value and obs_adv is None:
+            return True
+        if "max_order_pct_adv" in limit_value and obs_pct is None:
             return True
     values = obs.values() if isinstance(obs, Mapping) else [obs]
     return any(_optional_float(v) is None for v in values)
@@ -1063,7 +1137,14 @@ def _is_obs_missing(limit: str, limit_value: Any, obs: Any) -> bool:
 
 def _limit_for_key(limit: Mapping[str, float] | float, key: str) -> float | None:
     if isinstance(limit, Mapping):
-        return _optional_float(limit.get(key, limit.get("*")))
+        if key in limit:
+            return _optional_float(limit.get(key))
+        text = str(key).strip()
+        if text.isdigit():
+            for alias in (f"{int(text):02d}", str(int(text))):
+                if alias in limit:
+                    return _optional_float(limit.get(alias))
+        return _optional_float(limit.get("*"))
     return _optional_float(limit)
 
 
@@ -1285,6 +1366,104 @@ _FLEX_EXPOSURE_LIMIT_FIELDS: tuple[str, ...] = (
     "max_factor_exposure",
     "max_strategy_family_concentration",
 )
+
+
+_MAX_LIMITS = (
+    "gross_limit", "net_limit", "max_single_name_weight", "max_leverage", "turnover_limit",
+    "max_target_overlap", "max_signal_correlation", "max_canary_capital_scale_pct",
+    "max_canary_gross_scale_pct", "max_sector_exposure", "max_factor_exposure",
+    "max_strategy_family_concentration",
+)
+_MIN_LIMITS = ("min_cash_reserve_pct", "min_cash_reserve")
+
+
+def _limit_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _compare_limit(kind: str, cand: Any, cur: Any) -> str:
+    """One limit: 'stricter' | 'equal' | 'looser'. Missing is unlimited (max: +inf, min: 0)."""
+    if isinstance(cand, Mapping) or isinstance(cur, Mapping):
+        cm = cand if isinstance(cand, Mapping) else {}
+        um = cur if isinstance(cur, Mapping) else {}
+        scalar_c = None if isinstance(cand, Mapping) else _limit_number(cand)
+        scalar_u = None if isinstance(cur, Mapping) else _limit_number(cur)
+        results = []
+        for key in sorted(set(cm) | set(um)):
+            results.append(_compare_limit(
+                kind, _limit_number(cm.get(key)) if key in cm else scalar_c,
+                _limit_number(um.get(key)) if key in um else scalar_u))
+        if not results:
+            results.append(_compare_limit(kind, scalar_c, scalar_u))
+        for verdict in ("looser", "stricter"):
+            if verdict in results:
+                return verdict
+        return "equal"
+    c, u = _limit_number(cand), _limit_number(cur)
+    if kind == "max":
+        c = math.inf if c is None else c
+        u = math.inf if u is None else u
+        return "equal" if c == u else ("stricter" if c < u else "looser")
+    c = 0.0 if c is None else c
+    u = 0.0 if u is None else u
+    return "equal" if c == u else ("stricter" if c > u else "looser")
+
+
+def compare_risk_policies(
+    candidate: Mapping[str, Any] | None, current: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Risk direction of a candidate pool policy against the pool's effective policy.
+
+    Every limit equal or stricter -> 'reduce' (some stricter) or 'neutral' (all equal);
+    any looser limit, or no effective policy -> 'increase'. Returns the direction and the
+    per-limit comparison for the proposal subject.
+    """
+    cand = candidate if isinstance(candidate, Mapping) else {}
+    if not isinstance(current, Mapping) or not current:
+        return {"risk_direction": "increase", "risk_comparison": {"_effective_policy": "absent"}}
+    cur = current
+    comparison: dict[str, str] = {}
+    for name in (*_MAX_LIMITS, *_MIN_LIMITS):
+        if name not in cand and name not in cur:
+            continue
+        comparison[name] = _compare_limit("min" if name in _MIN_LIMITS else "max", cand.get(name), cur.get(name))
+    if "liquidity_constraints" in cand or "liquidity_constraints" in cur:
+        cand_liq = cand.get("liquidity_constraints") if isinstance(cand.get("liquidity_constraints"), Mapping) else {}
+        cur_liq = cur.get("liquidity_constraints") if isinstance(cur.get("liquidity_constraints"), Mapping) else {}
+        liq_results: list[str] = []
+        for sub_name, sub_kind in (("min_avg_daily_volume", "min"), ("max_order_pct_adv", "max")):
+            if sub_name in cand_liq or sub_name in cur_liq:
+                liq_results.append(_compare_limit(sub_kind, cand_liq.get(sub_name), cur_liq.get(sub_name)))
+        if "looser" in liq_results:
+            comparison["liquidity_constraints"] = "looser"
+        elif "stricter" in liq_results:
+            comparison["liquidity_constraints"] = "stricter"
+        elif liq_results:
+            comparison["liquidity_constraints"] = "equal"
+    values = set(comparison.values())
+    direction = "increase" if "looser" in values else ("reduce" if "stricter" in values else "neutral")
+    return {"risk_direction": direction, "risk_comparison": comparison}
+
+
+def require_valid_any(approval: Any, *, expected: Mapping[str, Any], **kwargs: Any) -> Any:
+    """``approval.require_valid`` where an expected value may be a set of accepted values.
+
+    The computed risk direction is any of increase, reduce or neutral; evidence satisfying any one member
+    passes, every other expected field is matched exactly. The first failure is raised when none passes.
+    """
+    candidates: list[dict[str, Any]] = [dict(expected)]
+    for key, value in expected.items():
+        if isinstance(value, (set, frozenset)):
+            candidates = [{**c, key: member} for c in candidates for member in sorted(value)]
+    failure: Exception | None = None
+    for candidate in candidates:
+        try:
+            return approval.require_valid(expected=candidate, **kwargs)
+        except Exception as exc:
+            failure = failure or exc
+    raise failure  # type: ignore[misc]
 
 
 def risk_policy_digest(policy: RiskPolicy | Mapping[str, Any] | None) -> str:
@@ -1657,12 +1836,15 @@ class CapitalOwnerApprovalReader:
         tenant_id: str | None = None,
         decision_state: str | None = "decided",
         max_items: int = 16,
+        history: bool = False,
+        now: datetime | None = None,
     ) -> list[Any]:
         from services.governance.approval_authority import (
             ApprovalEvidence,
             ApprovalInvalid,
             ApprovalUnavailable,
             BoundedApprovalList,
+            bound_candidate_history,
         )
 
         effective_pool_id = _optional_text(pool_id) or self.pool_id or _optional_text(target_id)
@@ -1702,11 +1884,10 @@ class CapitalOwnerApprovalReader:
                 continue
             if decision_state and ev.decision_state != decision_state:
                 continue
-            if len(results) >= bound:
-                overflow = True
-                break
             results.append(ev)
-        return BoundedApprovalList(results, overflow=overflow)
+        out = bound_candidate_history(results, bound=bound, now=now, history=history)
+        out.overflow = out.overflow or overflow
+        return out
 
     def verify(
         self,
@@ -1718,7 +1899,8 @@ class CapitalOwnerApprovalReader:
     ) -> Any:
         pool_id = _optional_text(expected.get("target_id") or expected.get("subject.pool_id"))
         tenant_id = _optional_text(expected.get("tenant_id"))
-        return self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id).require_valid(
+        return require_valid_any(
+            self.get(decision_id, pool_id=pool_id, tenant_id=tenant_id),
             expected=expected,
             now=now,
             usage_context=usage_context,
@@ -1815,6 +1997,13 @@ def _capital_owner_approval_reader_from_pool_reader(
 
 
 MAX_POLICY_CATALOG_FILES = 64
+
+
+def split_candidate_decisions(items: Any, now: datetime | None = None) -> tuple[list[Any], list[Any]]:
+    from services.governance.approval_authority import split_candidate_decisions as _split
+
+    return _split(items, now)
+
 MAX_BOUNDED_APPROVAL_CANDIDATES = 16
 
 _ABSENCE_SOURCE_PRIORITY: dict[str, int] = {
@@ -1830,6 +2019,7 @@ _ABSENCE_SOURCE_PRIORITY: dict[str, int] = {
     "policy_version_mismatch": 40,
     "policy_invalid_or_stage_not_allowed": 35,
     "policy_definition_and_approval_absent": 10,
+    "approval_reader_unavailable": 65,
 }
 
 
@@ -1895,14 +2085,21 @@ def _policy_approval_veto_source(
     return None
 
 
-def _build_approval_readers(
+
+
+def _build_approval_readers(**kwargs: Any) -> list[Any]:
+    return _build_approval_readers_with_diag(**kwargs)[0]
+
+
+def _build_approval_readers_with_diag(
     *,
     approval_reader: Any | None,
     capital_pool_reader: Any | None,
     resolved_pool_id: str,
     effective_tenant_id: str | None,
-) -> list[Any]:
+) -> tuple[list[Any], str | None, tuple[str, ...]]:
     readers: list[Any] = []
+    failure_types: list[str] = []
     seen_reader_ids: set[int] = set()
 
     def _add_reader(cand_reader: Any) -> None:
@@ -1921,8 +2118,8 @@ def _build_approval_readers(
                         tenant_id=effective_tenant_id,
                     )
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                failure_types.append(type(exc).__name__)
         _add_reader(
             _capital_owner_approval_reader_from_pool_reader(
                 capital_pool_reader,
@@ -1946,18 +2143,22 @@ def _build_approval_readers(
                 for domain in domains:
                     try:
                         _add_reader(auth_factory(domain))
-                    except Exception:
+                    except Exception as exc:
+                        failure_types.append(type(exc).__name__)
                         continue
             local_factory = globals().get("configured_approval_reader")
             if not readers and callable(local_factory) and local_factory is not auth_factory:
                 for domain in domains:
                     try:
                         _add_reader(local_factory(domain))
-                    except Exception:
+                    except Exception as exc:
+                        failure_types.append(type(exc).__name__)
                         continue
-        except Exception:
-            pass
-    return readers
+        except Exception as exc:
+            failure_types.append(type(exc).__name__)
+    diag = "approval_reader_unavailable" if (not readers and failure_types) else None
+    # Only exception type names are retained (never message text, URLs or credentials).
+    return readers, diag, (tuple(dict.fromkeys(failure_types)) if diag else ())
 
 
 def _classify_decision_payload_rejection(
@@ -2153,6 +2354,23 @@ def _verify_policy_owner_approval_decisions(
 
     explicit_candidate_ids = frozenset([*caller_explicit_ids, *container_candidate_ids])
     diagnostic_source: str | None = None
+    verified_info: dict[str, tuple[str, bool, str]] = {}
+
+    def _collapse_renewal_overlap(ids: list[str]) -> list[str]:
+        """Renewals of one policy digest overlap while the previous decision is still valid: keep the
+        pool-bound one, else the most recently created. Different digests stay distinct (ambiguous)."""
+        by_digest: dict[str, list[str]] = {}
+        for vid in ids:
+            by_digest.setdefault(verified_info.get(vid, ("", False, ""))[0] or vid, []).append(vid)
+        picked: list[str] = []
+        for group in by_digest.values():
+            if len(group) == 1:
+                picked.append(group[0])
+                continue
+            pool_bound = [g for g in group if verified_info.get(g, ("", False, ""))[1]]
+            pool = pool_bound or group
+            picked.append(max(pool, key=lambda g: (verified_info.get(g, ("", False, ""))[2], g)))
+        return picked
 
     def _validate_loaded_evidence(loaded_ev: Any, expected_decision_id: str | None = None) -> str | None:
         nonlocal diagnostic_source
@@ -2199,7 +2417,7 @@ def _verify_policy_owner_approval_decisions(
                 "target_id": policy_model.risk_policy_id,
                 "target_version": ev_target_ver,
                 "subject.pool_id": subj_pool,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": policy_model.risk_policy_id,
                 "subject.risk_policy_version": str(policy_model.version),
             }
@@ -2209,7 +2427,7 @@ def _verify_policy_owner_approval_decisions(
                 "target_type": "capital_pool_activation",
                 "target_id": resolved_pool_id,
                 "subject.pool_id": resolved_pool_id,
-                "subject.risk_direction": "increase",
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
                 "subject.risk_policy_id": policy_model.risk_policy_id,
                 "subject.risk_policy_version": str(policy_model.version),
             }
@@ -2227,7 +2445,8 @@ def _verify_policy_owner_approval_decisions(
                 expected_decision_id in explicit_candidate_ids
                 and callable(getattr(loaded_ev, "require_valid", None))
             ):
-                res_ev = loaded_ev.require_valid(
+                res_ev = require_valid_any(
+                    loaded_ev,
                     expected={
                         **expected_binding,
                         "subject.risk_policy_digest": computed_digest,
@@ -2253,7 +2472,8 @@ def _verify_policy_owner_approval_decisions(
             return None
 
         try:
-            evidence.require_valid(
+            require_valid_any(
+                evidence,
                 expected=expected_binding,
                 now=now_dt,
                 usage_context=usage_ctx,
@@ -2279,6 +2499,11 @@ def _verify_policy_owner_approval_decisions(
         elif not subj_risk:
             return None
 
+        verified_info[evidence.decision_id] = (
+            _optional_text(subject.get("risk_policy_digest")) or "",
+            ev_target_id == resolved_pool_id,
+            _first_text_or_none(d, "created_at", "recorded_at", "decided_at") or "",
+        )
         return evidence.decision_id
 
     def _fetch_by_id(cand_id: str) -> Any:
@@ -2363,9 +2588,10 @@ def _verify_policy_owner_approval_decisions(
                         items = []
                 except Exception:
                     items = []
-                if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+                current_items, past_items = split_candidate_decisions(items, now_dt)
+                if len(current_items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
                     target_lookup_overflow = True
-                for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+                for item in [*current_items[:MAX_BOUNDED_APPROVAL_CANDIDATES], *past_items]:
                     item_id = _extract_decision_id_reference(item)
                     if item_id:
                         checked_ids.add(item_id)
@@ -2380,6 +2606,8 @@ def _verify_policy_owner_approval_decisions(
         if matched_default and matched_default not in discovered_verified:
             discovered_verified.append(matched_default)
 
+    if len(discovered_verified) > 1 and not target_lookup_overflow:
+        discovered_verified = _collapse_renewal_overlap(discovered_verified)
     if len(discovered_verified) > 1 or target_lookup_overflow:
         return None, discovered_verified, "policy_candidates_ambiguous"
     if len(discovered_verified) == 1:
@@ -2538,7 +2766,7 @@ def discover_approved_profile_risk_policy(
     resolved_pool_id: str,
     effective_tenant_id: str | None,
     clean_stage: str | None = "paper",
-    clean_profile: str = "low",
+    clean_profile: str | None = None,
     expected_version: str | None = None,
     base_pool: Mapping[str, Any] | None = None,
     currency: str | None = None,
@@ -2557,7 +2785,15 @@ def discover_approved_profile_risk_policy(
 ) -> ProfilePolicyAutoResolution:
     """Bounded discovery of an applicable approved RiskPolicy for (tenant_id, requested_profile, stage)."""
     effective_now = now_dt or _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
-    eff_profile = _optional_text(clean_profile) or "low"
+    eff_profile = _optional_text(clean_profile)
+    if eff_profile is None or not isinstance(clean_profile, str):
+        return ProfilePolicyAutoResolution(
+            resolved=False,
+            status="unresolved_profile_mapping",
+            reason_code="risk_policy_profile_mapping_unapproved",
+            reason="Requested profile provenance must be established before policy discovery",
+            absence_source="requested_profile_missing" if eff_profile is None else "requested_profile_invalid",
+        )
     eff_stage = _optional_text(clean_stage) or "paper"
     req_version = _optional_text(expected_version)
 
@@ -2645,12 +2881,14 @@ def discover_approved_profile_risk_policy(
             catalog_candidates.append((cand_policy, raw_dict))
             catalog_by_id[cand_policy.risk_policy_id] = (cand_policy, raw_dict)
 
-    readers = _build_approval_readers(
+    readers, reader_diag, reader_err_types = _build_approval_readers_with_diag(
         approval_reader=approval_reader,
         capital_pool_reader=capital_pool_reader,
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
     )
+    if reader_diag:
+        diagnostic_source = _higher_priority_absence_source(diagnostic_source, reader_diag)
 
     base = dict(base_pool) if isinstance(base_pool, Mapping) else {}
     base_meta = dict(base.get("metadata")) if isinstance(base.get("metadata"), Mapping) else {}
@@ -2773,9 +3011,10 @@ def discover_approved_profile_risk_policy(
                     items = []
             except Exception:
                 items = []
-            if len(items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
+            current_items, past_items = split_candidate_decisions(items, effective_now)
+            if len(current_items) > MAX_BOUNDED_APPROVAL_CANDIDATES:
                 pool_decision_lookup_overflow = True
-            for item in items[:MAX_BOUNDED_APPROVAL_CANDIDATES]:
+            for item in [*current_items[:MAX_BOUNDED_APPROVAL_CANDIDATES], *past_items]:
                 _collect_decision_obj(item)
         default_apv_id = f"apv-capital-pool-{resolved_pool_id}"
         if not pool_decisions and not pool_decision_lookup_overflow and default_apv_id not in seen_dec_ids:
@@ -2916,6 +3155,23 @@ def discover_approved_profile_risk_policy(
             except Exception:
                 pass
 
+        if is_def_id:
+            # Never synthesize limits for a default-id approval. Content comes only from a risk-officer draft
+            # embedded in the decision subject, bound to the approved digest.
+            draft = subject.get("risk_officer_draft") if isinstance(subject.get("risk_officer_draft"), Mapping) else {}
+            draft_policy = draft.get("policy") if isinstance(draft.get("policy"), Mapping) else None
+            if (
+                draft_policy is not None
+                and _optional_text(draft_policy.get("risk_policy_id")) == subj_pol_id
+                and (_optional_text(draft_policy.get("version")) or "") == subj_pol_ver
+                and risk_policy_digest(draft_policy) == _optional_text(subject.get("risk_policy_digest"))
+            ):
+                raw_draft = dict(draft_policy)
+                decision_policy_candidates.append(
+                    (None, normalize_risk_policy(raw_draft, default_id=subj_pol_id), raw_draft)
+                )
+                continue
+
         if isinstance(base_meta.get("risk_policy"), Mapping):
             base_pol_dict = dict(base_meta["risk_policy"])
             if str(base_pol_dict.get("risk_policy_id") or "") == subj_pol_id:
@@ -2950,23 +3206,10 @@ def discover_approved_profile_risk_policy(
                 except Exception:
                     pass
 
-        if is_def_id:
-            default_raw = {
-                "risk_policy_id": subj_pol_id,
-                "version": subj_pol_ver,
-                "status": "active",
-                "allowed_stages": ["paper"],
-                "gross_limit": 2.0,
-                "net_limit": 2.0,
-                "max_leverage": 2.0,
-                "allowed_asset_classes": ["equity", "future"],
-            }
-            norm_p = normalize_risk_policy(default_raw, default_id=subj_pol_id)
-            decision_policy_candidates.append((None, norm_p, default_raw))
-
     # Also include the base_pool inline policy (or default paper pool baseline) so that existing/default
     # pool approvals (including apv-capital-pool-{pool_id} or custom decision_ids) are evaluated.
     fallback_inline_raw: dict[str, Any]
+    fallback_inline_policy: RiskPolicy | None
     fallback_is_vetoed = False
     if isinstance(base_meta.get("risk_policy"), Mapping) and _is_policy_content_mapping(base_meta["risk_policy"]):
         fallback_inline_raw = dict(base_meta["risk_policy"])
@@ -2986,18 +3229,11 @@ def discover_approved_profile_risk_policy(
                 fallback_is_vetoed = True
                 diagnostic_source = _higher_priority_absence_source(diagnostic_source, fb_veto)
     else:
-        fallback_inline_raw = {
-            "risk_policy_id": f"rp-{resolved_pool_id}",
-            "version": req_version or "1.0",
-            "status": "active",
-            "allowed_stages": ["paper"],
-            "gross_limit": 2.0,
-            "net_limit": 2.0,
-            "max_leverage": 2.0,
-            "allowed_asset_classes": ["equity", "future"],
-        }
-        fallback_inline_policy = normalize_risk_policy(fallback_inline_raw, default_id=f"rp-{resolved_pool_id}")
-    if not fallback_is_vetoed:
+        # No inline policy: nothing is invented. A candidate can only come from the catalog or an approved
+        # decision that embeds a risk-officer draft.
+        fallback_inline_raw = {}
+        fallback_inline_policy = None
+    if not fallback_is_vetoed and fallback_inline_policy is not None:
         decision_policy_candidates.append((None, fallback_inline_policy, fallback_inline_raw))
 
     # 3. Verify each candidate policy against Governance approvals.
@@ -3134,13 +3370,19 @@ def discover_approved_profile_risk_policy(
         if (catalog_candidates or unapproved_catalog_policies)
         else "policy_definition_and_approval_absent"
     )
+    on_policy = (
+        f" on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r}"
+        if best_candidate_policy is not None else ""
+    )
+    if final_absence == "approval_reader_unavailable" and reader_err_types:
+        on_policy += f" (approval_reader_error_types={list(reader_err_types)!r})"
     return ProfilePolicyAutoResolution(
         resolved=False,
         status="unresolved_profile_mapping",
         reason_code="risk_policy_profile_mapping_unapproved",
         reason=(
             f"No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile "
-            f"{eff_profile!r} on policy {best_candidate_policy.risk_policy_id!r}@{best_candidate_policy.version!r} "
+            f"{eff_profile!r}{on_policy} "
             f"(absence_source={final_absence}); policy owner must approve explicit gross_limit/net_limit/"
             f"max_leverage/max_single_name_weight or bind an approved risk_policy_ref."
         ),
@@ -3404,21 +3646,37 @@ def resolve_pool_risk_policy_binding(
     )
     effective_tenant_id = clean_expected_tenant or pool_tenant_id or binding_tenant
     clean_stage = _optional_text(expected_stage)
-    clean_profile = (
-        _optional_text(requested_profile)
-        or (
-            _first_text_or_none(pool_obj, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
-            if isinstance(pool_obj, Mapping)
-            else None
-        )
-        or _first_text_or_none(pool_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
-        or _first_text_or_none(b_meta, "requested_risk_profile", "risk_profile", "requested_risk", "risk")
+    # Request provenance belongs to the caller/pool/binding, never the candidate
+    # policy. Check every alias so precedence cannot hide a contradictory source.
+    profile_keys = ("requested_risk_profile", "risk_profile", "requested_risk", "risk")
+    profile_sources = {"requested_profile": requested_profile}
+    for label, container in (
+        ("pool", pool_obj), ("pool.metadata", pool_meta),
+        ("binding", b_map), ("binding.metadata", b_meta),
+        ("binding.capital_pool", pool_sub),
+        ("binding.capital_pool.metadata", pool_sub.get("metadata")),
+    ):
+        for key in profile_keys:
+            value = container.get(key) if isinstance(container, Mapping) else getattr(container, key, None)
+            if value is not None:
+                profile_sources[f"{label}.{key}"] = value
+    present_profiles = {key: value for key, value in profile_sources.items() if value is not None and value != ""}
+    invalid_profile = any(not isinstance(value, str) or not value.strip() for value in present_profiles.values())
+    distinct_profiles = {value.strip() for value in present_profiles.values() if isinstance(value, str) and value.strip()}
+    profile_absence = (
+        "requested_profile_invalid" if invalid_profile else
+        "requested_profile_conflict" if len(distinct_profiles) > 1 else
+        "requested_profile_missing" if not distinct_profiles else None
     )
+    clean_profile = next(iter(distinct_profiles)) if profile_absence is None else None
     needs_approved_mapping = bool(
         require_approved_profile_mapping is True
         or pool_meta.get("require_approved_profile_mapping") is True
         or b_meta.get("require_approved_profile_mapping") is True
-        or (require_approved_profile_mapping is not False and clean_profile is not None)
+        or getattr(pool_obj, "require_approved_profile_mapping", False) is True
+        or pool_sub.get("require_approved_profile_mapping") is True
+        or _mapping(pool_sub.get("metadata")).get("require_approved_profile_mapping") is True
+        or (require_approved_profile_mapping is not False and bool(present_profiles))
     )
 
     def _fail(
@@ -3456,6 +3714,26 @@ def resolve_pool_risk_policy_binding(
             owner_decision_request=owner_decision,
         )
 
+    def _profile_provenance_failure(
+        policy_obj: RiskPolicy | None = None, policy_tenant: str | None = None,
+    ) -> BoundPoolRiskPolicyResolution:
+        return _fail(
+            "unresolved_profile_mapping", "risk_policy_profile_mapping_unapproved",
+            f"Requested profile provenance rejected: {profile_absence}; repair the original request before policy mapping",
+            policy_obj=policy_obj, policy_tenant=policy_tenant,
+            profile_status="unresolved_owner_decision_required",
+            owner_decision={
+                "policy_owner": "services/capital/risk_policy.py",
+                "accountable_domain": "capital_risk_policy_owner",
+                "absence_source": profile_absence,
+                "requested_profile": None,
+                "profile_sources": present_profiles,
+                "capital_pool_id": resolved_pool_id,
+                "tenant_id": effective_tenant_id,
+                "stage": clean_stage,
+            },
+        )
+
     if clean_expected_tenant and pool_tenant_id and clean_expected_tenant != pool_tenant_id:
         return _fail(
             "wrong_tenant",
@@ -3465,7 +3743,9 @@ def resolve_pool_risk_policy_binding(
         )
 
     if needs_approved_mapping and not resolved_ref and not explicit_inline_key:
-        effective_req_profile = clean_profile or "low"
+        if profile_absence is not None:
+            return _profile_provenance_failure()
+        effective_req_profile = clean_profile
         auto_now = _parse_iso_timestamp(as_of) or datetime.now(timezone.utc)
         auto_res = discover_approved_profile_risk_policy(
             resolved_pool_id=resolved_pool_id,
@@ -3961,19 +4241,35 @@ def resolve_pool_risk_policy_binding(
                 policy_tenant=policy_tenant_id,
             )
 
-    if not clean_profile:
-        clean_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
+    policy_profile = _first_text_or_none(policy_meta, "requested_profile", "risk_profile", "requested_risk")
     is_default_inline_id = (
         str(policy_model.risk_policy_id).startswith("rp-pool-")
         or (bool(resolved_pool_id) and str(policy_model.risk_policy_id) == f"rp-{resolved_pool_id}")
         or policy_meta.get("default_paper_baseline") is True
         or pool_meta.get("default_paper_baseline") is True
     )
-    needs_approved_mapping = bool(
+    explicit_profile_mapping = bool(
         needs_approved_mapping
         or policy_meta.get("require_approved_profile_mapping") is True
-        or (require_approved_profile_mapping is not False and (clean_profile is not None or is_default_inline_id))
+        or (require_approved_profile_mapping is not False and policy_profile is not None)
     )
+    needs_approved_mapping = bool(
+        explicit_profile_mapping
+        or (require_approved_profile_mapping is not False and is_default_inline_id)
+    )
+    # Older pools may already have an exact pool/limits approval without a
+    # separate profile-mapping request. Preserve that contract, but never use
+    # catalog discovery or policy metadata to invent the missing request.
+    legacy_pool_contract = (
+        profile_absence == "requested_profile_missing"
+        and is_default_inline_id and not explicit_profile_mapping
+    )
+    if needs_approved_mapping and profile_absence is not None and not legacy_pool_contract:
+        # Retain the validated bound policy for governed reductions and exits.
+        return _profile_provenance_failure(policy_model, policy_tenant_id)
+    verification_pool = pool_obj
+    if legacy_pool_contract and isinstance(pool_obj, Mapping):
+        verification_pool = {**pool_obj, "approval_digest": capital_pool_approval_digest(pool_obj)}
     verified_decision_id, all_verified_decision_ids, verification_diag = _verify_policy_owner_approval_decisions(
         resolved_pool_id=resolved_pool_id,
         effective_tenant_id=effective_tenant_id,
@@ -3982,7 +4278,7 @@ def resolve_pool_risk_policy_binding(
         policy_model=policy_model,
         computed_digest=computed_digest,
         raw_policy_mapping=raw_policy_mapping,
-        pool_obj=pool_obj,
+        pool_obj=verification_pool,
         pool_meta=pool_meta,
         b_map=b_map,
         b_meta=b_meta,
@@ -3993,13 +4289,16 @@ def resolve_pool_risk_policy_binding(
         approval_reader=approval_reader,
         capital_pool_reader=capital_pool_reader,
         now_dt=now_dt,
+        allow_target_discovery=not legacy_pool_contract,
     )
+    if needs_approved_mapping and profile_absence is not None and verified_decision_id is None:
+        return _profile_provenance_failure(policy_model, policy_tenant_id)
 
     if needs_approved_mapping and (
         len(all_verified_decision_ids) > 1
         or verification_diag == "policy_candidates_ambiguous"
     ):
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         ambig_req = {
             "policy_owner": "services/capital/risk_policy.py",
             "governance_surface": "services/control-plane/governance/risk_policy.py",
@@ -4138,7 +4437,7 @@ def resolve_pool_risk_policy_binding(
         verification_diag = _higher_priority_absence_source(verification_diag, policy_veto_diag)
 
     if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         if is_default_inline_id and not resolved_ref and policy_veto_diag is None:
             auto_res = discover_approved_profile_risk_policy(
                 resolved_pool_id=resolved_pool_id,
@@ -4198,7 +4497,7 @@ def resolve_pool_risk_policy_binding(
                     computed_digest = risk_policy_digest(policy_model)
 
     if (needs_approved_mapping or policy_veto_diag is not None) and verified_decision_id is None and not owner_verified_explicit_contract:
-        effective_req_profile = clean_profile or _first_text_or_none(policy_meta, "requested_profile", "risk_profile") or "low"
+        effective_req_profile = clean_profile
         cand_pool_digest = (
             (
                 _first_text_or_none(pool_obj, "approval_digest", "pool_approval_digest")
@@ -4388,3 +4687,201 @@ def resolve_bound_pool_risk_policy(
         raise RiskPolicyLoadError(f"{resolution.reason} ({resolution.reason_code})")
     raise RiskPolicyError(f"{resolution.reason} ({resolution.reason_code})")
 
+
+
+# ---------------------------------------------------------------------------
+# Risk-officer drafted paper-pool policy: Capital-owned validation + outer bounds
+# ---------------------------------------------------------------------------
+PROFILE_OUTER_BOUNDS_ENV = "PANTHEON_PAPER_RISK_PROFILE_BOUNDS"
+# Override with PANTHEON_PAPER_RISK_PROFILE_BOUNDS='{"low": {"gross_limit": 2.0, "max_leverage": 2.0,
+# "max_single_name_weight": 0.2, "min_cash_reserve_pct": 0.1}}'.  Mirrored in services/governance/paper_approval_scope.py.
+DEFAULT_PROFILE_OUTER_BOUNDS: Mapping[str, Mapping[str, float]] = {
+    "low": {
+        # Operator decision 2026-11-07 (DEV_PLAN_INSTRUMENT_EXPRESSION_LAYER Q3): gross and leverage <= 2.0x pool equity.
+        "gross_limit": 2.0,
+        "max_leverage": 2.0,
+        # Operator decision 2026-11-23: single name <= 20% of NAV, cash reserve >= 10% of NAV.
+        "max_single_name_weight": 0.20,
+        "min_cash_reserve_pct": 0.10,
+    },
+}
+PROFILE_OUTER_BOUND_KEYS = (
+    "gross_limit",
+    "max_leverage",
+    "max_single_name_weight",
+    "min_cash_reserve_pct",
+    "max_sector_exposure",
+    "turnover_limit",
+    "max_order_pct_adv",
+    "min_avg_daily_volume",
+    "liquidity_constraints",
+)
+_PROFILE_UPPER_BOUND_KEYS = ("gross_limit", "max_leverage", "max_single_name_weight")
+DRAFT_REQUIRED_LIMITS = ("gross_limit", "net_limit", "max_leverage", "max_single_name_weight", "min_cash_reserve_pct")
+DRAFT_BLUEPRINT_LIMITS = ("max_sector_exposure", "turnover_limit", "liquidity_constraints")
+_LIQUIDITY_CONSTRAINT_KEYS = ("min_avg_daily_volume", "max_order_pct_adv")
+
+
+def profile_outer_bounds(env: Mapping[str, str] | None = None) -> dict[str, dict[str, float]]:
+    """Operator outer bounds per profile. A malformed override fails closed (raises)."""
+    source = os.environ if env is None else env
+    raw = str(source.get(PROFILE_OUTER_BOUNDS_ENV) or "").strip()
+    loaded: Any = json.loads(raw) if raw else DEFAULT_PROFILE_OUTER_BOUNDS
+    if not isinstance(loaded, Mapping):
+        raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV} must be a JSON object")
+    bounds: dict[str, dict[str, float]] = {}
+    for profile, limits in loaded.items():
+        if not isinstance(limits, Mapping) or set(limits) - set(PROFILE_OUTER_BOUND_KEYS):
+            raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}] has unsupported bounds")
+        normalized_limits: dict[str, float] = {}
+        for k, v in limits.items():
+            if k == "liquidity_constraints":
+                if not isinstance(v, Mapping) or not v or set(v) - set(_LIQUIDITY_CONSTRAINT_KEYS):
+                    raise RiskPolicyError(
+                        f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}].liquidity_constraints has unsupported bounds"
+                    )
+                for lk, lv in v.items():
+                    num = _optional_float(lv)
+                    if num is None or num <= 0.0:
+                        raise RiskPolicyError(
+                            f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}].liquidity_constraints[{lk!r}] must be positive"
+                        )
+                    normalized_limits[lk] = float(num)
+                continue
+            num = _optional_float(v)
+            if num is None or num <= 0.0:
+                raise RiskPolicyError(f"{PROFILE_OUTER_BOUNDS_ENV}[{profile!r}][{k!r}] must be a positive number")
+            normalized_limits[k] = float(num)
+        bounds[str(profile).strip().lower()] = normalized_limits
+    return bounds
+
+
+def validate_drafted_pool_risk_policy(
+    policy: Mapping[str, Any],
+    *,
+    profile: str,
+    bounds: Mapping[str, Mapping[str, Any]] | None = None,
+) -> tuple[RiskPolicy | None, str | None]:
+    """Validate a risk-officer drafted policy. Returns ``(model, None)`` or ``(None, reason)``.
+
+    Requires gross/net/leverage, a single-name cap strictly inside (0, 1) and a positive cash reserve < 1,
+    validates any drafted blueprint limits (``max_sector_exposure``, ``turnover_limit``,
+    ``liquidity_constraints``), and enforces the configured operator outer bounds for ``profile`` as hard
+    validation without inventing unconfigured bounds.
+    """
+    if not isinstance(policy, Mapping):
+        return None, "risk_policy_draft_malformed: expected a mapping"
+    raw_sector = policy.get("max_sector_exposure")
+    if isinstance(raw_sector, Mapping) and not raw_sector:
+        return None, "risk_policy_draft_empty_limit:max_sector_exposure"
+    raw_liq = policy.get("liquidity_constraints")
+    if raw_liq is not None:
+        if not isinstance(raw_liq, Mapping) or not raw_liq:
+            return None, "risk_policy_draft_empty_limit:liquidity_constraints"
+        unsupported_liq = sorted(set(raw_liq) - set(_LIQUIDITY_CONSTRAINT_KEYS))
+        if unsupported_liq:
+            return None, f"risk_policy_draft_unsupported_liquidity_constraints:{','.join(unsupported_liq)}"
+    try:
+        model = normalize_risk_policy(policy)
+    except (RiskPolicyError, TypeError, ValueError) as exc:
+        return None, f"risk_policy_draft_malformed: {exc}"
+    for name in DRAFT_REQUIRED_LIMITS:
+        val = getattr(model, name)
+        if val is None or isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+            return None, f"risk_policy_draft_missing_or_non_numeric:{name}"
+        if float(val) <= 0.0:
+            return None, f"risk_policy_draft_limit_not_positive:{name}={val!r}"
+    if not float(model.max_single_name_weight) < 1.0:
+        return None, f"risk_policy_draft_single_name_not_below_1:max_single_name_weight={model.max_single_name_weight!r}"
+    if not float(model.min_cash_reserve_pct) < 1.0:
+        return None, f"risk_policy_draft_cash_reserve_not_below_1:min_cash_reserve_pct={model.min_cash_reserve_pct!r}"
+
+    if model.turnover_limit is not None and float(model.turnover_limit) <= 0.0:
+        return None, f"risk_policy_draft_limit_not_positive:turnover_limit={model.turnover_limit!r}"
+
+    if model.max_sector_exposure is not None:
+        sector_items = (
+            tuple(model.max_sector_exposure.items())
+            if isinstance(model.max_sector_exposure, Mapping)
+            else (("*", float(model.max_sector_exposure)),)
+        )
+        if not sector_items:
+            return None, "risk_policy_draft_empty_limit:max_sector_exposure"
+        for sec_key, sec_val in sector_items:
+            if float(sec_val) <= 0.0 or float(sec_val) > 1.0:
+                return None, f"risk_policy_draft_invalid_sector_exposure:max_sector_exposure[{sec_key}]={sec_val!r}"
+
+    if model.liquidity_constraints:
+        if "min_avg_daily_volume" in model.liquidity_constraints:
+            min_adv = float(model.liquidity_constraints["min_avg_daily_volume"])
+            if min_adv <= 0.0:
+                return None, f"risk_policy_draft_limit_not_positive:min_avg_daily_volume={min_adv!r}"
+        if "max_order_pct_adv" in model.liquidity_constraints:
+            max_pct = float(model.liquidity_constraints["max_order_pct_adv"])
+            if max_pct <= 0.0 or max_pct > 1.0:
+                return None, f"risk_policy_draft_invalid_order_pct_adv:max_order_pct_adv={max_pct!r}"
+
+    draft_meta = model.metadata.get("risk_officer_draft") if isinstance(model.metadata, Mapping) else None
+    if isinstance(draft_meta, Mapping) and "omitted_limits" in draft_meta:
+        omitted = draft_meta.get("omitted_limits")
+        if not isinstance(omitted, Mapping):
+            return None, "risk_policy_draft_malformed:omitted_limits must be a mapping"
+        for omit_key, omit_reason in omitted.items():
+            if not _optional_text(omit_reason):
+                return None, f"risk_policy_draft_missing_omission_reason:{omit_key}"
+
+    limits = (profile_outer_bounds() if bounds is None else bounds).get(str(profile or "").strip().lower())
+    if limits:
+        for name in _PROFILE_UPPER_BOUND_KEYS:
+            cap = _optional_float(limits.get(name))
+            if cap is not None and float(getattr(model, name)) > cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:{name}="
+                              f"{getattr(model, name)!r} exceeds {profile} bound {cap!r}")
+        reserve = _optional_float(limits.get("min_cash_reserve_pct"))
+        if reserve is not None and float(model.min_cash_reserve_pct) + 1e-12 < reserve:
+            return None, (f"risk_policy_draft_outside_bounds:min_cash_reserve_pct="
+                          f"{model.min_cash_reserve_pct!r} below {profile} bound {reserve!r}")
+        sector_cap = _optional_float(limits.get("max_sector_exposure"))
+        if sector_cap is not None:
+            if model.max_sector_exposure in (None, {}):
+                return None, (f"risk_policy_draft_outside_bounds:max_sector_exposure=None "
+                              f"exceeds {profile} bound {sector_cap!r}")
+            sec_vals = (
+                tuple(float(v) for v in model.max_sector_exposure.values())
+                if isinstance(model.max_sector_exposure, Mapping)
+                else (float(model.max_sector_exposure),)
+            )
+            if any(v > sector_cap + 1e-12 for v in sec_vals):
+                return None, (f"risk_policy_draft_outside_bounds:max_sector_exposure="
+                              f"{model.max_sector_exposure!r} exceeds {profile} bound {sector_cap!r}")
+        turnover_cap = _optional_float(limits.get("turnover_limit"))
+        if turnover_cap is not None:
+            if model.turnover_limit is None or float(model.turnover_limit) > turnover_cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:turnover_limit="
+                              f"{model.turnover_limit!r} exceeds {profile} bound {turnover_cap!r}")
+        liq_bound_map = limits.get("liquidity_constraints") if isinstance(limits.get("liquidity_constraints"), Mapping) else {}
+        max_pct_adv_cap = _optional_float(
+            limits.get("max_order_pct_adv", liq_bound_map.get("max_order_pct_adv"))
+        )
+        if max_pct_adv_cap is not None:
+            draft_pct = (
+                _optional_float(model.liquidity_constraints.get("max_order_pct_adv"))
+                if isinstance(model.liquidity_constraints, Mapping)
+                else None
+            )
+            if draft_pct is None or draft_pct > max_pct_adv_cap + 1e-12:
+                return None, (f"risk_policy_draft_outside_bounds:max_order_pct_adv="
+                              f"{draft_pct!r} exceeds {profile} bound {max_pct_adv_cap!r}")
+        min_adv_floor = _optional_float(
+            limits.get("min_avg_daily_volume", liq_bound_map.get("min_avg_daily_volume"))
+        )
+        if min_adv_floor is not None:
+            draft_adv = (
+                _optional_float(model.liquidity_constraints.get("min_avg_daily_volume"))
+                if isinstance(model.liquidity_constraints, Mapping)
+                else None
+            )
+            if draft_adv is None or draft_adv + 1e-12 < min_adv_floor:
+                return None, (f"risk_policy_draft_outside_bounds:min_avg_daily_volume="
+                              f"{draft_adv!r} below {profile} bound {min_adv_floor!r}")
+    return model, None

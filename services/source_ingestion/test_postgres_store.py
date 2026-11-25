@@ -154,7 +154,7 @@ def test_read_source_records_for_tenant_uses_read_only_scoped_postgres_query(mon
     records = read_source_records_for_tenant(jsonl_path=tmp_path / "absent.jsonl", tenant_id="tenant-a")
 
     assert [record.to_dict() for record in records] == [source.to_dict()]
-    assert statements[0][0] == "SET TRANSACTION READ ONLY"
+    assert statements[0][0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
     assert "payload->'metadata'->>'tenant_id' = %s" in statements[1][0]
     assert "tenant-a" not in statements[1][0]
 
@@ -481,3 +481,215 @@ def test_real_postgres_legacy_and_tenanted_record_coexistence():
     finally:
         with psycopg.connect(dsn) as conn:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+@pytest.fixture
+def bounded_distillation_pg(monkeypatch):
+    dsn = os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN") or os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured")
+    psycopg = pytest.importorskip("psycopg")
+    schema = f"distillation_{uuid.uuid4().hex[:16]}"
+    table = f'"{schema}"."source_evidence"'
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", dsn)
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_TABLE", f"{schema}.source_evidence")
+    with psycopg.connect(dsn) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+        conn.execute(f"CREATE TABLE {table} (append_id bigserial PRIMARY KEY, record_type text, payload jsonb)")
+    try:
+        yield psycopg, dsn, table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+def test_bounded_distillation_real_pg_backlog_and_revisions(bounded_distillation_pg, tmp_path):
+    """The incident's 27,803 rows must never become one Python payload list."""
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.distillation_worker import DistillationJobQueue, source_version_digest
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    psycopg, dsn, table = bounded_distillation_pg
+    base = SourceRecord(source_id="eligible", connector_id="conn", source_type="paper",
+                        title="Paper", content_ref="ref://paper", metadata={"tenant_id": "tenant-a"}).to_dict()
+    with psycopg.connect(dsn) as conn:
+        # Large market payloads precede the eligible rows, as on hosted.
+        conn.execute(
+            f"INSERT INTO {table} (record_type, payload) "
+            "SELECT 'source_record', %s::jsonb || jsonb_build_object('source_id', 'market-' || n, "
+            "'source_type', 'market', 'metadata', jsonb_build_object('tenant_id', 'tenant-a', "
+            "'collector_market_bundle', true, 'body', repeat('m', 2048))) FROM generate_series(1, 27598) n",
+            (json.dumps(base),),
+        )
+        conn.execute(
+            f"INSERT INTO {table} (record_type, payload) "
+            "SELECT 'source_record', %s::jsonb || jsonb_build_object('source_id', 'paper-' || n) "
+            "FROM generate_series(1, 205) n", (json.dumps(base),),
+        )
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+    summary = {}
+
+    def read():
+        return read_source_records_for_tenant(
+            jsonl_path=tmp_path / "unused.jsonl", tenant_id="tenant-a", limit=100,
+            already_admitted=lambda source: queue.get(source.source_id, source_version_digest(source)) is not None,
+            summary=summary,
+        )
+
+    batches = []
+    for expected_size in (100, 100, 5, 0):
+        batch = read()
+        assert len(batch) == expected_size
+        assert summary["eligible_source_count"] == 205
+        assert summary["source_summary_origin"] == "source-ingest.postgres.tenant_eligible_count"
+        batches.extend(source.source_id for source in batch)
+        for source in batch:
+            job = queue.enqueue_source_record(source)
+            if int(source.source_id.split("-")[1]) % 2:
+                queue.mark_skipped(job.job_id, reason="completed", processed_at=1)
+        queue.prune(now=1000, terminal_retention_seconds=10)
+    assert batches == [f"paper-{i}" for i in range(1, 206)]
+    # A revision retains its old append_id, so an enduring high-water mark
+    # would lose it. Each catch-up starts a new read-only snapshot instead.
+    with psycopg.connect(dsn) as conn:
+        conn.execute(f"UPDATE {table} SET payload = jsonb_set(payload, '{{title}}', '\"Revised paper\"') "
+                     "WHERE payload->>'source_id' = 'paper-1'")
+    revised = read()
+    assert [s.source_id for s in revised] == ["paper-1"]
+    assert revised[0].title == "Revised paper"
+    assert queue.version_count("paper-1") == 1
+    queue.enqueue_source_record(revised[0])
+    assert queue.version_count("paper-1") == 2
+
+
+def test_bounded_distillation_real_pg_eligibility_and_scope(bounded_distillation_pg, tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    psycopg, dsn, table = bounded_distillation_pg
+    markers = [None, False, 0, "", [], {}, True, "false", [1], {"bundle": "b"}]
+    payloads = [SourceRecord(source_id=f"market-{i}", connector_id="conn", source_type="market",
+                             title="Market", content_ref="ref://market",
+                             metadata={"tenant_id": "tenant-a", "collector_market_bundle": marker}).to_dict()
+                for i, marker in enumerate(markers)]
+    payloads.extend([
+        {**payloads[0], "source_id": "rejected", "status": "rejected"},
+        {**payloads[0], "source_id": "foreign", "metadata": {"tenant_id": "tenant-b"}},
+        {**payloads[0], "source_id": "unowned", "metadata": {}},
+        {**payloads[0], "source_id": "paper", "source_type": "paper", "metadata": {"tenant_id": "tenant-a", "collector_market_bundle": True}},
+    ])
+    legacy = {**payloads[0], "source_id": "missing-status"}
+    legacy.pop("status")
+    payloads.append(legacy)
+    with psycopg.connect(dsn) as conn:
+        for payload in payloads:
+            conn.execute(f"INSERT INTO {table} (record_type, payload) VALUES ('source_record', %s::jsonb)",
+                         (json.dumps(payload),))
+    summary = {}
+    records = read_source_records_for_tenant(jsonl_path=tmp_path / "unused", tenant_id="tenant-a",
+                                             limit=100, summary=summary)
+    assert [s.source_id for s in records] == [*[f"market-{i}" for i in range(6)], "paper", "missing-status"]
+    assert summary["eligible_source_count"] == 8
+
+
+@pytest.mark.parametrize("dict_rows", [False, True])
+def test_bounded_distillation_pg_limits_every_payload_query(monkeypatch, tmp_path, dict_rows):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    statements = []
+    payload = SourceRecord(source_id="s", connector_id="conn", source_type="paper", title="Paper",
+                           content_ref="ref://paper", metadata={"tenant_id": "tenant-a"}).to_dict()
+
+    class Cursor(_FakeCursor):
+        def fetchone(self):
+            return {"count": 250} if dict_rows else (250,)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params=()):
+            statements.append((sql, params))
+            if not sql.startswith("SELECT payload"):
+                return Cursor([])
+            assert "ORDER BY append_id ASC LIMIT %s" in sql
+            assert "collector_market_bundle" in sql and "'normalized'" in sql
+            assert params[:2] == ("source_record", "tenant-a")
+            after, take = params[-2:]
+            assert take == 100
+            rows = []
+            for i in range(max(1, after + 1), min(251, max(1, after + 1) + take)):
+                value = {**payload, "source_id": f"s-{i}"}
+                rows.append({"payload": value, "append_id": i} if dict_rows else (value, i))
+            return Cursor(rows)
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://unused/test")
+    summary = {}
+    records = read_source_records_for_tenant(
+        jsonl_path=tmp_path / "unused", tenant_id="tenant-a", limit=100, summary=summary,
+        already_admitted=lambda s: int(s.source_id.split("-")[1]) <= 150,
+    )
+    assert [s.source_id for s in records] == [f"s-{i}" for i in range(151, 251)]
+    assert summary["eligible_source_count"] == 250
+    assert len([sql for sql, _ in statements if sql.startswith("SELECT payload")]) == 3
+    assert statements[0][0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+
+
+def test_bounded_distillation_pg_uses_one_server_cursor(monkeypatch, tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pg_store import read_source_records_for_tenant
+
+    payload = SourceRecord(source_id="s", connector_id="conn", source_type="paper", title="Paper",
+                           content_ref="ref://paper", metadata={"tenant_id": "tenant-a"}).to_dict()
+    executed, fetch_sizes, names = [], [], []
+
+    class Cursor:
+        def __init__(self):
+            self._rows = [(({**payload, "source_id": f"s-{i}"}), i) for i in range(1, 251)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, sql, params=()):
+            executed.append((sql, params))
+
+        def fetchmany(self, size):
+            fetch_sizes.append(size)
+            batch, self._rows = self._rows[:size], self._rows[size:]
+            return batch
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def cursor(self, name=None):
+            names.append(name)
+            return Cursor()
+
+        def execute(self, sql, params=()):
+            return SimpleNamespace(fetchone=lambda: (250,))
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=lambda _: Connection()))
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "postgres")
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_DSN", "postgresql://unused/test")
+    records = read_source_records_for_tenant(
+        jsonl_path=tmp_path / "unused", tenant_id="tenant-a", limit=100, summary={},
+        already_admitted=lambda s: int(s.source_id.split("-")[1]) <= 150,
+    )
+    assert [s.source_id for s in records] == [f"s-{i}" for i in range(151, 251)]
+    assert len(names) == 1 and len(executed) == 1
+    assert "ORDER BY append_id ASC" in executed[0][0] and "append_id >" not in executed[0][0]
+    assert set(fetch_sizes) == {100} and len(fetch_sizes) == 3

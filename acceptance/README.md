@@ -123,6 +123,98 @@ when either (or `ACCEPTANCE_BFF_URL`) is absent. Reads the first page of `GET /b
 `persona_is_probe` true, or when `attention=recon_mismatch` returns as many rows as the unfiltered page.
 Tests: `acceptance/test_trade_journey_readable_probe.py` with `fixtures/hosted_trade_journeys_20261120.json`.
 
+## Governed paper risk and journey proof
+
+`acceptance/probes/paper-risk-journey` belongs to `PAPER-RISK-JOURNEY-HOSTED-PROOF-20261121`
+(RC2 WP2.1 / RC6). It uses the existing policy probe to read all three trading
+personas, active tenant bindings and pool policies, and requires current owner
+approval of the requested profile. Both pool activation and catalog policy
+targets are recognized; tenant, policy identity, version, content digest, target,
+expiry, role authority and paper authorization scope must agree. A catalog
+reference never falls back to nearby inline policy data. Journey details use
+the served BFF contract: `identifiers.binding_id[]` and root `stage_events`.
+Every inspected stage must also name the active binding before an immutable
+owner event can qualify.
+
+The journey probe requires the standard `ACCEPTANCE_BFF_URL`,
+`ACCEPTANCE_FE_URL`, `ACCEPTANCE_BACKEND_SHA`, `ACCEPTANCE_FRONTEND_SHA` and
+viewer credentials. Optional `ACCEPTANCE_POLICY_READER_CLIENT_ID/SECRET` are
+used only for the governance approval GET. On the existing dev release runner,
+the configured `DEV_DEPLOY_SSH_HOST`, `DEV_DEPLOY_SSH_USER`,
+`DEV_DEPLOY_SSH_KEY_FILE` and `DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE` enable
+`scripts/dev_vm_ssh.sh` owner reads. No additional owner URLs or tokens are
+needed: the fixed read commands use installed paper-signal-producer service
+credentials for tenant-scoped Capital policy and immutable telemetry GETs.
+When no separate policy reader is configured, the existing dev risk-owner
+identity is exchanged inside the BFF container solely for the approvals GET.
+The transport is limited to the current dev BFF origin. Credentials stay in
+the containers; returned errors omit remote exception text.
+
+Alternatively, reference-backed pools accept `ACCEPTANCE_CAPITAL_OWNER_URL`
+and `ACCEPTANCE_CAPITAL_OWNER_TOKEN` for the existing tenant-scoped
+`/api/capital-pools/{id}/risk-policy?stage=paper` GET; fresh source reads accept
+`ACCEPTANCE_TELEMETRY_URL` and `ACCEPTANCE_TELEMETRY_TOKEN` for
+`/api/telemetry/events/{id}`. Missing authorized reads fail closed. The probe
+creates no grants or policies. A public DTO alone lacks complete sizing metadata.
+
+The exact FE/BFF pair is read before and after. `deployment.json.deployedAt`
+sets the cutoff: only natural live source events strictly after it, belonging to
+the active binding, persona, tenant and journey, qualify. The probe requires a
+governed sizing decision for every expected persona, a pre-broker rejection
+with its actual reason and required/available/limit amounts, and a fresh fill
+with submission sizing and six passing broker/position/cash reconciliation
+comparisons. Both historical URLs are read separately to verify recovered
+insufficient-cash evidence and unavailable accounting evidence. They never
+supply fresh samples. The companion browser observation and served service
+version inventory remain task evidence; probe success alone does not assert
+that the browser or every service was verified.
+
+Exit 0 means all probe checks passed; 1 means failed, including unresolved policy,
+identity, binding, history, source reads or a changed served pair; 77 means missing
+initial release/auth configuration, or pending (`verdict: pending`, `pending: [...]`):
+the findings are a non-empty subset of exactly `no_fresh_governed_decision:<persona>`,
+`no_fresh_pre_broker_rejection_with_amounts` and
+`no_fresh_broker_position_cash_reconciled_fill`. Any other finding alongside them exits 1. Run `timeout 245s acceptance/probes/paper-risk-journey`.
+All product reads use GET; only existing dev-login token exchanges use POST.
+No trades, policy activation, repair or replay are performed. Dev probes remain
+post-switch and do not introduce a deploy gate.
+
+Budget: at most 72 requests (including remote GETs and token exchanges), 240
+seconds, 15 seconds per request or SSH call, 8 MiB per
+response, 50 list rows and four detailed journeys per persona (three by default;
+maximum ten configured personas). Budget exhaustion fails. This is a bounded
+sample, not a global absence claim. The release runner owns cadence (one per
+release) and its existing capped verdict; the probe writes only stdout and
+adds no persistent runtime storage or daily growth. Standalone task evidence is
+a fixed git snapshot, with no recurring writer or temporary product files.
+Tests: `acceptance/test_paper_risk_journey.py` and
+`acceptance/test_paper_risk_policy_binding.py`. Positive fresh events are
+explicit synthetic fixtures, never represented as hosted acceptance.
+
+## Daily paper risk journey check (`acceptance/paper_risk_journey_day.py`)
+
+Task: PAPER-RISK-JOURNEY-DAILY-RUNS-20261125 (after PAPER-RISK-JOURNEY-PENDING-AND-DAILY-20261125), run by
+`.github/workflows/paper-risk-journey-daily.yml`. Reuses the release probe's `check` unchanged (its pending/failed
+split stays) and adds the deadline. Trading sessions are the distinct trade days of decisions released for the
+configured personas, read from `GET /bff/management/trade-journeys` (list and detail) and the immutable
+`trade_decision` event through the existing telemetry owner read; there is no calendar route and no weekday
+arithmetic. The workflow prepares the same pinned SSH transport as the release stage with the existing dev
+secrets and variables and removes it afterwards. Only decisions whose `decision_time` is after the cutoff are
+judged; older parked decisions released later are ignored and listed (`ignored_before_cutoff`).
+
+Operator HOLD rule (2026-11-25):
+
+- a decision the strategy itself held (`flat_view`, `already_at_target`, no directional view) is neither pass nor failure;
+- a directional view (LONG/SHORT) without `pre_trade_sizing` (or sizing not bound to the persona's policy), or a HOLD with
+  `candidates_unavailable` / `budget_unavailable`, fails at once, naming persona, decision and reason;
+- five trading days after the cutoff without any judgeable (sized) decision for a persona fail;
+- five trading days without a refusal or reconciled fill fail (unchanged);
+- seven calendar days without any released decision, or with unreadable journey reads, fail; before that they are pending.
+
+Exit 0 passed or pending, 1 failed, 77 missing configuration. Reads: at most 72 + 3 x 13 + 2 requests, 280 seconds.
+Tests: `acceptance/test_paper_risk_journey_day.py` (fixed clock, recorded hosted shapes, route/read registration) and
+`scripts/test_dev_acceptance_stage.py`. Accepted only after the coordinator runs the workflow once against hosted.
+
 ## mgmt-strategy-meeting-research-readable probe (`acceptance/probes/mgmt-strategy-meeting-research-readable`)
 
 Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at `/bff/auth/dev-login` with
@@ -130,6 +222,52 @@ Task: BFF-STRATEGY-SYNTHETIC-STUBS-20261120. Read-only release probe. Logs in at
 when either (or `ACCEPTANCE_BFF_URL`) is absent. GET only. Fails when `GET /bff/strategies?exclude_state=draft` (all pages)
 lists a `SIMULATION paper-only`, `TW official` / `strat-tw-official` row or a retired/unbound `Pantheon Dev Paper Release`
 row, or lacks `meta.hidden_unbound_stub_strategy_count` / `meta.hidden_test_persona_strategy_count`; when
-`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks` lists an `is_non_real`
-row or lacks `meta.hidden_non_real_count`. Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
+`GET /bff/meetings?status=upcoming` lists a dead_letter meeting; or when `GET /bff/research-tasks?view=research` lists an `is_non_real`
+row, lacks `meta.hidden_non_real_count`, reports `meta.surfaces.research_demands` other than `ok` (BFF-RESEARCH-DEMAND-READ-20261125:
+open persona demands unreadable from the Research owner), or lists a row whose `persona_ids` are all test-scope personas
+(`GET /bff/management/persona-fleet?data_scope=test`). Tests: `acceptance/test_mgmt_strategy_meeting_research_readable.py` with
 `fixtures/hosted_mgmt_strategy_meeting_research_20261120.json`.
+
+## mgmt-evolution-pages-readable probe (`acceptance/probes/mgmt-evolution-pages-readable`)
+
+Task: BFF-EVO-JOURNAL-POOL-VERSIONS-20261125. Read-only (GET only), same viewer login as the other probes; exit 77 naming
+the missing variable. Reads `GET /bff/management/evolution-journal?view=history` (at most 30 pages) and one
+`GET /bff/management/evolution-qualification`. Fails when `meta.surfaces.strategy_pools` is unavailable or missing; when a
+refused `pool_version` row is not `status=refused` / `refused=true` or is worded or flagged as an applied change; when a
+decision lacks `subject_class` or an infrastructure/test entry is listed by default; when `summary.hidden_system_counts`
+is missing; when `auto_proposal_counts` parts (`threshold`, `incident_followup`, `incident_severity`, `other`,
+`infrastructure`) do not add up to `total` or `postmortem_draft` is not a separate integer; when
+`summary.mutation_review_count` differs from the decisions that carry an `approval_decision_id`; or when
+`member_baselines` / `member_baselines_surface` are missing, unavailable, or a row lacks persona_name, artifact_ref or status.
+Tests: `acceptance/test_mgmt_evolution_pages_readable.py` with the recorded pool versions of
+persona-ee7112a829d38b9135ac. Accepted only after the operator acceptance task runs it against hosted.
+
+## meeting-action-followthrough probe (`acceptance/probes/meeting-action-followthrough`)
+
+Task: MEETING-ACTION-TWO-MEETING-PROOF-20261123; the natural hosted observation stays owned by
+MEETING-HOSTED-ACCEPTANCE-20261115 (no second job or gate). Read-only (GET only) with the same viewer login as the
+other probes. `ACCEPTANCE_MEETING_ACTION_M1` / `ACCEPTANCE_MEETING_ACTION_M2` name the recorded meeting and the natural
+next meeting of the same series. Without them the observation is **pending**: it prints `pending` and exits 77, never 0.
+Fails on: the same meeting twice, legacy W47 (`mtg-0f7fa4993625ca47`) as proof, tenant/type/subject mismatch, an
+action without its canonical Research ticket or with another meeting/series origin, evidence that is nonexistent,
+checksum-drifted, or a non-owner reference (generic closed demand, inbox/membership ack), submitter equal to verifier
+or either missing, a prior action silently dropped at M2, and a submitted item M2 neither reviews nor cites. Bounded:
+two meeting reads plus at most 24 ticket reads, 8 MiB per response; no writer or storage. Pure checker and
+falsification tests: `acceptance/test_meeting_action_followthrough.py`. Real-owner regression (needs an isolated
+`RESEARCH_MEETING_TEST_DSN`, skipped otherwise): `services/consultation/tests/test_persona_meeting_action_loop.py`.
+
+### trading-pulse-operator consistent read
+
+Heartbeats move `latest_report_at` and `pnl_at` every ~15 s, so comparing the
+pulse with raw telemetry read many seconds later was unverifiable on three
+releases. The probe now reads the pulse and then every raw telemetry summary
+back to back (nothing else in between) and repeats that pair at most 6 times
+until `latest_report_at` and `pnl_at` agree for every operator runtime. Every
+existing comparison runs on the accepted pair; no tolerance is added. A pair
+that never agrees exits 77 with `source_changed_during_read:attempts=6`. If the
+raw summaries are identical between two consecutive attempts yet the pulse still
+disagrees, the pulse is stale and the probe fails
+(`pulse_stale_against_unchanged_source`). The roster bookend check is unchanged.
+Budget (unchanged contract): read-only GETs, at most 200 runtimes, 5 MiB and
+30 s per request, retries stop after 240 s inside the stage's 300 s timeout;
+stdout only, no files, no new writer.

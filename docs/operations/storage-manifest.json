@@ -185,10 +185,10 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code for whole-file historical line retention (tracked under RC3 WP3.1); incremental risk-policy repair/rebinding/auto-resolve/provisional-suspension audit event (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2, event_type=capital_pool_status_updated) is bounded to 1 JSONL line (~380-450 bytes) per actual pool policy/status mutation (idempotent repair_paper_pool_risk_policy and ambiguous/unresolved retries on already-suspended pools short-circuit and emit 0 lines)",
+   "cap": "none verified in code for whole-file historical line retention (tracked under RC3 WP3.1); incremental risk-policy repair/rebinding/auto-resolve/provisional-suspension audit event (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2, event_type=capital_pool_status_updated) is bounded to 1 JSONL line (~380-450 bytes) per actual pool policy/status mutation (idempotent repair_paper_pool_risk_policy and ambiguous/unresolved retries on already-suspended pools short-circuit and emit 0 lines); PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122: <=1 capital_pool_status_updated event (<=512 B at current hosted identity lengths) per actual requested-profile mutation, 0 on same-data retries or dry_run",
    "cleanup": "none in this task for historical append-only audit lines (tracked under RC3 WP3.1); idempotent risk-policy repair replays and already-suspended unresolved/ambiguous pool checks are suppressed before PATCH /api/capital-pools/{pool_id}/status",
    "growth_driver": "append-only JSONL capital audit journal (1 capital_pool_status_updated event per actual status, provisional suspension, or risk-policy mutation; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122)",
-   "growth_per_day": "whole-file total unmeasured on hosted (RC3 WP3.3); incremental risk-policy binding/auto-resolve repair growth at hosted scale (3 enrolled dev paper personas): ~1.3 KB one-time on initial repair (~420 B x 3 pools) and 0 B/day steady-state once converged",
+   "growth_per_day": "whole-file total unmeasured on hosted (RC3 WP3.3); incremental risk-policy binding/auto-resolve repair growth at hosted scale (3 enrolled dev paper personas): ~1.3 KB one-time on initial repair (~420 B x 3 pools) and 0 B/day steady-state once converged; pending-profile increment: <=3 events (<=1536 B) once for 3 hosted accounts, 0/day steady, <=512 B times newly repaired accounts/day; inherited audit retention/cleanup unchanged (RC3 WP3.1)",
    "kind": "jsonl",
    "name": "capital_audit.jsonl",
    "owner": "capital",
@@ -325,7 +325,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -2092,7 +2101,16 @@
     "services/control-plane/bff/personas/cycle_views.py",
     "services/control-plane/bff/ports/persona_pool.py"
    ],
-   "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117"
+   "task": "PERSONA-OODA-PACKET-STORE-BOUNDED-20261117",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -2351,10 +2369,10 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code for total pool count (tracked under RC3 WP3.1); keyed in-place by pool_id (1 record per capital pool, ~1.1 KB per pool including ~280-340 B metadata.risk_policy and profile_mapping_approval_id/provisional_unresolved_risk_policy fields; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2)",
-   "cleanup": "in-place keyed overwrite of metadata.risk_policy via pool_store.patch on PATCH /api/capital-pools/{pool_id}/status (clearing transient risk_policy_stale/risk_policy_superseded_by/risk_policy_expires_at/provisional_unresolved_risk_policy fields and suspending provisional unresolved active pools in-place); pool retirement marks status=archived",
-   "growth_driver": "keyed CapitalPool state file on /data volume (written at pool creation and patched in-place on status, provisional suspension, or risk-policy repair/rebinding/auto-resolve; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122)",
-   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper pools (~3.5 KB total for 3 pools; in-place patch by pool_id and idempotent no-op when policy digest already matches)",
+   "cap": "none verified in code for total pool count (tracked under RC3 WP3.1); keyed in-place by pool_id (1 record per capital pool, ~1.1 KB per pool including ~280-340 B metadata.risk_policy and profile_mapping_approval_id/provisional_unresolved_risk_policy fields; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2); PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122 (RC2 WP2.1): requested_risk_profile is low/medium/high (<=6 chars), require_approved_profile_mapping=true; <=96 B extra metadata per existing pool, 0 extra pool rows; PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123: <=64 KiB additional ordered intent/receipt metadata per pool; MAX_CHANGE_RECEIPTS=128 rolling receipts plus durable issued-time eviction watermark; opaque keys retire to exact existing audit tombstones before eviction; pool-row bound is not an audit-history bound",
+   "cleanup": "in-place keyed overwrite of metadata.risk_policy via pool_store.patch on PATCH /api/capital-pools/{pool_id}/status (clearing transient risk_policy_stale/risk_policy_superseded_by/risk_policy_expires_at/provisional_unresolved_risk_policy fields and suspending provisional unresolved active pools in-place); pool retirement marks status=archived; bounded provenance follows the existing pool row retention/archival; no new file, table, queue or scheduled cleanup; historical whole-writer retention remains RC3 WP3.1; ordered receipts compact inline to 128 entries under owner lock; retired timestamps advance the persistent replay-rejection watermark; opaque receipts archive durably to the existing audit writer before eviction; latest intent/watermark follow existing pool row retention/archive; no new cleanup job",
+   "growth_driver": "keyed CapitalPool state file on /data volume (written at pool creation and patched in-place on status, provisional suspension, or risk-policy repair/rebinding/auto-resolve; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122); event-driven verified requested-profile repair through the existing status PATCH (status omitted); at most one row mutation per account missing provenance, same-data retries and dry_run write zero; event-driven normal Persona risk PATCH, atomic row-locked intent plus approved exact binding, 0 writes for same-key converged retries",
+   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper pools (~3.5 KB total for 3 pools; in-place patch by pool_id and idempotent no-op when policy digest already matches); pending-profile increment: <=288 B once for 3 hosted pools, 0 B/day steady, <=96 B times newly repaired accounts/day; Postgres record_requested_profile locks and updates only the addressed row; ordered edits: 0 B/day steady, <=384 B per new receipt until the 128-entry rolling cap then zero net receipt growth; <=2 KiB fixed intent/watermark per pool; 3 hosted trading pools + 1 isolated acceptance pool imply <=256 KiB total additional state",
    "kind": "compose_path",
    "name": "/data/capital/capital_pools.json",
    "owner": "compose:capital",
@@ -3027,6 +3045,24 @@
    ],
    "register_class": "RC3",
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+  },
+  {
+   "bound_proof": {
+    "contains": "DELETE FROM reservations WHERE day < ?",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) rows per UTC day (one per record version that reserved a call that day); rows of earlier days are deleted on every reserve_call",
+   "cleanup": "DELETE FROM reservations WHERE day < today on each reserve_call write",
+   "growth_driver": "one row per record version that reserved a model call that day, so a retry of the same record is not charged twice",
+   "growth_per_day": "at most 400 rows (about 150 bytes each, about 60 KB), none carried past the next UTC day",
+   "kind": "table",
+   "name": "reservations",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125"
   },
   {
    "bound_status": "unreviewed",
@@ -3714,7 +3750,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -3748,7 +3793,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4324,8 +4378,8 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code for total historical provisioning records (tracked under RC3 WP3.1); keyed in-place by (tenant_id, idempotency_key) / provisioning_id (1 row per persona provisioning idempotency key; incremental PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2 checkpoint fields references.capital_pool_risk_policy_resolution ~650-900 B or references.risk_policy_owner_decision_request + error.owner_decision_request ~0.9-1.3 KB updated in-place on the existing row)",
    "cleanup": "in-place keyed upsert of ProvisioningRecord JSONB payload via store.save(record); references.pop('risk_policy_owner_decision_request', None) clears the pending owner decision request and record.error=None clears the failure envelope when profile risk policy resolves",
-   "growth_driver": "keyed control-plane persona_provisioning_records table rows updated in-place across provisioning steps and risk-policy repair checkpoints (PAPER-RISK-PROFILE-AUTORESOLVE-20261122)",
-   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper personas (0 new rows on retry or repair; in-place JSONB update on existing provisioning record)",
+   "growth_driver": "keyed control-plane persona_provisioning_records table rows updated in-place across provisioning steps and risk-policy repair checkpoints (PAPER-RISK-PROFILE-AUTORESOLVE-20261122); PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122 adds <=96 B to a new name-only request for the effective default and provenance label, or <=512 B once per existing hosted record for verified Persona owner provenance; event driven, no additional rows or recurring job",
+   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper personas; <=1536 B once for 3 recovered records; <=96*N + 512*M B/day for N new omitted-profile requests and M newly recovered existing records; fields replace in-place, no retry history appended; inherited row cleanup, total historical row retention remains RC3 WP3.1",
    "kind": "table",
    "name": "services/control-plane/bff/persona_provisioning.py::{self.table}",
    "owner": "control-plane",
@@ -4363,7 +4417,16 @@
     "services/foundation/postgres_json_store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4803,10 +4866,10 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code for whole-table historical row retention (tracked under RC3 WP3.1); incremental risk-policy repair/rebinding/auto-resolve/provisional-suspension audit row (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2, event_type=capital_pool_status_updated) is bounded to 1 row (~380-450 bytes) per actual pool policy/status mutation (idempotent repair_paper_pool_risk_policy and ambiguous/unresolved retries on already-suspended pools short-circuit and emit 0 rows)",
+   "cap": "none verified in code for whole-table historical row retention (tracked under RC3 WP3.1); incremental risk-policy repair/rebinding/auto-resolve/provisional-suspension audit row (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2, event_type=capital_pool_status_updated) is bounded to 1 row (~380-450 bytes) per actual pool policy/status mutation (idempotent repair_paper_pool_risk_policy and ambiguous/unresolved retries on already-suspended pools short-circuit and emit 0 rows); PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122: <=1 capital_pool_status_updated event (<=512 B at current hosted identity lengths) per actual requested-profile mutation, 0 on same-data retries or dry_run; ordered change event increment <=2 KiB per actual mutation at maximum accepted identity lengths; existing whole-journal retention remains RC3 WP3.1",
    "cleanup": "none in this task for historical append-only audit rows (tracked under RC3 WP3.1); idempotent risk-policy repair replays and already-suspended unresolved/ambiguous pool checks are suppressed before PATCH /api/capital-pools/{pool_id}/status",
-   "growth_driver": "append-only Postgres capital audit rows (1 capital_pool_status_updated row per actual status, provisional suspension, or risk-policy mutation; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122)",
-   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental risk-policy binding/auto-resolve repair growth at hosted scale (3 enrolled dev paper personas): ~1.3 KB one-time on initial repair (~420 B x 3 pools) and 0 B/day steady-state once converged",
+   "growth_driver": "append-only Postgres capital audit rows (1 capital_pool_status_updated row per actual status, provisional suspension, or risk-policy mutation; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122); ordered paper risk changes add one existing capital_pool_status_updated event per actual intent/binding mutation (same-key converged retries: zero)",
+   "growth_per_day": "whole-table total unmeasured on hosted (RC3 WP3.3); incremental risk-policy binding/auto-resolve repair growth at hosted scale (3 enrolled dev paper personas): ~1.3 KB one-time on initial repair (~420 B x 3 pools) and 0 B/day steady-state once converged; pending-profile increment: <=3 events (<=1536 B) once for 3 hosted accounts, 0/day steady, <=512 B times newly repaired accounts/day; inherited audit retention/cleanup unchanged (RC3 WP3.1)",
    "kind": "schema_table",
    "name": "capital.audit_events",
    "owner": "schema:capital",
@@ -4818,10 +4881,10 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code for total pool count (tracked under RC3 WP3.1); keyed in-place by pool_id primary key (1 row per capital pool, ~1.1 KB per row including ~280-340 B metadata.risk_policy JSONB object and profile_mapping_approval_id/provisional_unresolved_risk_policy fields; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2)",
-   "cleanup": "in-place keyed UPDATE of metadata.risk_policy via PostgresCapitalPoolStore.patch on PATCH /api/capital-pools/{pool_id}/status (clearing transient risk_policy_stale/risk_policy_superseded_by/risk_policy_expires_at/provisional_unresolved_risk_policy fields and suspending provisional unresolved active pools in-place); pool retirement marks status=archived",
-   "growth_driver": "keyed Postgres capital.capital_pools rows written at pool creation and updated in-place on status, provisional suspension, or risk-policy repair/rebinding/auto-resolve (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122)",
-   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper pools (~3.5 KB total for 3 pools; in-place UPDATE by pool_id and idempotent no-op when policy digest already matches)",
+   "cap": "none verified in code for total pool count (tracked under RC3 WP3.1); keyed in-place by pool_id primary key (1 row per capital pool, ~1.1 KB per row including ~280-340 B metadata.risk_policy JSONB object and profile_mapping_approval_id/provisional_unresolved_risk_policy fields; PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122, RC2); PAPER-RISK-PENDING-PROFILE-PERSISTENCE-20261122 (RC2 WP2.1): requested_risk_profile is low/medium/high (<=6 chars), require_approved_profile_mapping=true; <=96 B extra metadata per existing pool, 0 extra pool rows; PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123: <=64 KiB additional ordered intent/receipt metadata per pool; MAX_CHANGE_RECEIPTS=128 rolling receipts plus durable issued-time eviction watermark; opaque keys retire to exact existing audit tombstones before eviction; pool-row bound is not an audit-history bound",
+   "cleanup": "in-place keyed UPDATE of metadata.risk_policy via PostgresCapitalPoolStore.patch on PATCH /api/capital-pools/{pool_id}/status (clearing transient risk_policy_stale/risk_policy_superseded_by/risk_policy_expires_at/provisional_unresolved_risk_policy fields and suspending provisional unresolved active pools in-place); pool retirement marks status=archived; bounded provenance follows the existing pool row retention/archival; no new file, table, queue or scheduled cleanup; historical whole-writer retention remains RC3 WP3.1; ordered receipts compact inline to 128 entries under owner lock; retired timestamps advance the persistent replay-rejection watermark; opaque receipts archive durably to the existing audit writer before eviction; latest intent/watermark follow existing pool row retention/archive; no new cleanup job",
+   "growth_driver": "keyed Postgres capital.capital_pools rows written at pool creation and updated in-place on status, provisional suspension, or risk-policy repair/rebinding/auto-resolve (PAPER-RISK-POLICY-BINDING-20261121, PAPER-RISK-PROFILE-AUTORESOLVE-20261122); event-driven verified requested-profile repair through the existing status PATCH (status omitted); at most one row mutation per account missing provenance, same-data retries and dry_run write zero; event-driven normal Persona risk PATCH, atomic row-locked intent plus approved exact binding, 0 writes for same-key converged retries",
+   "growth_per_day": "0 B/day steady-state across the 3 enrolled dev paper pools (~3.5 KB total for 3 pools; in-place UPDATE by pool_id and idempotent no-op when policy digest already matches); pending-profile increment: <=288 B once for 3 hosted pools, 0 B/day steady, <=96 B times newly repaired accounts/day; Postgres record_requested_profile locks and updates only the addressed row; ordered edits: 0 B/day steady, <=384 B per new receipt until the 128-entry rolling cap then zero net receipt growth; <=2 KiB fixed intent/watermark per pool; 3 hosted trading pools + 1 isolated acceptance pool imply <=256 KiB total additional state",
    "kind": "schema_table",
    "name": "capital.capital_pools",
    "owner": "schema:capital",
@@ -4882,7 +4945,16 @@
     "services/consultation/store.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "meeting_action_followthrough": {
+    "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+    "contract": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/contract.md",
+    "mutable_progress_owner": "research.research_tickets; no shadow task collection",
+    "cadence": "No new cadence: <=9 scheduled meetings/week at 3 enrolled personas plus explicit human-convened meetings; 3 existing daily Persona turns/day.",
+    "reference_budget": "Owner metadata <=16 KiB/assignment, <=8 adopted tickets/origin; summary evidence metadata <=4 KiB/8 refs. Producer snapshots must page outstanding work, retain explicit continuation and cap prompt bytes; producer-specific caps/bytes verified in MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 and PERSONA-MEETING-ACTION-EXECUTION-20261123 before integrated acceptance.",
+    "retention": "Existing consultation append-only lifecycle/outbox retention remains RC3 WP3.1; OODA packets retain existing 30-day/1000-record write-time cleanup, list bound64. These snapshots cannot be authority for open-obligation retention.",
+    "measurement_status": "Owner bytes measured locally; producer/hosted bytes pending their normal-entrypoint evidence. No whole-writer bounded claim."
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -5119,10 +5191,10 @@
     "file": "services/incident/incident.py"
    },
    "bound_status": "bounded",
-   "cap": "one row per deduplicated open incident (by (binding_id, runtime_id, incident_cluster_id) for drift, canonical finding key for monitor-agent findings, and component for infrastructure health); repeated reports update occurrence_count, last_seen_at, and observed in place and replace evidence_summary with the latest single report summary (<= 4000 chars, typically ~450-550 chars vs 4000-char appended log before; row JSON size reduced from ~4,800 B to ~1,350 B on hosted drift shape while row count per report is unchanged at 0 net new rows per repeated report)",
-   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation; open drift incidents of a retired RuntimeBinding are resolved with resolution_reason=runtime_binding_retired (POST /api/incidents/resolve-retired-binding, called by the scheduled drift pass when it sees the binding retired)",
+   "cap": "one row per deduplicated open incident (by (binding_id, runtime_id, incident_cluster_id) for drift, canonical finding key for monitor-agent findings, and component for infrastructure health); repeated reports update occurrence_count, last_seen_at, and observed in place and replace evidence_summary with the latest single report summary (<= 4000 chars, typically ~450-550 chars vs 4000-char appended log before; row JSON size reduced from ~4,800 B to ~1,350 B on hosted drift shape while row count per report is unchanged at 0 net new rows per repeated report); READ-SIDE CAP (INCIDENTS-MEMORY-OOM-DURING-DEPLOY-CHURN-20261123): the service process no longer mirrors the table. Resident memory is bounded by OPEN cases (refresh = status IN open/investigating), keyed point reads by incident_id, and list reads capped at 1000 rows (GET /api/incidents default page; open_only is bounded by the open set); /health counts with SELECT count(*), not a table load",
+   "cleanup": "open incidents updated in place via PostgresIncidentStore CAS UPDATE; stale monitor-agent findings auto-resolved after INCIDENTS_AGENT_FINDING_RESOLVE_AFTER_SECONDS (default 7200s); orphaned infrastructure incidents auto-resolved on health reconciliation; open drift incidents of a retired RuntimeBinding are resolved with resolution_reason=runtime_binding_retired (POST /api/incidents/resolve-retired-binding, called by the scheduled drift pass when it sees the binding retired); no age-based delete of resolved cases yet (history growth is now a disk-only cost, not memory); deletion/archival stays an operator decision under RC3",
    "growth_driver": "deduplicated IncidentCase owner-store rows updated in place on repeated reports (INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120); BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap (INFRA-INCIDENT-FLAP-ONE-PER-OUTAGE-20261120)",
-   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted; drift incidents per active binding per day: before, 1 stuck open incident per retired binding indefinitely (inc-drift-5f668ec4c8d9 open 2026-11-18 to 2026-11-20); after, 0 open once the binding retires, and no new one from stale drawdown",
+   "growth_per_day": "0 net new rows for repeated reports on an open incident; ~1.35 KB per distinct new incident case (down from ~4.8 KB with 4000-char appended evidence_summary); infrastructure flap: hosted 2026-11-20 before about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total), after one per continuous outage and per target at most one per (recovery span + 600s) window, not yet re-measured on hosted; drift incidents per active binding per day: before, 1 stuck open incident per retired binding indefinitely (inc-drift-5f668ec4c8d9 open 2026-11-18 to 2026-11-20); after, 0 open once the binding retires, and no new one from stale drawdown; cadence: written on each BFF/monitor/drift report (create or in-place CAS update) and once per resolve; hosted rows/day for 2026-11-23 not measured by this task (read-only hosted access unavailable to the worker)",
    "kind": "schema_table",
    "name": "incident.incident_cases",
    "owner": "schema:incident",
@@ -5130,7 +5202,7 @@
     "services/incident/pg_store.py"
    ],
    "register_class": "RC6",
-   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120; DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120"
+   "task": "INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120; DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120; INCIDENTS-MEMORY-OOM-DURING-DEPLOY-CHURN-20261123"
   },
   {
    "bound_status": "unreviewed",
@@ -5149,10 +5221,10 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none in this task: existing incidents and postmortem drafts are not deleted or rewritten; an age or cap cleanup is still open (RC3)",
-   "growth_driver": "one case and one postmortem draft per resolved incident; BFF infrastructure incidents are now one per outage (recovery held for a sustained-OK count and a 600s reopen window) instead of one per probe flap",
-   "growth_per_day": "hosted 2026-11-20 before: about 19 BFF degradation incidents per 2 hours (about 228 per day, 4715 postmortem drafts total); after: one per continuous outage, per target at most one per (recovery span + 600s) window, i.e. at most about 144 per target per day in the worst alternating case, expected single digits; not yet re-measured on hosted",
+   "cap": "no row cap on writes; reads: GET /api/postmortems total is exact (uncapped list_all_postmortems, not HISTORY_READ_ROW_CAP=1000) and pages are at most 200 rows; existing infrastructure drafts are hidden by default (hidden_infrastructure_count reported), not capped",
+   "cleanup": "none: nothing is deleted or rewritten; the 5479 existing drafts stay stored and are hidden from default lists unless include_infrastructure=true or an incident_id filter is given; reviewed/approved/published infrastructure rows are never hidden; an age or cap cleanup is still open (RC3)",
+   "growth_driver": "one postmortem draft per resolved NON-infrastructure incident (trading, drift, deployment); infrastructure-health and monitor-agent incidents no longer create a draft (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125): consume-resolved-incident answers 200 skipped reason=infrastructure_incident and reserves no inbox row",
+   "growth_per_day": "expected new infrastructure drafts per day at hosted volume: 0 (before: about 228 incidents per day; hosted total 5479 drafts of which 5355 downstream degradation); non-infrastructure drafts: hosted total 103 drift-threshold drafts over the table lifetime, per-day rate not measured by this task (read-only hosted access unavailable to the worker); hosted re-measure is left to the operator acceptance task",
    "kind": "schema_table",
    "name": "incident.postmortems",
    "owner": "schema:incident",
@@ -5844,6 +5916,48 @@
     "file": "services/control-plane/bff/downstream_health_monitor.py",
     "contains": "CREATE TABLE IF NOT EXISTS incident_recovery (\n                    target_name TEXT PRIMARY KEY"
    }
+  },
+  {
+   "kind": "schema_table",
+   "name": "research.research_tickets",
+   "owner": "research-svc",
+   "readers": [
+    "services/research/write_owner.py",
+    "services/research/main.py"
+   ],
+   "growth_driver": "Existing RW-01 JSONB row; meeting assignment insert plus explicit owner CAS actions. No cron or new store. At most 8 adopted actions per tenant/origin meeting; exact retries write 0 rows/events.",
+   "growth_per_day": "3 enrolled personas x <=3 meetings/persona/week = <=9 meetings/week. Up to 72 new tickets/week (~10.29/day); each separately human-convened meeting adds <=8 tickets. Local Postgres16 fixture: 1 accepted ticket 3203 JSONB-text bytes including 1665 bytes/3 history events; baseline 1 ticket/meeting -> ~4.12 KB/day, max 8 -> ~32.95 KB/day. Lifetime payload ceiling 256 KiB/ticket -> <=2.58 MiB/day for scheduled origins at 8 actions/meeting. Updates rewrite existing rows; WAL, MVCC bloat and hosted bytes require RC3 measurement.",
+   "cap": "Meeting ticket <=262144 encoded JSON bytes and <=256 history entries; assignment/command <=16384 bytes; source/evidence arrays <=8 refs and <=4096 bytes; optional required_data <=8 unique identifiers <=256 chars each and <=4096 encoded array bytes, within the same assignment/row caps (<=~42.4 KB/day extra field allocation at 72 tickets/week, no additional writes/history copies); <=8 tickets/tenant/origin. No global ticket-count/time retention cap; do not evict unfinished obligations. Legacy ordinary RW-01 rows keep their existing behavior.",
+   "cleanup": "No deletion or historical backfill. Open, returned, waiting and submitted obligations remain available by tenant/owner/series across periods. Accepted audit history retained; full-table retention/DB maintenance remains RC3 WP3.1. Capacity rejects new writes visibly, preserves existing work and idempotent retries.",
+   "bound_status": "unbounded",
+   "register_class": "RC3",
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "bound_proof": {
+    "file": "services/research/write_owner.py",
+    "contains": "_ACTION_HISTORY_MAX = 256"
+   },
+   "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
+  },
+  {
+   "kind": "schema_table",
+   "name": "research.research_notes",
+   "owner": "research-svc",
+   "readers": [
+    "services/research/write_owner.py",
+    "services/research/main.py"
+   ],
+   "growth_driver": "Existing KW-02 table. Explicit authenticated immutable meeting-bound analysis/evidence note, via note POST or inline ticket submit/provide_input evidence_note. Inline note insertion and original-ticket CAS share one transaction; rejected/failed commands and exact retries write 0 rows/events. Deterministic ticket/actor/key insertion. No extra scheduler; <=128 notes/ticket.",
+   "growth_per_day": "Same <=72 scheduled-origin tickets/week; each note local fixture 539 JSONB-text bytes (1 per completed ticket). Typical 1 action/meeting x1 note = ~693 B/day; 8 actions x1 note = ~5.54 KB/day. Lifetime maximum 128 notes x16 KiB per ticket -> <=20.58 MiB/day across scheduled origins; each human-convened meeting adds <=8 tickets x128 notes (<=16 MiB lifetime payload). Existing ordinary notes have no measured hosted rate.",
+   "cap": "Each meeting note command <=16384 bytes, body <=12000 characters, <=8 source refs; <=128 notes/tenant/ticket via advisory transaction lock and count. Whole table remains unbounded: preserve ordinary notes and open-obligation evidence; no speculative TTL or history deletion.",
+   "cleanup": "No new cleanup job. Immutable evidence retained with existing notes; no dangling accepted references introduced by automatic pruning. Whole-table archival/cleanup belongs to RC3 WP3.1.",
+   "bound_status": "unbounded",
+   "register_class": "RC3",
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "bound_proof": {
+    "file": "services/research/write_owner.py",
+    "contains": "_ACTION_NOTES_PER_TICKET_MAX = 128"
+   },
+   "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
@@ -5921,6 +6035,112 @@
    "task": "MEETING-E2E-EXECUTION-AND-AUTH-20261121",
    "volume": "dev-paper-consultation-tokens (/issued/consultation-svc -> /run/pantheon-principals:ro)",
    "writer": "scripts/issue_dev_paper_principals.py refresh_files (_atomic_private writes /issued/consultation-svc/CONSULTATION_TELEMETRY_READ_TOKEN; not discovered by check_storage_manifest.py static inventory because token files under /run/pantheon-principals have no .json/.jsonl/.sqlite/.db suffix)"
+  },
+  {
+   "name": "meeting_output_dispatches.json (existing consultation dispatch ledger)",
+   "owner": "consultation-svc",
+   "writer": "services/consultation/meeting_outputs.py _DispatchLedger.put / _write_unlocked",
+   "task": "RESEARCH-MEETING-ACTION-TICKETS-20261123",
+   "register_class": "RC3",
+   "cadence": "Existing meeting close/owner dispatch only; <=9 scheduled meetings/week across 3 enrolled trading personas plus separately counted human-convened meetings; retries reuse source identity.",
+   "count_at_hosted_scale": "At most 8 adopted RW-01 assignments/origin (72/week) accepted by Research, plus existing formal proposal dispatches with their original semantics. No new collection or recurring writer.",
+   "size_per_day": "Owner-side measured ticket/note bytes in task storage.json. Consultation-specific frozen reference envelope bytes must be measured by MEETING-ACTION-ADOPTION-AND-REVIEW-20261123 before integrated acceptance; no fabricated hosted value.",
+   "growth_per_day": "Reference allocation: 9/7 meetings/day x8 action refs/meeting x4096 evidence-metadata bytes = ~42.1 KB/day plus bounded immutable origin/decision fields; actual producer envelope and full-file rewrite amplification remain producer/RC3 measurement obligations.",
+   "cap": "Whole existing JSON ledger has no verified historical row/byte retention cap. The owner bounds each adopted assignment to16 KiB and8 refs/4096 bytes, but producer snapshot bounds are independently verified; this entry is not a bounded-writer claim.",
+   "cleanup": "Existing _write_unlocked atomically replaces one JSON file and removes failed temporary files; it does not prune historical dispatch entries. Whole-ledger retention belongs to RC3 WP3.1. Open obligations live only in Research tickets and cannot be aged out with minutes.",
+   "measurement_status": "producer-envelope pending; existing unbounded writer explicitly recorded",
+   "readers": [
+    "services/consultation/meeting_outputs.py"
+   ],
+   "bound_proof": {
+    "file": "services/consultation/meeting_outputs.py",
+    "contains": "os.replace(tmp_name, self.path)"
+   }
+  },
+  {
+   "task": "PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123",
+   "name": "ordered paper risk intent and receipts",
+   "owner": "capital-pool-svc",
+   "register_class": "RC2",
+   "writer": "services/capital/pg_store.py mutate_paper_risk_profile; existing Capital pool row/file and audit writer",
+   "cadence": "event-driven operator PATCH; at most one pool row update plus one ordinary audit event and one opaque retirement audit event per actual edit; zero for converged same-key retries; no recurring job",
+   "count_at_hosted_scale": "3 enrolled trading pool rows plus 1 isolated acceptance pool; no new pool rows/files/tables; opaque retirements add one existing audit event row per evicted opaque key",
+   "size": "<=64 KiB additional metadata per pool (<=128 receipts of <=384 B plus <=2 KiB latest intent/watermark); <=256 KiB across four pools; <=2 KiB per opaque retirement audit event",
+   "growth_per_day": "0 B/day steady; <=384 B/new receipt until row cap 128 then zero net row growth; <=2 KiB ordinary audit event plus <=2 KiB opaque retirement per new edit after window fills; 4 pools x E edits/pool/day implies <=16E KiB/day incremental audit growth",
+   "cap": "pool row MAX_CHANGE_RECEIPTS=128, no lifetime edit cap; timestamped replays use watermark, opaque keys use exact durable audit tombstones; existing audit total retention remains unbounded/unreviewed RC3 WP3.1 (pool lifetime tombstones must be preserved by cleanup)",
+   "cleanup": "inline under pool owner lock: archive opaque receipt using deterministic existing audit event id before row eviction, or advance timestamp watermark; archive failure prevents eviction, failed pool commit retains row receipt; pool lifecycle retention; no additional scheduled cleanup/files/tables; future RC3 audit cleanup must retain or migrate exact opaque tombstones for pool lifetime",
+   "bound_proof": {
+    "file": "services/capital/profile_change.py",
+    "contains": "MAX_CHANGE_RECEIPTS = 128"
+   }
+  },
+  {
+   "bound_proof": {
+    "contains": "MAX_EVIDENCE_ITEMS = 8",
+    "file": "services/persona/risk_policy_draft.py"
+   },
+   "cadence": "one ensure per BFF/persona process per risk-officer record digest (in-process memo; the adapter sync is itself idempotent and the route has no replay cache); no recurring job; one risk-officer turn per (pool, requested profile, input digest), reusing the governance proposal that already carries the draft",
+   "cap": "one agent identity persona-risk-officer; ensure fixed record; MAX_EVIDENCE_ITEMS=8 and MAX_TEXT=400 bound the drafting prompt",
+   "cleanup": "none needed for the single agent; gateway session transcripts follow the existing gateway retention; retiring the agent is an operator persona-agent removal, not part of this task",
+   "count_at_hosted_scale": "1 agent, 1 workspace directory, 1 SOUL.md (the fixed record yields a constant digest); 3 low pools => at most 3 drafting turns, 0 on retry",
+   "growth_per_day": "0 B/day steady for the agent and SOUL (re-ensure rewrites the same files); drafting adds <=1 session transcript per new (pool, profile, input digest), i.e. 0 on a quiet day; lesson-cycle review turns are unchanged by this task",
+   "name": "persona-risk-officer own agent ensure and drafting turn",
+   "owner": "operator-bff (caller), openclaw-gateway-adapter (existing persona/ensure writer)",
+   "register_class": "RC2",
+   "size": "agent registry entry <=2 KiB; SOUL.md <=8 KiB; memory cache bounded by the existing persona memory materializer; a turn adds one gateway session transcript per turn (existing gateway session retention)",
+   "task": "PAPER-RISK-OFFICER-AGENT-ENSURE-20261124",
+   "writer": "integrations/openclaw/persona_agent_client.py ensure_risk_officer_agent -> existing POST /api/openclaw-adapter/agents/persona/ensure (persona_agent_sync: one agents.list entry, one SOUL.md, one memory-cache file in the gateway workspace); no new file, table or queue"
+  },
+  {
+   "bound_proof": {
+    "contains": "MAX_PENDING_SUPERSEDE = 16",
+    "file": "services/control-plane/bff/persona_provisioning_coordinator.py"
+   },
+   "cadence": "at most one gate review and one gate decision per (pool, requested profile, input digest) proposal, run from the existing enrollment reconcile / persona daily cycle route; replays read back the decided record and write nothing; no new recurring job",
+   "cap": "list_for_target max_items=16 per pool bounds the superseded-proposal scan; one decision per proposal",
+   "cleanup": "none; decided Governance approval records follow the existing approval retention",
+   "count_at_hosted_scale": "3 low pools => 3 gate decisions for the risk-officer drafts plus 3 closures of the v1.0 human requests, then 0 on retry",
+   "growth_per_day": "0 records on a quiet day; <=2 audit events per new (pool, profile, input digest)",
+   "name": "paper pool risk-policy automated gate decision",
+   "owner": "governance (decision writer), operator-bff persona provisioning coordinator (caller)",
+   "register_class": "RC2",
+   "size": "one ApprovalDecision row update (<=8 KiB) plus its audit entry per decision",
+   "task": "PAPER-RISK-POLICY-GATE-PER-PLAN-20261124",
+   "writer": "services/control-plane/bff/persona_provisioning_coordinator.py _paper_gate_decide_risk_policy -> existing Governance POST /api/governance/approvals/{id}/review and /decide as the dedicated automated gate; no new file, table or queue"
+  },
+  {
+   "growth_per_day": "0 B/day outside releases; <=5 MiB per dev release inside the existing 30-day pantheon-cross-repo-release artifact; nothing written to the dev VM or any database",
+   "cleanup": "existing 30-day retention of the release evidence artifact; runner temp is discarded with the runner",
+   "name": "dev release Trading Pulse browser QA evidence",
+   "owner": "release workflow (nonprod-deploy dev release, supplementary non-gating step)",
+   "register_class": "RC6",
+   "size": "trading-pulse-readonly-qa.json (<=16 KiB) + trading-pulse-summary.json + <=2 masked PNG screenshots; CLI-enforced total <=5 MiB per release (summary included)",
+   "task": "TRADING-PULSE-BROWSER-ACCEPTANCE-IN-RELEASE-20261124",
+   "writer": "scripts/run_dev_trading_pulse_readonly_qa.py (viewer GET reads only, plus the viewer login POST)"
+  },
+  {
+   "bound_proof": {
+    "contains": "RETENTION_TRADING_DAYS = 400",
+    "file": "services/telemetry/pool_risk_snapshot.py"
+   },
+   "cadence": "one row per paper pool and governed trading day after the close; replays, duplicates, restarts and rollover upsert the same (pool, day) row; a late correction replaces it keeping previous_digest",
+   "cap": "RETENTION_TRADING_DAYS = 400 rows per pool, overflow deleted on every write (enforce_retention); the served summary carries at most the last 20 rows (OBSERVATION_ROWS) as pool_risk_snapshots and pool_observations, never the retained 400",
+   "cleanup": "enforce_retention on each write; rows leave with the summary on retirement",
+   "count_at_hosted_scale": "3 pools: about 750 rows per year, about 1.2 MB per year retained (cap 1,200 rows, 1.9 MB)",
+   "growth": "about 1.55 KB per pool per trading day, about 4.7 KB per day for three pools",
+   "growth_per_day": "about 4.7 KB/day for 3 pools; capped at 1.9 MB total",
+   "name": "PoolRiskSnapshot rows (key _pool_risk_snapshot_rows inside the telemetry runtime summary store runtime_summaries.json)",
+   "owner": "telemetry (services/telemetry/pool_risk_snapshot.py, written from RuntimeSummaryProjectionStore.project_event)",
+   "readers": [
+    "services/telemetry/runtime_summary.py",
+    "services/persona/persona_cycle_controller.py",
+    "acceptance/pool_risk_snapshot_day.py"
+   ],
+   "register_class": "RC2",
+   "size": "measured 1.55 KB per row with all null reasons (local recorded-shape run); retained 400 rows = 0.62 MB per pool; served 20 rows = 31 KB + pool_observations 3.8 KB",
+   "size_per_day": "about 4.7 KB/day for 3 pools",
+   "task": "PAPER-POOL-RISK-SNAPSHOT-20261125",
+   "writer": "RuntimeSummaryProjectionStore.project_event -> pool_risk_snapshot.apply_event; no new file, table, queue or job"
   }
  ]
 }

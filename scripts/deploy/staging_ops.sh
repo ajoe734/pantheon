@@ -82,6 +82,12 @@ STATE_DIR="${STAGING_STATE_DIR:-/tmp/pantheon-staging-state}"
 mkdir -p "${STATE_DIR}/evidence" "${STATE_DIR}/artifacts" "${STATE_DIR}/observed-gates"
 
 validate_and_inspect_artifacts() {
+  local vm_size_err
+  if ! vm_size_err="$(python3 "${SCRIPT_DIR}/prod_preflight.py" vm-size \
+      --machine-type "${STAGING_MACHINE_TYPE:-e2-standard-8}" \
+      --instance-template "${STAGING_INSTANCE_TEMPLATE_FILE:-${REPO_ROOT}/deploy/staging/instance-template.json}" 2>&1)"; then
+    die_json "VM_SIZE_BELOW_GATE" "Staging VM size or instance template rejected: $(tr '\n"' '  ' <<<"${vm_size_err}")"
+  fi
   local base_summary_file="${STATE_DIR}/artifacts/manifest-base-summary.json"
   install -m 0600 /dev/null "${base_summary_file}"
   if ! python3 "${SCRIPT_DIR}/release_manifest.py" validate \
@@ -271,6 +277,9 @@ import os, shlex
 
 passthrough_vars = (
     "STAGING_GCP_PROJECT_ID",
+    "STAGING_MACHINE_TYPE",
+    "STAGING_INSTANCE_TEMPLATE_MACHINE_TYPE",
+    "STAGING_OBSERVED_VCPUS",
     "STAGING_ROOT",
     "STAGING_DATA_MOUNT",
     "STAGING_FE_ROOT",
@@ -392,6 +401,7 @@ PY
     cp "${REPO_ROOT}/deploy/staging/docker-compose.staging.yml" "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml"
     cp "${REPO_ROOT}/deploy/staging/Caddyfile.staging.tmpl" "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl"
     cp "${REPO_ROOT}/deploy/staging/staging-env.defaults" "${STAGE_BUNDLE_DIR}/staging-env.defaults"
+    cp "${REPO_ROOT}/deploy/staging/instance-template.json" "${STAGE_BUNDLE_DIR}/instance-template.json"
     cp "${REPO_ROOT}/deploy/staging/bootstrap.sh" "${STAGE_BUNDLE_DIR}/bootstrap.sh"
     cp "${REPO_ROOT}/deploy/staging/pantheon-staging-collect-gates" "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates"
     cp "${SCRIPT_DIR}/staging_sanitize.py" "${STAGE_BUNDLE_DIR}/staging_sanitize.py"
@@ -503,6 +513,7 @@ PY
       "${STAGE_BUNDLE_DIR}/docker-compose.staging.yml" \
       "${STAGE_BUNDLE_DIR}/Caddyfile.staging.tmpl" \
       "${STAGE_BUNDLE_DIR}/staging-env.defaults" \
+      "${STAGE_BUNDLE_DIR}/instance-template.json" \
       "${STAGE_BUNDLE_DIR}/bootstrap.sh" \
       "${STAGE_BUNDLE_DIR}/pantheon-staging-collect-gates" \
       "${STAGE_BUNDLE_DIR}/staging_sanitize.py" \

@@ -17,7 +17,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
 
 from fastapi import HTTPException
 
@@ -60,6 +60,8 @@ except (ImportError, ValueError):
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
+from .client import ResearchCommandError
+
 log = logging.getLogger(__name__)
 
 _CATALOG_CURSOR_PREFIX = "m1:"
@@ -67,24 +69,38 @@ _CATALOG_CURSOR_PREFIX = "m1:"
 
 def _encode_catalog_cursor(state: Dict[str, Dict[str, Any]]) -> str:
     import base64
+    import zlib
 
     raw = json.dumps(state, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
-    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    compressed = zlib.compress(raw, level=9, wbits=-15)
+    payload = compressed if len(compressed) < len(raw) else raw
+    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
 def _decode_catalog_cursor(token: Optional[str]) -> Optional[Dict[str, Dict[str, Any]]]:
     """Per-owner ``{token, done, total}`` anchors; ``None`` for no token or one that is not a merge cursor."""
     import base64
+    import zlib
 
     text = str(token or "").strip()
     if not text.startswith(_CATALOG_CURSOR_PREFIX):
         return None
     body = text[len(_CATALOG_CURSOR_PREFIX):]
     try:
-        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+        raw_bytes = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
     except (ValueError, UnicodeError):
         return None
-    return decoded if isinstance(decoded, dict) else None
+    for wbits in (None, -15, 15):
+        if wbits is not None and raw_bytes.startswith(b"{"):
+            continue
+        try:
+            unpacked = raw_bytes if wbits is None else zlib.decompress(raw_bytes, wbits)
+            decoded = json.loads(unpacked.decode("ascii"))
+            if isinstance(decoded, dict):
+                return decoded
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
@@ -537,6 +553,33 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     # Research Tickets (RW-01)
     # -------------------------------------------------------------------------
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        for source in (self._read_surface, self._ks):
+            if source is not None and hasattr(source, "list_research_ticket_page"):
+                return source.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
+        raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+
     def list_research_tickets(
         self,
         *,
@@ -1115,6 +1158,21 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.get_persona(persona_id)
         return None
 
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_labels"):
+                return owner.get_strategy_labels()
+        raise AttributeError("Research port operation 'get_strategy_labels' not implemented")
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_persona_bindings"):
+                return owner.get_strategy_persona_bindings()
+            nested_ks = getattr(owner, "research_knowledge_source", None)
+            if nested_ks is not None and hasattr(nested_ks, "get_strategy_persona_bindings"):
+                return nested_ks.get_strategy_persona_bindings()
+        raise AttributeError("Research port operation 'get_strategy_persona_bindings' not implemented")
+
 
 
 @dataclass
@@ -1133,6 +1191,7 @@ class ResearchRouterService:
     build_knowledge_workbench: Optional[Callable[[], Any]] = None
     cross_entity_search_fn: Optional[Callable[..., Any]] = None
     persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None
     _experiment_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def _port(self) -> ResearchKnowledgeSourcePort:
@@ -1150,6 +1209,12 @@ class ResearchRouterService:
             yield
         except (HTTPException, ResearchNotFoundError, ResearchValidationError, TypeError):
             raise
+        except ResearchCommandError as exc:
+            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
+                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
+                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
+                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
+                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -3784,15 +3849,31 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        meeting_linked: bool = False,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
-        try:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
-        except TypeError:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets() or [])
+        if meeting_linked:
+            with self._map_port_errors("list_research_ticket_page"):
+                page = port.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
+            return {**page, "meta": {**self.snapshot_meta(snap),
+                    "surfaces": {"ticket_list": {"status": "ok", "source": "research"}}}}
+        with self._map_port_errors("list_research_tickets"):
+            records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3843,6 +3924,15 @@ class ResearchRouterService:
             ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
+
+        if ticket.get("meeting_action"):
+            # Owner alone validates state, actor, revision and idempotent replay.
+            # Preserve the full durable receipt, including input and history.
+            with self._map_port_errors("patch_research_ticket"):
+                updated = port.patch_research_ticket(ticket_id, patch=payload, actor_id=actor_id)
+            if not updated:
+                self._not_found("Research ticket", ticket_id)
+            return updated
 
         allowed_fields = {"status", "title", "description", "priority", "owner"}
         unknown_fields = sorted(set(payload) - allowed_fields)

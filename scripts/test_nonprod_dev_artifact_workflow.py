@@ -364,6 +364,7 @@ def test_advisory_results_are_recorded_and_uploaded_without_failing_the_job():
     summary = step(DEPLOY, "advisory_summary")
     assert "always()" in summary["if"] and "summary.json" in summary["run"]
     assert "ADVISORY_CHECK_RESULT" in summary["run"] and "GITHUB_STEP_SUMMARY" in summary["run"]
+    assert '"advisoryStatus"' in summary["run"] and '"acceptance"' not in summary["run"]
     assert step(DEPLOY, "advisory_upload")["with"]["name"].startswith("pantheon-dev-advisory-checks-")
     for name in ("evolution-dispatch-probe", "loop-prod-tel-002-probe"):
         assert step(DEPLOY, name)["continue-on-error"] == "${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}"

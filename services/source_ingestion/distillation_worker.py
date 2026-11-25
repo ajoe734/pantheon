@@ -46,6 +46,7 @@ from services.source_ingestion.seed_materializer import (
 )
 from services.source_ingestion.hypothesis_card import (
     HypothesisExtractor,
+    assess_source_relevance,
     card_to_strategy_seed_metadata,
     extraction_origin,
     extractor_from_env,
@@ -74,10 +75,21 @@ LEASE_BACKOFF_BASE_SECONDS = 30.0
 LEASE_BACKOFF_CAP_SECONDS = 3600.0
 LEASE_RECOVER_BATCH = 200
 DEFERRED_CANDIDATE_WINDOW = 500
+NEW_CANDIDATE_WINDOW = 500
 PRUNED_PAYLOAD_JSON = '{"_pruned":true}'
 DEFAULT_TERMINAL_RETENTION_SECONDS = 7 * 86400
 DEFAULT_DEAD_LETTER_RETENTION_SECONDS = 30 * 86400
 LEASE_EXPIRED_REASON = "lease_expired_repeatedly"
+# A lease-expired dead letter is redriven at most this many times; a job that
+# exhausts its leases again afterwards stays dead-lettered with its count.
+DEFAULT_MAX_LEASE_REDRIVES = 2
+DEFAULT_LEASE_REDRIVE_LIMIT = 10
+LINEAGE_CONFLICT_MARKERS = (
+    "exists with conflicting distillation lineage/content",
+    "readback mismatched distillation lineage/content",
+)
+LINEAGE_CONFLICT_DISPOSITION = "registry_lineage_conflict_unresolved"
+OUT_OF_SCOPE_RETIRED_RUNTIME_REASON = "out_of_scope_retired_runtime"
 
 
 # Statuses where re-distillation is allowed (seed is still a mutable draft).
@@ -301,6 +313,17 @@ def is_auth_registry_failure(reason: str) -> bool:
     return any(m in text for m in _REGISTRY_FAILURE_MARKERS) and any(
         m in text for m in _AUTH_FAILURE_MARKERS
     )
+
+
+def is_lease_expired_failure(reason: str) -> bool:
+    """True for a dead letter caused by repeatedly expired leases (e.g. an OOM burst)."""
+    return str(reason or "").startswith(LEASE_EXPIRED_REASON)
+
+
+def is_lineage_conflict_failure(reason: str) -> bool:
+    """True for a Registry lineage/content conflict that a replay cannot fix."""
+    text = str(reason or "")
+    return any(m in text for m in LINEAGE_CONFLICT_MARKERS)
 
 
 class DistillationJobStatus(str, Enum):
@@ -702,6 +725,10 @@ class DistillationJobQueue:
                ON distillation_outbox(lease_expires_at) WHERE status = 'leased'""",
             """CREATE INDEX IF NOT EXISTS distillation_outbox_prune_idx
                ON distillation_outbox(status, processed_at) WHERE pruned_at IS NULL""",
+            # Exact (source_id, source_digest) readbacks (get/claim/due_tenants)
+            # would otherwise scan the whole outbox for every lookup.
+            """CREATE INDEX IF NOT EXISTS distillation_outbox_source_version_idx
+               ON distillation_outbox(source_id, source_digest)""",
             """CREATE INDEX IF NOT EXISTS distillation_dead_letters_resolved_idx
                ON distillation_dead_letters(resolved_at) WHERE resolved_at IS NOT NULL""",
         ):
@@ -1214,6 +1241,9 @@ class DistillationJobQueue:
                     """
                     tenant_params = (tenant,)
                 selected: dict[str, sqlite3.Row] = {}
+                # With demand ordering on, read a wider arrival window so that
+                # papers and demand-relevant rows behind older news can be seen.
+                new_window = max(take, NEW_CANDIDATE_WINDOW) if priority_by_tenant else take
                 for status in ("pending", "retry_wait"):
                     # Index (status, available_at, enqueued_at) yields this
                     # order directly; LIMIT bounds rows read and parsed.
@@ -1226,9 +1256,28 @@ class DistillationJobQueue:
                          ORDER BY available_at, enqueued_at
                          LIMIT ?
                         """,
-                        (status, effective_now, *tenant_params, take),
+                        (status, effective_now, *tenant_params, new_window),
                     ).fetchall():
                         selected[str(row["job_id"])] = row
+                    if priority_by_tenant:
+                        # Papers (about 11 a day) are never starved by news volume.
+                        for row in connection.execute(
+                            f"""
+                            SELECT job_id, available_at, enqueued_at, deferred_since
+                              FROM distillation_outbox
+                             WHERE status = ? AND available_at <= ?
+                               AND EXISTS (
+                                   SELECT 1 FROM distillation_source_versions AS paper_version
+                                    WHERE paper_version.source_id = distillation_outbox.source_id
+                                      AND paper_version.source_digest = distillation_outbox.source_digest
+                                      AND json_extract(paper_version.payload_json, '$.source_type') = 'paper')
+                               {tenant_clause}
+                             ORDER BY available_at, enqueued_at
+                             LIMIT ?
+                            """,
+                            (status, effective_now, *tenant_params, take),
+                        ).fetchall():
+                            selected[str(row["job_id"])] = row
                     # Budget-deferred backlog precedes new work: take a bounded
                     # window of it through its partial index.
                     for row in connection.execute(
@@ -1263,10 +1312,13 @@ class DistillationJobQueue:
                         reason="demand_read_missing_tenant" if not scope else "demand_reader_not_configured",
                     ))
                     deferred = candidate["deferred_since"] is not None
-                    score = priority.score(payload) if deferred else 0
-                    # Deferred backlog precedes new work. Stable arrival ties;
-                    # hints never reorder new records or change tenant scope.
-                    key = (0 if deferred else 1, -score,
+                    score = priority.score(payload)
+                    is_paper = isinstance(payload, dict) and payload.get("source_type") == "paper"
+                    # Deferred backlog precedes new work; within each group papers
+                    # first, then demand score. Stable arrival ties. A hint only
+                    # orders: it never admits, drops or changes tenant scope, and a
+                    # record that does not fit the cap is deferred, not dropped.
+                    key = (0 if deferred else 1, 0 if is_paper else 1, -score,
                            candidate["enqueued_at"] if deferred else candidate["available_at"],
                            candidate["enqueued_at"], candidate["job_id"])
                     ranked.append((key, candidate, priority.reason, score))
@@ -1629,7 +1681,10 @@ class DistillationJobQueue:
                 ):
                     raise DistillationLeaseError(f"stale distillation lease failure: {job.job_id}")
                 attempts = int(row["attempts"])
-                auth_failure = is_auth_registry_failure(error)
+                # Unavailable model/adapter uses the long schedule of auth outages.
+                auth_failure = is_auth_registry_failure(error) or error.startswith(
+                    EXTRACTION_UNAVAILABLE_MARKER
+                )
                 attempt_limit = int(row["max_attempts"])
                 if auth_failure:
                     attempt_limit = max(attempt_limit, AUTH_RETRY_MAX_ATTEMPTS)
@@ -2041,6 +2096,283 @@ class DistillationJobQueue:
                 raise
         return {"redriven": redriven, "superseded": superseded}
 
+    def _redrive_dead_letter_row(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        *,
+        requested_by: str,
+        note: str,
+        now: float,
+    ) -> bool:
+        changed = connection.execute(
+            """
+            UPDATE distillation_outbox
+               SET status = 'pending', available_at = ?,
+                   processed_at = NULL, attempts = 0,
+                   lease_owner = NULL, lease_token = NULL,
+                   lease_expires_at = NULL, lease_expiries = 0,
+                   lease_started = 0, updated_at = ?
+             WHERE job_id = ? AND status = 'dead_letter'
+            """,
+            (now, now, job_id),
+        ).rowcount
+        if changed != 1:
+            return False
+        connection.execute(
+            """UPDATE distillation_inbox SET status = 'retry_wait', updated_at = ?
+                WHERE job_id = ? AND status = 'dead_letter'""",
+            (now, job_id),
+        )
+        connection.execute(
+            """
+            UPDATE distillation_dead_letters
+               SET redrive_count = redrive_count + 1,
+                   last_redrive_actor = ?, last_redrive_note = ?,
+                   resolved_at = ?
+             WHERE job_id = ? AND resolved_at IS NULL
+            """,
+            (requested_by, note, now, job_id),
+        )
+        return True
+
+    def _close_row_skipped(
+        self,
+        connection: sqlite3.Connection,
+        job_id: str,
+        *,
+        from_status: str,
+        skip_reason: str,
+        now: float,
+    ) -> bool:
+        changed = connection.execute(
+            """
+            UPDATE distillation_outbox
+               SET status = 'skipped', processed_at = ?, skip_reason = ?,
+                   lease_owner = NULL, lease_token = NULL,
+                   lease_expires_at = NULL, updated_at = ?
+             WHERE job_id = ? AND status = ?
+            """,
+            (now, skip_reason, now, job_id, from_status),
+        ).rowcount
+        if changed != 1:
+            return False
+        connection.execute(
+            """UPDATE distillation_inbox SET status = 'skipped', updated_at = ?
+                WHERE job_id = ? AND status IN ('dead_letter', 'retry_wait', 'pending')""",
+            (now, job_id),
+        )
+        return True
+
+    def redrive_lease_expired_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        note: str = "worker completed normal work after restart; lease-expired redrive",
+        max_redrives: int = DEFAULT_MAX_LEASE_REDRIVES,
+        limit: int = DEFAULT_LEASE_REDRIVE_LIMIT,
+        tenant_id: str | None = None,
+    ) -> list[str]:
+        """Re-queue ``lease_expired_repeatedly`` dead letters, bounded.
+
+        At most ``limit`` jobs per call and ``max_redrives`` per job. The caller
+        only invokes this once the worker completed normal work after a
+        restart, so a still-crashing worker does not churn the queue. A job
+        that exhausts its leases again is dead-lettered again by
+        ``_recover_expired`` with its ``redrive_count`` kept. Only the newest
+        outbox version of a source is redriven; an older one is left alone.
+        """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
+        budget, cap = max(0, int(max_redrives)), max(0, int(limit))
+        now = self._now()
+        redriven: list[str] = []
+        tenant_clause, params = "", (budget,)
+        if tenant is not None:
+            tenant_clause = """
+               AND EXISTS (
+                   SELECT 1 FROM distillation_outbox AS outbox
+                     JOIN distillation_source_versions AS source_version
+                       ON source_version.source_id = outbox.source_id
+                      AND source_version.source_digest = outbox.source_digest
+                    WHERE outbox.job_id = distillation_dead_letters.job_id
+                      AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?)
+            """
+            params = (budget, tenant)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    f"""
+                    SELECT job_id, source_id, reason
+                      FROM distillation_dead_letters
+                     WHERE resolved_at IS NULL AND redrive_count < ?
+                       AND reason LIKE '{LEASE_EXPIRED_REASON}%'
+                       {tenant_clause}
+                     ORDER BY redrive_count, created_at, job_id
+                     LIMIT ?
+                    """,
+                    (*params, cap * 4 + 1),
+                ).fetchall()
+                for row in rows:
+                    if len(redriven) >= cap:
+                        break
+                    latest = connection.execute(
+                        """SELECT job_id FROM distillation_outbox WHERE source_id = ?
+                            ORDER BY enqueued_at DESC, rowid DESC LIMIT 1""",
+                        (str(row["source_id"]),),
+                    ).fetchone()
+                    if latest is None or str(latest["job_id"]) != str(row["job_id"]):
+                        continue
+                    if self._redrive_dead_letter_row(
+                        connection, str(row["job_id"]),
+                        requested_by=requested_by, note=note, now=now,
+                    ):
+                        redriven.append(str(row["job_id"]))
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return redriven
+
+    def settle_lineage_conflict_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        limit: int = DEFAULT_LEASE_REDRIVE_LIMIT,
+        tenant_id: str | None = None,
+    ) -> dict[str, list[str]]:
+        """Give Registry lineage-conflict dead letters a terminal, readable end.
+
+        A conflict dead-lettered before the replay-provenance fix is replayed
+        once (the fix may now accept it). A conflict that is dead-lettered
+        again after that replay is a genuine disagreement: the outbox row is
+        closed ``skipped`` with ``registry_lineage_conflict_unresolved`` and
+        the Registry entry id, the dead letter is resolved with the same note.
+        No Registry entry is read for overwrite, written or checksummed here.
+        Returns ``{"replayed": [...], "closed": [...]}``.
+        """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
+        cap = max(0, int(limit))
+        now = self._now()
+        replayed: list[str] = []
+        closed: list[str] = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    """SELECT d.job_id, d.reason, d.redrive_count, d.payload_json
+                         FROM distillation_dead_letters AS d
+                        WHERE d.resolved_at IS NULL ORDER BY d.created_at, d.job_id"""
+                ).fetchall()
+                for row in rows:
+                    if len(replayed) + len(closed) >= cap:
+                        break
+                    reason = str(row["reason"])
+                    if not is_lineage_conflict_failure(reason):
+                        continue
+                    job_id = str(row["job_id"])
+                    if tenant is not None:
+                        try:
+                            scope = (json.loads(row["payload_json"]).get("metadata") or {}).get("tenant_id")
+                        except (ValueError, AttributeError):
+                            scope = None
+                        if scope != tenant:
+                            continue
+                    if int(row["redrive_count"]) < 1:
+                        if self._redrive_dead_letter_row(
+                            connection, job_id, requested_by=requested_by,
+                            note="lineage conflict replayed once under replay-provenance fix",
+                            now=now,
+                        ):
+                            replayed.append(job_id)
+                        continue
+                    text = f"{LINEAGE_CONFLICT_DISPOSITION}: {reason}"[:1000]
+                    if self._close_row_skipped(
+                        connection, job_id, from_status="dead_letter",
+                        skip_reason=text, now=now,
+                    ):
+                        connection.execute(
+                            """UPDATE distillation_dead_letters
+                                  SET last_redrive_actor = ?, last_redrive_note = ?,
+                                      resolved_at = ?
+                                WHERE job_id = ? AND resolved_at IS NULL""",
+                            (requested_by, text, now, job_id),
+                        )
+                        closed.append(job_id)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return {"replayed": replayed, "closed": closed}
+
+    def close_retired_tenant_pending(
+        self,
+        *,
+        retired_tenant_ids: Sequence[str],
+        active_tenant_id: str,
+        enqueued_from: float,
+        enqueued_to: float,
+        requested_by: str,
+        limit: int = 2000,
+    ) -> dict[str, Any]:
+        """Close pending rows of a retired runtime as out of scope.
+
+        Refuses unless the tenant is provably retired in this queue: it is not
+        the active tenant, and no row of it was enqueued after ``enqueued_to``
+        (a tenant still producing work is not retired). Only ``pending`` rows
+        enqueued inside ``[enqueued_from, enqueued_to]`` are closed, as
+        ``skipped`` with ``out_of_scope_retired_runtime``; leased, retry and
+        dead-letter rows and every other tenant are untouched.
+        """
+        retired = sorted({str(t).strip() for t in retired_tenant_ids if str(t).strip()})
+        active = str(active_tenant_id or "").strip()
+        result: dict[str, Any] = {"closed": [], "refused": {}}
+        now = self._now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for tenant in retired:
+                    if tenant == active:
+                        result["refused"][tenant] = "tenant_is_active"
+                        continue
+                    later = connection.execute(
+                        """SELECT COUNT(*) FROM distillation_outbox AS o
+                             JOIN distillation_source_versions AS v
+                               ON v.source_id = o.source_id AND v.source_digest = o.source_digest
+                            WHERE json_extract(v.payload_json, '$.metadata.tenant_id') = ?
+                              AND o.enqueued_at > ?""",
+                        (tenant, float(enqueued_to)),
+                    ).fetchone()[0]
+                    if later:
+                        result["refused"][tenant] = "tenant_enqueued_after_window"
+                        continue
+                    rows = connection.execute(
+                        """SELECT o.job_id FROM distillation_outbox AS o
+                             JOIN distillation_source_versions AS v
+                               ON v.source_id = o.source_id AND v.source_digest = o.source_digest
+                            WHERE o.status = 'pending'
+                              AND json_extract(v.payload_json, '$.metadata.tenant_id') = ?
+                              AND o.enqueued_at BETWEEN ? AND ?
+                            ORDER BY o.enqueued_at LIMIT ?""",
+                        (tenant, float(enqueued_from), float(enqueued_to), max(0, int(limit))),
+                    ).fetchall()
+                    reason = f"{OUT_OF_SCOPE_RETIRED_RUNTIME_REASON}: tenant={tenant} by {requested_by}"
+                    for row in rows:
+                        if self._close_row_skipped(
+                            connection, str(row["job_id"]), from_status="pending",
+                            skip_reason=reason, now=now,
+                        ):
+                            result["closed"].append(str(row["job_id"]))
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return result
+
     def count(self) -> int:
         with self._connect() as connection:
             row = connection.execute(
@@ -2074,6 +2406,33 @@ class DistillationJobQueue:
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
         return metrics
+
+    def external_text_closure_counts(self) -> dict[str, dict[str, int]]:
+        """Skipped jobs by source type then typed reason (text before the first colon).
+
+        Reads the committed source snapshot of each skipped job; used for the
+        per-source/per-reason accounting of RC2 closures.
+        """
+        counts: dict[str, dict[str, int]] = {}
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT json_extract(source.payload_json, '$.source_type') AS source_type,
+                       CASE WHEN instr(outbox.skip_reason, ':') > 0
+                            THEN substr(outbox.skip_reason, 1, instr(outbox.skip_reason, ':') - 1)
+                            ELSE outbox.skip_reason END AS reason,
+                       COUNT(*) AS count
+                  FROM distillation_outbox AS outbox
+                  LEFT JOIN distillation_source_versions AS source
+                    ON source.source_id = outbox.source_id AND source.source_digest = outbox.source_digest
+                 WHERE outbox.status = 'skipped' AND outbox.skip_reason IS NOT NULL
+                 GROUP BY 1, 2
+                """
+            ).fetchall()
+        for row in rows:
+            by_reason = counts.setdefault(str(row["source_type"] or "unknown"), {})
+            by_reason[str(row["reason"])] = int(row["count"])
+        return counts
 
     def list_dead_letters(
         self, *, include_payload: bool = True, limit: int | None = None,
@@ -2292,8 +2651,12 @@ def _synthesize_evidence_bundle(
 
 
 _EXTERNAL_TEXT_TYPES: frozenset[SourceType] = frozenset(
-    {SourceType.PAPER, SourceType.NEWS, SourceType.SOCIAL}
+    {SourceType.PAPER, SourceType.NEWS, SourceType.SOCIAL, SourceType.FILING, SourceType.MACRO}
 )
+
+IRRELEVANT_REASON = "l2_irrelevant"
+EXTRACTION_DISABLED_REASON = "l2_extraction_disabled"
+EXTRACTION_UNAVAILABLE_MARKER = "hypothesis_extraction_unavailable"
 
 
 def _with_hypothesis_card(source: SourceRecord, card: Mapping[str, Any]) -> SourceRecord:
@@ -2538,10 +2901,12 @@ class DistillationWorker:
         normalized = [
             s for s in source_records if s.status == SourceRecordStatus.NORMALIZED
             and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
-        ][:limit]
+        ]
 
         enqueued = 0
         for source in normalized:
+            if enqueued >= max(0, limit):
+                break
             digest = source_version_digest(source)
             existing = self._queue.get(source.source_id, digest)
             if existing is None:
@@ -2567,6 +2932,7 @@ class DistillationWorker:
             retried=run_result.retried,
             dead_lettered=run_result.dead_lettered,
             deferred=run_result.deferred,
+            lease_lost=run_result.lease_lost,
         )
 
     def redispatch(self, source_id: str, source: SourceRecord) -> DistillationJob:
@@ -2645,9 +3011,21 @@ class DistillationWorker:
         # see the source as admitted, not with the extracted card merged in.
         admitted_source = source
 
-        if self._hypothesis_extractor is not None and source.source_type != SourceType.MARKET:
+        if source.source_type != SourceType.MARKET:
             origin = extraction_origin(source.source_type.value, source.metadata)
             if origin is not None or source.source_type in _EXTERNAL_TEXT_TYPES:
+                # External text never becomes a draft without a verified card
+                # (RC2): no extractor, no relevance, no card -> typed closure.
+                if self._hypothesis_extractor is None:
+                    relevance = assess_source_relevance(source)
+                    reason = (
+                        EXTRACTION_DISABLED_REASON if relevance.relevant
+                        else f"{IRRELEVANT_REASON}: {relevance.reason}"
+                    )
+                    self._queue.mark_skipped(
+                        job.job_id, reason=reason, processed_at=now, claim_token=job.lease_token,
+                    )
+                    return "skipped", reason.split(":")[0]
                 outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 if outcome.card is None:
                     if outcome.status == "budget_exhausted":
@@ -2655,8 +3033,21 @@ class DistillationWorker:
                             job, now=_timestamp(now) if now is not None else self._queue._now(),
                         )
                         return "deferred", "budget_exhausted"
+                    if outcome.status == "unavailable":
+                        # The model or adapter did not answer: not a delivered
+                        # outcome. Retry with backoff; never store no_hypothesis.
+                        failure_status = self._queue.mark_retry_or_dead_letter(
+                            job,
+                            error=f"{EXTRACTION_UNAVAILABLE_MARKER}: {outcome.detail}",
+                            base_delay_seconds=self._retry_base_seconds,
+                            now=now,
+                        )
+                        return "failed", failure_status.value
                     reason = {
                         "rejected": "hypothesis_rejected",
+                        "irrelevant": IRRELEVANT_REASON,
+                        "admission_denied": "l2_admission_denied",
+                        "failed": "hypothesis_extraction_failed",
                     }.get(outcome.status, "no_hypothesis")
                     self._queue.mark_skipped(
                         job.job_id,

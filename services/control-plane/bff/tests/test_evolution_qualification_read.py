@@ -177,3 +177,113 @@ def test_owner_object_read_carries_the_callers_identity_and_query(monkeypatch) -
     assert calls[0]["url"] == "http://evolution:8093/api/evolution/program-qualification?limit=10&offset=0"
     assert calls[0]["caller_token"] == CALLER_JWT
     assert calls[0]["tenant_id"] == "tenant-a"
+
+
+def test_report_with_excluded_infrastructure_field_reads_through() -> None:
+    report = {**OWNER_REPORT, "excluded_infrastructure": 46}
+    response = _client(lambda query: dict(report)).get(
+        "/bff/management/evolution-qualification", headers=HEADERS
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["evaluated"] == 1
+    assert data.get("excluded_infrastructure") == 46
+
+
+def test_older_report_without_excluded_infrastructure_still_reads() -> None:
+    assert "excluded_infrastructure" not in OWNER_REPORT
+    response = _client(lambda query: dict(OWNER_REPORT)).get(
+        "/bff/management/evolution-qualification", headers=HEADERS
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["evaluated"] == 1
+
+
+# --- BFF-EVO-JOURNAL-POOL-VERSIONS-20261125: member baselines on the qualification page ---
+
+PB_PERSONA = "persona-ee7112a829d38b9135ac"
+PB_MEMBER = "artifact-persona-paper-a81b4fd15944698341aa"
+PB_CHECKSUM = "sha256:" + "a" * 64
+
+
+class _Ident:
+    operator_id = "op-1"
+    roles = {"viewer"}
+    claims = {"tenant_id": "tenant-dev"}
+
+
+def _pool_version(members: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {"persona_id": PB_PERSONA, "tenant_id": "tenant-dev", "pool_version": 6, "members": members,
+            "digest": "sha256:" + "6" * 64, "decision": {"action": "reweight", "status": "refused", "reasons": []}}
+
+
+def _baseline_client(registry_reader, members=None, tenant="tenant-dev"):
+    members = members if members is not None else [
+        {"artifact_ref": PB_MEMBER, "checksum": PB_CHECKSUM, "stage": "active", "risk_weight": 1.0, "baseline_ref": None},
+        {"artifact_ref": "artifact-removed", "checksum": PB_CHECKSUM, "stage": "removed", "risk_weight": 0.0, "baseline_ref": None},
+    ]
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "evolution_qualification_reader": lambda q: dict(OWNER_REPORT),
+            "personas": [
+                {"persona_id": PB_PERSONA, "name": "Paper One", "lifecycle_state": "paper_owner", "tenant_id": tenant},
+                {"persona_id": "persona-other-tenant", "name": "Other", "lifecycle_state": "paper_owner", "tenant_id": "tenant-x"},
+            ],
+        },
+        persona_pool_versions_reader=lambda pid, tid: {"versions": [_pool_version(members)]},
+        registry_entry_reader=registry_reader,
+    )
+    app = FastAPI()
+    app.include_router(create_evolution_router(read_surface=ports, extract_identity=lambda authorization=None: _Ident()))
+    return TestClient(app)
+
+
+def test_member_baselines_pass_the_resolver_reason_through_for_each_live_member() -> None:
+    calls: List[Any] = []
+
+    def registry(registry_id: str, tenant_id: str) -> Any:
+        calls.append((registry_id, tenant_id))
+        return {"registry_id": registry_id, "artifact_state": "candidate", "checksum": PB_CHECKSUM}
+
+    data = _baseline_client(registry).get("/bff/management/evolution-qualification", headers=HEADERS).json()["data"]
+    assert calls == [(PB_MEMBER, "tenant-dev")]  # removed member and other tenant never read
+    assert data["member_baselines"] == [{
+        "persona_id": PB_PERSONA, "persona_name": "Paper One", "artifact_ref": PB_MEMBER, "stage": "active",
+        "risk_weight": 1.0, "pool_version": 6, "status": "no_approved_baseline", "reason": "artifact_not_approved",
+    }]
+    surface = data["member_baselines_surface"]
+    assert (surface["status"], surface["not_approved"], surface["approved"]) == ("ok", 1, 0)
+    assert surface["reads"]["registry_reads"] == 1 and surface["reads"]["pool_version_reads"] == 1
+    assert data["items"][0]["first_failing_criterion"] == "real_threshold_signal"  # report untouched
+
+
+def test_member_baseline_missing_entry_and_unreadable_entry() -> None:
+    missing = _baseline_client(lambda rid, tid: {}).get("/bff/management/evolution-qualification", headers=HEADERS)
+    row = missing.json()["data"]["member_baselines"][0]
+    assert (row["status"], row["reason"]) == ("no_approved_baseline", "registry_entry_missing")
+
+    def broken(rid: str, tid: str) -> Any:
+        raise RuntimeError("registry down")
+
+    unreadable = _baseline_client(broken).get("/bff/management/evolution-qualification", headers=HEADERS).json()["data"]
+    row = unreadable["member_baselines"][0]
+    assert row["status"] == "unavailable" and row["reason"].startswith("registry_entry_unreadable:")
+    assert unreadable["member_baselines_surface"]["unavailable"] == 1
+    assert "oos_sharpe" not in row  # no number is written or defaulted
+
+
+def test_member_baselines_pool_owner_failure_is_unavailable_not_empty_success() -> None:
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "evolution_qualification_reader": lambda q: dict(OWNER_REPORT),
+            "personas": [{"persona_id": PB_PERSONA, "name": "P", "lifecycle_state": "paper_owner", "tenant_id": "tenant-dev"}],
+        },
+        persona_pool_versions_reader=lambda pid, tid: (_ for _ in ()).throw(RuntimeError("down")),
+        registry_entry_reader=lambda rid, tid: {},
+    )
+    app = FastAPI()
+    app.include_router(create_evolution_router(read_surface=ports, extract_identity=lambda authorization=None: _Ident()))
+    data = TestClient(app).get("/bff/management/evolution-qualification", headers=HEADERS).json()["data"]
+    assert data["member_baselines"] == []
+    assert data["member_baselines_surface"]["status"] == "unavailable"
+    assert data["evaluated"] == 1

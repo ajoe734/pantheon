@@ -10769,6 +10769,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(binding_fe["kind"], "artifact_contract")
         self.assertEqual(binding_fe["artifacts"], ["support/sidecars/evidence.json"])
 
+    def test_dev_bridge_source_task_requires_pr_delivery_binding_at_handoff(self) -> None:
+        source_task = {
+            "id": "BRIDGE-SRC-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["pantheon:services/control-plane/bff/main.py"],
+            "acceptance": ["Supervisor PR to dev"],
+            "dev_bridge": {"work_class": "functional"},
+        }
+        self.assertTrue(ai_status.requires_pr_delivery_binding(source_task))
+        with self.assertRaisesRegex(SystemExit, "requires a PR delivery binding at handoff"):
+            ai_status.resolve_handoff_delivery_binding(source_task, {})
+
+        readonly_task = {
+            "id": "BRIDGE-RO-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["docs/review.md"],
+            "acceptance": ["Read-only verification"],
+            "dev_bridge": {"work_class": "read_only"},
+        }
+        self.assertFalse(ai_status.requires_pr_delivery_binding(readonly_task))
+
     def test_command_handoff_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
         self.state["tasks"][0]["status"] = "in_progress"
         self.state["tasks"][0]["owner"] = "Codex"
@@ -13138,12 +13163,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 # Head-only binding (no base) sees only the clean head.
                 ai_status.reject_owner_trailer_mismatch_at_handoff(task, {"head_sha": head})
 
-    def test_handoff_accepts_prior_owner_trailer_with_audited_chain(self) -> None:
+    def test_handoff_reads_owner_audit_once_for_multiple_prior_owner_commits(self) -> None:
         task_id = "REG-002"
         with tempfile.TemporaryDirectory() as tmpdir:
             repo, base, head = self._owner_trailer_repo(
                 tmpdir,
-                [f"{task_id}: a\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+                [
+                    f"{task_id}: {part}\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"
+                    for part in ("main change", "review findings")
+                ],
             )
             event = audited_reassignment_event(
                 task_id=task_id, old_owner="Claude", new_owner="Claude2",
@@ -13156,10 +13184,20 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             with (
                 mock.patch.object(ai_status, "LOG_FILE", log_file),
                 mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+                mock.patch.object(
+                    ai_status, "_audited_reassignment_events", wraps=ai_status._audited_reassignment_events
+                ) as read_audit,
+                mock.patch.object(
+                    ai_status,
+                    "_verified_done_owner_reassignment",
+                    wraps=ai_status._verified_done_owner_reassignment,
+                ) as verify_commit,
             ):
                 ai_status.reject_owner_trailer_mismatch_at_handoff(
                     task, {"head_sha": head, "base_sha": base}
                 )
+                read_audit.assert_called_once()
+                self.assertEqual(verify_commit.call_count, 2)
 
     def test_handoff_refuses_prior_owner_trailer_after_reassignment(self) -> None:
         task_id = "REG-002"

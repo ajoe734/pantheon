@@ -2790,6 +2790,26 @@ def _is_terminal_prebroker_paper_rejection(
     return len(concrete_reasons) == 1
 
 
+_REASON_DETAIL_MAX_ENTRIES = 20
+_REASON_DETAIL_MAX_TEXT = 500
+
+
+def _bounded_reason_detail(detail: Any) -> Any:
+    """Bound reason_detail in entry count and string length."""
+    def _clip(value: Any) -> Any:
+        if isinstance(value, str) and len(value) > _REASON_DETAIL_MAX_TEXT:
+            return value[:_REASON_DETAIL_MAX_TEXT]
+        if isinstance(value, dict):
+            return {str(k): _clip(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_clip(v) for v in value[:_REASON_DETAIL_MAX_ENTRIES]]
+        return value
+
+    if isinstance(detail, list):
+        return [_clip(item) for item in detail[:_REASON_DETAIL_MAX_ENTRIES]]
+    return _clip(detail)
+
+
 def _scheduled_lifecycle_event(
     *,
     summary: Dict[str, Any],
@@ -2910,14 +2930,13 @@ def _scheduled_lifecycle_event(
         "metadata": metadata,
         "correlation_envelope": envelope,
     }
+    # The telemetry schema forbids top-level reason fields (additionalProperties
+    # false); the reason travels in metadata, which every reader already consults.
     if event_type == "reconciliation_failed":
-        event["reason_code"] = recon_reason_code
-        event["reason_detail"] = recon_reason_detail
         event["metadata"]["reason_code"] = recon_reason_code
-        event["metadata"]["reason_detail"] = recon_reason_detail
+        event["metadata"]["reason_detail"] = _bounded_reason_detail(recon_reason_detail)
     elif recon_reason_detail:
-        event["reason_detail"] = recon_reason_detail
-        event["metadata"]["reason_detail"] = recon_reason_detail
+        event["metadata"]["reason_detail"] = _bounded_reason_detail(recon_reason_detail)
     if isinstance(identity.get("authority_refs"), dict):
         event["authority_refs"] = json.loads(json.dumps(identity["authority_refs"]))
     return event, None
@@ -3261,6 +3280,85 @@ def _append_telemetry_lifecycle_event(
     )
 
 
+_REFUSAL_REPEAT_LIMIT = int(os.getenv("PANTHEON_RECON_REFUSAL_REPEAT_LIMIT", "3"))
+_REFUSAL_RETRY_SECONDS = float(os.getenv("PANTHEON_RECON_REFUSAL_RETRY_SECONDS", "3600"))
+_VOLATILE_EVENT_KEYS = ("event_id", "reconciliation_id", "created_at", "correlation_envelope")
+_VOLATILE_METADATA_KEYS = (
+    "reconciliation_evaluation_id",
+    "reconciliation_tick_id",
+    "correlation_envelope",
+)
+
+
+def _event_refusal_fingerprint(event: Dict[str, Any]) -> str:
+    """Stable identity of an event's content across ticks (ids/times removed)."""
+    body = {k: v for k, v in event.items() if k not in _VOLATILE_EVENT_KEYS}
+    meta = body.get("metadata")
+    if isinstance(meta, dict):
+        body["metadata"] = {k: v for k, v in meta.items() if k not in _VOLATILE_METADATA_KEYS}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _repeated_refusal(
+    *,
+    event: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    timestamp: str,
+    evaluations: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any] | None:
+    """Return the prior refusal when telemetry already refused identical content.
+
+    Bounded: after ``_REFUSAL_REPEAT_LIMIT`` real refusals of identical content the
+    pass stops sending, keeps the refusal reason, and probes again at most once per
+    ``_REFUSAL_RETRY_SECONDS``.  Changed content (a fixed emitter) is never suppressed.
+    """
+    binding_id = str(evaluation.get("binding_id") or "")
+    fingerprint = _event_refusal_fingerprint(event)
+    source = (
+        evaluations
+        if evaluations is not None
+        else _tenant_scoped(store.list_evaluations_for_binding(binding_id))
+    )
+    refusals: List[tuple[str, Dict[str, Any]]] = []
+    for prior in source:
+        if prior.get("evaluation_id") == evaluation.get("evaluation_id"):
+            continue
+        state = prior.get("lifecycle_append")
+        if not isinstance(state, dict) or state.get("status") != "terminal_rejected":
+            continue
+        prior_event = state.get("event")
+        if (
+            state.get("repeat_suppressed")
+            or not isinstance(prior_event, dict)
+            or prior_event.get("causal_parent_id") != event.get("causal_parent_id")
+            or _event_refusal_fingerprint(prior_event) != fingerprint
+        ):
+            continue
+        refusals.append((str(state.get("attempted_at") or ""), state))
+    if len(refusals) < _REFUSAL_REPEAT_LIMIT:
+        return None
+    refusals.sort(key=lambda item: item[0])
+    last_at, last_state = refusals[-1]
+    last_dt = _strict_lifecycle_datetime(last_at)
+    now = _strict_lifecycle_datetime(timestamp)
+    if (
+        last_dt is not None
+        and now is not None
+        and (now - last_dt).total_seconds() >= _REFUSAL_RETRY_SECONDS
+    ):
+        return None
+    return {
+        "refusal_count": len(refusals),
+        "last_attempted_at": last_at,
+        "http_status": last_state.get("http_status"),
+        "error": last_state.get("error"),
+        "response": last_state.get("response"),
+        "fingerprint": fingerprint,
+    }
+
+
 def _ensure_scheduled_lifecycle_append(
     *,
     summary: Dict[str, Any],
@@ -3344,6 +3442,30 @@ def _ensure_scheduled_lifecycle_append(
             evaluation["lifecycle_append"] = state
             store.put_evaluation(evaluation)
             return state
+        repeated = _repeated_refusal(
+            event=event, evaluation=evaluation, timestamp=timestamp, evaluations=evaluations
+        )
+        if repeated is not None:
+            state = {
+                "status": "terminal_rejected",
+                "terminal": True,
+                "retryable": False,
+                "outcome": "failed",
+                "reason": "telemetry_refused_identical_event",
+                "repeat_suppressed": True,
+                "http_status": repeated["http_status"],
+                "error": repeated["error"],
+                "response": repeated["response"],
+                "refusal_count": repeated["refusal_count"],
+                "last_attempted_at": repeated["last_attempted_at"],
+                "event_fingerprint": repeated["fingerprint"],
+                "attempt_count": 0,
+                "event_id": event["event_id"],
+                "updated_at": timestamp,
+            }
+            evaluation["lifecycle_append"] = state
+            store.put_evaluation(evaluation)
+            return state
         state = {
             "status": "pending",
             "terminal": False,
@@ -3413,6 +3535,7 @@ def _lifecycle_append_receipt(binding_id: str, state: Dict[str, Any]) -> Dict[st
         "reason": state.get("reason"),
         "http_status": state.get("http_status"),
         "error": state.get("error"),
+        "refusal_count": state.get("refusal_count"),
     }
 
 

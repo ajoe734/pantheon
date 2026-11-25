@@ -244,6 +244,55 @@ def read_records(url_builder, path, key=None):
     return cached_owner_call(("http_records", path, url, key, token, tenant), _fetch)
 
 
+def read_persona_pool_versions(persona_id: str, tenant_id: str) -> Any:
+    """Persona owner strategy pool versions as the caller; one bounded owner read."""
+    from urllib.parse import quote
+
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    base = get_base_url("PANTHEON_PERSONA_API_URL", "PANTHEON_PERSONA_SERVICE_URL")
+    url = base + f"/api/personas/{quote(persona_id, safe='')}/strategy-pool/versions"
+    token = auth.removeprefix("Bearer ")
+
+    def _fetch():
+        rem = remaining_management_read_budget(2.0)
+        return http_request_json(url, auth_token=token, tenant_id=tenant_id, timeout=rem)
+
+    return cached_owner_call(("persona_pool_versions", url, token, tenant_id), _fetch)
+
+
+def read_registry_entry(registry_id: str, tenant_id: str) -> Any:
+    """Registry owner entry as the caller through PANTHEON_REGISTRY_API_URL; ``{}`` if absent.
+
+    Same owner URL and caller principal the persona pool reads use on hosted; no
+    service credential is needed or read here.
+    """
+    from urllib.parse import quote
+
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    base = get_base_url("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL")
+    url = base + "/api/registry/entries/" + quote(registry_id, safe="")
+    token = auth.removeprefix("Bearer ")
+
+    def _fetch():
+        rem = remaining_management_read_budget(2.0)
+        try:
+            payload = http_request_json(url, auth_token=token, tenant_id=tenant_id, timeout=rem)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return {}
+            raise
+        entry = payload.get("entry") if isinstance(payload, dict) else None
+        if not isinstance(entry, dict) or entry.get("registry_id") != registry_id:
+            raise RuntimeError("registry returned a malformed or mismatched entry")
+        return entry
+
+    return cached_owner_call(("registry_entry", url, token, tenant_id), _fetch)
+
+
 def _evolution_http_get(url: str, caller_token: str, tenant_id: str) -> Any:
     rem = remaining_management_read_budget()
     try:

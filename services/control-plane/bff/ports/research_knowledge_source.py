@@ -535,11 +535,17 @@ class ResearchKnowledgeSourcePort:
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
     def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
         """``{strategy_id: {"title", "name"}}`` of bound strategies' current versions, without spec bodies."""
+        raise NotImplementedError
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        """``{strategy_id: [persona_id, ...]}`` of bound strategies' current versions, without spec bodies."""
         raise NotImplementedError
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
@@ -2661,6 +2667,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2686,6 +2694,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 page_token=page_token,
                 page_size=page_size,
                 **({"query": query} if query is not None else {}),
+                **(
+                    {"hide_stubs": True, "hide_persona_ids": hide_persona_ids}
+                    if hide_stubs
+                    else {}
+                ),
             )
 
         offset = 0
@@ -3042,6 +3055,89 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 labels[strategy_id] = {"title": str(title), "name": str(title)}
         return labels
 
+    def _persona_bindings_from_persona_binding_rows(self, raw: Any) -> Dict[str, List[str]]:
+        """Current-version persona_ids per family from flat registry ``persona_binding`` rows."""
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry binding payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, List[str]]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            raw_ids = (
+                inner.get("persona_ids")
+                or meta.get("personaIds")
+                or meta.get("persona_ids")
+                or ([meta["persona_id"]] if meta.get("persona_id") else (
+                    [inner_meta["persona_id"]] if inner_meta.get("persona_id") else []
+                ))
+                or entry.get("persona_ids")
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, list(dict.fromkeys(persona_ids)))
+        return {sid: pids for sid, (_key, pids) in best.items()}
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._persona_bindings_from_persona_binding_rows(
+                self._fetch_canonical_persona_binding_view("persona_binding")
+            )
+        bindings: Dict[str, List[str]] = {}
+        for strategy_spec in list(self._strategy_specs.values()):
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, _index, raw_current, _candidates, _versions = selected
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+            raw_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            bindings[str(strategy_id)] = list(dict.fromkeys(persona_ids))
+        return bindings
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -3078,14 +3174,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
-        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
 
         auth = authorization.get()
         if not auth:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-            raw = http_request_json(registry_url(f"/api/registry/strategy-specs?view={view}"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+            target_url = registry_url(f"/api/registry/strategy-specs?view={view}")
+            token = auth.removeprefix("Bearer ").strip()
+            raw = cached_owner_call(
+                ("registry_persona_binding_view", id(self), view, target_url, caller_tenant, token),
+                lambda: http_request_json(target_url, auth_token=token, tenant_id=caller_tenant),
+            )
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
@@ -3107,6 +3208,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, registry_url
@@ -3137,6 +3240,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
         norm_query = str(query).strip() if query is not None and str(query).strip() != "" else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+        norm_hide_ids: Optional[tuple] = (
+            tuple(sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()}))
+            if hide_stubs
+            else None
+        )
 
         def read_page() -> Dict[str, Any]:
             def fetch() -> Dict[str, Any]:
@@ -3144,6 +3252,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     state=norm_state, exclude_state=norm_exclude_state,
                     persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
                     **({"query": norm_query} if norm_query is not None else {}),
+                    **(
+                        {"hide_stubs": True, "hide_persona_ids": list(norm_hide_ids or ())}
+                        if hide_stubs
+                        else {}
+                    ),
                 )
 
             auth = authorization.get()
@@ -3158,6 +3271,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     tenant, hashlib.sha256(auth.encode()).digest(),
                     registry_url("/api/registry/strategy-specs"),
                     norm_state, norm_exclude_state, norm_persona, norm_query, norm_token, int(page_size),
+                    norm_hide_ids,
                 ),
                 fetch,
             )
@@ -3173,6 +3287,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_query,
                 norm_token,
                 int(page_size),
+                norm_hide_ids,
             ),
             read_page,
         )
@@ -3186,6 +3301,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -3213,6 +3330,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             query_params.append(("query", query))
         if page_token:
             query_params.append(("page_token", page_token))
+        if hide_stubs:
+            query_params.append(("hide_stubs", "true"))
+            hide_ids = sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()})
+            if hide_ids:
+                query_params.append(("hide_persona_ids", ",".join(hide_ids)))
         path = "/api/registry/strategy-specs?" + urllib.parse.urlencode(query_params)
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
@@ -3325,12 +3447,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             validated_state_counts = {
                 str(k).strip(): int(v) for k, v in raw_state_counts.items()
             }
-        return {
+        page_out: Dict[str, Any] = {
             "items": validated_items,
             "total": total,
             "next_page_token": next_page_token,
             "state_counts": validated_state_counts,
         }
+        if hide_stubs:
+            # Owner-side hide answer. A missing or malformed answer is carried
+            # as ``None`` (never as zeros): the caller treats the owner as one
+            # that did not hide and falls back to its own classification.
+            raw_visible = raw.get("visible_state_counts")
+            raw_hidden = raw.get("hidden")
+            by_reason = raw_hidden.get("by_reason") if isinstance(raw_hidden, dict) else None
+
+            def _counts_ok(value: Any) -> bool:
+                return (
+                    isinstance(value, dict)
+                    and bool(value)
+                    and all(
+                        isinstance(k, str)
+                        and k.strip()
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v >= 0
+                        for k, v in value.items()
+                    )
+                )
+
+            if _counts_ok(raw_visible) and _counts_ok(by_reason):
+                page_out["visible_state_counts"] = {
+                    str(k).strip(): int(v) for k, v in raw_visible.items()
+                }
+                page_out["hidden"] = {
+                    "by_reason": {str(k).strip(): int(v) for k, v in by_reason.items()},
+                    "total": sum(int(v) for v in by_reason.values()),
+                }
+        return page_out
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
@@ -3710,6 +3863,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
         }
 
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        source = self._get_research_write_owner()
+        if source is None or not hasattr(source, "list_research_ticket_page"):
+            raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+        return source.list_research_ticket_page(
+            statuses=statuses, owner=owner,
+            meeting_type=meeting_type, subject_ref=subject_ref,
+            action_state=action_state, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after,
+            human_actionable=human_actionable, page_token=page_token,
+            page_size=page_size
+        )
+
     def list_research_tickets(
         self,
         *,
@@ -3766,6 +3946,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             created_at=created_at,
         )
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
@@ -3785,6 +3967,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
         result = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result

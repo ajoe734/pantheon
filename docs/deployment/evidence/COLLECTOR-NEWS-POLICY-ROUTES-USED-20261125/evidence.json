@@ -1,0 +1,110 @@
+{
+  "task_id": "COLLECTOR-NEWS-POLICY-ROUTES-USED-20261125",
+  "title": "新聞收集程式真的照設定檔的路由抓，不再寫死抓中央社全部新聞",
+  "problem_register_class": "RC2",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "review_independence": {
+    "owner_family": "Antigravity",
+    "assigned_reviewer": "Claude",
+    "assigned_reviewer_family": "Claude",
+    "independent_family": true,
+    "quota_fallback_exception_if_reassigned": "If Claude/Claude2 and Codex/Codex2 remain at terminal quota until 2026-11-27T10:03:00Z and supervisor auto-reassigns reviewer to Antigravity2, that same-family exception is recorded per AGENTS.md Review Independence rule."
+  },
+  "host_access_used": false,
+  "host_access_note": "No SSH, remote command, or live network access to the third-location collector host was performed by this task. All verification ran offline against recorded fixtures with socket connections blocked by deploy/collector/tests/conftest.py.",
+  "policy_routes_and_validation": {
+    "source_id": "collector-news-rss",
+    "rsshub_image": "diygod/rsshub:chromium-bundled-2026-11-01",
+    "code_default_removed": true,
+    "collect_signature": "RssHubNewsPoller.collect(self, *, routes: Sequence[str] | None = None, fetched_at: datetime | str | None = None) -> list[CollectedItem]",
+    "active_verified_routes": [
+      "/cna/aie",
+      "/cna/asc",
+      "/udn/news/breakingnews/6",
+      "/udn/news/breakingnews/11"
+    ],
+    "verified_routes_constant": [
+      "/cna/aie",
+      "/cna/asc",
+      "/udn/news/breakingnews/6",
+      "/udn/news/breakingnews/11"
+    ],
+    "disabled_routes": {
+      "/chinatimes/money": "HTTP 503 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: upstream RSSHub URL concatenation bug in /app/dist/chinatimes-BOLqovDF.mjs (requests https://www.chinatimes.comhttps//www.chinatimes.com/...)",
+      "/cw/master/8": "HTTP 503 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: upstream www.cw.com.tw returns HTTP 403 Forbidden (Cloudflare challenge) to non-browser requests from RSSHub",
+      "/ltn/news/business": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace ltn in /app/dist/ltn-def-DRpP-Cva.mjs defines only /ltn/def/:channel{.+}? (自由軍武頻道, def.ltn.com.tw) and defines no business/finance route",
+      "/chinatimes/realtimenews/260410": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace chinatimes defines single-segment /:category? and returns HTTP 404 for two-segment /chinatimes/realtimenews/260410",
+      "/cw/master": "HTTP 404 on pinned RSSHub build diygod/rsshub:chromium-bundled-2026-11-01: namespace cw in /app/dist/cw-master-iT1tcF7s.mjs defines /master/:channel (channel parameter required) and returns HTTP 404 for bare /cw/master"
+    },
+    "config_validation_guards": [
+      "Missing, null, empty, or blank routes list in collector-news-rss raises CollectorConfigError('source collector-news-rss requires a non-empty routes list in fetch-policy.json')",
+      "Duplicate routes in collector-news-rss raise CollectorConfigError('source collector-news-rss routes must not contain duplicates')",
+      "Routes count exceeding max_requests_per_run raises CollectorConfigError('source collector-news-rss routes count (...) exceeds max_requests_per_run=10')",
+      "Routes referencing DISABLED_BY_BUILD tokens (yahoo, cnyes, anue) or /ptt raise CollectorConfigError",
+      "Active routes overlapping disabled_routes raise CollectorConfigError('source collector-news-rss active routes cannot include disabled_routes ...')"
+    ],
+    "per_route_isolation_and_deduplication": {
+      "per_route_error_recording": "Each route's HTTP error (non-200 status, FetchAccessBlockedError 403/429, or transport exception) or invalid XML (ET.ParseError or non-RSS root element) is recorded under route_errors[norm_route] in the poller, bundle manifest.json, and status.json without aborting, blocking, or auto-pausing the remaining routes.",
+      "all_routes_failed_behavior": "When succeeded_routes == 0 and route_errors is non-empty, all_routes_failed is true and CollectorRunner.run_source writes a partial bundle (status='partial', reason='fetch_failed' or 'parse_failed', items=[]) and records state.last_status='partial'.",
+      "cross_route_article_deduplication": "Articles are deduplicated across routes within a run by item_id, guid, and article link so an article served by both /cna/aie and /cna/asc (or both /udn/news/breakingnews/6 and /udn/news/breakingnews/11) is stored once.",
+      "request_count_per_run": 4,
+      "max_requests_per_run": 10
+    }
+  },
+  "expected_items_per_hour_against_today": {
+    "today_before_fix": {
+      "active_requested_routes": [
+        "/cna/aall"
+      ],
+      "requests_per_hourly_run": 1,
+      "items_per_hourly_bundle": "20 raw items/bundle from /cna/aall (CNA 即時新聞 all categories: politics, society, crime, sports, entertainment, lottery, plus occasional finance), yielding ~11.4 new articles/hour (3,565 single-article drafts across ~312 hours since 2026-11-12), of which ~80-90% were non-finance general news."
+    },
+    "expected_after_fix": {
+      "active_requested_routes": [
+        "/cna/aie",
+        "/cna/asc",
+        "/udn/news/breakingnews/6",
+        "/udn/news/breakingnews/11"
+      ],
+      "requests_per_hourly_run": 4,
+      "raw_feed_capacity_per_hourly_run": "Up to 80 raw feed items across 4 routes (~20 items per RSS feed response from /cna/aie, /cna/asc, /udn/news/breakingnews/6, and /udn/news/breakingnews/11).",
+      "deduplicated_items_per_hourly_bundle": "~55-75 unique finance/securities items per hourly bundle after cross-route deduplication between CNA 產經/證券 and UDN 財經/股市.",
+      "expected_new_finance_articles_per_hour": "~8-25 newly published Taiwan finance/securities articles per hour during Taiwan business/market hours (~1-5/hour overnight), 100% from dedicated finance and securities categories with 0 items from /cna/aall."
+    },
+    "runtime_budget": {
+      "new_persistent_writers_or_jobs": false,
+      "cadence": "hourly (cadence_seconds=3600, 24 runs/day via pantheon-collector-hourly@collector-news-rss.timer)",
+      "size_and_count_at_scale": "24 bundles/day, ~55-75 deduplicated items/bundle (~120-200 KB/bundle including raw/*.xml, items.jsonl, and manifest.json)",
+      "growth_per_day": "~2.9-4.8 MB/day on the collector host",
+      "cap_and_cleanup": "Capped by raw_retention_days=90 (~260-430 MB steady-state across 90 days) and cleaned daily by pantheon-collector-prune.timer (prune_expired_bundles)."
+    }
+  },
+  "collector_host_image_rebuild_and_readback_steps": {
+    "why_image_rebuild_is_required": "deploy/collector/Dockerfile copies collector_stack/ into /app/collector_stack at image build time (COPY collector_stack /app/collector_stack), while docker-compose.yml bind-mounts ./fetch-policy.json:/app/fetch-policy.json:ro. Both copying deploy/collector/. to /opt/pantheon-collector/ and rebuilding pantheon-collector-worker:1.0.0 are required for scheduled runs to use the updated RssHubNewsPoller, CollectorRunner, and validate_collector_config code.",
+    "step_1_backup_previous_image": "sudo docker tag pantheon-collector-worker:1.0.0 pantheon-collector-worker:previous",
+    "step_2_sync_collector_files_and_rebuild_image": "sudo cp -a deploy/collector/. /opt/pantheon-collector/ && cd /opt/pantheon-collector && sudo docker compose build collector-worker",
+    "step_3_validate_config_and_code_readback": "cd /opt/pantheon-collector && sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config && sudo docker compose run --rm --entrypoint python3 collector-worker -c 'import inspect, json; from collector_stack.config import load_collector_config; from collector_stack.pollers import RssHubNewsPoller; p = load_collector_config(\"/app/fetch-policy.json\").get_source(\"collector-news-rss\"); print(json.dumps({\"source_id\": p.source_id, \"policy_hash\": p.policy_hash, \"routes\": p.raw_config[\"routes\"], \"disabled_routes\": p.raw_config[\"disabled_routes\"], \"verified_routes\": sorted(RssHubNewsPoller.VERIFIED_ROUTES), \"collect_routes_default\": inspect.signature(RssHubNewsPoller.collect).parameters[\"routes\"].default}, ensure_ascii=False, indent=2))'",
+    "step_4_trigger_run_and_bundle_readback": "sudo systemctl start pantheon-collector@collector-news-rss.service && jq '.sources[\"collector-news-rss\"]' /var/lib/pantheon-collector/status.json && LATEST_MANIFEST=\"$(ls -1t /var/lib/pantheon-collector/bundles/collector-news-rss/*/*/manifest.json | head -n 1)\" && jq '{run_id, status, reason, route_errors, item_count: (.items | length)}' \"$LATEST_MANIFEST\" && jq -r '.metrics.route' \"$(dirname \"$LATEST_MANIFEST\")/items.jsonl\" | sort | uniq -c",
+    "rollback_command": "sudo docker tag pantheon-collector-worker:previous pantheon-collector-worker:1.0.0 && cd /opt/pantheon-collector && sudo docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config"
+  },
+  "residual_findings_outside_scope": [
+    {
+      "file": "deploy/collector/collector_stack/pollers.py",
+      "symbols": [
+        "CbcMacroPoller.collect (line 136)",
+        "RssHubPaperPoller.collect (line 860)"
+      ],
+      "defect": "Outside the collector-news-rss scope of this task, CbcMacroPoller.collect defaults to series_codes: Sequence[str] = ('BP01D01',) instead of reading self.policy.raw_config.get('series_codes') (which lists ['BP01D01', 'EF15M01', 'EF17M01', 'EG2AY01'] in fetch-policy.json), and RssHubPaperPoller.collect defaults to route: str = '/nber/papers' instead of reading self.policy.raw_config.get('routes').",
+      "recommended_action": "Attach to RC2 in docs/operations/problem-register.md if CBC multi-series or RSSHub paper multi-route policy defaults are needed on the collector host."
+    }
+  ],
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q deploy/collector/tests/test_spiders_and_pollers.py deploy/collector/tests/test_config_and_startup_guards.py deploy/collector/tests/test_real_source_repair.py deploy/collector/tests/test_auto_pause.py",
+      ".venv-pantheon/bin/python3 -m pytest -q deploy/collector"
+    ],
+    "focused_result": "204 passed in test_spiders_and_pollers.py, test_config_and_startup_guards.py, test_real_source_repair.py, and test_auto_pause.py",
+    "full_collector_suite_result": "304 passed, 6 skipped in deploy/collector"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "task": "TRADING-PULSE-WITNESS-SYMBOL-SOURCE-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC6 WP6.5 (Trading Pulse browser acceptance witness: identity_missing for underlying symbol)",
+  "root_cause": "witness read the symbol from the runtime binding, binding metadata or telemetry; the hosted bindings carry none of them, so the run stopped as identity_missing before the page checks",
+  "change": {
+    "symbol_source": "GET /api/v1/knowledge/strategy-specs/{strategy_id} (strategy-spec owner read) using the binding strategy_id; symbol = the single market_scope.symbols entry; foreign tenant, mismatched strategy id, no or several symbols, or an unavailable read all yield no symbol",
+    "persona_name_source": "same-tenant /api/v1/personas directory (unchanged, independent of the pulse endpoint)",
+    "unproven_report": "identity_missing names the operator row (persona name and runtime id) and the missing fact",
+    "provenance": "witness provenance now lists the strategy-spec read with a digest"
+  },
+  "no_value_from_endpoint_under_test": true,
+  "non_gating_supplementary": true,
+  "runtime_budget": "no new writer; at most one extra GET per distinct strategy_id, cached per run",
+  "secrets": "unchanged: viewer secret and bearer stay in RAM and CLI stdin",
+  "size": "unchanged: <=2 screenshots, <=5 MiB per release, 0 B/day outside releases",
+  "tests": "scripts/test_run_dev_trading_pulse_readonly_qa.py (binding without symbol resolved from strategy-spec; 5 unavailable-source cases; binding-carried symbol ignored) + scripts/test_cross_repo_release_controller.py: 131 passed",
+  "hosted_acceptance": "pending: next dev release evidence must contain a trading-pulse result reaching zh-TW 1440/390, en-US 1440 and the 2317 refusal detail; outcome reported to TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family (Claude)",
+  "residual_findings": ["strategy-spec response shape is read tolerantly (metadata.strategy_spec / strategy_spec / spec / top level); first hosted run confirms the live shape"]
+}

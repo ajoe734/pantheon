@@ -813,3 +813,21 @@ def test_operator_review_partial_write_failures_restart_concurrency_and_unicode_
         )
         assert too_long_resp.status_code == 422
         assert too_long_resp.json()["reason"] == "review_note_too_long"
+
+
+def test_mt3_with_enrolled_roster_convened_by_persona_is_convened_not_refused(client: TestClient) -> None:
+    from services.persona.meeting_triggers import enrolled_roster, RED_TEAM_ENTRY
+
+    ids = ["persona-alpha", "persona-beta", "persona-gamma"]
+    resp = client.post(
+        "/api/consult/meetings",
+        json={
+            "meeting_type": "MT-3",
+            "topic": "Strategy ideation (enrolled roster)",
+            "convened_by": {"kind": "persona", "id": ids[0]},
+            "participants": enrolled_roster(ids[0], ids, trading_cap=4, extras=(RED_TEAM_ENTRY,)),
+        },
+        headers=_headers("idem-mt3-enrolled"),
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json().get("status") == "convened", resp.text

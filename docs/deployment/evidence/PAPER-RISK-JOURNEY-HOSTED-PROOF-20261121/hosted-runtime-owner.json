@@ -1,0 +1,267 @@
+{
+  "observed_at": "2026-11-22T17:05:53.725249+00:00",
+  "desired_state": {
+    "active_count": 4,
+    "eligible_statuses": [
+      "active"
+    ],
+    "fleet_stages": [
+      "paper"
+    ],
+    "query_version": "2",
+    "bindings": [
+      {
+        "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+        "artifact_version": "1.2.0",
+        "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+        "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "deployment_mode": "paper",
+        "effective_at": "2026-11-18T06:59:58Z",
+        "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+        "plan_id": "plan-persona-pool-039ad01f8bcd2b4aa466-v2",
+        "policy_envelope": {
+          "fleet_eligible": true,
+          "stage": "paper"
+        },
+        "runtime_id": "rt-3252fa75",
+        "status": "active",
+        "metadata": {
+          "market": "TW",
+          "persona_id": "persona-6507750312870d03a241",
+          "pool_version": 2,
+          "replacement_parent_binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+          "symbol": "2317.TWSE",
+          "tenant_id": "tenant-dev"
+        }
+      },
+      {
+        "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+        "artifact_version": "1.2.0",
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "deployment_mode": "paper",
+        "effective_at": "2026-11-18T07:00:00Z",
+        "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+        "plan_id": "plan-persona-pool-06d4775a9b6a8f63b311-v2",
+        "policy_envelope": {
+          "fleet_eligible": true,
+          "stage": "paper"
+        },
+        "runtime_id": "rt-ad81501b",
+        "status": "active",
+        "metadata": {
+          "market": "TW",
+          "persona_id": "persona-2448c7053e33ea48da47",
+          "pool_version": 2,
+          "replacement_parent_binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+          "symbol": "2330.TWSE",
+          "tenant_id": "tenant-dev"
+        }
+      },
+      {
+        "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+        "artifact_version": "1.2.0",
+        "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "deployment_mode": "paper",
+        "effective_at": "2026-11-18T07:00:02Z",
+        "persona_capital_binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+        "plan_id": "plan-persona-pool-a81b4fd15944698341aa-v2",
+        "policy_envelope": {
+          "fleet_eligible": true,
+          "stage": "paper"
+        },
+        "runtime_id": "rt-3b65a843",
+        "status": "active",
+        "metadata": {
+          "market": "TW",
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "pool_version": 2,
+          "replacement_parent_binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+          "symbol": "0050.TWSE",
+          "tenant_id": "tenant-dev"
+        }
+      }
+    ],
+    "note": "only the three task-scoped trading bindings; nontrading binding and object-store bodies omitted"
+  },
+  "pools": {
+    "pool-persona-paper-06d4775a9b6a8f63b311": {
+      "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+      "resolved": false,
+      "status": "unresolved_profile_mapping",
+      "source": "pool_metadata_inline",
+      "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+      "risk_policy_version": "1.0",
+      "risk_policy_digest": "a20e78c2b97cb24e3fd592ca93cd11b6e966d0fa0ae175d6d5ebf15ce9d4740a",
+      "tenant_id": "tenant-dev",
+      "policy_tenant_id": null,
+      "stage": "paper",
+      "requested_profile": "low",
+      "profile_mapping_status": "unresolved_owner_decision_required",
+      "effective_limits": {
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_stages": [
+          "paper"
+        ],
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ]
+      },
+      "reason_code": "risk_policy_profile_mapping_unapproved",
+      "reason": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-06d4775a9b6a8f63b311'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+      "allow_new_or_increased_risk": false,
+      "allow_risk_reducing_actions": true,
+      "policy": {
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "version": "1.0",
+        "status": "active",
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ]
+      },
+      "owner_decision_request": {
+        "policy_owner": "services/capital/risk_policy.py",
+        "governance_surface": "services/control-plane/governance/risk_policy.py",
+        "requested_profile": "low",
+        "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+        "tenant_id": "tenant-dev",
+        "stage": "paper",
+        "candidate_risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "candidate_risk_policy_version": "1.0",
+        "candidate_risk_policy_digest": "a20e78c2b97cb24e3fd592ca93cd11b6e966d0fa0ae175d6d5ebf15ce9d4740a",
+        "candidate_pool_approval_digest": "04fc53afdbfc8ec4d5926bc4d9da527b0bdbc5020e37b5167a37c5623ac9b52e",
+        "decision_required": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-06d4775a9b6a8f63b311'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+        "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121"
+      }
+    },
+    "pool-persona-paper-039ad01f8bcd2b4aa466": {
+      "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+      "resolved": false,
+      "status": "unresolved_profile_mapping",
+      "source": "pool_metadata_inline",
+      "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+      "risk_policy_version": "1.0",
+      "risk_policy_digest": "9f6013bb5619ce9f5e4e6e749e3281e454b522207d2d2f687677b49cded806d7",
+      "tenant_id": "tenant-dev",
+      "policy_tenant_id": null,
+      "stage": "paper",
+      "requested_profile": "low",
+      "profile_mapping_status": "unresolved_owner_decision_required",
+      "effective_limits": {
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_stages": [
+          "paper"
+        ],
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ]
+      },
+      "reason_code": "risk_policy_profile_mapping_unapproved",
+      "reason": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-039ad01f8bcd2b4aa466'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+      "allow_new_or_increased_risk": false,
+      "allow_risk_reducing_actions": true,
+      "policy": {
+        "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+        "version": "1.0",
+        "status": "active",
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ]
+      },
+      "owner_decision_request": {
+        "policy_owner": "services/capital/risk_policy.py",
+        "governance_surface": "services/control-plane/governance/risk_policy.py",
+        "requested_profile": "low",
+        "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "tenant_id": "tenant-dev",
+        "stage": "paper",
+        "candidate_risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+        "candidate_risk_policy_version": "1.0",
+        "candidate_risk_policy_digest": "9f6013bb5619ce9f5e4e6e749e3281e454b522207d2d2f687677b49cded806d7",
+        "candidate_pool_approval_digest": "d8cedf0a1d318241dc5def8be6c040927e6cbcc2c418dcd09243d35ba96f53a8",
+        "decision_required": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-039ad01f8bcd2b4aa466'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+        "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121"
+      }
+    },
+    "pool-persona-paper-a81b4fd15944698341aa": {
+      "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+      "resolved": false,
+      "status": "unresolved_profile_mapping",
+      "source": "pool_metadata_inline",
+      "risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+      "risk_policy_version": "1.0",
+      "risk_policy_digest": "fdc10072080bce5069e3202eabac639043457aec6758142f1d7ba7974488a66e",
+      "tenant_id": "tenant-dev",
+      "policy_tenant_id": null,
+      "stage": "paper",
+      "requested_profile": "low",
+      "profile_mapping_status": "unresolved_owner_decision_required",
+      "effective_limits": {
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_stages": [
+          "paper"
+        ],
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ]
+      },
+      "reason_code": "risk_policy_profile_mapping_unapproved",
+      "reason": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-a81b4fd15944698341aa'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+      "allow_new_or_increased_risk": false,
+      "allow_risk_reducing_actions": true,
+      "policy": {
+        "risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+        "version": "1.0",
+        "status": "active",
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+        "allowed_asset_classes": [
+          "equity",
+          "future"
+        ],
+        "allowed_stages": [
+          "paper"
+        ]
+      },
+      "owner_decision_request": {
+        "policy_owner": "services/capital/risk_policy.py",
+        "governance_surface": "services/control-plane/governance/risk_policy.py",
+        "requested_profile": "low",
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "tenant_id": "tenant-dev",
+        "stage": "paper",
+        "candidate_risk_policy_id": "rp-pool-persona-paper-a81b4fd15944698341aa",
+        "candidate_risk_policy_version": "1.0",
+        "candidate_risk_policy_digest": "fdc10072080bce5069e3202eabac639043457aec6758142f1d7ba7974488a66e",
+        "candidate_pool_approval_digest": "c1c8df77005d0f1d75d6f2d6bb2a21f76eb2e3d6afb072162981296526ce9920",
+        "decision_required": "No approved capital_pool_activation RiskPolicy limit mapping exists for risk profile 'low' on policy 'rp-pool-persona-paper-a81b4fd15944698341aa'@'1.0'; policy owner must approve explicit gross_limit/net_limit/max_leverage/max_single_name_weight or bind an approved risk_policy_ref.",
+        "provenance_task_id": "PAPER-RISK-POLICY-PROVENANCE-20261121"
+      }
+    }
+  }
+}

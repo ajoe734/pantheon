@@ -2415,8 +2415,16 @@ class CollectorBundleAdapter:
             path = self._community_ledger_path()
             ledger = dict(load_community_ledger(path, persisted_only=_DEFER_ACK.get()))
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
+            # Only bare tickers consult stored price history. Empty pulls still
+            # rebuild closed-day ledger revisions, but need no instrument lookup.
+            # Normalize exactly like resolve_social_symbol (``raw or ""``) so None,
+            # False, 0 and "" stay recorded empty-symbol refusals without a scan.
+            needs_authority = any(
+                (text := str(symbol or "").strip()) and "." not in text
+                for record in records for symbol in _social_record_symbols(record)
+            )
             entries, rejected_list = community_ledger_entries(
-                records, authority=self._instrument_authority(), seen_at=now
+                records, authority=self._instrument_authority() if needs_authority else {}, seen_at=now
             )
             fresh = list({e["key"]: e for e in entries if e["key"] not in ledger}.values())
             for entry in fresh:
@@ -2805,6 +2813,12 @@ def resolve_social_symbol(raw: Any, authority: Mapping[str, Sequence[str]]) -> s
     return candidates[0]
 
 
+def _social_record_symbols(record: SourceRecord) -> Sequence[Any]:
+    meta = record.metadata
+    symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
+    return [symbols] if isinstance(symbols, str) else symbols
+
+
 def community_ledger_entries(
     records: Sequence[SourceRecord],
     *,
@@ -2816,9 +2830,7 @@ def community_ledger_entries(
     rejected: list[dict[str, str]] = []
     for record in records:
         meta = record.metadata
-        symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
-        if isinstance(symbols, str):
-            symbols = [symbols]
+        symbols = _social_record_symbols(record)
         try:
             event = _feature_time(meta.get("event_time"))
             available = _feature_time(meta.get("available_time"))

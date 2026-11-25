@@ -71,6 +71,7 @@ import fcntl
 
 from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
 from services.foundation.reliable_delivery import atomic_write_text, sweep_stale_temp_siblings
+from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
 
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
@@ -102,6 +103,11 @@ _LOOP_ACTUAL_SOURCE = "paper-fleet-reconciler.worker_inventory"
 # Env that must never reach a paper_runtime worker subprocess.
 _LOOP_WRITER_ENV_KEY = "RECONCILER_LOOP_CONTROLLER_DSN"
 _CONTROLLER_ENV_PREFIX = "PANTHEON_CONTROLLER_"
+_REGISTRY_READ_ENV_KEYS = (
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN",
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE",
+    "PERSONA_REGISTRY_BASE_URL",
+)
 
 
 def _build_loop_writer(
@@ -698,8 +704,13 @@ class PaperFleetReconciler:
             runtime_manager_url
             or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
         ).rstrip("/")
-        self._token = runtime_manager_token or os.getenv(
-            "PANTHEON_RUNTIME_MANAGER_TOKEN", ""
+        self._explicit_runtime_manager_token = (
+            str(runtime_manager_token).strip()
+            if runtime_manager_token is not None and str(runtime_manager_token).strip()
+            else None
+        )
+        self._runtime_manager_auth: RuntimeManagerAuthConfig = (
+            resolve_runtime_manager_auth(token=self._explicit_runtime_manager_token)
         )
         self._poll_interval = poll_interval_seconds or _as_float(
             os.getenv("RECONCILER_POLL_INTERVAL_SECONDS"), 15.0
@@ -1386,10 +1397,32 @@ class PaperFleetReconciler:
         persona_id = _binding_persona_id(binding)
         if persona_id:
             env["PANTHEON_PERSONA_ID"] = persona_id
+        else:
+            # Only a persona-scoped worker has member books to compare; others get no registry read.
+            for key in _REGISTRY_READ_ENV_KEYS:
+                env.pop(key, None)
         if self._url:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
-        if self._token:
-            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = self._token
+        explicit_rm_token = getattr(self, "_explicit_runtime_manager_token", None)
+        rm_auth = getattr(self, "_runtime_manager_auth", None)
+        if explicit_rm_token:
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = explicit_rm_token
+        elif (
+            rm_auth is not None
+            and rm_auth.source == "token_file"
+            and rm_auth.token_file_path
+        ):
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN_FILE"] = (
+                rm_auth.token_file_path
+            )
+        elif (
+            rm_auth is not None
+            and rm_auth.source in ("env", "default")
+            and rm_auth.token
+        ):
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = str(
+                rm_auth.token
+            )
         if self._source_ingest_url:
             env["PANTHEON_SOURCE_INGEST_URL"] = self._source_ingest_url
         env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"] = str(
@@ -1855,6 +1888,49 @@ class PaperFleetReconciler:
     # Runtime-manager polling
     # ------------------------------------------------------------------
 
+    @property
+    def _token(self) -> str:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            return str(getattr(self, "_explicit_runtime_manager_token", None) or "")
+        try:
+            return auth.token
+        except OSError:
+            return ""
+
+    @_token.setter
+    def _token(self, value: Optional[str | RuntimeManagerAuthConfig]) -> None:
+        if isinstance(value, RuntimeManagerAuthConfig):
+            self._explicit_runtime_manager_token = None
+            self._runtime_manager_auth = value
+            return
+        cleaned = (
+            str(value).strip()
+            if value is not None and str(value).strip()
+            else None
+        )
+        self._explicit_runtime_manager_token = cleaned
+        if cleaned is not None:
+            self._runtime_manager_auth = resolve_runtime_manager_auth(token=cleaned)
+        else:
+            self._runtime_manager_auth = RuntimeManagerAuthConfig(
+                token="",
+                source="argument",
+                used_default=False,
+            )
+
+    def _runtime_manager_headers(self) -> Dict[str, str]:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            tok = getattr(self, "_explicit_runtime_manager_token", None)
+            return {"Authorization": f"Bearer {tok}"} if tok else {}
+        if (
+            not auth.configured
+            and auth.source != "token_file"
+        ):
+            return {}
+        return auth.headers()
+
     def _fetch_fleet_state(
         self,
     ) -> Optional[Tuple[List[Dict[str, Any]], Set[str], List[Dict[str, Any]]]]:
@@ -1900,9 +1976,10 @@ class PaperFleetReconciler:
         try:
             import urllib.request
 
-            headers: Dict[str, str] = {"Accept": "application/json"}
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
+            headers: Dict[str, str] = {
+                "Accept": "application/json",
+                **self._runtime_manager_headers(),
+            }
             req = urllib.request.Request(
                 f"{self._url}/api/runtime-fleet/desired-state"
                 "?stage=paper&include_excluded=true",
@@ -2147,9 +2224,8 @@ class PaperFleetReconciler:
             headers: Dict[str, str] = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
+                **self._runtime_manager_headers(),
             }
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
             body_dict: Dict[str, Any] = {"new_status": new_status}
             if metadata_patch:
                 body_dict["metadata_patch"] = metadata_patch

@@ -1,0 +1,17 @@
+{
+  "fixture": "100 distinct owner summaries: 50 Persona input requests and 50 returned human assignments; 2000-character deliverable, criterion, input/return reason and direct-human description. Synthetic ASCII data, not hosted records or a maximum UTF-8 envelope.",
+  "reproduce": ".venv-pantheon/bin/python3 docs/deployment/evidence/BFF-MEETING-ACTION-HUMAN-INBOX-20261123/measure_resources.py",
+  "ticket_count": 100,
+  "projected_count": 100,
+  "owner_reply_bytes": 772715,
+  "projected_inbox_rows_bytes": 1304450,
+  "research_http_reply_cap_bytes": 4194304,
+  "new_research_calls_per_inbox_read": 1,
+  "max_meeting_contributor_direct_http_calls_per_read": 4,
+  "persistent_writer_count": 0,
+  "cache_entries_added": 0,
+  "bff_storage_growth_bytes_per_day": 0,
+  "cadence": "on-demand inbox reload; no recurring job",
+  "hosted_scale": "three enrolled trading personas, at most nine scheduled meetings/week plus explicitly convened meetings; human pages remain capped at 100 independent of archive size",
+  "cleanup": "request data released on response; no cross-request ticket cache; persisted records and retention remain with Research owner"
+}

@@ -25,7 +25,7 @@ import subprocess
 import sys
 from typing import Any, Dict, List
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 import pytest
@@ -40,6 +40,7 @@ from services.control_plane.bff.auth.policy import (
     require_read_role,
 )
 from services.control_plane.bff.core.app_factory import build_bff_app
+from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
 from services.control_plane.bff.management_read_models import create_management_router
 from services.control_plane.bff.management_read_models.service import ManagementService, _snapshot_meta
 from services.control_plane.bff.meetings.router import create_meetings_router
@@ -379,6 +380,7 @@ def test_isolated_dev_acceptance_write_and_readback_leaves_legacy_user_meeting_u
     monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", CONSULT_SERVICE_TOKEN)
     monkeypatch.setenv("PANTHEON_TENANT_ID", TENANT)
     monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", "http://consultation.acceptance.local")
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research.acceptance.local")
 
     data_dir = tmp_path / "consultation_data"
     wf_path = tmp_path / "wf.sqlite3"
@@ -388,9 +390,31 @@ def test_isolated_dev_acceptance_write_and_readback_leaves_legacy_user_meeting_u
     consultation_main.store.put_meeting(copy.deepcopy(ISOLATED_DEV_ACCEPTANCE_MEETING_FIXTURE))
 
     consult_client = TestClient(consultation_main.app)
+    research_calls = []
 
     def bridge_urlopen(req, timeout=5):
         u = urlsplit(req.full_url)
+        if u.hostname == "research.acceptance.local":
+            # Exercise the real Research client and caller context, returning an
+            # authorized empty page rather than hiding an unconfigured owner.
+            headers = {k.lower(): v for k, v in req.header_items()}
+            query = parse_qs(u.query)
+            research_calls.append((req.method, u.path, query, headers))
+            assert req.method == "GET"
+            assert u.path == "/api/research/tickets"
+            assert headers["authorization"] == viewer_headers["Authorization"]
+            assert headers["x-tenant-id"] == TENANT
+            assert query == {
+                "meeting_linked": ["true"],
+                "human_actionable": ["true"],
+                "page_size": ["100"],
+            }
+            out = io.BytesIO(json.dumps({
+                "data": [],
+                "page_info": {"page_size": 100, "next_page_token": None},
+            }).encode("utf-8"))
+            out.status = 200
+            return out
         assert u.hostname == "consultation.acceptance.local", f"Unexpected host: {req.full_url}"
         path_With_query = u.path + (f"?{u.query}" if u.query else "")
         hdrs = {k: v for k, v in req.header_items()}
@@ -418,6 +442,7 @@ def test_isolated_dev_acceptance_write_and_readback_leaves_legacy_user_meeting_u
     read_surface = _StubReadSurface()
     mgmt_service = ManagementService(get_read_store=lambda: read_surface)
     bff_app = build_bff_app()
+    bff_app.add_middleware(OwnerReadContextMiddleware)
     bff_app.include_router(
         create_meetings_router(
             extract_identity=extract_identity,
@@ -524,3 +549,5 @@ def test_isolated_dev_acceptance_write_and_readback_leaves_legacy_user_meeting_u
     assert legacy_after["synthesis"]["summary"] == "Synthesis empty or unreadable; recorded as REVIEW with no proposal."
     inbox_after = bff_fetch("/bff/management/human-inbox?source_type=meeting")["data"]["items"]
     assert [i["id"] for i in inbox_after] == [f"meeting_review:{LEGACY_USER_MEETING_ID}"]
+    # Two probe reads and the final reload each perform one bounded owner read.
+    assert len(research_calls) == 3

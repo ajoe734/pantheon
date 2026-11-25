@@ -45,15 +45,68 @@ def _check(rows, stored):
 
 
 def test_tolerance_shapes_from_hosted_measurement() -> None:
-    stored = {f"{1000 + i}": {"margin_balance": 100 + i, "short_balance": 50 + i} for i in range(500)}
-    assert MARGIN_CHAIN_MIN_MATCH_RATIO == 0.99
-    assert _check(_payload(500), stored)["matched_count"] == 500
-    ok = _check(_payload(500, mismatches=5), stored)  # 495/500 = 99%
-    assert ok["matched_count"] == 495 and ok["mismatched_count"] == 5
-    with pytest.raises(ChipSessionUndecidable, match="matched 494, mismatched 6"):
-        _check(_payload(500, mismatches=6), stored)
-    with pytest.raises(ChipSessionUndecidable, match="matched 102, mismatched 398"):
-        _check(_payload(500, mismatches=398), stored)
+    def stored(n):
+        return {f"{1000 + i}": {"margin_balance": 100 + i, "short_balance": 50 + i} for i in range(n)}
+
+    assert MARGIN_CHAIN_MIN_MATCH_RATIO == 0.90
+    assert _check(_payload(500), stored(500))["matched_count"] == 500
+    for n, bad in ((1311, 39), (1311, 7)):  # 11/24 (1272 matched) and 11/23 (1304 matched) shapes are accepted
+        ok = _check(_payload(n, mismatches=bad), stored(n))
+        assert ok["matched_count"] == n - bad and ok["mismatched_count"] == bad
+        assert len(ok["mismatched_symbols"]) == min(bad, 10)
+    for n, good in ((1311, 186), (1311, 185), (500, 102)):  # measured wrong sessions are refused
+        with pytest.raises(ChipSessionUndecidable, match=f"matched {good}, mismatched {n - good}"):
+            _check(_payload(n, mismatches=n - good), stored(n))
+
+
+def test_stored_earlier_lookup_is_bounded_and_newest_first(tmp_path: Path) -> None:
+    earlier = cps.stored_margin_earlier_session_lookup(tmp_path)
+    for day in ("2026-11-12", "2026-11-05"):
+        _write(tmp_path, day, TWSE, _rows(3, day))
+    assert earlier(TWSE, date(2026, 11, 17))[0] == date(2026, 11, 12)
+    assert earlier(TWSE, date(2026, 11, 17), max_sessions=2) is None  # 11/17 and 11/16 only (weekday calendar)
+    assert earlier(TPEX, date(2026, 11, 17)) is None  # other connector's rows are not used
+    assert cps.MARGIN_CHAIN_MAX_MISMATCH_SYMBOLS == 10 and cps.MARGIN_CHAIN_GAP_LOOKBACK_SESSIONS == 10
+
+
+def _margin_payload(previous: int, own: int, n: int = 20) -> list[dict]:
+    return [{"股票代號": f"{1000 + i}", "股票名稱": f"S{i}", "融資前日餘額": str(previous + i),
+             "融資今日餘額": str(own + i), "融券前日餘額": str(50 + i), "融券今日餘額": str(50 + i)} for i in range(n)]
+
+
+@pytest.mark.parametrize("connector,venue", [(TWSE, "TWSE"), (TPEX, "TPEx")])
+def test_gap_bridge_through_adapter_path(tmp_path: Path, connector: str, venue: str) -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.connectors import SourceEvidenceError
+
+    fetch = datetime(2026, 11, 19, 10, 50, tzinfo=timezone.utc)  # inferred session 2026-11-18, previous 11/17
+    _write(tmp_path, "2026-11-12", connector, [{"symbol": f"{1000 + i}", "date": "2026-11-12", "margin_balance": 100 + i,
+                                               "short_balance": 50 + i} for i in range(20)])
+    adapter = TaiwanOfficialMarketDatasetAdapter(connector_id=connector, **margin_chain_wiring(connector, root=tmp_path))
+
+    def run(payload):
+        return adapter.records_from_payload("tw_margin_short_balance", venue, payload, fetch_time=fetch, trace_id="t")
+
+    recs = run(_margin_payload(900, 950))  # unrelated to the compared session: bridged, nothing invented
+    chain = recs[0].metadata["normalized_row"]["session_chain"]
+    assert chain["status"] == "gap_bridged" and chain["compared_session"] == "2026-11-12"
+    assert chain["missing_sessions"] == ["2026-11-13", "2026-11-16", "2026-11-17"]
+    assert {r.metadata["date"] for r in recs} == {"2026-11-18"}
+    with pytest.raises(SourceEvidenceError, match="earlier session"):  # payload previous == compared session
+        run(_margin_payload(100, 950))
+    with pytest.raises(SourceEvidenceError, match="repeats"):  # payload own balances == compared session
+        run(_margin_payload(900, 100))
+    # nothing stored within 10 sessions: fails closed as before
+    far = TaiwanOfficialMarketDatasetAdapter(connector_id=connector, **margin_chain_wiring(connector, root=tmp_path))
+    _write(tmp_path, "2026-10-01", TPEX if connector == TWSE else TWSE, _rows(2, "2026-10-01"))
+    import shutil
+    shutil.rmtree(tmp_path / "normalized" / "tw_margin_short_balance" / "date=2026-11-12")
+    with pytest.raises(SourceEvidenceError, match="gap"):
+        far.records_from_payload("tw_margin_short_balance", venue, _margin_payload(900, 950), fetch_time=fetch, trace_id="t")
+
+
+def test_lookup_reads_one_session_one_connector_placeholder() -> None:
+    assert cps.MARGIN_CHAIN_MAX_MISMATCH_SYMBOLS == 10 and cps.MARGIN_CHAIN_GAP_LOOKBACK_SESSIONS == 10
 
 
 def test_lookup_reads_one_session_one_connector(tmp_path: Path) -> None:

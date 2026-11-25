@@ -139,7 +139,10 @@ class BrokerConfig:
             enabled=os.getenv("PERSONA_TOOL_BROKER_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"},
             token=os.getenv("PERSONA_TOOL_BROKER_TOKEN", ""),
             memory_api_url=(os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or "").strip(),
-            memory_auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", ""),
+            # The host-issued principal file (read per call, it rotates) outranks the legacy env value,
+            # so the env token is only carried when no file is configured.
+            memory_auth_token=("" if os.getenv("OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE", "").strip()
+                               else os.getenv("PANTHEON_MEMORY_AUTH_TOKEN", "")),
             memory_actor_id=(os.getenv("PERSONA_TOOL_BROKER_MEMORY_ACTOR_ID")
                              or adapter_memory_actor_id(os.getenv("PANTHEON_MEMORY_ACTOR_ID") or "persona-tool-broker")),
             memory_actor_roles=roles,
@@ -604,6 +607,27 @@ def _validation_message(exc: ValidationError) -> str:
     return "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())[:400]
 
 
+_AUTH_REFUSAL_CLASSES = (
+    ("missing required identity claims", "identity_claims_missing"),
+    ("blank/whitespace-only", "identity_claim_blank"),
+    ("missing bearer token", "bearer_token_missing"),
+    ("operator jwt is required", "operator_jwt_required"),
+    ("does not match", "identity_mismatch"),
+    ("expired", "token_expired"),
+    ("signature", "token_signature_invalid"),
+    ("invalid", "token_invalid"),
+)
+
+
+def _auth_refusal_class(code: int, detail: str) -> str:
+    """Map a plain-string 401/403 detail to a fixed message class; never echo the text (it may carry claims)."""
+    lowered = detail.lower()
+    for needle, label in _AUTH_REFUSAL_CLASSES:
+        if needle in lowered:
+            return f"memory_http_{code}_{label}"
+    return f"memory_http_{code}_refused"
+
+
 def http_memory_get(config: BrokerConfig, *, timeout_seconds: float = 8.0) -> MemoryGet:
     """The single memory-svc reader: GET with this module's own credential."""
     import urllib.error
@@ -630,6 +654,8 @@ def http_memory_get(config: BrokerConfig, *, timeout_seconds: float = 8.0) -> Me
                 detail = json.loads(exc.read().decode("utf-8") or "{}").get("detail")
                 if isinstance(detail, dict):
                     reason = str(detail.get("reason") or detail.get("error") or reason)[:120]
+                elif isinstance(detail, str) and exc.code in (401, 403):
+                    reason = _auth_refusal_class(exc.code, detail)
             except (ValueError, AttributeError):
                 pass
             raise MemoryCallError(exc.code, reason) from exc

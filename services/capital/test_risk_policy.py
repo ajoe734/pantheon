@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from services.capital.risk_policy import (
+    compare_risk_policies,
     RiskPolicy,
     RiskPolicyDecision,
     RiskPolicyEvaluationContext,
@@ -2653,3 +2654,232 @@ def test_cash_reserve_policy_limits_digest_binding_and_evaluator() -> None:
     assert rejected_eval.rejected is True
     assert any(c.code == "cash_reserve_breach" for c in rejected_eval.checks)
 
+
+
+def test_compare_risk_policies_direction_table() -> None:
+    cur = {"gross_limit": 1.0, "max_single_name_weight": 0.1, "min_cash_reserve_pct": 0.1}
+    cases = {
+        "equal": (dict(cur), "neutral"),
+        "stricter": ({**cur, "gross_limit": 0.8, "min_cash_reserve_pct": 0.2}, "reduce"),
+        "looser": ({**cur, "gross_limit": 1.2}, "increase"),
+        "mixed": ({**cur, "gross_limit": 0.5, "max_single_name_weight": 0.2}, "increase"),
+        "missing_max_limit": ({"gross_limit": 1.0, "min_cash_reserve_pct": 0.1}, "increase"),
+        "missing_cash_reserve": ({"gross_limit": 1.0, "max_single_name_weight": 0.1}, "increase"),
+        "new_limit_stricter": ({**cur, "net_limit": 0.5}, "reduce"),
+    }
+    for name, (cand, want) in cases.items():
+        assert compare_risk_policies(cand, cur)["risk_direction"] == want, name
+    new_pool = compare_risk_policies(cur, None)
+    assert new_pool["risk_direction"] == "increase"
+    assert compare_risk_policies(cur, {})["risk_direction"] == "increase"
+    result = compare_risk_policies({**cur, "gross_limit": 1.2}, cur)
+    assert result["risk_comparison"]["gross_limit"] == "looser"
+    assert result["risk_comparison"]["max_single_name_weight"] == "equal"
+
+
+def test_require_valid_any_accepts_any_member_of_a_value_set_and_nothing_else():
+    import pytest
+    from services.capital.risk_policy import require_valid_any
+
+    class Approval:
+        def __init__(self, direction):
+            self.direction = direction
+
+        def require_valid(self, *, expected, **kwargs):
+            if expected["subject.risk_direction"] != self.direction or expected["target_id"] != "pool-1":
+                raise ValueError("mismatch")
+            return "ok"
+
+    accepted = {"target_id": "pool-1", "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})}
+    for direction in ("increase", "reduce", "neutral"):
+        assert require_valid_any(Approval(direction), expected=accepted) == "ok"
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("sideways"), expected=accepted)
+    with pytest.raises(ValueError):
+        require_valid_any(Approval("reduce"), expected={**accepted, "target_id": "other"})
+
+
+def test_unavailable_approval_reader_is_not_reported_as_absence(monkeypatch, tmp_path):
+    """PAPER-IMAGES-CANNOT-READ-APPROVALS-20261125: a reader that cannot be built stays fail-closed but says why."""
+    import builtins
+
+    from services.capital import risk_policy as rp
+
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(tmp_path))
+    real_import = builtins.__import__
+
+    def failing_import(name, *args, **kwargs):
+        if name == "services.governance" or name.startswith("services.governance.approval_authority"):
+            raise ModuleNotFoundError("No module named 'pydantic' https://secret.example/token")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+    readers, diag, types = rp._build_approval_readers_with_diag(
+        approval_reader=None, capital_pool_reader=None, resolved_pool_id="pool-x", effective_tenant_id="tenant-dev")
+    assert readers == [] and diag == "approval_reader_unavailable"
+    assert types == ("ModuleNotFoundError",)
+    assert "secret.example" not in repr((readers, diag, types))
+    res = rp.discover_approved_profile_risk_policy(
+        resolved_pool_id="pool-x", effective_tenant_id="tenant-dev", clean_stage="paper", clean_profile="low",
+        base_pool={"pool_id": "pool-x", "metadata": {"tenant_id": "tenant-dev"}})
+    assert res.resolved is False
+    assert res.absence_source == "approval_reader_unavailable"
+    assert "ModuleNotFoundError" in res.reason and "secret.example" not in res.reason and "pydantic" not in res.reason
+
+
+def test_blueprint_limits_evaluator_missing_facts_reduce_only_and_configured_bounds() -> None:
+    import json
+    from services.capital.risk_policy import (
+        DEFAULT_PROFILE_OUTER_BOUNDS,
+        PROFILE_OUTER_BOUNDS_ENV,
+        profile_outer_bounds,
+        validate_drafted_pool_risk_policy,
+    )
+
+    # 1. No invented default outer bounds for sector, turnover, or liquidity (Operator decision Q2).
+    assert set(DEFAULT_PROFILE_OUTER_BOUNDS["low"].keys()) == {
+        "gross_limit",
+        "max_leverage",
+        "max_single_name_weight",
+        "min_cash_reserve_pct",
+    }
+
+    policy = RiskPolicy.from_mapping(
+        {
+            "risk_policy_id": "rp-blueprint-v2",
+            "version": "2.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "gross_limit": 1.6,
+            "net_limit": 1.0,
+            "max_leverage": 1.6,
+            "max_single_name_weight": 0.20,
+            "min_cash_reserve_pct": 0.15,
+            "max_sector_exposure": {"24": 0.35, "01": 0.25, "*": 0.30},
+            "turnover_limit": 1.5,
+            "liquidity_constraints": {
+                "min_avg_daily_volume": 500_000.0,
+                "max_order_pct_adv": 0.05,
+            },
+        }
+    )
+    evaluator = RiskPolicyEvaluator()
+
+    # 2. Order increase with missing facts fails closed naming the missing fact.
+    missing_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-missing-facts",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_increase",
+            "gross_exposure": 0.2,
+            "net_exposure": 0.2,
+            "leverage": 0.2,
+            "target_weights": {"2330": 0.2},
+            "cash_reserve_pct": 0.8,
+        },
+    )
+    assert missing_eval.rejected is True
+    failed_by_code = {c.code: c.reason for c in missing_eval.checks if c.status == "failed"}
+    assert failed_by_code["turnover_unavailable"] == (
+        "Risk policy limit turnover_limit cannot be evaluated: turnover unavailable"
+    )
+    assert failed_by_code["sector_exposures_unavailable"] == (
+        "Risk policy limit max_sector_exposure cannot be evaluated: sector_exposures unavailable"
+    )
+    assert failed_by_code["liquidity_unavailable"] == (
+        "Risk policy limit liquidity_constraints cannot be evaluated: liquidity unavailable"
+    )
+
+    # 3. Reduce-only order is always allowed even when facts are absent or current exposures exceed limits.
+    reduce_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-reduce-only",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_reduce",
+            "gross_exposure": 0.4,
+            "net_exposure": 0.4,
+            "leverage": 0.4,
+            "sector_exposures": {"24": 0.50},
+            "turnover": 2.5,
+            "liquidity": {"avg_daily_volume": 100_000.0, "order_pct_adv": 0.20},
+        },
+    )
+    assert reduce_eval.allowed is True
+
+    # 4. Breaches on sector ("24" and "1" matching "01"), turnover, and liquidity are rejected with reasons.
+    breach_eval = evaluator.evaluate(
+        policy,
+        {
+            "target_type": "runtime_action",
+            "target_id": "ord-breach",
+            "capital_pool_id": "pool-1",
+            "stage": "paper",
+            "runtime_action": "order_increase",
+            "gross_exposure": 0.4,
+            "net_exposure": 0.4,
+            "leverage": 0.4,
+            "target_weights": {"2330": 0.2},
+            "cash_reserve_pct": 0.6,
+            "sector_exposures": {"24": 0.40, "1": 0.30},
+            "turnover": 1.75,
+            "liquidity": {"avg_daily_volume": 400_000.0, "order_volume": 30_000.0},
+        },
+    )
+    assert breach_eval.rejected is True
+    breach_codes = {c.code for c in breach_eval.checks if c.status == "failed"}
+    assert {
+        "sector_exposure_limit_exceeded",
+        "turnover_limit_exceeded",
+        "liquidity_min_adv_breach",
+        "liquidity_order_pct_adv_breach",
+    } <= breach_codes
+
+    # 5. Configured outer bounds validate drafted blueprint limits without inventing bounds when unconfigured.
+    custom_env = {
+        PROFILE_OUTER_BOUNDS_ENV: json.dumps(
+            {
+                "low": {
+                    **DEFAULT_PROFILE_OUTER_BOUNDS["low"],
+                    "max_sector_exposure": 0.35,
+                    "turnover_limit": 1.5,
+                    "liquidity_constraints": {
+                        "min_avg_daily_volume": 500_000.0,
+                        "max_order_pct_adv": 0.05,
+                    },
+                }
+            }
+        )
+    }
+    parsed_bounds = profile_outer_bounds(custom_env)
+    model, err = validate_drafted_pool_risk_policy(policy.to_dict(), profile="low", bounds=parsed_bounds)
+    assert err is None and model is not None
+
+    _, sector_err = validate_drafted_pool_risk_policy(
+        {**policy.to_dict(), "max_sector_exposure": 0.45},
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert sector_err is not None and "max_sector_exposure" in sector_err
+
+    _, turnover_err = validate_drafted_pool_risk_policy(
+        {**policy.to_dict(), "turnover_limit": 2.0},
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert turnover_err is not None and "turnover_limit" in turnover_err
+
+    _, liq_err = validate_drafted_pool_risk_policy(
+        {
+            **policy.to_dict(),
+            "liquidity_constraints": {"min_avg_daily_volume": 500_000.0, "max_order_pct_adv": 0.10},
+        },
+        profile="low",
+        bounds=parsed_bounds,
+    )
+    assert liq_err is not None and "max_order_pct_adv" in liq_err

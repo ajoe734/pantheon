@@ -2251,3 +2251,22 @@ def test_staging_target_unchanged_frontend_gate_failure_rejects(tmp_path: Path) 
         )
 
     assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+
+
+def test_trading_pulse_readonly_qa_step_is_supplementary_and_secret_safe() -> None:
+    start = NONPROD_WORKFLOW.index("      - name: Trading Pulse page read-only browser QA")
+    end = NONPROD_WORKFLOW.index("      - name: Upload accepted or compensated release evidence")
+    step = NONPROD_WORKFLOW[start:end]
+    assert "continue-on-error: true" in step
+    assert "run_dev_trading_pulse_readonly_qa.py" in step
+    # viewer profile only; no other dev-login secret and no secret on argv
+    assert "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in step
+    for other in ("OPERATOR_A", "OPERATOR_B", "TEST_ADMIN", "DEV_DEPLOY_SSH_PRIVATE_KEY"):
+        assert other not in step
+    run_block = step[step.index("run: |"):]
+    assert "CLIENT_SECRET" not in run_block
+    # the release outcome gate must not read this step
+    gate = NONPROD_WORKFLOW[NONPROD_WORKFLOW.index("      - name: Enforce accepted or proven compensated outcome"):]
+    assert "trading_pulse_readonly_qa" not in gate[: gate.index("\n  dev-acceptance-stage:")]
+    # no new workflow_dispatch input
+    assert "trading_pulse" not in NONPROD_WORKFLOW[: NONPROD_WORKFLOW.index("\njobs:")]

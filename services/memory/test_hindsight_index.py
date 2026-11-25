@@ -1015,3 +1015,129 @@ def test_resync_map_enforces_256kb_payload_budget_and_maintains_no_unbounded_mir
     assert 0 < hs.pending_resync_bytes() <= hs.MAX_PENDING_RESYNC_BYTES
     assert hs.DIAGNOSTICS.snapshot()["pending_resync_bytes"] <= hs.MAX_PENDING_RESYNC_BYTES
 
+
+
+def test_scheduled_catch_up_survives_transient_store_build_failure(monkeypatch):
+    monkeypatch.setattr(hs, "CATCHUP_STORE_RESOLVE_BACKOFF_SECONDS", 0.0)
+    istore, pstore = InstitutionalMemoryStore(), PersonaMemoryStore()
+    entry = istore.create(inst(mid("catchup-transient-build")))
+    assert hs.flush_mirrors()
+    client = FakeClient()
+    hs.set_hindsight_client(client)
+    hs.DIAGNOSTICS.reset()
+
+    builds = {"count": 0}
+
+    def flaky_institutional_store():
+        builds["count"] += 1
+        if builds["count"] < 3:
+            raise ValueError("truncated store file")  # as seen when a writer is mid-write
+        return istore
+
+    result = hs.schedule_catch_up_mirrors(flaky_institutional_store, pstore, client=client)
+    assert result["status"] == "scheduled"
+    assert hs.flush_mirrors(timeout=30)
+    assert builds["count"] == 3
+    assert {items[0]["document_id"] for _bank, items in client.retained} == {entry.entry_id}
+
+
+def test_json_store_save_is_atomic_and_leaves_no_temp_files(tmp_path):
+    path = tmp_path / "inst.json"
+    store = InstitutionalMemoryStore(path)
+    store.create(inst(mid("atomic-1")))
+    store.create(inst(mid("atomic-2")))
+    assert len(InstitutionalMemoryStore(path).list(active_only=False)) == 2
+    assert [p.name for p in tmp_path.iterdir()] == ["inst.json"]
+
+
+# --- recall gate and standing-query cache (PERSONA-OBSERVE-MEMORY-RECALL-CONTENTION-20261124) ---
+
+class _CountingRecall:
+    def __init__(self, delay=0.0):
+        self.calls, self.active, self.max_active, self.delay = 0, 0, 0, delay
+        import threading
+        self.lock = threading.Lock()
+
+    def recall(self, bank, body):
+        import time
+        with self.lock:
+            self.calls += 1
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(self.delay)
+        with self.lock:
+            self.active -= 1
+        return {"results": [{"document_id": f"doc-{bank}", "scores": {"final": 0.9}}]}
+
+
+@pytest.fixture
+def clean_recall_state(monkeypatch):
+    hs.invalidate_recall_cache()
+    hs._RECALL_BANK_VERSION.clear()
+    for k in hs.RECALL_STATS:
+        hs.RECALL_STATS[k] = 0
+    yield
+    hs.invalidate_recall_cache()
+
+
+def test_concurrent_recalls_never_overlap_and_all_finish(clean_recall_state):
+    from concurrent.futures import ThreadPoolExecutor
+    client = _CountingRecall(delay=0.1)
+    with ThreadPoolExecutor(6) as pool:
+        futures = [pool.submit(hs.bounded_recall_canonical_ids, client, f"bank-{i}", query="q", groups=[], limit=8)
+                   for i in range(6)]
+        results = [f.result() for f in futures]
+    assert client.max_active == 1
+    assert [r[0][0] for r in results] == [f"doc-bank-{i}" for i in range(6)]
+
+
+def test_queue_wait_beyond_budget_is_a_recall_timeout(clean_recall_state, monkeypatch):
+    import threading
+    monkeypatch.setenv("PANTHEON_MEMORY_HINDSIGHT_RECALL_QUEUE_WAIT_SECONDS", "0.2")
+    client = _CountingRecall(delay=1.0)
+    t = threading.Thread(target=hs.bounded_recall_canonical_ids, args=(client, "b1"),
+                         kwargs={"query": "q", "groups": [], "limit": 8})
+    t.start()
+    import time
+    time.sleep(0.1)
+    with pytest.raises(hs.HindsightError) as err:
+        hs.bounded_recall_canonical_ids(client, "b2", query="q", groups=[], limit=8)
+    assert err.value.reason == "hindsight_recall_timeout"
+    t.join()
+
+
+def test_standing_query_is_reused_until_the_bank_changes(clean_recall_state):
+    client = _CountingRecall()
+    args = dict(query="standing", groups=[{"tags": ["x"]}], limit=8)
+    first = hs.bounded_recall_canonical_ids(client, "bank-a", **args)
+    assert hs.bounded_recall_canonical_ids(client, "bank-a", **args) == first
+    assert client.calls == 1 and hs.RECALL_STATS["cache_hit"] == 1
+    hs.bounded_recall_canonical_ids(client, "bank-b", **args)       # other bank: own entry
+    assert client.calls == 2
+    hs._bump_recall_bank("bank-a")                                   # bank-a written
+    hs.bounded_recall_canonical_ids(client, "bank-a", **args)
+    assert client.calls == 3
+    hs.bounded_recall_canonical_ids(client, "bank-b", **args)       # bank-b untouched
+    assert client.calls == 3
+
+
+def test_recall_cache_is_capped_per_bank_and_overall(clean_recall_state):
+    client = _CountingRecall()
+    for i in range(hs.RECALL_CACHE_MAX_PER_BANK + 4):
+        hs.bounded_recall_canonical_ids(client, "bank-a", query=f"q{i}", groups=[], limit=8)
+    assert sum(1 for k in hs._RECALL_CACHE if k[0] == "bank-a") == hs.RECALL_CACHE_MAX_PER_BANK
+    for i in range(hs.RECALL_CACHE_MAX_ENTRIES + 10):
+        hs.bounded_recall_canonical_ids(client, f"bank-{i}", query="q", groups=[], limit=8)
+    assert len(hs._RECALL_CACHE) <= hs.RECALL_CACHE_MAX_ENTRIES
+
+
+def test_write_during_recall_is_not_cached(clean_recall_state):
+    class WritingDuringRecall(_CountingRecall):
+        def recall(self, bank, body):
+            hs._bump_recall_bank(bank)
+            return super().recall(bank, body)
+
+    client = WritingDuringRecall()
+    hs.bounded_recall_canonical_ids(client, "bank-a", query="q", groups=[], limit=8)
+    hs.bounded_recall_canonical_ids(client, "bank-a", query="q", groups=[], limit=8)
+    assert client.calls == 2

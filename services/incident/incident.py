@@ -36,7 +36,6 @@ import json
 import math
 import os
 import re
-import tempfile
 import threading
 from copy import deepcopy
 from contextlib import contextmanager
@@ -46,6 +45,8 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Set, Tuple
+
+from services.foundation.reliable_delivery import sweep_stale_temp_siblings
 
 try:  # pragma: no cover - Linux production and CI provide fcntl.
     import fcntl
@@ -115,8 +116,11 @@ def _serialized_store_write(method):
             # that durable state so a failed _save (or any other exception after
             # mutation) cannot leak an uncommitted transition through reads.
             self._refresh_from_disk()
-            incidents_before = deepcopy(self._incidents)
-            postmortems_before = deepcopy(self._postmortems)
+            # IncidentCase/Postmortem are frozen and every mutation replaces the
+            # record, so a shallow map copy restores durable state exactly.  A
+            # whole-store deepcopy here cost ~40 MB per write at hosted scale.
+            incidents_before = dict(self._incidents)
+            postmortems_before = dict(self._postmortems)
             loaded_mtime_before = self._loaded_mtime_ns
             try:
                 return method(self, *args, **kwargs)
@@ -550,6 +554,70 @@ def is_monitor_agent_finding_incident(inc: IncidentCase) -> bool:
     )
 
 
+def is_infrastructure_postmortem(pm: Any) -> bool:
+    """Apply the incident predicates to a stored postmortem row.
+
+    A postmortem stores ``incident_evidence_summary`` where the predicates read
+    ``evidence_summary``; map it so real stored rows are classified correctly.
+    ``pm`` may be a Postmortem or a dict.
+    """
+    def attr(name: str) -> Any:
+        return pm.get(name) if isinstance(pm, dict) else getattr(pm, name, None)
+
+    shim = IncidentCase.__new__(IncidentCase)
+    for name in (
+        "incident_id", "binding_id", "deployment_plan_id",
+        "persona_capital_binding_id", "incident_cluster_id", "artifact_id",
+        "runtime_id",
+    ):
+        object.__setattr__(shim, name, attr(name))
+    object.__setattr__(
+        shim, "evidence_summary",
+        attr("incident_evidence_summary") or attr("evidence_summary"),
+    )
+    return is_infrastructure_health_incident(shim) or is_monitor_agent_finding_incident(shim)
+
+
+def page_postmortem_index(
+    index_rows: Any,
+    *,
+    incident_id: Optional[str] = None,
+    binding_id: Optional[str] = None,
+    statuses: Optional[set] = None,
+    hide_infrastructure: bool = True,
+    offset: int = 0,
+    limit: Optional[int] = None,
+) -> tuple:
+    """Filter, count and page narrow postmortem index rows (dicts).
+
+    Returns ``(page_rows, total, hidden_infrastructure_count)`` where ``total``
+    counts the visible rows exactly. Rows only need the fields the filters and
+    ``is_infrastructure_postmortem`` read, so callers may stream a narrow
+    projection instead of full payloads. ``index_rows`` may be any iterable.
+    """
+    visible: list = []
+    hidden = 0
+    for row in index_rows:
+        if incident_id and row.get("incident_id") != incident_id:
+            continue
+        if binding_id and row.get("binding_id") != binding_id:
+            continue
+        status = str(row.get("status") or "").strip().lower()
+        if statuses and status not in statuses:
+            continue
+        if hide_infrastructure and status == "draft" and is_infrastructure_postmortem(row):
+            hidden += 1
+            continue
+        visible.append(row)
+    visible.sort(
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("postmortem_id") or "")),
+        reverse=True,
+    )
+    total = len(visible)
+    end = None if limit is None else offset + limit
+    return visible[offset:end], total, hidden
+
+
 def normalize_infrastructure_component(value: str) -> str:
     """Normalize a downstream infrastructure component/service name."""
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
@@ -844,6 +912,9 @@ class IncidentStore:
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
+        if path:
+            with self._write_guard():
+                pass
 
     @contextmanager
     def _write_guard(self) -> Iterator[None]:
@@ -864,11 +935,11 @@ class IncidentStore:
             try:
                 if fcntl is not None:
                     fcntl.flock(descriptor, fcntl.LOCK_EX)
-                if self._path.exists():
-                    self._incidents.clear()
-                    self._postmortems.clear()
-                    self._load(self._path)
-                    self._loaded_mtime_ns = self._path.stat().st_mtime_ns
+                self._sweep_stale_temp_files()
+                # Reparse only when another writer changed the file; the
+                # previous unconditional reload re-read the whole store on
+                # every write.
+                self._reload_if_changed()
                 yield
             finally:
                 self._write_guard_depth = 0
@@ -877,20 +948,42 @@ class IncidentStore:
                 os.close(descriptor)
 
     def _refresh_from_disk(self) -> None:
+        self._reload_if_changed()
+
+    def _reload_if_changed(self) -> None:
         if not self._path or not self._path.exists():
             return
         mtime_ns = self._path.stat().st_mtime_ns
         if self._loaded_mtime_ns == mtime_ns:
             return
+        self._incidents.clear()
+        self._postmortems.clear()
         self._load(self._path)
         self._loaded_mtime_ns = mtime_ns
+
+    def _temp_path(self) -> Path:
+        assert self._path is not None
+        return self._path.with_name(f".{self._path.name}.tmp")
+
+    def _sweep_stale_temp_files(self) -> List[Path]:
+        """Remove partial atomic-write leftovers; call only under the write lock.
+
+        Shared rule (``sweep_stale_temp_siblings``): the deterministic
+        ``.<name>.tmp`` and legacy random-name siblings of this store only, regular
+        files only, and a temp newer than the real file is kept and reported.
+        At most one temp file exists between writes, bounded by one store size.
+        """
+
+        if self._path is None:
+            return []
+        return sweep_stale_temp_siblings(self._path, keep_newer=True)
 
     # ---- IncidentCase reads ----
 
     @_serialized_store_read
     def get_incident(self, incident_id: str) -> Optional[IncidentCase]:
         self._refresh_from_disk()
-        return self._incidents.get(incident_id)
+        return self._incident_by_id(incident_id)
 
     def require_incident(self, incident_id: str) -> IncidentCase:
         inc = self.get_incident(incident_id)
@@ -902,6 +995,68 @@ class IncidentStore:
     def list_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return list(self._incidents.values())
+
+    # ---- Bounded-read hooks (overridden by the Postgres store) ----
+
+    def _incident_by_id(self, incident_id: str) -> Optional[IncidentCase]:
+        """Point lookup that may reach beyond the resident cache."""
+        return self._incidents.get(incident_id)
+
+    def _postmortem_by_id(self, postmortem_id: str) -> Optional[Postmortem]:
+        return self._postmortems.get(postmortem_id)
+
+    def _postmortem_for_incident_id(self, incident_id: str) -> Optional[Postmortem]:
+        matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
+        return matches[0] if matches else None
+
+    @_serialized_store_read
+    def count_incidents(self) -> int:
+        self._refresh_from_disk()
+        return len(self._incidents)
+
+    @_serialized_store_read
+    def count_incidents_with_id_prefix(self, prefix: str) -> int:
+        self._refresh_from_disk()
+        return sum(1 for i in self._incidents.values() if i.incident_id.startswith(prefix))
+
+    @_serialized_store_read
+    def query_incidents(
+        self,
+        *,
+        binding_id: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        open_only: bool = False,
+        limit: Optional[int] = None,
+    ) -> List[IncidentCase]:
+        """Filtered incidents, most recently created first, optionally capped."""
+        self._refresh_from_disk()
+        rows = [
+            i
+            for i in self._incidents.values()
+            if (not binding_id or i.binding_id == binding_id)
+            and (not capital_pool_id or i.capital_pool_id == capital_pool_id)
+            and (not status or i.status == status)
+            and (not severity or i.severity == severity)
+            and (not open_only or i.is_open())
+        ]
+        rows.sort(key=lambda i: (i.created_at, i.incident_id), reverse=True)
+        return rows[:limit] if limit is not None else rows
+
+    @_serialized_store_read
+    def find_latest_infrastructure_incident_for_component(
+        self,
+        component: str,
+    ) -> Optional[IncidentCase]:
+        self._refresh_from_disk()
+        for candidate in reversed(list(self._incidents.values())):
+            if (
+                is_infrastructure_health_incident(candidate)
+                and extract_infrastructure_incident_component(candidate) == component
+            ):
+                return candidate
+        return None
 
     @_serialized_store_read
     def find_incidents_by_binding(self, binding_id: str) -> List[IncidentCase]:
@@ -1003,7 +1158,7 @@ class IncidentStore:
         target = str(incident_id or "").strip()
         if not target:
             return None
-        direct = self._incidents.get(target)
+        direct = self._incident_by_id(target)
         if direct is not None and is_infrastructure_health_incident(direct):
             return direct
         candidates = sorted(
@@ -1024,7 +1179,7 @@ class IncidentStore:
         errors = validate_incident_case(inc)
         if errors:
             raise IncidentError(f"Invalid IncidentCase: {errors}")
-        if inc.incident_id in self._incidents:
+        if self._incident_by_id(inc.incident_id) is not None:
             raise IncidentError(f"IncidentCase already exists: {inc.incident_id}")
         self._incidents[inc.incident_id] = inc
         self._save(
@@ -1693,7 +1848,7 @@ class IncidentStore:
     @_serialized_store_read
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
-        return self._postmortems.get(postmortem_id)
+        return self._postmortem_by_id(postmortem_id)
 
     def require_postmortem(self, postmortem_id: str) -> Postmortem:
         pm = self.get_postmortem(postmortem_id)
@@ -1707,10 +1862,39 @@ class IncidentStore:
         return list(self._postmortems.values())
 
     @_serialized_store_read
+    def list_all_postmortems(self) -> List[Postmortem]:
+        """Every stored postmortem, never capped (exact-total read path)."""
+        self._refresh_from_disk()
+        return list(self._postmortems.values())
+
+    @_serialized_store_read
+    def list_postmortem_page(
+        self,
+        *,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+        statuses: Optional[set] = None,
+        matcher: Optional[Any] = None,
+        hide_infrastructure: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        q_sql_needle: Optional[str] = None,
+    ) -> tuple:
+        """``(page_postmortems, total, hidden_infrastructure_count)``, exact."""
+        self._refresh_from_disk()
+        rows = [pm.to_dict() for pm in self._postmortems.values()]
+        if matcher is not None:
+            rows = [r for r in rows if matcher(r)]
+        page, total, hidden = page_postmortem_index(
+            rows, incident_id=incident_id, binding_id=binding_id, statuses=statuses,
+            hide_infrastructure=hide_infrastructure, offset=offset, limit=limit,
+        )
+        return [self._postmortems[r["postmortem_id"]] for r in page], total, hidden
+
+    @_serialized_store_read
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
-        matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
-        return matches[0] if matches else None
+        return self._postmortem_for_incident_id(incident_id)
 
     # ---- Postmortem writes ----
 
@@ -1725,24 +1909,17 @@ class IncidentStore:
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
-        if pm.postmortem_id in self._postmortems:
+        if self._postmortem_by_id(pm.postmortem_id) is not None:
             raise IncidentConcurrencyError(
                 f"Postmortem already exists: {pm.postmortem_id}"
             )
-        if pm.incident_id not in self._incidents:
+        parent = self._incident_by_id(pm.incident_id)
+        if parent is None:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        parent = self._incidents[pm.incident_id]
-        existing_for_incident = next(
-            (
-                candidate
-                for candidate in self._postmortems.values()
-                if candidate.incident_id == pm.incident_id
-            ),
-            None,
-        )
+        existing_for_incident = self._postmortem_for_incident_id(pm.incident_id)
         if existing_for_incident is not None:
             raise IncidentConcurrencyError(
                 "Postmortem already exists for IncidentCase "
@@ -1782,12 +1959,12 @@ class IncidentStore:
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
-        if pm.incident_id not in self._incidents:
+        parent = self._incident_by_id(pm.incident_id)
+        if parent is None:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        parent = self._incidents[pm.incident_id]
         self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
         self._save(
@@ -1897,22 +2074,22 @@ class IncidentStore:
     ) -> None:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "incidents": [i.to_dict() for i in self._incidents.values()],
-                "postmortems": [p.to_dict() for p in self._postmortems.values()],
-            }
-            handle = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self._path.parent,
-                prefix=f".{self._path.name}.",
-                suffix=".tmp",
-                delete=False,
-            )
-            temporary_path = Path(handle.name)
+            temporary_path = self._temp_path()
             try:
-                with handle:
-                    json.dump(data, handle, indent=2)
+                with temporary_path.open("w", encoding="utf-8") as handle:
+                    # Stream one record at a time in compact form: no whole-store
+                    # dict, no indent (the pure-Python encoder path), ~half the bytes.
+                    handle.write('{"incidents":[')
+                    for index, record in enumerate(self._incidents.values()):
+                        if index:
+                            handle.write(",")
+                        handle.write(json.dumps(record.to_dict(), separators=(",", ":")))
+                    handle.write('],"postmortems":[')
+                    for index, record in enumerate(self._postmortems.values()):
+                        if index:
+                            handle.write(",")
+                        handle.write(json.dumps(record.to_dict(), separators=(",", ":")))
+                    handle.write("]}")
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary_path, self._path)
@@ -1922,15 +2099,21 @@ class IncidentStore:
                 finally:
                     os.close(directory_fd)
             finally:
-                if temporary_path.exists():
-                    temporary_path.unlink()
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:
-        text = path.read_text()
-        if not text.strip():
-            return
-        data = json.loads(text)
+        with path.open("r", encoding="utf-8") as handle:
+            try:
+                data = json.load(handle)
+            except json.JSONDecodeError:
+                handle.seek(0)
+                if not handle.read().strip():
+                    return
+                raise
         for record in data.get("incidents", []):
             inc = IncidentCase.from_dict(record)
             self._incidents[inc.incident_id] = inc

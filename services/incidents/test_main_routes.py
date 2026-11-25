@@ -1670,3 +1670,41 @@ def test_resolve_retired_binding_resolves_only_open_drift_incidents():
 
     again = client.post("/api/incidents/resolve-retired-binding", json={"binding_id": "binding-drift-001"})
     assert again.json()["resolved_incident_ids"] == []
+
+
+def test_incident_delivery_read_timeout_empty_message_is_recorded_and_bounded(monkeypatch):
+    import asyncio
+    from unittest.mock import patch
+
+    import httpx
+
+    import services.incidents.main as main_mod
+    from services.incidents.main import outbox_store
+
+    monkeypatch.setenv("INCIDENTS_OUTBOX_BACKOFF_BASE_SECONDS", "0")
+    monkeypatch.setenv("INCIDENTS_OUTBOX_MAX_ATTEMPTS", "3")
+    created = client.post("/api/incidents", json={**_BASE_PAYLOAD, "incident_id": "inc-timeout-empty"})
+    assert created.status_code == 201, created.text
+    resolved = client.post("/api/incidents/inc-timeout-empty/status", json={"status": "resolved"})
+    assert resolved.status_code == 200, resolved.text
+
+    with patch("httpx.AsyncClient.post", side_effect=httpx.ReadTimeout("")) as mock_post:
+        for expected in (1, 2):
+            asyncio.run(main_mod.process_incidents_outbox())
+            records = [r for r in outbox_store.list_pending_and_failed()]
+            assert len(records) == 1
+            assert records[0].delivery_attempts == expected
+            assert records[0].status == "failed"
+            assert records[0].last_error == "ReadTimeout"
+        asyncio.run(main_mod.process_incidents_outbox())
+        assert mock_post.call_count == 3
+        assert outbox_store.list_pending_and_failed() == []
+
+
+def test_outbox_describe_exception_never_empty():
+    import httpx
+
+    from services.foundation.outbox import describe_exception
+
+    assert describe_exception(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert describe_exception(ValueError("x")) == "ValueError: x"

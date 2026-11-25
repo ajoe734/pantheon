@@ -1,0 +1,18 @@
+{
+  "task": "TRADING-PULSE-BROWSER-ACCEPTANCE-IN-RELEASE-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC6 WP6.5 (Trading Pulse browser acceptance has no credentialed executor)",
+  "change": {
+    "caller": "scripts/run_dev_trading_pulse_readonly_qa.py drives accept-persona-strategy-hosted-readonly.mjs --mode trading-pulse with the viewer profile on the exact served FE/BFF pair",
+    "workflow": ".github/workflows/nonprod-deploy.yml step 'Trading Pulse page read-only browser QA (supplementary, non-gating)': continue-on-error, only the viewer dev-login secret, no new workflow_dispatch input, not read by the outcome gate",
+    "sources_witness": "built in the caller from same-tenant /api/v1/personas, /api/v1/runtime-bindings (registry) and /api/v1/telemetry/{runtime}/summary (ledger) reads; never the trading-pulse endpoints; roster re-read to detect change; probe/test personas excluded with the BFF rule",
+    "history_witness": "immutable journey detail + timeline for DEV_TRADING_PULSE_HISTORY_JOURNEY_ID / _EVENT_ID (2317 refusal); canonical zh-TW/en-US reason labels",
+    "exit_mapping": "CLI 0 -> pass (also needs positive acceptance summary with the three locale/viewport runs), 1 -> failed, 2 or any other -> unproven; caller exits 0/1/2 accordingly"
+  },
+  "secrets": "viewer client secret and bearer stay in RAM and CLI stdin; CLI runs with a minimal environment; evidence is redacted of both",
+  "size": {"per_release_max_bytes": 5242880, "screenshots_max": 2, "daily_growth_outside_releases_bytes": 0},
+  "required_repository_variables": ["DEV_ORIGINAL_QA_TENANT_ID (existing)", "DEV_TRADING_PULSE_HISTORY_JOURNEY_ID", "DEV_TRADING_PULSE_HISTORY_EVENT_ID", "DEV_TRADING_PULSE_HISTORY_ENVIRONMENT (default paper)"],
+  "tests": "scripts/test_run_dev_trading_pulse_readonly_qa.py (14), scripts/test_cross_repo_release_controller.py::test_trading_pulse_readonly_qa_step_is_supplementary_and_secret_safe",
+  "hosted_acceptance": "pending: next dev release evidence must contain trading-pulse-summary.json for zh-TW 1440/390 and en-US 1440 with the 2317 refusal checked; result is handed to TRADING-PULSE-HOSTED-ACCEPTANCE-20261122",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family"
+}

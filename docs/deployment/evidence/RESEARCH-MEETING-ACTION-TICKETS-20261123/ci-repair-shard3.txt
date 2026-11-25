@@ -1,0 +1,81 @@
+shard 3/12: 79 test files
+ok      1.4s .orchestrator/rewrite/test_provider_health.py  18 passed in 0.72s
+ok      1.7s acceptance/test_persona_pool_member_rules.py  11 passed in 0.95s
+ok      1.0s deploy/caddy/test_caddy_security_headers.py  4 passed, 2 skipped in 0.28s
+ok      1.1s deploy/collector/tests/test_collector_host_layout_build.py  5 passed in 0.30s
+ok      3.2s deploy/collector/tests/test_config_and_startup_guards.py  64 passed in 2.51s
+ok      4.1s deploy/collector/tests/test_real_source_repair.py  35 passed in 3.21s
+ok      1.2s deploy/collector/tests/test_security_listing_module_shipped.py  6 passed in 0.51s
+ok      2.6s integrations/openclaw/skills/agora/result_synthesis/test_skill.py  28 passed in 1.78s
+ok      1.8s scripts/test_agora_v1_12_candidate_bundle.py  9 passed, 2 warnings in 0.95s
+ok      1.9s scripts/test_dev_deployment_tenant.py  1 passed in 1.10s
+ok      1.8s scripts/test_loop_prod_tel_002_hosted_workflow.py  4 passed in 1.03s
+ok      7.7s scripts/test_openclaw_assistant_openclaw_live_smoke.py  7 passed in 7.00s
+ok      2.9s scripts/test_run_dev_paired_readonly_qa.py  45 passed in 2.21s
+ok      4.2s scripts/test_run_evolution_ooda_loop_closure.py  45 passed in 3.61s
+ok      1.0s scripts/test_run_ibkr_live_order_cancel.py  2 passed in 0.34s
+ok      2.1s scripts/test_service_process_signal_contract.py  7 passed in 1.49s
+ok      9.2s scripts/test_smoke_openclaw_activation_ready_e2e.py  3 passed, 1 warning in 7.97s
+ok      1.2s scripts/test_verify_agora_current_hosted_acceptance.py  11 passed in 0.58s
+ok      5.8s scripts/test_verify_agora_product_journey.py  6 passed, 2 warnings in 4.76s
+ok      0.9s scripts/test_verify_e2e_runtime_state_coherence.py  4 passed in 0.30s
+ok      7.1s services/control-plane/bff/assistant/tests/test_user_mode_regression.py  22 passed in 6.03s
+ok     10.7s services/control-plane/bff/management_read_models/test_twelve_loop_projector.py  52 passed in 9.49s
+ok      6.0s services/control-plane/bff/test_action_catalog_safety_invariants.py  2 passed in 4.84s
+ok      5.8s services/control-plane/bff/test_agora_audit_store.py  2 passed in 4.60s
+ok      6.7s services/control-plane/bff/test_audit_timestamp_filter_no_500.py  9 passed, 1 warning in 5.55s
+ok      9.4s services/control-plane/bff/test_bff_agora_core_contract.py  1 passed, 3 warnings in 7.94s
+ok      5.2s services/control-plane/bff/test_bff_two_man_sign_race_contract.py  1 passed, 1 warning in 4.11s
+ok     10.4s services/control-plane/bff/test_cw02_debate_transcript_contract.py  15 passed, 1 warning in 9.02s
+ok     20.5s services/control-plane/bff/test_execute_plans_contract_registry.py  5 passed, 100 warnings in 17.67s
+ok      5.9s services/control-plane/bff/test_loop_run_ledger_merge.py  5 passed in 4.82s
+ok      7.0s services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py  2 passed, 3 warnings in 5.64s
+ok      6.3s services/control-plane/bff/test_pkt011_health_status_board_contract.py  3 passed, 1 warning in 5.01s
+ok      5.5s services/control-plane/bff/test_read_store_deployment.py  3 passed in 4.38s
+ok      9.7s services/control-plane/bff/test_rw01_research_ticket_contract.py  9 passed, 1 warning in 8.28s
+ok      5.4s services/control-plane/bff/test_settings_contract.py  3 passed, 1 warning in 4.24s
+ok     13.2s services/control-plane/bff/test_tw04_teaching_replay_contract.py  34 passed, 3 warnings in 11.96s
+ok      8.9s services/control-plane/bff/tests/test_agora_human_evidence.py  6 passed, 1 skipped, 3 warnings in 2.49s
+ok      7.9s services/control-plane/bff/tests/test_agora_identity_scope.py  6 passed, 2 warnings in 1.19s
+ok      8.3s services/control-plane/bff/tests/test_agora_persona_lab.py  8 passed, 3 warnings in 2.08s
+ok     12.0s services/control-plane/bff/tests/test_agora_servant_sessions.py  4 passed, 3 warnings in 5.66s
+ok     79.9s services/control-plane/bff/tests/test_agora_strategy_workshop.py  87 passed, 2 skipped, 3 warnings in 71.94s (0:01:11)
+ok      8.2s services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py  2 passed, 3 warnings in 1.42s
+ok      8.9s services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py  10 passed, 2 warnings in 1.94s
+ok      8.8s services/control-plane/bff/tests/test_command_audit_scope.py  2 passed, 2 warnings in 0.92s
+ok      9.1s services/control-plane/bff/tests/test_command_store_multiprocess.py  6 passed, 2 warnings in 1.95s
+ok      7.7s services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py  2 passed, 2 warnings in 1.27s
+ok     21.2s services/control-plane/bff/tests/test_development_route_boundary.py  5 passed, 2 warnings in 15.37s
+ok      7.4s services/control-plane/bff/tests/test_events_router.py  4 passed, 3 warnings in 1.49s
+ok      7.0s services/control-plane/bff/tests/test_evochain_005_governance_writes.py  11 passed, 3 warnings in 1.53s
+ok      7.1s services/control-plane/bff/tests/test_evolution_actor_role_binding.py  13 passed, 2 warnings in 1.45s
+ok      8.5s services/control-plane/bff/tests/test_governance_router.py  8 passed, 3 warnings in 2.62s
+ok      6.8s services/control-plane/bff/tests/test_management_display_names.py  7 passed, 2 warnings in 0.88s
+ok     20.8s services/control-plane/bff/tests/test_management_session_harness.py  11 passed, 3 warnings in 13.24s
+ok      8.7s services/control-plane/bff/tests/test_ooda_management_ports.py  18 passed, 3 warnings in 2.97s
+ok      8.9s services/control-plane/bff/tests/test_owner_read_wiring.py  27 passed, 3 warnings in 3.13s
+ok      8.8s services/control-plane/bff/tests/test_persona_agent_provision_http_entry.py  2 passed, 3 warnings in 2.87s
+ok      6.8s services/control-plane/bff/tests/test_persona_archived_lifecycle.py  7 passed, 3 warnings in 1.18s
+ok      9.1s services/control-plane/bff/tests/test_persona_training_ports.py  26 passed, 2 warnings in 3.44s
+ok      9.2s services/control-plane/bff/tests/test_pint_003_durable_opinions.py  10 passed, 3 warnings in 3.49s
+ok      6.7s services/control-plane/bff/tests/test_pint_013_interaction_store_postgres.py  11 skipped, 2 warnings in 1.28s
+ok     48.0s services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py  5 passed, 3 warnings in 39.08s
+ok     49.2s services/control-plane/bff/tests/test_read_store_final_deletion.py  7 passed, 2 warnings in 43.07s
+ok     10.5s services/control-plane/bff/tests/test_receipt_default_reads.py  14 passed, 3 warnings in 4.12s
+ok      8.7s services/control-plane/bff/tests/test_research_jobs_action_receipts.py  25 passed, 13 warnings in 3.08s
+ok      9.3s services/control-plane/bff/tests/test_review_queue_evidence_redaction.py  10 passed, 3 warnings in 3.23s
+ok     21.4s services/control-plane/bff/tests/test_shell_summary_jobs_read.py  8 passed, 3 warnings in 15.05s
+ok      6.9s services/control-plane/bff/tests/test_training_router.py  2 passed, 2 warnings in 0.64s
+ok      6.9s services/control-plane/bff/tests/test_unhandled_error_cors.py  2 passed, 3 warnings in 0.69s
+ok      1.9s services/control-plane/governance/test_service_family_contract.py  3 passed in 1.28s
+ok      8.0s services/runtime-manager/test_runtime_manager.py  89 passed, 3 subtests passed in 7.22s
+ok      1.1s tests/broker/test_credential_readiness.py  10 passed in 0.46s
+ok      8.0s tests/e2e/test_telemetry_persisted_e2e.py  5 passed in 7.29s
+ok      1.6s tests/governance/test_closeout_renderer.py  7 passed in 0.90s
+ok      0.9s tests/governance/test_promotion_readiness_packet.py  8 passed in 0.36s
+ok      1.6s tests/governance/test_revoke_expire.py  37 passed in 1.06s
+ok      0.7s tests/integration/l12/test_current_runtime_loops_deployed_e2e.py  11 skipped in 0.22s
+ok      0.8s tests/orchestrator/test_release_branch_discipline.py  9 passed in 0.32s
+ok      0.7s tests/persona/test_registry_health_gate.py  5 passed in 0.22s
+ok      1.1s tests/research_write_owner/test_research_write_owner.py  12 passed in 0.57s
+shard 3/12: 79 passed, 0 failed, wall 226s

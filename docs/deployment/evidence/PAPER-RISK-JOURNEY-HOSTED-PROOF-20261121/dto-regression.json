@@ -1,0 +1,16 @@
+{
+  "kind": "synthetic_positive_events_reshaped_to_recorded_hosted_DTO_not_hosted_acceptance",
+  "prior_head": "581cb757da05ae5f4a45b6a4210895ecd10717ab",
+  "prior_positive_control_passed": true,
+  "prior_actual_shape_passed": false,
+  "prior_actual_shape_failed": [
+    "journey_active_binding_mismatch:fixture-fill",
+    "journey_active_binding_mismatch:fixture-rejected",
+    "no_fresh_governed_decision:fixture-persona",
+    "no_fresh_pre_broker_rejection_with_amounts",
+    "no_fresh_broker_position_cash_reconciled_fill"
+  ],
+  "repaired_actual_shape_passed": true,
+  "repaired_actual_shape_failed": [],
+  "repaired_probe_sha256": "df5790e567ccfa60afa1183b868fd6a2001289b7d30f561793d3898fc944e849"
+}

@@ -10,7 +10,9 @@ import httpx
 from services.control_plane.bff.persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator, deterministic_provisioning_ids,
 )
-from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport
+from services.control_plane.bff.personas.service import (
+    _PersonaOwnerHttpTransport, _persona_create_effective_profile_payload,
+)
 from services.control_plane.bff.test_persona_provisioning_coordinator import TrackingStore, _schedule_receipt
 from services.control_plane.bff.tests.test_persona_governance_caller_contract import RealRegistryTransport
 from services.governance.test_paper_approval_postgres import (  # noqa: F401 fixture imports
@@ -45,12 +47,18 @@ def test_new_persona_crosses_real_approval_and_registry_and_reloads(paper_owners
                            tenant="tenant-dev", tenant_id="tenant-dev", aud="isolated-registry")
     stimulus = uuid4().hex
     store = TrackingStore()
+    wire_payload = {"name": "Isolated fresh paper contract", "requested_by": "synthetic-operator",
+                    "mandate": "Synthetic paper-only admission", "budget": 25000}
+    # Match fresh create ingress; an old source-less reservation must still fail closed.
+    effective_payload = _persona_create_effective_profile_payload(wire_payload)
+    assert "risk" not in wire_payload and "metadata" not in wire_payload
+    assert effective_payload["risk"] == "low"
+    assert effective_payload["metadata"]["requested_risk_profile_provenance"] == "persona_create_default"
     record, created = store.reserve(
         tenant_id="tenant-dev", idempotency_key="isolated-fresh-" + stimulus,
         request_hash="isolated-request-" + stimulus, normalized_name="isolated-" + stimulus,
         persona_id="persona-isolated-" + stimulus,
-        request_payload={"name": "Isolated fresh paper contract", "requested_by": "synthetic-operator",
-                         "mandate": "Synthetic paper-only admission", "budget": 25000},
+        request_payload=effective_payload,
     )
     assert created
     ids = deterministic_provisioning_ids(record)

@@ -190,7 +190,9 @@ def http_registry_entry_reader(registry_id: str, tenant_id: str) -> Mapping[str,
     from services.service_token_file import configured_service_token
 
     base = (os.getenv("PERSONA_REGISTRY_BASE_URL") or "").rstrip("/")
-    token = configured_service_token("PERSONA_REGISTRY_SERVICE_TOKEN")
+    # Dev paper runtimes get a registry-reader-only file; the persona token name remains the fallback.
+    token = (configured_service_token("PAPER_RUNTIME_REGISTRY_READ_TOKEN")
+             or configured_service_token("PERSONA_REGISTRY_SERVICE_TOKEN"))
     if not base or not token:
         raise RuntimeError("registry owner URL and read principal are required")
     request = Request(

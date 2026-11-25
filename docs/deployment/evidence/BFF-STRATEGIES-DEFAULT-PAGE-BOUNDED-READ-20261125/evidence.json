@@ -1,0 +1,14 @@
+{
+  "task": "BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125",
+  "change": "default and hide_retired_personas strategy list reads with test personas present use the bounded unfiltered page + overlapped exclude_state=draft read instead of the 38-page walk",
+  "verification": {
+    "command": "pytest test_strategy_list_test_scope.py test_strategy_list_latency.py test_strategy_list_default_view.py test_strategies_list_fanout_read.py test_strategy_synthetic_stubs.py test_strategy_operational_status.py",
+    "result": "83 passed, 1 skipped",
+    "scale_7500_default_first_page_owner_calls": "2 (first page + overlapped exclude_state=draft); 3 when prefetched 20 rows lose rows to hiding"
+  },
+  "residual": [
+    "Hidden-stub/test counts are exact over rows seen (walked pages + all non-draft); unseen unbound drafts are counted as unbound, so a stub among unseen drafts is not hidden until its page is reached.",
+    "Hosted Dev latency (<1,200 ms) not measured here."
+  ],
+  "writers": 0, "recurring_jobs": 0, "added_tables_files_caches": 0
+}

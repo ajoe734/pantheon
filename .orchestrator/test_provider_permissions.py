@@ -1754,11 +1754,33 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[:2], ["/usr/bin/codex", "exec"])
         self.assertIn("--skip-git-repo-check", command)
+        self.assertIn("--ephemeral", command)
         self.assertEqual(command[command.index("--model") + 1], "gpt-6-astra")
         self.assertIn('model_reasoning_effort="high"', command)
         env = run_command.call_args.kwargs["env"]
         self.assertEqual(env["CODEX_HOME"], str(home))
         self.assertNotIn("CODEX_SESSION_ID", env)
+
+    def test_codex_auth_probe_prunes_stale_sessions_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex"
+            day_dir = home / "sessions" / "2026" / "11" / "20"
+            day_dir.mkdir(parents=True)
+            (home / "auth.json").write_text('{"tokens":{"access_token":"ok"}}', encoding="utf-8")
+            stale_file = day_dir / "rollout-old.jsonl"
+            fresh_file = home / "sessions" / "rollout-fresh.jsonl"
+            stale_file.write_text("{}", encoding="utf-8")
+            fresh_file.write_text("{}", encoding="utf-8")
+            old_ts = 1_700_000_000.0
+            os.utime(stale_file, (old_ts, old_ts))
+            config = {"providers": {"codex": {"codex": {"codex_home": str(home)}}}}
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with mock.patch.object(provider_permissions, "run_command", return_value=completed):
+                probe = provider_permissions._codex_auth_probe(config, "codex", "/usr/bin/codex")
+            self.assertTrue(probe["ready"])
+            self.assertFalse(stale_file.exists())
+            self.assertFalse(day_dir.exists())
+            self.assertTrue(fresh_file.exists())
 
     def test_codex_auth_probe_honors_configured_api_key_env_without_emitting_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

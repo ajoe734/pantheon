@@ -71,36 +71,45 @@ def source_case(tmp_path, monkeypatch):
 
     source = importlib.import_module("services.training-session.source_dataset_authority")
     monkeypatch.setattr(source, "urllib_json_get", get)
+    # The price dataset is read from the stored daily bars; no persona authority output exists.
+    from services.research.tests.test_governed_market_dataset import store_from_records
+    store_root = store_from_records(tmp_path / "market_data_store", recorded_dataset()["records"])
+    env["GOVERNED_MARKET_STORE_ROOT"] = str(store_root)
     return env, responses, calls
 
 
-def materialized(env):
-    paths = list(Path(env["PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"]).glob("dataset-version-*.json"))
-    assert len(paths) == 1
-    return paths[0], json.loads(paths[0].read_text())
+CANDIDATE = {"artifact_ref": "candidate", "strategy_artifact": {"parameters": {"symbols": ["2330.TW"]}}}
+PRICE = ("instrument", "date", "open", "high", "low", "close", "volume")
 
 
-def test_loader_pins_recorded_source_dataset_and_lineage(source_case):
+def test_loader_reads_the_governed_market_from_the_store_and_never_calls_the_source_api(source_case):
     env, _, calls = source_case
-    dataset = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, {"artifact_ref": "candidate"})
-    _, payload = materialized(env)
-    assert dataset["dataset_id"] == payload["dataset_version_id"]
-    assert dataset["strategy_id"] == "candidate"
-    key = lambda r: (r["instrument"], r["date"])
-    assert sorted(dataset["records"], key=key) == sorted(recorded_dataset()["records"], key=key)
-    assert payload["metadata_json"]["source_connector_id"] == "tw-twse-tpex-official-market"
-    assert payload["metadata_json"]["source_dataset_id"] == "tw_price_daily"
-    assert payload["metadata_json"]["source_ingest_run_id"] == "ingest-authority-001"
-    assert len(calls) >= 3 and calls[0] == READBACK
-    assert payload["metadata_json"]["source_storage_binding_sha256"]
-    assert payload["metadata_json"]["canonical_ohlcv_sha256"]
-    # A later failure must not silently reuse this successful snapshot.
-    source_case[1][READBACK]["connectors"][0]["source_health"]["status"] = "error"
-    with pytest.raises(ValueError, match="authority rejected"):
+    dataset = governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, CANDIDATE)
+    assert dataset["dataset_id"].startswith("gmd-2024-12-31-") and dataset["strategy_id"] == "candidate"
+    assert dataset["source_dataset_refs"] == ["daily_bars:" + dataset["dataset_id"]]
+    expected = sorted(({k: r[k] for k in PRICE} for r in recorded_dataset()["records"] if r["instrument"].startswith("2330.")),
+                      key=lambda r: r["date"])
+    own = [{k: r[k] for k in PRICE} for r in dataset["records"] if r["instrument"].startswith("2330.")]
+    assert own == expected and dataset["companion_symbols"]  # one rule symbol + the most liquid companion
+    assert calls == [] and not Path(env["PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT"]).exists()
+    # dead letters of other connectors are the source owner's business: the price read has no dependency on them
+    assert dataset["market_boundary"]["included"] >= 1
+
+
+def test_loader_without_symbols_or_with_a_symbol_outside_the_boundary_rejects_with_the_reason(source_case):
+    env, _, _ = source_case
+    authority = importlib.import_module("services.training-session.evaluation_authority")
+    with pytest.raises(authority.AuthorityValidationError, match="dataset_symbols_missing"):
         governed_dataset_loader(env, clock=lambda: NOW)(PERSONA, {"artifact_ref": "candidate"})
+    with pytest.raises(authority.AuthorityValidationError, match="symbols_not_in_store"):
+        governed_dataset_loader(env, clock=lambda: NOW)(
+            PERSONA, {"artifact_ref": "c", "strategy_artifact": {"parameters": {"symbols": ["9999"]}}})
+    # the persona mandate names the symbols when the candidate rule does not
+    mandated = {**PERSONA, "market_scope": {"symbols": ["2330"]}}
+    assert governed_dataset_loader(env, clock=lambda: NOW)(mandated, {"artifact_ref": "c"})["records"]
 
 
-def run_cycle(tmp_path, source_case, monkeypatch):
+def run_cycle(tmp_path, source_case, monkeypatch, clock=NOW):
     env, _, _ = source_case
     pool_module = importlib.import_module("services.control_plane.persona.persona_strategy_pool")
     policy = importlib.import_module("services.control_plane.persona.pool_policy").load_policy()
@@ -152,7 +161,7 @@ def run_cycle(tmp_path, source_case, monkeypatch):
         requirement, persona_id=PERSONA["persona_id"], trace_id="ooda://fixture", tenant_id=PERSONA["tenant_id"],
         request_id="consult-" + requirement.decision_id)
     owner.publish({p["persona_id"]: "approve" for p in owner.requests["consult-" + requirement.decision_id]["metadata"]["panel"]["participants"]})
-    ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env, clock=lambda: NOW), env=env,
+    ports = HttpPoolCyclePorts(transport, pool_store=pool, dataset_loader=governed_dataset_loader(env, clock=lambda: clock), env=env,
                                consultation_factory=owner.factory)
     result = PoolAutonomyCycle(ports, now=lambda: NOW.isoformat()).run(PERSONA, {
         "pool": initial, "pool_health": {"demand_reasons": ["low_risk_budget_utilisation"]},
@@ -168,11 +177,11 @@ def test_cycle_real_loader_and_candidate_replay_use_source_dataset_version(tmp_p
     packet, pool, _ = run_cycle(tmp_path, source_case, monkeypatch)
     result = packet["pool_autonomy"]
     assert result["decide"]["kind"] == "admit_trial", result
-    assert result["act"]["receipts"][0]["status"] in {"applied", "refused"}, result
-    _, payload = materialized(source_case[0])
+    assert result["act"]["receipts"][0]["status"] in {"applied", "refused"}, result["act"]["receipts"][0]
+    snapshot = governed_dataset_loader(source_case[0], clock=lambda: NOW)(PERSONA, CANDIDATE)["dataset_id"]
     candidate = pool["decision"]["candidate"]
     replay = pool["decision"]["book_sources"][candidate["artifact_ref"]]
-    assert replay["source_ref"] == "governed-replay:" + payload["dataset_version_id"]
+    assert replay["source_ref"] == "governed-replay:" + snapshot
     assert replay["checksum"] == candidate["checksum"]
     assert replay["dates"][0] == "2024-11-28" and replay["dates"][-1] == "2024-12-31"
     # Recorded prices genuinely trigger the unchanged risk policy. This is
@@ -181,26 +190,27 @@ def test_cycle_real_loader_and_candidate_replay_use_source_dataset_version(tmp_p
     assert not packet["act"]["live_capital_side_effects"]
 
 
-@pytest.mark.parametrize("failure", ["missing_config", "missing_token", "source_rejected", "stale_readback", "missing_storage", "invalid_policy"])
-def test_rejected_authority_records_ooda_reason_without_admission(tmp_path, source_case, failure, monkeypatch):
-    env, responses, _ = source_case
-    if failure == "missing_config":
-        del env["PERSONA_POOL_SOURCE_CONNECTOR_ID"]
-    elif failure == "missing_token":
-        Path(env["PERSONA_POOL_SOURCE_READ_TOKEN_FILE"]).unlink()
-    elif failure == "source_rejected":
-        responses[READBACK]["connectors"][0]["source_health"]["status"] = "error"
-    elif failure == "stale_readback":
-        responses[READBACK]["captured_at"] = "2024-12-30T12:00:00Z"
-    elif failure == "missing_storage":
-        (Path(env["PERSONA_POOL_SOURCE_VOLUME_ROOT"]) / "normalized/ingest-authority-001.jsonl").unlink()
+@pytest.mark.parametrize("failure", ["missing_store", "stale_store", "truncated_day", "missing_day_file"])
+def test_unusable_store_records_ooda_reason_without_admission(tmp_path, source_case, failure, monkeypatch):
+    env, responses, calls = source_case
+    # hosted shape: 4,742 pending dead letters on other connectors, 0 on the price connector; the source API
+    # is not consulted for the price dataset at all, so it neither blocks nor is read (calls stays empty).
+    clock = NOW
+    root = Path(env["GOVERNED_MARKET_STORE_ROOT"])
+    part = next((root / "daily_bars").glob("date=2024-12-1*/*.parquet"), None) or next((root / "daily_bars").rglob("*.parquet"))
+    if failure == "missing_store":
+        env["GOVERNED_MARKET_STORE_ROOT"] = str(tmp_path / "absent")
+    elif failure == "stale_store":
+        clock = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    elif failure == "truncated_day":
+        part.write_bytes(part.read_bytes()[:-10])
     else:
-        env["PERSONA_POOL_THRESHOLD_POLICY_PATH"] = str(tmp_path / "absent-policy.json")
-    packet, pool, http = run_cycle(tmp_path, source_case, monkeypatch)
+        part.unlink()
+    packet, pool, http = run_cycle(tmp_path, source_case, monkeypatch, clock=clock)
     receipt = packet["pool_autonomy"]["act"]["receipts"][0]
     assert receipt["status"] == "not_attempted", packet
     assert receipt["reason"].startswith("governed_dataset_unavailable:")
-    assert pool["pool_version"] == 1
+    assert pool["pool_version"] == 1 and calls == []
     assert not any(method == "POST" and service == "memory" for method, service, _ in http)
     assert not packet["act"]["live_capital_side_effects"]
 
@@ -238,6 +248,7 @@ def test_rendered_compose_persona_uses_training_source_authority_and_reader(prof
     assert env["SOURCE_INGEST_API_URL"] == training["environment"]["SOURCE_INGEST_API_URL"]
     for name, value in {"CONNECTOR_ID": "tw-twse-tpex-official-market", "DATASET_ID": "tw_price_daily", "VOLUME_ROOT": "/data/source-ingest"}.items():
         assert env["PERSONA_POOL_SOURCE_" + name] == training["environment"]["TRAINING_SESSION_SOURCE_" + name] == value
+    assert env["GOVERNED_MARKET_STORE_ROOT"] == "/data/source-ingest/market_data_store"  # read through the :ro mount below
     assert env["PERSONA_POOL_SOURCE_READ_TOKEN_FILE"] == "/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN"
     assert env["PERSONA_POOL_SOURCE_READ_TENANT_ID"] == "tenant-dev"
     assert any(v["source"] == "source-ingest-data" and v["target"] == "/data/source-ingest" and v["read_only"] for v in persona["volumes"])

@@ -1,0 +1,25 @@
+{
+  "task": "TELEMETRY-CONFLICT-ISOLATES-ONE-EVENT-20261125",
+  "root_cause_class": "RC2",
+  "defect": "one conflicting duplicate event_id made build_postgres_write_fn raise, roll back and fail the whole batch non-retryable; the writer dead-lettered every event of the batch (poison_event) after they were answered 202; real paper decisions lost 2026-11-23 and 2026-11-24",
+  "fix": [
+    "build_postgres_write_fn: the conflict check returns every conflicting (index, event_id) instead of LIMIT 1 + raise; the transaction commits the other rows, one pg_notify, advisory lock and insert order unchanged; WriteResult.rejected carries (index, reason)",
+    "AsyncBatchWriter: dead-letters only rejected events (tag poison_event, reason 'conflicting duplicate event_id=<own id>'), acks the committed ones; a non-durable DLQ write releases only that event's receipt (redelivery is idempotent)",
+    "statements per batch constant: lock, insert, one conflict check (only when something was skipped), one notify",
+    "DeadLetterQueue.stats()/readiness dead_letter_queue.trading_dead_letters: count and newest reason/time/event id by trading event type (signal, decision, order, fill, position, risk, reconciliation tokens); in memory, no new store, readiness status unchanged",
+    "TelemetryIngestService.replay_dlq with an explicit tag skips entries whose reason names their own event_id as the conflict"
+  ],
+  "tests": "services/telemetry/test_conflict_isolation.py (10 tests: real AsyncBatchWriter + real build_postgres_write_fn over a stateful fake asyncpg: one, several, all conflicting, conflict inside the batch, exact duplicate, bounded statements, db error mid-way, dead-letter write failure + idempotent redelivery, trading visibility, replay filter). test_ingest_shock_absorption, test_paper_runtime_ingest_contract, test_l12_tel_001_durable_ingest pass (105 tests with them). test_main_routes could not be imported in this sandbox (flask not installed); only a one-line addition to the readiness payload in main.py.",
+  "recovery": {
+    "owner": "coordinator, after deploy; this task runs no hosted write",
+    "list": "GET /api/telemetry/dlq?tag=poison_event&limit=10000 (operator/admin token)",
+    "replay": "POST /api/telemetry/replay?tag=poison_event (operator/admin token)",
+    "note": "Replay re-enters ingest(); entries whose reason is 'Non-retryable write failure: conflicting duplicate event_id=X' and whose own event_id is X (the conflicting rows) are skipped. Everything else dead-lettered by the old whole-batch failure is replayed. Events already committed are exact duplicates and are no-ops.",
+    "expected_count": "number of poison_event entries from 2026-11-24 (rejected_at) in the list above minus those whose event.event_id equals the event_id named in the reason. The owner has no access to hosted dead_letter.jsonl, so no number is claimed; the coordinator records the count from the list before replay and compares it with the {\"replayed\": N} answer. Caveat: the DLQ spill is aged out after TELEMETRY_DLQ_RETENTION_SECONDS (default 7 days) for non-write-failure tags; 2026-11-23/24 are inside that window.",
+    "caveat": "replay only reaches entries still in the running service's DLQ (loaded from dead_letter.jsonl at start)"
+  },
+  "runtime_budget": "no new writer or store; dead-letter volume falls from whole batch to the conflicting events",
+  "hosted_run": "not run by the owner",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "residual_findings": []
+}

@@ -455,6 +455,7 @@ class DailySweepResponse(BaseModel):
     skipped_incidents: int
     items: List[DailySweepItemResponse]
     scheduler_attach: Dict[str, str]
+    infrastructure_skipped: int = 0
 
 
 # ---------------------------------------------------------------------------

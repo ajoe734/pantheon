@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+# acceptance-owner: PAPER-PERSONA-RISK-PROFILE-CHANGE-20261123
+"""Bounded read-only proof for explicitly named isolated dev paper Personas.
+
+Reuses the existing viewer/owner transport (24 requests, 180 s, bounded bodies).
+No edit, policy definition, vote, provisioning or deployment is performed here.
+"""
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import sys
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+path = Path(__file__).with_name("paper-risk-policy-binding")
+loader = importlib.machinery.SourceFileLoader("paper_risk_binding_transport", str(path))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+transport = importlib.util.module_from_spec(spec)
+loader.exec_module(transport)
+
+
+def run(fetch, expected, *, owner_read, pool_policy_reader=None, now=None):
+    now = now or datetime.now(timezone.utc)
+    expected = tuple(expected)
+    report = {"passed": False, "checked": 0, "personas": {}, "failed": []}
+    if not expected or len(expected) > 3 or len(set(expected)) != len(expected):
+        report["failed"].append("explicit_isolated_personas_required_max_three")
+        return report
+    approvals = transport.rows(fetch("/api/v1/approval-decisions"))
+    for pid in expected:
+        failures = []
+        row = {"failed": failures}
+        report["personas"][pid] = row
+        try:
+            endpoint = "/bff/personas/" + quote(pid, safe="")
+            persona = transport.data(fetch(endpoint))
+            if (persona.get("id") != pid or persona.get("capitalMode") != "paper"
+                    or persona.get("persona_purpose") == "advisory_assistant"):
+                raise ValueError("persona_scope_invalid")
+            change = persona.get("riskPolicyChange")
+            if not isinstance(change, dict) or change.get("requestedRisk") not in {"low", "medium", "high"}:
+                raise ValueError("risk_change_contract_unavailable")
+            pool_id = persona.get("legacyPaperCapitalPoolId")
+            tenant = persona.get("tenantId")
+            if not pool_id or not tenant:
+                raise ValueError("scoped_pool_identity_missing")
+            pool = transport.data(fetch("/bff/capital-pools/" + quote(pool_id, safe="")))
+            meta = pool.get("metadata") or {}
+            if (pool.get("pool_id") != pool_id or pool.get("tenant_id") != tenant
+                    or meta.get("persona_id") != pid or meta.get("execution_context") != "paper"
+                    or pool.get("single_runtime_enforced") is not True):
+                raise ValueError("persisted_pool_scope_invalid")
+            intent = meta.get("risk_profile_change") or {}
+            if (intent.get("requested_profile") != change["requestedRisk"]
+                    or meta.get("requested_risk_profile") != change["requestedRisk"]
+                    or not intent.get("request_id") or not intent.get("requested_by")):
+                raise ValueError("latest_intent_not_persisted")
+            if pool.get("risk_policy_ref"):
+                # Owner resolution is scoped to the pool, rather than loading
+                # a nearby inline policy by the reference's name.
+                owner = transport.data(pool_policy_reader(pool)) if pool_policy_reader else None
+                if not owner or owner.get("capital_pool_id") != pool_id or owner.get("tenant_id") != tenant:
+                    raise ValueError("referenced_policy_owner_readback_unavailable")
+                policy = owner.get("policy")
+                if not policy or policy.get("risk_policy_id") != pool["risk_policy_ref"]:
+                    raise ValueError("referenced_policy_identity_invalid")
+            else:
+                policy = pool.get("risk_policy") or meta.get("risk_policy")
+            verified = None
+            if policy and not transport.policy_errors(policy):
+                matches = [(tier, transport.approved_mapping(approvals, {**persona, "risk": tier}, pool, policy, now))
+                           for tier in ("low", "medium", "high")]
+                matches = [(tier, approval) for tier, approval in matches if approval]
+                if len(matches) == 1:
+                    verified = matches[0]
+            effective = change.get("effectiveRisk")
+            if effective is not None:
+                if (not verified or verified != (effective, change.get("approvalId"))
+                        or policy.get("version") != change.get("policyVersion")):
+                    raise ValueError("effective_tier_or_approval_not_verified")
+            elif verified is not None or change.get("policyVersion") is not None or change.get("approvalId") is not None:
+                raise ValueError("effective_null_not_truthful")
+            status = change.get("status")
+            if status == "effective":
+                if effective != change["requestedRisk"]:
+                    raise ValueError("effective_status_without_requested_binding")
+            elif status == "pending_approval":
+                guard = owner_read("capital", pool_id, tenant)
+                if guard.get("allow_new_or_increased_risk") is not False or guard.get("allow_risk_reducing_actions") is not True:
+                    raise ValueError("pending_request_does_not_hold_risk_increase")
+            else:
+                raise ValueError("risk_change_unavailable_or_failed")
+            reloaded = transport.data(fetch(endpoint))
+            if reloaded.get("riskPolicyChange") != change or reloaded.get("risk") != change["requestedRisk"]:
+                raise ValueError("reload_not_authoritative_or_concurrent_edit")
+            row.update(requestedRisk=change["requestedRisk"], effectiveRisk=effective,
+                       status=status, policyVersion=change.get("policyVersion"), approvalId=change.get("approvalId"),
+                       pool_id=pool_id, revision=intent.get("revision"))
+            report["checked"] += 1
+        except (RuntimeError, ValueError, TypeError, KeyError) as exc:
+            failures.append(str(exc))
+        if failures:
+            report["failed"].append(pid)
+    report["passed"] = not report["failed"] and report["checked"] == len(expected)
+    return report
+
+
+def main():
+    if not os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS", "").strip():
+        print("skipped: ACCEPTANCE_EXPECTED_PERSONA_IDS must explicitly name isolated paper acceptance Personas")
+        return 77
+    return transport.main(lambda fetch, expected, pool_reader, _manifest, owner_read:
+                          run(fetch, expected, owner_read=owner_read, pool_policy_reader=pool_reader))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

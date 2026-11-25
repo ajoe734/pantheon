@@ -105,9 +105,10 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
     def memos(session_id: str, request: Request):
         client = owner(request)
         memo_items = client.memos(session_id)
-        view = client.case_file_view(session_id) if memo_items else None
-        return envelope([{**m, "case_file_view": view} for m in memo_items], owner="consultation",
-                        empty_reason="no_panel_memos")
+        if memo_items and "case_file_view" not in memo_items[0]:
+            view = client.case_file_view(session_id)
+            memo_items = [{**m, "case_file_view": view} for m in memo_items]
+        return envelope(memo_items, owner="consultation", empty_reason="no_panel_memos")
 
     @router.post("/bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish")
     def publish(session_id: str, memo_id: str, request: Request):

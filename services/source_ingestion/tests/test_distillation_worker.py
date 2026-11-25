@@ -47,7 +47,7 @@ from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 def _normalized_source(
     source_id: str = "src-tw-001",
     title: str = "LightGBM TW equity momentum factor paper",
-    source_type: str = "paper",
+    source_type: str = "internal_note",
     trust_score: float = 0.8,
     **metadata_overrides: Any,
 ) -> SourceRecord:
@@ -88,6 +88,87 @@ def _make_worker(tmp_path: Path) -> tuple[DistillationWorker, DistillationJobQue
 
 def _versioned_bundle_id(source: SourceRecord) -> str:
     return _stable_bundle_id(source.source_id, source_version_digest(source))
+
+
+@pytest.mark.parametrize("conflict", [None, "tenant", "content"])
+def test_registry_ack_replay_after_capacity_eviction_and_restart(tmp_path, monkeypatch, conflict):
+    import copy
+    from datetime import datetime, timezone
+    from services.source_ingestion.distillation_controller import (
+        DistillationControllerConfig, _make_registry_sync,
+    )
+
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state", alive_path=None,
+        job_queue_path=tmp_path / "queue.sqlite", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=tmp_path / "evidence", source_dirs=[],
+    )
+    registry = {}
+    writes = []
+
+    def post(url, payload):
+        writes.append(payload["registry_id"])
+        entry = copy.deepcopy(payload)
+        entry["artifact_type"] = "strategy_spec"
+        entry["metadata"]["strategy_spec"] = entry.pop("strategy_spec")
+        registry[payload["registry_id"]] = {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", lambda url, key: registry.get(key))
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", post)
+    clock = {"value": datetime(2026, 11, 13, 15, 17, 11, tzinfo=timezone.utc)}
+    monkeypatch.setattr("services.source_ingestion.strategy_seed_builder._utc_now", lambda: clock["value"])
+    queue = DistillationJobQueue(config.job_queue_path, now=lambda: clock["value"].timestamp())
+    store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    sync = _make_registry_sync(config)
+
+    def lost_ack(request):
+        sync(request)
+        raise RuntimeError("timed out after Registry commit before queue acknowledgement")
+
+    worker = DistillationWorker(queue, store, registry_sync=lost_ack, retry_base_seconds=0)
+    source = _normalized_source(tenant_id="test")
+    job = worker.enqueue_from_source_record(source)
+    unowned = worker.enqueue_from_source_record(_normalized_source("legacy-unowned"))
+    first = worker.run_pending(now="2026-11-13T15:17:11Z", tenant_id="test")
+    assert first.failed == first.retried == 1
+    assert len(writes) == 1
+    original_checksum = registry[writes[0]]["entry"]["checksum"]
+
+    # Exercise the real capacity eviction, then recreate both queue/store objects.
+    clock["value"] = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    eviction_worker = DistillationWorker(
+        DistillationJobQueue(tmp_path / "eviction.sqlite"), store,
+    )
+    other = _normalized_source("other-source", tenant_id="test")
+    eviction_worker.enqueue_from_source_record(other)
+    assert eviction_worker.run_pending(tenant_id="test").created == 1
+    assert store.list_by_bundle(_versioned_bundle_id(source)) == []
+    if conflict == "tenant":
+        registry[writes[0]]["entry"]["metadata"]["tenant_id"] = "foreign"
+    elif conflict == "content":
+        registry[writes[0]]["entry"]["metadata"]["strategy_spec"]["title"] = "different"
+    before = copy.deepcopy(registry)
+
+    restarted_queue = DistillationJobQueue(config.job_queue_path)
+    restarted_store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    restarted = DistillationWorker(restarted_queue, restarted_store, registry_sync=sync, retry_base_seconds=0)
+    result = restarted.run_pending(now="2026-11-18T00:00:00Z", tenant_id="test")
+    receipt = DistillationJobQueue(config.job_queue_path).get(job.source_id, job.source_digest)
+    assert receipt is not None
+    if conflict:
+        assert result.failed == result.retried == 1
+        assert receipt.status == DistillationJobStatus.RETRY_WAIT
+        assert receipt.checksum is None
+    else:
+        assert result.registry_synced == 1
+        assert receipt.status == DistillationJobStatus.DONE
+        assert receipt.checksum == original_checksum
+        assert restarted.run_pending(tenant_id="test").processed == 0
+    assert registry == before
+    assert len(writes) == 1
+    assert restarted_queue.get(unowned.source_id, unowned.source_digest).status == DistillationJobStatus.PENDING
 
 
 # ---------------------------------------------------------------------------
@@ -1362,3 +1443,42 @@ class TestMarketSourceNoRegistryDrafts:
         assert queue.list_dead_letters() == []
 
 
+
+
+def test_catch_up_limit_counts_new_versions_and_preserves_pending(tmp_path):
+    worker, queue, _ = _make_worker(tmp_path)
+    old = [_normalized_source(source_id=f"old-{i}") for i in range(4)]
+    for source in old:
+        queue.enqueue_source_record(source)
+    # Known sources must not use all admission slots and starve later sources.
+    new = [_normalized_source(source_id=f"new-{i}") for i in range(3)]
+    result = worker.catch_up([*old, *new], limit=2)
+    assert result.enqueued == 2
+    assert result.processed == 6  # queued work is independent of admission
+    assert queue.get(new[2].source_id) is None
+    assert worker.catch_up([*old, *new], limit=2).enqueued == 1
+    revised = _normalized_source(source_id=old[0].source_id, title="Revised")
+    assert worker.catch_up([*old, revised], limit=1).enqueued == 1
+    assert queue.version_count(old[0].source_id) == 2
+
+
+def test_catch_up_reports_lost_leases(tmp_path, monkeypatch):
+    worker, _, _ = _make_worker(tmp_path)
+    monkeypatch.setattr(worker, "run_pending", lambda *a, **kw: DistillationRunResult(processed=0, created=0, refreshed=0, skipped=0, failed=0, lease_lost=("lost-job",)))
+    assert worker.catch_up([]).lease_lost == ("lost-job",)
+
+
+def test_outbox_exact_source_version_lookup_uses_index(tmp_path):
+    import sqlite3
+
+    from services.source_ingestion.distillation_worker import DistillationJobQueue as DistillationQueue
+
+    queue = DistillationQueue(tmp_path / "queue.sqlite3")
+    with sqlite3.connect(queue.path) as connection:
+        plan = " ".join(
+            str(row[-1]) for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM distillation_outbox "
+                "WHERE source_id = ? AND source_digest = ?", ("s", "d"))
+        )
+    assert "SCAN" not in plan.replace("SEARCH", "")
+    assert "distillation_outbox_source_version_idx" in plan

@@ -7,7 +7,7 @@
   "metric": "cgroup memory.peak (anonymous + page cache + kernel memory of every process in the container)",
   "min_ratio": 1.5,
   "host_total_mib": 32086,
-  "sum_limits_mib": 84224,
+  "sum_limits_mib": 84352,
   "sum_peaks_mib": 24740,
   "floor_exceptions": {
     "postgres": "peak is capped by the old 2g limit (reached 1127463 times); true demand is higher. 8g bounds the database page cache, not process memory (anon 22 MiB, file cache 1984 MiB at the limit)",
@@ -41,7 +41,7 @@
     {"service": "training-session-preview-worker", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 32, "limit_reached_count": 0},
     {"service": "policy-learning-svc", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 85, "limit_reached_count": 0},
     {"service": "policy-learning-shadow-eval-scheduler", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 49, "limit_reached_count": 0},
-    {"service": "research-orchestrator-svc", "limit": "256m", "limit_mib": 256, "old_limit_mib": 256, "peak_mib": 99, "limit_reached_count": 0},
+    {"service": "research-orchestrator-svc", "limit": "384m", "limit_mib": 384, "old_limit_mib": 256, "peak_mib": 99, "limit_reached_count": 0, "raised_by": "DISCOVERY-GOVERNED-MARKET-DATASET-20261125: the governed market dataset reads the daily bars in this service (pyarrow import ~50 MiB + boundary ~75 MiB + 60-symbol dataset ~45 MiB measured on a 1,950 x 483 store)"},
     {"service": "openclaw-data-init", "limit": "128m", "limit_mib": 128, "peak_mib": null, "not_measured_reason": "one-shot busybox init job; exits before the measurement window; 128m floor"},
     {"service": "openclaw-gateway", "limit": "1280m", "limit_mib": 1280, "old_limit_mib": 1280, "peak_mib": 658, "limit_reached_count": 0},
     {"service": "openclaw-gateway-adapter", "limit": "3g", "limit_mib": 3072, "old_limit_mib": 256, "peak_mib": 791, "limit_reached_count": 0},

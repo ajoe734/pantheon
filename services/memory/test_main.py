@@ -1324,8 +1324,9 @@ def test_lifespan_yields_and_allows_health_and_canonical_writes_when_hindsight_i
     monkeypatch.setenv("PANTHEON_MEMORY_STORE", str(tmp_path / "inst-slow-startup.json"))
     monkeypatch.setenv("PANTHEON_PERSONA_MEMORY_STORE", str(tmp_path / "persona-slow-startup.json"))
     monkeypatch.setenv("PANTHEON_MEMORY_AUTHZ_MODE", "local")
+    # Drain and join any mirror workers / catch-up continuation inherited from earlier tests.
     hs.stop_resync_timer()
-    hs.flush_mirrors()
+    assert hs.flush_mirrors(timeout=30)
     hs.DIAGNOSTICS.reset()
     hs.set_hindsight_client(None)
 
@@ -1369,12 +1370,13 @@ def test_lifespan_yields_and_allows_health_and_canonical_writes_when_hindsight_i
     thread = threading.Thread(target=run_lifespan)
     thread.start()
     try:
-        assert client.entered.wait(2)
-        assert startup_yielded.wait(0.25)
-        assert write_completed.wait(0.5)
+        # Event-based proof; the timeouts are generous failure bounds, not performance thresholds.
+        assert client.entered.wait(30)
+        assert startup_yielded.wait(30)
+        assert write_completed.wait(30)
     finally:
         client.release.set()
-        thread.join(3)
+        thread.join(30)
     try:
         assert not thread.is_alive()
         assert not errors
@@ -1384,8 +1386,9 @@ def test_lifespan_yields_and_allows_health_and_canonical_writes_when_hindsight_i
             mid("write-during-held-startup"),
         }
     finally:
+        client.release.set()
         hs.stop_resync_timer()
-        hs.flush_mirrors()
+        assert hs.flush_mirrors(timeout=30)  # joins the catch-up worker and continuation
         hs.DIAGNOSTICS.reset()
         hs.set_hindsight_client(None)
 

@@ -1423,6 +1423,9 @@ def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoord
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
         runtime_binding_reader=_runtime_bindings_for_case,
     )
 
@@ -2346,6 +2349,20 @@ def _clone_json_value(value: Any) -> Any:
     return value
 
 
+def _project_recorded_success_rate(*candidates: Any) -> Optional[float]:
+    for raw_value in candidates:
+        if raw_value is None or raw_value == "" or isinstance(raw_value, bool):
+            continue
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if numeric == 0.0:
+            continue
+        return numeric
+    return None
+
+
 # --- _project_persona_dto ---
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -2419,17 +2436,24 @@ def _project_persona_dto(
             or metadata.get("capital_pool_id")
         )
     capital_pool_id = None if capital_mode == "paper" else metadata.get("capital_pool_id")
+    projected_state = _persona_record_projected_state(raw)
     dto: Dict[str, Any] = {
         "id": persona_id,
         "name": raw.get("name") or persona_id,
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "tenantId": metadata.get("tenant_id"),
         "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
-        "state": _persona_record_projected_state(raw),
+        "state": projected_state,
+        "listScope": _fleet_cls.classify_persona_list_scope(raw, projected_state=projected_state),
         "risk": _normalize_risk_level(metadata.get("risk_level")),
         "archetype": archetype,
         "routedStrategies": int(routed_strategies if routed_strategies is not None else 0),
-        "successRate": float(metadata.get("success_rate") or 0.0),
+        "successRate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
         "ownerLifecycleState": _persona_owner_lifecycle_state(raw),
@@ -2508,7 +2532,7 @@ def _project_persona_dto(
         dto["metrics"] = _clone_json_value(performance)
     if overlay:
         for k, v in overlay.items():
-            if v is not None:
+            if v is not None or k == "successRate":
                 dto[k] = v
     return dto
 
@@ -2942,13 +2966,14 @@ def _get_persona_directory_snapshot(
     *,
     snapshot_at: Optional[str] = None,
     reuse_request_read: bool = False,
+    read_store: Optional[Any] = None,
 ) -> PersonaDirectorySnapshot:
     snapshot_timestamp = snapshot_at or utc_now()
     clean_tenant = str(tenant_id or "").strip()
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records(clean_tenant, reuse_request_read=reuse_request_read):
+    for raw in _list_persona_records(clean_tenant, read_store=read_store, reuse_request_read=reuse_request_read):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
@@ -2958,7 +2983,7 @@ def _get_persona_directory_snapshot(
         if pid:
             records_by_id[pid] = raw
 
-    active_store = _get_active_read_store()
+    active_store = _get_active_read_store(explicit=read_store)
     try:
         if (
             reuse_request_read
@@ -5994,6 +6019,35 @@ def _reconcile_paper_enrollment_once() -> int:
     return enrolled
 
 
+def _reconcile_paper_risk_policy_renewal_once() -> int:
+    """Renew gate-approved paper risk-policy approvals before they lapse (no operator call).
+
+    A record whose next check time is in the future costs no owner call.  Lease-guarded inside the coordinator,
+    so safe under restart and concurrent replicas; an unavailable Governance leaves the old approval in place
+    and is retried on the next due check.
+    """
+
+    renewed = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper risk policy renewal could not list provisioning ledger: %s", exc)
+        return 0
+    now = datetime.now(timezone.utc)
+    for record in records:
+        if record.state != "succeeded" or not PersonaProvisioningCoordinator.paper_risk_renewal_due(
+            (record.references or {}).get("paper_risk_policy_renewal"), now
+        ):
+            continue
+        try:
+            coordinator = _chain_paper_capital_coordinator(record.tenant_id)
+            coordinator.reconcile_paper_risk_policy_renewal(record, now=now)
+            renewed += 1
+        except Exception as exc:
+            log.warning("Paper risk policy renewal failed for %s: %s", record.persona_id, exc)
+    return renewed
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
@@ -6051,6 +6105,7 @@ def _reconcile_persona_provisioning_pass() -> Any:
     with request_read_scope():
         result = _reconcile_persona_provisioning_once()
         _reconcile_paper_enrollment_once()
+        _reconcile_paper_risk_policy_renewal_once()
         return result
 
 
@@ -6331,6 +6386,26 @@ def _persona_create_canonical_payload(
     return canonical
 
 
+def _persona_create_effective_profile_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Label the existing new-Persona default after hashing the original input.
+
+    This is create ingress normalization, never a fallback for an older pool.
+    Explicit policies retain their existing independent contract.
+    """
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
+    effective = deepcopy(dict(payload))
+    profile, required, _ = ProfileProvenance._extract_request_risk_profile_context(effective)
+    if profile is not None:
+        effective["risk"] = profile
+    if profile is None and required:
+        effective["risk"] = "low"
+        metadata = dict(effective["metadata"]) if isinstance(effective.get("metadata"), Mapping) else {}
+        metadata["requested_risk_profile_provenance"] = "persona_create_default"
+        effective["metadata"] = metadata
+    return effective
+
+
 def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str, Any]]:
     """Project the declared source requirements for a provisioned persona."""
     market = str(item.get("market") or "").upper()
@@ -6391,10 +6466,20 @@ def _persona_record_for_provisioning(
     mutate_store: bool = False,
     existing: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
+    requested_profile, _, _ = ProfileProvenance._extract_request_risk_profile_context(payload)
+    recovered = record.references.get("requested_risk_profile_provenance")
+    if (requested_profile is None and isinstance(recovered, Mapping)
+            and recovered.get("source") == "verified_persona_owner"
+            and recovered.get("persona_id") == record.persona_id
+            and recovered.get("tenant_id") == record.tenant_id):
+        requested_profile = ProfileProvenance._verified_requested_profile(
+            ("verified_persona_owner", recovered.get("requested_profile")))
+    risk = _normalize_risk_level(requested_profile or "low")
     mandate = str(payload.get("mandate") or "").strip() or None
     strategy_family = str(
         payload.get("strategy_family") or payload.get("strategyFamily") or ""
@@ -6576,7 +6661,13 @@ def _persona_create_response(
         persona,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
-            "successRate": float(payload.get("successRate") or 0.0),
+            "successRate": _project_recorded_success_rate(
+                payload.get("successRate")
+                if "successRate" in payload
+                else payload.get("success_rate"),
+                metadata.get("success_rate"),
+                metadata.get("successRate"),
+            ),
             "capitalMode": "paper",
             "paperLedgerId": metadata["paper_ledger_id"],
             "paperLedger": metadata["paper_ledger"],
@@ -6735,7 +6826,7 @@ def _coordinate_persona_create(
         active = latest
     persona, metadata = _persona_record_for_provisioning(
         active,
-        payload=payload,
+        payload=active.request_payload,
         owner=owner,
         mutate_store=True,
     )
@@ -6831,6 +6922,7 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
 
 # --- _PERSONA_PATCH_SERVER_MANAGED_FIELDS ---
 _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
+    "riskPolicyChange",
     "owner",
     "state",
     "status",
@@ -8918,7 +9010,12 @@ def _project_persona_league_row(
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
         "routed_strategy_count": int(routed or 0),
-        "success_rate": float(metadata.get("success_rate") or 0.0),
+        "success_rate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "mandate": raw.get("mandate") or "",
         "strategy_family": raw.get("strategy_family") or "",
         "capability_summary": capabilities,
@@ -14415,7 +14512,6 @@ def _persona_provisioning_metadata(
         "provisioning_step": record.current_step,
         "initial_mode": "paper",
         "execution_mode": "paper",
-        "success_rate": float(payload.get("successRate") or 0.0),
         "capital_mode": "paper",
         "paper_ledger_id": paper_ledger_id,
         "paper_ledger": {
@@ -14470,6 +14566,10 @@ def _persona_provisioning_metadata(
             f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
+    if "successRate" in payload and payload.get("successRate") is not None:
+        metadata["success_rate"] = float(payload["successRate"])
+    elif "success_rate" in payload and payload.get("success_rate") is not None:
+        metadata["success_rate"] = float(payload["success_rate"])
     readback_started_at = record.references.get("provisioning_readback_started_at")
     if isinstance(readback_started_at, str) and readback_started_at.strip():
         metadata["provisioning_readback_started_at"] = readback_started_at.strip()
@@ -17994,6 +18094,16 @@ class PersonaService:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
+        from .risk_changes import paper_pool_id, project_risk_change, key_issued_at_ms
+
+        risk_pool_id = None
+        if "risk" in payload:
+            try:
+                risk_pool_id = paper_pool_id(raw)
+            except ValueError as exc:
+                raise self._bff_error(409, ErrorCode.PRECONDITION_FAILED, "Paper pool identity conflict", str(exc)) from exc
+            if risk_pool_id and payload["risk"] not in ("low", "medium", "high"):
+                raise self._bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid risk tier", "risk must be low, medium or high")
         cache_key = ":".join(
             ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
         )
@@ -18007,7 +18117,7 @@ class PersonaService:
             }
         )
         cached = _strategy_persona_idempotency_check(cache_key, request_hash)
-        if cached is not None:
+        if cached is not None and not risk_pool_id:
             return cached
         snapshot_at = self._utc_now()
         routed = _routed_strategies_for_persona(persona_id)
@@ -18019,7 +18129,41 @@ class PersonaService:
             if field in payload:
                 base[field] = payload[field]
         if "risk" in payload:
-            base["risk"] = _normalize_risk_level(payload["risk"])
+            if risk_pool_id:
+                issued_at_ms = key_issued_at_ms(resolved_key)
+                try:
+                    risk_request_id = _stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
+                                                         "actor": identity.operator_id, "key": resolved_key})
+                    risk_change = _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
+                        tenant_id=caller_tenant, persona_id=persona_id, pool_id=risk_pool_id,
+                        profile=payload["risk"],
+                        requested_by=identity.operator_id,
+                        request_id=risk_request_id,
+                        request_hash=request_hash,
+                        issued_at_ms=issued_at_ms,
+                    )
+                except Exception as exc:
+                    conflict = getattr(exc, "reason_code", "") in {
+                        "paper_risk_change_idempotency_conflict", "paper_risk_change_revision_conflict",
+                        "paper_risk_change_key_stale",
+                    }
+                    raise self._bff_error(409 if conflict else 503,
+                                          ErrorCode.PRECONDITION_FAILED if conflict else ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                          "Paper risk change unavailable", str(exc)) from exc
+                if (not set(payload).intersection({"name", "archetype", "routedStrategies", "successRate"})
+                        or cached is not None or risk_change.get("requestId") != risk_request_id):
+                    # Risk-only requests need no second Persona write. Cached
+                    # or superseded retries must not replay older name/trait
+                    # edits while reconciling the latest Capital binding.
+                    data = _project_persona_dto(raw, routed_strategies=routed)
+                    project_risk_change(data, raw, caller_tenant)
+                    return {"data": data, "meta": {"snapshot_at": snapshot_at}}
+                # Capital owns the current request. Keep the legacy Persona
+                # scalar as creation provenance; stale Persona writes cannot
+                # change the latest intent. GET/PATCH project Capital below.
+                base["risk"] = _project_persona_dto(raw, routed_strategies=routed).get("risk", "low")
+            else:
+                base["risk"] = _normalize_risk_level(payload["risk"])
         base["updatedAt"] = snapshot_at
         base["id"] = persona_id
         base["tenantId"] = caller_tenant
@@ -18029,9 +18173,11 @@ class PersonaService:
             or (raw or {}).get("state")
             or "draft"
         )
-        update_metadata: Dict[str, Any] = {
-            "success_rate": float(base.get("successRate") or 0.0),
-        }
+        update_metadata: Dict[str, Any] = {}
+        if "successRate" in payload and payload.get("successRate") is not None:
+            update_metadata["success_rate"] = float(payload["successRate"])
+        elif "success_rate" in payload and payload.get("success_rate") is not None:
+            update_metadata["success_rate"] = float(payload["success_rate"])
         update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
             {
                 "id": persona_id,
@@ -18083,12 +18229,24 @@ class PersonaService:
             persona_record,
             overlay={
                 "routedStrategies": int(base.get("routedStrategies") or routed),
-                "successRate": float(base.get("successRate") or 0.0),
+                "successRate": _project_recorded_success_rate(
+                    payload.get("successRate")
+                    if "successRate" in payload
+                    else (
+                        payload.get("success_rate")
+                        if "success_rate" in payload
+                        else base.get("successRate")
+                    ),
+                    (persona_record.get("metadata") or {}).get("success_rate")
+                    if isinstance(persona_record, Mapping)
+                    else None,
+                ),
                 "tenantId": caller_tenant,
             },
             routed_strategies=routed,
         )
         result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
+        project_risk_change(result["data"], persona_record, caller_tenant)
         _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
             "request_hash": request_hash,
             "result": deepcopy(result),

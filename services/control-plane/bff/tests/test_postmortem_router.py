@@ -1,6 +1,8 @@
 """Focused contract tests for the dedicated Postmortem router and service."""
 from __future__ import annotations
 
+import pytest
+
 import os
 import sys
 from typing import Any, Dict, List, Optional
@@ -147,6 +149,9 @@ def test_list_postmortems_preserves_time_range_data_and_meta_contract() -> None:
         },
         "meta": {
             "total": 2,
+            # additive key (POSTMORTEM-SKIP-INFRA-DRAFTS-20261125); None (unknown) here
+            # because this store does not report the field. Row shape unchanged.
+            "hidden_infrastructure_count": None,
             "staleness": {
                 "served_from": "cache",
                 "last_known_at": "2026-08-30T00:00:00Z",
@@ -231,3 +236,64 @@ def test_service_uses_injected_canonical_store_for_list_and_detail() -> None:
     }
     assert service.get_postmortem("pm-missing") is None
     assert store.time_ranges == ["30d"]
+
+
+class _PagedStore(_ReadStore):
+    def __init__(self, hidden: int = 3) -> None:
+        super().__init__()
+        self.hidden = hidden
+        self.calls: List[Dict[str, Any]] = []
+
+    def list_postmortems_page(self, **kwargs: Any) -> Dict[str, Any]:
+        self.calls.append(kwargs)
+        items = list(self.postmortems.values())
+        return {"items": items, "total": len(items), "next_page_token": None,
+                "hidden_infrastructure_count": 0 if kwargs.get("include_infrastructure") else self.hidden}
+
+
+def test_include_infrastructure_is_passed_through_and_hidden_count_in_meta() -> None:
+    store = _PagedStore()
+    store.postmortems["pm-1"] = _real_postmortem_record("pm-1", incident_id="inc-1")
+    client = _client(store)
+
+    body = client.get("/api/v1/postmortems").json()
+    assert body["meta"]["hidden_infrastructure_count"] == 3
+    assert "include_infrastructure" not in store.calls[-1]
+    assert body["data"] == [store.postmortems["pm-1"]]  # row shape unchanged
+
+    body = client.get("/api/v1/postmortems?include_infrastructure=true").json()
+    assert store.calls[-1]["include_infrastructure"] is True
+    assert body["meta"]["hidden_infrastructure_count"] == 0
+
+
+def test_unavailable_surface_is_not_reported_as_hidden_or_empty_ok() -> None:
+    store = _PagedStore()
+    store.get_surface_status = None  # type: ignore[attr-defined]
+    from postmortems.service import PostmortemService as _S
+    svc = _S(store)
+    svc.get_surface_status = lambda: {"status": "unavailable", "source": "unavailable"}  # type: ignore[method-assign]
+    app = FastAPI()
+    app.include_router(create_postmortem_router(
+        postmortem_service=svc, extract_identity=lambda a: {}, require_read_role=lambda i: None, bff_error=_error))
+    body = TestClient(app).get("/api/v1/postmortems").json()
+    assert body["meta"]["surfaces"]["postmortems"]["status"] == "unavailable"
+    assert body["meta"]["hidden_infrastructure_count"] is None  # unknown, not 0
+
+
+@pytest.mark.parametrize("bad", [None, "abc", -4, True, 1.5, {}])
+def test_absent_or_malformed_hidden_count_is_null_not_zero(bad) -> None:
+    store = _PagedStore()
+    store.postmortems["pm-1"] = _real_postmortem_record("pm-1", incident_id="inc-1")
+    orig = store.list_postmortems_page
+
+    def page(**kw):
+        out = orig(**kw)
+        if bad is None:
+            out.pop("hidden_infrastructure_count")
+        else:
+            out["hidden_infrastructure_count"] = bad
+        return out
+
+    store.list_postmortems_page = page  # type: ignore[method-assign]
+    body = _client(store).get("/api/v1/postmortems").json()
+    assert body["meta"]["hidden_infrastructure_count"] is None

@@ -13,11 +13,14 @@ from .incident import (
     IncidentError,
     IncidentStore,
     Postmortem,
+    _serialized_store_read,
     _serialized_store_write,
     build_incident_timeline,
     derive_incident_summary_fields,
     extract_infrastructure_incident_component,
+    extract_infrastructure_incident_referenced_ids,
     is_infrastructure_health_incident,
+    page_postmortem_index,
 )
 
 
@@ -51,15 +54,274 @@ class PostgresIncidentStore(IncidentStore):
         super().__init__(path=None)
         self._refresh_from_disk()
 
+    # Statuses for which IncidentCase.is_open() is true.  The resident cache is
+    # bounded by this set (plus rows touched by the current call), never by the
+    # total stored history.
+    _OPEN_STATUS_SQL = "payload ->> 'status' IN ('open', 'investigating')"
+    # Hard ceiling for any single history read so one request cannot
+    # materialise the whole table.
+    HISTORY_READ_ROW_CAP = 1000
+    _INFRA_BINDING_SQL = "payload ->> 'binding_id' LIKE %s"
+    _INFRA_BINDING_PARAM = "infra-subject-%"
+
+    @staticmethod
+    def _select_payloads(owner: PostgresJsonOwnerStore, where: str, params: tuple, *, tail: str = "") -> list[dict[str, Any]]:
+        return owner.select_where(where, params, tail_sql=tail)
+
     def _refresh_from_disk(self) -> None:
+        """Reload only open incidents; history is read on demand by query."""
         self._incidents.clear()
         self._postmortems.clear()
-        for record in self._incident_records.list_all():
+        for record in self._select_payloads(
+            self._incident_records,
+            self._OPEN_STATUS_SQL,
+            (),
+            tail="ORDER BY updated_at ASC",
+        ):
             incident = IncidentCase.from_dict(record)
             self._incidents[incident.incident_id] = incident
-        for record in self._postmortem_records.list_all():
-            postmortem = Postmortem.from_dict(record)
-            self._postmortems[postmortem.postmortem_id] = postmortem
+
+    def _incident_by_id(self, incident_id: str) -> Optional[IncidentCase]:
+        cached = self._incidents.get(incident_id)
+        if cached is not None:
+            return cached
+        if not incident_id:
+            return None
+        record = self._incident_records.get(incident_id)
+        if record is None:
+            return None
+        incident = IncidentCase.from_dict(record)
+        self._incidents[incident.incident_id] = incident
+        return incident
+
+    def _postmortem_by_id(self, postmortem_id: str) -> Optional[Postmortem]:
+        cached = self._postmortems.get(postmortem_id)
+        if cached is not None:
+            return cached
+        if not postmortem_id:
+            return None
+        record = self._postmortem_records.get(postmortem_id)
+        if record is None:
+            return None
+        pm = Postmortem.from_dict(record)
+        self._postmortems[pm.postmortem_id] = pm
+        return pm
+
+    def _postmortem_for_incident_id(self, incident_id: str) -> Optional[Postmortem]:
+        for pm in self._postmortems.values():
+            if pm.incident_id == incident_id:
+                return pm
+        rows = self._select_payloads(
+            self._postmortem_records,
+            "payload ->> 'incident_id' = %s",
+            (incident_id,),
+            tail="ORDER BY updated_at ASC LIMIT 1",
+        )
+        if not rows:
+            return None
+        pm = Postmortem.from_dict(rows[0])
+        self._postmortems[pm.postmortem_id] = pm
+        return pm
+
+    @_serialized_store_read
+    def list_postmortems(self) -> list[Postmortem]:
+        rows = self._select_payloads(
+            self._postmortem_records,
+            "TRUE",
+            (),
+            tail=f"ORDER BY updated_at DESC LIMIT {self.HISTORY_READ_ROW_CAP}",
+        )
+        rows.reverse()
+        return [Postmortem.from_dict(r) for r in rows]
+
+    # Narrow projection (list_all_selected, no per-row payload decode): only the
+    # fields the list filters and the infrastructure predicate read.
+    # ``incident_evidence_summary`` is selected only for rows the predicate can
+    # possibly match, so large summaries of trading postmortems never load.
+    _PM_INDEX_COLUMNS = (
+        "payload ->> 'postmortem_id', payload ->> 'status', payload ->> 'created_at', "
+        "payload ->> 'incident_id', payload ->> 'binding_id', "
+        "payload ->> 'deployment_plan_id', payload ->> 'persona_capital_binding_id', "
+        "payload ->> 'incident_cluster_id', payload ->> 'artifact_id', "
+        "payload ->> 'runtime_id', "
+        "CASE WHEN payload ->> 'binding_id' LIKE 'infra-subject-%' "
+        "OR payload ->> 'incident_id' LIKE 'agent-%' "
+        "THEN payload ->> 'incident_evidence_summary' END"
+    )
+    _PM_INDEX_FIELDS = (
+        "postmortem_id", "status", "created_at", "incident_id", "binding_id",
+        "deployment_plan_id", "persona_capital_binding_id",
+        "incident_cluster_id", "artifact_id", "runtime_id",
+        "incident_evidence_summary",
+    )
+
+    @_serialized_store_read
+    def list_postmortem_page(
+        self,
+        *,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+        statuses: Optional[set] = None,
+        matcher: Optional[Any] = None,
+        hide_infrastructure: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        q_sql_needle: Optional[str] = None,
+    ) -> tuple:
+        """Exact ``(page, total, hidden_infrastructure_count)`` without loading
+        every payload and without HISTORY_READ_ROW_CAP.
+
+        Filtering, counting and ordering run over a narrow column projection
+        (small per-row tuples, never the wide JSONB payload); only the
+        requested page's payloads are fetched. Free-text ``q`` is selected in
+        SQL (``ILIKE`` over the payload text, a superset of the matcher) so only
+        candidate payloads are loaded, then confirmed by ``matcher``.
+        """
+        owner = self._postmortem_records
+        if matcher is not None:
+            escaped = (
+                (q_sql_needle or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            candidates = owner.select_where(
+                "payload::text ILIKE %s", ("%" + escaped + "%",)
+            )
+            index_rows: list = []
+            for full in candidates:
+                if matcher(full):
+                    row = {f: full.get(f) for f in self._PM_INDEX_FIELDS}
+                    row["incident_evidence_summary"] = full.get("incident_evidence_summary")
+                    index_rows.append(row)
+        else:
+            index_rows = [
+                dict(zip(self._PM_INDEX_FIELDS, rec))
+                for rec in owner.list_all_selected(self._PM_INDEX_COLUMNS)
+            ]
+        page, total, hidden = page_postmortem_index(
+            index_rows, incident_id=incident_id, binding_id=binding_id,
+            statuses=statuses, hide_infrastructure=hide_infrastructure,
+            offset=offset, limit=limit,
+        )
+        pms: list[Postmortem] = []
+        for row in page:
+            full = owner.get(row["postmortem_id"])
+            if full is not None:
+                pms.append(Postmortem.from_dict(full))
+        return pms, total, hidden
+
+    @staticmethod
+    def _count(owner: PostgresJsonOwnerStore, where: str, params: tuple) -> int:
+        return owner.count_where(where, params)
+
+    @_serialized_store_read
+    def count_incidents(self) -> int:
+        return self._count(self._incident_records, "TRUE", ())
+
+    @_serialized_store_read
+    def count_incidents_with_id_prefix(self, prefix: str) -> int:
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return self._count(
+            self._incident_records, "record_id LIKE %s", (escaped + "%",)
+        )
+
+    @_serialized_store_read
+    def list_incidents(self) -> list[IncidentCase]:
+        """Open incidents plus the newest history, capped at HISTORY_READ_ROW_CAP."""
+        merged: dict[str, IncidentCase] = {}
+        for inc in self.query_incidents(limit=self.HISTORY_READ_ROW_CAP):
+            merged[inc.incident_id] = inc
+        for inc in self.query_incidents(open_only=True):
+            merged[inc.incident_id] = inc
+        return sorted(merged.values(), key=lambda i: (i.created_at, i.incident_id), reverse=True)
+
+    @_serialized_store_read
+    def query_incidents(
+        self,
+        *,
+        binding_id: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        open_only: bool = False,
+        limit: Optional[int] = None,
+    ) -> list[IncidentCase]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if binding_id:
+            clauses.append("payload ->> 'binding_id' = %s")
+            params.append(binding_id)
+        if capital_pool_id:
+            clauses.append("payload ->> 'capital_pool_id' = %s")
+            params.append(capital_pool_id)
+        if status:
+            clauses.append("payload ->> 'status' = %s")
+            params.append(status)
+        if severity:
+            clauses.append("payload ->> 'severity' = %s")
+            params.append(severity)
+        if open_only:
+            clauses.append(self._OPEN_STATUS_SQL)
+        where = " AND ".join(clauses) or "TRUE"
+        tail = "ORDER BY payload ->> 'created_at' DESC, record_id DESC"
+        if limit is not None:
+            tail += f" LIMIT {max(0, int(limit))}"
+        return [
+            IncidentCase.from_dict(r)
+            for r in self._select_payloads(self._incident_records, where, tuple(params), tail=tail)
+        ]
+
+    @_serialized_store_read
+    def find_incidents_by_binding(self, binding_id: str) -> list[IncidentCase]:
+        return self.query_incidents(binding_id=binding_id, limit=self.HISTORY_READ_ROW_CAP)
+
+    @_serialized_store_read
+    def find_incidents_by_pool(self, capital_pool_id: str) -> list[IncidentCase]:
+        return self.query_incidents(capital_pool_id=capital_pool_id, limit=self.HISTORY_READ_ROW_CAP)
+
+    @_serialized_store_read
+    def find_infrastructure_incident_by_id_or_alias(self, incident_id: str) -> Optional[IncidentCase]:
+        self._refresh_from_disk()
+        target = str(incident_id or "").strip()
+        if not target:
+            return None
+        direct = self._incident_by_id(target)
+        if direct is not None and is_infrastructure_health_incident(direct):
+            return direct
+        # Merged aliases live inside telemetry_event_ids / evidence_summary text.
+        escaped = target.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self._select_payloads(
+            self._incident_records,
+            f"{self._INFRA_BINDING_SQL} AND payload::text LIKE %s",
+            (self._INFRA_BINDING_PARAM, "%" + escaped + "%"),
+            tail="ORDER BY updated_at DESC LIMIT 200",
+        )
+        candidates = sorted(
+            (
+                inc
+                for inc in (IncidentCase.from_dict(r) for r in rows)
+                if is_infrastructure_health_incident(inc)
+                and target in extract_infrastructure_incident_referenced_ids(inc)
+            ),
+            key=lambda item: (0 if item.is_open() else 1, item.created_at, item.incident_id),
+        )
+        return candidates[0] if candidates else None
+
+    @_serialized_store_read
+    def find_latest_infrastructure_incident_for_component(self, component: str) -> Optional[IncidentCase]:
+        self._refresh_from_disk()
+        rows = self._select_payloads(
+            self._incident_records,
+            self._INFRA_BINDING_SQL,
+            (self._INFRA_BINDING_PARAM,),
+            tail=f"ORDER BY updated_at DESC LIMIT {self.HISTORY_READ_ROW_CAP}",
+        )
+        for record in rows:
+            candidate = IncidentCase.from_dict(record)
+            if (
+                is_infrastructure_health_incident(candidate)
+                and extract_infrastructure_incident_component(candidate) == component
+            ):
+                return candidate
+        return None
 
     def _save(
         self,

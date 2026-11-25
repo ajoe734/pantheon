@@ -1,0 +1,41 @@
+{
+  "task_id": "JSON-STORE-STALE-TEMP-SWEEP-20261125",
+  "class": "RC3",
+  "base_head": "3e571fd3447f8bcb21bfbfc465fb4cdc16b9ec54",
+  "shared_helper": "services/foundation/reliable_delivery.py::sweep_stale_temp_siblings(target, keep_newer=True, kept=None, legacy_names=())",
+  "rule": {
+    "matches": ["<name>.tmp", ".<name>.tmp", "<name>.<8-32 hex>.tmp", ".<name>.<8-32 hex>.tmp", ".<name>.<pid>.<32 hex>.tmp"],
+    "regular_files_only": true,
+    "follows_symlinks": false,
+    "removes_real_file": false,
+    "temp_newer_than_real_file": "kept and reported once (path and size, WARNING log)",
+    "real_file_absent": "all temps kept and reported",
+    "lock": "exclusive store lock held by every caller (flock); no wall-clock thresholds"
+  },
+  "stores": [
+    {"store": "services/incident/incident.py IncidentStore", "change": "private copy of the sweep replaced by the shared helper; temp name .<name>.tmp unchanged", "lock": ".<name>.lock flock LOCK_EX"},
+    {"store": "services/incidents/consumer.py DurableDeliveredIncidentsStore / DurableDownstreamWorkStore", "change": "temp name <name>.tmp (was with_suffix .tmp, deterministic, never random); old name swept via legacy_names; writes now under a .<name>.lock flock", "lock": "new .<name>.lock flock LOCK_EX"},
+    {"store": "services/reconciliation-drift/store.py ReconciliationDriftStore", "change": "random NamedTemporaryFile -> deterministic <name>.tmp, swept once per path per process", "lock": "existing _locked(path) flock"},
+    {"store": "services/reconciliation-drift/consumer.py ConsumerWorkerState", "change": "random mkstemp -> deterministic <name>.tmp, swept once", "lock": "existing _locked() flock"},
+    {"store": "services/reconciliation-drift/incident_listener.py IncidentListenerState", "change": "random mkstemp -> deterministic <name>.tmp, swept once; save() now takes a .<name>.lock flock", "lock": "new .<name>.lock flock LOCK_EX"},
+    {"store": "services/governance/record_store.py JsonGovernanceRecordStore", "change": "uuid temp -> deterministic <name>.tmp (unlinked then O_EXCL create, mode handling unchanged), swept once", "lock": "existing .<name>.flock"},
+    {"store": "services/execution/lean_runtime/paper_runtime.py", "change": "none: cannot leak on current head, already atomic_write_text (one deterministic temp) plus sweep_stale_temp_siblings", "fixed_by_commit": "ffa1bfd8e PAPER-RUNTIME-STATE-FILES-BOUND-20261117"},
+    {"store": "services/incidents/main.py", "change": "none: owns no temp writer; its outbox JSON store is AtomicJsonRecordStore (deterministic temp plus sweep)", "fixed_by_commit": "3e18ff985 INCIDENTS-MEMORY-OOM-R2-20261124"}
+  ],
+  "write_amplification": "unchanged: each operation still performs exactly one temp write of the same document and one rename; only the temp file name changes. New sweeps are one directory scan per store path per process (not per write). The two flocks added (incidents consumer stores, listener state) open one small lock file per write.",
+  "runtime_budget": "at most one temp file per store between writes, bounded by one store size. Storage manifest bounds describe data volume, not temps; none changes, scripts/check_storage_manifest.py passes unchanged.",
+  "tests": [
+    "services/incidents/test_stale_temp_sweep.py",
+    "services/reconciliation-drift/test_stale_temp_sweep.py",
+    "services/governance/test_stale_temp_sweep.py",
+    "services/foundation/tests/test_reliable_delivery.py",
+    "services/incidents/test_read_sweep_cost.py (stale-temp test updated: leftovers older than real file)"
+  ],
+  "tests_result": "29 passed focused; 139 passed in the wider incident/governance/drift suite run; scripts/test_check_storage_manifest.py 10 passed",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer (Claude2) may be from the owner's family.",
+  "residual_findings": [
+    "A newer-than-real temp left by a kill is kept forever (reported once per process) until the next successful write replaces the deterministic one; legacy random-name newer temps need the operator.",
+    "services/paper_fleet_reconciler and paper_runtime tests could not be collected in this worker env (missing deps); their sweep callers are unchanged apart from the helper now also matching .<name>.tmp and 8-hex legacy names.",
+    "Hosted cleanup of the existing 583 files (5.2 GB) remains an operator action."
+  ]
+}

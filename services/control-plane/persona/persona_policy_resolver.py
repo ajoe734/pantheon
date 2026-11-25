@@ -34,6 +34,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from collections.abc import Mapping
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +289,132 @@ class PersonaPolicyResolver:
             source_refs=result.source_refs,
             denial_reasons=result.denial_reasons,
         )
+
+
+def evaluate_participant_action_capability(
+    persona: Mapping[str, Any], snapshot: Mapping[str, Any] | None, *,
+    run_purpose: str = "daily_cycle", requirements: Mapping[str, Any] | None = None,
+    resolver: PersonaPolicyResolver | None = None, owner_available: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Join owner-issued access with the active harness and the broker's ceiling.
+
+    The caller must read both records from their owners. Inline meeting/BFF
+    snapshots are never inputs to this function. A label cannot confer access.
+    Referenced policies must resolve; absent references use the owner harness.
+    """
+    from integrations.openclaw.persona_agent_sync import active_harness_version, PERSONA_AGENT_TOOL_PROFILE
+
+    pid = persona.get("persona_id")
+    out = {"persona_id": pid, "status": "owner_unavailable", "executable": False,
+           "can_be_assigned": False, "can_receive_persona_action": False,
+           "can_execute_in_current_run": False, "can_mutate_trading_state": False,
+           "consultation_can_mutate_trading_state": False, "run_purpose": run_purpose,
+           "effective_tools": [], "effective_workflows": [], "accessible_data": [],
+           "allowed_deliverables": [], "denial_reasons": []}
+
+    def deny(status, reason):
+        out.update(status=status, reason=reason, blocked_reason=reason, denial_reasons=[reason])
+        return out
+
+    if not owner_available:
+        return deny("owner_unavailable", "capability_owner_unavailable")
+    if persona.get("status") != "active" or persona.get("lifecycle_state") in {"frozen", "retired"}:
+        return deny("suspended", "persona_not_active")
+    identity = persona.get("metadata") or {}
+    if persona.get("lifecycle_state") not in {"paper_owner", "paper_running"} or (
+            identity.get("persona_class") in {"consult_panel", "agora_servant", "agora_advisor"}
+            or identity.get("origin") in {"private_servant", "agora_advisor"}
+            or identity.get("owner_scope") == "user_private"
+            or persona.get("consult_policy_id") == "consult-panel.non-trading"):
+        return deny("advisory_only", "persona_not_enrolled_for_daily_execution")
+    if not snapshot or snapshot.get("persona_id") != pid:
+        return deny("owner_unavailable", "capability_snapshot_missing")
+    meta = snapshot.get("metadata") or {}
+    if meta.get("canonical_write_authority") != "persona_service":
+        return deny("downgraded_access", "unverified_capability_authority")
+    if meta.get("access_status") in {"expired", "downgraded", "revoked"}:
+        return deny("expired_access" if meta["access_status"] == "expired" else "downgraded_access",
+                    "capability_access_" + meta["access_status"])
+    if meta.get("expires_at"):
+        try:
+            expires = datetime.fromisoformat(meta["expires_at"].replace("Z", "+00:00"))
+            if expires <= (now or datetime.now(timezone.utc)):
+                return deny("expired_access", "capability_expired")
+        except (ValueError, TypeError):
+            return deny("expired_access", "capability_expiry_invalid")
+    version, reason = active_harness_version(persona)
+    if not version:
+        return deny("no_workflow", reason)
+    surface = version["surface"]
+    # A paper_advisory receipt is the advisory purpose's ceiling only. For the
+    # registered daily actor it carries no daily grant either way, so the daily
+    # ceiling derives from the broker profile, the active harness and owner
+    # policy below. Explicit restrictions/expiry above and below still apply.
+    advisory_receipt = meta.get("scope") == "paper_advisory" and run_purpose == "daily_cycle"
+    granted_tools = PERSONA_AGENT_TOOL_PROFILE["allow"] if advisory_receipt else snapshot.get("effective_tools")
+    tools = set(granted_tools or []) & set(PERSONA_AGENT_TOOL_PROFILE["allow"])
+    # 'read' is the established harness permission for brokered decision reads.
+    harness_tools = set(surface["guardrails"]["allowed_tools"])
+    if "read" not in harness_tools:
+        tools &= harness_tools
+    workflows = set(snapshot.get("effective_workflows") or [])
+    if advisory_receipt:
+        workflows.add("persona_daily_cycle")  # only valid with the five-step active harness checked below
+    if persona.get("tool_profile_id") or persona.get("route_policy_id"):
+        resolved = (resolver or PersonaPolicyResolver()).resolve(SimpleNamespace(**persona))
+        if persona.get("tool_profile_id"):
+            tools &= set(resolved.effective_tools)
+        if persona.get("route_policy_id"):
+            workflows &= set(resolved.effective_workflows)
+        if resolved.denied:
+            return deny("no_workflow", "; ".join(resolved.denial_reasons))
+    workflow = surface["workflow"]
+    if not workflows.intersection({"persona_daily_cycle", "pantheon.persona.daily-cycle"}) or not {
+            "observe", "orient", "decide", "act", "learn"} <= set(workflow["steps"]):
+        return deny("no_workflow", "effective_daily_workflow_missing")
+    if "persona_proposal_submit" not in tools:
+        return deny("downgraded_access", "decision_tool_unavailable")
+    restrictions = set(snapshot.get("restrictions") or [])
+    if restrictions & {"advisory_only", "no_execution", "read_only"}:
+        return deny("advisory_only", "snapshot_advisory_only")
+    req = dict(requirements or {})
+    deliverable = req.get("deliverable_kind", "research_note")
+    accessible = set(meta.get("accessible_data") or [])
+    revoked = restrictions | set(meta.get("revoked_data") or [])
+    required = {str(d).strip() for d in (req.get("required_data") or []) if str(d).strip()}
+    gated = {r["dataset"]: r for r in (persona.get("required_data_sources") or [])
+             if isinstance(r, Mapping) and r.get("dataset") and r.get("policy_gates")}
+    if req.get("requires_market_data") or req.get("evidence_scope") == "market_data":
+        required |= set(gated)
+    unhealthy = set(meta.get("unhealthy_data") or []) | {
+        k for k, v in (meta.get("data_health") or {}).items()
+        if v in {False, "unhealthy", "degraded", "failed", "unavailable"}
+    }
+    failed_gates = meta.get("failed_policy_gates") if isinstance(meta.get("failed_policy_gates"), Mapping) else {}
+    missing = set(required - accessible) | (required & revoked)
+    for ds in required & set(gated):
+        src = gated[ds]
+        gates = set(src.get("policy_gates") or [])
+        if (src.get("source_class") == "seed_only"
+                or ("no_live_capital" in gates and run_purpose not in {"daily_cycle", "consultation", "panel_interpretation"})
+                or ("require_connector_approved" in gates and (not src.get("connector_candidates") or ds in set(meta.get("unapproved_connectors") or [])))
+                or ("require_schedule_active" in gates and ds in set(meta.get("inactive_schedules") or []))
+                or ("require_source_health_ok" in gates and ds in unhealthy)
+                or failed_gates.get(ds)):
+            missing.add(ds)
+    if missing:
+        out["missing_data"] = sorted(missing)
+        return deny("restricted_data", "deliverable_data_not_accessible")
+    granted = advisory_receipt or "research_note" in snapshot.get("allowed_capabilities", [])
+    if deliverable != "research_note" or not granted:
+        return deny("downgraded_access", "deliverable_not_granted")
+    out.update(status="allowed", reason="owner_access_and_daily_workflow_verified",
+               blocked_reason=None, effective_tools=sorted(tools), effective_workflows=sorted(workflows),
+               accessible_data=sorted(accessible - revoked), allowed_deliverables=["research_note"],
+               snapshot_id=snapshot.get("snapshot_id"), can_be_assigned=True, can_receive_persona_action=True)
+    if run_purpose != "daily_cycle":
+        out.update(status="advisory_only", reason="consultation_run_is_advisory", blocked_reason="consultation_run_is_advisory")
+        return out
+    out.update(executable=True, can_execute_in_current_run=True)
+    return out

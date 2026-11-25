@@ -83,15 +83,15 @@ def _run(summary, *, order=None, error=None, broker_url="http://broker:8102",
 
 def _failed(event, code):
     assert event["event_type"] == "reconciliation_failed"
-    assert event["reason_code"] == code
-    return {d["check"]: d for d in event["reason_detail"]}
+    assert event["metadata"]["reason_code"] == code
+    return {d["check"]: d for d in event["metadata"]["reason_detail"]}
 
 
 def test_match_completes_and_lists_each_passed_check() -> None:
     (event, reason), fetch = _run(_summary(), order=BROKER_ORDER)
     assert reason is None
     assert event["event_type"] == "reconciliation_completed"
-    detail = {d["check"]: d for d in event["reason_detail"]}
+    detail = {d["check"]: d for d in event["metadata"]["reason_detail"]}
     assert {"broker_fill_qty", "broker_fill_price", "position_change", "cash_change",
             "committed_snapshot_position", "committed_snapshot_cash"} <= set(detail)
     assert all(d["status"] == "passed" for d in detail.values())
@@ -143,12 +143,12 @@ def test_broker_timeout_defers_then_fails_after_sixty_minutes() -> None:
 def test_no_broker_url_records_not_configured_and_decides_on_booking() -> None:
     (event, _), fetch = _run(_summary(), broker_url="")
     assert event["event_type"] == "reconciliation_completed"
-    assert event["reason_detail"][0] == {"check": "broker_record", "status": "not_configured"}
+    assert event["metadata"]["reason_detail"][0] == {"check": "broker_record", "status": "not_configured"}
     fetch.assert_not_called()
     bad = _summary({"cash_after": 0.0}, {"cash": 0.0})
     (event, _), _ = _run(bad, broker_url="")
     _failed(event, "cash_variance")
-    cash_check = next(c for c in event["reason_detail"] if c["check"] == "cash_change")
+    cash_check = next(c for c in event["metadata"]["reason_detail"] if c["check"] == "cash_change")
     assert cash_check["difference"] == -102206.0
     assert cash_check["delta"] == -102206.0
 
@@ -157,7 +157,7 @@ def test_journey_without_fill_reconciles_as_before() -> None:
     summary = _paper_lifecycle_summary()
     (event, reason), fetch = _run(summary)
     assert event["event_type"] == "reconciliation_completed"
-    assert "reason_detail" not in event
+    assert "reason_detail" not in event["metadata"]
     fetch.assert_not_called()
 
     # Legacy in-process non-broker fill snapshots carry ledger_committed/fill_id/source_fill_event_id
@@ -175,7 +175,7 @@ def test_journey_without_fill_reconciles_as_before() -> None:
     (legacy_event, legacy_reason), fetch_legacy = _run(legacy_summary)
     assert legacy_reason is None
     assert legacy_event["event_type"] == "reconciliation_completed"
-    assert "reason_detail" not in legacy_event
+    assert "reason_detail" not in legacy_event["metadata"]
     fetch_legacy.assert_not_called()
 
 
@@ -185,7 +185,7 @@ def test_incomplete_booking_evidence_is_classified_distinctly_from_accounting_va
     (event, reason), _ = _run(missing_cash, order=BROKER_ORDER)
     assert reason is None
     _failed(event, "reconciliation_evidence_incomplete")
-    cash_check = next(c for c in event["reason_detail"] if c["check"] == "cash_change")
+    cash_check = next(c for c in event["metadata"]["reason_detail"] if c["check"] == "cash_change")
     assert cash_check["status"] == "unverified"
     assert cash_check["difference"] is None and cash_check["delta"] is None
     assert cash_check["missing_evidence"] == ["actual"]
@@ -195,7 +195,7 @@ def test_incomplete_booking_evidence_is_classified_distinctly_from_accounting_va
     missing_pos = _summary({"position_quantity_before": None, "position_quantity_after": None})
     (event2, _), _ = _run(missing_pos, order=BROKER_ORDER)
     _failed(event2, "reconciliation_evidence_incomplete")
-    pos_check = next(c for c in event2["reason_detail"] if c["check"] == "position_change")
+    pos_check = next(c for c in event2["metadata"]["reason_detail"] if c["check"] == "position_change")
     assert pos_check["status"] == "unverified"
     assert pos_check["missing_evidence"] == ["actual"]
 
@@ -204,7 +204,7 @@ def test_incomplete_booking_evidence_is_classified_distinctly_from_accounting_va
     (event3, _), fetch3 = _run(missing_broker_id, order=BROKER_ORDER)
     fetch3.assert_not_called()
     _failed(event3, "reconciliation_evidence_incomplete")
-    broker_check = next(c for c in event3["reason_detail"] if c["check"] == "broker_record")
+    broker_check = next(c for c in event3["metadata"]["reason_detail"] if c["check"] == "broker_record")
     assert broker_check["status"] == "unverified"
     assert broker_check["missing_evidence"] == ["broker_order_id"]
 
@@ -237,7 +237,7 @@ def test_recorded_tj_57418ba7_sell_reconciliation_with_complete_and_incomplete_e
     )
     (completed_event, _), _ = _run(summary, order=broker_order)
     assert completed_event["event_type"] == "reconciliation_completed"
-    assert all(c["status"] == "passed" for c in completed_event["reason_detail"])
+    assert all(c["status"] == "passed" for c in completed_event["metadata"]["reason_detail"])
 
     # Proven cash discrepancy on tj_57418ba7 carries expected, actual, difference and delta
     mismatch_summary = _summary(
@@ -258,7 +258,7 @@ def test_recorded_tj_57418ba7_sell_reconciliation_with_complete_and_incomplete_e
     )
     (variance_event, _), _ = _run(mismatch_summary, order=broker_order)
     _failed(variance_event, "cash_variance")
-    cash_change = next(c for c in variance_event["reason_detail"] if c["check"] == "cash_change")
+    cash_change = next(c for c in variance_event["metadata"]["reason_detail"] if c["check"] == "cash_change")
     assert cash_change["status"] == "failed"
     assert cash_change["expected"] == pytest.approx(217.5331375)
     assert cash_change["actual"] == pytest.approx(172.5331375)
@@ -336,7 +336,7 @@ def test_missing_or_invalid_fee_and_tax_leave_cash_change_unverified_and_preserv
     (zero_event, zero_reason), _ = _run(zero_summary, order=BROKER_ORDER)
     assert zero_reason is None
     assert zero_event["event_type"] == "reconciliation_completed"
-    zero_detail = {d["check"]: d for d in zero_event["reason_detail"]}
+    zero_detail = {d["check"]: d for d in zero_event["metadata"]["reason_detail"]}
     assert zero_detail["cash_change"]["status"] == "passed"
     assert zero_detail["cash_change"]["expected"] == pytest.approx(2215.0)
     assert zero_detail["cash_change"]["actual"] == pytest.approx(2215.0)

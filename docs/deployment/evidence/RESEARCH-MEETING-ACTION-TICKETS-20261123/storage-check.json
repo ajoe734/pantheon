@@ -1,0 +1,20 @@
+{
+  "bound_status": {
+    "bounded": 17,
+    "unbounded": 21,
+    "unreviewed": 336
+  },
+  "discovered": {
+    "compose_path": 82,
+    "jsonl": 90,
+    "schema_table": 59,
+    "sqlite": 14,
+    "sqlite_connect": 14,
+    "table": 118
+  },
+  "entries": 374,
+  "failures": [],
+  "passed": true,
+  "schema_version": "storage_manifest_check.v1",
+  "waivers": 3
+}

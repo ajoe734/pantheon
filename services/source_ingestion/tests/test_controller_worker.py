@@ -3503,6 +3503,66 @@ def test_steady_rpc_timeouts_derive_from_collector_read_budget_with_headroom() -
     assert cw.STEADY_RECONCILE_RPC_TIMEOUT_SECONDS >= 2 * 30
 
 
+@pytest.mark.parametrize("symbols", [[], ["2330.TWSE"], ["2330"]], ids=["no-symbols", "qualified", "bare"])
+def test_social_scheduled_handler_preserves_delivery_without_unneeded_price_reads(
+    tmp_path, monkeypatch, symbols, record_property
+):
+    import time
+    from fastapi.testclient import TestClient
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.main import create_app
+    from services.source_ingestion.tests.test_collector_outcome_truth import setup_governed_pipeline
+
+    authority_reader = CollectorBundleAdapter._instrument_authority
+    runtime, connector, files = setup_governed_pipeline(tmp_path, monkeypatch, "social", producer=True)
+    # Replace the fixture's authority stub with the production run-file reader.
+    monkeypatch.setattr(CollectorBundleAdapter, "_instrument_authority", authority_reader)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    monkeypatch.delenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", raising=False)
+    price = tmp_path / "market_data_store/normalized/tw_price_daily/date=2026-11-10/run.jsonl"
+    price.parent.mkdir(parents=True)
+    line = json.dumps({"metadata": {"symbol_canonical": "2330.TWSE", "normalized_row": {"close": 100}}})
+    price.write_text((line + "\n") * 1393, encoding="utf-8")
+    items_path = next(p for p in files if p.endswith("items.jsonl"))
+    items = [json.loads(line) for line in files[items_path].splitlines()]
+    for item in items:
+        item["symbols"] = symbols
+    files[items_path] = b"\n".join(json.dumps(item).encode() for item in items)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    request = {"exclusive_connector_ids": [connector.connector_id],
+               "force_connector_ids": [connector.connector_id], "max_concurrency": 1}
+    price_opens = []
+    original_open = Path.open
+
+    def counted_open(path, *args, **kwargs):
+        if "/normalized/tw_price_daily/" in str(path):
+            price_opens.append(str(path))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted_open)
+    for phase in ("cold", "warm-empty", "restart-empty"):
+        if phase == "restart-empty":
+            runtime = create_runtime(data_dir=tmp_path)
+        previous_opens = len(price_opens)
+        with TestClient(create_app(runtime)) as client:
+            start = time.monotonic()
+            response = client.post("/api/source-ingest/run-scheduled", json=request)
+            elapsed = time.monotonic() - start
+        record_property(f"{phase}_handler_seconds", elapsed)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"]["total_ran"] == 1
+        assert body["summary"]["total_failed"] == 0, body
+        receipt = body["ran"][0]["receipt"]
+        expected_count = (3 if symbols else 2) if phase == "cold" else 0
+        assert receipt["raw_count"] == receipt["normalized_count"] == expected_count
+        # Work is independent of the number/size of historical files for these paths.
+        assert len(price_opens) - previous_opens == (1 if symbols == ["2330"] and phase == "cold" else 0)
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["no_new_data"] is True
+    assert state["observed"]["health_state"] == "healthy"
+
+
 def _serve_steady(paths_delay: dict[str, float]):
     import http.server
     import threading

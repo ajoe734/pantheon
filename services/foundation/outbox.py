@@ -158,6 +158,13 @@ class EventEnvelope:
         )
 
 
+def describe_exception(exc: BaseException) -> str:
+    """Failure text that never depends on the exception message being non-empty."""
+    message = str(exc).strip()
+    name = type(exc).__name__
+    return f"{name}: {message}" if message else name
+
+
 @dataclass(frozen=True)
 class OutboxRecord:
     outbox_id: str
@@ -209,8 +216,9 @@ class OutboxRecord:
         )
 
     def mark_failed(self, error: str, *, dead_lettered: bool = False) -> "OutboxRecord":
-        if not str(error).strip():
-            raise FoundationValidationError("outbox failure error is required")
+        # Never raise on an empty message: exceptions such as httpx.ReadTimeout
+        # stringify to "" and would otherwise abort failure recording.
+        error = str(error).strip() or "unspecified_delivery_error"
         return OutboxRecord(
             outbox_id=self.outbox_id,
             owner_service=self.owner_service,

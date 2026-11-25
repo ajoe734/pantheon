@@ -82,6 +82,21 @@ class DistillationControllerConfig:
     max_consecutive_failed_ticks: int = 5
     terminal_retention_seconds: int = 7 * 86400
     dead_letter_retention_seconds: int = 30 * 86400
+    # Retired-runtime closure (empty = off): explicit tenants plus the enqueue
+    # window (epoch seconds) whose pending rows are closed out of scope.
+    retired_tenant_ids: tuple[str, ...] = ()
+    retired_window_from: float = 0.0
+    retired_window_to: float = 0.0
+
+
+STATUS_WORKING = "working"
+STATUS_WORKING_DEAD_LETTERS = "working_with_unresolved_dead_letters"
+STATUS_NOT_WORKING = "not_working"
+STATUS_DELIVERY_DEGRADED = "working_delivery_degraded"
+# Process-local: queue path -> a tick of this process completed normal work.
+_NORMAL_WORK_SEEN: dict[str, bool] = {}
+LEASE_REDRIVE_PER_TICK = 10
+LINEAGE_SETTLE_PER_TICK = 10
 
 
 # Consecutive hard failures per alive path (process-local; a restart resets it
@@ -92,6 +107,7 @@ _PRUNED_BYTES: dict[str, int] = {}
 COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
 # Max auth (401/403) dead letters redriven per tick; bounds recovery Registry load.
 AUTH_REDRIVE_PER_TICK = 100
+SOURCE_BATCH_LIMIT = 100
 
 
 def _queue_for(config: "DistillationControllerConfig") -> DistillationJobQueue:
@@ -178,6 +194,13 @@ def config_from_env() -> DistillationControllerConfig:
         max_consecutive_failed_ticks=max_consecutive_failed_ticks,
         terminal_retention_seconds=terminal_retention_seconds,
         dead_letter_retention_seconds=dead_letter_retention_seconds,
+        retired_tenant_ids=tuple(
+            t.strip()
+            for t in (os.getenv("DISTILLATION_RETIRED_TENANT_IDS") or "").split(",")
+            if t.strip()
+        ),
+        retired_window_from=float(os.getenv("DISTILLATION_RETIRED_WINDOW_FROM_EPOCH") or 0),
+        retired_window_to=float(os.getenv("DISTILLATION_RETIRED_WINDOW_TO_EPOCH") or 0),
     )
 
 
@@ -335,6 +358,7 @@ def _build_registry_payload(
     *,
     request: RegistrySyncRequest,
     registry_id: str,
+    created_at: str | None = None,
 ) -> dict[str, Any]:
     from services.research.strategy_spec.conversion import (
         StrategySpecConversionService,
@@ -383,6 +407,7 @@ def _build_registry_payload(
         strategy_id=f"strat-{source.source_id}-{job.source_digest[-12:]}",
         title=source.title,
         version="1.0.0",
+        created_at=created_at,
     )
     registry_payload = dict(conversion.registry_payload)
 
@@ -404,6 +429,43 @@ def _build_registry_payload(
     registry_payload["registry_id"] = registry_id
     registry_payload["source_digest"] = job.source_digest
     return registry_payload
+
+
+def _registry_entry_matches_replay(
+    entry: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    request: RegistrySyncRequest,
+) -> bool:
+    """Rebuild a versioned draft using its retained creation time, then verify all content.
+
+    The bounded seed store can evict a seed after the Registry write but before
+    queue acknowledgement. Recreating that seed supplies today's timestamp.
+    Only the existing draft's timestamp is reused; no other Registry content is
+    copied into the expected projection, and the full comparator still applies.
+    """
+    if _registry_entry_matches_expected(entry, expected):
+        return True
+    if not request.job.source_digest or _registry_artifact_state(entry) != "draft":
+        return False
+    payload = _registry_entry_payload(entry)
+    metadata = payload.get("metadata")
+    spec = metadata.get("strategy_spec") if isinstance(metadata, Mapping) else None
+    provenance = spec.get("provenance") if isinstance(spec, Mapping) else None
+    created_at = provenance.get("created_at") if isinstance(provenance, Mapping) else None
+    if not isinstance(created_at, str) or not created_at.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return False
+        replay = _build_registry_payload(
+            request=request,
+            registry_id=str(expected["registry_id"]),
+            created_at=created_at,
+        )
+    except ValueError:
+        return False
+    return _registry_entry_matches_expected(entry, replay)
 
 
 def _make_registry_sync(
@@ -441,7 +503,7 @@ def _make_registry_sync(
                     status="immutable",
                     reason=f"Registry artifact {registry_id} is immutable ({state})",
                 )
-            if not _registry_entry_matches_expected(existing, payload):
+            if not _registry_entry_matches_replay(existing, payload, request):
                 raise RuntimeError(
                     f"Registry artifact {registry_id} exists with conflicting "
                     f"distillation lineage/content for source {source.source_id}"
@@ -477,7 +539,7 @@ def _make_registry_sync(
                 status="immutable",
                 reason=f"Registry artifact {registry_id} became immutable ({state})",
             )
-        if not _registry_entry_matches_expected(readback, payload):
+        if not _registry_entry_matches_replay(readback, payload, request):
             raise RuntimeError(
                 f"Registry write readback mismatched distillation lineage/content for {registry_id}"
             )
@@ -535,13 +597,24 @@ def run_controller_tick(
     reconcile_meta: dict[str, Any] = {}
     actual_meta: dict[str, Any] = {}
     hard_failure = False
-    
+    alive_status = STATUS_NOT_WORKING
+
     try:
         # 1. Read desired state: normalized SourceRecords
         try:
+            def already_admitted(source: SourceRecord) -> bool:
+                nonlocal queue
+                if queue is None:
+                    queue = _queue_for(config)
+                return queue.get(source.source_id, source_version_digest(source)) is not None
+
+            source_summary: dict[str, Any] = {}
             source_records = read_source_records_for_tenant(
                 jsonl_path=config.evidence_store_path,
                 tenant_id=state.tenant_id,
+                limit=SOURCE_BATCH_LIMIT,
+                already_admitted=already_admitted,
+                summary=source_summary,
             )
         except Exception as exc:
             raise DistillationControllerError("desired_read", f"Failed to read source evidence repo: {exc}")
@@ -553,7 +626,13 @@ def run_controller_tick(
             and not (s.source_type == SourceType.MARKET and s.metadata.get("collector_market_bundle"))
         ]
         eligible_ids = [s.source_id for s in eligible_records]
-        desired_meta = {"eligible_source_ids": sorted(eligible_ids)}
+        eligible_count = source_summary.get("eligible_source_count", len(eligible_ids))
+        desired_meta = {
+            **source_summary,
+            "eligible_source_count": eligible_count,
+            "eligible_source_ids": sorted(eligible_ids),
+            "eligible_source_ids_scope": "admission_batch",
+        }
         
         # 2. Transactionally admit source versions and process leased events.
         # A job is acknowledged only after Registry terminal readback.
@@ -579,6 +658,7 @@ def run_controller_tick(
             # once the Registry answers again (404 on a probe id is an answer).
             registry_reachable = False
             auth_recovery: dict[str, list[str]] = {"redriven": [], "superseded": []}
+            lineage_recovery: dict[str, list[str]] = {"replayed": [], "closed": []}
             if queue.dead_letter_count():
                 try:
                     _get_registry_entry(config.registry_url, "distillation-redrive-probe")
@@ -601,12 +681,48 @@ def run_controller_tick(
                     limit=AUTH_REDRIVE_PER_TICK,
                     tenant_id=state.tenant_id,
                 )
+                lineage_recovery = queue.settle_lineage_conflict_dead_letters(
+                    requested_by="strategy-distillation-controller",
+                    limit=LINEAGE_SETTLE_PER_TICK,
+                    tenant_id=state.tenant_id,
+                )
+            retired_closure: dict[str, Any] = {"closed": [], "refused": {}}
+            if config.retired_tenant_ids and config.retired_window_to > 0:
+                retired_closure = queue.close_retired_tenant_pending(
+                    retired_tenant_ids=config.retired_tenant_ids,
+                    active_tenant_id=state.tenant_id,
+                    enqueued_from=config.retired_window_from,
+                    enqueued_to=config.retired_window_to,
+                    requested_by="strategy-distillation-controller",
+                )
             run_result = worker.catch_up(
                 source_records,
-                limit=100,
+                limit=SOURCE_BATCH_LIMIT,
                 tenant_id=state.tenant_id,
             )
+            # Lease-expired dead letters (e.g. an OOM burst) are redriven only
+            # after this process completed normal work, bounded per tick/job.
+            queue_key = str(config.job_queue_path)
+            if (
+                run_result.registry_synced
+                or run_result.skipped
+                or run_result.created
+                or run_result.refreshed
+            ) and not run_result.lease_lost:
+                _NORMAL_WORK_SEEN[queue_key] = True
+            lease_redriven: list[str] = []
+            if _NORMAL_WORK_SEEN.get(queue_key) and not run_result.lease_lost:
+                lease_redriven = queue.redrive_lease_expired_dead_letters(
+                    requested_by="strategy-distillation-controller",
+                    limit=LEASE_REDRIVE_PER_TICK,
+                    tenant_id=state.tenant_id,
+                )
             reconcile_meta = {
+                "lease_expired_redriven": len(lease_redriven),
+                "lineage_replayed": len(lineage_recovery["replayed"]),
+                "lineage_closed": len(lineage_recovery["closed"]),
+                "retired_closed": len(retired_closure["closed"]),
+                "retired_refused": dict(retired_closure["refused"]),
                 "processed": run_result.processed,
                 "created": run_result.created,
                 "refreshed": run_result.refreshed,
@@ -675,11 +791,18 @@ def run_controller_tick(
             "pending_dead_letter_count": queue.dead_letter_count(),
             "terminal_drafts": terminal_drafts,
         }
+        # A durable dead letter alone is not "not working": the loop ran and
+        # the unresolved rows are counted. Only live delivery trouble fails.
+        controller_status = (
+            STATUS_WORKING_DEAD_LETTERS
+            if queue_metrics["dead_letter"] or actual_meta["pending_dead_letter_count"]
+            else STATUS_WORKING
+        )
+        actual_meta["controller_status"] = controller_status
 
         if (
             run_result.failed
             or queue_metrics["retry_wait"] - queue_metrics["deferred"]
-            or queue_metrics["dead_letter"]
             or queue_metrics["failed"]
         ):
             raise DistillationControllerError(
@@ -710,10 +833,10 @@ def run_controller_tick(
                 ),
                 backlog=reconcile_meta.get("enqueued", 0),
                 desired_state={
-                    "present": bool(eligible_ids),
+                    "present": bool(eligible_count),
                     "source": "source-ingest.normalized_source_records",
                     "checked_at": observed_at,
-                    "summary": f"{len(eligible_ids)} eligible normalized source records",
+                    "summary": f"{eligible_count} eligible normalized source records",
                     "sources": ["source-ingest.normalized_source_records"],
                 },
                 downstream_actual_state={
@@ -722,7 +845,12 @@ def run_controller_tick(
                     "checked_at": observed_at,
                     "summary": (
                         f"{len(terminal_drafts)} terminal drafts; "
-                        f"{actual_meta['pending_dead_letter_count']} dead letters"
+                        f"{actual_meta['pending_dead_letter_count']} "
+                        + (
+                            "unresolved dead letters (working_with_unresolved_dead_letters)"
+                            if controller_status == STATUS_WORKING_DEAD_LETTERS
+                            else "dead letters"
+                        )
                     ),
                     "sources": ["registry.distillation_job_queue"],
                 },
@@ -736,8 +864,10 @@ def run_controller_tick(
             )
         )
         
+        alive_status = controller_status
         return {
             "status": "success",
+            "controller_status": controller_status,
             "desired": desired_meta,
             "reconcile": reconcile_meta,
             "actual": actual_meta,
@@ -750,6 +880,7 @@ def run_controller_tick(
         # tracked, the loop itself runs); every other stage means the loop
         # could not do its job this tick.
         hard_failure = stage != "registry_sync"
+        alive_status = STATUS_NOT_WORKING if hard_failure else STATUS_DELIVERY_DEGRADED
         state.record_failure(
             stage=stage,
             reason=reason,
@@ -783,10 +914,12 @@ def run_controller_tick(
             
         raise exc
     finally:
-        _refresh_alive(config, hard_failure=hard_failure)
+        _refresh_alive(config, hard_failure=hard_failure, status=alive_status)
 
 
-def _refresh_alive(config: DistillationControllerConfig, *, hard_failure: bool) -> None:
+def _refresh_alive(
+    config: DistillationControllerConfig, *, hard_failure: bool, status: str = STATUS_WORKING
+) -> None:
     """Refresh the healthcheck marker, unless the loop keeps failing.
 
     The container healthcheck reads this file's mtime. Refreshing it on every
@@ -803,13 +936,13 @@ def _refresh_alive(config: DistillationControllerConfig, *, hard_failure: bool) 
         _HARD_FAILURES[key] = 0
     if _HARD_FAILURES[key] >= max(1, int(config.max_consecutive_failed_ticks)):
         return
-    _write_alive(config.alive_path)
+    _write_alive(config.alive_path, status)
 
 
-def _write_alive(path: Path) -> None:
+def _write_alive(path: Path, status: str = STATUS_WORKING) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(utc_now() + "\n", encoding="utf-8")
+        path.write_text(f"{utc_now()}\n{status}\n", encoding="utf-8")
     except Exception:
         pass
 

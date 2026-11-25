@@ -3634,3 +3634,211 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
         self.assertNotIn("pre_trade_sizing", legacy_decision["metadata"])
         self.assertEqual(legacy_decision["metadata"]["risk_policy_id"], "fixture-single-name-25pct")
 
+
+class TestPaperSignalProducerDynamicRuntimeManagerBearer(unittest.TestCase):
+    """PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125: dynamic HS256 JWT minting and token_file re-reads."""
+
+    def test_fetch_eligible_paper_bindings_mints_fresh_hs256_tokens_across_clock_advances_past_ttl(
+        self,
+    ) -> None:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+        secret = "producer-dynamic-bearer-test-secret-2026!"
+        issuer = "pantheon-dev-control-plane"
+        audience = "pantheon-runtime-manager"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+            "PANTHEON_RUNTIME_JWT_ISSUER": issuer,
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": audience,
+        }
+        clock_now = [1_700_500_000.0]
+        captured_headers: list[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            auth_hdr = req.get_header("Authorization") or ""
+            captured_headers.append(auth_hdr)
+            validate_request_auth(
+                authorization=auth_hdr,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            if "/api/runtime-fleet/desired-state" in req.full_url:
+                body = {
+                    "bindings": [
+                        {
+                            "binding_id": "rb-dyn-1",
+                            "status": "active",
+                            "deployment_mode": "paper",
+                        }
+                    ],
+                    "excluded": [],
+                }
+            else:
+                body = {
+                    "binding_id": "rb-dyn-1",
+                    "status": "active",
+                    "artifact_id": "art-1",
+                    "artifact_version": "1.0.0",
+                    "metadata": {"strategy_id": "strat-1"},
+                }
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return json.dumps(body).encode("utf-8")
+
+            return _Resp()
+
+        producer_env = {
+            **strict_env,
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+            "PANTHEON_RUNTIME_MANAGER_ACTOR_ID": "paper-signal-producer",
+            "PANTHEON_RUNTIME_MANAGER_ROLES": "operator",
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "PANTHEON_RUNTIME_MANAGER_JWT_TTL_SECONDS": "30",
+        }
+        with patch.dict("os.environ", producer_env, clear=False), patch(
+            "time.time", side_effect=lambda: clock_now[0]
+        ), patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            auth = resolve_runtime_manager_auth()
+            bindings_t0 = fetch_eligible_paper_bindings(
+                "http://runtime-manager:8081",
+                auth,
+                raise_on_error=True,
+            )
+            self.assertEqual(len(bindings_t0), 1)
+            self.assertEqual(bindings_t0[0]["binding_id"], "rb-dyn-1")
+            self.assertEqual(len(captured_headers), 2)
+            t0_header = captured_headers[-1]
+
+            # Advance simulated clock past initial 30s TTL.
+            clock_now[0] = 1_700_500_045.0
+            with self.assertRaises(AuthError) as expired:
+                validate_request_auth(
+                    authorization=t0_header,
+                    required_roles=("operator",),
+                    env=strict_env,
+                    allow_shared_secret=True,
+                )
+            self.assertEqual(expired.exception.code, "AUTH_JWT_EXPIRED")
+
+            # Subsequent tick using the same long-lived auth object mints fresh tokens and succeeds.
+            bindings_t1 = fetch_eligible_paper_bindings(
+                "http://runtime-manager:8081",
+                auth,
+                raise_on_error=True,
+            )
+            self.assertEqual(len(bindings_t1), 1)
+            self.assertEqual(len(captured_headers), 4)
+            t1_header = captured_headers[-1]
+            self.assertNotEqual(t1_header, t0_header)
+            ctx = validate_request_auth(
+                authorization=t1_header,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            self.assertEqual(ctx.actor_id, "paper-signal-producer")
+
+    def test_fetch_eligible_paper_bindings_rereads_rotated_token_file_across_clock_advances(
+        self,
+    ) -> None:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        from services.runtime_auth_inbound import (
+            AuthError,
+            encode_jwt_hs256,
+            validate_request_auth,
+        )
+
+        secret = "producer-token-file-rotation-secret-2026!"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+        }
+        clock_now = [1_700_550_000.0]
+
+        def _mint(sub: str, issued: int) -> str:
+            return encode_jwt_hs256(
+                {
+                    "sub": sub,
+                    "roles": ["operator"],
+                    "iat": issued,
+                    "nbf": issued - 5,
+                    "exp": issued + 30,
+                },
+                secret=secret,
+            )
+
+        seen_actors: list[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            ctx = validate_request_auth(
+                authorization=req.get_header("Authorization") or "",
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            seen_actors.append(ctx.actor_id)
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return json.dumps({"bindings": [], "excluded": []}).encode("utf-8")
+
+            return _Resp()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            token_file = Path(tmp_dir) / "rm-producer.token"
+            tok1 = _mint("producer-file-v1", int(clock_now[0]))
+            token_file.write_text(tok1, encoding="utf-8")
+
+            with patch.dict(
+                "os.environ",
+                {"PANTHEON_RUNTIME_MANAGER_TOKEN_FILE": str(token_file)},
+                clear=False,
+            ), patch("time.time", side_effect=lambda: clock_now[0]), patch(
+                "urllib.request.urlopen", side_effect=_fake_urlopen
+            ):
+                auth = resolve_runtime_manager_auth()
+                self.assertEqual(
+                    fetch_eligible_paper_bindings(
+                        "http://runtime-manager:8081", auth, raise_on_error=True
+                    ),
+                    [],
+                )
+                self.assertEqual(seen_actors, ["producer-file-v1"])
+
+                clock_now[0] = 1_700_550_045.0
+                with self.assertRaises(AuthError):
+                    validate_request_auth(
+                        authorization=f"Bearer {tok1}",
+                        required_roles=("operator",),
+                        env=strict_env,
+                        allow_shared_secret=True,
+                    )
+                tok2 = _mint("producer-file-v2", int(clock_now[0]))
+                token_file.write_text(tok2, encoding="utf-8")
+
+                self.assertEqual(
+                    fetch_eligible_paper_bindings(
+                        "http://runtime-manager:8081", auth, raise_on_error=True
+                    ),
+                    [],
+                )
+                self.assertEqual(seen_actors, ["producer-file-v1", "producer-file-v2"])
+
+

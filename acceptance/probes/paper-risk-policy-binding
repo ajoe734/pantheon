@@ -13,12 +13,22 @@ import hashlib
 import json
 import math
 import os
+import shlex
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from services.capital.risk_policy import profile_outer_bounds, risk_policy_digest
+from services.governance.write_authority import is_authorized_to_decide
+from services.governance.paper_approval_scope import (
+    ApprovalUsageContext, DEV_PAPER_PROVISIONER_SUBJECT, enforce_authorization_scope, require_dedicated_subject_scope,
+)
 
 DEFAULT_PERSONAS = (
     "persona-2448c7053e33ea48da47",
@@ -30,6 +40,80 @@ MAX_BYTES = 8 * 1024 * 1024
 MAX_ROWS = 2000
 MAX_REQUESTS = 24
 MAX_SECONDS = 180
+
+# Existing dev acceptance jobs already carry pinned SSH transport. Service
+# credentials stay in the running containers; only scoped GET bodies return.
+DEV_OWNER_READ = r'''
+import json, os, sys, urllib.parse, urllib.request
+from services.service_token_file import configured_service_token
+try:
+    args = json.load(sys.stdin)
+    kind, identity, tenant = args['kind'], args['identity'], args['tenant']
+    def request(url, token=None, body=None):
+        headers = {'Content-Type': 'application/json', 'X-Tenant-Id': tenant}
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        req = urllib.request.Request(url, headers=headers,
+            data=json.dumps(body).encode() if body else None, method='POST' if body else 'GET')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            raw = response.read(8388609)
+        if len(raw) > 8388608:
+            raise ValueError('response_size_exceeded')
+        return json.loads(raw)
+    if kind == 'approvals':
+        origin = 'http://127.0.0.1:8001'
+        token = request(origin + '/bff/auth/dev-login', body={
+            'grant_type': 'client_credentials',
+            'client_id': os.environ['PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID'],
+            'client_secret': os.environ['PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET'],
+        })['access_token']
+        result = request(origin + '/api/v1/approval-decisions', token)
+    elif kind in ('capital', 'telemetry'):
+        if kind == 'capital':
+            origin = os.environ['PANTHEON_CAPITAL_API_URL'].rstrip('/')
+            token = (configured_service_token('RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN')
+                     or configured_service_token('DEPLOYMENT_CAPITAL_SERVICE_TOKEN'))
+            path = '/api/capital-pools/' + urllib.parse.quote(identity, safe='') + '/risk-policy?stage=paper'
+        else:
+            origin = os.environ['PANTHEON_TELEMETRY_API_URL'].rstrip('/')
+            token = configured_service_token('PANTHEON_TELEMETRY_SERVICE_TOKEN')
+            path = '/api/telemetry/events/' + urllib.parse.quote(identity, safe='')
+        if not token:
+            raise ValueError('owner_credential_unavailable')
+        result = request(origin + path, token)
+    else:
+        raise ValueError('unsupported_owner_read')
+    print(json.dumps(result, ensure_ascii=False))
+except Exception:
+    # Never print credential-bearing exception text or remote environment.
+    print(json.dumps({'owner_read_failed': True}))
+    sys.exit(1)
+'''
+
+
+def dev_transport_configured():
+    return bool(os.environ.get("DEV_DEPLOY_SSH_HOST") and os.environ.get("DEV_DEPLOY_SSH_KEY_FILE"))
+
+
+def dev_owner_read(kind, identity, tenant, *, timeout):
+    if (kind not in {"capital", "telemetry", "approvals"} or not tenant
+            or os.environ.get("ACCEPTANCE_BFF_URL", "").rstrip("/") != "https://api.dev.mvl-cap.tw"):
+        raise RuntimeError("dev_owner_read_scope_invalid")
+    container = "pantheon-operator-bff-1" if kind == "approvals" else "pantheon-paper-signal-producer-1"
+    command = "timeout 15s docker exec -i " + container + " python3 -c " + shlex.quote(DEV_OWNER_READ)
+    transport = Path(__file__).resolve().parents[2] / "scripts/dev_vm_ssh.sh"
+    try:
+        result = subprocess.run([str(transport), "exec", command],
+            input=json.dumps({"kind": kind, "identity": identity, "tenant": tenant}),
+            text=True, capture_output=True, timeout=min(15, timeout))
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("dev_owner_transport_failed") from None
+    if result.returncode or len(result.stdout.encode()) > MAX_BYTES:
+        raise RuntimeError("dev_owner_read_failed")
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError("dev_owner_response_invalid") from None
 
 
 def data(body):
@@ -45,8 +129,7 @@ def effective_policy(pool, referenced_policy_reader=None):
     """Follow owner ref precedence. A null ref can have a valid inline policy.
 
     A referenced policy needs an authoritative loader; a nearby inline policy
-    cannot substitute for an unreadable reference. The public BFF currently
-    exposes no referenced-policy readback, so the CLI fails closed for that case.
+    cannot substitute for an unreadable reference.
     """
     ref = pool.get("risk_policy_ref")
     if ref:
@@ -80,6 +163,95 @@ def policy_errors(policy):
     return errors
 
 
+DRAFT_PROFILES = ("low",)
+DRAFT_SOURCE = "risk_officer_draft"
+
+
+def _positive_below_one(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and 0 < value < 1)
+
+
+def _bounded_limits(policy):
+    """Single-name cap < 1 and a positive cash reserve; the reserve may be a pct or an absolute amount."""
+    errors = []
+    if not _positive_below_one(policy.get("max_single_name_weight")):
+        errors.append("draft_single_name_cap_missing_or_not_below_1")
+    pct, absolute = policy.get("min_cash_reserve_pct"), policy.get("min_cash_reserve")
+    if not (_positive_below_one(pct) or (not isinstance(absolute, bool) and isinstance(absolute, (int, float))
+                                          and math.isfinite(absolute) and absolute > 0)):
+        errors.append("draft_cash_reserve_missing_or_not_positive")
+    return errors + _outer_bound_errors(policy)
+
+
+def _outer_bound_errors(policy, profile="low"):
+    """A draft limit outside the operator outer bound (gross, leverage, single name, cash reserve) fails."""
+    errors = []
+    limits = profile_outer_bounds().get(profile) or {}
+    for name in ("gross_limit", "max_leverage", "max_single_name_weight"):
+        cap, value = limits.get(name), policy.get(name)
+        if cap is not None and isinstance(value, (int, float)) and not isinstance(value, bool) and value > cap + 1e-12:
+            errors.append("draft_outside_bound:" + name)
+    reserve, pct = limits.get("min_cash_reserve_pct"), policy.get("min_cash_reserve_pct")
+    if reserve is not None and isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct + 1e-12 < reserve:
+        errors.append("draft_outside_bound:min_cash_reserve_pct")
+    return errors
+
+
+def pending_risk_officer_draft(approvals, persona, pool):
+    """A pending Governance proposal that carries a risk-officer drafted policy for this pool, or None."""
+    for approval in approvals:
+        subject = (approval.get("metadata") or {}).get("subject") or {}
+        draft = subject.get("risk_officer_draft") or {}
+        policy = draft.get("policy")
+        if (approval.get("tenant_id") == persona.get("tenantId")
+                and approval.get("target_type") == "capital_pool_activation"
+                and approval.get("target_id") == pool.get("pool_id")
+                and approval.get("decision_state") in {"proposed", "under_review"}
+                and subject.get("pool_id") == pool.get("pool_id")
+                and (subject.get("requested_risk") or subject.get("requested_profile")) == persona.get("risk")
+                and isinstance(policy, dict)
+                and (policy.get("metadata") or {}).get("risk_officer_draft", {}).get("source") == DRAFT_SOURCE
+                and not _bounded_limits(policy)
+                and subject.get("risk_policy_digest") in {policy_digest(policy), risk_policy_digest(policy)}):
+            return approval.get("decision_id")
+    return None
+
+
+def risk_officer_draft_errors(policy, approvals, persona, pool):
+    """Active policy must be bounded and carry risk-officer provenance; else a pending draft must exist.
+
+    The former hardcoded 2x v1.0 (no single-name cap, no cash reserve, no provenance) fails here.
+    Returns (errors, pending_decision_id).
+    """
+    errors = _bounded_limits(policy)
+    prov = ((policy.get("metadata") or {}).get("risk_officer_draft") or {})
+    if prov.get("source") != DRAFT_SOURCE or prov.get("risk_persona_id") != "persona-risk-officer":
+        errors.append("draft_provenance_missing")
+    if not errors:
+        return [], None
+    pending = pending_risk_officer_draft(approvals, persona, pool)
+    return ([], pending) if pending else (errors, None)
+
+
+def computed_direction_errors(approval, subject):
+    """Risk direction is computed from the per-limit comparison, never a constant; paper gate decisions
+    must be decided by the dedicated automated gate subject (operator decision P-4)."""
+    gate = approval.get("actor_role") == "automated_gate"
+    if gate and approval.get("actor_id") != DEV_PAPER_PROVISIONER_SUBJECT:
+        return True
+    if subject.get("risk_direction") not in {"increase", "reduce", "neutral"}:
+        return True
+    comparison = subject.get("risk_comparison")
+    if (gate or subject.get("risk_direction") != "increase") and not (isinstance(comparison, dict) and comparison):
+        return True
+    if isinstance(comparison, dict):
+        looser = "looser" in comparison.values() or comparison.get("_effective_policy") == "absent"
+        if looser != (subject.get("risk_direction") == "increase"):
+            return True
+    return False
+
+
 def approved_mapping(approvals, persona, pool, policy, now):
     """Look for explicit owner proof in existing governance decision subjects.
 
@@ -87,36 +259,53 @@ def approved_mapping(approvals, persona, pool, policy, now):
     No such subject was found on hosted. Registry admission risk_level=low and
     pool activation digests alone do not bind the financial policy contents.
     """
+    matches = set()
+    digests = {policy_digest(policy), risk_policy_digest(policy)}
     for approval in approvals:
         subject = (approval.get("metadata") or {}).get("subject") or {}
+        policy_target = (approval.get("target_id") == policy.get("risk_policy_id")
+                         and not str(policy.get("risk_policy_id")).startswith("rp-pool-"))
+        target_ok = (
+            approval.get("target_version") in digests | {str(policy.get("version"))}
+            and subject.get("pool_id") in {pool.get("pool_id"), policy.get("risk_policy_id"), "*"}
+        ) if policy_target else (
+            approval.get("target_id") == pool.get("pool_id")
+            and bool(pool.get("approval_digest"))
+            and approval.get("target_version") == pool.get("approval_digest")
+            and subject.get("pool_id") == pool.get("pool_id")
+        )
         if (approval.get("tenant_id") != persona.get("tenantId")
                 or approval.get("target_type") != "capital_pool_activation"
-                or approval.get("target_id") != pool.get("pool_id")
-                or not pool.get("approval_digest")
-                or approval.get("target_version") != pool["approval_digest"]
+                or not target_ok
                 or approval.get("decision_state") != "decided"
                 or approval.get("decision") != "approved"
                 or not approval.get("decision_id")
                 or approval.get("authority_status") != "authoritative"
                 or not approval.get("actor_role")
                 or not approval.get("actor_id") or not approval.get("decided_at")
+                or not approval.get("recorded_at") or not approval.get("controller_record_ref")
+                or not is_authorized_to_decide(approval.get("actor_role"), approval.get("risk_level"))
                 or approval.get("conditions") or approval.get("revoked_at")
                 or approval.get("superseded_by")
-                or subject.get("pool_id") != pool.get("pool_id")
-                or subject.get("requested_risk") != persona.get("risk")
+                or (subject.get("requested_risk") or subject.get("requested_profile") or subject.get("risk_profile")) != persona.get("risk")
+                or computed_direction_errors(approval, subject)
                 or subject.get("risk_policy_id") != policy.get("risk_policy_id")
                 or subject.get("risk_policy_version") != policy.get("version")
-                or subject.get("risk_policy_digest") != policy_digest(policy)):
+                or subject.get("risk_policy_digest") not in digests):
             continue
-        expiry = approval.get("expires_at")
-        if expiry:
-            try:
-                if datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= now:
-                    continue
-            except (ValueError, TypeError):
+        try:
+            expiry = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
+            decided = datetime.fromisoformat(approval["decided_at"].replace("Z", "+00:00"))
+            if expiry.tzinfo is None or decided.tzinfo is None or expiry <= now or decided > now:
                 continue
-        return approval["decision_id"]
-    return None
+            require_dedicated_subject_scope(actor_id=approval["actor_id"],
+                owner_user_id=approval.get("owner_user_id"), authorization_scope=approval.get("authorization_scope"))
+            enforce_authorization_scope(approval.get("authorization_scope"),
+                ApprovalUsageContext(environment="dev", target_stage="paper", capital_scale_pct=0.0))
+        except (KeyError, AttributeError, ValueError, TypeError):
+            continue
+        matches.add(approval["decision_id"])
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def rows(body):
@@ -126,11 +315,12 @@ def rows(body):
     return value
 
 
-def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None):
+def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None,
+        pool_policy_reader=None):
     now = now or datetime.now(timezone.utc)
     expected = tuple(expected)
     report = {"checked": 0, "expected": len(expected), "personas": {}, "failed": [],
-              "observed_at": now.isoformat()}
+              "observed_at": now.isoformat(), "outer_bounds": profile_outer_bounds()}
     if not expected or len(expected) > 10 or len(set(expected)) != len(expected):
         report.update(passed=False, failed=["expected_personas_empty_duplicate_or_over_budget"])
         return report
@@ -175,8 +365,28 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
                           pool_id=pool_id, artifact_id=binding.get("artifact_id"),
                           artifact_version=binding.get("artifact_version"), risk_policy_ref=pool.get("risk_policy_ref"),
                           persona_display_binding_id=persona.get("runtimeBindingId"))
-            policy, origin = effective_policy(pool, referenced_policy_reader)
+            owner = data(pool_policy_reader(pool)) if pool_policy_reader else None
+            if owner is not None:
+                if (owner.get("capital_pool_id") != pool_id or owner.get("tenant_id") != tenant
+                        or owner.get("stage") != "paper" or owner.get("resolved") is not True):
+                    raise ValueError("policy_owner_resolution_invalid")
+            reader = (lambda ref: owner["policy"]) if owner is not None else referenced_policy_reader
+            policy, origin = effective_policy(pool, reader)
             failures.extend(policy_errors(policy))
+            if persona.get("risk") in DRAFT_PROFILES:
+                draft_errors, pending_draft = risk_officer_draft_errors(policy, approvals, persona, pool)
+                failures.extend(draft_errors)
+                result["risk_officer_draft"] = "pending:" + pending_draft if pending_draft else (
+                    "active" if not draft_errors else "missing")
+            policy_meta = policy.get("metadata") or {}
+            if (policy.get("tenant_id") or policy_meta.get("tenant_id")) not in (None, tenant):
+                failures.append("policy_tenant_mismatch")
+            for container in (policy, policy_meta):
+                if container.get("superseded_by") or container.get("stale") or container.get("revoked_at"):
+                    failures.append("policy_stale_or_revoked")
+                for key in ("expires_at", "effective_to"):
+                    if container.get(key) and datetime.fromisoformat(container[key].replace("Z", "+00:00")) <= now:
+                        failures.append("policy_expired")
             result.update(policy_origin=origin, effective_policy=policy)
             if origin == "reference" and policy.get("risk_policy_id") != pool.get("risk_policy_ref"):
                 failures.append("referenced_policy_identity_mismatch")
@@ -193,7 +403,7 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
     return report
 
 
-def main():
+def main(report_runner=None):
     missing = [key for key in REQUIRED if not os.environ.get(key, "").strip()]
     if missing:
         print("skipped: missing " + ", ".join(missing))
@@ -201,7 +411,7 @@ def main():
     base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
     deadline, requests = time.monotonic() + MAX_SECONDS, 0
 
-    def request(path, body=None, token=None):
+    def request(path, body=None, token=None, origin=None, tenant=None):
         nonlocal requests
         requests += 1
         remaining = deadline - time.monotonic()
@@ -210,7 +420,9 @@ def main():
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
-        req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body else None,
+        if tenant:
+            headers["X-Tenant-Id"] = tenant
+        req = urllib.request.Request((origin or base) + path, data=json.dumps(body).encode() if body else None,
                                      method="POST" if body else "GET", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
@@ -224,6 +436,28 @@ def main():
             raise
         except Exception as exc:
             raise RuntimeError("request_failed:" + type(exc).__name__) from None
+
+    def owner_read(kind, identity, tenant):
+        nonlocal requests
+        if kind == "capital":
+            base_owner = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_URL", "").rstrip("/")
+            owner_token = os.environ.get("ACCEPTANCE_CAPITAL_OWNER_TOKEN", "")
+            path = "/api/capital-pools/" + urllib.parse.quote(identity, safe="") + "/risk-policy?stage=paper"
+        else:
+            base_owner = os.environ.get("ACCEPTANCE_TELEMETRY_URL", "").rstrip("/")
+            owner_token = os.environ.get("ACCEPTANCE_TELEMETRY_TOKEN", "")
+            path = "/api/telemetry/events/" + urllib.parse.quote(identity, safe="")
+        if kind != "approvals" and base_owner and owner_token:
+            return request(path, origin=base_owner, token=owner_token, tenant=tenant)
+        if dev_transport_configured():
+            requests += 2 if kind == "approvals" else 1
+            remaining = deadline - time.monotonic()
+            if requests > MAX_REQUESTS or remaining <= 0:
+                raise RuntimeError("probe_budget_exceeded")
+            return dev_owner_read(kind, identity, tenant, timeout=remaining)
+        if not base_owner or not owner_token:
+            raise RuntimeError("referenced_policy_owner_readback_unavailable" if kind == "capital"
+                               else "immutable_telemetry_owner_readback_unavailable")
 
     try:
         token = request("/bff/auth/dev-login", {
@@ -245,7 +479,18 @@ def main():
                 raise RuntimeError("policy_reader_access_token_missing")
         configured = os.environ.get("ACCEPTANCE_EXPECTED_PERSONA_IDS")
         expected = DEFAULT_PERSONAS if configured is None else tuple(x.strip() for x in configured.split(",") if x.strip())
-        report = run(lambda path: request(path, token=policy_token if path == "/api/v1/approval-decisions" else token), expected)
+        def fetch(path):
+            if path == "/api/v1/approval-decisions":
+                if not policy_id and dev_transport_configured():
+                    return owner_read("approvals", "", "tenant-dev")
+                return request(path, token=policy_token)
+            return request(path, token=token)
+        pool_reader = lambda pool: owner_read("capital", pool["pool_id"], pool["tenant_id"]) if pool.get("risk_policy_ref") else None
+        if report_runner:
+            report = report_runner(fetch, expected, pool_reader,
+                lambda: request("/deployment.json", origin=os.environ["ACCEPTANCE_FE_URL"].rstrip("/")), owner_read)
+        else:
+            report = run(fetch, expected, pool_policy_reader=pool_reader)
     except (RuntimeError, ValueError) as exc:
         print(json.dumps({"passed": False, "failed": [str(exc)]}))
         return 1
