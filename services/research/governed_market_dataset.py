@@ -36,7 +36,7 @@ DEFAULT_STORE_ROOT = "/data/source-ingest/market_data_store"
 SUPPORTED_SCHEMAS = ("daily_bars_manifest.v1", "daily_bars_manifest.v2")
 MIN_INSTRUMENTS = 2  # the backtest backends need at least two instruments in a dataset
 MAX_DATASET_SYMBOLS = 60  # records are Python objects (about 0.55 MiB per symbol over 483 days): one dataset must fit a 256 MiB service
-_READ_CHUNK = 100  # symbols per read; DailyBarsReader allows 500
+_READ_CHUNK = 20  # symbols per read; keeps the transient row dicts of one read small (DailyBarsReader allows 500)
 _LISTING_BATCH_DAYS = 8  # list_symbols caches one symbol set per day; clear it between batches
 
 

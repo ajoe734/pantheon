@@ -966,7 +966,7 @@ services:
 
   research-orchestrator-svc:
     profiles: ["research", "root"]
-    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-256m}
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-384m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
