@@ -820,7 +820,6 @@ class ApprovalDecisionStore:
             "review": "approval_decision_state_changed",
             "decide": "approval_decision_decided",
             "revoke": "approval_decision_revoked",
-            "close_superseded": "approval_decision_superseded",
         }.get(str(command.get("operation") or ""), "approval_decision_state_changed")
         if audit_store is not None and hasattr(audit_store, "append_event"):
             audit_store.append_event(

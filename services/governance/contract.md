@@ -541,6 +541,6 @@ target and binding a different policy digest. Any failure is `403` (`409` when t
 never approve, never touches a decided decision (so never the decision bound to the pool), and never changes limits,
 bounds, TTL or who may approve. Result: `decision_state=superseded`, `superseded_by=<superseding decision id>`,
 `rationale` names that id, `actor_id`/`actor_role` are the gate, existing votes (`metadata.approvals`) are kept
-unchanged and nothing is deleted. The audit event is `approval_decision_superseded` (actor = the gate). The
+unchanged and nothing is deleted. The audit event is the generic `approval_decision_state_changed` (actor = the gate; the command carries `close_superseded`). The
 coordinator calls it on repair/redraft/renewal and in the hourly reconcile pass (`renew_paper_risk_policy_approval`),
 reporting a failed close without raising it.

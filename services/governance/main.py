@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional
 import threading
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -112,7 +113,6 @@ try:
         DecideRequest,
         ProposeApprovalRequest,
         RevokeRequest,
-        CloseSupersededRequest,
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
@@ -130,7 +130,6 @@ except ImportError:
         DecideRequest,
         ProposeApprovalRequest,
         RevokeRequest,
-        CloseSupersededRequest,
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
@@ -1552,7 +1551,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             except PaperApprovalDenied as exc:
                 raise HTTPException(exc.status_code, str(exc)) from exc
     command = {
-        'operation': operation, 'decision_id': decision_id,
+        # The close shares the review audit/receipt shape (state change, actor = the gate); `close_superseded`
+        # keeps its command identity distinct from a review.
+        'operation': 'review' if operation == 'close_superseded' else operation,
+        **({'close_superseded': True} if operation == 'close_superseded' else {}),
+        'decision_id': decision_id,
         'tenant_id': ctx.claims['tenant_id'], 'actor_id': ctx.actor_id, 'actor_role': role,
         'expected_version': body.expected_version, 'idempotency_key': idempotency_key,
         'body': body.model_dump(mode='json'),
@@ -1838,6 +1841,14 @@ def record_decision(decision_id: str, body: DecideRequest,
                  idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
     return _approval_command('decide', decision_id, body, authorization, idempotency_key)
 
+
+
+class CloseSupersededRequest(BaseModel):
+    """Close-only command: the superseding decision and the reason are derived by Governance, never supplied."""
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    actor_role: ActorRole
+    actor_id: str
 
 
 @app.post(
