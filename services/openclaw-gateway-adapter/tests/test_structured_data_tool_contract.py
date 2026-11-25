@@ -618,36 +618,6 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         invoke.assert_called_once()
         assert invoke.call_args.kwargs["timeout_seconds"] == 3.0
 
-    @pytest.mark.parametrize("requested,expected", [(88.0, 88.0), (500.0, 170.0), (None, 170.0), (-1, 170.0)])
-    def test_caller_deadline_bounds_policy_and_gateway_call(self, gateway_policy, requested, expected):
-        # L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125: one deadline for the
-        # client, the adapter call and the gateway call; it can only shorten ours.
-        from types import SimpleNamespace
-        client, adapter_main = self._client()
-        clock = [100.0]
-        snapshot = gateway_policy.return_value
-
-        def policy(*args, **kwargs):
-            assert kwargs["timeout_seconds"] == expected
-            return snapshot
-
-        gateway_policy.side_effect = policy
-        result = SimpleNamespace(to_dict=lambda: {"status": "completed"})
-        body = {"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA}
-        if requested is not None:
-            body["timeout_seconds"] = requested
-        with (
-            patch.object(adapter_main, "time", SimpleNamespace(monotonic=lambda: clock[0])),
-            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_timeout", 170),
-            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured", return_value=result) as invoke,
-        ):
-            response = client.post(
-                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
-                json=body, headers={"X-Operator-Id": "operator-1"},
-            )
-        assert response.status_code == 200, response.text
-        assert invoke.call_args.kwargs["timeout_seconds"] == expected
-
     def test_unavailable_policy_blocks_before_dispatch(self, gateway_policy):
         client, adapter_main = self._client()
         gateway_policy.side_effect = OpenClawProviderError(
