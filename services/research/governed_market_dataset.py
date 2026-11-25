@@ -34,6 +34,7 @@ from typing import Any, Callable, Mapping, Sequence
 STORE_ROOT_ENV = "GOVERNED_MARKET_STORE_ROOT"
 DEFAULT_STORE_ROOT = "/data/source-ingest/market_data_store"
 SUPPORTED_SCHEMAS = ("daily_bars_manifest.v1", "daily_bars_manifest.v2")
+MIN_INSTRUMENTS = 2  # the backtest backends need at least two instruments in a dataset
 MAX_DATASET_SYMBOLS = 60  # records are Python objects (about 0.55 MiB per symbol over 483 days): one dataset must fit a 256 MiB service
 _READ_CHUNK = 100  # symbols per read; DailyBarsReader allows 500
 _LISTING_BATCH_DAYS = 8  # list_symbols caches one symbol set per day; clear it between batches
@@ -74,6 +75,7 @@ class MarketBoundary:
     exclusions: Mapping[str, str]
     policy: MarketPolicy
     store_symbol_count: int
+    liquidity: Mapping[str, float]  # median traded value of the newest days, per included symbol
 
     def summary(self) -> dict[str, Any]:
         reasons: dict[str, int] = {}
@@ -211,6 +213,7 @@ def build_market_boundary(
             survivors.append(symbol)
     liquidity_window = window[-policy.liquidity_days:]
     included: list[str] = []
+    liquidity: dict[str, float] = {}
     for chunk in _chunks(survivors, _READ_CHUNK):
         rows = reader.read_range(chunk, liquidity_window[0], liquidity_window[-1],
                                  columns=["symbol", "trade_date", "traded_value"])
@@ -224,13 +227,14 @@ def build_market_boundary(
                                       f"< {policy.min_median_traded_value:.0f}")
             else:
                 included.append(symbol)
+                liquidity[symbol] = float(statistics.median(values))
     if len(included) < policy.min_symbols:
         raise GovernedMarketDatasetError(
             "market_boundary_empty", f"no symbol passes the boundary of {len(stats)} stored symbols")
     return MarketBoundary(
         snapshot_id=_snapshot_id(digests, policy), as_of=as_of.isoformat(), window_start=window[0], window_end=latest,
         trade_days=len(window), symbols=tuple(included), exclusions=exclusions, policy=policy,
-        store_symbol_count=len(stats))
+        store_symbol_count=len(stats), liquidity=liquidity)
 
 
 def verify_snapshot(snapshot_id: str, root: str | Path | None = None, *, policy: MarketPolicy | None = None,
@@ -300,6 +304,7 @@ def resolve_governed_dataset(
     *, symbols: Sequence[str] | None = None, snapshot_id: str | None = None, strategy_id: str = "governed-market-dataset",
     root: str | Path | None = None, now: Callable[[], datetime] | datetime | None = None,
     policy: MarketPolicy | None = None, env: Mapping[str, str] | None = None,
+    min_instruments: int = MIN_INSTRUMENTS,
 ) -> dict[str, Any]:
     """One call for the three consumers. ``symbols`` are matched to stored forms (``2330`` finds ``2330.TW``).
     ``snapshot_id`` pins an earlier snapshot: the dataset is built at that snapshot's day and its id must
@@ -325,4 +330,14 @@ def resolve_governed_dataset(
             (chosen if match else missing).append(match or text)
         if missing:
             raise GovernedMarketDatasetError("symbols_not_in_store", ", ".join(missing[:5]))
-    return dataset_for(boundary, chosen, root=root, strategy_id=strategy_id, env=env)
+    companions: list[str] = []
+    if chosen is not None and len(set(chosen)) < min_instruments:
+        # A one-symbol rule still needs a dataset of at least two instruments: add the most liquid symbols of
+        # the boundary (real bars, named in ``companion_symbols``); the rule still trades only its own symbols.
+        ranked = sorted((s for s in boundary.symbols if s not in set(chosen)), key=lambda s: (-boundary.liquidity[s], s))
+        companions = ranked[:min_instruments - len(set(chosen))]
+        chosen = list(chosen) + companions
+    dataset = dataset_for(boundary, chosen, root=root, strategy_id=strategy_id, env=env)
+    if companions:
+        dataset["companion_symbols"] = companions
+    return dataset

@@ -99,7 +99,8 @@ def test_empty_authority_directory_reaches_a_dataset(tmp_path, monkeypatch):
     dataset = gmd.resolve_governed_dataset(symbols=["2330"], now=NOW, policy=SMALL)
     assert list(empty_authority.iterdir()) == []
     assert dataset["data_frequency"] == "daily" and dataset["dataset_id"].startswith("gmd-" + END)
-    assert {r["instrument"] for r in dataset["records"]} == {"2330.TW"}
+    assert {r["instrument"] for r in dataset["records"]} == {"2330.TW", "2317.TW"}
+    assert dataset["companion_symbols"] == ["2317.TW"]  # a one-symbol rule still gets two instruments
     first = dataset["records"][0]
     assert set(first) == {"instrument", "date", "open", "high", "low", "close", "volume", "traded_value", "available_time"}
     assert first["available_time"].endswith("Z")
@@ -112,7 +113,7 @@ def test_point_in_time_by_stored_available_time_and_nothing_imputed(tmp_path):
         late = datetime(2026, 11, 26, tzinfo=timezone.utc) if d == ds[-1] else None
         store.write_day(d, [row("2330.TW", d, 100.0 + i, available=late), row("2317.TW", d, 50.0 + i)], ingest_run_id=d)
     dataset = gmd.resolve_governed_dataset(symbols=["2330.TW"], root=tmp_path, now=NOW, policy=SMALL)
-    assert [r["date"] for r in dataset["records"]] == ds[:-1]  # the bar not yet available is left out, not filled
+    assert [r["date"] for r in dataset["records"] if r["instrument"] == "2330.TW"] == ds[:-1]  # the bar not yet available is left out, not filled
     assert dataset["bars_not_point_in_time"] == 1
 
 

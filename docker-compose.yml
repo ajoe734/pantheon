@@ -622,6 +622,8 @@ services:
       ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN}
       RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
       RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Card gate dataset: the governed whole-market dataset read from the stored daily bars (DailyBarsReader).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
@@ -1016,6 +1018,8 @@ services:
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
       # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
       RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Template search dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
@@ -2166,6 +2170,8 @@ services:
       PERSONA_POOL_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
       PERSONA_POOL_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
       PERSONA_POOL_SOURCE_VOLUME_ROOT: /data/source-ingest
+      # Pool admission price dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
       PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT: /data/bff/persona-pool-dataset-authority
       PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
       PERSONA_POOL_SOURCE_READ_TOKEN_FILE: ${PERSONA_POOL_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
