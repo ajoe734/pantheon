@@ -399,14 +399,24 @@ class RegistryService:
         visible_tenants: Optional[frozenset] = None,
         artifact_type: Optional[str] = "strategy_spec",
         include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected by the owner store for Phase 1 of strategy_summary_page."""
+        extra: dict[str, bool] = {}
+        if include_title:
+            extra["include_title"] = True
+        if include_scope:
+            extra["include_scope"] = True
+        if include_scope:
+            # A store that cannot project the scope leaf must not silently drop
+            # it: hiding on a partial row would misclassify.
+            return self.store.list_strategy_spec_summary_index_rows(
+                visible_tenants=visible_tenants, artifact_type=artifact_type, **extra,
+            )
         if include_title:
             try:
                 return self.store.list_strategy_spec_summary_index_rows(
-                    visible_tenants=visible_tenants,
-                    artifact_type=artifact_type,
-                    include_title=True,
+                    visible_tenants=visible_tenants, artifact_type=artifact_type, **extra,
                 )
             except TypeError:
                 pass
@@ -438,8 +448,14 @@ class RegistryService:
         query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[Sequence[str]] = None,
     ) -> dict[str, object]:
-        """Owner-filtered and paged canonical strategy summary page."""
+        """Owner-filtered and paged canonical strategy summary page.
+
+        ``hide_stubs`` / ``hide_persona_ids`` are the owner-side hide input: the
+        same candidate pass excludes and counts the hidden rows.
+        """
         _validate_strategy_summary_page_args(
             state=state,
             exclude_state=exclude_state,
@@ -447,13 +463,17 @@ class RegistryService:
             page_size=page_size,
         )
         has_query = bool(query is not None and str(query).strip() != "")
+        hide_kwargs: dict[str, object] = (
+            {"hide_stubs": True, "hide_persona_ids": hide_persona_ids} if hide_stubs else {}
+        )
         if hasattr(self.store, "list_strategy_spec_summary_index_rows") and hasattr(
             self.store, "get_strategy_spec_summary_rows_by_ids"
         ):
             index_rows = self.list_strategy_spec_summary_index_rows(
                 visible_tenants=visible_tenants,
                 artifact_type=artifact_type,
-                include_title=has_query,
+                include_title=has_query or hide_stubs,
+                include_scope=hide_stubs,
             )
             return project_strategy_spec_summary_page(
                 index_rows,
@@ -467,6 +487,7 @@ class RegistryService:
                 full_row_loader=lambda reg_ids: self.get_strategy_spec_summary_rows_by_ids(
                     reg_ids, visible_tenants=visible_tenants, artifact_type=artifact_type
                 ),
+                **hide_kwargs,
             )
         rows = self.list_strategy_spec_summary_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
@@ -480,6 +501,7 @@ class RegistryService:
             query=query,
             page_token=page_token,
             page_size=page_size,
+            **hide_kwargs,
         )
 
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:

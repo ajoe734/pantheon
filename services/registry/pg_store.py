@@ -49,6 +49,7 @@ from .storage import (
     STRATEGY_SUMMARY_INDEX_PROV_KEYS,
     STRATEGY_SUMMARY_INDEX_ROW_KEYS,
     STRATEGY_SUMMARY_INDEX_SPEC_KEYS,
+    STRATEGY_SUMMARY_INDEX_SCOPE_KEYS,
     STRATEGY_SUMMARY_INDEX_TITLE_KEYS,
     STRATEGY_SUMMARY_INNER_META_KEYS,
     STRATEGY_SUMMARY_MARKET_KEYS,
@@ -1036,6 +1037,7 @@ class PostgresRegistryStore:
         visible_tenants: Optional[frozenset] = None,
         artifact_type: Optional[str] = "strategy_spec",
         include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected inside Postgres for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -1046,23 +1048,30 @@ class PostgresRegistryStore:
         if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
             sql = _strategy_spec_summary_index_single_pass_sql(
                 self._entries.table, visible_sql, include_title=include_title,
+                include_scope=include_scope,
             )
+            # The visible predicate is bound twice: once in the table scan
+            # (before any payload expression) and once over the normalised row.
+            sql_params = params + params
             with self._entries._use_conn(None) as conn:
-                cursor = conn.execute(sql, params) if params else conn.execute(sql)
+                cursor = conn.execute(sql, sql_params) if sql_params else conn.execute(sql)
                 raw_rows = [
                     tuple(r.values()) if isinstance(r, dict) else tuple(r)
                     for r in cursor.fetchall()
                 ]
             return strategy_spec_summary_index_rows_from_columns(
-                raw_rows, include_title=include_title,
+                raw_rows, include_title=include_title, include_scope=include_scope,
             )
         return strategy_spec_summary_index_rows_from_columns(
             self._entries.list_all_selected(
-                strategy_spec_summary_index_select_sql(include_title=include_title),
+                strategy_spec_summary_index_select_sql(
+                    include_title=include_title, include_scope=include_scope,
+                ),
                 visible_sql=visible_sql,
                 keep_params=params,
             ),
             include_title=include_title,
+            include_scope=include_scope,
         )
 
     def get_strategy_spec_summary_rows_by_ids(
@@ -1452,7 +1461,18 @@ def _strategy_summary_index_leaf_paths(*, include_title: bool = False) -> list[t
     return paths
 
 
-def strategy_spec_summary_index_select_sql(*, include_title: bool = False) -> str:
+def _strategy_summary_index_scope_paths() -> list[tuple[str, ...]]:
+    """``data_scope`` leaves read for the owner-side hide rule (metadata, then spec metadata)."""
+    meta = ("metadata",)
+    spec_meta = ("metadata", "strategy_spec", "metadata")
+    return [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS] + [
+        spec_meta + (k,) for k in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
+    ]
+
+
+def strategy_spec_summary_index_select_sql(
+    *, include_title: bool = False, include_scope: bool = False,
+) -> str:
     """Plain column list over ``payload`` for candidate-index rows (Phase 1)."""
     cols = ", ".join(
         f"({_sql_node(p)})::text" for p in _strategy_summary_index_leaf_paths(include_title=include_title)
@@ -1461,11 +1481,16 @@ def strategy_spec_summary_index_select_sql(*, include_title: bool = False) -> st
         f"jsonb_typeof({_sql_node(p)})"
         for p in _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS
     )
-    return f"{cols}, {shapes}"
+    sql = f"{cols}, {shapes}"
+    if include_scope:
+        sql += ", " + ", ".join(
+            f"({_sql_node(p)})::text" for p in _strategy_summary_index_scope_paths()
+        )
+    return sql
 
 
 def _strategy_spec_summary_index_single_pass_sql(
-    table: str, visible_sql: str, *, include_title: bool = False,
+    table: str, visible_sql: str, *, include_title: bool = False, include_scope: bool = False,
 ) -> str:
     """Single-pass Postgres query that detoasts ``payload`` once, extracts
     ``metadata`` and ``strategy_spec`` sub-objects once per visible row, and
@@ -1507,6 +1532,18 @@ def _strategy_spec_summary_index_single_pass_sql(
         + title_outer_cols
         + ["t0", "t1", "t2", "t3"]
     )
+    if include_scope:
+        scope_cols = (
+            [f"(m -> '{k}')::text AS ds{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS)]
+            + [
+                f"(sm -> '{k}')::text AS dsm{i}"
+                for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS)
+            ]
+        )
+        cols_expr = cols_expr + scope_cols
+        outer_cols = outer_cols + [
+            f"ds{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS))
+        ] + [f"dsm{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS))]
     return (
         f"SELECT {', '.join(outer_cols)} FROM ("
         f"SELECT updated_at, {', '.join(cols_expr)} FROM ("
@@ -1518,7 +1555,12 @@ def _strategy_spec_summary_index_single_pass_sql(
         "(CASE WHEN jsonb_typeof(payload) = 'string' "
         "THEN (payload #>> '{}')::jsonb ELSE u END) ELSE u END AS payload "
         f"FROM (SELECT updated_at, payload, payload || '{{}}'::jsonb AS u "
-        f"FROM {table} OFFSET 0) AS raw OFFSET 0"
+        # Artifact type and tenant are decided on the stored payload before
+        # ``payload || '{}'`` is built, so rows of other artifact types or
+        # tenants are never copied. A non-object payload (legacy string or
+        # array encoding) cannot be judged yet and is normalised first.
+        f"FROM {table} WHERE jsonb_typeof(payload) <> 'object' OR ({visible_sql}) "
+        "OFFSET 0) AS raw OFFSET 0"
         f") AS r1 WHERE jsonb_typeof(payload) = 'object' AND ({visible_sql}) OFFSET 0"
         ") AS r2 OFFSET 0"
         ") AS r3 OFFSET 0"
@@ -1526,7 +1568,9 @@ def _strategy_spec_summary_index_single_pass_sql(
     )
 
 
-def strategy_spec_summary_index_rows_from_columns(rows, *, include_title: bool = False) -> list[dict]:
+def strategy_spec_summary_index_rows_from_columns(
+    rows, *, include_title: bool = False, include_scope: bool = False,
+) -> list[dict]:
     """Assemble ``strategy_spec_summary_index_row``-shaped dicts from the index select columns."""
     loads = json.loads
 
@@ -1542,6 +1586,12 @@ def strategy_spec_summary_index_rows_from_columns(rows, *, include_title: bool =
     out: list[dict] = []
     append = out.append
     for raw_tuple in rows:
+        if include_scope:
+            # Scope leaves trail the fixed columns: data_scope / dataScope from
+            # metadata, then from metadata.strategy_spec.metadata.
+            raw_tuple, scope_cols = tuple(raw_tuple[:-4]), tuple(raw_tuple[-4:])
+        else:
+            scope_cols = ()
         if include_title:
             (
                 c0, c1, c2, c3, c4, c5, c6,
@@ -1588,6 +1638,10 @@ def strategy_spec_summary_index_rows_from_columns(rows, *, include_title: bool =
                 meta["title"] = _dec(mt0)
             if mt1 is not None:
                 meta["name"] = _dec(mt1)
+        if scope_cols:
+            for key, raw in zip(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS, scope_cols[:2]):
+                if raw is not None:
+                    meta[key] = _dec(raw)
         if t0 == "object":
             meta["provenance"] = {"created_at": _dec(mp0)} if mp0 is not None else {}
         if t1 == "object":
@@ -1627,6 +1681,10 @@ def strategy_spec_summary_index_rows_from_columns(rows, *, include_title: bool =
                     inner_meta["state"] = _dec(sm2)
                 if sm3 is not None:
                     inner_meta["status"] = _dec(sm3)
+                if scope_cols:
+                    for key, raw in zip(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS, scope_cols[2:]):
+                        if raw is not None:
+                            inner_meta[key] = _dec(raw)
                 spec["metadata"] = inner_meta
             meta["strategy_spec"] = spec
         row: dict[str, Any] = {"metadata": meta}
