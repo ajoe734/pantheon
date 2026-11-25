@@ -1045,7 +1045,7 @@ def test_consultation_research_principal_is_admitted_by_research_owner_checks_an
 
 CASE_FILE_READERS = {
     "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": ("pantheon-dev-research-case-file-memory-reader", ["consultation_session"]),
-    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ["viewer", "reviewer"]),
+    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ["viewer"]),
     "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", ["registry-reader"]),
     "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", ["persona_pool_reader"]),
 }
@@ -1060,18 +1060,23 @@ def case_file_write_roles(root):
     import ast
 
     roles = set()
-    for path in (root / "services").glob("*/main.py"):
+    paths = list((root / "services").glob("*/main.py")) + list((root / "services" / "control-plane").rglob("*.py"))
+    for path in paths:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Assign) and any(
                 isinstance(t, ast.Name) and t.id.endswith("_WRITE_ROLES") for t in node.targets
             ):
+                expr = node.value
+                if isinstance(expr, ast.Call) and getattr(expr.func, "id", "") == "frozenset" and expr.args:
+                    expr = expr.args[0]
                 try:
-                    value = ast.literal_eval(node.value)
+                    value = ast.literal_eval(expr)
                 except ValueError:
                     continue
                 if isinstance(value, (tuple, list, set, frozenset)):
                     roles |= {r for r in value if isinstance(r, str)}
     assert "researcher" in roles  # guard: the memory write role list was actually found
+    assert "reviewer" in roles  # guard: the control-plane write role lists were actually found
     return roles
 
 

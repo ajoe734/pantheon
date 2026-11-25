@@ -106,7 +106,7 @@ READERS = {
     # actor id research-orchestrator-svc sends (RESEARCH_CASE_FILE_ACTOR_ID); files only, mounted to
     # research-orchestrator-svc alone, and none of the existing write-capable RESEARCH_* tokens is used.
     "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": (CASE_FILE_MEMORY_SUBJECT, "consultation_session"),
-    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", ("viewer", "reviewer")),
+    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", "viewer"),
     "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", "registry-reader"),
     "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", "persona_pool_reader"),
     # No search reader is issued: every existing search read role can write (researcher is a memory write role;

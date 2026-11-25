@@ -17,10 +17,30 @@
   "actor_id": "pantheon-dev-research-case-file-memory-reader (equals the memory credential subject)",
   "actor_roles": "consultation_session",
   "principals": {
-   "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": ["pantheon-dev-research-case-file-memory-reader", ["consultation_session"]],
-   "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ["pantheon-dev-research-case-file-telemetry-reader", ["viewer", "reviewer"]],
-   "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ["pantheon-dev-research-case-file-registry-reader", ["registry-reader"]],
-   "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ["pantheon-dev-research-case-file-persona-pool-reader", ["persona_pool_reader"]]
+   "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": [
+    "pantheon-dev-research-case-file-memory-reader",
+    [
+     "consultation_session"
+    ]
+   ],
+   "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": [
+    "pantheon-dev-research-case-file-telemetry-reader",
+    [
+     "viewer"
+    ]
+   ],
+   "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": [
+    "pantheon-dev-research-case-file-registry-reader",
+    [
+     "registry-reader"
+    ]
+   ],
+   "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": [
+    "pantheon-dev-research-case-file-persona-pool-reader",
+    [
+     "persona_pool_reader"
+    ]
+   ]
   },
   "scope": "pantheon:dev-owner-read for all four; tenant-dev only",
   "delivery": "files only (<OWNER>_SERVICE_TOKEN_FILE under /run/pantheon-principals, read-only mount of dev-paper-research-tokens) on research-orchestrator-svc only; RESEARCH_CASE_FILE_ACTOR_ID/ROLES are ${VAR:-} with no default, so nothing is granted unless the issuer ran. Staging, production and the other compose files carry no RESEARCH_CASE_FILE_ reference.",
@@ -52,5 +72,8 @@
    "tests/deployment/test_staging_release.py and test_production_release.py: exceeded the 2-minute bounded batch twice (not counted as passed); they cover the staging/production compose, which this change does not touch.",
    "scripts/test_validate_profile_topology.py: listed among the task's files but does not exist in the repository; scripts/test_paper_runtime_topology_contract.py (passed) is the existing topology contract test."
   ]
- }
+ },
+ "residual_findings": [
+  "Existing CONSULTATION_TELEMETRY_READ_TOKEN carries roles viewer+reviewer; reviewer is a write role in the control-plane _WRITE_ROLES lists. Out of scope here and unchanged; needs a separate task."
+ ]
 }
