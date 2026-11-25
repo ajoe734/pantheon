@@ -407,34 +407,26 @@ def test_unconfigured_search_keeps_collector_tasks_independent(tmp_path, monkeyp
     assert result['attempts'] == {}
 
 
-@pytest.mark.parametrize(
-    'dataset_env,policy_env,expected_reason',
-    [
-        (None, '/nonexistent/policy.json', 'governed_market_data_missing'),
-        ('/nonexistent/dataset.json', None, 'governed_policy_authority_missing'),
-        ('/nonexistent/dataset.json', '/nonexistent/policy.json', 'governed_policy_authority_unavailable:'),
-    ],
-)
-def test_missing_governed_dataset_or_policy_authority_fails_closed_with_reason_recorded_on_demand(
-    tmp_path, monkeypatch, configured_owners, dataset_env, policy_env, expected_reason
+from services.research.tests.test_governed_market_dataset import store_from_records  # noqa: E402
+
+
+def _recorded_store(root):
+    return store_from_records(root, recorded()['records'])
+
+
+@pytest.mark.parametrize('case,expected_reason', [('missing', 'daily_bars_store_missing'),
+                                                   ('stale', 'daily_bars_store_stale')])
+def test_missing_or_stale_store_fails_closed_with_reason_recorded_on_demand(
+    tmp_path, monkeypatch, configured_owners, case, expected_reason
 ):
     from services.research.vectorbt.adapter import vectorbt_adapter as adapter
 
     monkeypatch.setenv('ALPHA_REPLICATION_DATA_DIR', str(tmp_path / 'alpha'))
     monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
-    for key in (
-        'RESEARCH_RETRAIN_CANONICAL_DATASET_PATH',
-        'TRAINING_SESSION_CANONICAL_DATASET_PATH',
-        'PERSONA_POOL_CANONICAL_DATASET_PATH',
-        'RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH',
-        'TRAINING_SESSION_THRESHOLD_POLICY_PATH',
-        'PERSONA_POOL_THRESHOLD_POLICY_PATH',
-    ):
-        monkeypatch.delenv(key, raising=False)
-    if dataset_env is not None:
-        monkeypatch.setenv('RESEARCH_RETRAIN_CANONICAL_DATASET_PATH', dataset_env)
-    if policy_env is not None:
-        monkeypatch.setenv('RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH', policy_env)
+    store_root = tmp_path / 'market_data_store'
+    if case == 'stale':
+        _recorded_store(store_root)  # newest recorded day is 2026-10-30; today is later than the limit
+    monkeypatch.setenv('GOVERNED_MARKET_STORE_ROOT', str(store_root))
 
     module = _load_service_module(data_dir=str(tmp_path / 'research'))
 
@@ -472,4 +464,37 @@ def test_missing_governed_dataset_or_policy_authority_fails_closed_with_reason_r
     assert expected_reason in ts['reason'], ts
     assert ts['attempts'] == {}
     assert not (tmp_path / 'trials.json').exists()
+
+
+def test_search_reaches_the_gate_from_an_empty_authority_directory(tmp_path, monkeypatch, configured_owners):
+    """No persona candidate evaluation output exists: the dataset comes from the stored daily bars alone."""
+    from datetime import datetime, timezone
+    from services.research import governed_market_dataset as gmd
+
+    authority = tmp_path / 'persona-pool-dataset-authority'
+    authority.mkdir()
+    for key in ('RESEARCH_RETRAIN_CANONICAL_DATASET_PATH', 'TRAINING_SESSION_CANONICAL_DATASET_PATH',
+                'PERSONA_POOL_CANONICAL_DATASET_PATH', 'RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH',
+                'TRAINING_SESSION_THRESHOLD_POLICY_PATH', 'PERSONA_POOL_THRESHOLD_POLICY_PATH'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('GOVERNED_MARKET_STORE_ROOT', str(_recorded_store(tmp_path / 'market_data_store')))
+    monkeypatch.setattr(gmd, '_as_of', lambda now: datetime(2026, 11, 2, tzinfo=timezone.utc))
+    monkeypatch.setenv('ALPHA_REPLICATION_DATA_DIR', str(tmp_path / 'alpha'))
+    monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
+    module = _load_service_module(data_dir=str(tmp_path / 'research'))
+    monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
+    monkeypatch.setattr(module, '_retrain_call', lambda **kw: (
+        {'tenant_id': 'tenant-a', 'persona_id': BODY['persona_id'], 'metadata': {'market_scope': {'symbols': ['2330']}}}
+        if kw['service'] == 'persona' else entries('qlib_alpha158:KMID')))
+    demand = module.research_demand_store.open('tenant-a', BODY)
+    module._search_demand_templates([demand])
+    run_id = module.store.list_runs()[0]['run_id']
+    for t in threading.enumerate():
+        if t.name == 'retrain-executor-' + run_id:
+            t.join(150)
+            assert not t.is_alive()
+    assert module.get_run(run_id)['status'] == 'completed'
+    ts = module.research_demand_store.list('tenant-a')[0]['discovery']['template_search']
+    assert len(ts['attempts']) == 1, ts
+    assert list(authority.iterdir()) == []
 

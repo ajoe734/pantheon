@@ -115,44 +115,6 @@ class Transport:
         return self._send(request)
 
 
-def _write_governed_dataset_authority(root: Path, dataset: dict[str, Any]) -> tuple[Path, Path]:
-    """A real governed dataset version + threshold policy in the authority file contract."""
-    root.mkdir(parents=True, exist_ok=True)
-    records = dataset["records"]
-    storage = root / "canonical-ohlcv.jsonl"
-    payload = "".join(json.dumps(r, sort_keys=True, separators=(",", ":")) + "\n" for r in records).encode()
-    storage.write_bytes(payload)
-    instruments = sorted({r["instrument"] for r in records})
-    last = max(r["date"] for r in records)
-    version = {
-        "dataset_version_id": dataset["dataset_id"], "market_scope": ["TW_EQUITY"],
-        "instrument_scope": instruments, "raw_dataset_refs": ["raw:" + dataset["dataset_id"]],
-        "normalized_dataset_refs": list(dataset["source_dataset_refs"]),
-        "feature_dataset_refs": ["feature:" + dataset["dataset_id"]],
-        "frozen_at": last + "T10:00:00Z", "metadata_json": {"authority_status": "authoritative"},
-        "created_at": last + "T09:00:00Z", "source_controller_readback_ref": "readback:" + dataset["dataset_id"],
-        "source_evidence_bundle_ids": ["evbundle:" + dataset["dataset_id"]],
-        "normalized_storage_refs": [{"uri": storage.resolve().as_posix(),
-                                     "sha256": hashlib.sha256(payload).hexdigest(), "row_count": len(records)}],
-        "records": records,
-    }
-    now = datetime.now(timezone.utc)
-    policy = {
-        "policy_id": "card-admission-evaluation", "policy_version": "1", "status": "active",
-        "approval_decision_ref": "approval:card-admission-evaluation",
-        "effective_from": (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "effective_until": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "required_backend": "vectorbt_portfolio", "proof_ttl_seconds": 900, "max_future_skew_seconds": 300,
-        "max_staleness_days": 400, "min_bars_per_instrument": 30, "min_instruments": 2,
-        "required_instruments": instruments, "min_sharpe_ratio": 0.5, "min_total_return": -0.1,
-        "max_drawdown": 0.5,
-    }
-    pointer, policy_path = root / "canonical-dataset-version.json", root / "threshold_policy.json"
-    pointer.write_text(json.dumps(version))
-    policy_path.write_text(json.dumps(policy))
-    return pointer, policy_path
-
-
 class World:
     """The deployed environment of the alpha replication worker, with every neighbour a real application."""
 
@@ -212,7 +174,15 @@ class World:
 
         # The deployed worker's environment: compose names, mounted credential files.
         data_dir = self.owners.data_dir
-        pointer, policy = _write_governed_dataset_authority(tmp_path / "authority", dataset)
+        # The governed market dataset reads the stored daily bars only: no persona authority file exists.
+        from services.research import governed_market_dataset as gmd
+        from services.research.tests import test_hypothesis_card_gate_candidate as card_candidate
+        from services.research.tests.test_governed_market_dataset import store_from_records
+
+        store_root = store_from_records(tmp_path / "market_data_store", dataset["records"])
+        monkeypatch.setattr(gmd, "_as_of", lambda now: datetime(2026, 11, 2, tzinfo=timezone.utc))
+        # the card binds to the governed market reference (as the distillation env does), not a persona dataset
+        monkeypatch.setattr(card_candidate, "_dataset", lambda: dataset)
         env = {
             "ALPHA_REPLICATION_DATA_DIR": str(data_dir), "ALPHA_REPLICATION_CONTROLLER_MAX_TICKS": "1",
             "ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS": "60", "PANTHEON_TENANT_ID": TENANT,
@@ -223,8 +193,7 @@ class World:
             "PERSONA_API_URL": "http://persona.test",
             "RESEARCH_GOVERNANCE_PROPOSER_ID": self.issued["RESEARCH_GOVERNANCE_PROPOSER_ID"],
             "RESEARCH_GOVERNANCE_GATE_ID": self.issued["RESEARCH_GOVERNANCE_GATE_ID"],
-            "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH": str(pointer),
-            "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH": str(policy),
+            "GOVERNED_MARKET_STORE_ROOT": str(store_root),
         }
         for variable in issuer.CONSUMER_FILES[WORKER]:
             env[variable + "_FILE"] = str(principals / WORKER / variable)
@@ -248,7 +217,10 @@ class World:
 
 
 def _dataset() -> dict[str, Any]:
-    return json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"]
+    """Recorded official bars, bound to the governed market reference the way a card's binding names it."""
+    from services.research.alpha_replication.card_production_wiring import GOVERNED_MARKET_DATASET_ID
+
+    return {**json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"], "dataset_id": GOVERNED_MARKET_DATASET_ID}
 
 
 def _store_card_spec(world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:

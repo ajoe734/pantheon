@@ -1,0 +1,55 @@
+{
+  "task_id": "DISCOVERY-GOVERNED-MARKET-DATASET-20261125",
+  "class": "RC2",
+  "date": "2026-11-25",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md section 6B",
+  "builder": "services/research/governed_market_dataset.py",
+  "consumers": [
+    "services/research/main.py _load_template_search_governed_dataset (template search)",
+    "services/research/alpha_replication/card_production_wiring.py build_dataset_resolver (card gate; symbols passed by revalidation_worker._lift_card_inputs)",
+    "services/persona/pool_dataset_authority.py _load_price (persona pool admission)"
+  ],
+  "not_changed": ["gate thresholds", "survivorship rule", "trial counting", "Retrain and Teaching authority", "DatasetVersion pointer sync for real DatasetVersions", "services/source_ingestion (reader, store)"],
+  "no_new_writer": "The builder opens no file for writing; scripts/check_storage_manifest.py passes unchanged (374 entries, 0 failures).",
+  "size_measurement": {
+    "store_shape": "1,950 symbols x 483 trade days, written with DailyBarsStore.write_day (same-shape fixture; hosted store was not read in this task); 27 MiB on disk",
+    "machine": "12 vCPU dev VM, Python 3.12, pyarrow 26.0.1, foreground, one process",
+    "boundary": {"wall_seconds": "2.0 to 3.9 over six runs", "included": 1560, "excluded": 390, "excluded_reason": "illiquid (fixture: every fifth symbol has a low traded value)"},
+    "dataset_60_symbols_483_days": {"records": 28980, "wall_seconds": "1.0 to 2.8"},
+    "verify_snapshot_seconds": "0.04 to 0.06",
+    "peak_rss_mib": {"interpreter_plus_pyarrow_import": 77, "after_boundary": "147 to 185", "after_dataset": "192 to 237"},
+    "container_limits": {
+      "persona": "512m, fits (237 MiB peak for the builder alone; persona recorded cgroup peak 230 MiB includes its own steady state, which is why the 1.5x headroom matters: re-check after the first hosted cycle)",
+      "alpha-replication-worker": "512m, fits",
+      "research-orchestrator-svc": "256m does not fit: 99 MiB steady + about 50 MiB pyarrow + 75 MiB boundary + 45 MiB dataset exceeds it; the one limit needed is 384m (compose default, docs/deployment/dev-container-memory-budget.md and the machine readable budget evidence updated, scripts/test_compose_memory_limits.py passes)"
+    },
+    "not_event_loop": "build_market_boundary, verify_snapshot, dataset_for and resolve_governed_dataset raise governed_dataset_must_run_in_worker when called on a running event loop (test); template search runs in the run's retrain-executor thread, the card resolver in the alpha-replication controller loop, pool admission in the persona cycle.",
+    "limits_in_code": {"MAX_DATASET_SYMBOLS": 60, "reader_chunk_symbols": 20, "window_days": 800}
+  },
+  "dead_letters": "The builder never calls the source API and never reads dead letter counts. Test with the hosted shape (4,742 pending on other connectors, 0 on the price connector) shows the dataset builds; a truncated, deleted, non-JSON or digest-less store day blocks (tests: test_corrupt_incomplete_or_unverifiable_day_blocks, test_unusable_store_records_ooda_reason_without_admission).",
+  "empty_authority_directory": "test_search_reaches_the_gate_from_an_empty_authority_directory runs the real template search worker and the real gate from a store written from recorded TWSE bars with the authority directory empty and no pointer or policy env set; test_empty_authority_directory_reaches_a_dataset covers the builder alone.",
+  "tests_run": [
+    "services/research/tests/test_governed_market_dataset.py",
+    "services/research/tests/test_template_demand_search.py",
+    "services/research/tests/test_card_admission_production_integration.py",
+    "services/research/alpha_replication/test_card_production_wiring.py",
+    "services/persona/test_pool_dataset_authority.py",
+    "services/persona/test_owner_port_health.py",
+    "scripts/test_persona_cycle_owner_ports_compose_contract.py",
+    "scripts/test_current_l12_compose_wiring.py",
+    "scripts/test_compose_memory_limits.py"
+  ],
+  "image_locks": "pyarrow added to services/research/runtime-requirements.txt (pyarrow==26.0.1, hash locked via uv pip compile) and services/control-plane/persona/requirements.txt (lock regenerated; only pyarrow was added in both locks). The research and persona images did not contain pyarrow, which DailyBarsReader needs.",
+  "residual_findings": [
+    "Hosted facts measured read-only after the head (not changed here): (1) hosted daily_bars has traded_value null for every row on 481 of 484 days and volume null on collector rows, because daily_bars_store reads volume and value while collector rows carry volume_shares and turnover_twd; with the liquidity rule the hosted boundary is empty and fails closed as market_boundary_empty until DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 lands; (2) available_time is present on all 484 days; (3) TWSE symbols start 2025-03-20 or 2025-03-21 (about 410 bars, 2330 has 411) and TPEx symbols start 2024-11-27 (483 to 484 bars), so the gate's 480 bars and 730 days cannot be met for TWSE symbols yet.",
+    "Hosted proof (three consumers on real stored data, hosted memory.peak of research-orchestrator-svc and persona) is for the coordinator after deploy. The hosted store was not read here; thresholds (60 bars, 20 days, TWD 5,000,000 median traded value, 7 days stale) are engineering defaults chosen for the boundary of SD_STRATEGY_SCREEN_ENTRY_EXIT section 2 and are recorded in the amendment; the operator may tune them.",
+    "The card distillation env (PANTHEON_L2_CARD_DATASET_ID, defaulting to PERSONA_POOL_SOURCE_DATASET_ID) must name governed-market:tw-daily or tw_price_daily for new cards; the resolver also accepts tw_price_daily, the logical dataset name the old default carried. A card pinned to a persona DatasetVersion id now resolves to nothing (fails closed with dataset_id_not_governed_market; the worker drops the binding). Outside this task's artifact list.",
+    "services/research/alpha_replication/revalidation_worker.py (one call site, passes the rule's own symbols to the resolver) and services/control-plane/persona/main.py (does not publish a governed market dataset as a DatasetVersion pointer) were edited although not listed; both are required by the design.",
+    "alpha-replication-worker mounts source-ingest-data read-write (seed store path). The builder only reads; making the mount read-only needs the seed store moved first.",
+    "An available_time of null (a v1 partition) leaves the bar out and counts it in bars_not_point_in_time; if hosted history is mostly v1 the boundary will be empty and fail closed with market_boundary_empty or symbols_not_in_store naming the reason.",
+    "A one-symbol rule is given companion instruments (most liquid in the boundary) because the backtest backends require two instruments; the rule trades only its own symbols (companion_symbols names them).",
+    "Outside scope, not changed: _default_retrain_dataset_loader (Retrain) still reads the DatasetVersion pointer; its pointer is now written only by real DatasetVersion producers."
+  ]
+}
