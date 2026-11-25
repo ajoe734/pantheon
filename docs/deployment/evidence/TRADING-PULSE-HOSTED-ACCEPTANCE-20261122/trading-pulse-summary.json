@@ -42,129 +42,34 @@
       ],
       "failures": [],
       "reads": [
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/auth/dev-login",
-          "method": "POST",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/events/stream",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/shell-summary",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/agora/capabilities",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/audit",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/strategies",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/personas/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
-          "method": "GET",
-          "status": 200
-        }
+        "GET /bff/me 401",
+        "GET /bff/auth/readiness 401",
+        "POST /bff/auth/dev-login 200",
+        "GET /bff/me 200",
+        "GET /bff/auth/readiness 200",
+        "GET /bff/me 200",
+        "GET /bff/me 200",
+        "GET /bff/events/stream 200",
+        "GET /bff/management/shell-summary 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/me 200",
+        "GET /bff/agora/capabilities 200",
+        "GET /bff/audit 200",
+        "GET /bff/strategies 200",
+        "GET /bff/personas/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/evidence 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/timeline 200"
       ],
       "entry": "sidebar",
-      "overview_digest": "e2d7b0672a001431cab3cb33d159fe77febabc50048d79f4b567405bdefeb2d1"
+      "overview_digest": "e2d7b0672a001431cab3cb33d159fe77febabc50048d79f4b567405bdefeb2d1",
+      "reads_sha256": "c09df52aee5fbb964a2f76cb2124b16b7b298d1da42282b484fe0c797cb76abb"
     },
     {
       "locale": "zh-TW",
@@ -179,134 +84,35 @@
       ],
       "failures": [],
       "reads": [
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/auth/dev-login",
-          "method": "POST",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/events/stream",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/shell-summary",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/search",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/agora/capabilities",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/audit",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/strategies",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/personas/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
-          "method": "GET",
-          "status": 200
-        }
+        "GET /bff/auth/readiness 401",
+        "GET /bff/me 401",
+        "POST /bff/auth/dev-login 200",
+        "GET /bff/me 200",
+        "GET /bff/auth/readiness 200",
+        "GET /bff/me 200",
+        "GET /bff/me 200",
+        "GET /bff/events/stream 200",
+        "GET /bff/management/shell-summary 200",
+        "GET /bff/search 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/me 200",
+        "GET /bff/agora/capabilities 200",
+        "GET /bff/audit 200",
+        "GET /bff/strategies 200",
+        "GET /bff/personas/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/evidence 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/timeline 200"
       ],
       "entry": "command_palette",
-      "overview_digest": "5eab0dad8d1c2cd0ea3d4b33a7766924933376b4c292e127989cef2302ddcaf7"
+      "overview_digest": "5eab0dad8d1c2cd0ea3d4b33a7766924933376b4c292e127989cef2302ddcaf7",
+      "reads_sha256": "a03a26ad3531b85d1087d409fe1815241f20e2cb5f93d2b4c9fde6d5993fc098"
     },
     {
       "locale": "en-US",
@@ -320,129 +126,34 @@
       ],
       "failures": [],
       "reads": [
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 401
-        },
-        {
-          "path": "/bff/auth/dev-login",
-          "method": "POST",
-          "status": 200
-        },
-        {
-          "path": "/bff/auth/readiness",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/events/stream",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/shell-summary",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trading-pulse/rankings",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/me",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/agora/capabilities",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/audit",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/strategies",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/personas/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/events",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/timeline",
-          "method": "GET",
-          "status": 200
-        },
-        {
-          "path": "/bff/management/trade-journeys/[REDACTED]/evidence",
-          "method": "GET",
-          "status": 200
-        }
+        "GET /bff/me 401",
+        "GET /bff/auth/readiness 401",
+        "POST /bff/auth/dev-login 200",
+        "GET /bff/auth/readiness 200",
+        "GET /bff/me 200",
+        "GET /bff/me 200",
+        "GET /bff/me 200",
+        "GET /bff/events/stream 200",
+        "GET /bff/management/shell-summary 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/management/trading-pulse 200",
+        "GET /bff/management/trading-pulse/rankings 200",
+        "GET /bff/me 200",
+        "GET /bff/agora/capabilities 200",
+        "GET /bff/audit 200",
+        "GET /bff/strategies 200",
+        "GET /bff/personas/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys 200",
+        "GET /bff/management/trade-journeys/events 200",
+        "GET /bff/management/trade-journeys/[REDACTED] 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/timeline 200",
+        "GET /bff/management/trade-journeys/[REDACTED]/evidence 200"
       ],
       "entry": "sidebar",
-      "overview_digest": "8d32f9363b486d21c38439f645724eb943bc80584f3020fd0c058d857541b963"
+      "overview_digest": "8d32f9363b486d21c38439f645724eb943bc80584f3020fd0c058d857541b963",
+      "reads_sha256": "478f71f3964ce94768f2215633332e169af0a4b10b5cee096ba888b4f2bc99f9"
     }
   ],
   "blocked_writes": [],
@@ -470,7 +181,7 @@
       "desktop.png",
       "narrow.png"
     ],
-    "bytes": 345580,
+    "bytes": 340448,
     "max_bytes": 5242880,
     "routine_daily_growth_bytes": 0
   }

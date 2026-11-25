@@ -273,7 +273,7 @@
     "max_screenshots_per_pair": 2,
     "max_bundle_bytes": 5242880,
     "cleanup": "No raw API bodies, credentials, tokens, cookie state, traces or browser profiles committed. Temporary rehearsal witness is removed after deidentification. Replace duplicate summaries/images per SHA pair.",
-    "measured_bundle_bytes": 345580,
+    "measured_bundle_bytes": 340448,
     "cleanup_completed": "Temp downloads removed; no credentials, raw bodies, traces or profiles retained."
   },
   "validation": {
