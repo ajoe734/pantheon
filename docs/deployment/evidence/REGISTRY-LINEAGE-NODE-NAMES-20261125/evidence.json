@@ -1,0 +1,71 @@
+{
+  "task_id": "REGISTRY-LINEAGE-NODE-NAMES-20261125",
+  "title": "Lineage nodes carry the names people know",
+  "register_class": "RC6",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-25T07:56:00Z",
+  "delivery_state": "functional_source_verified_pending_review",
+  "acceptance_evidence": {
+    "1_registry_lineage_node_strategy_id_and_version": {
+      "files": [
+        "services/registry/storage.py",
+        "services/registry/test_lineage_read.py"
+      ],
+      "summary": "build_lineage_graph adds strategy_id and version on registry entry nodes while preserving id, label, type, state, risk, the unrooted most-recent execution_bundle seed traversal, limit cap, and visible-tenant rule."
+    },
+    "2_bff_lineage_display_name_and_name_missing": {
+      "files": [
+        "services/control-plane/bff/core/display_names.py",
+        "services/control-plane/bff/console_gap/lineage.py",
+        "services/control-plane/bff/tests/test_management_display_names.py",
+        "services/control-plane/bff/tests/test_bff_lineage_contract.py"
+      ],
+      "summary": "GET /bff/lineage enriches nodes via DisplayNameResolver.annotate_lineage_nodes: Persona, Strategy, and Artifact nodes resolve display_name from the persona/strategy directories; CapitalPool and Experiment (run) nodes with exactly one owning strategy get '{strategy_name} ({type})'; nodes the resolver cannot name get display_name=null and name_missing=true; label remains the node id."
+    },
+    "3_one_bounded_read_per_request_and_degraded_surface_on_failure": {
+      "files": [
+        "services/control-plane/bff/core/display_names.py",
+        "services/control-plane/bff/console_gap/lineage.py",
+        "services/control-plane/bff/tests/test_lineage_registry_read.py",
+        "services/control-plane/bff/tests/test_management_display_names.py"
+      ],
+      "summary": "GET /bff/lineage executes inside request_read_scope() with one DisplayNameResolver instance per request, issuing at most one persona directory read and one bounded strategy label read (view=persona_binding) per request regardless of node count. When a resolver read fails, the graph remains readable with display_name=null, name_missing=true, and status='degraded' on meta.surfaces.display_names, meta.surfaces.lineage, meta.status, and data.status."
+    },
+    "4_four_recorded_live_persona_roots_return_same_connected_graph": {
+      "files": [
+        "services/registry/test_lineage_read.py",
+        "services/control-plane/bff/tests/test_lineage_registry_read.py"
+      ],
+      "recorded_roots": [
+        "strategy-persona-a81b4fd15944698341aa",
+        "persona-ee7112a829d38b9135ac",
+        "artifact-persona-pool-a81b4fd15944698341aa-v2",
+        "pool-persona-paper-a81b4fd15944698341aa"
+      ],
+      "summary": "Verified in both Registry and BFF tests that querying with any of the four recorded live persona roots returns the identical connected node set and edge set with all nodes named."
+    },
+    "5_contracts_updated_and_no_existing_test_weakened": {
+      "files": [
+        "services/registry/contract.md",
+        "services/control-plane/bff/BFF_API_CONTRACT.md"
+      ],
+      "changed_test_assertions": "none; no existing test was weakened or deleted, only additive assertions and new tests were added",
+      "summary": "Updated services/registry/contract.md (§8 Lineage read) and services/control-plane/bff/BFF_API_CONTRACT.md (line 641). Unavailable owner responses remain status='unavailable' with empty nodes/edges, distinct from a reachable owner returning an empty graph with status='ok'."
+    }
+  },
+  "runtime_budget": {
+    "new_persistent_writers": 0,
+    "new_recurring_jobs": 0,
+    "growth_per_day_bytes": 0,
+    "per_request_reads": "At most 1 GET /api/registry/lineage read, 1 shared persona directory read, and 1 bounded GET /api/registry/strategy-specs?view=persona_binding read per GET /bff/lineage request (cached within request_read_scope)."
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_lineage_read.py services/control-plane/bff/tests/test_bff_lineage_contract.py services/control-plane/bff/tests/test_lineage_registry_read.py services/control-plane/bff/test_pkt003_lineage_view_contract.py services/control-plane/bff/tests/test_management_display_names.py services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/test_bff_runtimes_contract.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py"
+    ],
+    "result": "all passed"
+  },
+  "residual_findings": []
+}

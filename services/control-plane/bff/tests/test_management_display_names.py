@@ -162,3 +162,49 @@ def test_incident_and_inbox_titles_are_presented_without_rewriting_stored_title(
     annotate_subject_row(DisplayNameResolver(), item)
     assert item["title_display"] == "Drawdown breach on Alpha Trader / Momentum One"
     assert item["persona_display_name"] == "Alpha Trader"
+
+
+def test_lineage_nodes_resolve_persona_strategy_artifact_pool_and_run_names(store):
+    names = DisplayNameResolver()
+    nodes = [
+        {"id": "persona-a", "label": "persona-a", "type": "Persona"},
+        {"id": "reg-spec-1", "label": "reg-spec-1", "type": "Strategy", "strategy_id": "strategy-1", "version": "1.0.1"},
+        {"id": "art-1", "label": "art-1", "type": "Artifact", "strategy_id": "strategy-1", "version": "1.2.0"},
+        {"id": "pool-1", "label": "pool-1", "type": "CapitalPool"},
+        {"id": "run-1", "label": "run-1", "type": "Experiment"},
+        {"id": "pool-shared", "label": "pool-shared", "type": "CapitalPool"},
+        {"id": "reg-spec-2", "label": "reg-spec-2", "type": "Strategy", "strategy_id": "strategy-unknown", "version": "1.0.0"},
+        {"id": "ds-1", "label": "ds-1", "type": "Dataset"},
+    ]
+    edges = [
+        {"from": "run-1", "to": "reg-spec-1", "label": "source_run"},
+        {"from": "reg-spec-1", "to": "art-1", "label": "source_strategy_spec"},
+        {"from": "art-1", "to": "persona-a", "label": "persona"},
+        {"from": "art-1", "to": "pool-1", "label": "capital_pool"},
+        {"from": "art-1", "to": "pool-shared", "label": "capital_pool"},
+        {"from": "reg-spec-2", "to": "pool-shared", "label": "capital_pool"},
+        {"from": "ds-1", "to": "reg-spec-1", "label": "source_dataset"},
+    ]
+    annotated = {n["id"]: n for n in names.annotate_lineage_nodes(nodes, edges)}
+    for nid, n in annotated.items():
+        assert n["label"] == nid
+
+    assert annotated["persona-a"]["display_name"] == "Alpha Trader"
+    assert annotated["persona-a"]["name_missing"] is False
+    assert annotated["reg-spec-1"]["display_name"] == "Momentum One"
+    assert annotated["reg-spec-1"]["name_missing"] is False
+    assert annotated["art-1"]["display_name"] == "Momentum One"
+    assert annotated["art-1"]["name_missing"] is False
+    assert annotated["pool-1"]["display_name"] == "Momentum One (CapitalPool)"
+    assert annotated["pool-1"]["name_missing"] is False
+    assert annotated["run-1"]["display_name"] == "Momentum One (Experiment)"
+    assert annotated["run-1"]["name_missing"] is False
+    # Shared across two distinct strategies: not one owning strategy -> null display_name
+    assert annotated["pool-shared"]["display_name"] is None
+    assert annotated["pool-shared"]["name_missing"] is True
+    assert annotated["reg-spec-2"]["display_name"] is None
+    assert annotated["reg-spec-2"]["name_missing"] is True
+    assert annotated["ds-1"]["display_name"] is None
+    assert annotated["ds-1"]["name_missing"] is True
+    assert store.calls == {"personas": 1, "strategies": 1, "bindings": 0}
+    assert names.surface() == {"status": "ok", "source": "display_name_resolver"}

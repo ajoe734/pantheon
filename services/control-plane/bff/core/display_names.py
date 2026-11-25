@@ -13,9 +13,10 @@ ids and strategy ids to display names for one request:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from .owner_reads import cached_owner_call, selected_tenant, shared_persona_directory_list
 
@@ -62,6 +63,20 @@ def _persona_label(record: Mapping[str, Any]) -> str:
     return ""
 
 
+def _strategy_labels_configured(store: Any) -> bool:
+    """True when ``store.get_strategy_labels`` is backed by a configured or injected source."""
+    if store is None or not hasattr(store, "get_strategy_labels"):
+        return False
+    if not hasattr(store, "research_knowledge_source"):
+        return True
+    if "get_strategy_labels" in getattr(store, "__dict__", {}):
+        return True
+    rks = getattr(store, "research_knowledge_source", None)
+    if getattr(rks, "_has_injected_strategy_specs", False):
+        return True
+    return bool(os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+
+
 class DisplayNameResolver:
     """Resolve persona and strategy display names with one read per directory."""
 
@@ -73,19 +88,37 @@ class DisplayNameResolver:
         strategy_loader: Optional[Callable[[], Mapping[str, Any]]] = None,
         binding_loader: Optional[Callable[[], Iterable[Mapping[str, Any]]]] = None,
     ) -> None:
-        store = _source if _source is not None else (_composed_read_store() or read_store)  # configured, then composed, then explicit
-        self._store = store
-        if persona_loader is None and store is not None and hasattr(store, "list_personas"):
-            persona_loader = lambda: shared_persona_directory_list(store, store.list_personas)  # noqa: E731
-        if strategy_loader is None and store is not None and hasattr(store, "get_strategy_labels"):
-            strategy_loader = lambda: cached_owner_call(  # noqa: E731
-                ("display_names_strategy_labels", id(store), selected_tenant.get()),
-                store.get_strategy_labels,
+        composed = _composed_read_store()
+        if _source is not None:
+            p_store = s_store = b_store = _source
+        else:
+            p_store = (
+                read_store
+                if read_store is not None and hasattr(read_store, "list_personas")
+                else (composed or read_store)
             )
-        if binding_loader is None and store is not None and hasattr(store, "list_runtime_bindings"):
+            s_store = (
+                read_store
+                if read_store is not None and _strategy_labels_configured(read_store)
+                else (composed if _strategy_labels_configured(composed) else None)
+            )
+            b_store = (
+                read_store
+                if read_store is not None and hasattr(read_store, "list_runtime_bindings")
+                else (composed or read_store)
+            )
+        self._store = p_store
+        if persona_loader is None and p_store is not None and hasattr(p_store, "list_personas"):
+            persona_loader = lambda: shared_persona_directory_list(p_store, p_store.list_personas)  # noqa: E731
+        if strategy_loader is None and s_store is not None and hasattr(s_store, "get_strategy_labels"):
+            strategy_loader = lambda: cached_owner_call(  # noqa: E731
+                ("display_names_strategy_labels", id(s_store), selected_tenant.get()),
+                s_store.get_strategy_labels,
+            )
+        if binding_loader is None and b_store is not None and hasattr(b_store, "list_runtime_bindings"):
             binding_loader = lambda: cached_owner_call(  # noqa: E731
-                ("display_names_runtime_bindings", id(store), selected_tenant.get()),
-                store.list_runtime_bindings,
+                ("display_names_runtime_bindings", id(b_store), selected_tenant.get()),
+                b_store.list_runtime_bindings,
             )
         self._binding_loader = binding_loader
         self._bindings: Optional[Dict[str, Tuple[str, str]]] = None
@@ -93,6 +126,8 @@ class DisplayNameResolver:
         self._strategy_loader = strategy_loader
         self._personas: Optional[Dict[str, str]] = None
         self._strategies: Optional[Dict[str, str]] = None
+        self._persona_error: Optional[str] = None
+        self._strategy_error: Optional[str] = None
 
     # -- directory reads (each at most once per resolver) --------------------
     def _persona_names(self) -> Dict[str, str]:
@@ -105,9 +140,14 @@ class DisplayNameResolver:
                             continue
                         pid = _text(record.get("persona_id") or record.get("id"))
                         label = _persona_label(record)
-                        if pid and label:
+                        if pid and label and label != pid:
                             names[pid] = label
+                    p_port = getattr(getattr(self._store, "persona_capital_runtime", None), "persona", None)
+                    if p_port is not None and callable(getattr(p_port, "get_surface_status", None)):
+                        if p_port.get_surface_status().get("source") == "unavailable":
+                            self._persona_error = "persona_store_unavailable"
                 except Exception as exc:  # noqa: BLE001 - names degrade to ids, rows stay visible
+                    self._persona_error = f"{type(exc).__name__}: {exc}"
                     log.warning("persona display-name read failed: %s", exc)
             self._personas = names
         return self._personas
@@ -118,17 +158,46 @@ class DisplayNameResolver:
             if self._strategy_loader is not None:
                 try:
                     for sid, label in (self._strategy_loader() or {}).items():
+                        clean_sid = _text(sid)
                         text = _text(
                             (label.get("title") or label.get("name"))
                             if isinstance(label, Mapping)
                             else label
                         )
-                        if _text(sid) and text:
-                            names[_text(sid)] = text
+                        if clean_sid and text and text != clean_sid:
+                            names[clean_sid] = text
                 except Exception as exc:  # noqa: BLE001
+                    self._strategy_error = f"{type(exc).__name__}: {exc}"
                     log.warning("strategy display-name read failed: %s", exc)
             self._strategies = names
         return self._strategies
+
+    @property
+    def errors(self) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        if self._persona_error:
+            out["personas"] = self._persona_error
+        if self._strategy_error:
+            out["strategies"] = self._strategy_error
+        return out
+
+    @property
+    def failed(self) -> bool:
+        return bool(self._persona_error or self._strategy_error)
+
+    def surface(self) -> Dict[str, Any]:
+        errors = self.errors
+        if errors:
+            return {
+                "status": "degraded",
+                "source": "display_name_resolver",
+                "reason": "; ".join(f"{k}: {v}" for k, v in sorted(errors.items())),
+                "errors": errors,
+            }
+        return {
+            "status": "ok",
+            "source": "display_name_resolver",
+        }
 
     def _binding_ids(self) -> Dict[str, Tuple[str, str]]:
         """``binding_id -> (persona_id, strategy_id)`` from one runtime-binding read."""
@@ -232,6 +301,86 @@ class DisplayNameResolver:
             if not missing:
                 out = re.sub(re.escape(clean), lambda _m, n=name: n, out)
         return out if out != text else None
+
+    def annotate_lineage_nodes(
+        self,
+        nodes: Iterable[Any],
+        edges: Iterable[Any] = (),
+    ) -> List[Dict[str, Any]]:
+        """Annotate lineage nodes with ``display_name`` and ``name_missing``.
+
+        * ``Persona``, ``Strategy`` and ``Artifact`` nodes resolve through the
+          persona/strategy directory (one bounded read per directory per request).
+        * A ``CapitalPool`` or run (``Experiment``) node connected to exactly one
+          owning strategy gets ``"{strategy_name} ({kind})"``.
+        * Any node the resolver cannot name has ``display_name: None`` and
+          ``name_missing: True``; ``label`` always stays the node ``id``.
+        """
+        node_list: List[Dict[str, Any]] = [
+            dict(n) for n in (nodes or ()) if isinstance(n, Mapping)
+        ]
+        direct_strategy_by_node: Dict[str, str] = {}
+        owning_strategies: Dict[str, Set[str]] = {}
+        for node in node_list:
+            nid = _text(node.get("id") or node.get("artifact_id"))
+            if not nid:
+                continue
+            raw_type = _text(node.get("type") or node.get("artifact_type"))
+            kind = raw_type.lower()
+            sid = _text(node.get("strategy_id"))
+            if not sid and kind in ("strategy", "strategy_spec") and not nid.startswith("reg-"):
+                sid = nid
+            if sid:
+                direct_strategy_by_node[nid] = sid
+                owning_strategies.setdefault(nid, set()).add(sid)
+
+        for edge in edges or ():
+            if not isinstance(edge, Mapping):
+                continue
+            frm = _text(edge.get("from") or edge.get("from_artifact_id"))
+            to = _text(edge.get("to") or edge.get("to_artifact_id"))
+            if not frm or not to:
+                continue
+            if frm in direct_strategy_by_node:
+                owning_strategies.setdefault(to, set()).add(direct_strategy_by_node[frm])
+            if to in direct_strategy_by_node:
+                owning_strategies.setdefault(frm, set()).add(direct_strategy_by_node[to])
+
+        for node in node_list:
+            nid = _text(node.get("id") or node.get("artifact_id"))
+            if nid:
+                node.setdefault("id", nid)
+                node["label"] = nid
+            raw_type = _text(node.get("type") or node.get("artifact_type"))
+            kind = raw_type.lower()
+            display_name: Optional[str] = None
+            name_missing = True
+            if kind == "persona":
+                pid = _text(node.get("persona_id") or nid)
+                if pid:
+                    resolved, missing = self.persona(pid)
+                    if not missing and resolved:
+                        display_name = resolved
+                        name_missing = False
+            elif kind in ("strategy", "strategy_spec", "artifact", "execution_bundle", "strategy_bundle"):
+                sid = _text(node.get("strategy_id") or nid)
+                if sid:
+                    resolved, missing = self.strategy(sid)
+                    if not missing and resolved:
+                        display_name = resolved
+                        name_missing = False
+            elif kind in ("capitalpool", "capital_pool", "experiment", "run", "source_run"):
+                owners = owning_strategies.get(nid, set())
+                if len(owners) == 1:
+                    sid = next(iter(owners))
+                    resolved, missing = self.strategy(sid)
+                    if not missing and resolved:
+                        kind_label = raw_type or ("CapitalPool" if "pool" in kind else "Experiment")
+                        display_name = f"{resolved} ({kind_label})"
+                        name_missing = False
+            node["display_name"] = display_name
+            node["name_missing"] = name_missing
+        return node_list
 
 
 def annotate_subject_row(names: "DisplayNameResolver", row: Any, *, title_key: str = "title") -> Any:
