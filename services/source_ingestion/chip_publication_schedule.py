@@ -891,8 +891,9 @@ def margin_chain_wiring(connector_id: str, *, root: str | Path | None = None) ->
     """Adapter kwargs that wire the chain check for a margin connector; empty for every other connector."""
     if connector_id not in margin_chain_connector_ids():
         return {}
-    return {"previous_session_lookup": stored_margin_session_lookup(root), "accept_first_load": True,
-            "earlier_session_lookup": stored_margin_earlier_session_lookup(root)}
+    lookup = stored_margin_session_lookup(root)
+    lookup.earlier_session_lookup = stored_margin_earlier_session_lookup(root)  # type: ignore[attr-defined]
+    return {"previous_session_lookup": lookup, "accept_first_load": True}
 
 
 def verify_margin_session_chain(

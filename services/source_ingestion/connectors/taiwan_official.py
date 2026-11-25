@@ -904,8 +904,6 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     # {symbol: {"margin_balance", "short_balance"}} stored for that session, or None when it is not stored.
     previous_session_lookup: Any | None = None
     accept_first_load: bool = False
-    # earlier_session_lookup(connector_id, start, is_session_day=...) -> (session, rows) | None: gap bridging.
-    earlier_session_lookup: Any | None = None
 
     def __post_init__(self) -> None:
         # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three full-market chip profiles hold the whole
@@ -1674,9 +1672,11 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 try:
                     stored_previous = self.previous_session_lookup(self.connector_id, previous)
                 except ChipSessionUndecidable:
-                    if self.earlier_session_lookup is None:
+                    # gap bridging: the wired lookup carries its bounded earlier-session reader
+                    earlier_lookup = getattr(self.previous_session_lookup, "earlier_session_lookup", None)
+                    if earlier_lookup is None:
                         raise
-                    found = self.earlier_session_lookup(self.connector_id, previous, is_session_day=_is_session_day)
+                    found = earlier_lookup(self.connector_id, previous, is_session_day=_is_session_day)
                     if found is None:
                         raise
                     compared, stored_previous = found

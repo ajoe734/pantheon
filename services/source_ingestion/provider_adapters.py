@@ -590,7 +590,6 @@ def _taiwan_official_records(
             bundle_root=request.get("bundle_root") or adapter.bundle_root,
             previous_session_lookup=adapter.previous_session_lookup,
             accept_first_load=adapter.accept_first_load,
-            earlier_session_lookup=adapter.earlier_session_lookup,
         )
     dataset = str(request.get("dataset") or "tw_price_daily")
     venues = _string_list(request.get("venues") or request.get("venue")) or ["TWSE", "TPEx"]
