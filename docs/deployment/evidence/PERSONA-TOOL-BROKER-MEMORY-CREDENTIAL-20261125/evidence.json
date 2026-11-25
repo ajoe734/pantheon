@@ -1,0 +1,19 @@
+{
+  "task_id": "PERSONA-TOOL-BROKER-MEMORY-CREDENTIAL-20261125",
+  "class": "RC2 WP2.3",
+  "cause": "BrokerConfig.from_env copied PANTHEON_MEMORY_AUTH_TOKEN into memory_auth_token, which http_memory_get preferred over the rotating adapter principal file, so every recall got 403.",
+  "fix": [
+    "from_env carries the env token only when OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE is not configured; the file is read per call",
+    "configured but unreadable file stays memory_credential_unavailable, no env fallback; explicit BrokerConfig.memory_auth_token still wins",
+    "plain-string 401/403 detail is recorded as a fixed class memory_http_<code>_<class>, never the text"
+  ],
+  "not_changed": "memory authorization, roles, materialize route, tool contract; no new writer, job or file",
+  "tests": {
+    "run_with": "/tmp/rv-mp/bin/python -m pytest (cwd services/openclaw-gateway-adapter, PYTHONPATH=../..:.)",
+    "result": "tests/test_persona_tool_broker_memory_credential.py + test_persona_tool_broker.py: 37 passed, 4 skipped (opt-in Hindsight container tests)",
+    "before_change": "5 of 7 new tests fail on the dev head (both banks 403 with stale env token + valid file)"
+  },
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family",
+  "residual_findings": ["one of three personas made no recall call on 2026-11-25 (prompt decision)"],
+  "hosted_acceptance": "pending: next daily cycle memory_recall_ok >= 1 for personas that call recall; persona-day memory_read_via_broker passes"
+}
