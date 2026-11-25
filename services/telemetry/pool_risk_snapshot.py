@@ -189,6 +189,8 @@ def build_idle_base(*, day: date, valuation: Optional[Mapping[str, Any]], metada
         base_valuation["equity"] = base_valuation["initial_cash"]
         base_valuation["cash"] = base_valuation["initial_cash"]
         basis = "flat_never_filled_initial_cash"
+    elif base_valuation.get("equity") is None and base_valuation.get("cash") is not None:
+        base_valuation["equity"] = base_valuation["cash"]
     base_valuation["mark_refs"] = []
     row = _base_row(day, base_valuation, {**(metadata or {}), "position_facts": []}, pool_id, binding,
                     "weekday_default_no_evidence" if not holidays else "governed_calendar_evidence", basis)
@@ -329,6 +331,9 @@ def upsert(rows: list[dict[str, Any]], base: dict[str, Any], *, rank: int) -> tu
         new_key = (rank, base.get("valuation_as_of") or "")
         if new_key < old_key:
             return rows, "ignored_stale"
+        if row.get("_rank", 1) == 0 and rank > 0:
+            rows[index] = {**base, "revision": 1}
+            return rows, "replaced"
         replaced = {**base, "previous_digest": row.get("digest"), "revision": int(row.get("revision") or 1) + 1}
         rows[index] = replaced
         return rows, "replaced"
@@ -367,8 +372,21 @@ def observations(rows: Sequence[Mapping[str, Any]], *, limit: int = OBSERVATION_
 
 ROWS_KEY = "_pool_risk_snapshot_rows"          # retained store, <= 400 days per pool, never served whole
 HOLIDAYS_KEY = "_pool_risk_holidays"
-POLICY_KEY = "_pool_risk_policy_facts"       # last bound-policy facts a valuation event stamped
+POLICY_KEY = "_pool_risk_policy_facts"         # last bound-policy facts a valuation or state snapshot stamped
+ACCOUNT_KEY = "_pool_risk_account_facts"       # last account facts (initial_cash, cash, fill_count)
 LAST_WRITE_KEY = "_pool_risk_snapshot_last_write"
+_POLICY_FACT_KEYS = (
+    "risk_policy_id", "risk_policy_version", "risk_policy_digest",
+    "gross_limit", "max_leverage", "drawdown_risk_off", "drawdown_warn",
+    "unavailable_reason",
+)
+
+
+def _taipei_date(created_at: Any) -> Optional[date]:
+    created = _parse(created_at)
+    if created is None:
+        return None
+    return created.astimezone(ZoneInfo(_CLOSES[_DEFAULT_MARKET][0])).date()
 
 
 def _budget_full() -> Optional[float]:
@@ -410,57 +428,203 @@ def _apply_event(current, event, *, observation, metadata) -> None:
     outcomes: list[tuple[str, str]] = []
     event_type = str(event.get("event_type") or "")
 
+    if event_type in ("runtime_state_snapshot", "heartbeat"):
+        raw_account = metadata.get("account_facts")
+        if isinstance(raw_account, Mapping):
+            init_cash = _finite(raw_account.get("initial_cash"))
+            cash = _finite(raw_account.get("cash"))
+            raw_fc = raw_account.get("fill_count")
+            fc = (
+                int(raw_fc)
+                if isinstance(raw_fc, int) and not isinstance(raw_fc, bool) and raw_fc >= 0
+                else None
+            )
+            if init_cash is not None and init_cash > 0 and cash is not None and fc is not None:
+                event_day = _taipei_date(event.get("created_at"))
+                event_day_iso = event_day.isoformat() if event_day else None
+                prev_acc = current.get(ACCOUNT_KEY)
+                prev_fc = prev_acc.get("fill_count") if isinstance(prev_acc, Mapping) else None
+                if prev_fc is None or fc >= prev_fc:
+                    if (
+                        isinstance(prev_acc, Mapping)
+                        and prev_fc == fc
+                        and prev_acc.get("initial_cash") == init_cash
+                        and prev_acc.get("cash") == cash
+                    ):
+                        prev_as_of = prev_acc.get("as_of")
+                        candidates = [d for d in (prev_as_of, event_day_iso) if isinstance(d, str) and d]
+                        as_of = min(candidates) if candidates else None
+                    else:
+                        as_of = event_day_iso
+                    new_acc: dict[str, Any] = {
+                        "initial_cash": init_cash,
+                        "cash": cash,
+                        "fill_count": fc,
+                    }
+                    if as_of:
+                        new_acc["as_of"] = as_of
+                    current[ACCOUNT_KEY] = new_acc
+        raw_policy = metadata.get("risk_policy_facts")
+        if isinstance(raw_policy, Mapping) and (
+            raw_policy.get("risk_policy_digest") or raw_policy.get("unavailable_reason")
+        ):
+            basis_name = "runtime_state_snapshot" if event_type == "runtime_state_snapshot" else "last_valuation_event"
+            current[POLICY_KEY] = {
+                **{k: raw_policy[k] for k in _POLICY_FACT_KEYS if k in raw_policy},
+                "_basis": basis_name,
+            }
+
     if (event_type == "pnl_snapshot" and observation and observation.get("status") == "known"):
         new_holidays, _ = holidays_from_marks(observation.get("mark_refs") or [])
         holidays |= new_holidays
         facts = metadata.get("risk_policy_facts")
-        if isinstance(facts, Mapping) and facts.get("risk_policy_digest"):
-            current[POLICY_KEY] = dict(facts)
+        if isinstance(facts, Mapping) and (facts.get("risk_policy_digest") or facts.get("unavailable_reason")):
+            current[POLICY_KEY] = {
+                **{k: facts[k] for k in _POLICY_FACT_KEYS if k in facts},
+                "_basis": "last_valuation_event",
+            }
         base, reason = build_base(valuation=observation, metadata=metadata, pool_id=pool_id,
                                   binding=binding, event_created_at=event.get("created_at"))
         if base is not None:
             rows, outcome = upsert(rows, base, rank=2)
-            outcomes.append((base["as_of"], outcome))
+            if outcome in ("inserted", "replaced"):
+                outcomes.append((base["as_of"], outcome))
         else:
             current["pool_risk_snapshot_last_skip"] = reason
 
     day = _taipei_day_after_close(event.get("created_at"))
     if day is not None and pool_id and is_trading_day(day, holidays) and not any(
-            r["as_of"] == day.isoformat() and r["pool_id"] == str(pool_id) for r in rows):
+            r["as_of"] == day.isoformat() and r["pool_id"] == str(pool_id) and r.get("_rank", 0) >= 2 for r in rows):
         known = [o for o in current.get("quarter_equity_observations") or [] if o.get("status") == "known"]
         valuation = known[-1] if known else None
+        account = current.get(ACCOUNT_KEY) if isinstance(current.get(ACCOUNT_KEY), Mapping) else None
         stored = current.get(POLICY_KEY)
+        idle_meta = dict(metadata or {})
         if isinstance(stored, Mapping):
-            # Heartbeats carry no policy. The limits in force are the last bound policy a valuation stamped;
-            # the row says so rather than presenting it as stamped at this close.
-            metadata = {**metadata, "risk_policy_facts": {**stored, "_basis": "last_valuation_event"}}
-        flat = current.get("position_count") == 0 and isinstance(current.get("positions"), list)
-        never_filled = not current.get("ledger_fill_count") and not current.get("executed_trade_count")
-        if flat and (valuation is not None):
-            base, _ = build_idle_base(day=day, valuation=valuation, metadata=metadata, pool_id=pool_id,
+            # Heartbeats carry no policy. The limits in force are the last bound policy a valuation or
+            # runtime_state_snapshot stamped; the row says so rather than presenting it as stamped at this close.
+            idle_meta["risk_policy_facts"] = {
+                **stored,
+                "_basis": stored.get("_basis") or "last_valuation_event",
+            }
+        raw_lfc = current.get("ledger_fill_count")
+        acc_fc = account.get("fill_count") if account is not None else None
+        fill_counts = [
+            c for c in (raw_lfc, acc_fc)
+            if isinstance(c, int) and not isinstance(c, bool) and c >= 0
+        ]
+        effective_lfc = max(fill_counts) if fill_counts else None
+        executed_fills = int(current.get("executed_trade_count") or 0)
+        never_filled = (
+            executed_fills == 0
+            and (effective_lfc == 0 or (effective_lfc is None and valuation is not None))
+        )
+        if current.get("positions_status") == "unavailable":
+            flat = False
+        elif isinstance(current.get("positions"), list):
+            flat = current.get("position_count") == 0 and len(current["positions"]) == 0
+        else:
+            flat = never_filled and not current.get("_positions_by_symbol")
+
+        idle_valuation: Optional[dict[str, Any]] = None
+        if flat:
+            if never_filled:
+                init_cash = _finite((account or {}).get("initial_cash"))
+                if init_cash is None or init_cash <= 0:
+                    init_cash = _finite((valuation or {}).get("initial_cash"))
+                if init_cash is not None and init_cash > 0:
+                    idle_valuation = {
+                        **(valuation or {}),
+                        "initial_cash": init_cash,
+                        "cash": init_cash,
+                        "equity": init_cash,
+                    }
+            else:
+                val_as_of = _parse(valuation.get("as_of")) if valuation else None
+                val_day = val_as_of.astimezone(ZoneInfo(_CLOSES[_DEFAULT_MARKET][0])).date() if val_as_of else None
+                usable_val = valuation if (valuation is not None and (val_day is None or val_day <= day)) else None
+                acc_day = (
+                    date.fromisoformat(account["as_of"])
+                    if (account and isinstance(account.get("as_of"), str) and account["as_of"])
+                    else None
+                )
+                usable_acc = account if (account is not None and (acc_day is None or acc_day <= day)) else None
+                if usable_val is not None or usable_acc is not None:
+                    cand: dict[str, Any] = dict(usable_val or {})
+                    if usable_acc is not None:
+                        val_fc = usable_val.get("fill_count") if isinstance(usable_val, Mapping) else None
+                        if usable_val is None or not isinstance(val_fc, int) or usable_acc["fill_count"] >= val_fc:
+                            cand["initial_cash"] = usable_acc["initial_cash"]
+                            cand["cash"] = usable_acc["cash"]
+                            cand["equity"] = usable_acc["cash"]
+                    if _finite(cand.get("equity")) is not None and _finite(cand.get("equity")) > 0:
+                        idle_valuation = cand
+
+        if flat and (idle_valuation is not None):
+            base, _ = build_idle_base(day=day, valuation=idle_valuation, metadata=idle_meta, pool_id=pool_id,
                                       binding=binding, holidays=holidays, never_filled=never_filled)
             rank = 1
-            if base is not None and never_filled and not any(r["pool_id"] == str(pool_id) for r in rows):
-                start = _parse(current.get("_binding_effective_at") or current.get("pnl_period_start_at"))
+            if base is not None and never_filled:
+                start = _parse(
+                    current.get("_binding_effective_at")
+                    or current.get("pnl_period_start_at")
+                    or current.get("_binding_first_event_at")
+                    or (metadata or {}).get("runtime_binding_effective_at")
+                    or (metadata or {}).get("binding_effective_at")
+                )
                 cursor = start.astimezone(ZoneInfo(_CLOSES[_DEFAULT_MARKET][0])).date() if start else day
-                cursor = max(cursor, day - timedelta(days=int(RETENTION_TRADING_DAYS * 1.5)))
+                cursor = max(cursor, day - timedelta(days=int(RETENTION_TRADING_DAYS * 2)))
+                backfill_days: list[date] = []
                 while cursor < day:
                     if is_trading_day(cursor, holidays):
-                        back, _ = build_idle_base(day=cursor, valuation=valuation, metadata=metadata,
-                                                  pool_id=pool_id, binding=binding, holidays=holidays,
-                                                  never_filled=True)
-                        if back is not None:
-                            rows, outcome = upsert(rows, back, rank=1)
-                            outcomes.append((back["as_of"], outcome))
+                        backfill_days.append(cursor)
                     cursor += timedelta(days=1)
+                for b_day in backfill_days[-(RETENTION_TRADING_DAYS - 1):]:
+                    back, _ = build_idle_base(day=b_day, valuation=idle_valuation, metadata=idle_meta,
+                                              pool_id=pool_id, binding=binding, holidays=holidays,
+                                              never_filled=True)
+                    if back is not None:
+                        rows, outcome = upsert(rows, back, rank=1)
+                        if outcome in ("inserted", "replaced"):
+                            outcomes.append((back["as_of"], outcome))
         else:
-            base = _base_row(day, {}, {}, pool_id, binding,
-                             "weekday_default_no_evidence" if not holidays else "governed_calendar_evidence",
-                             "owner_valuation_missing")
-            rank = 0
+            acc_day = (
+                date.fromisoformat(account["as_of"])
+                if (account and isinstance(account.get("as_of"), str) and account["as_of"])
+                else None
+            )
+            has_later_valued = any(
+                r["pool_id"] == str(pool_id) and r.get("equity") is not None and r["as_of"] >= day.isoformat()
+                for r in rows
+            )
+            before_account_facts = (not never_filled and acc_day is not None and day < acc_day)
+            if has_later_valued or before_account_facts:
+                base = None
+                rank = 0
+            else:
+                base = _base_row(day, {}, {}, pool_id, binding,
+                                 "weekday_default_no_evidence" if not holidays else "governed_calendar_evidence",
+                                 "owner_valuation_missing")
+                rank = 0
         if base is not None:
             rows, outcome = upsert(rows, base, rank=rank)
-            outcomes.append((base["as_of"], outcome))
+            if outcome in ("inserted", "replaced"):
+                outcomes.append((base["as_of"], outcome))
+
+    if pool_id:
+        last_valued = max(
+            (r["as_of"] for r in rows if r["pool_id"] == str(pool_id) and r.get("equity") is not None),
+            default=None,
+        )
+        if last_valued is not None:
+            filtered = [
+                r for r in rows
+                if r["pool_id"] != str(pool_id) or r.get("equity") is not None or r["as_of"] > last_valued
+            ]
+            if len(filtered) != len(rows):
+                rows = filtered
+                if not outcomes:
+                    outcomes.append((last_valued, "pruned_placeholder"))
 
     if not outcomes:
         return

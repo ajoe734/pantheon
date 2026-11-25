@@ -170,6 +170,8 @@ def test_catalog_mapping_rejects_foreign_stale_or_ambiguous_proof(mutation):
     else:
         duplicate = copy.deepcopy(approval)
         duplicate["decision_id"] = "another-approval"
+        duplicate["metadata"]["subject"]["risk_policy_digest"] = probe.risk_policy_digest(
+            payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"])
         payload["/api/v1/approval-decisions"]["data"].append(duplicate)
     assert not check(payload)["passed"]
 
@@ -433,3 +435,89 @@ def test_paper_gate_decision_needs_consistent_computed_direction_and_the_gate_su
     assert not check(_gate_payload("increase", {"gross_limit": "equal"}))["passed"]
     assert not check(_gate_payload("reduce", None))["passed"]
     assert not check(_gate_payload("reduce", {"gross_limit": "stricter"}, actor_id="some-service"))["passed"]
+
+
+def _renewal_overlap_payload():
+    payload = _gate_payload("increase", {"_effective_policy": "absent"})
+    previous = payload["/api/v1/approval-decisions"]["data"][0]
+    previous.update(decision_id="apv-risk-profile-prev", decided_at="2026-11-20T00:00:00Z",
+                    recorded_at="2026-11-20T00:00:01Z", expires_at="2026-11-23T08:00:00Z")
+    renewed = copy.deepcopy(previous)
+    renewed.update(decision_id="apv-risk-renew-next", decided_at="2026-11-20T17:00:00Z",
+                   recorded_at="2026-11-20T17:00:01Z", expires_at="2026-11-24T00:00:00Z")
+    renewed["metadata"]["subject"].update(
+        risk_direction="neutral", risk_comparison={"gross_limit": "equal", "net_limit": "equal"},
+        renewal_of="apv-risk-profile-prev")
+    payload["/api/v1/approval-decisions"]["data"].append(renewed)
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["profile_mapping_approval_id"] = "apv-risk-renew-next"
+    return payload
+
+
+def test_overlapping_renewed_and_previous_approvals_pass_and_report_pool_bound_or_last_decided():
+    payload = _renewal_overlap_payload()
+    report = check(payload)
+    assert report["passed"], report
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
+
+    # If the pool binds the previous approval during the overlap, report the pool-bound one.
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["profile_mapping_approval_id"] = "apv-risk-profile-prev"
+    report = check(payload)
+    assert report["passed"], report
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-profile-prev"
+
+    # Without a pool-bound approval id among the matches, report the one decided last.
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"].pop("profile_mapping_approval_id", None)
+    payload["/api/v1/approval-decisions"]["data"].reverse()
+    report = check(payload)
+    assert report["passed"], report
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
+
+
+def test_only_previous_valid_passes_and_both_expired_fails():
+    payload = _renewal_overlap_payload()
+    approvals = payload["/api/v1/approval-decisions"]["data"]
+    approvals[1]["expires_at"] = "2026-11-20T18:00:00Z"
+    report = check(payload)
+    assert report["passed"], report
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-profile-prev"
+
+    approvals[0]["expires_at"] = "2026-11-20T12:00:00Z"
+    report = check(payload)
+    assert not report["passed"]
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] is None
+    assert "required_profile_mapping_unresolved" in report["personas"]["fixture-persona"]["failed"]
+
+
+@pytest.mark.parametrize("diff_kind", ["other_digest", "alt_canonical_digest", "policy_version", "policy_id", "target_version"])
+def test_two_valid_approvals_with_different_policy_digests_or_binding_values_fail(diff_kind):
+    payload = _renewal_overlap_payload()
+    policy = payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"]
+    renewed = payload["/api/v1/approval-decisions"]["data"][1]
+    if diff_kind == "other_digest":
+        renewed["metadata"]["subject"]["risk_policy_digest"] = "different-policy-digest"
+    elif diff_kind == "alt_canonical_digest":
+        renewed["metadata"]["subject"]["risk_policy_digest"] = probe.risk_policy_digest(policy)
+    elif diff_kind == "policy_version":
+        renewed["metadata"]["subject"]["risk_policy_version"] = "fixture-v2"
+    elif diff_kind == "policy_id":
+        renewed["metadata"]["subject"]["risk_policy_id"] = "other-policy"
+    else:
+        renewed["target_version"] = "different-target-version"
+    report = check(payload)
+    assert not report["passed"]
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] is None
+    assert "required_profile_mapping_unresolved" in report["personas"]["fixture-persona"]["failed"]
+
+
+@pytest.mark.parametrize("inactive_field,inactive_val", [
+    ("revoked_at", "2026-11-20T16:00:00Z"),
+    ("superseded_by", "apv-risk-renew-next"),
+])
+def test_revoked_or_superseded_previous_approval_next_to_valid_renewal_passes_with_renewal(inactive_field, inactive_val):
+    payload = _renewal_overlap_payload()
+    previous = payload["/api/v1/approval-decisions"]["data"][0]
+    previous[inactive_field] = inactive_val
+    previous["metadata"]["subject"]["risk_policy_digest"] = "retired-previous-digest"
+    report = check(payload)
+    assert report["passed"], report
+    assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
