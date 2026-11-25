@@ -20,6 +20,7 @@ from .incident import (
     extract_infrastructure_incident_component,
     extract_infrastructure_incident_referenced_ids,
     is_infrastructure_health_incident,
+    page_postmortem_index,
 )
 
 
@@ -133,21 +134,79 @@ class PostgresIncidentStore(IncidentStore):
         rows.reverse()
         return [Postmortem.from_dict(r) for r in rows]
 
-    @_serialized_store_read
-    def list_all_postmortems(self) -> list[Postmortem]:
-        """Every stored postmortem, uncapped (HISTORY_READ_ROW_CAP not applied).
+    # Narrow projection (list_all_selected, no per-row payload decode): only the
+    # fields the list filters and the infrastructure predicate read.
+    # ``incident_evidence_summary`` is selected only for rows the predicate can
+    # possibly match, so large summaries of trading postmortems never load.
+    _PM_INDEX_COLUMNS = (
+        "payload ->> 'postmortem_id', payload ->> 'status', payload ->> 'created_at', "
+        "payload ->> 'incident_id', payload ->> 'binding_id', "
+        "payload ->> 'deployment_plan_id', payload ->> 'persona_capital_binding_id', "
+        "payload ->> 'incident_cluster_id', payload ->> 'artifact_id', "
+        "payload ->> 'runtime_id', "
+        "CASE WHEN payload ->> 'binding_id' LIKE 'infra-subject-%' "
+        "OR payload ->> 'incident_id' LIKE 'agent-%' "
+        "THEN payload ->> 'incident_evidence_summary' END"
+    )
+    _PM_INDEX_FIELDS = (
+        "postmortem_id", "status", "created_at", "incident_id", "binding_id",
+        "deployment_plan_id", "persona_capital_binding_id",
+        "incident_cluster_id", "artifact_id", "runtime_id",
+        "incident_evidence_summary",
+    )
 
-        Used by list endpoints whose ``total`` must be exact; the capped
-        ``list_postmortems`` must never be the source of a reported total.
+    @_serialized_store_read
+    def list_postmortem_page(
+        self,
+        *,
+        incident_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+        statuses: Optional[set] = None,
+        matcher: Optional[Any] = None,
+        hide_infrastructure: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        q_sql_needle: Optional[str] = None,
+    ) -> tuple:
+        """Exact ``(page, total, hidden_infrastructure_count)`` without loading
+        every payload and without HISTORY_READ_ROW_CAP.
+
+        Filtering, counting and ordering run over a narrow column projection
+        (small per-row tuples, never the wide JSONB payload); only the
+        requested page's payloads are fetched. Free-text ``q`` is selected in
+        SQL (``ILIKE`` over the payload text, a superset of the matcher) so only
+        candidate payloads are loaded, then confirmed by ``matcher``.
         """
-        rows = self._select_payloads(
-            self._postmortem_records,
-            "TRUE",
-            (),
-            tail="ORDER BY updated_at DESC",
+        owner = self._postmortem_records
+        if matcher is not None:
+            escaped = (
+                (q_sql_needle or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            candidates = owner.select_where(
+                "payload::text ILIKE %s", ("%" + escaped + "%",)
+            )
+            index_rows: list = []
+            for full in candidates:
+                if matcher(full):
+                    row = {f: full.get(f) for f in self._PM_INDEX_FIELDS}
+                    row["incident_evidence_summary"] = full.get("incident_evidence_summary")
+                    index_rows.append(row)
+        else:
+            index_rows = [
+                dict(zip(self._PM_INDEX_FIELDS, rec))
+                for rec in owner.list_all_selected(self._PM_INDEX_COLUMNS)
+            ]
+        page, total, hidden = page_postmortem_index(
+            index_rows, incident_id=incident_id, binding_id=binding_id,
+            statuses=statuses, hide_infrastructure=hide_infrastructure,
+            offset=offset, limit=limit,
         )
-        rows.reverse()
-        return [Postmortem.from_dict(r) for r in rows]
+        pms: list[Postmortem] = []
+        for row in page:
+            full = owner.get(row["postmortem_id"])
+            if full is not None:
+                pms.append(Postmortem.from_dict(full))
+        return pms, total, hidden
 
     @staticmethod
     def _count(owner: PostgresJsonOwnerStore, where: str, params: tuple) -> int:

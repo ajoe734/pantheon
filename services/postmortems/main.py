@@ -573,49 +573,15 @@ def list_postmortems(
     hidden count is reported. Reviewed/approved/published rows are never hidden.
     ``total`` is exact: it comes from the uncapped store read.
     """
-    postmortems = store.list_all_postmortems()
-
-    if incident_id:
-        postmortems = [p for p in postmortems if _postmortem_attr(p, "incident_id") == incident_id]
-    if binding_id:
-        postmortems = [p for p in postmortems if _postmortem_attr(p, "binding_id") == binding_id]
-    if status:
-        requested_statuses = {s.strip().lower() for s in status.split(",") if s.strip()}
-        if requested_statuses:
-            postmortems = [
-                p
-                for p in postmortems
-                if str(_postmortem_attr(p, "status") or "").strip().lower() in requested_statuses
-            ]
-    if q is not None and q.strip():
-        needle = q.strip().lower()
-        postmortems = [p for p in postmortems if _postmortem_matches_query(p, needle)]
-
-    postmortems.sort(
-        key=lambda p: (
-            str(_postmortem_attr(p, "created_at") or ""),
-            str(_postmortem_attr(p, "postmortem_id") or ""),
-        ),
-        reverse=True,
+    requested_statuses = (
+        {s.strip().lower() for s in status.split(",") if s.strip()} if status else set()
     )
-    hidden_infrastructure_count = 0
-    if not include_infrastructure and not incident_id:
-        visible = []
-        for p in postmortems:
-            if (
-                str(_postmortem_attr(p, "status") or "").strip().lower() == "draft"
-                and is_infrastructure_postmortem(p)
-            ):
-                hidden_infrastructure_count += 1
-            else:
-                visible.append(p)
-        postmortems = visible
-    total = len(postmortems)
-    response.headers["X-Total-Count"] = str(total)
-    response.headers["X-Hidden-Infrastructure-Count"] = str(hidden_infrastructure_count)
+    needle = q.strip().lower() if q is not None and q.strip() else None
+    hide_infrastructure = not include_infrastructure and not incident_id
 
-    if page_size is not None or page_token is not None:
-        start = 0
+    paged = page_size is not None or page_token is not None
+    start = 0
+    if paged:
         if page_token is not None and str(page_token).strip() != "":
             raw_token = str(page_token).strip()
             if raw_token.startswith("offset:"):
@@ -626,8 +592,26 @@ def list_postmortems(
                 raise HTTPException(status_code=400, detail=f"Invalid page_token: {page_token!r}") from exc
             if start < 0:
                 raise HTTPException(status_code=400, detail="page_token must be non-negative")
-        effective_page_size = page_size if page_size is not None else 50
-        page_slice = postmortems[start : start + effective_page_size]
+    effective_page_size = (page_size if page_size is not None else 50) if paged else None
+
+    # The store filters, counts (total and hidden) and pages exactly; the
+    # Postgres store does so over a streamed narrow projection and loads only
+    # the page's payloads (no HISTORY_READ_ROW_CAP, no full-table load).
+    postmortems, total, hidden_infrastructure_count = store.list_postmortem_page(
+        incident_id=incident_id or None,
+        binding_id=binding_id or None,
+        statuses=requested_statuses or None,
+        matcher=(lambda p: _postmortem_matches_query(p, needle)) if needle else None,
+        q_sql_needle=needle,
+        hide_infrastructure=hide_infrastructure,
+        offset=start,
+        limit=effective_page_size,
+    )
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Hidden-Infrastructure-Count"] = str(hidden_infrastructure_count)
+
+    if paged:
+        page_slice = postmortems
         next_page_token = str(start + effective_page_size) if (start + effective_page_size) < total else None
         if next_page_token is not None:
             response.headers["X-Next-Page-Token"] = next_page_token
