@@ -59,7 +59,6 @@ from services.execution.lean_runtime.performance_telemetry import (
     MarketMark,
     RollingDrawdownTracker,
     SourceIngestMarkProvider,
-    position_facts_from,
     value_portfolio,
 )
 from services.execution.lean_runtime.futures_session_inputs import (
@@ -165,6 +164,30 @@ defense-in-depth — otherwise the execution loop keeps filling orders for a
 halted binding. Signals are left on the queue so they can replay on resume.
 """
 
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def position_facts_from(positions: Sequence[Mapping[str, Any]], marks: Mapping[str, float]) -> list[dict[str, Any]]:
+    """Owner-side helper: the closing positions at their marks, as stamped on the valuation event."""
+    rows = []
+    for pos in positions:
+        symbol = str(pos.get("symbol") or pos.get("instrument_id") or "").strip()
+        quantity = _finite_number(pos.get("quantity"))
+        if not symbol or quantity is None or abs(quantity) <= 1e-12:
+            continue
+        multiplier = _finite_number(pos.get("multiplier"))
+        multiplier = multiplier if multiplier and multiplier > 0 else 1.0
+        price = _finite_number(marks.get(symbol))
+        rows.append({"symbol": symbol, "quantity": quantity, "multiplier": multiplier,
+                     "mark_price": price,
+                     "notional": None if price is None else round(quantity * multiplier * price, 6)})
+    return rows
 
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

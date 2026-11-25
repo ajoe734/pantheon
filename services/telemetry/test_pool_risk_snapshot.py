@@ -261,3 +261,20 @@ def test_risk_budget_factor_changes_nothing_that_sizes_or_allocates():
                                            "pool_risk_snapshots": [{"risk_budget_factor": 0.01}]},
                                           {"budget_full": 1.0})
     assert baseline == polluted and baseline["risk_budget_factor"] == 0.5
+
+
+def test_owner_stamps_closing_positions_at_marks_and_policy_facts_on_the_valuation_event():
+    from services.execution.lean_runtime.paper_runtime import position_facts_from
+    facts = position_facts_from(
+        [{"symbol": "2330.TW", "quantity": 90, "multiplier": 1}, {"symbol": "0050.TW", "quantity": -10},
+         {"symbol": "FLAT.TW", "quantity": 0}, {"symbol": "NOMARK.TW", "quantity": 5}],
+        {"2330.TW": 221.0, "0050.TW": 150.0})
+    by_symbol = {f["symbol"]: f for f in facts}
+    assert set(by_symbol) == {"2330.TW", "0050.TW", "NOMARK.TW"}
+    assert by_symbol["2330.TW"]["notional"] == 19890.0 and by_symbol["0050.TW"]["notional"] == -1500.0
+    assert by_symbol["NOMARK.TW"]["notional"] is None  # unmarked stays null, never zero
+    base, _ = prs.build_base(valuation={"as_of": "2026-10-27T00:00:00Z", "equity": 100000.0, "cash": 80000.0,
+                                        "initial_cash": 100000.0, "mark_refs": [{"as_of": "2026-10-27T00:00:00Z"}]},
+                             metadata={"position_facts": facts}, pool_id="p", binding="b",
+                             event_created_at="2026-10-27T07:00:00Z")
+    assert base["gross_notional"] is None and base["nulls_base"]["gross_notional"] == "position_mark_missing"

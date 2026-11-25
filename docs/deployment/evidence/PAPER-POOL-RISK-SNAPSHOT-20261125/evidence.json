@@ -6,13 +6,13 @@
   "fix": [
     "services/telemetry/pool_risk_snapshot.py: one PoolRiskSnapshot per (pool, governed trading day) built from owner facts; upsert keyed by (pool, day) with digest, previous_digest and revision; history dependent fields recomputed from the retained series after every write; null with reason, never zero; vol/CVaR null under 20 consecutive returns; retention 400 days per pool deleted on write; served_view exposes only the last 20 rows as pool_risk_snapshots and pool_observations",
     "services/telemetry/runtime_summary.py: apply_event hook after event projection (never raises into ingest); served rows trimmed in get/list",
-    "services/execution/lean_runtime/paper_runtime.py + performance_telemetry.py: valuation event metadata now carries position_facts (closing positions at marks) and risk_policy_facts (bound policy id/version/digest, gross_limit, drawdown risk_off); read-only, fails to {unavailable_reason}",
+    "services/execution/lean_runtime/paper_runtime.py: valuation event metadata now carries position_facts (closing positions at marks) and risk_policy_facts (bound policy id/version/digest, gross_limit, drawdown risk_off); read-only, fails to {unavailable_reason}",
     "services/persona/persona_cycle_controller.py: observations capped at the last 20 rows (existing consumer, read only)",
     "acceptance/pool_risk_snapshot_day.py + .github/workflows/persona-day-acceptance.yml: read-only viewer-identity daily check; fails on no snapshot for the last completed governed session or unknown pool health"
   ],
   "unchanged": "No order, sizing, admission, allocation, approval or policy behaviour. risk_budget_factor (min(1, mean 20d gross_utilisation / budget_full), same definition as persona-evaluator pool_health_factors) is recorded with inputs and applied=false; a test proves the allocation consumer ignores it and a source scan proves no non-telemetry reader.",
   "tests": {
-    "services/telemetry/test_pool_risk_snapshot.py": "13 passed: replay, duplicate, out-of-order, restart, binding rollover, late correction, before-close and holiday skips, null reasons, <20 day nulls, 22-day vol/CVaR/factor, retention, bounded payload, real pool_health driven from a real summary (active and idle), unvalued position, measurement-only",
+    "services/telemetry/test_pool_risk_snapshot.py": "14 passed: replay, duplicate, out-of-order, restart, binding rollover, late correction, before-close and holiday skips, null reasons, <20 day nulls, 22-day vol/CVaR/factor, retention, bounded payload, real pool_health driven from a real summary (active and idle), unvalued position, measurement-only",
     "acceptance/test_pool_risk_snapshot_day.py": "7 passed, includes the recorded hosted unknown-health shape (hosted_persona_pool_20261119.json)",
     "services/persona/test_persona_cycle_controller.py": "new 20-row cap test passes; 2 lifespan tests need asyncpg and are environment-only (fail identically without this change)",
     "services/execution/lean_runtime": "test_paper_runtime.py + test_performance_telemetry.py 192 passed, with new assertions on the emitted position_facts / risk_policy_facts",
