@@ -1037,8 +1037,9 @@ class DailyBarsStore:
         try:
             state = json.loads((self.root / "daily_bars_completion_state.json").read_text(encoding="utf-8"))
             days = state.get("days") or {}
+            last_run = state.get("last_run")
         except (OSError, ValueError):
-            days = {}
+            days, last_run = {}, None
         stored = self.read_manifest_dates()
         over = [
             {"trade_date": d, "traded_rows": v.get("traded_rows"), "no_value": v.get("no_value"), "status": v.get("status")}
@@ -1047,6 +1048,7 @@ class DailyBarsStore:
         return {"stored_days": len(stored), "examined_days": sum(1 for d in stored if d in days),
                 "unexamined_days": sum(1 for d in stored if d not in days), "days_over_threshold": len(over),
                 "unretained_days": sum(1 for d in stored if (days.get(d) or {}).get("status") == "unretained"),
+                "last_run": last_run, "completion_failed": bool((last_run or {}).get("failed")),
                 "days": over[:500]}
 
     def record_dual_write_error(self, exc: BaseException) -> None:

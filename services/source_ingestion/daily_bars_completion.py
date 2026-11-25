@@ -37,7 +37,12 @@ STATE_FILENAME = "daily_bars_completion_state.json"
 STATE_SCHEMA = "daily_bars_completion_state.v1"
 MAX_DAYS = int(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS", "3"))
 MAX_SECONDS = float(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_SECONDS", "20"))
-MAX_RSS_MB = float(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_RSS_MB", "768"))
+# Memory: the call may GROW the process by MAX_GROWTH_MB over its RSS at the start (the source-ingest process is already
+# ~2.7 GB on hosted, so a flat 768 MB cap would stop every call before the first partition). MAX_RSS_MB is the absolute
+# guard against the 6 GiB (6144 MB) source-ingest container limit: 5120 MB leaves 1 GiB of headroom for the rest of the
+# process. 2727 MB (hosted today) + 768 MB growth = 3495 MB, inside the ceiling.
+MAX_GROWTH_MB = float(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_GROWTH_MB", "768"))
+MAX_RSS_MB = float(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_RSS_MB", "5120"))
 MAX_PARTITIONS = int(os.getenv("SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_PARTITIONS", "40"))
 UNRETAINED_LIST_LIMIT = 500
 
@@ -163,10 +168,12 @@ class DailyBarsCompleter:
 
     # -- one bounded call ----------------------------------------------------------------------
     def run(self, *, max_days: int = MAX_DAYS, max_seconds: float = MAX_SECONDS, max_rss_mb: float = MAX_RSS_MB,
-            max_partitions: int = MAX_PARTITIONS) -> dict[str, Any]:
+            max_growth_mb: float = MAX_GROWTH_MB, max_partitions: int = MAX_PARTITIONS) -> dict[str, Any]:
         started = self._clock()
+        baseline_rss = self._rss()
         state = self.load_state()
         report: dict[str, Any] = {
+            "baseline_rss_mb": round(baseline_rss, 1), "max_growth_mb": max_growth_mb, "max_rss_mb": max_rss_mb,
             "completed_days": [], "unchanged_days": [], "indexed_partitions": 0, "filled_rows": 0,
             "conflicts": 0, "rejected": {}, "stopped": None, "peak_rss_mb": 0.0}
 
@@ -174,8 +181,11 @@ class DailyBarsCompleter:
             report["peak_rss_mb"] = max(report["peak_rss_mb"], round(self._rss(), 1))
             if self._clock() - started >= max_seconds:
                 return "seconds"
-            if self._rss() >= max_rss_mb:
-                return "memory"
+            rss = self._rss()
+            if rss >= max_rss_mb:
+                return "memory_ceiling"  # absolute guard against the container limit
+            if rss - baseline_rss >= max_growth_mb:
+                return "memory_growth"  # this call grew the process by its declared increment
             return None
 
         root_parts = partitions(self.root)
@@ -243,6 +253,17 @@ class DailyBarsCompleter:
         report["pending_days"] = sum(1 for d in stored if d not in days or days[d].get("status") == "partial")
         report["elapsed_seconds"] = round(self._clock() - started, 3)
         report["peak_rss_mb"] = max(report["peak_rss_mb"], round(self._rss(), 1))
+        # A call that stopped for memory before doing anything can never make progress: a visible failure, not idle.
+        report["failed"] = bool(str(report["stopped"] or "").startswith("memory")
+                                and not report["completed_days"] and not report["unchanged_days"]
+                                and report["indexed_partitions"] == 0)
+        state = self.load_state()
+        state["last_run"] = {k: report[k] for k in (
+            "stopped", "failed", "baseline_rss_mb", "peak_rss_mb", "max_growth_mb", "max_rss_mb", "elapsed_seconds",
+            "indexed_partitions", "filled_rows", "conflicts")}
+        state["last_run"]["completed_days"] = len(report["completed_days"])
+        state["last_run"]["finished_at"] = time.time()
+        self._save(state)
         return report
 
     # -- parts ---------------------------------------------------------------------------------

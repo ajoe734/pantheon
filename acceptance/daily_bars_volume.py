@@ -22,7 +22,11 @@ def evaluate(volume: Mapping[str, Any], since: str) -> tuple[bool, str]:
     detail = (f"days over 5% null traded value: {int(volume.get('days_over_threshold') or 0)} "
               f"(newer than {since}: {len(newer)}); examined {volume.get('examined_days')} of {volume.get('stored_days')} "
               f"stored days, unretained {volume.get('unretained_days')}")
-    return not newer, detail
+    failed = bool(volume.get("completion_failed"))
+    if failed:
+        run = volume.get("last_run") or {}
+        detail += f"; completion FAILED (stopped {run.get('stopped')}, baseline rss {run.get('baseline_rss_mb')} MB)"
+    return not newer and not failed, detail
 
 
 def fetch(base_url: str, token: str | None = None) -> Mapping[str, Any]:

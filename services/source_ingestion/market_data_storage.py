@@ -347,6 +347,8 @@ class MarketDataStorageWriter:
         self._start_daily_bars_completion()
 
     COMPLETION_MIN_INTERVAL_SECONDS = 30.0
+    COMPLETION_CALL_PAUSE_SECONDS = 5.0
+    COMPLETION_MAX_CALLS = 400  # 484 days at 3 a call is 162 calls; the index partitions add some
 
     def _start_daily_bars_completion(self) -> None:
         """DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125: the source-ingest owner completes stored days from the retained
@@ -372,7 +374,18 @@ class MarketDataStorageWriter:
         try:
             from .daily_bars_completion import DailyBarsCompleter
 
-            self.last_daily_bars_completion = DailyBarsCompleter(self.daily_bars_store, self.root).run()
+            # The only external trigger is a daily bars dual write, which on hosted happens about once a day per source
+            # (definition cadence 86400 s). At 3 days a call that would be ~162 daily writes for 484 days, so the
+            # thread keeps calling (one bounded call at a time, ``COMPLETION_CALL_PAUSE_SECONDS`` apart) while a
+            # call stopped only because its own day/second/partition budget ran out. A memory stop or a call that
+            # made no progress ends the loop (the next dual write re-arms it); ``COMPLETION_MAX_CALLS`` bounds it.
+            for _ in range(self.COMPLETION_MAX_CALLS):
+                report = DailyBarsCompleter(self.daily_bars_store, self.root).run()
+                self.last_daily_bars_completion = report
+                progressed = bool(report["completed_days"] or report["unchanged_days"] or report["indexed_partitions"])
+                if report["stopped"] not in ("days", "seconds", "partitions") or not progressed:
+                    break
+                time.sleep(self.COMPLETION_CALL_PAUSE_SECONDS)
         except Exception as exc:  # noqa: BLE001 - completion is a repair path: counted, never raised into ingest
             self.daily_bars_store.record_dual_write_error(exc)
         finally:

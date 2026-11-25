@@ -131,8 +131,27 @@ def test_the_call_stops_on_seconds_and_memory_and_the_state_resumes(tmp_path):
     slow = DailyBarsCompleter(store, clock=lambda: next(ticks)).run(max_seconds=50)
     assert slow["stopped"] == "seconds" and slow["completed_days"] == []
     heavy = DailyBarsCompleter(store, rss=lambda: 5000.0).run(max_rss_mb=100)
-    assert heavy["stopped"] == "memory" and heavy["completed_days"] == []
+    assert heavy["stopped"] == "memory_ceiling" and heavy["completed_days"] == [] and heavy["failed"] is True
     assert DailyBarsCompleter(store).run()["completed_days"] == [DAY]
+
+
+def test_a_process_already_above_768_mb_still_completes_and_growth_is_what_is_bounded(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store_day_without_values(store, DAY)
+    write_run(tmp_path, DAY, "run-a", [run_line(collector("2330", DAY, 2010.0, 1000, 2_010_000))])
+    report = DailyBarsCompleter(store, rss=lambda: 2800.0).run()  # hosted-like: far above the old flat 768 MB cap
+    assert report["completed_days"] == [DAY] and report["failed"] is False and report["baseline_rss_mb"] == 2800.0
+    # growth beyond the declared increment stops the call
+    readings = iter([2800.0] + [4000.0] * 50)
+    grown = DailyBarsCompleter(store, rss=lambda: next(readings)).run(max_growth_mb=768)
+    assert grown["stopped"] in (None, "memory_growth")
+    # a first check already above the absolute ceiling is a visible failure in the health field the probe reads
+    store2 = DailyBarsStore(tmp_path / "b")
+    store_day_without_values(store2, DAY)
+    write_run(tmp_path / "b", DAY, "run-a", [run_line(collector("2330", DAY, 2010.0, 1000, 2_010_000))])
+    DailyBarsCompleter(store2, rss=lambda: 5200.0).run()
+    volume = store2.health()["volume"]
+    assert volume["completion_failed"] is True and volume["last_run"]["stopped"] == "memory_ceiling"
 
 
 def test_health_reports_days_over_five_percent_and_the_writer_completes_in_the_background(tmp_path, monkeypatch):
@@ -171,3 +190,33 @@ def test_health_lists_a_stored_day_that_is_still_over_five_percent(tmp_path):
     health = store.volume_health()
     assert health["days_over_threshold"] == 1 and health["unretained_days"] == 1
     assert health["days"][0]["trade_date"] == OLD and health["days"][0]["status"] == "unretained"
+
+
+def test_the_writer_thread_keeps_calling_until_the_budget_stops_are_over_and_ends_on_memory(tmp_path, monkeypatch):
+    import threading
+
+    from services.source_ingestion import daily_bars_completion as mod
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    reports = iter([
+        {"completed_days": ["a"], "unchanged_days": [], "indexed_partitions": 0, "stopped": "days"},
+        {"completed_days": ["b"], "unchanged_days": [], "indexed_partitions": 0, "stopped": "days"},
+        {"completed_days": [], "unchanged_days": [], "indexed_partitions": 0, "stopped": "memory_ceiling"},
+        {"completed_days": ["never"], "unchanged_days": [], "indexed_partitions": 0, "stopped": None},
+    ])
+    calls = []
+
+    class Fake:
+        def __init__(self, *a, **k): ...
+        def run(self):
+            calls.append(1)
+            return next(reports)
+
+    monkeypatch.setattr(mod, "DailyBarsCompleter", Fake)
+    writer = MarketDataStorageWriter.__new__(MarketDataStorageWriter)
+    writer.root, writer.daily_bars_store = tmp_path, DailyBarsStore(tmp_path)
+    writer._completion_guard, writer._completion_running = threading.Lock(), True
+    writer.COMPLETION_CALL_PAUSE_SECONDS = 0.0
+    writer._run_daily_bars_completion()
+    assert len(calls) == 3 and writer.last_daily_bars_completion["stopped"] == "memory_ceiling"
+    assert writer._completion_running is False

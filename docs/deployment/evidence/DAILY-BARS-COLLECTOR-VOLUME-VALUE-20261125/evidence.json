@@ -58,18 +58,27 @@
   "per_call": {
    "max_days": 3,
    "max_seconds": 20,
-   "max_rss_mb": 768,
-   "max_partitions": 40
+   "max_partitions": 40,
+   "max_growth_mb": 768,
+   "max_rss_mb_absolute_ceiling": 5120
   },
   "env": [
    "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS",
    "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_SECONDS",
+   "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_GROWTH_MB",
    "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_RSS_MB",
    "SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_PARTITIONS"
   ],
   "memory_model": "one trade date of copies in memory plus one parquet day; run files are streamed line by line",
   "hosted_scale_estimate": "484 days at 3 days a call is 162 calls; at the measured 2.6 s a day about 21 minutes of completion work spread over ticks, plus one read of the 14 GB of run files for the index (bounded by 20 s and 40 partitions a call, resumable)",
-  "not_measured": "the real 14 GB read speed on the hosted host"
+  "not_measured": "the real 14 GB read speed on the hosted host",
+  "memory_policy": {
+   "rule": "stop 'memory_growth' when RSS minus RSS at call start >= max_growth_mb (768); stop 'memory_ceiling' when RSS >= 5120 MB absolute",
+   "against_limit": "source-ingest container limit 6 GiB = 6144 MB; ceiling 5120 leaves 1 GiB headroom; hosted process RSS 2727 MB (VmHWM 2727) + 768 growth = 3495 MB, inside the ceiling; measured synthetic tick growth was about 240 MB, so growth bound has >3x margin",
+   "why": "the previous flat 768 MB whole-process cap stopped every hosted call before the first partition (process RSS 2727 MB)",
+   "proof": "test_a_process_already_above_768_mb_still_completes_and_growth_is_what_is_bounded injects rss 2800 MB and completes a day",
+   "visible_failure": "a call that stops for memory with no day completed and no partition indexed sets failed=true; stored in the state file last_run and exposed as daily_bars.volume.completion_failed / last_run; the acceptance probe fails on completion_failed"
+  }
  },
  "storage": {
   "new_file": "daily_bars_completion_state.json under the market data root, tens of bytes per stored day plus run file paths",
@@ -97,5 +106,12 @@
   "Hosted 14 GB read speed and the real tick time are not measured; the bounds make them safe, not fast.",
   "A controller-tick or route trigger needs routers/observability.py in the artifact contract (Human/Ops only)."
  ],
- "trigger": "MarketDataStorageWriter starts DailyBarsCompleter.run on a daemon thread after a daily bars dual write (single flight, at most once per 30 s, SOURCE_INGEST_DAILY_BARS_COMPLETION=off disables); no new route and no controller change because routers/observability.py and main.py are outside the task artifact contract (residual: a controller-tick trigger would need the contract widened)"
+ "trigger": "MarketDataStorageWriter starts DailyBarsCompleter.run on a daemon thread after a daily bars dual write (single flight, at most once per 30 s, SOURCE_INGEST_DAILY_BARS_COMPLETION=off disables); no new route and no controller change because routers/observability.py and main.py are outside the task artifact contract (residual: a controller-tick trigger would need the contract widened)",
+ "trigger_and_rate": {
+  "external_trigger": "only a daily bars dual write (MarketDataStorageWriter after a tw_price_daily run). Hosted collector price-history definitions (TWSE, TPEx) have cadence 86400 s, so about one dual write a day per source (measured nothing new on hosted: from COLLECTOR-HOSTED-ADMISSION-20261112 evidence, definition cadence)",
+  "problem": "one call per trigger at 3 days a call would take 162 triggers, about 162 days, for 484 days",
+  "fix": "the daemon thread started by a dual write now keeps making bounded calls (5 s apart, at most 400) while a call stopped only on days/seconds/partitions and made progress; a memory stop or a no-progress call ends it and the next dual write re-arms it",
+  "hours_for_484_days": "162 calls x (about 2.6 s a day x 3 days + 5 s pause) is about 36 minutes of completion work plus the one pass over 14 GB for the index (40 partitions or 20 s a call, same loop); under 2 hours on the measured synthetic rates; real hosted read speed not measured",
+  "test": "test_the_writer_thread_keeps_calling_until_the_budget_stops_are_over_and_ends_on_memory"
+ }
 }
