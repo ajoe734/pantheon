@@ -1479,7 +1479,8 @@ def test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_clos
     # A pinned snapshot is reproduced exactly.
     pinned = {**env, "PANTHEON_L2_CARD_DATASET_ID": binding["dataset_id"]}
     assert controller.card_dataset_binding_from_env(pinned, as_of=as_of)["dataset_id"] == binding["dataset_id"]
-    # Stale store relative to the job, and a missing store: fail closed with the store's reason (not cached).
+    # Stale store relative to the job, and a missing store: fail closed with the store's reason; an unavailable
+    # result is kept only for the retry window, so a recovered store binds on the next attempt after it.
     stale = controller.resolve_card_dataset_binding(as_of=as_of + timedelta(days=30), env=env)
     assert stale["status"] == "unavailable" and "daily_bars_store_stale" in stale["reason"]
     missing = controller.resolve_card_dataset_binding(
@@ -1489,6 +1490,16 @@ def test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_clos
         {**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")}, as_of=as_of) == {
         "unavailable_reason": missing["reason"]}
     assert len(controller._BINDING_CACHE) <= controller._BINDING_CACHE_ENTRIES
+    recovered_root = tmp_path / "absent"
+    import shutil
+
+    shutil.copytree(tmp_path / "store", recovered_root)
+    absent_env = {**env, "GOVERNED_MARKET_STORE_ROOT": str(recovered_root)}
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "unavailable"  # window
+    for value in controller._BINDING_CACHE.values():  # the retry window passes
+        if "_retry_after" in value:
+            value["_retry_after"] = 0.0
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "bound"
 
 
 AUTH_401_REASON = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"

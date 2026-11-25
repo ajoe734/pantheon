@@ -6,8 +6,10 @@ issued principals (``scripts/issue_dev_paper_principals``), the real Registry ap
 application (open persona demands) and the real Persona owner application (the demand's persona for the
 existing discovery scorer). Neighbours are reached over their real HTTP routes through one in-process
 transport; only the Governance decision store is the in-memory mirror of ``execute_command`` that the
-existing operator tests use (no database in the sandbox) and the gate's backtest protocol is the recorded
-governed evaluation the other card tests use. No owner is replaced by a hand-written fake.
+existing operator tests use (no database in the sandbox). The pass-path tests replay the recorded governed
+evaluation as the gate's backtest protocol; the paper-record end-to-end
+(HYPOTHESIS-CARD-GOVERNED-BINDING-20261125) runs the real protocol on the governed bars. No owner is replaced by a
+hand-written fake.
 """
 from __future__ import annotations
 

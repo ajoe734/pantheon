@@ -349,10 +349,11 @@ def card_binding_status(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     return {"status": "bound", "dataset_id": dataset_id, "scope": CARD_BINDING_SCOPE, "reason": None}
 
 
-# Successful bindings only, one per (dataset id, end day, store root); a tick needs one or two. Bounded at
+# One binding per (dataset id, end day, store root); a tick needs one or two. Bounded at
 # _BINDING_CACHE_ENTRIES entries of about 60 symbol names each (a few KiB), process lifetime, no file.
 _BINDING_CACHE: dict[str, dict[str, Any]] = {}
 _BINDING_CACHE_ENTRIES = 4
+_BINDING_RETRY_SECONDS = 900.0  # an unavailable governed store is retried at most every 15 minutes
 
 
 def _binding_end_day(as_of: datetime) -> str:
@@ -383,8 +384,8 @@ def resolve_card_dataset_binding(*, as_of: datetime, env: Mapping[str, str] | No
     end = "-".join(requested.split("-")[1:4]) if pinned else _binding_end_day(as_of)
     key = f"{requested}|{end}|{governed.store_root(source)}"
     cached = _BINDING_CACHE.get(key)
-    if cached is not None:
-        return dict(cached)
+    if cached is not None and cached.get("_retry_after", float("inf")) > time.monotonic():
+        return {k: v for k, v in cached.items() if k != "_retry_after"}
     try:
         boundary = governed.build_market_boundary(end_date=end, now=as_of, env=source)
         if pinned and boundary.snapshot_id != pinned:
@@ -405,12 +406,14 @@ def resolve_card_dataset_binding(*, as_of: datetime, env: Mapping[str, str] | No
                                 "store_symbols": boundary.store_symbol_count},
         }
     except governed.GovernedMarketDatasetError as exc:
-        # never cached: a store that recovers later the same day is bound on the next attempt
-        return {"status": "unavailable", "dataset_id": requested, "reason": f"card_binding_unavailable:{exc}"[:300]}
+        # Kept only for _BINDING_RETRY_SECONDS: a stale store costs a full boundary build, so it is not rebuilt
+        # every tick, and a store that recovers later the same day is bound on the next attempt after that.
+        result = {"status": "unavailable", "dataset_id": requested, "reason": f"card_binding_unavailable:{exc}"[:300],
+                  "_retry_after": time.monotonic() + _BINDING_RETRY_SECONDS}
     while len(_BINDING_CACHE) >= _BINDING_CACHE_ENTRIES:
         _BINDING_CACHE.pop(next(iter(_BINDING_CACHE)))
     _BINDING_CACHE[key] = dict(result)
-    return result
+    return {k: v for k, v in result.items() if k != "_retry_after"}
 
 
 def card_dataset_binding_from_env(env: Mapping[str, str] | None = None, *,

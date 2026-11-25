@@ -1,0 +1,75 @@
+{
+  "task_id": "HYPOTHESIS-CARD-GOVERNED-BINDING-20261125",
+  "class": "RC2",
+  "date": "2026-11-25",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27 10:03Z (operator note in the task acceptance), so the reviewer may be from the owner's family; recorded here and in the task handoff.",
+  "source": "operator instruction 2026-11-25, conversation 2dc972b7; .orchestrator/assistant-dev-packets/sources/hypothesis-card-governed-binding-20261125/EXECUTION_TASKS.md",
+  "acceptance": {
+    "1_governed_binding": {
+      "change": "services/source_ingestion/distillation_controller.py: card_binding_status / resolve_card_dataset_binding / card_dataset_binding_from_env. PANTHEON_L2_CARD_DATASET_ID names the governed market (governed-market:tw-daily, tw_price_daily, or a pinned gmd- snapshot). For a seed carrying a compiled rule, the controller builds the governed market boundary of DISCOVERY-GOVERNED-MARKET-DATASET-20261125 from the stored daily_bars as of the day before the job's enqueue time (settled bars only, so registry replay re-derives the same snapshot) and binds the rule to the pinned gmd- snapshot id with the governed dataset's own symbols (its documented 60-symbol cap). PANTHEON_L2_CARD_SYMBOLS, PANTHEON_L2_CARD_SOURCE_DATASET_REFS, PANTHEON_L2_CARD_BAR_FREQUENCY and the PERSONA_POOL_SOURCE_DATASET_ID fallback are no longer read.",
+      "screen": "services/research/strategy_spec/conversion.py: a whole-market binding (scope all_governed_tw) requires the rule's screen (compiled screen_idea or the code-owned whole_governed_tw_boundary.v1 default the compiler attaches); without a screen the rule stays a research draft (whole_market_binding_requires_screen).",
+      "fail_closed": "unset id -> card_binding_unconfigured:PANTHEON_L2_CARD_DATASET_ID is not set; non-governed id -> card_binding_not_governed_market:...; missing, stale, corrupt or non-reproducible store -> card_binding_unavailable:<code>: <detail>. The rule stays a research_only_draft with that reason on the spec (card_wiring.reason) and the controller state carries reconcile.summary.card_binding_status / card_binding_dataset_id / card_binding_reason / card_binding_bound_symbols / card_binding_boundary_symbols on every tick (success or failure); with L2 extraction off the status is extraction_disabled.",
+      "gate_time": "services/research/alpha_replication/card_production_wiring.py build_dataset_resolver: the pinned snapshot is reproduced with the rule's symbols; a whole-market binding also gets candidate_pool_market from the same bars through template_demand_search.market_from_dataset (no copy), with includes_delisted/includes_suspended false, so the real gate refuses a screened rule as survivorship_limited until the source owner attests coverage (a correct refusal; gate, thresholds and survivorship rule unchanged).",
+      "tests": [
+        "services/research/tests/test_hypothesis_card_gate_candidate.py::test_compiled_card_reaches_registry_spec_with_artifact_and_dataset_binding",
+        "services/research/tests/test_hypothesis_card_gate_candidate.py::test_card_without_governed_dataset_stays_research_only_draft_with_reason",
+        "services/research/tests/test_hypothesis_card_gate_candidate.py::test_missing_governed_store_keeps_the_rule_a_draft_with_the_store_reason",
+        "services/source_ingestion/tests/test_distillation_controller.py::test_card_dataset_binding_from_env_is_reference_only_and_fail_closed",
+        "services/source_ingestion/tests/test_distillation_controller.py::test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_closed_without_store",
+        "services/research/alpha_replication/test_card_production_wiring.py::test_whole_market_binding_gets_the_unattested_pool_market_of_the_same_bars"
+      ]
+    },
+    "2_referenced_route_policy": {
+      "change": "services/persona/discovery_constraints.py (new): resolve_route_policy / resolve_capability_snapshot, the persona daily cycle's resolution moved out of the lifespan closure. services/control-plane/persona/main.py _route_policy / _capability_snapshot now call them with the same owner surface reads; card_production_wiring.build_matcher calls the same functions with the route policy owner catalog the daily cycle reads (DomainWorkflowCatalogPort, as built by create_operations_consultation_port) bound to the persona's tenant, and the persona owner's GET /api/personas/{id}/capability-snapshot (404 = none). Inline wins; a referenced policy is selected by its own policy_id/id; a referenced policy or snapshot the owner does not return raises route_policy_unavailable:<id> / capability_snapshot_unavailable:<id>; an unreadable catalog is read_route_policies: route policy owner unavailable. The scorer is never called without the constraints.",
+      "tests": [
+        "services/research/alpha_replication/test_card_production_wiring.py::test_matcher_resolves_a_referenced_route_policy_and_snapshot_from_their_owners",
+        "services/research/alpha_replication/test_card_production_wiring.py::test_matcher_never_scores_a_referenced_policy_without_its_constraints",
+        "services/research/alpha_replication/test_card_production_wiring.py::test_matcher_and_daily_cycle_share_one_resolution",
+        "services/research/alpha_replication/test_card_production_wiring.py::test_production_route_policy_catalog_is_the_daily_cycle_catalog",
+        "services/research/tests/test_card_admission_production_integration.py::test_a_referenced_route_policy_its_owner_does_not_hold_fails_the_match_closed",
+        "services/persona/test_persona_demand_discovery.py (daily cycle regressions, unchanged, pass through the shared module)"
+      ],
+      "stored_shape": "TRADING_PERSONA in the wiring test and TRADING_PERSONA_FIELDS in the integration test: route_policy_id set, consult_policy_id and tool_profile_id set, no inline route_policy, no inline capability_snapshot (created through the real persona owner application in the integration test)."
+    },
+    "3_compose_contract": {
+      "change": "docker-compose.yml strategy-distillation-worker: PANTHEON_L2_CARD_DATASET_ID (default governed-market:tw-daily) and GOVERNED_MARKET_STORE_ROOT (default /data/source-ingest/market_data_store, on the source-ingest-data volume the service already mounts). scripts/test_persona_cycle_owner_ports_compose_contract.py: area 10 hypothesis_card_binding plus CARD_PATH_MODULES and an AST completeness scan (getenv / environ.get / environ[...] / env[...] / *_ENV constants / REQUIRED_* tuples / configured_service_token) requiring every name the card path modules read to be wired for the container that runs them.",
+      "fails_on_dev": "scan_code_read_owner_env_contract against origin/dev cc652544c docker-compose.yml: \"docker-compose.yml service 'strategy-distillation-worker' missing PANTHEON_L2_CARD_DATASET_ID (read at services/source_ingestion/distillation_controller.py:328 for hypothesis_card_binding)\" and \"... missing GOVERNED_MARKET_STORE_ROOT (read at services/research/governed_market_dataset.py:34 for hypothesis_card_binding)\".",
+      "test": "scripts/test_persona_cycle_owner_ports_compose_contract.py::test_every_environment_name_the_card_path_reads_is_passed_to_its_container"
+    },
+    "4_end_to_end": {
+      "test": "services/research/tests/test_card_admission_production_integration.py::test_paper_record_to_gated_admission_on_the_governed_market_end_to_end",
+      "path": "stored normalized paper SourceRecord -> real distillation controller tick (only the model answer is recorded) -> hypothesis card -> compiled screened factor_rule_v1 bound to gmd-2026-10-30-... with symbols 0050.TW and 2330.TW -> real Registry -> real alpha-replication-worker entry point (replication_controller.main) -> matcher on the trading persona (route_policy_id, policy from the owner catalog) -> admission through real Governance/Registry/Research/Persona applications -> real ReplicationGate with the real vectorbt protocol on the governed bars -> real_backtest_validation refused survivorship_limited (confidence_score and implementation_ready fail for the same missing backtest).",
+      "state_read": "distillation controller state reconcile.summary.card_binding_status=bound with the snapshot id; worker controller_state.json reconcile.card_path {enabled true, error null}, card_admissions admitted, errors carries the acknowledged gate refusal of the spec; research owner GET /api/research-orchestrator/alpha-replication/entries (the alpha factory board's read) returns the admission with its demand and persona; the worker's run list holds the gate run with the survivorship_limited evidence.",
+      "substitutions": "The Governance decision store is the in-memory mirror of execute_command (no database in the sandbox), as in every test of this file; the route policy owner catalog is the real DomainWorkflowCatalogPort holding the policy (production holds none, see residuals); the clock of the binding is pinned to 2026-11-02 because the recorded bars end 2026-10-30. No backtest protocol is replaced in this test."
+    },
+    "5_register": "docs/operations/problem-register.md RC2 row added after the strategy-discovery umbrella row; SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md residual line updated."
+  },
+  "runtime_budget": {
+    "binding_cache": "in-process dict, at most 4 entries of about 60 symbol names each (a few KiB), process lifetime, no file, no growth beyond the cap; successful bindings per (dataset id, end day, store root), unavailable results kept 900 s so a stale store is not rebuilt every 60 s tick.",
+    "cost": "one governed boundary build per end day per controller process, only when L2 extraction is on (tick status) or a seed carries a compiled rule; DISCOVERY-GOVERNED-MARKET-DATASET-20261125 measured on a same-shape store (1,950 symbols x 483 days): boundary 2 to 4 s, process peak RSS 190 to 237 MiB including 77 MiB interpreter plus pyarrow; strategy-distillation-worker limit 640m. The source-ingest image lock already carries pyarrow.",
+    "storage": "no new file, table or volume; nothing to register in docs/operations/storage-manifest.json."
+  },
+  "not_changed": [
+    "gate, thresholds, survivorship rule, trial counting",
+    "template search universe handling (_template_search_context), research demand reads, research items and evolution pages (conversation 5724fc3b)",
+    "services/research/governed_market_dataset.py (owner module of DISCOVERY-GOVERNED-MARKET-DATASET-20261125)"
+  ],
+  "tests_run": [
+    "services/source_ingestion/tests (142 files in five bounded shards): 753 + 754 + 593 + 388 + 402 passed, 22 skipped, 0 failed",
+    "scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_l2_extraction_deploy_switch_contract.py scripts/test_compose_memory_limits.py: 24 passed",
+    "services/research/strategy_spec services/research/alpha_replication services/research/tests/test_hypothesis_card_gate_candidate.py test_governed_market_dataset.py test_template_demand_search.py test_candidate_registration.py: 310 passed",
+    "services/research/tests/test_card_admission_production_integration.py test_persona_cycle_demand_integration.py test_pool_evolution_integration.py: 16 passed",
+    "services/persona services/control-plane/persona: 823 passed, 1 skipped",
+    "after the retry-window change: services/source_ingestion/tests/test_distillation_controller.py services/research/tests/test_hypothesis_card_gate_candidate.py: 51 passed",
+    "interpreter: .venv-pantheon provisioned by scripts/dev/provision_python_distribution.py; pyarrow 26.0.1 (the locked version) on PYTHONPATH from a scratch --target directory because the shared worker test interpreter has none"
+  ],
+  "residual_findings": [
+    "Route policy owner store missing (RC2, outside this task): the catalog the persona daily cycle reads (ReadSurfacePorts.list_route_policies -> DomainWorkflowCatalogPort built with no service store) reports dataset_source 'missing' and returns [] in production. Both the daily cycle and the card matcher therefore fail closed with route_policy_unavailable:<id> for every persona that references a route policy, including the three trading personas, until a route policy owner store exists and is wired into that catalog. /bff/route-policies is the same empty catalog.",
+    "The binding uses the governed dataset's own 60-symbol cap (MAX_DATASET_SYMBOLS, first 60 boundary symbols in symbol order); trading the whole boundary needs a bounded dataset for more symbols in the dataset owner module.",
+    "Screened card rules are refused survivorship_limited until the source owner attests delisted and suspended coverage of the governed market (unchanged rule; same as template search).",
+    "Hosted: after deploy with L2 extraction on, read reconcile.summary.card_binding_* of the distillation controller state and memory.peak of strategy-distillation-worker during the first daily boundary build.",
+    "The real trading personas' route_policy_id values were not read from hosted in this task (no hosted access); tests use the stored shape (id set, no inline policy)."
+  ]
+}
