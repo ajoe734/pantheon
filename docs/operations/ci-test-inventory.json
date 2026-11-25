@@ -732,17 +732,6 @@
    "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
   },
   {
-   "path": "services/control-plane/bff/test_persona_provisioning_route_security.py",
-   "owner": "domain:bff",
-   "reason": "failed when run once on the development host: 2 failed, 18 passed, 1 warning in 13.88s",
-   "failing_tests": [
-    "services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_get_and_list_are_pure_reads",
-    "services/control-plane/bff/test_persona_provisioning_route_security.py::test_persona_list_projects_only_requested_page"
-   ],
-   "measured": "2026-11-19",
-   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
-  },
-  {
    "path": "services/control-plane/bff/test_ptj_004_trade_journal.py",
    "owner": "domain:bff",
    "reason": "failed when run once on the development host: 1 failed, 7 passed, 1 warning in 4.34s",
