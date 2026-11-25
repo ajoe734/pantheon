@@ -605,3 +605,43 @@ def test_pool_refusal_is_recorded_on_the_attempt_and_visible_on_the_demand(tmp_p
     assert again['discovery']['template_search']['attempts'][aid]['pool_admission']['status'] == 'refused'
     with pytest.raises(Exception):
         store.record_pool_refusal('tenant-a', demand['demand_id'], 'nope', 'x')
+
+
+def test_closed_demand_attempts_are_compacted_after_the_retention_and_keep_their_receipts(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    search, store, demand, context = setup_search(tmp_path)
+    receipts = search.run(demand)['discovery']['template_search']['attempts']
+    aid = next(iter(receipts))
+    store.record_pool_refusal('tenant-a', demand['demand_id'], aid, 'candidate_outside_pool_approved_universe')
+    full = len(json.dumps(store.list('tenant-a')))
+    assert 'gate' in store.list('tenant-a')[0]['discovery']['template_search']['attempts'][aid]
+    later = ResearchDemandStore(store.path, now=lambda: datetime.now(timezone.utc) + timedelta(days=30 + 61))
+    row = later.list('tenant-a')[0]
+    attempt = row['discovery']['template_search']['attempts'][aid]
+    assert row['status'] == 'expired' and attempt['compacted'] and 'gate' not in attempt and 'artifact' not in attempt
+    assert attempt['status'] == receipts[aid]['status'] and attempt['family_trial_count'] == receipts[aid]['family_trial_count']
+    assert attempt['pool_admission']['reason'] == 'candidate_outside_pool_approved_universe'
+    assert len(json.dumps(later.list('tenant-a'))) < full / 4
+
+
+def test_pool_refusal_route_records_for_the_writer_and_refuses_unknown_attempts(tmp_path, monkeypatch):
+    from services.research.tests.test_persona_demand_routes_auth import (
+        SECRET, ISSUER, AUDIENCE, TENANT, BASE, _cycle_headers, _headers,
+    )
+    for key, value in {'AUTH_MODE': 'strict', 'JWT_SECRET': SECRET, 'JWT_ISSUER': ISSUER,
+                       'JWT_AUDIENCE': AUDIENCE, 'MFA_REQUIRED': 'false'}.items():
+        monkeypatch.setenv('PANTHEON_RESEARCH_' + key, value)
+    module = _load_service_module(data_dir=str(tmp_path))
+    client = TestClient(module.app)
+    demand = client.post(BASE, headers=_cycle_headers(), json=BODY).json()
+    url = BASE + '/' + demand['demand_id'] + '/pool-refusal'
+    body = {'artifact_ref': 'template-demand-x', 'reason': 'candidate_outside_pool_approved_universe'}
+    assert client.post(url, headers=_headers(), json=body).status_code in (401, 403)  # unrelated viewer
+    assert client.post(url, headers=_cycle_headers(), json=body).status_code == 404  # no such attempt
+    module.research_demand_store.record_template_search(
+        TENANT, demand['demand_id'], {'run_at': '2026-11-25T00:00:00Z', 'paper_only': True,
+                                      'attempts': {'template-demand-x': {'template_id': 't', 'status': 'admitted'}}})
+    done = client.post(url, headers=_cycle_headers(), json=body)
+    assert done.status_code == 200, done.text
+    assert done.json()['discovery']['template_search']['attempts']['template-demand-x']['pool_admission']['status'] == 'refused'
+    assert done.json()['status'] == 'open'
