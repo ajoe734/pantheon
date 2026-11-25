@@ -65,6 +65,15 @@ from .service import (
     evolution_journal_filter_items,
     evolution_journal_freeze_order_item,
     evolution_journal_is_registered_seed_id,
+    evolution_journal_member_baselines,
+    evolution_journal_pool_version_items,
+    evolution_journal_subject_class,
+    evolution_journal_incident_refs_to_read,
+    evolution_journal_incident_ref,
+    EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
+    EVOLUTION_JOURNAL_HIDDEN_SUBJECT_CLASSES,
+    EVOLUTION_JOURNAL_MAX_POOL_PERSONAS,
+    persona_record_tenant_id,
     evolution_journal_postmortem_item,
     evolution_journal_read_postmortems,
     evolution_journal_rollback_item,
@@ -681,6 +690,79 @@ def create_evolution_programs_router(
     return router
 
 
+def _caller_tenant(identity: Any) -> Optional[str]:
+    tenant = _identity_tenant(identity)
+    if tenant:
+        return tenant
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+
+    return selected_tenant.get() or None
+
+
+def _read_paper_owner_pools(
+    store: Any, tenant_id: Optional[str], snapshot_at: str, *, personas: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Bounded owner reads of the strategy pool versions of paper_owner personas in one tenant.
+
+    Reads: at most one persona list plus ``EVOLUTION_JOURNAL_MAX_POOL_PERSONAS``
+    pool-version reads.  Every failure is reported in ``surface``; nothing is
+    defaulted and the other sources still render.
+    """
+    surface: Dict[str, Any] = {
+        "status": "ok", "source": "persona_owner", "reason": None, "snapshot_at": snapshot_at,
+    }
+    result: Dict[str, Any] = {
+        "personas": [], "versions": {}, "surface": surface,
+        "reads": {"persona_list": 0, "pool_version_reads": 0, "max_pool_version_reads": EVOLUTION_JOURNAL_MAX_POOL_PERSONAS},
+    }
+
+    def _fail(reason: str) -> Dict[str, Any]:
+        surface.update({"status": "unavailable", "reason": reason})
+        return result
+
+    if not tenant_id:
+        return _fail("tenant_unresolved")
+    reader = getattr(store, "read_persona_pool_versions", None)
+    if not callable(reader):
+        return _fail("pool_versions_reader_unconfigured")
+    if personas is None:
+        lister = getattr(store, "list_personas", None)
+        if not callable(lister):
+            return _fail("persona_list_unconfigured")
+        try:
+            result["reads"]["persona_list"] = 1
+            personas = list(lister(lifecycle_state="paper_owner") or [])
+        except Exception as exc:  # noqa: BLE001
+            return _fail(f"persona_list_failed:{type(exc).__name__}")
+    owners = [
+        p for p in personas
+        if isinstance(p, dict)
+        and str(p.get("lifecycle_state") or "").strip().lower() == "paper_owner"
+        and persona_record_tenant_id(p) == tenant_id
+        and str(p.get("persona_id") or p.get("id") or "").strip()
+    ]
+    capped = owners[:EVOLUTION_JOURNAL_MAX_POOL_PERSONAS]
+    result["personas"] = capped
+    failures: List[str] = []
+    for persona in capped:
+        persona_id = str(persona.get("persona_id") or persona.get("id")).strip()
+        result["reads"]["pool_version_reads"] += 1
+        try:
+            result["versions"][persona_id] = reader(persona_id, tenant_id)
+        except Exception as exc:  # noqa: BLE001
+            result["versions"][persona_id] = None
+            failures.append(f"{persona_id}:{type(exc).__name__}")
+    notes: List[str] = []
+    if failures:
+        notes.append("owner_read_failed:" + ",".join(failures))
+    if len(owners) > len(capped):
+        notes.append(f"persona_limit_exceeded:{len(owners) - len(capped)}_not_read")
+    if notes:
+        all_failed = bool(capped) and len(failures) == len(capped)
+        surface.update({"status": "unavailable" if all_failed else "degraded", "reason": "; ".join(notes)})
+    return result
+
+
 def create_evolution_router(
     *,
     read_surface: Optional[Any] = None,
@@ -1122,7 +1204,28 @@ def create_evolution_router(
                 "Evolution qualification unavailable",
                 str(exc),
             ) from exc
-        return {"data": report, "meta": _snap_meta(_utc_now())}
+        snapshot_at = _utc_now()
+        tenant_id = _caller_tenant(identity)
+        pools = _read_paper_owner_pools(store, tenant_id, snapshot_at)
+        baselines: List[Dict[str, Any]] = []
+        read_info: Dict[str, Any] = {}
+        entry_reader = getattr(store, "read_registry_entry", None)
+        if pools["surface"]["status"] != "unavailable" and callable(entry_reader):
+            baselines, read_info = evolution_journal_member_baselines(
+                pools["personas"], pools["versions"], tenant_id=str(tenant_id), registry_entry_reader=entry_reader,
+            )
+        report = dict(report)
+        report["member_baselines"] = baselines
+        report["member_baselines_surface"] = {
+            **pools["surface"],
+            **({"status": "unavailable", "reason": "registry_entry_reader_unconfigured"}
+               if pools["surface"]["status"] != "unavailable" and not callable(entry_reader) else {}),
+            "reads": {**pools["reads"], **read_info},
+            "approved": sum(1 for b in baselines if b.get("status") == "approved"),
+            "not_approved": sum(1 for b in baselines if b.get("status") == "no_approved_baseline"),
+            "unavailable": sum(1 for b in baselines if b.get("status") == "unavailable"),
+        }
+        return {"data": report, "meta": _snap_meta(snapshot_at)}
 
     # 13. Management Evolution Journal
     @router.get("/bff/management/evolution-journal")
@@ -1135,6 +1238,7 @@ def create_evolution_router(
         persona: Optional[str] = None,
         mutation_review: Optional[str] = None,
         decision: Optional[str] = None,
+        include_system: bool = False,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -1174,6 +1278,54 @@ def create_evolution_router(
         rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
         journal_read_store = _JournalApprovalIsolatedReadStore(read_store)
 
+        # One persona list serves subject classification
+        # and the strategy pool reads (bounded; see _read_paper_owner_pools).
+        try:
+            all_personas = list(getattr(read_store, "list_personas", lambda **kw: [])() or [])
+        except Exception:  # noqa: BLE001
+            all_personas = []
+        personas_by_id = {
+            str(p.get("persona_id") or p.get("id") or ""): p for p in all_personas if isinstance(p, dict)
+        }
+        # No full incident list: classify from the decision's own fields first, then
+        # read only the linked incident by id, at most EVOLUTION_JOURNAL_MAX_INCIDENT_READS
+        # per request.  Anything unread stays "unclassified" and is counted.
+        refs_to_read, beyond_cap = evolution_journal_incident_refs_to_read(
+            decisions, personas_by_id=personas_by_id
+        )
+        incidents_by_id: Dict[str, Dict[str, Any]] = {}
+        unreadable_incident_ids: set = set()
+        get_incident = getattr(read_store, "get_incident", None)
+        for ref in refs_to_read:
+            try:
+                rec = get_incident(ref) if callable(get_incident) else None
+            except Exception:  # noqa: BLE001
+                rec = None
+            if isinstance(rec, dict) and rec:
+                incidents_by_id[ref] = rec
+            else:
+                unreadable_incident_ids.add(ref)
+        unresolved_incident_ids = {
+            ref for ref in {evolution_journal_incident_ref(d) for d in decisions if isinstance(d, dict)}
+            if ref and ref not in incidents_by_id
+        }
+        incident_class_reads = {
+            "cap": EVOLUTION_JOURNAL_MAX_INCIDENT_READS,
+            "read": len(incidents_by_id),
+            "unreadable": len(unreadable_incident_ids),
+            "beyond_cap": beyond_cap,
+        }
+
+        def _subject_class(dec: Dict[str, Any]) -> str:
+            return evolution_journal_subject_class(
+                dec, incidents_by_id=incidents_by_id, personas_by_id=personas_by_id,
+                unresolved_incident_ids=unresolved_incident_ids,
+            )
+
+        pools = _read_paper_owner_pools(
+            read_store, _caller_tenant(identity), snapshot_at, personas=all_personas
+        )
+
         def _journal_surface_status_fn(dataset: str, *, snapshot_at: str, **kwargs: Any) -> Dict[str, Any]:
             if dataset == "approval_decisions" and journal_read_store.approval_forbidden:
                 return _surface_status_fn(dataset, snapshot_at=snapshot_at, source="missing", **kwargs)
@@ -1189,6 +1341,7 @@ def create_evolution_router(
             snapshot_at=snapshot_at,
             dataset_surface_status_fn=_journal_surface_status_fn,
         )
+        surfaces["strategy_pools"] = pools["surface"]
 
         items: List[Dict[str, Any]] = []
         dec_by_id: Dict[str, Dict[str, Any]] = {}
@@ -1200,6 +1353,7 @@ def create_evolution_router(
                 else evolution_journal_decision_evidence_class(dec)
             )
             if dec_item is not None:
+                dec_item["subject_class"] = _subject_class(dec)
                 items.append(dec_item)
             # Mutation review projection (nested into the decision row)
             dec_id = _management_record_id(dec, "decision_id", "id", "evolution_decision_id")
@@ -1256,6 +1410,12 @@ def create_evolution_router(
                 # projection rides inside the decision row, never as its own row.
                 if dec_item is not None:
                     dec_item["mutation_review"] = proj
+
+        for pool_persona in pools["personas"]:
+            pool_persona_id = str(pool_persona.get("persona_id") or pool_persona.get("id")).strip()
+            pool_versions = pools["versions"].get(pool_persona_id)
+            if pool_versions:
+                items.extend(evolution_journal_pool_version_items(pool_persona, pool_versions))
 
         for pm in postmortems:
             pm_item = evolution_journal_postmortem_item(pm)
@@ -1342,6 +1502,17 @@ def create_evolution_router(
             action_type=action_type,
             risk_level=risk_level,
         )
+
+        hidden_counts = {name: 0 for name in EVOLUTION_JOURNAL_HIDDEN_SUBJECT_CLASSES}
+        if view_mode == "history" and not has_explicit_target_filter and not include_system:
+            visible = []
+            for it in filtered:
+                cls = it.get("subject_class")
+                if cls in hidden_counts:
+                    hidden_counts[cls] += 1
+                else:
+                    visible.append(it)
+            filtered = visible
 
         if persona:
             p_clean = persona.strip().lower()
@@ -1543,6 +1714,7 @@ def create_evolution_router(
                 snapshot_at=snapshot_at,
                 dataset_surface_status_fn=_journal_surface_status_fn,
             )
+            surfaces["strategy_pools"] = pools["surface"]
 
         meta = _snap_meta(snapshot_at)
         meta["surfaces"] = surfaces
@@ -1552,7 +1724,9 @@ def create_evolution_router(
             "mutation_review",
             "rollbacks",
             "freeze_orders",
+            "strategy_pool_versions",
         ]
+        meta["pool_reads"] = pools["reads"]
         raw_summary = evolution_journal_summary(filtered, len(page_items))
         if effective_unfetched_draft > 0:
             raw_summary["total_items"] += effective_unfetched_draft
@@ -1569,10 +1743,26 @@ def create_evolution_router(
                 raw_summary["by_risk_level"].get("unknown", 0) + effective_unfetched_draft
             )
             raw_summary["byRiskLevel"]["unknown"] = raw_summary["by_risk_level"]["unknown"]
+        raw_summary["pool_version_count"] = raw_summary["by_type"].get("pool_version", 0)
+        raw_summary["refused_pool_version_count"] = sum(
+            1 for it in filtered if it.get("entry_type") == "pool_version" and it.get("refused")
+        )
+        by_subject: Dict[str, int] = {}
+        for it in filtered:
+            if it.get("entry_type") == "evolution_decision":
+                by_subject[str(it.get("subject_class"))] = by_subject.get(str(it.get("subject_class")), 0) + 1
+        raw_summary["decision_subject_class_counts"] = by_subject
+        raw_summary["incident_class_reads"] = incident_class_reads
+        raw_summary["unclassified_decision_count"] = sum(
+            1 for it in filtered if it.get("entry_type") == "evolution_decision" and it.get("subject_class") == "unclassified"
+        )
+        raw_summary["hidden_system_counts"] = hidden_counts
+        raw_summary["include_system"] = bool(include_system)
         summary = _management_prune_camel_aliases(raw_summary)
         auto_proposal_counts = evolution_journal_auto_proposal_counts(
             decisions,
             postmortem_draft_count=postmortem_draft_total,
+            subject_class_fn=_subject_class,
         )
         canonical_page_items = _management_prune_camel_aliases(page_items)
         return {
