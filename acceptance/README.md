@@ -242,6 +242,33 @@ is missing; when `auto_proposal_counts` parts (`threshold`, `incident_followup`,
 Tests: `acceptance/test_mgmt_evolution_pages_readable.py` with the recorded pool versions of
 persona-ee7112a829d38b9135ac. Accepted only after the operator acceptance task runs it against hosted.
 
+## mgmt-registry-pages-readable probe (`acceptance/probes/mgmt-registry-pages-readable`)
+
+Task: REGISTRY-PAGES-ACCEPTANCE-PROBE-20261125 (RC6). Read-only (GET only), same viewer login as the other probes; exit
+77 naming the missing variable, 1 failed, 0 passed. Eight checks, each naming the task that owns it:
+`strategy_state_totals` (REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125: `GET /bff/strategies` with no filter, `state=draft`
+and `state=retired` has `page_info.total` equal to `meta.visible_state_counts` for that filter, and the counts are not
+null); `strategy_default_view_counts` (BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125: the default view `exclude_state=draft&hide_retired_personas=true` answers non-null `meta.visible_state_counts`, equal to the unfiltered view's, with `page_info.total` equal to the visible non-draft non-retired rows minus `hidden_retired_persona_count`); `strategy_metrics_vs_pulse` (BFF-STRATEGY-METRICS-RUNTIME-20261125: a strategy with a running admitted binding
+shows the same `pnl` / `totalTrades` as its one `GET /bff/management/trading-pulse` runtime row after one re-read of
+both, and `metricsResolution: fresh` never comes with a null `pnl` and no `metricsReason`); `persona_artifact_scope`
+(BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125: no `GET /bff/personas` row has `successRate` 0, every row has `listScope`, every
+`GET /bff/artifacts?page_size=100` row (all pages) has `list_scope`); `lineage_node_names` (REGISTRY-LINEAGE-NODE-NAMES-20261125: every node of
+`GET /bff/lineage?root_id=<running strategy>` has a `display_name`, at most 5 roots); `evidence_detail_paging`
+(BFF-EVIDENCE-DETAIL-AND-PAGING-20261125: `GET /bff/management/evidence/{ref_id}` is one flat object, and the page at
+offset total-1 is not empty while `meta.surfaces.evidence_refs` is ok); `cited_sources_visible`
+(BFF-EVIDENCE-CITED-LIST-20261125: every source of `scope=cited` is reported, and a source that is not ok is in
+`summary.sources_not_ok` with `summary.incomplete` true and the surface not ok); `postmortem_infra_hidden`
+(POSTMORTEM-SKIP-INFRA-DRAFTS-20261125: the default `GET /api/v1/postmortems` list has no infrastructure or monitor-agent
+draft, using the owner's `is_infrastructure_postmortem` rule, and `meta.hidden_infrastructure_count` is an integer).
+A 401/403 for the viewer is reported as `DENIED <check>` and does not fail that check (lineage is operator-only);
+a check with nothing to test (no running strategy, empty evidence) is `not_exercised`. Each failure prints
+`FAILED <check> owner=<task> code=<code> route=<route> values=<json>`; the token is never printed. The `state=draft` read
+time is printed as `INFO ... (information only)`; no time threshold decides the result. The evolution journal page
+(BFF-EVO-JOURNAL-POOL-VERSIONS-20261125) stays covered by `mgmt-evolution-pages-readable`. Tests:
+`acceptance/test_mgmt_registry_pages_readable.py` run the probe against a local fixture server with the recorded
+hosted ids and the real handler envelopes, one passing world and at least one failing case per check. Accepted only
+after the operator acceptance task runs it against hosted.
+
 ## meeting-action-followthrough probe (`acceptance/probes/meeting-action-followthrough`)
 
 Task: MEETING-ACTION-TWO-MEETING-PROOF-20261123; the natural hosted observation stays owned by
@@ -279,3 +306,19 @@ Owner DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125. Read-only: `GET $ACCEPTANCE_SO
 number of stored days whose traded value is null on more than 5 % of their traded rows (days the completion has examined; the
 payload also counts `unexamined_days` and `unretained_days`) and fails when any such day is newer than the fix date. Older days
 are reported while the completion fills them. Exit 77 when the URL is unset.
+
+## Tests that import the BFF app (`acceptance/conftest.py`)
+
+`services.control_plane.bff.main` opens durable state under `BFF_DATA_DIR` when it is
+imported (`downstream_health.sqlite3` in SQLite WAL mode, among others); the default is the
+fixed `/tmp/pantheon/bff`. The CI Test sweep runs several pytest processes per runner, so two
+processes importing the app shared one SQLite file and one failed with
+`database is locked` at `PRAGMA journal_mode = WAL` (Branch CI run 45715715898, shard 5).
+
+`acceptance/conftest.py` therefore gives each test process its own data directory: when
+`BFF_DATA_DIR` is unset it creates a new temporary directory (prefix
+`pantheon-acceptance-bff-`), sets the variable before any test module is imported, and
+removes the directory at process exit. An explicitly set `BFF_DATA_DIR` is kept and never
+removed. `acceptance/test_acceptance_bff_data_dir.py` proves both cases and runs two
+concurrent real imports with the conftest (both pass) and two on one shared directory while
+its SQLite file is held locked past the 10 s busy timeout (both fail with `database is locked`).

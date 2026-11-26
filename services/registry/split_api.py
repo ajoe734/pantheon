@@ -32,7 +32,10 @@ from .models import (
 )
 from .pg_store import DivergentCommandReplayError
 from .storage import (
+    DISCOVERY_MAX_PAGE_SIZE,
     _validate_strategy_summary_page_args,
+    decode_discovery_page_token,
+    encode_discovery_page_token,
     build_lineage_graph,
     persona_binding_counts,
     project_strategy_spec_summary_page,
@@ -358,6 +361,53 @@ class RegistryService:
 
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
+
+    def card_admission_draft_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        page_size: int,
+        after_registry_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        """One bounded page of admissible card drafts; ``next_page_token`` is the last registry_id."""
+        rows = self.store.list_card_admission_drafts(
+            visible_tenants=visible_tenants, tenant_id=tenant_id,
+            limit=int(page_size) + 1, after_registry_id=after_registry_id,
+        )
+        page = rows[: int(page_size)]
+        return {
+            "items": [{"entry": e.to_dict()} for e in page],
+            "next_page_token": page[-1].registry_id if len(rows) > len(page) and page else None,
+        }
+
+    def discovery_candidate_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        page_size: int,
+        page_token: Optional[str] = None,
+    ) -> dict[str, object]:
+        """One bounded discovery page (REGISTRY-DISCOVERY-SPEC-PAGE-20261125).
+
+        Same keyset as :meth:`card_admission_draft_page`; the token is opaque and
+        bound to the view and ``tenant_id`` (``ValueError`` "Invalid page_token"
+        for any other token, including a card admission cursor).
+        """
+        size = max(1, min(int(page_size), DISCOVERY_MAX_PAGE_SIZE))
+        after = decode_discovery_page_token(page_token, tenant_id) if page_token else None
+        rows = self.store.list_discovery_candidates(
+            visible_tenants=visible_tenants, limit=size + 1, after_registry_id=after,
+        )
+        page = rows[:size]
+        return {
+            "items": [{"entry": row} for row in page],
+            "next_page_token": (
+                encode_discovery_page_token(tenant_id, page[-1]["registry_id"])
+                if len(rows) > len(page) and page else None
+            ),
+        }
 
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,

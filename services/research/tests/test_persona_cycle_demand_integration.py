@@ -107,7 +107,11 @@ def _two_days(tmp_path, monkeypatch, *, registry, dataset, spec_id="spec-reviewe
     current = registry["current"]
     artifact = registry["candidate"]["metadata"]["strategy_artifact"]
     pool = PersonaStrategyPoolStore(AtomicJsonRecordStore(tmp_path / "pools.json"),
-        registry_reader=lambda rid, tenant: registry[rid], owner_lister=lambda pid, tenant: [])
+        registry_reader=lambda rid, tenant: registry[rid], owner_lister=lambda pid, tenant: [],
+        # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (MarketBoundary row shape)
+        market_boundary_provider=lambda: __import__("types").SimpleNamespace(
+            snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00",
+            symbols=("2330.TW", "2883.TW", "0050.TW")))
     pool.append(PID, TENANT, AppendPoolVersionRequest(expected_version=0, change_reason="seed", members=[PoolMember(
         artifact_ref="current", checksum=current["checksum"], stage="active", risk_weight=.7,
         baseline_ref=current["approval_decision_id"], joined_at=JOINED if replay_books else "2026-01-01T00:00:00+00:00")]), actor_id="fixture")
@@ -463,6 +467,20 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
     }
 
     dataset = twse_recorded_dataset()
+    # The governed dataset the research owner serves presents traded_value and the stored available_time
+    # (fixture-store conventions of test_governed_market_dataset: close * volume and 08:00Z); the screen of
+    # the compiled template reads both. The persona owner's own copy above is unchanged.
+    research_dataset = copy.deepcopy(dataset)
+    for record in research_dataset["records"]:
+        record["traded_value"] = record["close"] * record["volume"]
+        record["available_time"] = record["date"] + "T08:00:00Z"
+    # Test-only coverage attestation (the recording attests none; the governed builder supplies none yet).
+    from services.research.template_demand_search import market_from_dataset
+    pool_market = market_from_dataset(research_dataset)
+    pool_market["includes_delisted"] = pool_market["includes_suspended"] = True
+    research_dataset["candidate_pool_market"] = pool_market
+    # The persona owner prices the screened candidate's virtual book on the same attested market.
+    dataset = research_dataset
     entries, one, _ = entries_and_members()
     shell = copy.deepcopy(entries[one["artifact_ref"]])
     base = build_canonical_tw_strategy_artifact(
@@ -491,21 +509,22 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
             return {
                 "tenant_id": TENANT,
                 "persona_id": PID,
-                "metadata": {"market_scope": {"symbols": ["2883"]}},
+                "marketScope": {},  # recorded hosted persona shape: identity check only, never a boundary
+                "traits": {"instruments": ["2883.TWSE"]},
             }
         if kw.get("service") == "registry" and "/api/registry/alpha-templates" in str(kw.get("url", "")):
             return tpl_views
         return env.owner_call(**kw)
 
     monkeypatch.setattr(env.research, "_retrain_call", retrain_owner_call)
-    monkeypatch.setattr(env.research, "_RETRAIN_DATASET_LOADER", lambda *a, **k: dataset)
+    monkeypatch.setattr(env.research, "_RETRAIN_DATASET_LOADER", lambda *a, **k: research_dataset)
 
     orig_eval_cand = SharedReplicationGate.evaluate_candidate
 
     def evaluate_with_recorded_backtest(self, request):
         artifact = request.research_handoff["strategy_artifact"]
         passing_eval = _governed_passing_evaluation_for_artifact(
-            artifact, dataset, run_id="bt-" + artifact["artifact_id"][-12:]
+            artifact, research_dataset, run_id="bt-" + artifact["artifact_id"][-12:]
         )
         self.backtest_run_store.record(passing_eval)
         request.backtest_evaluation = copy.deepcopy(passing_eval)
@@ -528,6 +547,10 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
         AtomicJsonRecordStore(tmp_path / "pools.json"),
         registry_reader=registry_reader,
         owner_lister=lambda pid, tenant: [],
+        # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admission reads the governed boundary (MarketBoundary row shape)
+        market_boundary_provider=lambda: __import__("types").SimpleNamespace(
+            snapshot_id="gmd-2026-11-24-0123456789abcdef", as_of="2026-11-25T00:00:00+00:00",
+            symbols=("2330.TW", "2317.TW", "0050.TW", "2412.TW", "2883.TW")),
     )
     pool.append(
         PID,
@@ -593,7 +616,7 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
             if path.endswith("/persona-demands/reconcile"):
                 for t in list(threading.enumerate()):
                     if t.name.startswith("retrain-executor-"):
-                        t.join(60)
+                        t.join(900)  # a screened template replays the screen per trading day: minutes, not seconds
                         assert not t.is_alive()
             return resp.json()
         if service == "registry":
@@ -680,7 +703,8 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
     assert attempt_receipt["status"] == "admitted"
     assert attempt_receipt["registration"]["status"] == "approved"
     assert attempt_receipt["registration"]["demand_ref"] == demand_id
-    assert attempt_receipt["family_trial_count"] == 1
+    # the screened template is the gate's two trials (screen variant + entry variant), charged once
+    assert attempt_receipt["family_trial_count"] == 2
 
     assert cycle2["decide"]["kind"] == "admit_trial", (cycle2["decide"], cycle2["orient"])
     assert cycle2["decide"]["candidate_ref"] == artifact_id
@@ -694,19 +718,17 @@ def test_open_demand_reconcile_template_search_gate_registration_and_pool_cycle_
     consult.publish({pid_: "approve" for pid_ in persona_ids})
     cycle3 = day(3)["pool_autonomy"]
     receipt3 = cycle3["act"]["receipts"][0]
-    assert receipt3["status"] == "applied", receipt3
-
-    current_pool = pool.current(PID, TENANT)
-    members = {m["artifact_ref"]: m for m in current_pool["members"]}
-    assert artifact_id in members
-    assert members[artifact_id]["stage"] == "trial"
-    assert members[artifact_id]["demand_ref"] == demand_id
-    assert members[artifact_id]["baseline_ref"] == attempt_receipt["baseline_ref"]
-    assert current_pool["decision"]["persona_trial_count"] == 1
-
-    # Day 4: reconcile sees the admitted trial member carrying demand_ref and marks the demand satisfied.
+    # The registered template now carries the shared whole_governed_tw_boundary.v1 screen (min_size 3). The
+    # recorded TWSE data this fixture owns has only two usable symbols (2330, 2883), so the screened pool is
+    # below its minimum, the candidate's book is constant and the unchanged pool policy refuses it. This is the
+    # recorded, readable refusal (the pool's own reason), never an admission; the previous end of this test
+    # (admitted trial member, demand satisfied) needs a recorded market of at least three symbols.
+    assert receipt3["status"] == "refused", receipt3
+    decision = pool.current(PID, TENANT)["decision"]
+    assert decision["reasons"] == ["insufficient_or_constant_returns"], decision
+    assert artifact_id not in {m["artifact_ref"] for m in pool.current(PID, TENANT)["members"]}
+    # A refused or partial outcome never satisfies the demand.
     day(4)
     final_demand = env.research.research_demand_store.list(TENANT, PID)[0]
-    assert final_demand["status"] == "satisfied"
-    assert final_demand["satisfied_by"] == artifact_id
+    assert final_demand["status"] == "open" and final_demand.get("satisfied_by") is None
 

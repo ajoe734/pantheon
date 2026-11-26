@@ -37,6 +37,14 @@ from urllib.request import Request as UrllibRequest, urlopen
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SCHEMA_VERSION = "persona_strategy_pool.v1"
+PAPER_UNIVERSE_RULE = "paper_governed_taiwan_market_boundary"
+
+
+def governed_market_boundary():
+    """Production boundary: built read-only from the stored daily bars (stale, empty or corrupt store raises)."""
+    from services.research import governed_market_dataset as governed
+
+    return governed.build_market_boundary()
 STAGES = ("trial", "active", "removed")
 _WEIGHT_EPSILON = 1e-9
 
@@ -332,8 +340,11 @@ class PersonaStrategyPoolStore:
         owner_lister: OwnerArtifactLister | None = None,
         now: Callable[[], str] = _utc_now,
         consultation_verifier: ConsultationMemoVerifier | None = None,
+        market_boundary_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._records = records
+        # () -> object with snapshot_id / symbols / as_of (services.research.governed_market_dataset.MarketBoundary).
+        self._market_boundary = market_boundary_provider or governed_market_boundary
         self._verify_memo = consultation_verifier or consultation_memo_verifier
         self._reader = registry_reader or http_registry_entry_reader
         self._lister = owner_lister or http_owner_artifact_lister
@@ -689,17 +700,35 @@ class PersonaStrategyPoolStore:
                     if baseline["status"] != "approved":
                         raise ValueError(f"{ref}: {baseline['reason']}")
                     baselines[ref] = baseline
-                # Until a separate permitted-universe owner is available, do
-                # not infer authority to widen P: use the pool's approved universe.
-                if live:
-                    symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                candidate_symbols = {s.split(".")[0] for s in baselines[candidate.artifact_ref]["validated_universe"]}
+                if request.execution_context == "paper":
+                    # Operator decision 2026-11-25 (paper only): the symbol limit is the governed Taiwan market
+                    # boundary, not the current members' symbols. Every other criterion below is unchanged.
+                    previous = ({s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                                if live else self._last_live_universe(persona_id, tenant_id))
+                    decision["universe_rule"] = {
+                        "rule": PAPER_UNIVERSE_RULE, "approved_by": "operator", "approved_on": "2026-11-25",
+                        "previous_member_symbols": sorted(previous), "candidate_symbols": sorted(candidate_symbols)}
+                    boundary = self._read_boundary()
+                    allowed = {s.split(".")[0] for s in boundary.symbols}
+                    decision["universe_rule"].update(boundary_snapshot_id=boundary.snapshot_id,
+                        boundary_symbol_count=len(allowed), boundary_as_of=getattr(boundary, "as_of", None))
+                    outside = sorted(candidate_symbols - allowed)
+                    if outside:
+                        raise ValueError("candidate_outside_governed_market_boundary: " + ", ".join(outside[:5])
+                                         + f" not in boundary {boundary.snapshot_id} ({len(allowed)} symbols)")
                 else:
-                    symbols = self._last_live_universe(persona_id, tenant_id)
-                    if not symbols:
-                        raise ValueError("empty_pool_approved_universe_unknown")
-                decision["approved_universe"] = sorted(symbols)
-                if not {s.split(".")[0] for s in baselines[candidate.artifact_ref]["validated_universe"]} <= symbols:
-                    raise ValueError("candidate_outside_pool_approved_universe")
+                    # Until a separate permitted-universe owner is available, do
+                    # not infer authority to widen P: use the pool's approved universe.
+                    if live:
+                        symbols = {s.split(".")[0] for m in live for s in baselines[m["artifact_ref"]]["validated_universe"]}
+                    else:
+                        symbols = self._last_live_universe(persona_id, tenant_id)
+                        if not symbols:
+                            raise ValueError("empty_pool_approved_universe_unknown")
+                    decision["approved_universe"] = sorted(symbols)
+                    if not candidate_symbols <= symbols:
+                        raise ValueError("candidate_outside_pool_approved_universe")
                 trial = PoolMember(artifact_ref=candidate.artifact_ref, checksum=candidate.checksum,
                     stage="trial", risk_weight=0, baseline_ref=entries[candidate.artifact_ref].get("approval_decision_id"),
                     joined_at=now, parent_ref=candidate.parent_ref, demand_ref=candidate.demand_ref).model_dump()
@@ -760,6 +789,16 @@ class PersonaStrategyPoolStore:
             expected_version=request.expected_version, members=[PoolMember.model_validate(m) for m in members],
             change_reason=f"paper pool {request.action}: {decision['status']}; " + "; ".join(decision["reasons"])),
             actor_id=actor_id, decision=decision)
+
+    def _read_boundary(self):
+        """The governed market boundary, or a refusal. An unreadable or stale one never widens or falls back."""
+        try:
+            boundary = self._market_boundary()
+        except Exception as exc:  # GovernedMarketDatasetError and anything else: a refusal, never a wider set
+            raise ValueError(f"governed_market_boundary_unavailable: {exc}") from exc
+        if not getattr(boundary, "snapshot_id", None) or not getattr(boundary, "symbols", None):
+            raise ValueError("governed_market_boundary_unavailable: boundary has no snapshot id or symbols")
+        return boundary
 
     def _last_live_universe(self, persona_id, tenant_id):
         """Approved universe of an empty pool: the one it had at its last version with live members.

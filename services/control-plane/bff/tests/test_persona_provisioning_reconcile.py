@@ -243,6 +243,12 @@ def mock_external_services(monkeypatch: pytest.MonkeyPatch):
             return None
 
     monkeypatch.setattr(_persona_service_module, "_runtime_manager_client", lambda: MockEmptyRuntimeManagerClient(), raising=False)
+    monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_ORPHAN_SKIP", set())
+    monkeypatch.setattr(_persona_service_module, "_PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT", {})
+    monkeypatch.setattr(_persona_service_module, "_PERSONA_CLEANUP_BACKOFF", {})
+    prev_current = _persona_service_module._current_persona_service.get()
+    yield
+    _persona_service_module._current_persona_service.set(prev_current)
 
 
 def _fresh_client(td: str) -> TestClient:
@@ -1596,4 +1602,356 @@ def test_reconcile_preserves_provisioned_expression_policy_and_pool_risk_policy(
         assert pool_risk["max_leverage"] == 2.0
         assert pool_risk["gross_limit"] == 2.0
         assert pool_risk["allowed_asset_classes"] == ["equity", "future"]
+
+
+# =========================================================================
+# BFF-PERSONA-PROVISIONING-LEASE-LOAD-20261125: zero lease writes when idle
+# =========================================================================
+
+
+def _wrap_store_lease_recorder(
+    store: MemoryPersonaProvisioningStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> List[tuple[str, str]]:
+    calls: List[tuple[str, str]] = []
+    orig_acquire = store.acquire
+    orig_checkpoint = store.checkpoint
+    orig_release = store.release
+
+    def _acquire(tenant_id: str, idempotency_key: str, **kwargs: Any) -> Any:
+        calls.append(("acquire", idempotency_key))
+        return orig_acquire(tenant_id, idempotency_key, **kwargs)
+
+    def _checkpoint(record: Any, **kwargs: Any) -> Any:
+        calls.append(("checkpoint", record.idempotency_key))
+        return orig_checkpoint(record, **kwargs)
+
+    def _release(record: Any, **kwargs: Any) -> Any:
+        calls.append(("release", record.idempotency_key))
+        return orig_release(record, **kwargs)
+
+    monkeypatch.setattr(store, "acquire", _acquire)
+    monkeypatch.setattr(store, "checkpoint", _checkpoint)
+    monkeypatch.setattr(store, "release", _release)
+    return calls
+
+
+def test_steady_state_ticks_with_only_succeeded_and_retired_rows_perform_zero_lease_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Steady-state background ticks with only succeeded (including legacy/not_eligible)
+    and retired rows perform 0 lease INSERT/UPDATE/DELETE writes.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        _compose_background_service(monkeypatch)
+        store = _persona_service_module._PERSONA_PROVISIONING_STORE
+
+        # 1. Create and promote a real persona to paper_running (state='succeeded').
+        persona_ok, _meta_ok = _ready_persona(client, monkeypatch, "steady-ok-1")
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_ok)["lifecycle_state"] == "paper_running"
+
+        # 2. Seed a legacy 'succeeded' row lacking authoritative_readback and carrying
+        #    paper_enrollment.status='not_eligible', plus 'retired' rows.
+        tenant_id = _state.read_store.get_persona(persona_ok)["metadata"]["tenant_id"]
+        store.reserve(
+            tenant_id=tenant_id,
+            idempotency_key="steady-legacy-succeeded",
+            request_hash="hash-legacy-succeeded",
+            normalized_name="steady legacy succeeded",
+            persona_id="persona-steady-legacy",
+            request_payload={"name": "Steady Legacy Succeeded", "requested_by": "op-2"},
+        )
+        legacy_rec = store.acquire(
+            tenant_id, "steady-legacy-succeeded", lease_owner="seed", lease_seconds=60
+        )
+        assert legacy_rec is not None
+        legacy_rec.state = "succeeded"
+        legacy_rec.references = {
+            "paper_enrollment": {
+                "persona_id": "persona-steady-legacy",
+                "status": "not_eligible",
+                "reason": "release_probe_or_test_persona_not_enrolled",
+                "attempted_at": utc_now(),
+            },
+            "paper_risk_policy_renewal": {
+                "status": "not_due",
+                "next_check_at": "2099-01-01T00:00:00Z",
+            },
+        }
+        store.release(legacy_rec, lease_owner="seed")
+
+        # Mark the first succeeded record's risk renewal check in the future for pass parity.
+        ok_rec = store.acquire(tenant_id, "steady-ok-1", lease_owner="seed", lease_seconds=60)
+        assert ok_rec is not None
+        ok_rec.references["paper_risk_policy_renewal"] = {
+            "status": "not_due",
+            "next_check_at": "2099-01-01T00:00:00Z",
+        }
+        store.release(ok_rec, lease_owner="seed")
+
+        for i in range(3):
+            rkey = f"steady-retired-{i}"
+            store.reserve(
+                tenant_id=tenant_id,
+                idempotency_key=rkey,
+                request_hash=f"hash-{rkey}",
+                normalized_name=f"steady retired {i}",
+                persona_id=f"persona-retired-{i}",
+                request_payload={"name": f"Steady Retired {i}", "requested_by": "op-2"},
+            )
+            rrec = store.acquire(tenant_id, rkey, lease_owner="seed", lease_seconds=60)
+            assert rrec is not None
+            rrec.state = "retired"
+            store.release(rrec, lease_owner="seed")
+
+        assert {r.state for r in store.list_all()} == {"succeeded", "retired"}
+
+        lease_calls = _wrap_store_lease_recorder(store, monkeypatch)
+        snapshot_calls: List[int] = []
+        real_snapshot = _persona_service_module._persona_readback_snapshot
+        monkeypatch.setattr(
+            _persona_service_module,
+            "_persona_readback_snapshot",
+            lambda: (snapshot_calls.append(1) or real_snapshot()),
+        )
+
+        for _ in range(4):
+            assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+            assert _persona_service_module._reconcile_persona_provisioning_pass() == 0
+
+        assert lease_calls == []
+        assert snapshot_calls == []
+
+
+def test_pending_row_reconciles_normally_alongside_succeeded_and_retired_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a pending provisioning row exists alongside succeeded and retired rows,
+    only the pending row acquires/releases its lease and promotes to paper_running,
+    and subsequent ticks perform 0 lease writes.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        _compose_background_service(monkeypatch)
+        store = _persona_service_module._PERSONA_PROVISIONING_STORE
+
+        persona_ok, _ = _ready_persona(client, monkeypatch, "mixed-succeeded-1")
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_ok)["lifecycle_state"] == "paper_running"
+
+        tenant_id = _state.read_store.get_persona(persona_ok)["metadata"]["tenant_id"]
+        store.reserve(
+            tenant_id=tenant_id,
+            idempotency_key="mixed-retired-1",
+            request_hash="hash-mixed-retired-1",
+            normalized_name="mixed retired 1",
+            persona_id="persona-mixed-retired-1",
+            request_payload={"name": "Mixed Retired 1", "requested_by": "op-2"},
+        )
+        rrec = store.acquire(tenant_id, "mixed-retired-1", lease_owner="seed", lease_seconds=60)
+        assert rrec is not None
+        rrec.state = "retired"
+        store.release(rrec, lease_owner="seed")
+
+        # Now create a fresh pending persona and install its authoritative readback.
+        monkeypatch.setattr(
+            _persona_service_module,
+            "_register_persona_cron_required",
+            lambda persona_id, pool_id, binding_id, **_kwargs: _schedule_receipt(
+                persona_id, pool_id, binding_id
+            ),
+        )
+        persona_pending, _ = _ready_persona(client, monkeypatch, "mixed-pending-1")
+        lease_calls = _wrap_store_lease_recorder(store, monkeypatch)
+
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_pending)["lifecycle_state"] == "paper_running"
+        # Lease writes touched only the pending record, never the succeeded or retired records.
+        assert {key for _, key in lease_calls} == {"mixed-pending-1"}
+
+        # Subsequent steady-state ticks perform 0 lease writes.
+        lease_calls.clear()
+        for _ in range(3):
+            assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+        assert lease_calls == []
+
+
+def test_terminal_cleanup_backoff_and_settled_skip_semantics_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provisioning_failed record with pending schedule cleanup retries according to
+    _PERSONA_CLEANUP_BACKOFF and stops evaluating once cleanup and compensation settle.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        _compose_background_service(monkeypatch)
+        persona_id, _data, meta = _create_persona(client, "cleanup-backoff-1")
+        tenant_id = _state.read_store.get_persona(persona_id)["metadata"]["tenant_id"]
+        store = _persona_service_module._PERSONA_PROVISIONING_STORE
+        record = store._backend.records[(tenant_id, "cleanup-backoff-1")]
+        record.references["provisioning_readback_started_at"] = "2026-01-01T00:00:00Z"
+        _state.read_store.update_persona(
+            persona_id,
+            metadata={"provisioning_readback_started_at": "2026-01-01T00:00:00Z"},
+        )
+
+        remove_attempts: List[str] = []
+        should_fail = {"on": True}
+
+        def _flaky_remove(pid: str, **_kwargs: Any) -> Dict[str, Any]:
+            remove_attempts.append(pid)
+            if should_fail["on"]:
+                raise RuntimeError("cron gateway temporarily unavailable")
+            return {"persona_id": pid, "registered": False, "removed_ids": ["job-1"]}
+
+        monkeypatch.setattr(_persona_service_module, "_remove_persona_cron_required", _flaky_remove)
+
+        # Pass 1 transitions to provisioning_failed and records pending schedule cleanup.
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert _state.read_store.get_persona(persona_id)["lifecycle_state"] == "provisioning_failed"
+        assert len(remove_attempts) == 1
+
+        # Advance the deployment saga compensation to completed so only schedule cleanup remains.
+        saga_id = meta["deployment_saga_id"]
+        saga_key = ("deployment", f"/api/deployment/sagas/{saga_id}")
+        if saga_key in _state.transport.objects:
+            _state.transport.objects[saga_key]["status"] = "failed"
+            _state.transport.objects[saga_key]["current_step"] = "compensated"
+
+        # Pass 2 finishes compensation, attempts schedule cleanup (which fails), and arms backoff.
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert len(remove_attempts) == 2
+
+        # Pass 3 while backoff is active skips the record (0 new remove attempts, 0 lease writes).
+        lease_calls = _wrap_store_lease_recorder(store, monkeypatch)
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+        assert len(remove_attempts) == 2
+        assert lease_calls == []
+
+        # Expire backoff and allow cleanup to succeed.
+        _persona_service_module._PERSONA_CLEANUP_BACKOFF.clear()
+        should_fail["on"] = False
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 1
+        assert len(remove_attempts) == 3
+
+        # Once cleanup and compensation are settled, subsequent ticks skip the terminal record.
+        lease_calls.clear()
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+        assert len(remove_attempts) == 3
+        assert lease_calls == []
+
+
+def test_postgres_store_reconciles_canonical_only_provisioning_and_failed_personas_then_idles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When PostgresPersonaProvisioningStore holds only succeeded/retired rows, canonical-only
+    read-surface personas in provisioning or provisioning_failed still reconcile and settle,
+    and subsequent steady-state ticks return 0 with 0 lease writes.
+    """
+    from services.control_plane.bff.persona_provisioning import PostgresPersonaProvisioningStore
+    from services.control_plane.bff.test_persona_provisioning_reconcile_orphan_skip import (
+        _SqlTrackingConnect,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        _fresh_client(td)
+        _compose_background_service(monkeypatch)
+        tracker = _SqlTrackingConnect(
+            [
+                ("persona-live-1", "succeeded"),
+                ("persona-retired-1", "retired"),
+            ]
+        )
+        pg_store = PostgresPersonaProvisioningStore(
+            "postgresql://example/provisioning",
+            connect=tracker,
+        )
+        tracker.statements.clear()
+        monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", pg_store)
+
+        # 1. Seed a canonical-only provisioning persona in read_store (no store row).
+        canon_prov_id = "canon-prov-only-001"
+        _state.read_store.create_persona(
+            persona_id=canon_prov_id,
+            name="Canonical Provisioning Only",
+            actor_id="op-2",
+            lifecycle_state="provisioning",
+            metadata={
+                "tenant_id": "pantheon-dev",
+                "deployment_plan_id": "plan-canon-prov-001",
+                "deployment_saga_id": "saga-canon-prov-001",
+                "persona_capital_binding_id": "pcb-canon-prov-001",
+                "internal_paper_capital_pool_id": "pool-canon-prov-001",
+            },
+        )
+
+        # 2. Seed a canonical-only provisioning_failed persona in read_store (no store row) with cleanup due.
+        canon_failed_id = "canon-failed-only-001"
+        _state.read_store.create_persona(
+            persona_id=canon_failed_id,
+            name="Canonical Failed Only",
+            actor_id="op-2",
+            lifecycle_state="provisioning_failed",
+            metadata={
+                "tenant_id": "pantheon-dev",
+                "provisioning_failure_reason": "deployment_saga_failed",
+            },
+        )
+        removed_for: List[str] = []
+        monkeypatch.setattr(
+            _persona_service_module,
+            "_remove_persona_cron_required",
+            lambda pid, **_kw: (
+                removed_for.append(pid)
+                or {"persona_id": pid, "registered": False, "removed_ids": ["job-canon-1"]}
+            ),
+        )
+
+        # Pass 1 evaluates both canonical-only personas even though Postgres store has 0 non-terminal rows.
+        assert _persona_service_module._reconcile_persona_provisioning_once() == 2
+        assert tracker.write_statements == []
+
+        persisted_prov = _state.read_store.get_persona(canon_prov_id)
+        assert persisted_prov["lifecycle_state"] == "provisioning"
+        assert isinstance(
+            persisted_prov["metadata"].get("provisioning_readback_summary"), dict
+        )
+
+        persisted_failed = _state.read_store.get_persona(canon_failed_id)
+        assert persisted_failed["lifecycle_state"] == "provisioning_failed"
+        assert (
+            persisted_failed["metadata"]["first_evaluation_schedule_cleanup"]["registered"]
+            is False
+        )
+        assert (
+            persisted_failed["metadata"]["provisioning_reconciliation_state"]
+            == "provisioning_failed"
+        )
+        assert removed_for == [canon_failed_id]
+
+        # Once canonical personas settle on the read surface, subsequent ticks idle with 0 writes.
+        _state.read_store.update_persona(
+            canon_prov_id,
+            lifecycle_state="paper_running",
+            metadata={"provisioning_reconciliation_state": "paper_running"},
+        )
+        _state.read_store.update_persona(
+            canon_failed_id,
+            metadata={"provisioning_compensation": {"status": "not_required"}},
+        )
+        tracker.statements.clear()
+        removed_for.clear()
+        for _ in range(3):
+            assert _persona_service_module._reconcile_persona_provisioning_once() == 0
+        assert removed_for == []
+        assert tracker.write_statements == []
+        assert len(tracker.statements) == 3
+        assert all(
+            "WHERE state NOT IN ('succeeded', 'retired')" in sql
+            for sql, _ in tracker.statements
+        )
+
+
 

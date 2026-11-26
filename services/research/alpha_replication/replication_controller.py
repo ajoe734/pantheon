@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,8 @@ class ReplicationControllerConfig:
         # (main) so a mounted credential or dataset pointer that appears later enables the path and
         # one that disappears disables it, with the reason on the health file. Never a fallback.
         self.card_wiring_builder = card_wiring_builder
+        self.card_draft_cursor: str | None = None
+        self.card_admission_switch: Any = lambda: True  # production entry point installs the env switch
         self.card_path_status: dict[str, Any] = {
             "enabled": all((card_registrar, card_matcher, demands_provider)),
             "reason": None if all((card_registrar, card_matcher, demands_provider)) else "card_path_not_wired",
@@ -79,6 +82,11 @@ class ReplicationControllerConfig:
 def refresh_card_wiring(config: "ReplicationControllerConfig") -> dict[str, Any]:
     """Rebuild the four card collaborators from the deployed environment (production entry point only)."""
     if config.card_wiring_builder is None:
+        return config.card_path_status
+    if not config.card_admission_switch():
+        # switch off: no wiring is built and nothing downstream reads Registry drafts
+        config.card_registrar = config.card_matcher = config.demands_provider = config.dataset_resolver = None
+        config.card_path_status = {"enabled": False, "reason": "card_path_disabled", "missing": []}
         return config.card_path_status
     wiring = config.card_wiring_builder()
     config.card_registrar = wiring.registrar
@@ -108,15 +116,42 @@ def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> lis
         raise RuntimeError(f"Failed to query registry for strategy {strategy_id}: {exc}") from exc
 
 
-def _list_registry_strategy_specs(registry_url: str, artifact_state: str) -> list[dict]:
-    url = f"{registry_url}/api/registry/strategy-specs?artifact_state={artifact_state}"
+CARD_ADMISSION_PAGE_SIZE = 20
+CARD_ADMISSION_MAX_PAGES_PER_TICK = 3  # hard cap: at most 60 admissible drafts read per tick
+
+
+def card_admission_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """One switch, default off, checked before any Registry draft read."""
+    raw = (os.environ if env is None else env).get("ALPHA_REPLICATION_CARD_ADMISSION_ENABLED", "0")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _list_card_admission_drafts(config: "ReplicationControllerConfig", tenant_id: str) -> list[dict]:
+    """Bounded owner read: only gate-ready card drafts of the tenant, filtered in the Registry store.
+
+    Pages of CARD_ADMISSION_PAGE_SIZE, at most CARD_ADMISSION_MAX_PAGES_PER_TICK per tick; the keyset
+    cursor persists on the config so a backlog larger than the cap is walked across ticks.
+    """
     headers = {}
     token = configured_service_token("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=5) as response:
-        return [v["entry"] for v in json.loads(response.read().decode("utf-8")) if "entry" in v]
+    entries: list[dict] = []
+    cursor = getattr(config, "card_draft_cursor", None)
+    for _ in range(CARD_ADMISSION_MAX_PAGES_PER_TICK):
+        query = {"view": "card_admission_drafts", "tenant_id": tenant_id, "page_size": CARD_ADMISSION_PAGE_SIZE}
+        if cursor:
+            query["page_token"] = cursor
+        url = f"{config.registry_url}/api/registry/strategy-specs?{urllib.parse.urlencode(query)}"
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            page = json.loads(response.read().decode("utf-8"))
+        entries.extend(v["entry"] for v in page.get("items", []) if "entry" in v)
+        cursor = page.get("next_page_token")
+        if not cursor:
+            break
+    config.card_draft_cursor = cursor  # None = wrap to the start on the next tick
+    return entries
 
 
 def _admit_card_specs(config: "ReplicationControllerConfig", tenant_id: str) -> list[dict[str, Any]]:
@@ -128,7 +163,7 @@ def _admit_card_specs(config: "ReplicationControllerConfig", tenant_id: str) -> 
     )
     demands = list(config.demands_provider(tenant_id))
     results: list[dict[str, Any]] = []
-    for entry in _list_registry_strategy_specs(config.registry_url, "draft"):
+    for entry in _list_card_admission_drafts(config, tenant_id):
         if (entry.get("metadata") or {}).get("tenant_id") != tenant_id:
             continue
         try:
@@ -499,7 +534,21 @@ def build_production_config() -> ReplicationControllerConfig:
     config = ReplicationControllerConfig()
     config.card_wiring_builder = lambda: build_card_wiring(
         data_dir=config.data_dir, admission_store=config.admission_store)
+    config.card_admission_switch = card_admission_enabled
     return config
+
+
+def start_template_evaluation(config: ReplicationControllerConfig) -> Any:
+    """Run the scheduled AlphaTemplate evaluation beside the controller loop (own thread, never blocks a tick).
+
+    A failure to start is reported and never stops the controller."""
+    try:
+        from services.research.alpha_templates.schedule import start_background
+
+        return start_background(config.data_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"alpha template evaluation not started: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
 
 
 def main() -> int:
@@ -512,6 +561,7 @@ def main() -> int:
         writer = build_loop_writer(dsn=config.database_url, state=state)
         
     print(f"Starting Alpha Replication Controller loop, interval={config.interval_seconds}s")
+    start_template_evaluation(config)
     
     tick_count = 0
     while True:

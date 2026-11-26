@@ -1,6 +1,8 @@
 """Policy and isolation of the persona's daily pool cycle (fake ports; no network)."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from services.persona.pool_autonomy_cycle import PoolAutonomyCycle, apply_to_packet, decide
@@ -753,10 +755,323 @@ def test_partial_seed_read_is_recorded_as_partial_never_as_no_match(tmp_path):
                     "backfill_datasets": ["ohlcv"]}
     import importlib
     real = importlib.import_module
-    ports = HttpPoolCyclePorts(lambda *a, **k: {}, discovery_loader=lambda p: {"seeds": Seeds([{}, {}, {}]), "route_policy": {}, "capability_snapshot": {}},
+    ports = HttpPoolCyclePorts(lambda *a, **k: {"items": [], "next_page_token": None},
+                               discovery_loader=lambda p: {"seeds": Seeds([{}, {}, {}]), "route_policy": {}, "capability_snapshot": {}},
                                env={})
     import unittest.mock as mock
     with mock.patch("importlib.import_module", lambda n, *a: Module if n.endswith("persona_strategy_discovery") else real(n, *a)):
         found = ports.discover_for_demand({"persona_id": "p", "tenant_id": "t"}, {"demand_id": "d1"})
     assert found["partial"] and found["seeds_seen"] == 3 and found["partial_reason"] == "page_cap"
     assert found["reason"].startswith("partial_seed_read:3_seeds_seen")
+
+
+
+# --- POOL-CYCLE-SPEC-READ-BOUNDED-20261125: bounded, paged registry StrategySpec read ---------------------
+
+from urllib.parse import parse_qs, urlsplit  # noqa: E402
+
+DISCOVERY_PATH = "/api/registry/strategy-specs"
+
+
+class FakeRegistry:
+    """The registry owner's ``view=discovery_candidates`` contract; any unpaged list read fails the test."""
+
+    def __init__(self, entries, *, fail_on_page=None, page_seconds=0.0, clock=None):
+        self.entries = sorted(entries, key=lambda e: e["registry_id"])
+        self.requests, self.fail_on_page, self.page_seconds, self.clock = [], fail_on_page, page_seconds, clock
+
+    def transport(self, method, service, path, tenant, body=None):
+        assert service == "registry" and method == "GET", (method, service, path)
+        url = urlsplit(path)
+        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        assert url.path == DISCOVERY_PATH and query.get("view") == "discovery_candidates", f"unpaged registry read: {path}"
+        self.requests.append((tenant, query))
+        if self.fail_on_page is not None and len(self.requests) == self.fail_on_page:
+            raise ConnectionError("RemoteDisconnected")
+        if self.clock is not None:
+            self.clock.now += self.page_seconds
+        size = min(int(query["page_size"]), 50)
+        after = query.get("page_token")
+        rows = [e for e in self.entries if str(e.get("artifact_state")) not in ("retired", "rejected")
+                and e["tenant"] == query["tenant_id"] and (after is None or e["registry_id"] > after)]
+        page = rows[:size]
+        return {"items": [{"entry": {k: e.get(k) for k in ("registry_id", "strategy_id", "artifact_state", "lineage", "metadata")}}
+                          for e in page],
+                "next_page_token": page[-1]["registry_id"] if len(rows) > size else None}
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def reg_entry(i, *, tenant="t1", state="draft", family="momentum", **meta):
+    spec = {"strategy_id": f"spec-{i}", "title": f"TWSE equity {family} {i}", "hypothesis": f"{family} persists",
+            "market_scope": {"venues": ["TWSE"], "asset_classes": ["equity"]},
+            "execution_profile": {"rebalance_cadence": "swing", "backend_hint": "qlib"},
+            "data_dependencies": [{"ref": "ohlcv"}], "governance": {"risk_level": "medium"},
+            "provenance": {"source_refs": [f"src-{i}"]}, "evidence_refs": [f"ev-{i}"],
+            "metadata": {"strategy_family": family},
+            # bulk the scorer never reads
+            "signals": [{"name": f"sig-{k}", "expr": "x" * 200} for k in range(5)], "parameters": {"window": 20},
+            "description": "d" * 300}
+    return {"registry_id": f"reg-{i:05d}", "strategy_id": f"spec-{i}", "artifact_state": state, "tenant": tenant,
+            "lineage": {"source_run_ids": [f"run-{i}"], "parent_registry_ids": []},
+            "metadata": {"strategy_spec": spec, "tenant_id": tenant, **meta}}
+
+
+def spec_ports(registry, clock=None, **env):
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    return HttpPoolCyclePorts(registry.transport, env={k: str(v) for k, v in env.items()}, spec_clock=clock or Clock())
+
+
+def test_spec_read_is_paged_tenant_scoped_projected_and_never_unpaged():
+    registry = FakeRegistry([reg_entry(i) for i in range(120)] + [reg_entry(500, state="retired"),
+                            reg_entry(501, tenant="t2")])
+    read = spec_ports(registry).read_strategy_specs(PERSONA)
+    assert len(read) == 120 and read.pages == 3 and not read.partial and read.stop_reason is None
+    assert all(tenant == "t1" and q["tenant_id"] == "t1" and q["page_size"] == "50" for tenant, q in registry.requests)
+    assert "page_token" not in registry.requests[0][1] and registry.requests[1][1]["page_token"] == "reg-00049"
+    # only the fields the discovery scorer reads travel past the read
+    assert all("signals" not in s and "parameters" not in s and "description" not in s for s in read)
+    assert read[0]["strategy_spec_registry_id"] == "reg-00000" and read[0]["lineage"]["source_run_ids"] == ["run-0"]
+    assert read.summary()["bytes"] > 0 and read.summary()["specs_seen"] == 120
+
+
+def test_spec_read_stops_at_page_cap_and_resumes_on_the_next_read():
+    registry = FakeRegistry([reg_entry(i) for i in range(230)])
+    clock = Clock()
+    ports = spec_ports(registry, clock, PERSONA_DISCOVERY_SPEC_MAX_PAGES=2, PERSONA_DISCOVERY_SPEC_REUSE_SECONDS=0)
+    first = ports.read_strategy_specs(PERSONA)
+    assert (len(first), first.pages, first.partial, first.stop_reason) == (100, 2, True, "page_cap")
+    second = ports.read_strategy_specs(PERSONA)
+    assert second.resumed and second[0]["strategy_spec_registry_id"] == "reg-00100" and second.stop_reason == "page_cap"
+    tail = ports.read_strategy_specs(PERSONA)
+    assert (len(tail), tail.partial, tail.stop_reason) == (30, True, "resumed_tail")
+    full_from_start = ports.read_strategy_specs(PERSONA)
+    assert not full_from_start.resumed and full_from_start[0]["strategy_spec_registry_id"] == "reg-00000"
+    assert len(registry.requests) == 2 + 2 + 1 + 2
+
+
+def test_spec_read_stops_at_time_budget():
+    clock = Clock()
+    registry = FakeRegistry([reg_entry(i) for i in range(500)], page_seconds=4.0, clock=clock)
+    read = spec_ports(registry, clock, PERSONA_DISCOVERY_SPEC_BUDGET_SECONDS=10).read_strategy_specs(PERSONA)
+    assert (read.pages, len(read), read.partial, read.stop_reason) == (3, 150, True, "time_budget")
+
+
+def test_failed_first_page_is_unavailable_and_later_page_failure_is_partial_with_counts():
+    registry = FakeRegistry([reg_entry(i) for i in range(200)], fail_on_page=1)
+    with pytest.raises(RuntimeError, match=r"strategy_spec_read_unavailable:pages=0:specs=0:ConnectionError"):
+        spec_ports(registry).read_strategy_specs(PERSONA)
+    registry = FakeRegistry([reg_entry(i) for i in range(200)], fail_on_page=3)
+    read = spec_ports(registry).read_strategy_specs(PERSONA)
+    assert (read.pages, len(read), read.partial, read.stop_reason) == (2, 100, True, "page_failed:ConnectionError")
+
+
+def test_one_read_serves_every_demand_and_persona_of_the_tenant_within_reuse_window():
+    clock = Clock()
+    registry = FakeRegistry([reg_entry(i) for i in range(60)] + [reg_entry(900, tenant="t2")])
+    ports = spec_ports(registry, clock)
+    a = ports.read_strategy_specs(PERSONA)
+    assert ports.read_strategy_specs({**PERSONA, "persona_id": "p2"}) is a
+    other = ports.read_strategy_specs({"persona_id": "p9", "tenant_id": "t2"})
+    assert [s["strategy_spec_registry_id"] for s in other] == ["reg-00900"]
+    assert len(registry.requests) == 2 + 1
+    clock.now += 601
+    ports.read_strategy_specs(PERSONA)
+    assert len(registry.requests) == 2 + 1 + 2
+
+
+def _demand_world(registry, clock, **env):
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, governed_discovery_loader
+
+    class World(HttpPoolCyclePorts):
+        def __init__(self):
+            super().__init__(self._t, env={k: str(v) for k, v in env.items()}, spec_clock=clock,
+                             discovery_loader=governed_discovery_loader(seeds=lambda p: [], route_policy=lambda p: {},
+                                                                        capability_snapshot=lambda p: {}))
+            self.recorded = []
+
+        def _t(self, method, service, path, tenant, body=None):
+            return registry.transport(method, service, path, tenant, body)
+
+        def reconcile_demands(self, persona, members):
+            return [{"demand_id": "d1", "status": "open", "tried_families": [], "missing_datasets": []},
+                    {"demand_id": "d2", "status": "open", "tried_families": [], "missing_datasets": []}]
+
+        def record_discovery(self, persona, demand_id, record):
+            self.recorded.append((demand_id, record))
+
+        def execute_match_action(self, persona, demand, match):
+            return {"owner": "research:tickets", "status": "created", "ticket_id": "t"}
+    return World()
+
+
+def test_capped_spec_read_is_recorded_partial_never_no_match_and_failed_read_unavailable():
+    clock = Clock()
+    # every candidate here is excluded/unfit, so a full read would say "no match"
+    registry = FakeRegistry([reg_entry(i, family="carry", negative_memory_match={"warning_level": "blocking"})
+                             for i in range(200)])
+    world = _demand_world(registry, clock, PERSONA_DISCOVERY_SPEC_MAX_PAGES=2)
+    out = PoolAutonomyCycle(world)._discover(PERSONA, {"members": []})
+    assert [e["demand_id"] for e in out] == ["d1", "d2"]
+    for _, record in world.recorded:
+        assert record["partial"] and record["specs_seen"] == 100 and record["spec_pages"] == 2
+        assert record["spec_partial_reason"] == "page_cap"
+        assert record["reason"] == "partial_spec_read:100_specs_seen_no_match_yet"
+        assert record["spec_read"]["max_pages"] == 2 and record["spec_read"]["stop_reason"] == "page_cap"
+    assert len(registry.requests) == 2  # both demands share one bounded read
+    failing = FakeRegistry([reg_entry(0)], fail_on_page=1)
+    world = _demand_world(failing, Clock())
+    PoolAutonomyCycle(world)._discover(PERSONA, {"members": []})
+    (d1, first), (d2, second) = world.recorded
+    assert first["reason"].startswith("discovery_unavailable:RuntimeError: strategy_spec_read_unavailable:pages=0:specs=0")
+    assert first["matched"] == 0 and "spec_read" not in first
+    # a failed read is not reused: the next demand reads again (one bounded read per demand at most)
+    assert second["spec_read"]["specs_seen"] == 1 and len(failing.requests) == 2
+
+
+def _previous_read_strategy_specs(rows):
+    """The unpaged read this task replaced (verbatim logic), kept as the equality reference."""
+    from collections.abc import Mapping as _Mapping
+    specs = []
+    for view in rows or []:
+        entry = view.get("entry") if isinstance(view, _Mapping) else None
+        if not isinstance(entry, _Mapping) or str(entry.get("artifact_state") or "").lower() in {"retired", "rejected"}:
+            continue
+        metadata = dict(entry.get("metadata") or {})
+        stored = metadata.get("strategy_spec")
+        spec = dict(stored) if isinstance(stored, _Mapping) else {}
+        for key in ("mechanism", "mechanism_status", "mechanism_support", "negative_memory_match"):
+            if key in metadata:
+                spec.setdefault(key, metadata[key])
+        spec.update({"strategy_id": spec.get("strategy_id") or entry.get("strategy_id"),
+                     "strategy_spec_registry_id": entry.get("registry_id"),
+                     "lifecycle_state": entry.get("artifact_state"),
+                     "metadata": {**(spec.get("metadata") if isinstance(spec.get("metadata"), _Mapping) else {}),
+                                  **{k: v for k, v in metadata.items() if k != "strategy_spec"}},
+                     "lineage": entry.get("lineage") if isinstance(entry.get("lineage"), _Mapping) else {}})
+        specs.append(spec)
+    return specs
+
+
+def _recorded_set():
+    rows = [reg_entry(0), reg_entry(1, state="approved"), reg_entry(2, state="candidate", family="carry"),
+            reg_entry(3, mechanism={"name": "underreaction", "support": 0.7}, mechanism_status="supported",
+                      mechanism_support=0.7),
+            reg_entry(4, negative_memory_match={"warning_level": "warning", "matched_ids": ["old-1"]}),
+            reg_entry(5, negative_memory_match={"warning_level": "info"}),
+            reg_entry(6, state="retired"), reg_entry(7, state="rejected"),
+            reg_entry(8, family="value", required_data=["tw-margin-balance"], allowed_use=["research_discovery"]),
+            {"registry_id": "reg-00009", "strategy_id": "spec-9", "artifact_state": "draft", "tenant": "t1",
+             "lineage": None, "metadata": None},
+            {**reg_entry(10), "lineage": {"source_run_ids": [], "parent_registry_ids": ["reg-00001"], "execution_route": "paper"}}]
+    rows[1]["metadata"]["strategy_spec"]["mechanism"] = {"name": "spec-level"}
+    return rows
+
+
+@pytest.mark.parametrize("demand", [
+    {"demand_id": "d1", "tried_families": [], "missing_datasets": []},
+    {"demand_id": "d2", "tried_families": ["carry"], "missing_datasets": []},
+    {"demand_id": "d3", "tried_families": [], "missing_datasets": ["tw-margin-balance"]},
+])
+def test_scoring_is_identical_to_the_previous_unpaged_read(demand):
+    import importlib
+    module = importlib.import_module("services.control_plane.persona.persona_strategy_discovery")
+    rows = _recorded_set()
+    registry = FakeRegistry(rows)
+    unpaged = [{"entry": {k: e.get(k) for k in ("registry_id", "strategy_id", "artifact_state", "lineage", "metadata")}}
+               for e in registry.entries]
+    previous = _previous_read_strategy_specs(unpaged)
+    current = spec_ports(registry, PERSONA_DISCOVERY_SPEC_PAGE_SIZE=4).read_strategy_specs(PERSONA)
+    assert [s["strategy_spec_registry_id"] for s in current] == [s["strategy_spec_registry_id"] for s in previous]
+    for old, new in zip(previous, current):
+        assert module._candidate_from_strategy_spec(old) == module._candidate_from_strategy_spec(new)
+        for key in ("lineage", "mechanism", "mechanism_status", "mechanism_support", "negative_memory_match", "metadata"):
+            assert old.get(key) == new.get(key), key
+    persona = {"persona_id": "p1", "tenant_id": "t1", "name": "P1", "mandate": "TWSE equity momentum",
+               "strategy_family": "momentum", "required_data_sources": ["ohlcv"],
+               "metadata": {"market_scope": ["TWSE"], "asset_classes": ["equity"], "data_availability_scope": ["ohlcv"]}}
+    kwargs = dict(route_policy={}, capability_snapshot={}, strategy_seeds=[], created_at="2026-11-25T00:00:00Z",
+                  discovery_session_id="psd-demand-x", max_matches=50)
+    assert (module.discover_for_demand(persona, demand, strategy_specs=current, **kwargs)
+            == module.discover_for_demand(persona, demand, strategy_specs=previous, **kwargs))
+
+
+def test_hosted_scale_three_cycle_reads_stay_far_below_registry_memory_limit(monkeypatch):
+    """9,940 hosted-shape registry rows (~5.6 kB) behind the real registry app; three consecutive cycle reads."""
+    import json as _json
+    import time as _time
+    import tracemalloc
+
+    from fastapi.testclient import TestClient
+
+    from services.registry import storage as storage_module
+    from services.registry.service import app
+    from services.registry.test_discovery_spec_page import _hosted_entries
+    from services.registry.test_service import _JWT_SECRET, _jwt
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    storage_module.reset_store()
+    try:
+        with TestClient(app) as client:
+            store = storage_module.get_store()
+            for e in _hosted_entries():
+                store.put(e)
+            rows = len(store._entries)
+            assert rows >= 9940
+            token = _jwt(subject="persona-registry-reader", tenant="tenant-a")
+            requests, request_peaks, response_bytes = [], [], []
+
+            def transport(method, service, path, tenant, body=None):
+                url = urlsplit(path)
+                assert service == "registry" and parse_qs(url.query).get("view") == ["discovery_candidates"], path
+                requests.append(path)
+                before = tracemalloc.get_traced_memory()[0] if tracemalloc.is_tracing() else 0
+                if tracemalloc.is_tracing():
+                    tracemalloc.reset_peak()
+                resp = client.get(path, headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant})
+                assert resp.status_code == 200, resp.text
+                if tracemalloc.is_tracing():  # registry-side cost of serving this one page
+                    request_peaks.append(tracemalloc.get_traced_memory()[1] - before)
+                    response_bytes.append(len(resp.content))
+                return resp.json()
+
+            persona = {"persona_id": "p-hosted", "tenant_id": "tenant-a"}
+            ports = HttpPoolCyclePorts(transport, env={"PERSONA_DISCOVERY_SPEC_REUSE_SECONDS": "0",
+                                                       "PERSONA_DISCOVERY_SPEC_BUDGET_SECONDS": "600"})
+            tracemalloc.start()
+            base = tracemalloc.get_traced_memory()[0]
+            reads, held, started = [], 0, _time.monotonic()
+            for _ in range(3):
+                read = ports.read_strategy_specs(persona)
+                reads.append(read.summary())
+                held = max(held, tracemalloc.get_traced_memory()[0] - base)  # what the persona keeps per read
+                del read
+            elapsed = _time.monotonic() - started
+            tracemalloc.stop()
+    finally:
+        storage_module.reset_store()
+    assert [r["pages"] for r in reads] == [40, 40, 40] and all(r["stop_reason"] == "page_cap" for r in reads)
+    assert [r["resumed"] for r in reads] == [False, True, True] and all(r["specs_seen"] == 2000 for r in reads)
+    assert len(requests) == 120
+    assert len(request_peaks) == 120
+    assert max(request_peaks) < 8 * 1024 * 1024, max(request_peaks)  # per page served, far below 256 MiB
+    assert held < 64 * 1024 * 1024, held  # the reader's cap bounds what the persona holds per tenant
+    out = os.environ.get("POOL_CYCLE_SPEC_READ_EVIDENCE_OUT", "").strip()
+    if out:
+        with open(out, "w") as fh:
+            _json.dump({"registry_rows": rows, "reads": reads, "requests": len(requests),
+                        "registry_request_python_peak_bytes_max": max(request_peaks),
+                        "registry_request_python_peak_bytes_median": sorted(request_peaks)[len(request_peaks) // 2],
+                        "response_bytes_max": max(response_bytes), "persona_held_bytes_max": held,
+                        "three_reads_seconds": round(elapsed, 3)}, fh, indent=2, sort_keys=True)

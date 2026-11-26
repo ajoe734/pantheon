@@ -479,7 +479,8 @@ def test_evidence_610ms_owner_read_completes_under_evidence_route_budget() -> No
     assert payload["page_info"]["total"] == 518
     assert len(payload["data"]["items"]) == 20
     assert payload["data"]["summary"]["total_evidence"] == 518
-    assert payload["data"]["summary"]["verified_count"] == 518
+    # verified_count is removed (null): a connector confidence is not a verification.
+    assert payload["data"]["summary"]["verified_count"] is None
     assert payload["data"]["summary"]["by_source_type"] == {"official_reference": 510, "source_record": 8}
     assert payload["meta"]["surfaces"]["management_evidence"]["status"] == "ok"
 

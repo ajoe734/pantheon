@@ -1746,7 +1746,11 @@ def read_lineage_graph(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
+    view: Optional[Literal[
+        "persona_binding", "persona_binding_counts", "strategy_summary_page", "card_admission_drafts",
+        "discovery_candidates",
+    ]] = None,
+    tenant_id: Optional[str] = None,
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -1773,6 +1777,36 @@ def list_all_strategy_spec_entries(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(counts)
+    if view == "card_admission_drafts":
+        # Bounded owner read for the card admission path: Postgres-side filter, keyset page.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        if not tenant_id or not tenant_id.strip():
+            raise HTTPException(status_code=400, detail="tenant_id is required for view=card_admission_drafts")
+        try:
+            return JSONResponse(get_registry_service().card_admission_draft_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                tenant_id=tenant_id.strip(), page_size=min(page_size, 50), after_registry_id=page_token,
+            ))
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if view == "discovery_candidates":
+        # REGISTRY-DISCOVERY-SPEC-PAGE-20261125: bounded keyset page of non-retired/rejected
+        # StrategySpecs; ``tenant_id`` is the read scope with the X-Tenant-Id rules.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        scope_tenant = tenant_id.strip() if tenant_id is not None else ""
+        if not scope_tenant:
+            raise HTTPException(status_code=400, detail="tenant_id is required for view=discovery_candidates")
+        if header_tenant is not None and header_tenant != scope_tenant:
+            raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
+        ctx, scope_tenant = _strategy_spec_read_scope(authorization, scope_tenant)
+        try:
+            return JSONResponse(get_registry_service().discovery_candidate_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, scope_tenant),
+                tenant_id=scope_tenant, page_size=page_size, page_token=page_token,
+            ))
+        except ValueError as exc:
+            msg = str(exc)
+            raise HTTPException(status_code=400 if msg.startswith("Invalid page_token") else 503, detail=msg) from exc
     if view == "strategy_summary_page":
         ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
         wanted_artifact_state = artifact_state.value if artifact_state is not None else None

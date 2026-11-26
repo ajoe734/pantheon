@@ -538,6 +538,15 @@ services:
       PANTHEON_L2_EXTRACTION_ENABLED: ${PANTHEON_L2_EXTRACTION_ENABLED:-0}
       PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP: ${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}
       PANTHEON_L2_EXTRACTION_LEDGER_PATH: /data/source-ingest/l2_extraction_ledger.sqlite
+      # One HYPOTHESIS_CARD call: client, adapter and gateway share this deadline (bounded 5-180 s).
+      # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
+      PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
+      PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
+      # A compiled card rule is bound to the governed whole-market dataset (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125):
+      # a logical id or a pinned gmd- snapshot; no symbol list. Unset or not governed keeps every rule a research-only
+      # draft with the reason in the controller state. The boundary is read from the stored daily bars below.
+      PANTHEON_L2_CARD_DATASET_ID: ${PANTHEON_L2_CARD_DATASET_ID:-governed-market:tw-daily}
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
       DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
       DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
@@ -581,7 +590,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
-    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-512m}
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-768m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -593,6 +602,8 @@ services:
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
       ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      # Card admission reads Registry drafts; off until the coordinator has seen one hosted tick of the bounded read.
+      ALPHA_REPLICATION_CARD_ADMISSION_ENABLED: ${ALPHA_REPLICATION_CARD_ADMISSION_ENABLED:-0}
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -626,6 +637,14 @@ services:
       RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
       # Card gate dataset: the governed whole-market dataset read from the stored daily bars (DailyBarsReader).
       GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Scheduled AlphaTemplate evaluation (ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125): time_series templates on the
+      # governed dataset, at most weekly after a new stored trading day; results go to the Registry store.
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
+      ALPHA_TEMPLATE_EVAL_ENABLED: ${ALPHA_TEMPLATE_EVAL_ENABLED:-1}
+      # State file of the cycle in progress; each cycle's research run records sit beside it under cycles/ (last 3 kept).
+      ALPHA_TEMPLATE_EVAL_STATE_PATH: /data/research-orchestrator/alpha-replication/template-evaluation/schedule_state.json
+      ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS: ${ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS:-60}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
@@ -991,6 +1010,9 @@ services:
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
+      # GET /api/research/alpha-templates/evaluations reads the Registry store (same Postgres owner as registry).
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       # Keep HTTP admission and the supervised alpha worker on one durable
       # volume so accepted research specs survive a service restart.
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication

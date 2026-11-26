@@ -1,0 +1,172 @@
+{
+  "task_id": "REQUALIFY-REFUSAL-NOT-CRASH-20261125",
+  "title": "A refused requalified replacement is deferred to the operator instead of failing the run",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "register_instance": "RC2",
+  "design_refs": [
+    "SD_PERSONA_STRATEGY_POOL_AUTONOMY section 5.2 (could not evaluate: operator_decision_required and retried)",
+    "Operator decision 2026-11-16 (legacy close-fill members are requalified under next-open fills; could-not-evaluate keeps the member and retries)"
+  ],
+  "scope_approval": "Operator approval 2026-11-25 06:2xZ in conversation 5724fc3b names this scope, so the feature freeze does not apply.",
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer (Claude2) is from the owner's model family. Recorded per the task brief.",
+  "evidence_kind": "functional (source and local tests only). Hosted verification is left to the operator acceptance task. No VM or SSH access was used and no operator keys were read.",
+  "defect": "services/evolution/auto_consumer_runtime.py PoolOwner.replace_requalified_member raised RuntimeError on any non-applied pool decision. services/research/main.py _trigger_retrain_execution's generic except recorded the run as failed at step executor, and the requalified Registry entry, already registered and approved, stayed outside the pool. On the next attempt the executor allocated a new version (the family listing now held the first one), which made a second registry entry and spent a second gate trial.",
+  "changes": [
+    {
+      "file": "services/evolution/auto_consumer_runtime.py",
+      "anchor": "PoolOwner.replace_requalified_member, the decision handling after the POST to /strategy-pool/decisions",
+      "change": "A decision row with status 'refused' and a non-empty reasons list now raises executor.RequalifyDeferred('pool_admission_refused', detail) instead of RuntimeError. The detail carries pool_decision_reasons (verbatim from the pool owner), pool_decision_action, pool_decision_record_version, pool_version_before_decision, candidate_artifact_ref, candidate_checksum and live_member_ref. Nothing is published and no /versions write happens on this path. Any other non-applied row (decision missing, unknown status, refused without a reasons list) still raises the unchanged RuntimeError('requalified replacement admission refused: ...')."
+    },
+    {
+      "file": "services/research/main.py",
+      "anchor": "_unadmitted_requalified_entries (new helper) and _execute_legacy_member_requalification",
+      "change": "The family listing the executor already reads is kept as entries. Before re-running the gate, the executor looks for an entry that this decision registered to replace this legacy member (matching metadata.replaces_registry_id, metadata.demand_ref == decision_id and lineage parent) that is not in pool history. If that entry is approved, has the right tenant and its checksum matches, it is reused: no new version, no second registration, no second gate trial. Its recorded verdict is taken from the run's pending_replacement. Matching entries that cannot be reused (not approved, checksum drift, tenant mismatch, or superseded by a newer one) are recorded on the run as evolution_result.requalified_residuals. The replace and record step moved into _replace_with_requalified, which catches RequalifyDeferred and re-raises it with pending_replacement (registry_id, checksum, version, verdict, resume='next_cadence_reuses_registered_entry'). The existing RequalifyDeferred handler in _trigger_retrain_execution then records status=queued, outcome=operator_decision_required, outcome_reason=pool_admission_refused, operator_decision_required=true, and dispatch_run's existing operator_decision_required retry re-runs it on the next cadence. The generic except, the _RetrainFailure path and the ExecutorRefusal path are unchanged."
+    },
+    {
+      "file": "services/research/main.py",
+      "anchor": "_deferred_retry_cadence_seconds, _deferred_retry_due, dispatch_run idempotent-match branch, the RequalifyDeferred handler in _trigger_retrain_execution, resume_retrain_runs",
+      "change": "Review fix for the pre-review of PR 7879 at 031ecccc1: a deferred run is re-executed at most once per cadence. The RequalifyDeferred handler now stamps deferred_at (orchestrator clock) and retry_not_before_seconds on the run. dispatch_run returns an operator_decision_required/queued run unchanged (no attempt increment, no executor start, no store write) until deferred_at + EVOLUTION_SCHEDULER_INTERVAL_SECONDS (default 86400) is reached; the startup resume skips such a run for the same reason. The gate uses the orchestrator's own clock, never a caller-supplied requested_at. It applies to every RequalifyDeferred reason (pool_admission_refused, owner_read_failed:*, governed_dataset_unavailable and the synthetic/fixture dataset refusals), because they all reach the same handler. A run deferred before this change (no deferred_at) or with an unreadable stamp is due, so no older deferral is stranded."
+    }
+  ],
+  "not_changed": [
+    "No gate threshold, gate criterion or pool admission criterion (persona_strategy_pool.py decide() is untouched).",
+    "The auto consumer switch EVOLUTION_AUTO_CONSUMER_ENABLED is not touched by this task.",
+    "No existing test was weakened or deleted. One pre-existing test had a setup-only clock change (changed_test_setup), and the refusal test this task added had assertions changed (changed_assertions)."
+  ],
+  "hosted_switch_state": {
+    "statement": "The auto consumer switch is off on hosted, so this path does not run until the operator turns it on. This task changes no switch.",
+    "source_refs": [
+      "docker-compose.yml:2841 EVOLUTION_AUTO_CONSUMER_ENABLED: ${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}",
+      "scripts/deploy_nonprod_vm.sh:37 and :7033 default false",
+      ".github/workflows/nonprod-deploy.yml:1423 DEV_EVOLUTION_AUTO_CONSUMER_ENABLED defaults to 'false'",
+      "docs/operations/problem-register.md:254 records EVOLUTION_AUTO_CONSUMER_ENABLED as false on hosted (found by 5724fc3b)"
+    ],
+    "note": "Read from the repository's deploy configuration only. The live hosted value was not read (no VM/SSH access, per the hard rules)."
+  },
+  "interpretation_for_reviewer": {
+    "acceptance_1_no_pool_version_written": "The real pool decide route (PersonaStrategyPoolStore.decide, 'Append even a refused decision') writes its refusal as an audit version with membership identical to the previous version. That route is outside this task's artifact contract and is required by acceptance 4. This task reads 'no pool version is written' as: the requalify path writes no membership-changing version (no /strategy-pool/versions call) and publishes nothing. The live member stays active with the same weight. The integration test asserts exactly this: refused_pool.members equals the seeded member, decision.status is 'refused', no ('versions') write, and pool version 2 (the refusal journal) is never published by the replace path. If the reviewer reads the item literally, the fix is in persona_strategy_pool.py, which is not in the artifact contract, and the task should be blocked on that reason."
+  },
+  "acceptance": [
+    {
+      "id": 1,
+      "result": "met (see interpretation_for_reviewer)",
+      "proof": [
+        "services/evolution/test_auto_consumer_runtime.py::test_refused_requalified_replacement_is_deferred_not_crashed",
+        "services/research/tests/test_pool_evolution_integration.py::test_refused_requalified_replacement_defers_to_operator_then_reuses_the_registered_entry_next_cadence[*] cadence 1: status queued, outcome operator_decision_required, outcome_reason pool_admission_refused, evolution_result.pool_decision_reasons verbatim, live member unchanged, nothing published, no /versions write",
+        "Retried once per cadence: same integration test, the run_poll loop with an advancing clock described in changed_assertions"
+      ]
+    },
+    {
+      "id": 2,
+      "result": "met",
+      "proof": [
+        "Same integration test, successful cadence (after one more refused cadence): attempt_number 3, outcome revalidation_passed, candidate_artifact_id equals the cadence-1 pending registry_id, replacement.reused_unadmitted_entry true, exactly one register call and one gate evaluation over both cadences, Registry holds only legacy and that one requalified entry, final pool v4 applied with legacy removed (replaced_by_requalified_entry) and the requalified entry as a trial with parent_ref legacy",
+        "services/research/tests/test_pool_evolution_integration.py::test_requalify_executor_records_unusable_unadmitted_entries_as_visible_residuals: candidate state, checksum drift and superseded entries are reported as requalified_residuals; entries already in pool history are never reused; other decisions' entries are ignored"
+      ]
+    },
+    {
+      "id": 3,
+      "result": "met",
+      "proof": [
+        "services/evolution/test_auto_consumer_runtime.py::test_malformed_replacement_decision_keeps_runtime_error[None|pending|refused-without-reasons|reasons-not-list] still raises RuntimeError 'requalified replacement admission refused' (not RequalifyDeferred) and nothing is published",
+        "The generic except Exception and _RetrainFailure handlers in _trigger_retrain_execution are unchanged; the existing suites below pass",
+        "No gate or admission code changed (diff touches only auto_consumer_runtime.py, research/main.py and tests)"
+      ]
+    },
+    {
+      "id": 4,
+      "result": "met",
+      "proof": "test_refused_requalified_replacement_defers_to_operator_then_reuses_the_registered_entry_next_cadence is parametrized over the four refusals. Each starts from the real tick, dispatch, research run and executor entry (run_consumer_tick -> dispatch_run -> _trigger_retrain_execution -> _execute_legacy_member_requalification), uses the real gate on the recorded 2-year TWSE dataset, and gets its refusal from the real PersonaStrategyPoolStore.decide: (a) boundary_unavailable: the market_boundary_provider raises GovernedMarketDatasetError('daily_bars_store_stale', ...), giving reason 'governed_market_boundary_unavailable: daily_bars_store_stale: ...'; (b) candidate_outside_boundary: a real MarketBoundary dataclass row that excludes 2330.TW, giving 'candidate_outside_governed_market_boundary: 2330 not in boundary gmd-...'; (c) consultation_memo_missing: the route's token-derived actor is PERSONA_CYCLE_ACTOR with no memo, giving 'consultation_memo_required'; (d) risk_observations_missing: member_virtual_book.idle_pool_observations yields no observations, giving 'risk_budget_observations_missing'. Each fault is cleared before cadence 2, which then succeeds."
+    },
+    {
+      "id": 5,
+      "result": "met",
+      "proof": "hosted_switch_state above"
+    },
+    {
+      "id": 6,
+      "result": "met",
+      "proof": "No pre-existing assertion was weakened, deleted or changed. The pre-existing deferral test now has a setup-only cadence clock (changed_test_setup). The refusal test this task added had assertions changed, with justification in changed_assertions."
+    }
+  ],
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/research/tests/test_pool_evolution_integration.py",
+      "result": "9 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/research/tests/test_pool_evolution_integration.py services/evolution/test_auto_consumer_runtime.py (before the clock change in the pre-existing deferral test)",
+      "result": "1 failed (test_legacy_close_fill_member_defers..., attempt_number 1 == 2: the back-to-back cadence it relied on is now gated), 24 passed; fixed by changed_test_setup"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/evolution",
+      "result": "586 passed, 3 skipped"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/research/tests/test_evolution_gate_executor.py services/research/tests/test_candidate_registration.py services/research/alpha_replication services/research/tests/test_pool_admission.py services/research/tests/test_retrain_executor_real_auth.py services/research/tests/test_retrain_oos_gate.py services/research/tests/test_retrain_search_update.py services/research/tests/test_candidate_pool_parity.py services/control-plane/persona/test_persona_strategy_pool.py services/research/tests/test_template_demand_search.py",
+      "result": "269 passed, 4 skipped"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/research/tests/test_persona_cycle_demand_integration.py services/persona/test_pool_autonomy_cycle.py",
+      "result": "55 passed"
+    },
+    {
+      "command": "mutation: _deferred_retry_due forced to return True (local, reverted), refusal test [boundary_unavailable]",
+      "result": "failed as expected: attempt_number 7 == 1"
+    },
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/research/tests/test_pool_evolution_integration.py services/evolution/test_auto_consumer_runtime.py; then services/evolution (re-run at head ade7e8fd3 after ci-red return)",
+      "result": "25 passed; 586 passed, 3 skipped"
+    }
+  ],
+  "test_ports_disclosed": [
+    "Registry, Governance and BFF owner HTTP are the same controlled in-process ports the existing test_legacy_close_fill_member_defers... test uses. The pool owner is the real PersonaStrategyPoolStore.",
+    "The runtime unit tests fix candidate_virtual_book and idle_pool_observations so they isolate decision-row handling. The integration test runs the real builders, except idle_pool_observations in the risk_observations_missing case."
+  ],
+  "residual_risk": [
+    "Each refused cadence adds one refusal journal version from the pool owner's existing behaviour: at most one per member per cadence (1 per day by default). A long-lived refusal grows pool history at that rate until the operator acts.",
+    "The research orchestrator reads EVOLUTION_SCHEDULER_INTERVAL_SECONDS from its own environment. docker-compose.yml sets it only for the evolution and scheduler services, so research uses the 86400 default. If the operator changes the scheduler interval, the same value must be set on the research orchestrator, or deferred retries keep the daily pace. docker-compose.yml is outside this task's artifact contract.",
+    "Reuse trusts the registered entry's gate proof from the earlier attempt of the same decision and does not re-run the gate."
+  ],
+  "retry_trigger_on_hosted": {
+    "statement": "On hosted the retry is triggered by the evolution dispatch worker container (python -m services.evolution.dispatch_worker, docker-compose.yml:2787), not by the scheduler tick.",
+    "mechanism": "The deferred run stays queued, so ResearchPlaneAdapter.read_receipt returns PENDING and dispatch_worker leaves the outbox claim to expire (DEFAULT_CLAIM_LEASE_SECONDS 60, services/evolution/dispatch_outbox.py:379; EVOLUTION_DISPATCH_INTERVAL_SECONDS 30). Each later claim calls ResearchPlaneAdapter.submit, which reaches dispatch_run through the idempotency key. Before the cadence is due dispatch_run now returns the run unchanged; the first claim at or after deferred_at + 86400 s re-executes it once (in practice within about 60 to 90 s after it is due).",
+    "scheduler_tick": "PoolOwner.retry_requalify (services/evolution/auto_consumer_runtime.py:380) looks up services.evolution.main in sys.modules to clear the claim early. The scheduler container runs python -m services.evolution.scheduler_worker (docker-compose.yml:2829), and neither that module nor dispatch_worker imports services.evolution.main (checked: importing services.evolution.scheduler_worker, auto_consumer_runtime and pool_evolution_scheduler leaves 'services.evolution.main' not in sys.modules; same for dispatch_worker). So retry_requalify is a no-op on hosted. It only has an effect where the scheduler tick runs inside the evolution API process (the in-process tests). Even there it can only clear a claim: dispatch_run still refuses to re-execute before the cadence is due.",
+    "earlier_retry_needed": "No. The design (SD_PERSONA_STRATEGY_POOL_AUTONOMY 5.2) asks for a retry on the next cadence, and the dispatch worker already triggers it within about one claim lease after it is due. The scheduler tick does not need to trigger an earlier retry, so retry_requalify is left unchanged."
+  },
+  "pool_version_growth": {
+    "before_fix_at_031ecccc1": "One re-execution and one refused pool decision version per claim-lease expiry: about 86400 / 70 = roughly 1200 refusal journal versions per refused member per day (reviewer reproduction: attempts 2..6 and pool versions 3..7 at +70 s each).",
+    "after_fix": "At most one refused pool decision version per refused member per cadence: 1 per day at the default EVOLUTION_SCHEDULER_INTERVAL_SECONDS=86400 (about 365 per year while the refusal persists and the operator does not act). Membership is never changed by a refusal version and none is published.",
+    "cap": "At most one re-execution, one pool decision call and one refusal journal version per member per cadence, for every RequalifyDeferred reason. Owner reads and dataset loads of deferred runs are capped the same way. Between cadences each dispatch-worker re-claim only costs an idempotent submit and a receipt read, with no research store write."
+  },
+  "changed_assertions": [
+    {
+      "test": "services/research/tests/test_pool_evolution_integration.py::test_refused_requalified_replacement_defers_to_operator_then_reuses_the_registered_entry_next_cadence[*]",
+      "change": "This test was added by this task. Before the successful cadence it now drives the real dispatch_worker.run_poll with an advancing clock shared with the research orchestrator: five polls at +70 s each and one poll 1 s before the cadence is due give no new attempt (attempt_number 1), no new pool decision and pool version 2. The first poll after the cadence is due gives exactly one new attempt (2), one new refused decision (pool version 3, membership unchanged, not published) and a new deferred_at. Five more polls at +70 s give nothing new. The successful cadence is therefore attempt 3 with final pool version 4. Earlier it was attempt 2 with version 3.",
+      "justification": "The reviewer required a test showing no attempt and no pool version before the cadence is due, and exactly one after it. The extra refused cadence shifts the final attempt and version numbers by one. All other assertions (reuse of the same registry entry, one registration, one gate evaluation, legacy removed, trial parent_ref, legacy entry untouched, approved baseline) are unchanged.",
+      "mutation_check": "With _deferred_retry_due forced to return True (temporary local edit, reverted), the boundary_unavailable case fails with attempt_number 7 != 1. This reproduces the reviewer's finding."
+    }
+  ],
+  "changed_test_setup": [
+    {
+      "test": "services/research/tests/test_pool_evolution_integration.py::test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_replaces_passing_artifact_on_next_cadence (pre-existing on dev)",
+      "change": "Setup only. research.utc_now is replaced with a test clock, and the clock moves forward one cadence (86400 s) before each step labelled 'next cadence'. No assertion was changed, added or removed.",
+      "justification": "This test ran its 'next cadence' steps back to back at the same wall-clock time, relying on a deferred run re-executing immediately. That immediate re-execution is the defect the reviewer reported. Under the once-per-cadence gate a step only re-executes when it really is one cadence later, so the clock must move. Without the clock change it fails with attempt_number 1 == 2."
+    }
+  ],
+  "ci_red_return_2026_11_25": {
+    "pr": 7879,
+    "run_id": 45715715898,
+    "head": "ade7e8fd3eeb2fbe68b7572edfa3598f6eb99606",
+    "failed_checks": [
+      "Test sweep (shard 5)",
+      "Service suites (aggregate; failed only because the shard 5 leg failed)"
+    ],
+    "failing_test": "acceptance/test_mgmt_registry_pages_readable.py::test_every_route_the_probe_reads_is_registered_in_the_bff_application",
+    "error": "sqlite3.OperationalError: database is locked, raised at import of services/control-plane/bff/main.py in DownstreamHealthMonitor._DurableHealthStore._connect (PRAGMA journal_mode = WAL) while the shard ran 3 test files in parallel",
+    "relation_to_this_task": "none: this branch does not touch services/control-plane/bff or acceptance/; the failure is shared-SQLite contention in the BFF health store",
+    "local_repro": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q acceptance/test_mgmt_registry_pages_readable.py -> 36 passed",
+    "action": "gh run rerun --failed was refused for the run, and dev had no new commits to merge, so this evidence update is the new head that re-triggers CI; no product code or test was changed for the CI return"
+  }
+}

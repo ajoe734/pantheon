@@ -1157,3 +1157,157 @@ def test_reconciliation_mapping_preserves_tenant_for_scoped_baselines():
     body = _operator_pulse(store)
     assert body["data"]["summary"]["baseline_comparison_count"] == 0
     assert body["data"]["summary"]["missing_baseline_runtime_ids"] == ["r-p1"]
+
+
+def test_trading_pulse_pnl_currency_from_constituent_positions_single_mixed_and_empty():
+    store = _OperatorStore()
+    for record in store.records:
+        record.pop("pnl_currency", None)
+    # 1. Single unambiguous ISO currency (TWD) derived from constituent positions on p1,
+    # while p2 is an empty 0-fill ledger with no positions.
+    store.records[0]["positions"] = [
+        {"symbol": "2330.TWSE", "quantity": 1000, "currency": "TWD"},
+    ]
+    store.records[1]["positions"] = []
+
+    pulse = _operator_pulse(store)["data"]
+    rows = {r["persona_id"]: r for r in pulse["runtime_rows"]}
+    assert rows["p1"]["pnl_currency"] == "TWD"
+    assert rows["p1"]["performance_context"]["pnl_currency"] == "TWD"
+    assert rows["p1"]["performance_context"]["pnl_currency_status"] == "single_currency"
+    assert rows["p1"]["performance_context"]["metric_units"]["pnl"] == "TWD"
+    assert rows["p1"]["telemetry_summary"]["pnl_currency"] == "TWD"
+    assert rows["p2"]["pnl_currency"] is None
+    assert rows["p2"]["performance_context"]["pnl_currency"] is None
+    assert rows["p2"]["performance_context"]["pnl_currency_status"] == "unknown"
+    assert rows["p2"]["performance_context"]["pnl_currency_reason"] == "empty_ledger"
+    assert pulse["summary"]["pnl_currency"] == "TWD"
+    assert pulse["summary"]["pnl_currency_status"] == "single_currency"
+    assert pulse["summary"]["pnl_currency_reason"] is None
+    assert pulse["summary"]["total_pnl"] == -168.085
+    assert len(pulse["summary"]["pnl_groups"]) == 1
+    assert pulse["summary"]["pnl_groups"][0]["currency"] == "TWD"
+
+    ranked = ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]
+    assert ranked["summary"]["pnl_currency"] == "TWD"
+    assert ranked["summary"]["pnl_currency_status"] == "single_currency"
+
+    # 2. Mixed currencies within constituent positions (TWD + USD without FX conversion)
+    store.records[0]["positions"] = [
+        {"symbol": "2330.TWSE", "quantity": 1000, "currency": "TWD"},
+        {"symbol": "AAPL.US", "quantity": 10, "currency": "USD"},
+    ]
+    mixed_pulse = _operator_pulse(store)["data"]
+    mixed_rows = {r["persona_id"]: r for r in mixed_pulse["runtime_rows"]}
+    assert mixed_rows["p1"]["pnl_currency"] is None
+    assert mixed_rows["p1"]["performance_context"]["pnl_currency"] is None
+    assert mixed_rows["p1"]["performance_context"]["pnl_currency_status"] == "mixed"
+    assert mixed_rows["p1"]["performance_context"]["pnl_currency_reason"] == "mixed_currency_without_fx"
+    assert mixed_rows["p1"]["performance_context"]["metric_reasons"]["pnl_comparison"] == "mixed_currency_without_fx"
+    assert mixed_pulse["summary"]["pnl_currency"] is None
+    assert mixed_pulse["summary"]["pnl_currency_status"] == "mixed"
+    assert mixed_pulse["summary"]["pnl_currency_reason"] == "mixed_currency_without_fx"
+    assert mixed_pulse["summary"]["total_pnl"] is None
+    assert mixed_pulse["summary"]["pnl_groups"] == []
+
+    # 3. Mixed currencies across two separate single-currency ledgers (TWD vs USD)
+    store.records[0]["positions"] = [{"symbol": "2330.TWSE", "quantity": 1000, "currency": "TWD"}]
+    store.records[1].update(
+        pnl=42.0,
+        ledger_fill_count=1,
+        positions=[{"symbol": "AAPL.US", "quantity": 10, "currency": "USD"}],
+    )
+    cross_mixed = _operator_pulse(store)["data"]
+    assert cross_mixed["summary"]["pnl_currency"] is None
+    assert cross_mixed["summary"]["pnl_currency_status"] == "mixed"
+    assert cross_mixed["summary"]["pnl_currency_reason"] == "mixed_currency_without_fx"
+    assert cross_mixed["summary"]["total_pnl"] is None
+    assert len(cross_mixed["summary"]["pnl_groups"]) == 2
+
+    # 4. All constituent ledgers empty (0 fills, no positions, no currency facts)
+    for record in store.records:
+        record.update(pnl=None, ledger_fill_count=0, positions=[])
+    empty_pulse = _operator_pulse(store)["data"]
+    assert empty_pulse["summary"]["pnl_currency"] is None
+    assert empty_pulse["summary"]["pnl_currency_status"] == "unknown"
+    assert empty_pulse["summary"]["pnl_currency_reason"] == "empty_ledger"
+    assert empty_pulse["summary"]["total_pnl"] is None
+    assert empty_pulse["summary"]["pnl_groups"] == []
+
+
+def test_risk_radar_queries_bounded_strategy_summary_page_and_never_calls_unpaged_list_strategies(monkeypatch):
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core.owner_reads import authorization
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    calls = []
+    store = _OperatorStore()
+    store.bindings[0].update(strategy_id="strategy-p1", capital_pool_id="pool-1")
+    store.bindings[1].update(strategy_id="strategy-p2", capital_pool_id="pool-1")
+    store.list_personas = lambda *_a, **_kw: list(store.people)
+    store.list_runtime_bindings = lambda *_a, **_kw: list(store.bindings)
+
+    def http_read(url, *, method="GET", tenant_id=None, **kwargs):
+        calls.append((url, method, tenant_id))
+        if "view=strategy_summary_page" in url:
+            return {
+                "items": [
+                    {
+                        "strategy_id": "strategy-p1",
+                        "title": "台股趨勢策略一號",
+                        "current_spec_version_id": "reg-p1-v1",
+                        "current_spec_version": "1.0.0",
+                        "lifecycle_state": "approved",
+                        "tenant_id": "tenant-test",
+                    },
+                    {
+                        "strategy_id": "strategy-p2",
+                        "title": "台股均值回歸二號",
+                        "current_spec_version_id": "reg-p2-v1",
+                        "current_spec_version": "1.0.0",
+                        "lifecycle_state": "approved",
+                        "tenant_id": "tenant-test",
+                    },
+                ],
+                "total": 2,
+                "next_page_token": None,
+            }
+        raise AssertionError(f"Unexpected registry URL: {url}")
+
+    monkeypatch.setattr(adapter_base, "http_request_json", http_read)
+    ports = ReadSurfacePorts(research_knowledge_source=DefaultResearchKnowledgeSourcePort())
+    store.list_strategy_summaries_page = ports.list_strategy_summaries_page
+    store.get_strategy_spec_detail = ports.get_strategy_spec_detail
+    store.list_strategies = lambda: calls.append(("FULL_LIST", None, None)) or []
+    store.list_strategy_summaries = lambda: calls.append(("FULL_SUMMARIES", None, None)) or []
+    store.list_strategy_specs = lambda: calls.append(("FULL_SPECS", None, None)) or []
+
+    token = authorization.set("Bearer bounded:operator:tenant-test")
+    try:
+        radar = ManagementService(read_store=store).get_risk_radar(tenant_id="tenant-test")
+    finally:
+        authorization.reset(token)
+
+    rows = {r["strategy_id"]: r for r in radar["data"]["rows"] if r["strategy_id"] in {"strategy-p1", "strategy-p2"}}
+    assert rows["strategy-p1"]["strategy_label"] == "台股趨勢策略一號"
+    assert rows["strategy-p2"]["strategy_label"] == "台股均值回歸二號"
+    assert len(calls) == 1
+    assert "view=strategy_summary_page" in calls[0][0]
+    assert "exclude_state=draft" in calls[0][0]
+    assert calls[0][1] == "GET"
+    assert calls[0][2] == "tenant-test"
+
+    calls.clear()
+    for b in store.bindings:
+        b.pop("strategy_id", None)
+    token = authorization.set("Bearer bounded:operator:tenant-test")
+    try:
+        ManagementService(read_store=store).get_risk_radar(tenant_id="tenant-test")
+    finally:
+        authorization.reset(token)
+    assert calls == []

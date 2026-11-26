@@ -11,6 +11,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 
 import pytest
@@ -142,6 +143,9 @@ def run_cycle(tmp_path, source_case, monkeypatch, clock=NOW):
     pool = pool_module.PersonaStrategyPoolStore(
         AtomicJsonRecordStore(tmp_path / "pool.json"),
         registry_reader=lambda ref, tenant: entries[ref], owner_lister=lambda pid, tenant: [],
+        # POOL-ADMISSION-GOVERNED-UNIVERSE-20261125: paper admit reads the governed boundary (row shape of MarketBoundary)
+        market_boundary_provider=lambda: SimpleNamespace(snapshot_id="gmd-fixture", as_of=NOW.isoformat(),
+                                                         symbols=("2330.TW", "2317.TW")),
     )
     pool.append(PERSONA["persona_id"], PERSONA["tenant_id"], pool_module.AppendPoolVersionRequest(
         expected_version=0, members=[pool_module.PoolMember.model_validate(current)], change_reason="fixture"), actor_id="fixture")
