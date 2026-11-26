@@ -431,6 +431,76 @@ class TestValidateExtractionArgumentsSchemaCoverage:
         assert excinfo.value.status_code == 422
 
 
+def _mismatch(value, schema):
+    with pytest.raises(OpenClawProviderError) as excinfo:
+        _validate_extraction_arguments(value, schema)
+    assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+    assert excinfo.value.status_code == 422
+    return excinfo.value.message
+
+
+class TestCombinatorKeywords:
+    """L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126: `anyOf`/`allOf`/
+    `if`/`then`/`else` are validated for real, every branch against the same
+    keyword allowlist; anything else still fails closed."""
+
+    NULLABLE_CARD = {
+        "type": "object",
+        "required": ["card"],
+        "properties": {"card": {"anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": False, "required": ["claim"],
+             "properties": {"claim": {"type": "string", "minLength": 1}}},
+        ]}},
+    }
+
+    def test_any_of_accepts_a_value_matching_any_branch(self):
+        _validate_extraction_arguments({"card": None}, self.NULLABLE_CARD)
+        _validate_extraction_arguments({"card": {"claim": "x"}}, self.NULLABLE_CARD)
+
+    @pytest.mark.parametrize("card", [{}, {"claim": ""}, {"claim": "x", "extra": 1}, "text", 3])
+    def test_any_of_rejects_a_value_matching_no_branch(self, card):
+        assert "anyOf" in _mismatch({"card": card}, self.NULLABLE_CARD)
+
+    def test_unsupported_keyword_in_a_branch_is_refused_even_if_another_branch_matches(self):
+        schema = {"anyOf": [{"type": "null"}, {"type": "string", "format": "date"}]}
+        assert "format" in _mismatch(None, schema)
+        nested = {"anyOf": [{"type": "null"}, {"type": "object", "properties": {"x": {"oneOf": []}}}]}
+        assert "oneOf" in _mismatch(None, nested)
+
+    def test_malformed_any_of_is_refused(self):
+        for bad in ([], {"type": "null"}, ["null"]):
+            assert "malformed anyOf" in _mismatch(None, {"anyOf": bad})
+
+    def test_malformed_declaration_in_a_branch_is_not_a_silent_non_match(self):
+        schema = {"anyOf": [{"type": "nope"}, {"type": "string"}]}
+        assert "unsupported type" in _mismatch("x", schema)
+
+    def test_all_of_requires_every_branch(self):
+        schema = {"allOf": [{"type": "integer"}, {"minimum": 3}]}
+        _validate_extraction_arguments(5, schema)
+        _mismatch(2, schema)
+        _mismatch("5", schema)
+
+    def test_if_then_else_selects_the_branch(self):
+        schema = {
+            "type": "object",
+            "allOf": [{
+                "if": {"properties": {"abstained": {"const": False}}},
+                "then": {"required": ["card"]},
+                "else": {"required": ["reason"]},
+            }],
+        }
+        _validate_extraction_arguments({"abstained": False, "card": 1}, schema)
+        _validate_extraction_arguments({"abstained": True, "reason": "r"}, schema)
+        _mismatch({"abstained": False, "reason": "r"}, schema)
+        _mismatch({"abstained": True, "card": 1}, schema)
+
+    @pytest.mark.parametrize("keyword", ["oneOf", "not", "format", "$ref", "patternProperties"])
+    def test_other_keywords_still_fail_closed(self, keyword):
+        assert keyword in _mismatch("x", {"type": "string", keyword: {}})
+
+
 class TestStructuredEndpointRejectsCallerSuppliedTools:
     """Endpoint-level contract: a caller-supplied `tools`/`tool_choice` must
     be rejected (422), never silently accepted as an arbitrary tool
