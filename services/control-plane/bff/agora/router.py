@@ -445,6 +445,7 @@ def create_agora_router(
         **_kw,
         get_read_store=get_read_store,
         surfaces_reader=_operational_surface_readback,
+        workshop_store=workshop_store,
     ))
     # ------------------------------------------------------------------ #
     # Migrated Agora Route Handlers (40 decorators, 38 endpoints/aliases)
