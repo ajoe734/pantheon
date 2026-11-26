@@ -346,3 +346,74 @@ def test_memory_store_accepts_legacy_shaped_snapshot_and_refuses_real_change():
     assert store.update(current, expected=_legacy_payload(_entry("reg-legacy-2"))).checksum == "sha256:new"
     with pytest.raises(RegistryConcurrentUpdateError):
         store.update(current, expected={**_legacy_payload(_entry("reg-legacy-2")), "checksum": "x"})
+
+
+# -- real Postgres JSONB equality (gated on TEST_DATABASE_URL) ------------------
+
+@pytest.fixture
+def real_pg_store():
+    import os
+    from uuid import uuid4
+
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for the real Postgres CAS proof")
+    psycopg = pytest.importorskip("psycopg")
+    schema = f"registry_cas_legacy_{uuid4().hex}"
+    store = PostgresRegistryStore(
+        dsn=dsn,
+        entries_table=f"{schema}.entries",
+        receipts_table=f"{schema}.command_receipts",
+    )
+    try:
+        yield store
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def _real_seed_legacy(store: PostgresRegistryStore, entry: RegistryEntry) -> None:
+    with store._entries._use_conn(None) as conn:
+        conn.execute(
+            f"INSERT INTO {store._entries.table} (record_id, payload, updated_at) "
+            "VALUES (%s, %s::jsonb, now())",
+            (entry.registry_id, json.dumps(_legacy_payload(entry), sort_keys=True)),
+        )
+
+
+def test_real_pg_legacy_row_retire_replay_and_concurrent_refusal(real_pg_store):
+    store = real_pg_store
+    _real_seed_legacy(store, _entry("reg-legacy-1"))
+    _real_seed_legacy(store, _entry("reg-legacy-2"))
+    raw = store._entries.get("reg-legacy-1")
+    assert not any(key in raw for key in LEGACY_MISSING)
+
+    service = RegistryService(store)
+    kwargs = dict(
+        command_key="retire-1",
+        actor={"id": "ops", "role": "service", "tenant": "tenant-a"},
+        expected_artifact_state=ArtifactState.DRAFT,
+        expected_version="1.0.0",
+        expected_updated_at="2026-10-01T00:00:00Z",
+    )
+    first = service.advance_artifact_state("reg-legacy-1", ArtifactState.RETIRED, **kwargs)
+    stored = store._entries.get("reg-legacy-1")
+    assert stored["artifact_state"] == "retired"
+    assert set(stored) == set(_entry().to_dict())
+    replay = service.advance_artifact_state("reg-legacy-1", ArtifactState.RETIRED, **kwargs)
+    assert replay.entry.to_dict() == first.entry.to_dict()
+
+    base = store.get("reg-legacy-2").to_dict()
+    with store._entries._use_conn(None) as conn:
+        conn.execute(
+            f"UPDATE {store._entries.table} SET payload = jsonb_set(payload, '{{checksum}}', "
+            "'\"sha256:theirs\"') WHERE record_id = %s",
+            ("reg-legacy-2",),
+        )
+    with pytest.raises(RegistryConcurrentUpdateError):
+        store.commit_artifact_state_cas(
+            registry_id="reg-legacy-2", base_snapshot=base, target_state=ArtifactState.RETIRED,
+            command_key="retire-2",
+        )
+    after = store._entries.get("reg-legacy-2")
+    assert after["artifact_state"] == "draft" and after["checksum"] == "sha256:theirs"
