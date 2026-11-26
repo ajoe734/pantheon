@@ -71,6 +71,18 @@ MARKET_SOURCE_SKIP_REASON: str = (
     "source_type=market does not produce Registry strategy drafts"
 )
 DEFER_TTL_SECONDS = 14 * 86400
+# Planned (non-failure) deferral reasons: the only ``reason`` values
+# ``DistillationJobQueue.defer_budget`` writes, and the exact set
+# ``metrics()["deferred"]`` counts, so the controller never reads a planned
+# deferral as a Registry delivery retry (one shared definition).
+DEFERRAL_BUDGET_EXHAUSTED = "budget_exhausted"
+DEFERRAL_ATTEMPTS_DEFERRED = "attempts_deferred"
+DEFERRAL_EXTRACTION_TICK_BUDGET = "extraction_tick_budget"
+PLANNED_DEFERRAL_REASONS = frozenset({
+    DEFERRAL_BUDGET_EXHAUSTED,
+    DEFERRAL_ATTEMPTS_DEFERRED,
+    DEFERRAL_EXTRACTION_TICK_BUDGET,
+})
 # A started job's lease covers one extraction call (its deadline) plus this.
 EXTRACTION_LEASE_MARGIN_SECONDS = 60.0
 EXTRACTION_ATTEMPTS_EXHAUSTED_REASON = "l2_extraction_attempts_exhausted"
@@ -1581,14 +1593,18 @@ class DistillationJobQueue:
         job: DistillationJob,
         *,
         now: float,
-        reason: str = "budget_exhausted",
+        reason: str = DEFERRAL_BUDGET_EXHAUSTED,
         next_window: bool = True,
     ) -> None:
         """Return a fenced lease without burning retries.
 
         ``next_window`` waits for the next UTC cap window (14-day deferral TTL);
         otherwise the job is due again at once (end of this tick's budget).
+        ``reason`` must be one of ``PLANNED_DEFERRAL_REASONS`` so ``metrics()``
+        counts the row as deferred rather than as a delivery retry.
         """
+        if reason not in PLANNED_DEFERRAL_REASONS:
+            raise ValueError(f"unplanned distillation deferral reason: {reason!r}")
         if not next_window:
             self._release_started(job, now=now, reason=reason)
             return
@@ -2573,10 +2589,13 @@ class DistillationJobQueue:
                  GROUP BY status
                 """
             ).fetchall()
+            # Every planned deferral, including ``extraction_tick_budget``
+            # (released for the next tick without ``deferred_since``).
+            reasons = sorted(PLANNED_DEFERRAL_REASONS)
             metrics["deferred"] = int(connection.execute(
-                """SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
-                   AND deferred_since IS NOT NULL
-                   AND last_error IN ('budget_exhausted', 'attempts_deferred')""",
+                f"""SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
+                   AND last_error IN ({", ".join("?" for _ in reasons)})""",
+                reasons,
             ).fetchone()[0])
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
@@ -3232,16 +3251,16 @@ class DistillationWorker:
                     # for the next tick without counting an attempt.
                     self._queue.defer_budget(
                         job, now=_timestamp(now) if now is not None else self._queue._now(),
-                        reason="extraction_tick_budget", next_window=False,
+                        reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False,
                     )
-                    return "deferred", "extraction_tick_budget"
+                    return "deferred", DEFERRAL_EXTRACTION_TICK_BUDGET
                 started = time.monotonic()
                 try:
                     outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 finally:
                     self._tick_extraction_seconds += time.monotonic() - started
                 if outcome.card is None:
-                    if outcome.status in ("budget_exhausted", "attempts_deferred"):
+                    if outcome.status in (DEFERRAL_BUDGET_EXHAUSTED, DEFERRAL_ATTEMPTS_DEFERRED):
                         # Daily cap, or this record already had 3 calls today:
                         # wait for the next UTC day without burning an attempt.
                         self._queue.defer_budget(

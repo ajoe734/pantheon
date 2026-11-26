@@ -1,0 +1,26 @@
+{
+  "task_id": "L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126",
+  "class": "RC2",
+  "root_cause": {
+    "adapter": "hypothesis_card_model_schema() answers anyOf [null, card]; the OpenClaw adapter structured-argument validator allowlist did not include anyOf, so every answer was refused with OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH (hosted: 109 of 112 paid calls, 0 cards)",
+    "controller": "extraction_tick_budget deferral is released via defer_budget(next_window=False) without deferred_since, and metrics()['deferred'] counted only budget_exhausted/attempts_deferred with deferred_since set, so retry_wait - deferred > 0 failed every tick on registry_sync"
+  },
+  "decisions": {
+    "acceptance_1_option": "adapter support, not a schema change: the model-facing schema stays nullable (anyOf [null, card]) and the semantic extraction schemas keep their allOf/if/then/else abstention conditional, so the provider side still receives the full contract. anyOf, allOf, if, then, else are validated for real; every subschema is held to the same keyword allowlist by unsupported_schema_keyword_paths() before any branch is tried, so an unsupported keyword in any branch is refused even when a sibling branch would match; schema-declaration faults inside a branch (malformed type/required/...) propagate instead of reading as a non-match. oneOf, not, format, $ref, patternProperties etc. still fail closed. An unknown type name is now a declaration error (was a value mismatch).",
+    "acceptance_1_scope_note": "allOf/if/then/else were added beyond anyOf because acceptance 2 requires every schema sent to /structured (including the four semantic extraction schemas, which use allOf+if/then/else) to pass the adapter keyword check.",
+    "acceptance_3_option": "prompt states the limit: ABSTENTION_REASON_MAX_CHARS = 200 is shared by the schema and the prompt line; an over-long reason stays a refusal on both adapter and jsonschema sides, never truncated",
+    "acceptance_4": "PLANNED_DEFERRAL_REASONS (budget_exhausted, attempts_deferred, extraction_tick_budget) in distillation_worker.py is the one definition: defer_budget refuses any other reason and metrics() counts retry_wait rows whose last_error is in the set"
+  },
+  "tests": {
+    "services/openclaw-gateway-adapter/tests/": "281 passed (includes new test_hypothesis_card_schema_contract.py and TestCombinatorKeywords)",
+    "services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py": "real hypothesis_card_model_schema() and get_semantic_extraction_json_schema() for every ExtractionTaskType through the real adapter validator and jsonschema Draft7: valid card passes, abstained null card passes, missing required / extra field / non-object card refused, abstention_reason 200 ok and 201 refused, every client schema has no unsupported keyword, semantic if/then/else agrees with jsonschema",
+    "services/source_ingestion/tests/test_hypothesis_extraction.py test_distillation_controller.py test_distillation_worker.py test_demand_priority.py": "229 passed, 1 skipped",
+    "services/source_ingestion/tests/test_distillation_controller.py::test_tick_with_only_extraction_tick_budget_deferrals_is_working": "only extraction_tick_budget deferrals -> controller_status working; plus a real registry_sync retry_wait -> DistillationControllerError stage registry_sync",
+    "services/source_ingestion/tests semantic/card/queue-lifetime/e2e/l12/product_v2/compiler_wiring": "125 passed"
+  },
+  "runtime_budget": {"daily_call_cap": 400, "changed": false, "new_writer": false},
+  "hosted_acceptance": "pending deploy (read-only, here or via DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125): OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH near zero, at least one card or recorded model abstention in the ledger, controller ticks not failing on registry_sync",
+  "residual_findings": [
+    "The adapter keyword check is not applied to optional properties that are absent from a value outside combinators (unchanged behavior); the new contract test pins the client schemas statically instead."
+  ]
+}
