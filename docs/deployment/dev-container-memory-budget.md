@@ -20,7 +20,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 - `openclaw-gateway-adapter` 3g: idle about 200 MiB + 6 concurrent openclaw CLI calls x about 400 MiB each (two node processes: openclaw about 62 MiB and openclaw-gateway 170 to 345 MiB, for 5 to 7 seconds) = about 2600 MiB, rounded to 3g. The adapter has no concurrency cap today, so the limit is sized for six overlapping calls. Under a temporary 1 GiB the peak was 791 MiB with two overlapping calls. Callers in 10 minutes: 32 cron POSTs from persona, 17 status GETs from operator-bff, 1 structured call.
 - `postgres` 8g: the limit bounds the database page cache. At 2g the file cache was 1984 of 2048 MiB (anon 22 MiB, shmem 143 MiB), the limit was reached over one million times in an hour and container IO pressure avg300 was 11.66 percent. The peak is capped, so 1.5x of it is meaningless.
-- `paper-fleet-reconciler` 1280m: peak capped at 640 (anon 253 MiB, file 382 MiB). `alpha-replication-worker` 512m: peak capped at 256. Both set to 2x the capped peak; re-check on the next daily measurement.
+- `paper-fleet-reconciler` 1280m: peak capped at 640 (anon 253 MiB, file 382 MiB). `alpha-replication-worker` 512m: peak capped at 256. Both set to 2x the capped peak; re-check on the next daily measurement. ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125 then raised `alpha-replication-worker` to 768m because the scheduled AlphaTemplate evaluation runs in it (one full 171-template cycle measured at 395 MiB peak RSS, upper bound 452 MiB).
 - `hindsight` 10g: peak 5784 MiB; 1.5x is 8676 MiB, 10g gives 1.77x (the incident floor was 8g).
 - `search-svc` 13g: kept above the earlier 11.5 GiB peak so a leak restarts search-svc only (1.5x of the current 4578 MiB peak would be lower, 13g is not reduced).
 - `loop-run-projector-scheduler`: keeps its pre-existing 16g limit (`LIFECYCLE_PROJECTOR_MEMORY_LIMIT`).
@@ -48,7 +48,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 | broker | 377 | 640 | 640m | `DEV_MEM_LIMIT_BROKER` | 1.7x |
 | memory-index-postgres | 109 | 512 | 512m | `DEV_MEM_LIMIT_MEMORY_INDEX_POSTGRES` | 4.7x |
 | nats | 25 | 512 | 512m | `DEV_MEM_LIMIT_NATS` | 20.5x |
-| alpha-replication-worker | 256 | 256 | 512m | `DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER` | 2.0x |
+| alpha-replication-worker | 256 | 256 | 768m | `DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER` | 3.0x |
 | postmortems | 280 | 384 | 512m | `DEV_MEM_LIMIT_POSTMORTEMS` | 1.8x |
 | persona | 230 | 256 | 512m | `DEV_MEM_LIMIT_PERSONA` | 2.2x |
 | consultation-svc | 110 | 256 | 256m | `DEV_MEM_LIMIT_CONSULTATION_SVC` | 2.3x |
@@ -92,7 +92,7 @@ A peak recorded at the limit (limit reached many times) is a lower bound only; t
 
 ## Overcommit vs the 32 GiB host
 
-- Sum of all limits: 84352 MiB (82.4 GiB) = 2.63x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
+- Sum of all limits: 84608 MiB (82.6 GiB) = 2.64x host RAM. Deliberately overcommitted: limits are ceilings, not reservations.
 - Sum of recorded peaks: 24740 MiB (24.2 GiB), of which search-svc is 4578 MiB.
 - Limits that mostly bound reclaimable page cache rather than process memory: postgres (8g; anon 22 MiB), paper-fleet-reconciler (file 382 of 640 MiB), hindsight and search-svc (large cached data). A page cache ceiling is reclaimed under pressure and does not OOM-kill, but a ceiling that is too low causes IO thrash, which is what happened to postgres.
 - Limits that bound process memory: openclaw-gateway-adapter (3g, six concurrent node pairs), operator-bff, source-ingest, telemetry, loop-run-projector-scheduler (16g).

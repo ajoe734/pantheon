@@ -491,8 +491,11 @@ def test_hide_filter_walks_owner_pages_of_200_with_one_directory_read(
         headers=HEADERS,
     )
     assert resp.status_code == 200
+    # BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125: the walk now sends the same
+    # owner hide input as every other path (still one owner call).
     assert [call for call, _ in world.owner_summary_calls] == [
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200&exclude_state=draft"
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200"
+        "&exclude_state=draft&hide_stubs=true"
     ]
     assert world.directory_reads == [TENANT]
 

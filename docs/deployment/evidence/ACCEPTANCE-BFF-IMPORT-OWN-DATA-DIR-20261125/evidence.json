@@ -1,0 +1,29 @@
+{
+  "task_id": "ACCEPTANCE-BFF-IMPORT-OWN-DATA-DIR-20261125",
+  "title": "Acceptance tests that import the BFF app use their own data directory",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC1",
+  "delivery_state": "functional_source_verified_pending_review",
+  "hosted_verification_note": "No VM or SSH access of any kind and no operator key read. Functional evidence only; hosted verification belongs to the operator acceptance task.",
+  "operator_approval": "2026-11-25, conversation 52a1dacf, names the registry pages chain; this repairs the merged test of that chain (REGISTRY-PAGES-ACCEPTANCE-PROBE-20261125).",
+  "failure_of_record": "Branch CI run 45715715898, Test sweep (shard 5), PR 7879: acceptance/test_mgmt_registry_pages_readable.py::test_every_route_the_probe_reads_is_registered_in_the_bff_application failed at 'from services.control_plane.bff import main' with sqlite3.OperationalError: database is locked at PRAGMA journal_mode = WAL. main.py line 550 builds DownstreamHealthMonitor(state_path=os.path.join(BFF_DATA_DIR, 'downstream_health.sqlite3')) and line 342 defaults BFF_DATA_DIR to /tmp/pantheon/bff; the sweep (scripts/ci_test_inventory.py run-shard --jobs 3) runs one pytest process per file, three at a time on one runner, so processes shared the file.",
+  "acceptance": {
+    "ac1_conftest": "acceptance/conftest.py (stdlib only) runs ensure_own_bff_data_dir() at load: when BFF_DATA_DIR is not in os.environ it creates tempfile.mkdtemp(prefix='pantheon-acceptance-bff-'), sets BFF_DATA_DIR before any test module in acceptance/ is imported, and registers atexit shutil.rmtree for it. An explicitly set BFF_DATA_DIR (any value) is kept and never removed. Tests: test_unset_bff_data_dir_gets_a_new_temporary_dir_removed_at_exit (dir exists during the process, under TMPDIR, gone after exit, TMPDIR left empty) and test_explicitly_set_bff_data_dir_is_kept.",
+    "ac2_concurrent_imports": "test_two_concurrent_bff_imports_share_a_lock_without_conftest_and_not_with_it starts four real subprocess imports of services.control_plane.bff.main at the same time. Two load acceptance/conftest.py (runpy, as pytest does) with BFF_DATA_DIR unset: both exit 0, each downstream_health_monitor.state_path is <own dir>/downstream_health.sqlite3, the two paths differ, and both dirs are removed after exit. Two run without the conftest on one shared directory standing in for the fixed default: both fail with 'sqlite3.OperationalError: database is locked' at 'PRAGMA journal_mode = WAL' (downstream_health_monitor.py line 718, the same statement as the CI failure).",
+    "ac2_reproduction_method": "A plain concurrent import does not lock reliably: locally 2 rounds of 6 concurrent imports on one shared dir all exited 0, because the store waits busy_timeout=10000 ms and short contention resolves within it. CI failed when a sibling held the file past that timeout under runner load. The test makes that deterministic with the real file and real import: the test process holds BEGIN EXCLUSIVE on the shared downstream_health.sqlite3 for the whole run, as a slower sibling did. The shared dir is a tmp_path, not /tmp/pantheon/bff, so the test never locks the real default other runner processes may use.",
+    "ac3_unchanged": "acceptance/test_mgmt_registry_pages_readable.py and acceptance/test_pool_risk_snapshot_day.py are not modified (assertions unchanged). No product file changed (only acceptance/conftest.py, acceptance/test_acceptance_bff_data_dir.py, acceptance/README.md and this evidence). The per-process dirs are removed at process exit; after the full acceptance run no pantheon-acceptance-bff-* entry remained in /tmp. No test was weakened or deleted."
+  },
+  "justified_changed_assertions": [],
+  "tests_run": [
+    "python -m pytest -q -p no:cacheprovider acceptance/test_acceptance_bff_data_dir.py -> 3 passed",
+    "python -m pytest -q -p no:cacheprovider acceptance/test_mgmt_registry_pages_readable.py -> 36 passed",
+    "python -m pytest -q -p no:cacheprovider acceptance/test_pool_risk_snapshot_day.py -> 17 passed",
+    "python -m pytest -q -p no:cacheprovider acceptance/ -> 298 passed",
+    "Interpreter: Python 3.12 venv with services/control-plane/bff/requirements.txt and pytest; PYTHONPATH=.orchestrator as in scripts/ci_test_inventory.py run-shard."
+  ],
+  "residual_findings": [
+    "Outside scope (no product or service test change allowed here): these tests import or reference the BFF main module without setting BFF_DATA_DIR and run outside acceptance/, so in the sweep they can still share /tmp/pantheon/bff: services/control-plane/bff/test_normalized_route_uniqueness.py, services/control-plane/bff/tests/test_http_auth_composition_owner.py, test_management_read_timeout_and_capacity.py, test_main_composition_seam_extraction_005.py, test_bff_test_architecture.py, test_main_composition_seam_extraction_003.py, test_agora_servant_production_write_owner.py, test_read_surface_caller_migration.py, scripts/test_bff_cw_contract_prerequisite.py. Not every listed file necessarily imports main at collection; a follow-up should check each and give the services/control-plane/bff tests the same per-process data dir.",
+    "Product: DownstreamHealthMonitor opens state at import time of main.py, so any import of the app touches the filesystem; a lazy open at startup would remove the need for test-side isolation."
+  ]
+}

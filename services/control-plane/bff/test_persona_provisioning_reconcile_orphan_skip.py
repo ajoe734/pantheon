@@ -1,4 +1,5 @@
-"""Persona provisioning reconciliation must not retry a confirmed orphan forever.
+"""Persona provisioning reconciliation must not retry a confirmed orphan forever
+or churn lease writes on idle ticks with only succeeded and retired records.
 
 ``_reconcile_persona_provisioning_once`` reads BFF-local provisioning
 projections (read_store / provisioning store / ``_PERSONA_BFF_OVERLAY``) and
@@ -8,74 +9,33 @@ registry. If the registry has no record of a listed persona id at all,
 reconciliation can never succeed for that id, so it must be abandoned after
 the first failure instead of logging a warning every reconciliation tick
 forever. A different (e.g. transient network) failure must keep retrying.
+
+When all provisioning records are already ``succeeded`` or ``retired`` (or
+confirmed orphans), steady-state ticks must perform 0 lease INSERT/UPDATE/DELETE
+writes while still reconciling pending rows normally when actionable work exists.
 """
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 import pytest
 
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    PostgresPersonaProvisioningStore,
+    ProvisioningRecord,
+)
+from services.control_plane.bff.personas import service as personas_service
 from services.control_plane.bff.personas.reconciliation import (
     PersonaReconciliationMutationError,
 )
 
-_this_module = sys.modules[__name__]
-
-_PERSONA_PROVISIONING_ORPHAN_SKIP: set[str] = set()
-
-
-def _persona_readback_snapshot() -> tuple[dict[str, Any], None, list[Any]]:
-    return ({}, None, [])
-
-
-def _list_persona_records() -> list[dict[str, Any]]:
-    return []
-
-
-def _evaluate_persona_provisioning_status(
-    persona_id: str,
-    raw: dict[str, Any],
-    *,
-    all_bindings: Any = None,
-    all_cron_registrations: Any = None,
-    all_monitoring_sessions: Any = None,
-) -> None:
-    pass
-
-
-def _reconcile_persona_provisioning_once() -> int:
-    """Materialize provisioning lifecycle from owner readbacks off read paths."""
-    all_bindings, _, monitoring_sessions = _this_module._persona_readback_snapshot()
-    reconciled = 0
-    for raw in _this_module._list_persona_records():
-        state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
-        if state not in {"provisioning", "provisioning_failed"}:
-            continue
-        persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if not persona_id or persona_id in _this_module._PERSONA_PROVISIONING_ORPHAN_SKIP:
-            continue
-        try:
-            _this_module._evaluate_persona_provisioning_status(
-                persona_id,
-                raw,
-                all_bindings=all_bindings,
-                all_cron_registrations=None,
-                all_monitoring_sessions=monitoring_sessions,
-            )
-            reconciled += 1
-        except PersonaReconciliationMutationError:
-            _this_module._PERSONA_PROVISIONING_ORPHAN_SKIP.add(persona_id)
-        except Exception:
-            pass
-    return reconciled
-
 
 @pytest.fixture(autouse=True)
 def _reset_orphan_skip_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_this_module, "_PERSONA_PROVISIONING_ORPHAN_SKIP", set())
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_ORPHAN_SKIP", set())
     monkeypatch.setattr(
-        _this_module,
+        personas_service,
         "_persona_readback_snapshot",
         lambda: ({}, None, []),
     )
@@ -98,16 +58,16 @@ def test_confirmed_orphan_is_reconciled_once_then_skipped(
         )
 
     monkeypatch.setattr(
-        _this_module, "_list_persona_records", lambda: [_provisioning_record(persona_id)]
+        personas_service, "_list_persona_records", lambda: [_provisioning_record(persona_id)]
     )
-    monkeypatch.setattr(_this_module, "_evaluate_persona_provisioning_status", _evaluate)
+    monkeypatch.setattr(personas_service, "_evaluate_persona_provisioning_status", _evaluate)
 
-    _reconcile_persona_provisioning_once()
-    _reconcile_persona_provisioning_once()
-    _reconcile_persona_provisioning_once()
+    personas_service._reconcile_persona_provisioning_once()
+    personas_service._reconcile_persona_provisioning_once()
+    personas_service._reconcile_persona_provisioning_once()
 
     assert calls == [persona_id]
-    assert persona_id in _this_module._PERSONA_PROVISIONING_ORPHAN_SKIP
+    assert persona_id in personas_service._PERSONA_PROVISIONING_ORPHAN_SKIP
 
 
 def test_transient_failure_keeps_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,15 +79,15 @@ def test_transient_failure_keeps_retrying(monkeypatch: pytest.MonkeyPatch) -> No
         raise RuntimeError("owner registry temporarily unreachable")
 
     monkeypatch.setattr(
-        _this_module, "_list_persona_records", lambda: [_provisioning_record(persona_id)]
+        personas_service, "_list_persona_records", lambda: [_provisioning_record(persona_id)]
     )
-    monkeypatch.setattr(_this_module, "_evaluate_persona_provisioning_status", _evaluate)
+    monkeypatch.setattr(personas_service, "_evaluate_persona_provisioning_status", _evaluate)
 
-    _reconcile_persona_provisioning_once()
-    _reconcile_persona_provisioning_once()
+    personas_service._reconcile_persona_provisioning_once()
+    personas_service._reconcile_persona_provisioning_once()
 
     assert calls == [persona_id, persona_id]
-    assert persona_id not in _this_module._PERSONA_PROVISIONING_ORPHAN_SKIP
+    assert persona_id not in personas_service._PERSONA_PROVISIONING_ORPHAN_SKIP
 
 
 def test_different_orphans_are_tracked_independently(
@@ -145,17 +105,359 @@ def test_different_orphans_are_tracked_independently(
             )
 
     monkeypatch.setattr(
-        _this_module,
+        personas_service,
         "_list_persona_records",
         lambda: [_provisioning_record(orphan_id), _provisioning_record(healthy_id)],
     )
-    monkeypatch.setattr(_this_module, "_evaluate_persona_provisioning_status", _evaluate)
+    monkeypatch.setattr(personas_service, "_evaluate_persona_provisioning_status", _evaluate)
 
-    reconciled_first = _reconcile_persona_provisioning_once()
+    reconciled_first = personas_service._reconcile_persona_provisioning_once()
     calls.clear()
-    reconciled_second = _reconcile_persona_provisioning_once()
+    reconciled_second = personas_service._reconcile_persona_provisioning_once()
 
     assert reconciled_first == 1
     assert reconciled_second == 1
     assert calls == [healthy_id]
-    assert _this_module._PERSONA_PROVISIONING_ORPHAN_SKIP == {orphan_id}
+    assert personas_service._PERSONA_PROVISIONING_ORPHAN_SKIP == {orphan_id}
+
+
+class _SqlTrackingConnect:
+    """Records all SQL statements against PostgresPersonaProvisioningStore."""
+
+    def __init__(self, rows_by_state: list[tuple[str, str]]) -> None:
+        self.rows_by_state = list(rows_by_state)
+        self.statements: list[tuple[str, Any]] = []
+
+    def __call__(self, _dsn: str) -> "_SqlTrackingConnect":
+        return self
+
+    def __enter__(self) -> "_SqlTrackingConnect":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def cursor(self) -> "_SqlTrackingConnect":
+        return self
+
+    def execute(self, sql: str, params: Any = None) -> None:
+        self.statements.append((sql.strip(), params))
+
+    def fetchall(self) -> list[tuple[str, str]]:
+        if not self.statements:
+            return []
+        last_sql = self.statements[-1][0].upper()
+        if "WHERE STATE NOT IN ('SUCCEEDED', 'RETIRED')" in last_sql:
+            return [
+                (pid, st)
+                for pid, st in self.rows_by_state
+                if st not in {"succeeded", "retired"}
+            ]
+        return []
+
+    def fetchone(self) -> None:
+        return None
+
+    @property
+    def write_statements(self) -> list[str]:
+        writes: list[str] = []
+        for sql, _ in self.statements:
+            upper = sql.lstrip().upper()
+            if upper.startswith(("INSERT", "UPDATE", "DELETE")):
+                writes.append(sql)
+        return writes
+
+
+def test_postgres_steady_state_ticks_with_only_succeeded_and_retired_rows_perform_zero_lease_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+
+    rows = [
+        ("persona-live-1", "succeeded"),
+        ("persona-live-2", "succeeded"),
+        ("persona-live-3", "succeeded"),
+        ("persona-live-4", "succeeded"),
+        *[(f"persona-retired-{i}", "retired") for i in range(165)],
+    ]
+    tracker = _SqlTrackingConnect(rows)
+    store = PostgresPersonaProvisioningStore(
+        "postgresql://example/provisioning",
+        connect=tracker,
+    )
+    # Clear bootstrap DDL statements before measuring steady-state reconcile ticks.
+    tracker.statements.clear()
+
+    read_surface = create_read_surface_ports()
+    assert isinstance(read_surface, ReadSurfacePorts)
+    assert "list_personas" not in read_surface.__dict__
+    read_surface.persona_capital_runtime.persona._records_provider = lambda: [
+        {"persona_id": "persona-live-1", "lifecycle_state": "paper_running"},
+        {"persona_id": "persona-retired-0", "lifecycle_state": "retired"},
+        {
+            "persona_id": "persona-failed-settled",
+            "lifecycle_state": "provisioning_failed",
+            "metadata": {
+                "first_evaluation_schedule_cleanup": {"registered": False},
+                "provisioning_compensation": {"status": "completed"},
+                "provisioning_reconciliation_state": "provisioning_failed",
+            },
+        },
+    ]
+
+    snapshot_calls: list[int] = []
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: read_surface)
+    monkeypatch.setattr(
+        personas_service,
+        "_persona_readback_snapshot",
+        lambda: (snapshot_calls.append(1) or ({}, None, [])),
+    )
+
+    for _ in range(5):
+        assert personas_service._reconcile_persona_provisioning_once() == 0
+
+    assert tracker.write_statements == []
+    assert snapshot_calls == []
+    assert len(tracker.statements) == 5
+    assert all(
+        "WHERE state NOT IN ('succeeded', 'retired')" in sql
+        for sql, _ in tracker.statements
+    )
+
+
+def test_postgres_store_reconciles_canonical_only_provisioning_and_provisioning_failed_personas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+
+    rows = [
+        ("persona-live-1", "succeeded"),
+        ("persona-retired-1", "retired"),
+    ]
+    tracker = _SqlTrackingConnect(rows)
+    store = PostgresPersonaProvisioningStore(
+        "postgresql://example/provisioning",
+        connect=tracker,
+    )
+    tracker.statements.clear()
+
+    canonical_personas: dict[str, dict[str, Any]] = {
+        "persona-live-1": {
+            "persona_id": "persona-live-1",
+            "lifecycle_state": "paper_running",
+            "metadata": {"provisioning_reconciliation_state": "paper_running"},
+        },
+        "canon-1": {
+            "persona_id": "canon-1",
+            "lifecycle_state": "provisioning",
+            "metadata": {"tenant_id": "tenant-dev"},
+        },
+        "canon-failed-1": {
+            "persona_id": "canon-failed-1",
+            "lifecycle_state": "provisioning_failed",
+            "metadata": {"tenant_id": "tenant-dev"},
+        },
+    }
+    read_surface = create_read_surface_ports()
+    assert isinstance(read_surface, ReadSurfacePorts)
+    assert "list_personas" not in read_surface.__dict__
+    read_surface.persona_capital_runtime.persona._records_provider = lambda: [
+        dict(item) for item in canonical_personas.values()
+    ]
+
+    evaluated: list[str] = []
+
+    def _fake_evaluate(pid: str, raw: dict[str, Any], **_kwargs: Any) -> str:
+        evaluated.append(pid)
+        if pid == "canon-1":
+            canonical_personas[pid]["lifecycle_state"] = "paper_running"
+            canonical_personas[pid]["metadata"] = {
+                "tenant_id": "tenant-dev",
+                "provisioning_reconciliation_state": "paper_running",
+            }
+            raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = "paper_running"
+            return "paper_running"
+        if pid == "canon-failed-1":
+            canonical_personas[pid]["metadata"] = {
+                "tenant_id": "tenant-dev",
+                "first_evaluation_schedule_cleanup": {"registered": False},
+                "provisioning_compensation": {"status": "completed"},
+                "provisioning_reconciliation_state": "provisioning_failed",
+            }
+            raw.setdefault("metadata", {}).update(canonical_personas[pid]["metadata"])
+            return "provisioning_failed"
+        return str(raw.get("lifecycle_state") or "")
+
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: read_surface)
+    monkeypatch.setattr(
+        personas_service, "_evaluate_persona_provisioning_status", _fake_evaluate
+    )
+
+    assert personas_service._reconcile_persona_provisioning_once() == 2
+    assert evaluated == ["canon-1", "canon-failed-1"]
+    assert tracker.write_statements == []
+
+    # Subsequent tick after both canonical personas settle performs 0 evaluations and 1 bounded pre-check query.
+    evaluated.clear()
+    tracker.statements.clear()
+    assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert evaluated == []
+    assert tracker.write_statements == []
+    assert len(tracker.statements) == 1
+    assert "WHERE state NOT IN ('succeeded', 'retired')" in tracker.statements[0][0]
+
+
+def test_memory_steady_state_succeeded_and_retired_rows_perform_zero_lease_writes_while_pending_reconciles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryPersonaProvisioningStore()
+    lease_writes: list[tuple[str, str]] = []
+
+    orig_acquire = store.acquire
+    orig_checkpoint = store.checkpoint
+    orig_release = store.release
+
+    def _recording_acquire(tenant_id: str, idempotency_key: str, **kwargs: Any) -> Any:
+        lease_writes.append(("acquire", idempotency_key))
+        return orig_acquire(tenant_id, idempotency_key, **kwargs)
+
+    def _recording_checkpoint(record: ProvisioningRecord, **kwargs: Any) -> Any:
+        lease_writes.append(("checkpoint", record.idempotency_key))
+        return orig_checkpoint(record, **kwargs)
+
+    def _recording_release(record: ProvisioningRecord, **kwargs: Any) -> Any:
+        lease_writes.append(("release", record.idempotency_key))
+        return orig_release(record, **kwargs)
+
+    # Seed succeeded (both complete and legacy without authoritative_readback) and retired rows.
+    for idx, state in enumerate(("succeeded", "succeeded", "retired", "retired"), start=1):
+        key = f"idem-steady-{idx}"
+        pid = f"persona-steady-{idx}"
+        store.reserve(
+            tenant_id="tenant-dev",
+            idempotency_key=key,
+            request_hash=f"hash-{idx}",
+            normalized_name=f"steady {idx}",
+            persona_id=pid,
+            request_payload={"name": f"Steady {idx}", "requested_by": "op"},
+        )
+        rec = orig_acquire("tenant-dev", key, lease_owner="seed", lease_seconds=60)
+        assert rec is not None
+        rec.state = state
+        if idx == 1:
+            rec.references = {
+                "runtime_binding_id": "rb-steady-1",
+                "runtime_id": "rt-steady-1",
+                "authoritative_readback": {"observed_at": "2026-11-25T00:00:00Z"},
+            }
+            rec.result = {"status": "paper_running", "paper_running": True}
+        orig_release(rec, lease_owner="seed")
+
+    class _EmptyReadStore:
+        @staticmethod
+        def list_personas(**_kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        @staticmethod
+        def get_persona(_pid: str) -> None:
+            return None
+
+    monkeypatch.setattr(store, "acquire", _recording_acquire)
+    monkeypatch.setattr(store, "checkpoint", _recording_checkpoint)
+    monkeypatch.setattr(store, "release", _recording_release)
+    monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: _EmptyReadStore())
+    monkeypatch.setattr(personas_service, "_get_active_write_owner", lambda **_: None)
+
+    # Steady-state ticks with only succeeded and retired rows must do 0 lease writes.
+    for _ in range(3):
+        assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert lease_writes == []
+
+    # Add a pending provisioning record and verify it reconciles normally.
+    store.reserve(
+        tenant_id="tenant-dev",
+        idempotency_key="idem-pending-1",
+        request_hash="hash-pending-1",
+        normalized_name="pending 1",
+        persona_id="persona-pending-1",
+        request_payload={"name": "Pending 1", "requested_by": "op"},
+    )
+    evaluated: list[str] = []
+
+    def _fake_evaluate(pid: str, raw: dict[str, Any], **_kwargs: Any) -> str:
+        evaluated.append(pid)
+        rec = orig_acquire("tenant-dev", "idem-pending-1", lease_owner="eval", lease_seconds=60)
+        assert rec is not None
+        rec.state = "succeeded"
+        rec.references = {
+            "runtime_binding_id": "rb-pending-1",
+            "runtime_id": "rt-pending-1",
+            "authoritative_readback": {"observed_at": "2026-11-25T00:01:00Z"},
+        }
+        rec.result = {"status": "paper_running", "paper_running": True}
+        orig_release(rec, lease_owner="eval")
+        raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = "paper_running"
+        return "paper_running"
+
+    monkeypatch.setattr(
+        personas_service, "_evaluate_persona_provisioning_status", _fake_evaluate
+    )
+    assert personas_service._reconcile_persona_provisioning_once() == 1
+    assert evaluated == ["persona-pending-1"]
+    assert {key for _, key in lease_writes} <= {"idem-pending-1"}
+
+    # Once the pending row transitions to succeeded, subsequent ticks perform 0 work and 0 lease writes.
+    evaluated.clear()
+    lease_writes.clear()
+    assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert evaluated == []
+    assert lease_writes == []
+
+
+def test_store_list_non_terminal_method_is_preferred_when_exposed_by_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits_seen: list[int] = []
+    read_personas: list[dict[str, Any]] = []
+
+    class _BoundedStoreWithMethod:
+        def list_non_terminal(self, *, limit: int = 64) -> list[Any]:
+            limits_seen.append(limit)
+            return []
+
+        def list_all(self) -> list[Any]:
+            return []
+
+        def _connect(self, _dsn: str) -> Any:
+            raise AssertionError("list_non_terminal must be preferred over raw _connect")
+
+    class _ReadStore:
+        @staticmethod
+        def list_personas(**_kwargs: Any) -> list[dict[str, Any]]:
+            return list(read_personas)
+
+    monkeypatch.setattr(
+        personas_service, "_PERSONA_PROVISIONING_STORE", _BoundedStoreWithMethod()
+    )
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda **_: _ReadStore())
+    assert personas_service._reconcile_persona_provisioning_once() == 0
+    assert limits_seen == [64]
+
+    # When the read surface lists a canonical-only provisioning persona, list_non_terminal
+    # returning [] must still consult list_personas() and evaluate the canonical persona.
+    read_personas.append({"persona_id": "canon-list-non-terminal", "lifecycle_state": "provisioning"})
+    evaluated: list[str] = []
+    monkeypatch.setattr(
+        personas_service,
+        "_evaluate_persona_provisioning_status",
+        lambda pid, *_a, **_kw: (evaluated.append(pid) or "provisioning"),
+    )
+    assert personas_service._reconcile_persona_provisioning_once() == 1
+    assert evaluated == ["canon-list-non-terminal"]
+    assert limits_seen == [64, 64]
+
+
+

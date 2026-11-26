@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import copy
 import asyncio
 import hashlib
+import heapq
 import json
 import json as _json
 import logging
@@ -1267,6 +1269,30 @@ def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str,
     return task
 
 
+def _deferred_retry_cadence_seconds() -> int:
+    """One evolution cadence (the scheduler interval; default one day)."""
+    try:
+        return max(1, int(os.getenv("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", "86400")))
+    except ValueError:
+        return 86400
+
+
+def _deferred_retry_due(run: Dict[str, Any]) -> bool:
+    """True when an ``operator_decision_required`` run may be re-executed: one cadence after its last deferral.
+
+    Uses the orchestrator's own clock, never a caller-supplied time. A run deferred before ``deferred_at`` was
+    recorded (or with an unreadable stamp) is due, so the gate can never strand an older deferral."""
+    stamp = str(run.get("deferred_at") or "")
+    if not stamp:
+        return True
+    try:
+        deferred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (now - deferred).total_seconds() >= _deferred_retry_cadence_seconds()
+
+
 @app.post("/api/research-orchestrator/tasks/{task_id}/runs", status_code=201)
 def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     task = store.get_task(task_id)
@@ -1275,6 +1301,11 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     existing = _idempotent_match(store.list_runs(), body.idempotency_key)
     if existing:
         if existing.get("outcome") == "operator_decision_required" and existing.get("status") == "queued":
+            if not _deferred_retry_due(existing):
+                # REQUALIFY-REFUSAL-NOT-CRASH-20261125: a deferred run is re-executed at most once per cadence.
+                # The dispatch worker re-submits on every claim-lease expiry; before the cadence is due the run is
+                # returned unchanged so no attempt, owner read or pool decision version is produced.
+                return existing
             existing["attempt_number"] = int(existing.get("attempt_number") or 1) + 1
             existing["updated_at"] = body.requested_at or utc_now()
             store.put_run(existing)
@@ -2589,6 +2620,66 @@ def _producer_proof_registration(
     }
 
 
+def _unadmitted_requalified_entries(
+    family_entries: List[Dict[str, Any]],
+    *,
+    legacy_ref: str,
+    decision_id: str,
+    tenant_id: str,
+    pool: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Registry entries this decision registered to replace ``legacy_ref`` that the pool never admitted.
+
+    Returns the one entry the next attempt reuses (approved, checksum-bound, never in pool history; the
+    highest version when several exist) and every other such entry as a visible residual for the operator.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    in_pool = {str(m.get("artifact_ref")) for m in pool.get("members") or []}
+    usable: List[Dict[str, Any]] = []
+    residuals: List[Dict[str, Any]] = []
+    for e in family_entries:
+        meta = e.get("metadata") if isinstance(e.get("metadata"), dict) else {}
+        art = meta.get("strategy_artifact") if isinstance(meta.get("strategy_artifact"), dict) else None
+        parents = list(((art or {}).get("lineage") or {}).get("parent_registry_ids") or [])
+        if (
+            str(meta.get("replaces_registry_id") or "") != legacy_ref
+            or str(meta.get("demand_ref") or "") != decision_id
+            or legacy_ref not in parents
+            or str(e.get("registry_id") or "") in in_pool
+        ):
+            continue
+        reason = None
+        if str(e.get("owner_tenant") or meta.get("tenant_id") or "") != tenant_id:
+            reason = "owner_tenant_mismatch"
+        elif e.get("artifact_state") != "approved":
+            reason = "not_approved:" + str(e.get("artifact_state"))
+        else:
+            try:
+                if strategy_artifact_checksum(art) != e.get("checksum"):
+                    reason = "checksum_mismatch"
+            except Exception as exc:  # noqa: BLE001 - an unreadable artifact is a residual, never a reuse
+                reason = "artifact_invalid:" + type(exc).__name__
+        if reason is None:
+            usable.append(e)
+        else:
+            residuals.append({"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": reason})
+
+    def _vkey(e: Dict[str, Any]) -> Tuple[int, ...]:
+        try:
+            return tuple(int(p) for p in str(e.get("version") or "0").split("."))
+        except ValueError:
+            return (0,)
+
+    usable.sort(key=_vkey)
+    chosen = usable.pop() if usable else None
+    residuals.extend(
+        {"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": "superseded_unadmitted_requalified_entry"}
+        for e in usable
+    )
+    return chosen, residuals
+
+
 def _execute_legacy_member_requalification(
     *,
     run_id: str,
@@ -2659,12 +2750,18 @@ def _execute_legacy_member_requalification(
             "read_family_versions",
             f"/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
         )
+        family_entries = [
+            (v or {}).get("entry") or {}
+            for v in (family_views if isinstance(family_views, list) else [])
+            if isinstance((v or {}).get("entry"), dict)
+        ]
         existing_versions = [
             str(((v or {}).get("entry") or {}).get("version") or "")
             for v in (family_views if isinstance(family_views, list) else [])
         ]
     except _OwnerRejection as exc:
         if exc.status == 404:
+            family_entries = []
             existing_versions = []
         else:
             raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
@@ -2677,6 +2774,83 @@ def _execute_legacy_member_requalification(
             dataset = _RETRAIN_DATASET_LOADER(parent, params)
         except Exception as exc:  # noqa: BLE001
             raise executor.RequalifyDeferred("governed_dataset_unavailable", {"detail": str(exc)}) from None
+
+    pending, residuals = _unadmitted_requalified_entries(
+        family_entries, legacy_ref=str(ctx["artifact_ref"]), decision_id=decision_id, tenant_id=tenant_id, pool=pool,
+    )
+    residual_detail = {"requalified_residuals": residuals} if residuals else {}
+
+    def _replace_with_requalified(registration: Dict[str, Any], artifact: Dict[str, Any], verdict: Dict[str, Any]) -> None:
+        """Admit the registered requalified entry; a stated pool refusal defers instead of failing the run."""
+        try:
+            replace_receipt = owner.replace_requalified_member(
+                ctx,
+                new_artifact=artifact,
+                new_checksum=registration["checksum"],
+                dataset=dataset,
+            )
+        except executor.RequalifyDeferred as deferred:
+            # The live member stays; the registered entry is kept for the next cadence to reuse.
+            raise executor.RequalifyDeferred(
+                deferred.reason,
+                {
+                    **deferred.detail,
+                    "pending_replacement": {
+                        "registry_id": str(registration["registry_id"]),
+                        "checksum": registration["checksum"],
+                        "version": artifact.get("version"),
+                        "resume": "next_cadence_reuses_registered_entry",
+                        "verdict": verdict,
+                    },
+                    **residual_detail,
+                },
+            ) from None
+        new_id = str(registration["registry_id"])
+        run = get_store().get_run(run_id) or {}
+        writebacks = list(run.get("registry_writebacks") or [])
+        writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
+        _retrain_record(
+            run_id,
+            operator_decision_required=False,
+            candidate_artifact_id=new_id,
+            registry_writebacks=writebacks,
+            evolution_result={
+                **verdict,
+                "replacement": registration,
+                "pool_replacement_receipt": replace_receipt,
+                **residual_detail,
+            },
+        )
+        raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+
+    if pending is not None:
+        # An earlier attempt of this decision registered and approved the requalified entry but the pool refused
+        # it. Reuse that exact entry: no second registration, version or gate trial for the same decision.
+        from services.research.rebaseline_next_open import is_synthetic_or_fixture_dataset
+
+        dataset_refusal = is_synthetic_or_fixture_dataset(dataset)
+        if dataset_refusal is not None:
+            raise executor.RequalifyDeferred(dataset_refusal, {"reused_registry_id": pending["registry_id"], **residual_detail})
+        prior = ((get_store().get_run(run_id) or {}).get("evolution_result") or {}).get("pending_replacement") or {}
+        verdict = prior.get("verdict") if prior.get("registry_id") == pending["registry_id"] else None
+        reused_artifact = dict(pending["metadata"]["strategy_artifact"])
+        _replace_with_requalified(
+            {
+                "registry_id": pending["registry_id"],
+                "checksum": pending["checksum"],
+                "artifact_state": pending.get("artifact_state"),
+                "reused_unadmitted_entry": True,
+            },
+            reused_artifact,
+            dict(verdict) if isinstance(verdict, dict) else {
+                "passed": True,
+                "legacy_registry_id": str(ctx["artifact_ref"]),
+                "legacy_checksum": ctx.get("checksum"),
+                "requalified_artifact_id": pending["registry_id"],
+                "requalified_checksum": pending["checksum"],
+                "evaluation_summary": pending.get("evaluation_summary"),
+            },
+        )
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
@@ -2736,6 +2910,7 @@ def _execute_legacy_member_requalification(
                 **verdict,
                 "pool_removal_receipt": removed_receipt,
                 "memory_writeback": memory_receipt,
+                **residual_detail,
             },
         )
         raise _RetrainFinished("revalidation_failed", "requalification_failed_next_open_fill")
@@ -2806,28 +2981,7 @@ def _execute_legacy_member_requalification(
         gate_response=result["gate_response"],
         backtest_evaluation=result["backtest_evaluation"],
     )
-    replace_receipt = owner.replace_requalified_member(
-        ctx,
-        new_artifact=result["requalified_artifact"],
-        new_checksum=registration["checksum"],
-        dataset=dataset,
-    )
-    new_id = str(registration["registry_id"])
-    run = get_store().get_run(run_id) or {}
-    writebacks = list(run.get("registry_writebacks") or [])
-    writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
-    _retrain_record(
-        run_id,
-        operator_decision_required=False,
-        candidate_artifact_id=new_id,
-        registry_writebacks=writebacks,
-        evolution_result={
-            **verdict,
-            "replacement": registration,
-            "pool_replacement_receipt": replace_receipt,
-        },
-    )
-    raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+    _replace_with_requalified(registration, result["requalified_artifact"], verdict)
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -3050,6 +3204,8 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 outcome="operator_decision_required",
                 outcome_reason=deferred.reason,
                 operator_decision_required=True,
+                deferred_at=utc_now(),
+                retry_not_before_seconds=_deferred_retry_cadence_seconds(),
                 evolution_result={
                     "status": "could_not_evaluate",
                     "operator_decision_required": True,
@@ -3113,19 +3269,22 @@ research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.j
 query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
 
 
-def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any = None) -> Dict[str, Any]:
-    """Governed price dataset for template search, from the stored daily bars (read-only), or fail closed.
+def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Governed market dataset for template search, from the stored daily bars (read-only), or fail closed.
 
-    DISCOVERY-GOVERNED-MARKET-DATASET-20261125: it no longer reads a DatasetVersion that only exists after
-    a persona candidate was evaluated. ``universe`` is the mandate's own symbol list; a symbol outside the
-    governed market boundary fails closed with its exclusion reason. The reason is the readable
-    ``<code>: <detail>`` of ``GovernedMarketDatasetError``. This runs in the run's worker thread."""
+    TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125: the symbol boundary is the governed market boundary
+    (``governed_market_dataset.build_market_boundary``), not a persona list. The result carries
+    ``market_boundary`` (counts and exclusion reasons) and ``boundary_exclusions`` (symbol -> reason).
+    Readable ``<code>: <detail>`` reasons of ``GovernedMarketDatasetError`` are re-raised as ValueError.
+    This runs in the run's worker thread, never on an API event loop."""
     if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
         from services.research import governed_market_dataset as _governed
 
         try:
-            return _governed.resolve_governed_dataset(
-                symbols=list(universe) if universe else None, strategy_id=str(demand["demand_id"]))
+            boundary = _governed.build_market_boundary()
+            dataset = _governed.dataset_for(boundary, strategy_id=str(demand["demand_id"]))
+            dataset["boundary_exclusions"] = dict(boundary.exclusions)
+            return dataset
         except _governed.GovernedMarketDatasetError as exc:
             raise ValueError(str(exc)) from exc
     dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
@@ -3135,7 +3294,10 @@ def _load_template_search_governed_dataset(demand: Dict[str, Any], universe: Any
 
 
 def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
-    """Read the mandate universe and registered templates from their owners."""
+    """Read the persona identity, the governed market boundary and the registered templates from their owners.
+
+    The persona owner read only proves the tenant and persona identity; ``market_scope`` and
+    ``traits.instruments`` are never read as a boundary (SD_STRATEGY_SCREEN_ENTRY_EXIT 2026-11-12 section 2)."""
     tenant_id = demand["tenant_id"]
     persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
     persona = _retrain_call(
@@ -3144,11 +3306,8 @@ def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
         url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
     if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
         raise ValueError("template_mandate_owner_mismatch")
-    scope = persona.get("market_scope") or (persona.get("metadata") or {}).get("market_scope") or {}
-    universe = scope.get("symbols")
-    if not universe:
-        raise ValueError("mandate_universe_missing")
-    dataset = _load_template_search_governed_dataset(demand, universe)
+    dataset = _load_template_search_governed_dataset(demand)
+    universe = sorted({str(r["instrument"]) for r in dataset.get("records") or []})
     registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
     templates = _retrain_call(
         step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
@@ -3472,6 +3631,8 @@ def resume_retrain_runs() -> None:
             continue
         if record.get("cancellation_fence"):
             continue
+        if record.get("outcome") == "operator_decision_required" and status == "queued" and not _deferred_retry_due(record):
+            continue  # a deferred run waits for its cadence; the dispatch worker re-submits it when due
         _trigger_retrain_execution(str(record["run_id"]), params)
 
 
@@ -3503,13 +3664,67 @@ def repair_retrain_tasks_left_running() -> None:
             _set_task_terminal(task_id, str(run["status"]).lower(), utc_now())
 
 
+RUN_PAGE_MAX = 200
+
+
+def _run_page_key(run: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(run.get("created_at") or ""), str(run.get("run_id") or run.get("id") or ""))
+
+
+def _encode_run_cursor(key: Tuple[str, str]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(list(key)).encode("utf-8")).decode("ascii")
+
+
+def _decode_run_cursor(cursor: str) -> Tuple[str, str]:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+        if isinstance(value, list) and len(value) == 2 and all(isinstance(v, str) for v in value):
+            return value[0], value[1]
+    except (ValueError, UnicodeError):
+        pass
+    raise HTTPException(status_code=422, detail="invalid cursor")
+
+
 @app.get("/api/research-orchestrator/runs")
-def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [
+def list_runs(
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=RUN_PAGE_MAX),
+    cursor: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Any:
+    """Run list. Without ``limit``/``cursor``: the unscoped list for existing callers.
+
+    With ``limit`` (1..``RUN_PAGE_MAX``) or ``cursor``: the caller tenant's runs only
+    (verified bearer bound to ``X-Tenant-Id``), newest first by (created_at, run_id), as
+    ``{items, count, limit, order, next_cursor}``; only runs stamped with the tenant.
+    """
+    matches = (
         r for r in store.list_runs()
         if (not task_id or r.get("task_id") == task_id)
         and (not status or str(r.get("status") or "").lower() == status.lower())
-    ]
+    )
+    if limit is None and not cursor:
+        return list(matches)
+    tenant_id = _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+    page_size = limit or 50
+    after = _decode_run_cursor(cursor) if cursor else None
+    mine = (
+        r for r in matches
+        if str(r.get("tenant_id") or "").strip() == tenant_id
+        and (after is None or _run_page_key(r) < after)
+    )
+    window = heapq.nlargest(page_size + 1, mine, key=_run_page_key)
+    items = window[:page_size]
+    return {
+        "tenant_id": tenant_id,
+        "items": items,
+        "count": len(items),
+        "limit": page_size,
+        "order": "created_at_desc",
+        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > page_size else None,
+    }
 
 
 @app.get("/api/research-orchestrator/runs/{run_id}")
@@ -5482,11 +5697,9 @@ def list_alpha_template_evaluations_endpoint(
 ) -> Dict[str, Any]:
     registry_service = RegistryService(get_registry_store())
     ensure_builtin_alpha_templates(registry_service)
-    entries = [
-        v
-        for v in registry_service.list_all_entries()
-        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
-    ]
+    from services.research.alpha_templates import list_alpha_template_views
+
+    entries = list_alpha_template_views(registry_service)
     items: List[Dict[str, Any]] = []
     for view in entries:
         meta = view.entry.metadata or {}

@@ -300,6 +300,44 @@ def _section_fingerprint(logic: Mapping[str, Any], section: str) -> str:
     return rule_fingerprint(body)
 
 
+DEFAULT_SCREEN_ID = "whole_governed_tw_boundary.v1"
+
+
+def _default_constant(params: dict, controls: list, name: str, value: int) -> dict:
+    key = "hc_default_" + name
+    if key in params or any(isinstance(c, Mapping) and c.get("parameter_key") == key for c in controls):
+        raise ValueError("reserved_default_parameter:" + key)
+    params[key] = value
+    controls.append({
+        "parameter_key": key, "value_type": "number", "current_value": value,
+        "allowed_range": {"min": value, "max": value}, "step": 1,
+    })
+    return {"const_param": key}
+
+
+def attach_default_market_screen(logic: dict, params: dict, controls: list) -> None:
+    """Attach the one code-owned ``whole_governed_tw_boundary.v1`` screen (eligibility history, liquidity,
+    traded value) to ``logic``, adding its constants to ``params`` and ``controls`` in place. Shared by the
+    hypothesis compiler's default and the template search compiler; the screen is never copied."""
+    if params.get("market", "TW") != "TW":
+        raise ValueError("default_screen_requires_TW")
+    params["market"] = "TW"
+    name = "hc_default_close"
+    inputs = logic.setdefault("inputs", [])
+    if not isinstance(inputs, list) or any(i.get("name") == name for i in inputs if isinstance(i, Mapping)):
+        raise ValueError("invalid_or_reserved_default_input")
+    inputs.append({"name": name, "dataset": "tw_price_daily", "field": "close", "availability_lag_days": 0})
+    logic["screen"] = {
+        "version": "candidate_screen.v1", "min_size": _default_constant(params, controls, "min_size", 3),
+        "eligibility": {"min_history_bars": _default_constant(params, controls, "history", 60),
+                        "liquidity_window": _default_constant(params, controls, "liquidity_window", 20),
+                        "min_median_traded_value": _default_constant(params, controls, "traded_value", 10_000_000)},
+        "steps": [{"kind": "filter", "expression": {"op": "not", "args": [
+            {"op": "lt", "args": [{"ref": name}, {"ref": name}]}]},
+                   "refresh": "daily"}],
+    }
+
+
 def _pair_defaults(proposal: Mapping[str, Any], card: Mapping[str, Any]) -> tuple[dict, dict]:
     """Code-owned, versioned pairings; never trust a model to choose a default."""
     p = copy.deepcopy(dict(proposal))
@@ -311,39 +349,14 @@ def _pair_defaults(proposal: Mapping[str, Any], card: Mapping[str, Any]) -> tupl
     defaults: dict[str, str] = {}
 
     def constant(name: str, value: int) -> dict:
-        key = "hc_default_" + name
-        if key in params or any(isinstance(c, Mapping) and c.get("parameter_key") == key
-                                for c in surface["controls"]):
-            raise ValueError("reserved_default_parameter:" + key)
-        params[key] = value
-        surface["controls"].append({
-            "parameter_key": key, "value_type": "number", "current_value": value,
-            "allowed_range": {"min": value, "max": value}, "step": 1,
-        })
-        return {"const_param": key}
+        return _default_constant(params, surface["controls"], name, value)
 
     if "screen_idea" in card:
         if "screen" not in logic:
             raise ValueError("missing_screen_for_screen_idea")
     else:
-        if params.get("market", "TW") != "TW":
-            raise ValueError("default_screen_requires_TW")
-        params["market"] = "TW"
-        name = "hc_default_close"
-        inputs = logic.setdefault("inputs", [])
-        if not isinstance(inputs, list) or any(i.get("name") == name for i in inputs if isinstance(i, Mapping)):
-            raise ValueError("invalid_or_reserved_default_input")
-        inputs.append({"name": name, "dataset": "tw_price_daily", "field": "close", "availability_lag_days": 0})
-        logic["screen"] = {
-            "version": "candidate_screen.v1", "min_size": constant("min_size", 3),
-            "eligibility": {"min_history_bars": constant("history", 60),
-                            "liquidity_window": constant("liquidity_window", 20),
-                            "min_median_traded_value": constant("traded_value", 10_000_000)},
-            "steps": [{"kind": "filter", "expression": {"op": "not", "args": [
-                {"op": "lt", "args": [{"ref": name}, {"ref": name}]}]},
-                       "refresh": "daily"}],
-        }
-        defaults["screen"] = "whole_governed_tw_boundary.v1"
+        attach_default_market_screen(logic, params, surface["controls"])
+        defaults["screen"] = DEFAULT_SCREEN_ID
     if "screen_idea" in card and "entry_idea" not in card:
         if card.get("direction", "long") != "long":
             raise ValueError("hold_in_pool_default_requires_long")

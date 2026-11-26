@@ -376,6 +376,10 @@ class ExtractionLedger:
             for name in ("timeouts", "billing", "unavailable"):
                 if name not in cols:
                     c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+            if "cap" not in cols:
+                # The cap in force when the day's last call was reserved, so a
+                # reader in another process reports the writer's cap.
+                c.execute("ALTER TABLE calls ADD COLUMN cap INTEGER")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
@@ -438,8 +442,9 @@ class ExtractionLedger:
             if (used_row[0] if used_row else 0) >= self._daily_cap:
                 return DAILY_CAP_REACHED
             c.execute(
-                "INSERT INTO calls(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1",
-                (day,),
+                "INSERT INTO calls(day, n, cap) VALUES(?, 1, ?)"
+                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap",
+                (day, self._daily_cap),
             )
             if source_id:
                 c.execute(

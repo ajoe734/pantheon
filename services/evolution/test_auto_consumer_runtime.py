@@ -150,3 +150,64 @@ def test_requalification_removal_records_verdict_and_learns_family_in_persona_me
     assert "tried_family:strat-tw-replication-001" in mem_body["tags"]
     assert "requalification_failed_next_open_fill" in mem_body["tags"]
 
+
+
+# REQUALIFY-REFUSAL-NOT-CRASH-20261125: a stated pool refusal of a requalified replacement defers
+# to the operator (SD_PERSONA_STRATEGY_POOL_AUTONOMY 5.2); a malformed decision keeps the RuntimeError.
+# The replay-book builders are owner-side and proven by the integration test; here they are fixed so the
+# test isolates how replace_requalified_member treats the pool owner's decision row.
+def _replacement_owner(monkeypatch, owners, decision_row):
+    import services.execution.lean_runtime.member_virtual_book as mvb
+    import services.persona.pool_autonomy_cycle as cycle
+
+    owner, _, state = owners
+    monkeypatch.setattr(cycle, "candidate_virtual_book", lambda **kw: {
+        "checksum": kw["checksum"], "source_ref": "governed-replay:recorded", "dates": ["2026-10-29", "2026-10-30"],
+        "returns": [0.0, 0.0]})
+    monkeypatch.setattr(mvb, "idle_pool_observations", lambda dates, **kw: [{"date": d} for d in dates])
+    inner = owner.send
+
+    def transport(method, url, headers, body):
+        if url.endswith("/strategy-pool/decisions"):
+            state["writes"].append((method, url, body))
+            # The pool owner records the decision as a version with unchanged membership.
+            return 201, {**state["pool"], "pool_version": state["pool"]["pool_version"] + 1, "decision": decision_row}
+        return inner(method, url, headers, body)
+
+    owner.send = transport
+    ctx = {"persona_id": "p", "artifact_ref": "a", "checksum": "sha256:a", "joined_at": "2024-01-01T00:00:00Z"}
+    return owner, state, ctx
+
+
+REFUSED_ROW = {"action": "admit", "status": "refused", "persona_trial_count": 1, "execution_context": "paper",
+               "reasons": ["governed_market_boundary_unavailable: governed daily-bar store is stale"]}
+
+
+def test_refused_requalified_replacement_is_deferred_not_crashed(monkeypatch, owners):
+    from services.research.alpha_replication.evolution_executor import RequalifyDeferred
+
+    owner, state, ctx = _replacement_owner(monkeypatch, owners, REFUSED_ROW)
+    with pytest.raises(RequalifyDeferred) as info:
+        owner.replace_requalified_member(ctx, new_artifact={"artifact_id": "a-rq", "strategy_id": "s"},
+                                         new_checksum="sha256:rq", dataset={"records": []})
+    deferred = info.value
+    assert deferred.reason == "pool_admission_refused"
+    assert deferred.detail["pool_decision_reasons"] == REFUSED_ROW["reasons"]
+    assert deferred.detail["candidate_artifact_ref"] == "a-rq" and deferred.detail["live_member_ref"] == "a"
+    assert deferred.detail["pool_version_before_decision"] == 1
+    # No pool version written by this path and nothing published; the live member is untouched.
+    assert [url for _, url, _ in state["writes"]] == ["http://per/api/personas/p/strategy-pool/decisions"]
+    assert state["pool"]["members"][0]["stage"] == "active" and state["pool"]["pool_version"] == 1
+
+
+@pytest.mark.parametrize("row", [None, {"status": "pending"}, {"status": "refused", "reasons": []},
+                                 {"status": "refused", "reasons": "not-a-list"}])
+def test_malformed_replacement_decision_keeps_runtime_error(monkeypatch, owners, row):
+    from services.research.alpha_replication.evolution_executor import RequalifyDeferred
+
+    owner, state, ctx = _replacement_owner(monkeypatch, owners, row)
+    with pytest.raises(RuntimeError, match="requalified replacement admission refused") as info:
+        owner.replace_requalified_member(ctx, new_artifact={"artifact_id": "a-rq", "strategy_id": "s"},
+                                         new_checksum="sha256:rq", dataset={"records": []})
+    assert not isinstance(info.value, RequalifyDeferred)
+    assert not any(url.endswith("/publish") for _, url, _ in state["writes"])

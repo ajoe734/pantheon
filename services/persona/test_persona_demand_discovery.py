@@ -73,8 +73,12 @@ class World:
             if found is None:
                 raise LookupError("404")
             return found
-        if service == "registry" and path == "/api/registry/strategy-specs":
-            return self.registry_specs
+        if service == "registry" and path.startswith("/api/registry/strategy-specs?view=discovery_candidates&"):
+            # the owner's bounded discovery page (retired/rejected excluded server side); an unpaged
+            # list read falls through to the AssertionError below
+            return {"items": [r for r in self.registry_specs
+                              if str(r["entry"].get("artifact_state")) not in ("retired", "rejected")],
+                    "next_page_token": None}
         if service == "research" and path == "/api/research/tickets":
             if self.ticket_failures:
                 self.ticket_failures -= 1

@@ -1,0 +1,59 @@
+{
+  "task_id": "BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "register_class": "RC6",
+  "evidence_kind": "functional (source only; hosted verification is left to the operator acceptance task)",
+  "no_vm_or_ssh_access": true,
+  "root_cause": "strategies/routes/collection.py called list_all_strategy_summary_pages(...) for the owner walk without owner_hide_kwargs, so the Registry never hid/counted test and stub rows and returned no visible_state_counts; the default view therefore had meta.visible_state_counts null.",
+  "change": {
+    "collection.py": "the owner walk now passes **owner_hide_kwargs; when the owner answered the hide input the walk takes hidden by_reason and visible_state_counts from its first owner page and does not re-classify; an owner without the answer keeps BFF classification and null counts.",
+    "service.py": "list_all_strategy_summary_pages returns owner_hid, hidden and visible_state_counts from the first page; pages of one walk that disagree on the hide answer fail closed.",
+    "BFF_API_CONTRACT.md": "states visible_state_counts is present on every filter, including the default view."
+  },
+  "acceptance": {
+    "1_counts_equal_state_filters": {
+      "test": "test_strategy_list_default_view.py::test_default_view_returns_visible_state_counts_equal_to_state_filters",
+      "hosted_shape": "14 approved non-draft rows (3 running personas, 11 retired personas), 2 retired, 4305 visible drafts plus 300 raw-seed and 120 test-persona drafts hidden",
+      "default_view_visible_state_counts": {"draft": 4305, "review": 0, "approved": 14, "retired": 2},
+      "equal_to": ["state=approved", "state=draft", "no filter"],
+      "owner_call": "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200&exclude_state=draft&hide_stubs=true&hide_persona_ids=persona-dv-test (single call)"
+    },
+    "2_rows_totals_hidden_unchanged": {
+      "test": "test_strategy_list_default_view.py::test_default_view_rows_totals_and_hidden_counts_unchanged_and_legacy_owner_falls_back",
+      "result": "rows, page_info, meta.total, hidden_test_persona_strategy_count, hidden_unbound_stub_strategy_count, hidden_retired_persona_count, operational_counts and state_counts equal the pre-change answer (older owner simulated by dropping the hide parameters and the hide answer, as a real older Registry does): 3 rows, 11 hidden retired.",
+      "legacy_owner_fallback": "visible_state_counts null, never zeros"
+    },
+    "3_owner_call_counts": {
+      "hosted_shape_default_view": {"before": 1, "after": 1},
+      "1728_non_draft_rows_default_view": {"before": 9, "after": 9, "note": "9 owner pages of 200; probes and seeds are hidden by the owner so the after walk covers 1663 visible rows, still 9 pages; every page carries hide_stubs=true"},
+      "test": "test_strategy_list_default_view.py::test_default_view_walks_many_owner_pages_with_hide_input_and_first_page_counts"
+    },
+    "4_contract_and_tests": {
+      "contract": "BFF_API_CONTRACT.md: meta.visible_state_counts present on every filter",
+      "no_test_weakened_or_deleted": true,
+      "changed_assertion": {
+        "test": "test_strategy_operational_status.py::test_hide_filter_walks_owner_pages_of_200_with_one_directory_read",
+        "change": "expected owner URL gains &hide_stubs=true (the walk now sends the owner hide input); same single owner call, same page size, same exclude_state; the assertion is otherwise identical.",
+        "justification": "This is the behaviour the task requires; the old URL had no hide input."
+      }
+    }
+  },
+  "verification": {
+    "interpreter": ".venv-pantheon (provision_python_distribution.py)",
+    "new_tests_on_unfixed_head": "counts test and multi-page test fail (visible_state_counts None; walk URLs lack hide_stubs); the unchanged-rows test passes on both, as intended",
+    "scoped_run": "services/control-plane/bff/tests/test_strategy_list_test_scope.py, test_strategy_list_default_view.py, test_strategy_operational_status.py and strategies/test_router_isolation.py: all pass except one failure that also fails on unchanged HEAD (below)",
+    "broader_run": "services/control-plane/bff/strategies + tests/test_strateg*.py: 209 passed, 1 skipped, 2 failed (both pre-existing, see residual findings)"
+  },
+  "residual_findings": [
+    {
+      "test": "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies",
+      "finding": "Fails on unchanged HEAD: the second request (page_token=20) makes 0 owner calls (assert 0 == 2) because the owner-page memo in ports/research_knowledge_source.py serves it. The test's expectation of 2 owner reads on page 2 predates the memo. Not changed here (different layer and task)."
+    },
+    {
+      "test": "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation",
+      "finding": "Fails on unchanged HEAD: the detail spec projection now returns hypothesis, objective and one more field the test does not expect. Outside this task's scope."
+    }
+  ],
+  "hosted_verification": "not performed; left to the operator acceptance task"
+}

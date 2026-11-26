@@ -27,12 +27,14 @@ def pool_item(n):
             "pool_version": n, "status": "refused" if refused else "applied", "decision_status": "refused" if refused else "applied",
             "refused": refused, "membership_changed": False, "subject_class": "strategy",
             "summary": ("Refused reweight; the pool membership was not changed." if refused else "Initial strategy pool created with 1 member(s)."),
-            "reasons": [REASONS[n]] if refused else [], "members_before": [] if n == 1 else [MEMBER], "members_after": [MEMBER]}
+            "reasons": [REASONS[n]] if refused else [], "members_before": [] if n == 1 else [MEMBER], "members_after": [MEMBER],
+            "target": {"type": "persona", "id": "persona-ee7112a829d38b9135ac", "version": str(n)}}
 
 
 def journal():
     decision = {"entry_type": "evolution_decision", "id": "evolution_decision:d-1", "subject_class": "strategy",
-                "decision": {"approval_decision_id": "ad-1"}}
+                "decision": {"approval_decision_id": "ad-1"},
+                "target": {"type": None, "id": None, "version": None}}
     return {"data": {"items": [pool_item(n) for n in range(1, 7)] + [decision],
                      "summary": {"mutation_review_count": 1, "decision_count": 1,
                                  "hidden_system_counts": {"infrastructure": 380, "test": 0}},
@@ -123,3 +125,14 @@ def test_skips_without_credentials(monkeypatch):
     for name in probe.REQUIRED:
         monkeypatch.delenv(name, raising=False)
     assert probe.main() == 77
+
+
+def test_fails_when_target_version_is_a_number():
+    # the hosted pre-fix shape: pool_version v6 carried target.version 6, which the page cannot lower-case
+    body = journal()
+    body["data"]["items"][5]["target"]["version"] = 6
+    failed = probe.check(fetcher(body))["failed"]
+    assert "target_field_not_text_or_null:pool_version:persona-ee7112a829d38b9135ac:v6.version" in failed
+    body = journal()
+    del body["data"]["items"][-1]["target"]
+    assert any(f.startswith("target_field_not_text_or_null:evolution_decision:d-1.") for f in probe.check(fetcher(body))["failed"])

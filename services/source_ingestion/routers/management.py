@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Request
 from services.runtime_auth_inbound import AuthContext, validate_request_auth
 
 from ..api_models import SourceCommandRequestBody
+from ..discovery_summary import read_discovery_summary
 from ..connector_definitions import get_connector_definition, list_connector_definitions
 from ..source_management_commands import AdapterNotSupportedError, CommandPreconditionError
 from ..source_management_models import SourceManagementCommand
@@ -325,6 +327,16 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
                 if any(eid and eid in tenant_item_ids for eid in s.evidence_item_ids):
                     items.append(s.to_dict())
         return {"items": items, "count": len(items), "store_path": str(store.path)}
+
+    @router.get("/api/source-ingest/management/discovery-summary")
+    def get_management_discovery_summary(request: Request) -> dict[str, Any]:
+        """Bounded tenant discovery summary; never reads seeds, evidence or source records."""
+        _, tenant_id = _require_seed_caller(request)
+        queue_path = getattr(runtime, "DISTILLATION_JOB_QUEUE_PATH", None)
+        if queue_path is None:
+            queue = getattr(runtime, "distillation_job_queue", None)
+            queue_path = getattr(queue, "path", None)
+        return read_discovery_summary(queue_path=Path(str(queue_path or "")), tenant_id=tenant_id)
 
     @router.get("/api/source-ingest/management/strategy-seeds")
     def list_management_strategy_seeds(
