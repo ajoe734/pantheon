@@ -6039,15 +6039,15 @@
     "contains": "MAX_PARTITIONS",
     "file": "services/source_ingestion/daily_bars_completion.py"
    },
-   "cadence": "one bounded call on a daemon thread after a daily bars batch, single flight, at most once per 30 s (SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS 3 days, _MAX_SECONDS 20, _MAX_RSS_MB 768, _MAX_PARTITIONS 40); a day whose values are all present is never rewritten",
-   "cap": "state file daily_bars_completion_state.json: one entry per run-file write-date partition and per stored trade date plus the run-file paths of each trade date (about 484 days x a few paths, well under 1 MB); one new daily_bars generation per completed day (same bytes per day as write_day, superseded generation deleted after each manifest swap)",
-   "cleanup": "the state file is rebuilt from the run files when absent; completed days stop being revisited; superseded generations deleted by the manifest swap; run files are read only and stay under their own retention",
+   "cadence": "one bounded call on a daemon thread after a daily bars batch, single flight, at most once per 30 s; the thread keeps calling (5 s apart, at most 400 calls) while a call made progress (SOURCE_INGEST_DAILY_BARS_COMPLETION_MAX_DAYS 3 days, _MAX_SECONDS 20, _MAX_GROWTH_MB 768, _MAX_RSS_MB 5120, _MAX_PARTITIONS 40); the unit of progress is one run file (at most 4 MB on hosted), so a call stopped on seconds always recorded at least one file; a day whose retained files were all staged is never re-read (DAILY-BARS-COMPLETION-RESUMABLE-INDEX-20261126)",
+   "cap": "state file daily_bars_completion_state.json: indexed map (one entry per write-date partition, 497 on hosted, ~45 B each), files_by_date (one ~72 B path per run file and trade date, 8,813 run files on hosted), indexing (file names of at most one partially indexed partition, <= ~200 x 25 B) and days (one entry per stored day, ~300 B): about 0.9 MB at the full hosted backlog (measured 71,098 B at 10 partitions / 1,009 paths). Stage files daily_bars_completion_stage/<trade date>.json: one per day whose files are partly staged, compact bars of that day (measured 0.41 to 0.52 MB for a hosted day of ~7,500 rows); removed when the day is applied or no longer stored, normally at most one; one new daily_bars generation per completed day (same bytes per day as write_day, superseded generation deleted after each manifest swap)",
+   "cleanup": "the state file is rebuilt from the run files when absent; completed days stop being revisited; a stage file is deleted when its day is applied and at the end of every call when its day is no longer stored; superseded generations deleted by the manifest swap; run files are read only and stay under their own retention",
    "growth": "zero net: values fill null columns of existing rows (about +8 B per row once volume and traded value are present); no new row, no new day",
-   "name": "daily_bars completion state (daily_bars_completion_state.json)",
+   "name": "daily_bars completion state (daily_bars_completion_state.json, daily_bars_completion_stage/<trade date>.json)",
    "owner": "source_ingestion",
-   "size_per_day": "state: tens of bytes per stored day; parquet: unchanged row count, compression of filled floats measured in evidence.json",
-   "task": "DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125",
-   "writer": "services/source_ingestion/daily_bars_completion.py DailyBarsCompleter started by MarketDataStorageWriter (state via _atomic_write_bytes) and DailyBarsStore.complete_day_values (one manifest swap per completed day)"
+   "size_per_day": "state: ~300 B per stored day plus ~72 B per run-file path; stage: ~0.5 MB for the one day in progress; parquet: unchanged row count, compression of filled floats measured in evidence.json",
+   "task": "DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125, DAILY-BARS-COMPLETION-RESUMABLE-INDEX-20261126",
+   "writer": "services/source_ingestion/daily_bars_completion.py DailyBarsCompleter started by MarketDataStorageWriter (state and stage files via _atomic_write_bytes) and DailyBarsStore.complete_day_values (one manifest swap per completed day)"
   },
   {
    "bound_proof": {

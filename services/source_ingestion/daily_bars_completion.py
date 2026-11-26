@@ -292,8 +292,10 @@ class DailyBarsCompleter:
             for key, n in result["rejected"].items():
                 report["rejected"][key] = report["rejected"].get(key, 0) + n
             after = self.missing_values(trade_date) or missing
-            status = ("complete" if after["no_volume"] == 0 and after["no_value"] == 0
-                      else "source_has_no_values" if result["filled_rows"] == 0 else "partial")
+            # Every retained file of the day was staged, so a row still null has no usable source value (unit
+            # mismatch, bad close, conflict, absent): re-reading the same files cannot fill it. The old "partial"
+            # status re-read a whole day (up to 350 MB on hosted) on the next call for nothing.
+            status = "complete" if after["no_volume"] == 0 and after["no_value"] == 0 else "source_has_no_values"
             state["days"][trade_date] = {
                 "status": status, "digest": after["digest"], "filled_rows": result["filled_rows"],
                 "conflicts": result["conflicts"], "rejected": result["rejected"], "traded_rows": after["traded_rows"],

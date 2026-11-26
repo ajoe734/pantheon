@@ -352,3 +352,17 @@ def test_a_v1_state_without_indexing_loads_and_keeps_its_indexed_partitions(tmp_
         "files_by_date": {DAY: [f"normalized/tw_price_daily/date={DAY}/run-000.jsonl"]}, "days": {}}))
     report = DailyBarsCompleter(store).run()
     assert report["indexed_files"] == 0 and report["completed_days"] == [DAY] and report["staged_files"] == 1
+
+
+def test_a_day_whose_files_were_all_staged_is_not_read_again_for_rows_the_source_cannot_fill(tmp_path):
+    store = DailyBarsStore(tmp_path)
+    store_day_without_values(store, DAY)
+    write_run(tmp_path, DAY, "run-a", [run_line(collector("2330", DAY, 2010.0, 88179393, 177284650)),  # unit slip
+                                       run_line(collector("6488", DAY, 2010.0, 1000, 2_010_000))])
+    first = DailyBarsCompleter(store).run()
+    assert first["completed_days"] == [DAY] and first["rejected"] == {"value_unit_mismatch": 1}
+    state = DailyBarsCompleter(store).load_state()
+    assert state["days"][DAY]["status"] == "source_has_no_values" and state["days"][DAY]["filled_rows"] == 1
+    second = DailyBarsCompleter(store).run()
+    assert second["staged_files"] == 0 and second["completed_days"] == second["unchanged_days"] == []
+    assert values(store, DAY) == {"2330": (None, None), "6488": (1000.0, 2_010_000.0)}
