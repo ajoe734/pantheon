@@ -14,6 +14,8 @@ import copy
 import hashlib
 import json
 import math
+import threading
+import time
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -414,3 +416,129 @@ def ensure_builtin_alpha_templates(registry_service: RegistryService) -> list[Re
                 )
         views.append(view)
     return views
+
+
+# -- Once-per-process ensure (ALPHA-TEMPLATE-READ-FAST-20261126) ----------------------------------------
+# Read routes must not re-register 182 built-ins per request (hosted: 6-7 s). The library is ensured once per
+# (registry store, checked-in library digest), off the request path; the outcome is a visible state, not silence.
+BUILTIN_ENSURE_RETRY_SECONDS = 60.0
+_BUILTIN_STATE_LOCK = threading.Lock()
+_BUILTIN_RUN_LOCK = threading.Lock()
+_BUILTIN_STATE: dict[str, Any] = {}
+
+
+def alpha_template_library_digest(files: Sequence[str] = ALPHA_TEMPLATE_LIBRARY_FILES) -> str:
+    """sha256 over the checked-in library files (name + bytes), the key for re-ensuring after a change.
+
+    Re-hashed only when a file's (mtime, size) changes, so a read route pays a few ``stat`` calls.
+    """
+    stamp = []
+    for name in files:
+        st = (ALPHA_TEMPLATE_LIBRARY_DIR / name).stat()
+        stamp.append((name, st.st_mtime_ns, st.st_size))
+    return _library_digest_for(tuple(stamp))
+
+
+@lru_cache(maxsize=4)
+def _library_digest_for(stamp: tuple[tuple[str, int, int], ...]) -> str:
+    h = hashlib.sha256()
+    for name, _mtime, _size in stamp:
+        h.update(name.encode("utf-8") + b"\0")
+        h.update((ALPHA_TEMPLATE_LIBRARY_DIR / name).read_bytes())
+    return h.hexdigest()
+
+
+def _builtin_state_for(store: Any, digest: str) -> dict[str, Any] | None:
+    state = _BUILTIN_STATE
+    if state and state.get("store") is store and state.get("library_digest") == digest:
+        return state
+    return None
+
+
+def _public_builtin_state(state: dict[str, Any] | None, digest: str) -> dict[str, Any]:
+    if state is None:
+        return {"status": "not_started", "library_digest": digest}
+    return {k: v for k, v in state.items() if k != "store"}
+
+
+def builtin_alpha_template_status(registry_service: RegistryService) -> dict[str, Any]:
+    """Visible state of the built-in library ensure for this service's store (no registry I/O)."""
+    digest = alpha_template_library_digest()
+    with _BUILTIN_STATE_LOCK:
+        return _public_builtin_state(_builtin_state_for(registry_service.store, digest), digest)
+
+
+def ensure_builtin_alpha_templates_once(registry_service: RegistryService) -> dict[str, Any]:
+    """Synchronous ensure that is a no-op once it succeeded for this store and library digest.
+
+    Raises what ``ensure_builtin_alpha_templates`` raises; the failure is also recorded in the visible state.
+    """
+    store = registry_service.store
+    digest = alpha_template_library_digest()
+    with _BUILTIN_RUN_LOCK:
+        with _BUILTIN_STATE_LOCK:
+            state = _builtin_state_for(store, digest)
+            if state is not None and state.get("status") == "ok":
+                return _public_builtin_state(state, digest)
+            _BUILTIN_STATE.clear()
+            _BUILTIN_STATE.update(
+                store=store, library_digest=digest, status="running", started_at=time.time(),
+                attempts=int((state or {}).get("attempts", 0)) + 1,
+            )
+        started = time.monotonic()
+        try:
+            views = ensure_builtin_alpha_templates(registry_service)
+        except Exception as exc:
+            with _BUILTIN_STATE_LOCK:
+                _BUILTIN_STATE.update(
+                    status="failed", error=f"{type(exc).__name__}: {exc}"[:500], finished_at=time.time(),
+                    duration_ms=round((time.monotonic() - started) * 1000.0, 1),
+                )
+            raise
+        with _BUILTIN_STATE_LOCK:
+            _BUILTIN_STATE.update(
+                status="ok", template_count=len(views), finished_at=time.time(), error=None,
+                duration_ms=round((time.monotonic() - started) * 1000.0, 1),
+            )
+            return _public_builtin_state(_BUILTIN_STATE, digest)
+
+
+def schedule_builtin_alpha_templates_ensure(registry_service: RegistryService) -> dict[str, Any]:
+    """Start the ensure on a daemon thread unless it already succeeded, is running, or failed recently.
+
+    Never blocks on registry I/O; returns the visible state (``pending`` while a thread is queued/running).
+    """
+    store = registry_service.store
+    digest = alpha_template_library_digest()
+    with _BUILTIN_STATE_LOCK:
+        state = _builtin_state_for(store, digest)
+        if state is not None:
+            status = state.get("status")
+            if status in ("ok", "running", "pending"):
+                return _public_builtin_state(state, digest)
+            if status == "failed" and time.time() - float(state.get("finished_at") or 0.0) < BUILTIN_ENSURE_RETRY_SECONDS:
+                return _public_builtin_state(state, digest)
+        attempts = int((state or {}).get("attempts", 0))
+        last_error = (state or {}).get("error")
+        _BUILTIN_STATE.clear()
+        _BUILTIN_STATE.update(
+            store=store, library_digest=digest, status="pending", attempts=attempts, error=last_error,
+        )
+        snapshot = _public_builtin_state(_BUILTIN_STATE, digest)
+
+    def _run() -> None:
+        try:
+            ensure_builtin_alpha_templates_once(registry_service)
+        except Exception:  # recorded in the visible state by ensure_builtin_alpha_templates_once
+            import logging
+
+            logging.getLogger(__name__).exception("built-in AlphaTemplate ensure failed")
+
+    threading.Thread(target=_run, name="alpha-template-builtin-ensure", daemon=True).start()
+    return snapshot
+
+
+def reset_builtin_alpha_template_state() -> None:
+    """Forget the once-per-process ensure state (tests)."""
+    with _BUILTIN_RUN_LOCK, _BUILTIN_STATE_LOCK:
+        _BUILTIN_STATE.clear()

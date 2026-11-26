@@ -19,20 +19,19 @@ from .common import (
     operational_counts,
     strategy_stub_reason,
     summary_persona_ids,
+    unavailable_lookup,
 )
 
 try:
     from services.control_plane.bff.models import ErrorCode
     from services.control_plane.bff.core.owner_reads import (
         remaining_management_read_budget,
-        request_read_cache,
         submit_owner_read,
     )
 except (ImportError, ValueError):
     from models import ErrorCode
     from core.owner_reads import (
         remaining_management_read_budget,
-        request_read_cache,
         submit_owner_read,
     )
 
@@ -54,6 +53,53 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         page, next_token = ctx.page_slice(kept, page_token, page_size)
         return page, next_token, len(kept), len(summaries) - len(kept)
 
+    def _start_owner_read(fn: Any, started: List[Future]) -> Future:
+        """Submit one owner read on the shared owner read executor.
+
+        It runs in a copy of the request context (caller identity, tenant,
+        deadline, request read cache). A submission failure is an owner failure
+        of that read, never of the request.
+        """
+        from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
+
+        try:
+            fut = submit_owner_read(_PERSONA_FLEET_READ_EXECUTOR, fn)
+        except Exception as exc:  # noqa: BLE001 - submission failure is an owner failure
+            fut = Future()
+            fut.set_exception(exc)
+        started.append(fut)
+        return fut
+
+    def _join_owner_read(fut: Future) -> Any:
+        """Join one started read inside the existing request read budget."""
+        return fut.result(timeout=remaining_management_read_budget())
+
+    def _start_independent_reads(
+        identity: Any, snapshot_at: str, started: List[Future]
+    ) -> Dict[str, Optional[Future]]:
+        """Start the Persona directory, ranking and runtime-truth reads together.
+
+        None of them depends on the Registry page or on each other; they used
+        to run one after another on the request thread. Each is joined once,
+        under the request read budget, where its answer is first needed. Only
+        the runtime-truth projection needs the Persona records, so it alone
+        waits for the Persona result. Each owner is read once per request.
+        """
+        service = ctx.service
+        return {
+            "persona": _start_owner_read(
+                lambda: ctx.read_persona_state_lookup(identity, snapshot_at), started
+            ),
+            "ranking": (
+                _start_owner_read(service.get_latest_ranking_snapshot, started)
+                if service
+                else None
+            ),
+            "runtime_inputs": _start_owner_read(
+                ctx.read_strategy_runtime_truth_inputs, started
+            ),
+        }
+
     def _prefetch_independent_owner_reads(
         *,
         norm_state: Optional[str],
@@ -64,15 +110,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         page_token: Optional[str],
         page_size: int,
     ) -> Any:
-        """Overlap the independent owner reads with the Persona directory read.
-
-        The Persona directory, the registry summary page and the ranking
-        snapshot do not depend on each other, yet were awaited one after
-        another. Each prefetch runs in a copy of the request context and lands
-        in the per-request read cache, so the handler's own call below joins
-        the in-flight read (value or failure, under the request deadline). It
-        is only done when a request cache exists; without one a prefetch would
-        be a second, uncoordinated read.
+        """Overlap the Registry first page with the other independent reads.
 
         The registry page port may be uncached, so the page read is not left to
         the cache: its Future is returned and the handler consumes that single
@@ -83,12 +121,6 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             return None
         from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
 
-        if request_read_cache.get() is not None:
-            submit_owner_read(
-                _PERSONA_FLEET_READ_EXECUTOR,
-                service.get_latest_ranking_snapshot,
-                warm_key="strategy_list_ranking_snapshot",
-            )
         if hide_retired_personas or hide_input_needed:
             # The owner-side hide input carries the test Persona ids, which
             # exist only after the Persona directory read; a page read sent
@@ -140,13 +172,12 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 precondition_failed="exclude_state",
             )
         snapshot_at = ctx.utc_now()
-        detail_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
-        state_counts: Optional[Dict[str, int]] = None
-        visible_state_counts: Optional[Dict[str, int]] = None
-        # One Persona directory read for the whole request: every row's
-        # personaStates, operationalStatus and the hide filter come from it.
         include_test_personas = include_test_personas or include_test
         hide_test = not include_test_personas
+        # The Registry first page (when it can be read before the Persona
+        # directory), the Persona directory, the ranking snapshot and the
+        # runtime-truth inputs all start before the first join.
+        started: List[Future] = []
         page_future = _prefetch_independent_owner_reads(
             norm_state=norm_state,
             norm_exclude_state=norm_exclude_state,
@@ -156,7 +187,56 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             page_token=page_token,
             page_size=page_size,
         )
-        persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+        if page_future is not None:
+            started.append(page_future)
+        reads = _start_independent_reads(identity, snapshot_at, started)
+        try:
+            return _list_strategies_page(
+                reads=reads,
+                page_future=page_future,
+                snapshot_at=snapshot_at,
+                norm_state=norm_state,
+                norm_exclude_state=norm_exclude_state,
+                persona_id=persona_id,
+                hide_retired_personas=hide_retired_personas,
+                include_test_personas=include_test_personas,
+                hide_test=hide_test,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        finally:
+            # A read not consumed (an earlier owner failure, offset > 0) stops
+            # holding a worker once the request is answered; no-op once run.
+            for fut in started:
+                if not fut.done():
+                    fut.cancel()
+
+    def _list_strategies_page(
+        *,
+        reads: Dict[str, Optional[Future]],
+        page_future: Any,
+        snapshot_at: str,
+        norm_state: Optional[str],
+        norm_exclude_state: Optional[str],
+        persona_id: Optional[str],
+        hide_retired_personas: bool,
+        include_test_personas: bool,
+        hide_test: bool,
+        page_token: Optional[str],
+        page_size: int,
+    ) -> Dict[str, Any]:
+        detail_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
+        state_counts: Optional[Dict[str, int]] = None
+        visible_state_counts: Optional[Dict[str, int]] = None
+        # One Persona directory read for the whole request: every row's
+        # personaStates, operationalStatus and the hide filter come from it.
+        # A failed or late read is reported unavailable, never hides rows.
+        try:
+            persona_lookup = _join_owner_read(reads["persona"])
+        except Exception as exc:  # noqa: BLE001 - degrades to unavailable, never zeros
+            persona_lookup = unavailable_lookup(
+                f"persona directory read failed: {type(exc).__name__}"
+            )
         # Strategies whose personas are all test-scoped are hidden by default
         # and counted in meta; include_test_personas=true returns them. Only
         # needed when the one directory read found test-scoped personas.
@@ -558,19 +638,26 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     total = max(0, total - hidden_here)
                 if candidates is not None:
                     candidates = visible_basis
+        ranking_f = reads["ranking"]
         try:
             ranking_snapshot, ranking_read_failed = (
-                ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
+                _join_owner_read(ranking_f) if ranking_f is not None else (None, False)
             )
-        except TimeoutError:
-            # Joining the warmed ranking read ran out of request budget. Same
-            # truthful outcome as an owner read failure: telemetry missing,
-            # no retry and no second owner read.
+        except Exception:  # noqa: BLE001 - telemetry missing, never a 500
+            # The started ranking read failed or ran out of request budget.
+            # Same truthful outcome as an owner read failure: telemetry
+            # missing, no retry and no second owner read.
             ranking_snapshot, ranking_read_failed = None, True
         ranking_index = _build_ranking_strategy_index(
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None
         )
-        runtime_truth = ctx.read_strategy_runtime_truth(snapshot_at, persona_lookup)
+        try:
+            runtime_inputs = _join_owner_read(reads["runtime_inputs"])
+        except Exception:  # noqa: BLE001 - unknown, never idle or zero
+            runtime_inputs = (None, [])
+        runtime_truth = ctx.read_strategy_runtime_truth(
+            snapshot_at, persona_lookup, prefetched_inputs=runtime_inputs
+        )
         page_items: List[Dict[str, Any]] = []
         for summary in page_summaries:
             strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()

@@ -1,0 +1,53 @@
+{
+  "task_id": "MGMT-VIEWER-APPROVALS-READ-20261126",
+  "title": "Read-only role cannot read the approval list: Runtime, approvals and governance pages fail for the viewer",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC6",
+  "cross_reference": "RC1 WP1.2 (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126, viewer crawl)",
+  "delivery_state": "implemented_pending_review",
+  "decision": "viewer_may_not_read_approvals",
+  "documented_rule": [
+    {"file": "services/control-plane/bff/BFF_API_CONTRACT.md", "line": 284, "text": "`viewer` | Read-only on non-sensitive surfaces"},
+    {"file": "services/control-plane/bff/BFF_API_CONTRACT.md", "line": 286, "text": "`approver` | Read on approval/deployment-adjacent surfaces"},
+    {"file": "services/control-plane/bff/BFF_API_CONTRACT.md", "line": 296, "text": "DP-01–DP-04 | `operator` | Pool-scoped | Deployment plans and approvals"},
+    {"file": "services/control-plane/bff/BFF_API_CONTRACT.md", "line": 1025, "text": "A 401/403 from an owner is `denied` ... (a tenant-scoped viewer who may not read approvals still gets the rest)"},
+    {"file": "services/governance/main.py", "line": 1417, "text": "_approval_reader: roles must intersect WRITE_AUTHORITY_MATRIX roles | {approval_reader, approval_proposer, operator}, else 403 'Approval read role required' (line 1423)"},
+    {"file": "services/control-plane/bff/auth/policy.py", "line": 58, "text": "dev-login viewer principal carries roles ('viewer',) only; approver (line 62) carries ('approver', 'governance_reviewer')"},
+    {"file": "services/control-plane/bff/auth/test_dev_approver_governance.py", "line": 86, "text": "existing test pins that the Governance owner refuses the real dev-login viewer token with 403"}
+  ],
+  "redaction_finding": {
+    "file": "services/control-plane/bff/models.py",
+    "line": 908,
+    "text": "safe_redact_evidence_refs / redact_evidence_refs (line 817) redact by capability set from auth/policy.py::capabilities_for_identity (line 490, role map line 80); no role is admitted or refused by it, so the redaction on GET /bff/approvals is not evidence that viewer read is intended."
+  },
+  "conflict_kept": "The task summary read the BFF redaction as meaning viewer read is intended; the contract, the owner rule and an existing owner test say the viewer may not read approvals. The owner side is right; the BFF side was wrong only in passing the owner's 403 through untyped.",
+  "change": {
+    "file": "services/control-plane/bff/governance/router.py",
+    "what": "New _forward_read used by GET /bff/approvals, GET /bff/approvals/{id}, GET /bff/approvals/{id}/evidence and GET /bff/management/governance-ledger: an owner 403 becomes 403 {error.code: FORBIDDEN, i18nKey: errors.FORBIDDEN, details.precondition_failed: approval_read_role, details.permission_state: no_permission, details.surface: approvals, details.owner: governance} with no record content. Other owner statuses are unchanged. Decide and batch-decide keep _forward unchanged.",
+    "not_changed": "Governance owner rule, BFF redaction, BFF role checks, every write path."
+  },
+  "contract_update": "services/control-plane/bff/BFF_API_CONTRACT.md section 8.2 note (line 305)",
+  "tests": {
+    "file": "services/control-plane/bff/governance/test_viewer_approvals_read.py",
+    "setup": "Real dev-login JWTs (viewer, operator, approver) from the BFF auth router; real Governance app (services.governance.main.app) verifying them with its own role rule; BFF governance router with production extract_identity, require_read_role, bff_error, redact_evidence_refs and capabilities_for_identity. Only persistence (JSON store in tmp_path) and the socket (urlopen routed to the Governance TestClient) are replaced.",
+    "cases": [
+      "viewer GET /bff/approvals, /bff/approvals/{id}, /bff/approvals/{id}/evidence, /bff/management/governance-ledger -> typed 403 FORBIDDEN approval_read_role, one owner GET with the viewer's own token, no record ids in the body",
+      "Governance owner itself refuses the viewer token (403 'Approval read role required')",
+      "operator and approver: GET /bff/approvals lists only the pending decision, GET /bff/approvals/{id} returns it; evidence_refs redacted exactly as redact_evidence_refs with that principal's capabilities; redacted refs carry no note/storage_ref; redacted_evidence_count matches",
+      "approver sees the approval-decision ref the operator does not (capability difference preserved)",
+      "viewer POST /bff/approvals/{id}/decide -> 403 untyped owner pass-through (write path unchanged); batch-decide -> 207 with 1 failed (http_status 403); owner /review and /revoke refuse the viewer; stored decision unchanged"
+    ]
+  },
+  "verification": [
+    {"command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/governance/test_viewer_approvals_read.py", "result": "9 passed"},
+    {"command": ".venv-pantheon/bin/python3 -m pytest -q tests/test_governance_router.py tests/test_bff_approvals_surface_contract.py tests/test_governance_owner_unconfigured_503.py tests/test_governance_evidence_redaction_sweep.py tests/test_project_approvals_regression.py tests/test_cited_evidence_list.py auth/test_dev_approver_governance.py governance/ (cwd services/control-plane/bff)", "result": "155 passed"},
+    {"command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_approvals_decide_contract.py services/control-plane/bff/tests/test_receipt_governance_routes.py services/control-plane/bff/tests/test_bff_b5_001_security_hardening.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py", "result": "passed"},
+    {"command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py", "result": "2-3 failures in human inbox / cockpit timing tests; the same tests fail on the base without this change (pre-existing, unrelated to approval reads)"}
+  ],
+  "runtime_budget": {"read_path_only": true, "recurring_jobs": 0, "emitters": 0, "persistent_writers": 0, "owner_calls_per_request": "unchanged (one)"},
+  "residual_findings": [
+    {"owner": "frontend (execute-plans)", "task": "none yet", "finding": "/management/runtimes, /management/approvals, /management/governance and /management/governance/ap_301 must render the typed FORBIDDEN approval_read_role answer as a no-permission state (or not request approvals for a viewer). Until then the viewer crawl still lists these pages, so the hosted acceptance item depends on that follow-up."}
+  ],
+  "hosted_acceptance": "pending: the next Dev release crawl no longer lists the four pages for a 403; requires the frontend residual. No VM or SSH access performed by this task."
+}

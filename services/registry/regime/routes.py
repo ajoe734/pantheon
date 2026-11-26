@@ -95,27 +95,13 @@ def _scoped(ctx, row: dict) -> bool:
 def evaluate(body: EvaluateRequest, authorization: Optional[str] = Header(default=None),
              x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
     from .. import service as svc
-    from ..models import ArtifactType
 
     svc._authenticate_registry(authorization, required_roles=REGIME_EVALUATE_ROLES)
     try:
         observations = _preflight_observations(body)
         ctx, header_tenant = svc._strategy_spec_read_scope(authorization, x_tenant_id)
-        latest: dict[str, Any] = {}
-        for view in svc.list_views_by_artifact_type(ArtifactType.STRATEGY_SPEC):
-            e = view.entry
-            if not (svc._can_read(ctx, view)
-                    and (header_tenant is None or e.owner_tenant in (header_tenant, svc.BUILTIN_TENANT))):
-                continue
-            if e.artifact_state.value == "retired":
-                continue
-            if e.strategy_id not in latest or _semver(e.version) >= _semver(latest[e.strategy_id].version):
-                latest[e.strategy_id] = e
-        strategies = [{"strategy_id": e.strategy_id, "registry_id": e.registry_id, "metadata": e.metadata or {},
-                       "owner_tenant": e.owner_tenant} for e in latest.values()]
-        models = [{"registry_id": v.entry.registry_id, "artifact_state": v.entry.artifact_state.value,
-                   "metadata": v.entry.metadata or {}, "created_at": v.entry.created_at}
-                  for v in svc.list_views_by_artifact_type(ArtifactType.MODEL_ARTIFACT)]
+        strategies = svc.list_regime_evaluation_strategies(ctx, header_tenant)
+        models = svc.list_regime_evaluation_models()
         return RegimeEvaluator(get_regime_store(), lambda: observations).evaluate(
             session=body.session, market=body.market, models=models, strategies=strategies,
             verify_inputs=body.verify_inputs)

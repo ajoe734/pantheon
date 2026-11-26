@@ -901,6 +901,158 @@ def strategy_spec_summary_index_row(
     return row
 
 
+# ---------------------------------------------------------------------------
+# Regime evaluator read projection (REGISTRY-REGIME-EVALUATE-BOUNDED-SQL-READ-20261126)
+# ---------------------------------------------------------------------------
+# Only the top-level identity/version/state/tenant fields and the metadata
+# leaves inspected by ``services.registry.regime.profiles.profile_for`` /
+# ``RegimeEvaluator.evaluate`` are projected. Heavy StrategySpec bodies,
+# evaluation summaries, lineage, storage refs, and approval evidence are never
+# decoded or copied.
+REGIME_EVAL_STRATEGY_ROW_KEYS = (
+    "registry_id",
+    "strategy_id",
+    "version",
+    "artifact_state",
+    "owner_tenant",
+)
+REGIME_EVAL_STRATEGY_META_KEYS = (
+    "regime",
+    "holding_horizon_sessions",
+    "family",
+    "strategy_family",
+    "applicable_regimes",
+)
+REGIME_EVAL_STRATEGY_SPEC_KEYS = (
+    "regime",
+    "holding_horizon_sessions",
+    "family",
+    "applicable_regimes",
+)
+REGIME_EVAL_STRATEGY_INNER_META_KEYS = (
+    "regime",
+)
+
+REGIME_EVAL_MODEL_ROW_KEYS = (
+    "registry_id",
+    "artifact_state",
+    "created_at",
+)
+REGIME_EVAL_MODEL_META_KEYS = (
+    "regime_classifier",
+    "market",
+    "scope",
+    "axis",
+    "horizon",
+    "model_version",
+    "model_family",
+    "model_artifact_id",
+    "model",
+)
+
+
+def regime_evaluate_strategy_row(entry: RegistryEntry) -> dict[str, Any]:
+    """Minimal projected StrategySpec row for POST /api/registry/regime/evaluate."""
+    row: dict[str, Any] = {
+        "registry_id": entry.registry_id,
+        "strategy_id": entry.strategy_id,
+        "version": entry.version,
+        "artifact_state": (
+            entry.artifact_state.value
+            if hasattr(entry.artifact_state, "value")
+            else entry.artifact_state
+        ),
+        "owner_tenant": entry.owner_tenant,
+    }
+    meta = entry.metadata
+    light_meta: dict[str, Any] = {}
+    if isinstance(meta, Mapping):
+        for k in REGIME_EVAL_STRATEGY_META_KEYS:
+            if k in meta:
+                light_meta[k] = meta[k]
+        inner = meta.get("strategy_spec")
+        if isinstance(inner, Mapping):
+            light_inner: dict[str, Any] = {
+                k: inner[k] for k in REGIME_EVAL_STRATEGY_SPEC_KEYS if k in inner
+            }
+            inner_meta = inner.get("metadata")
+            if isinstance(inner_meta, Mapping):
+                light_inner_meta = {
+                    k: inner_meta[k]
+                    for k in REGIME_EVAL_STRATEGY_INNER_META_KEYS
+                    if k in inner_meta
+                }
+                if light_inner_meta:
+                    light_inner["metadata"] = light_inner_meta
+            if light_inner:
+                light_meta["strategy_spec"] = light_inner
+    row["metadata"] = light_meta
+    return row
+
+
+def regime_evaluate_model_row(entry: RegistryEntry) -> dict[str, Any]:
+    """Minimal projected ModelArtifact row for POST /api/registry/regime/evaluate."""
+    meta = entry.metadata
+    light_meta: dict[str, Any] = {}
+    if isinstance(meta, Mapping):
+        for k in REGIME_EVAL_MODEL_META_KEYS:
+            if k in meta:
+                light_meta[k] = meta[k]
+    return {
+        "registry_id": entry.registry_id,
+        "artifact_state": (
+            entry.artifact_state.value
+            if hasattr(entry.artifact_state, "value")
+            else entry.artifact_state
+        ),
+        "created_at": entry.created_at,
+        "metadata": light_meta,
+    }
+
+
+@lru_cache(maxsize=512)
+def _regime_semver_key(version: Any) -> tuple[int, ...]:
+    try:
+        return tuple(int(p) for p in str(version).split("."))
+    except ValueError:
+        return (-1,)
+
+
+def select_latest_regime_strategy_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    visible_tenants: Optional[frozenset] = None,
+) -> list[dict[str, Any]]:
+    """Select the highest-semver non-retired visible StrategySpec row per strategy_id.
+
+    Tie-breaking uses ``>=`` in store order (matching ``routes.evaluate``'s
+    original loop over ``list_views_by_artifact_type``), preserving first-seen
+    ``strategy_id`` dict order.
+    """
+    latest: dict[str, tuple[tuple[int, ...], Mapping[str, Any]]] = {}
+    for row in rows:
+        if row.get("artifact_state") == "retired":
+            continue
+        if visible_tenants is not None and row.get("owner_tenant") not in visible_tenants:
+            continue
+        sid = row.get("strategy_id")
+        if not sid:
+            continue
+        ver_key = _regime_semver_key(row.get("version"))
+        prev = latest.get(sid)
+        if prev is None or ver_key >= prev[0]:
+            latest[sid] = (ver_key, row)
+    return [
+        {
+            "strategy_id": r["strategy_id"],
+            "registry_id": r["registry_id"],
+            "metadata": r.get("metadata") or {},
+            "owner_tenant": r.get("owner_tenant"),
+        }
+        for _, r in latest.values()
+    ]
+
+
 def _strategy_summary_last_modified_at(row: dict) -> Optional[str]:
     meta = _binding_dict(row.get("metadata"))
     inner = _binding_dict(meta.get("strategy_spec"))
@@ -1730,6 +1882,58 @@ class RegistryStore:
         self.full_summary_rows_extracted = len(out)
         self.full_summary_row_ids_extracted = tuple(extracted_ids)
         return out
+
+    def list_regime_strategy_spec_rows(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        """Return projected non-retired visible StrategySpec rows for regime evaluation without RegistryEntry copying."""
+        with self._lock:
+            entries = list(self._entries.values())
+        rows: list[dict] = []
+        for entry in entries:
+            art_type = (
+                entry.artifact_type.value
+                if hasattr(entry.artifact_type, "value")
+                else entry.artifact_type
+            )
+            if art_type != "strategy_spec":
+                continue
+            art_state = (
+                entry.artifact_state.value
+                if hasattr(entry.artifact_state, "value")
+                else entry.artifact_state
+            )
+            if art_state == "retired":
+                continue
+            if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
+                continue
+            rows.append(regime_evaluate_strategy_row(entry))
+        return rows
+
+    def list_regime_model_artifact_rows(self) -> list[dict]:
+        """Return projected non-retired ModelArtifact rows for regime evaluation without RegistryEntry copying."""
+        with self._lock:
+            entries = list(self._entries.values())
+        rows: list[dict] = []
+        for entry in entries:
+            art_type = (
+                entry.artifact_type.value
+                if hasattr(entry.artifact_type, "value")
+                else entry.artifact_type
+            )
+            if art_type != "model_artifact":
+                continue
+            art_state = (
+                entry.artifact_state.value
+                if hasattr(entry.artifact_state, "value")
+                else entry.artifact_state
+            )
+            if art_state == "retired":
+                continue
+            rows.append(regime_evaluate_model_row(entry))
+        return rows
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""

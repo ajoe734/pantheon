@@ -475,8 +475,12 @@ store's `evaluator_commit` / `evaluator_invalidate`). Paper scope only; no place
   the keyed or run-file tree exactly as in source-ingest. `POST /regime/evaluate` loads and checks these inputs first:
   an invalid request, an unmounted root, a declared input dataset with no normalized directory (each listed in a
   `409 session_data_incomplete` detail `missing_datasets:...`) or a missing session index close refuses before any
-  registry entry is read. Only then are strategy specs and model artifacts read, each with an artifact-type-filtered
-  query (`list_views_by_artifact_type`; SQL-filtered on Postgres), never the whole registry. Observations come from
+  registry entry is read. Only then are strategy specs and model artifacts read through bounded owner-store projections
+  (`list_regime_strategy_spec_rows` / `list_regime_model_artifact_rows` via `list_regime_evaluation_strategies` /
+  `list_regime_evaluation_models`), filtering `artifact_type`, `artifact_state <> 'retired'`, and caller-visible
+  `owner_tenant` in SQL on Postgres (with legacy JSON-string payload unwrap) and projecting only identity, semver,
+  tenant, and regime-profile/model metadata fields without materializing full `RegistryEntry` or `RegistryEntryView`
+  objects. Observations come from
   `services.research.regime.features.load_governed_observations`, which reads
   every input through the feature catalogue (point in time).
 - Statistical dependencies (numpy, pandas, scipy, scikit-learn, statsmodels) run in the registry image (design K5).

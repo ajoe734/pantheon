@@ -1,0 +1,74 @@
+{
+  "task": "REGISTRY-REGIME-EVALUATE-BOUNDED-SQL-READ-20261126",
+  "class": "RC3 WP3.4",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "problem": {
+    "source": "docs/operations/problem-register.md line 424 (found by REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125)",
+    "route": "POST /api/registry/regime/evaluate",
+    "prior_behavior": "Called svc.list_views_by_artifact_type(ArtifactType.STRATEGY_SPEC) and svc.list_views_by_artifact_type(ArtifactType.MODEL_ARTIFACT), decoding full (payload)::text for all ~9,148 strategy_spec rows and materializing full RegistryEntry + RegistryEntryView objects before filtering owner_tenant and artifact_state != 'retired' in Python (+337.8 MiB RSS delta / ~421 MiB peak in server at 9,148 specs)."
+  },
+  "solution": {
+    "sql_projection_and_filtering": {
+      "strategy_spec": "PostgresRegistryStore.list_regime_strategy_spec_rows (_regime_strategy_spec_single_pass_sql / regime_strategy_spec_select_sql) filters artifact_type = 'strategy_spec', COALESCE(payload ->> 'artifact_state', '') <> 'retired', and visible owner_tenant in SQL (unwrapping legacy JSON-string payloads via (payload #>> '{}')::jsonb and detoasting kept rows once via payload || '{}'::jsonb). Projects only registry_id, strategy_id, version, artifact_state, owner_tenant and the regime-profile metadata leaves inspected by profile_for (regime, holding_horizon_sessions, family, strategy_family, applicable_regimes under metadata, metadata.strategy_spec, and metadata.strategy_spec.metadata).",
+      "model_artifact": "PostgresRegistryStore.list_regime_model_artifact_rows (_regime_model_artifact_single_pass_sql / regime_model_artifact_select_sql) filters artifact_type = 'model_artifact' and COALESCE(payload ->> 'artifact_state', '') <> 'retired' in SQL (with legacy JSON-string payload unwrap) and projects only registry_id, artifact_state, created_at, and the regime model metadata keys (regime_classifier, market, scope, axis, horizon, model_version, model_family, model_artifact_id, model).",
+      "in_memory_parity": "RegistryStore.list_regime_strategy_spec_rows, RegistryStore.list_regime_model_artifact_rows, regime_evaluate_strategy_row, regime_evaluate_model_row, and select_latest_regime_strategy_rows preserve exact semantic parity (retired rows excluded, numerical highest semver per strategy_id with >= store-order tie-breaking, X-Tenant-Id / BUILTIN_TENANT / admin visibility rules, legacy JSON-string payload handling)."
+    },
+    "touched_files": [
+      "services/registry/regime/routes.py",
+      "services/registry/pg_store.py",
+      "services/registry/storage.py",
+      "services/registry/split_api.py",
+      "services/registry/service.py",
+      "services/registry/contract.md",
+      "services/registry/test_regime_evaluate_memory_bound.py",
+      "docs/operations/problem-register.md",
+      "docs/deployment/evidence/REGISTRY-REGIME-EVALUATE-BOUNDED-SQL-READ-20261126/evidence.json"
+    ]
+  },
+  "measurements": {
+    "python_column_decode_benchmark_9148_specs": {
+      "total_strategy_spec_rows": 9148,
+      "non_retired_strategy_spec_rows": 7592,
+      "retired_strategy_spec_rows_filtered_in_sql": 1556,
+      "bounded_traced_peak_bytes": 8043148,
+      "bounded_traced_peak_mib": 7.67,
+      "legacy_traced_peak_bytes": 203301355,
+      "legacy_traced_peak_mib": 193.88,
+      "traced_memory_reduction_pct": 96.04,
+      "bounded_elapsed_ms": 124.88,
+      "legacy_elapsed_ms": 5120.41
+    },
+    "real_postgres_benchmark_9148_specs": {
+      "total_rows_in_table": 9348,
+      "strategy_spec_rows": 9148,
+      "non_retired_strategy_spec_rows": 7592,
+      "retired_strategy_spec_rows": 1556,
+      "unrelated_20kb_model_artifact_rows": 200,
+      "legacy_string_wrapped_rows": 9,
+      "bounded_traced_peak_bytes": 8246252,
+      "bounded_traced_peak_mib": 7.86,
+      "legacy_traced_peak_bytes": 264909273,
+      "legacy_traced_peak_mib": 252.64,
+      "traced_memory_reduction_pct": 96.89,
+      "bounded_elapsed_ms": 2886.97,
+      "legacy_elapsed_ms": 7500.53
+    }
+  },
+  "runtime_budget": {
+    "read_path_memory": "Reduced from +337.8 MiB RSS delta (252.64 MiB traced Python allocation) at 9,148 strategy_spec rows to 7.86 MiB traced Python allocation (-96.89%) by filtering retired and non-visible rows in SQL and projecting only regime-evaluation leaves without RegistryEntry/RegistryEntryView materialization.",
+    "writers_and_jobs": "0 new recurring jobs, emitters, or persistent writers; existing RegimeStore writes (1 market_state row + active strategy regime_states rows per evaluated session via evaluator_commit / evaluator_invalidate) unchanged."
+  },
+  "verification": {
+    "commands": [
+      "./.venv-pantheon/bin/python3 -m pytest -q services/registry/test_regime_evaluate_memory_bound.py services/registry/regime/tests services/research/tests/test_regime_research_route.py",
+      "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:41525/postgres ./.venv-pantheon/bin/python3 -m pytest -q services/registry/test_regime_evaluate_memory_bound.py"
+    ],
+    "results": {
+      "test_regime_evaluate_memory_bound_postgres": "5 passed",
+      "registry_regime_tests": "45 passed, 1 skipped",
+      "research_regime_route_tests": "4 passed"
+    }
+  },
+  "residual_findings": []
+}

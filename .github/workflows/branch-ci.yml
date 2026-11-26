@@ -943,7 +943,7 @@ jobs:
   research-suite:
     name: Research suite
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     needs:
       - trailers
       - generated-files
@@ -972,10 +972,10 @@ jobs:
           # Regime classifier libraries: same pins as the deployed research
           # image (services/research/runtime-requirements.txt).
           "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
-            "statsmodels==0.15.0" "ruptures==1.1.10"
+            "statsmodels==0.15.0" "ruptures==1.1.10" "pytest-xdist==3.6.1"
           "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite
         timeout-minutes: 25
         run: |
-          "$RUNNER_TEMP/research-venv/bin/python" -m pytest -q services/research
+          "$RUNNER_TEMP/research-venv/bin/python" -m pytest -q -n 4 --dist=loadfile services/research

@@ -473,6 +473,62 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
     assert res["actual"]["skipped_immutable_count"] == 1
 
 
+def test_distillation_does_not_revive_or_rewrite_retired_fallback_draft(tmp_path, monkeypatch) -> None:
+    """STRATEGY-FALLBACK-DRAFT-RETIRE-20261125: a retired entry is immutable to distillation.
+
+    The versioned Registry id of a source is stable, so a retired fallback draft is read back as
+    ``retired``; distillation neither re-registers nor revives it and no lineage conflict is raised.
+    """
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    state_path = tmp_path / "controller_state.json"
+    record = _normalized_source("src-note-test-003", tenant_id="test")
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "controller_alive",
+        job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    state_store = ControllerStateStore(state_path)
+    state_store.save(state)
+
+    def mock_get_registry_entry(url: str, registry_id: str) -> dict | None:
+        # Retired by the maintenance path: content differs from a fresh projection (last_actor, state).
+        return {"entry": {
+            "registry_id": registry_id,
+            "artifact_state": "retired",
+            "last_actor": {"actor_id": "registry-maintenance:fallback-draft-retire"},
+            "metadata": {"distillation": {"source_id": "other"}},
+        }}
+
+    def mock_register_strategy_spec(url: str, payload: dict) -> dict:
+        pytest.fail("Must not re-register or revive a retired fallback draft!")
+
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
+
+    res = run_controller_tick(config=config, state=state, store=state_store, writer=DummyLoopWriter())
+
+    assert res["status"] == "success"
+    assert res["actual"]["synced_count"] == 0
+    assert res["actual"]["skipped_immutable_count"] == 1
+    assert res["actual"]["sync_failures_count"] == 0
+
+
 def test_distillation_registry_http_client_authorization_and_rotation(tmp_path, monkeypatch) -> None:
     from services.source_ingestion.distillation_controller import (
         _get_registry_entry,
@@ -1776,3 +1832,60 @@ def test_lease_expired_dead_letters_wait_for_normal_work_and_status_is_truthful(
     import sqlite3
     with sqlite3.connect(config.job_queue_path) as conn:
         assert conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("delivery_failure", [False, True])
+def test_tick_with_only_extraction_tick_budget_deferrals_is_working(
+    tmp_path, monkeypatch, delivery_failure
+) -> None:
+    """L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126: planned
+    ``extraction_tick_budget`` deferrals are not Registry delivery retries;
+    a real delivery retry_wait still fails the tick on registry_sync."""
+    from services.source_ingestion import distillation_controller as ctl
+    from services.source_ingestion.distillation_worker import DEFERRAL_EXTRACTION_TICK_BUDGET
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.sqlite3",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+    for index in range(3):
+        queue.enqueue_source_record(_normalized_source(f"src-tick-{index}", tenant_id="test"))
+    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=3, tenant_id="test")
+    future = 4_000_000_000.0  # not due during this tick
+    for job in jobs:
+        queue.begin_job(job, lease_seconds=30)
+    for job in jobs[:2]:
+        queue.defer_budget(job, now=future, reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False)
+    if delivery_failure:
+        queue.mark_retry_or_dead_letter(
+            jobs[2], error="registry_sync_failed: RuntimeError: timed out",
+            base_delay_seconds=10_000_000_000, permanent=False,
+        )
+    else:
+        queue.defer_budget(jobs[2], now=future, reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False)
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+
+    if delivery_failure:
+        with pytest.raises(DistillationControllerError) as failure:
+            run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+        assert failure.value.stage == "registry_sync"
+        return
+    result = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+    assert result["status"] == "success"
+    assert result["controller_status"] == "working"
+    assert queue.metrics()["deferred"] == queue.metrics()["retry_wait"] == 3
+    assert state.consecutive_failures == 0 and state.last_failure_stage is None

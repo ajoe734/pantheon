@@ -27,6 +27,7 @@ from ..api_models import (
     TriggerIngestJobRequest,
 )
 from ..connectors import SourceEvidenceError
+from ..pg_store import SOURCE_RECORD_PAGE_MAX, read_source_records_page
 from ..daily_bars_reader import SNAPSHOT_CLOSES, DailyBarsReader, join_snapshot_with_daily_bars
 from ..requirement_state import (
     DAILY_SNAPSHOT_DATASET,
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 
 _SOURCE_INGEST_READ_ROLES: tuple[str, ...] = ("source_ingest_reader", "operator", "admin", "persona.admin", "viewer")
 _SOURCE_INGEST_WRITE_ROLES: tuple[str, ...] = ("operator", "admin", "persona.admin")
+_SOURCE_RECORD_PAGE_DEFAULT = 200
+_SOURCE_RECORD_PAGE_MAX = SOURCE_RECORD_PAGE_MAX
 _JOBS_DEFAULT_PAGE_SIZE = 100
 _JOBS_MAX_PAGE_SIZE = 250
 
@@ -549,8 +552,48 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/api/source-ingest/source-records")
-    def list_source_records(authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
-        return {"source_records": [r.to_dict() for r in _owned_evidence_read(runtime.evidence_repository, "list_source_records", _source_read_tenant(authorization, tenant_id))]}
+    def list_source_records(
+        connector_id: str | None = Query(default=None, min_length=1, max_length=200),
+        page_size: int | None = Query(default=None, ge=1, le=_SOURCE_RECORD_PAGE_MAX),
+        page_token: str | None = Query(default=None, max_length=32),
+        authorization: str | None = Header(default=None),
+        tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        """Without ``connector_id``: the tenant's whole list (unchanged contract).
+
+        With ``connector_id``: one bounded newest-first page of that connector's
+        records (``page_size`` default 200, owner cap 1000) and an opaque
+        ``next_page_token`` (null on the last page), served by the connector page
+        index. Paging parameters without ``connector_id`` are rejected rather than
+        silently returning the whole tenant list.
+        """
+        if connector_id is None:
+            if page_size is not None or page_token is not None:
+                raise HTTPException(status_code=400, detail="page_size/page_token require connector_id")
+            return {"source_records": [r.to_dict() for r in _owned_evidence_read(runtime.evidence_repository, "list_source_records", _source_read_tenant(authorization, tenant_id))]}
+        connector = connector_id.strip()
+        if not connector:
+            raise HTTPException(status_code=400, detail="connector_id must be non-empty")
+        try:
+            cursor = int(page_token) if page_token else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid page_token") from None
+        if cursor is not None and cursor < 0:
+            raise HTTPException(status_code=400, detail="invalid page_token")
+        tenant = _source_read_tenant(authorization, tenant_id)
+        size = page_size or _SOURCE_RECORD_PAGE_DEFAULT
+        try:
+            records, next_cursor = read_source_records_page(
+                runtime.evidence_repository, tenant, connector_id=connector, limit=size, cursor=cursor
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Source evidence owner unavailable") from exc
+        return {
+            "source_records": [r.to_dict() for r in records],
+            "connector_id": connector,
+            "page_size": size,
+            "next_page_token": str(next_cursor) if next_cursor is not None else None,
+        }
 
     @router.get("/api/source-ingest/source-records/{source_id}")
     def get_source_record(source_id: str, authorization: str | None = Header(default=None), tenant_id: str | None = Header(default=None, alias="X-Tenant-Id")) -> dict[str, Any]:
