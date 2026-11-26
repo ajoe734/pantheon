@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# acceptance-owner: POOL-MEMBER-JOINED-AT-CARRY-20261126
+"""Read-only release probe: a member virtual book marked by this release carries its admission time.
+
+Reads GET /bff/version (build_time of the deployed BFF) and every page of GET /bff/personas
+(page_size=200, following next_page_token until empty). For every persona that is not retired
+or archived and whose strategy_pool surface is ok, each current (non-removed) member with an ok
+data.strategyPool.memberVirtualBooks row whose newest mark is later than the BFF build time is
+checked: the book's admitted_at must equal that member's joined_at in data.strategyPool.current.
+
+A book whose newest mark is not later than the build time was written before this release and is
+not judged. When no book qualifies yet the probe exits 77 with the reason.
+
+Logs in through /bff/auth/dev-login (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET); the token stays in
+memory and is never printed. GET only apart from that exchange.
+Exit 0 passed, 1 failed, 77 skipped (a required variable is missing or no book qualifies yet).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+NO_BOOK = "no_member_book_marked_after_bff_build"
+
+
+def _instant(value):
+    """Aware UTC datetime of an ISO timestamp, or None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _newest_mark(book):
+    """Newest mark time of a book: its as_of or any underlying's as_of (the runtime's event times)."""
+    marks = [_instant(book.get("as_of"))] + [_instant(u.get("as_of")) for u in book.get("underlyings") or []
+                                             if isinstance(u, dict)]
+    marks = [m for m in marks if m is not None]
+    return max(marks) if marks else None
+
+
+def check_persona(detail, built):
+    """(failures, checked_books) for one persona detail; ``built`` is the BFF build instant."""
+    pool = (detail.get("data") or {}).get("strategyPool") or {}
+    joined = {m.get("artifact_ref"): m.get("joined_at") for m in (pool.get("current") or {}).get("members") or []
+              if isinstance(m, dict) and m.get("stage") != "removed"}
+    failures, checked = [], 0
+    for row in pool.get("memberVirtualBooks") or []:
+        if not isinstance(row, dict) or row.get("status") != "ok" or not isinstance(row.get("book"), dict):
+            continue
+        ref = row.get("artifact_ref")
+        if ref not in joined:
+            continue
+        newest = _newest_mark(row["book"])
+        if newest is None or newest <= built:
+            continue
+        checked += 1
+        admitted = row["book"].get("admitted_at")
+        if admitted != joined[ref]:
+            failures.append(f"admitted_at_not_joined_at:{ref}:admitted_at={admitted}:joined_at={joined[ref]}")
+    return failures, checked
+
+
+def _personas(listing):
+    data = listing.get("data") if isinstance(listing, dict) else listing
+    if isinstance(data, dict):
+        data = data.get("items") or data.get("personas") or []
+    return [p for p in data or [] if isinstance(p, dict)]
+
+
+def _is_retired(persona) -> bool:
+    return any(str(persona.get(k) or "").lower() in ("retired", "archived")
+               for k in ("lifecycle_state", "lifecycleState", "state", "status"))
+
+
+def _next_token(listing):
+    if not isinstance(listing, dict):
+        return None
+    for holder in (listing, listing.get("meta") or {}, (listing.get("meta") or {}).get("page") or {},
+                   listing.get("page") or {}, listing.get("pagination") or {}):
+        if isinstance(holder, dict) and holder.get("next_page_token"):
+            return str(holder["next_page_token"])
+    return None
+
+
+def _all_personas(fetch, max_pages=100):
+    personas, token = [], None
+    for _ in range(max_pages):
+        path = "/bff/personas?page_size=200"
+        if token:
+            path += "&page_token=" + urllib.parse.quote(token, safe="")
+        listing = fetch(path)
+        personas.extend(_personas(listing))
+        token = _next_token(listing)
+        if not token:
+            return personas
+    raise RuntimeError("persona_list_pagination_exceeded")
+
+
+def _applicable(detail) -> bool:
+    surfaces = (detail.get("meta") or {}).get("surfaces") or {}
+    pool = (detail.get("data") or {}).get("strategyPool") or {}
+    return (surfaces.get("strategy_pool") or {}).get("status") == "ok" and isinstance(pool.get("current"), dict)
+
+
+def run(fetch) -> dict:
+    version = fetch("/bff/version")
+    version = version.get("data", version) if isinstance(version, dict) else {}
+    built = _instant((version or {}).get("build_time"))
+    if built is None:
+        return {"passed": False, "skipped": False, "reason": "bff_build_time_unknown",
+                "build_time": (version or {}).get("build_time")}
+    personas = _all_personas(fetch)
+    results, read, checked_books = {}, 0, 0
+    for persona in personas:
+        pid = persona.get("id") or persona.get("persona_id")
+        if not pid or _is_retired(persona):
+            continue
+        detail = fetch(f"/bff/personas/{pid}")
+        read += 1
+        if not _applicable(detail):
+            continue
+        failures, checked = check_persona(detail, built)
+        if checked:
+            results[pid] = failures
+            checked_books += checked
+    failed = {pid: f for pid, f in results.items() if f}
+    report = {"build_time": built.isoformat(), "personas_listed": len(personas), "personas_read": read,
+              "books_checked": checked_books,
+              "results": {pid: ("failed" if f else "ok") for pid, f in sorted(results.items())}, "failed": failed}
+    report["skipped"] = checked_books == 0
+    if report["skipped"]:
+        report["reason"] = NO_BOOK
+    report["passed"] = checked_books > 0 and not failed
+    return report
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = run(lambda path: _request(urllib.request.Request(
+            base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    if report.get("skipped"):
+        return 77
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
