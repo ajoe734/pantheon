@@ -256,25 +256,30 @@ old_root_cands = [
 ]
 old_prod_root = next((c for c in old_root_cands if c.is_dir()), old_root_cands[0])
 
-def copy_missing_tree(src_dir: Path, dst_dir: Path) -> None:
+def copy_boot_tree(src_dir: Path, dst_dir: Path, overwrite: bool = True) -> None:
     if not src_dir.exists() or src_dir.is_symlink() or not src_dir.is_dir():
         return
     dst_dir.mkdir(parents=True, exist_ok=True)
     for entry in sorted(src_dir.iterdir(), key=lambda p: p.name):
         dst_entry = dst_dir / entry.name
         if entry.is_symlink():
-            if not dst_entry.exists() and not dst_entry.is_symlink():
+            if overwrite and (dst_entry.is_symlink() or dst_entry.is_file()):
+                dst_entry.unlink()
+            if not dst_entry.is_symlink() and not dst_entry.exists():
                 os.symlink(os.readlink(entry), dst_entry)
         elif entry.is_dir():
-            copy_missing_tree(entry, dst_entry)
+            copy_boot_tree(entry, dst_entry, overwrite=overwrite)
         elif entry.is_file():
-            if not dst_entry.exists() or (dst_entry.is_file() and dst_entry.stat().st_size == 0 and entry.stat().st_size > 0):
+            dst_has_bytes = dst_entry.is_file() and not dst_entry.is_symlink() and dst_entry.stat().st_size > 0
+            if (overwrite and (entry.stat().st_size > 0 or not dst_has_bytes)) or (not dst_entry.is_symlink() and not dst_entry.exists()) or not dst_has_bytes:
+                if dst_entry.is_symlink():
+                    dst_entry.unlink()
                 shutil.copy2(entry, dst_entry)
 
 for d in ("secrets", "state", "manifests", "fe", "config", "proxy"):
     target_d = data_mount / d
     target_d.mkdir(parents=True, exist_ok=True)
-    copy_missing_tree(old_prod_root / d, target_d)
+    copy_boot_tree(old_prod_root / d, target_d, overwrite=True)
 
 for sub in ("state/snapshots", "state/journal", "fe/releases", "fe/artifacts", "proxy/caddy-data", "proxy/caddy-config"):
     (data_mount / sub).mkdir(parents=True, exist_ok=True)
@@ -299,13 +304,23 @@ for sec_name in ("prod.secrets.env", "postgres_password"):
     if sec_file.is_file() and (sec_file.stat().st_mode & 0o777) not in (0o400, 0o600):
         os.chmod(sec_file, 0o600)
 
+am_path = data_mount / "state" / "active_manifest.json"
+bl_path = data_mount / "state" / "baseline.json"
+if not am_path.is_file() or not bl_path.is_file():
+    raise SystemExit("ACTIVE_MANIFEST_OR_BASELINE_MISSING")
+am = json.loads(am_path.read_text(encoding="utf-8"))
+bl = json.loads(bl_path.read_text(encoding="utf-8"))
+if am.get("release_id") != release_id or bl.get("release_id") != release_id or bl.get("healthy") is not True:
+    raise SystemExit(
+        f"active release mismatch: active_manifest={am.get('release_id')} baseline={bl.get('release_id')} want={release_id}"
+    )
+
 fe_rel_dir = data_mount / "fe" / "releases" / release_id
 if not fe_rel_dir.is_dir():
     raise SystemExit(f"FE_RELEASE_DIR_MISSING:{fe_rel_dir}")
 fe_current = data_mount / "fe" / "current"
-if fe_current.is_symlink() or fe_current.is_file():
-    fe_current.unlink()
-os.symlink(f"{prod_root_s.rstrip('/')}/fe/releases/{release_id}", fe_current)
+if not fe_current.is_symlink() and not fe_current.exists():
+    os.symlink(f"{prod_root_s.rstrip('/')}/fe/releases/{release_id}", fe_current)
 if not (fe_rel_dir / "deployment.json").is_file() or (fe_rel_dir / "deployment.json").stat().st_size == 0:
     raise SystemExit("FE_DEPLOYMENT_JSON_MISSING")
 if not (fe_rel_dir / ".artifact_sha256").is_file() or (fe_rel_dir / ".artifact_sha256").stat().st_size == 0:
@@ -353,22 +368,11 @@ if containers_root.is_dir():
                     if raw_src:
                         boot_src = old_boot_mount / raw_src.lstrip("/")
                         if boot_src.is_dir():
-                            copy_missing_tree(boot_src, data_mount / target_rel)
+                            copy_boot_tree(boot_src, data_mount / target_rel, overwrite=False)
 
 if not caddy_img or "@sha256:" not in caddy_img:
     caddy_img = default_caddy_img
 caddy_img_file.write_text(caddy_img + "\n", encoding="utf-8")
-
-am_path = data_mount / "state" / "active_manifest.json"
-bl_path = data_mount / "state" / "baseline.json"
-if not am_path.is_file() or not bl_path.is_file():
-    raise SystemExit("ACTIVE_MANIFEST_OR_BASELINE_MISSING")
-am = json.loads(am_path.read_text(encoding="utf-8"))
-bl = json.loads(bl_path.read_text(encoding="utf-8"))
-if am.get("release_id") != release_id or bl.get("release_id") != release_id or bl.get("healthy") is not True:
-    raise SystemExit(
-        f"active release mismatch: active_manifest={am.get('release_id')} baseline={bl.get('release_id')} want={release_id}"
-    )
 
 shutil.copy2(pre_snap_s, data_mount / "state" / "snapshots" / f"vm-replace-{release_id}.json")
 (data_mount / "state" / "data_disk_uuid").write_text(data_uuid + "\n", encoding="utf-8")
@@ -416,8 +420,21 @@ upload_bundle_to_vm() {
 MIGRATION_MODE="offline_boot_disk"
 DATA_UUID=""
 CADDY_IMAGE="$PROD_CADDY_DEFAULT_IMAGE"
+PROD_INCUMBENT_SSH_TRIES="${PROD_INCUMBENT_SSH_TRIES:-2}"
+PROD_INCUMBENT_SSH_INTERVAL="${PROD_INCUMBENT_SSH_INTERVAL:-1}"
 
-if [[ "$OLD_STATUS" == "RUNNING" ]] && upload_bundle_to_vm >/dev/null 2>&1; then
+try_upload_bundle_incumbent() {
+  local attempt
+  for attempt in $(seq 1 "$PROD_INCUMBENT_SSH_TRIES"); do
+    if upload_bundle_to_vm >/dev/null 2>&1; then
+      return 0
+    fi
+    (( attempt < PROD_INCUMBENT_SSH_TRIES )) && sleep "$PROD_INCUMBENT_SSH_INTERVAL"
+  done
+  return 1
+}
+
+if [[ "$OLD_STATUS" == "RUNNING" ]] && try_upload_bundle_incumbent; then
   if PRE_MIGRATE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
     --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --command "set -euo pipefail
     echo ONLINE_SSH_CONNECTED=1
@@ -432,7 +449,6 @@ if [[ "$OLD_STATUS" == "RUNNING" ]] && upload_bundle_to_vm >/dev/null 2>&1; then
       PROD_COMPOSE_ENV_FILE=\"\$PROD_DATA_MOUNT/config/compose.env\" \
       \"\$PROD_ROOT/bin/bootstrap.sh\" >/dev/null
     sudo python3 -I \"\$PROD_ROOT/bin/prod_preflight.py\" boot-disk --prod-root \"\$PROD_ROOT\" --data-mount \"\$PROD_DATA_MOUNT\" >/dev/null
-    sudo install -m 0644 \"\$B/pre_replace_snapshot.json\" \"\$PROD_DATA_MOUNT/state/snapshots/vm-replace-\$RELEASE_ID.json\"
     sudo python3 -I - \"\$PROD_DATA_MOUNT/state/active_manifest.json\" \"\$PROD_DATA_MOUNT/state/baseline.json\" \"\$RELEASE_ID\" <<'PY'
 import json, sys
 from pathlib import Path
@@ -442,6 +458,7 @@ want = sys.argv[3]
 if am.get('release_id') != want or bl.get('release_id') != want or bl.get('healthy') is not True:
     raise SystemExit(f'active release mismatch: active_manifest={am.get(\"release_id\")} baseline={bl.get(\"release_id\")} want={want}')
 PY
+    sudo install -m 0644 \"\$B/pre_replace_snapshot.json\" \"\$PROD_DATA_MOUNT/state/snapshots/vm-replace-\$RELEASE_ID.json\"
     if ! sudo test -L \"\$PROD_DATA_MOUNT/fe/current\" && sudo test -d \"\$PROD_DATA_MOUNT/fe/releases/\$RELEASE_ID\"; then
       sudo ln -sfn \"\$PROD_ROOT/fe/releases/\$RELEASE_ID\" \"\$PROD_DATA_MOUNT/fe/current\"
     fi
@@ -605,6 +622,9 @@ if [[ "$MIGRATION_MODE" == "online_ssh" ]]; then
     sudo sync
     sudo umount \"\$PROD_DATA_MOUNT\" >/dev/null 2>&1 || true
   " >/dev/null 2>&1 || true
+elif [[ "$OLD_STATUS" == "RUNNING" ]]; then
+  "$GCLOUD" compute instances stop "$PROD_VM_NAME" \
+    --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --quiet >/dev/null 2>&1 || true
 fi
 
 wait_for_ssh() {
@@ -677,7 +697,6 @@ rollback_to_old_boot_disk() {
           sudo install -m 0755 \"\$B/bootstrap.sh\" \"\$B/prod_atomic_switch.sh\" \"\$B/prod_rollback.sh\" \"\$B/prod_ops.sh\" \"\$B/prod_preflight.py\" \"\$B/staging_sanitize.py\" \"\$B/release_manifest.py\" \"\$PROD_ROOT/bin/\"
           sudo install -m 0644 \"\$B/docker-compose.prod-control.yml\" \"\$B/Caddyfile\" \"\$PROD_ROOT/bin/\"
           sudo -H -E env PROD_USE_SUDO=true PROD_REQUIRE_FULL_SECRET_KEYS=true PROD_BOOTSTRAP_SKIP_STATEFUL=true PROD_PREPULL_IMAGES=false \
-            PROD_MACHINE_TYPE=\"${OLD_MACHINE_TYPE}\" \
             PROD_SECRETS_ENV_FILE=\"\${PROD_SECRETS_ENV_FILE:-\$PROD_DATA_MOUNT/secrets/prod.secrets.env}\" \
             PROD_POSTGRES_PASSWORD_FILE=\"\${PROD_POSTGRES_PASSWORD_FILE:-\$PROD_DATA_MOUNT/secrets/postgres_password}\" \
             PROD_COMPOSE_ENV_FILE=\"\$PROD_DATA_MOUNT/config/compose.env\" \
@@ -784,21 +803,24 @@ nic = nics[0] if nics and isinstance(nics[0], dict) else {}
 ac = (nic.get("accessConfigs") or [{}])[0]
 got_ip = str((ac if isinstance(ac, dict) else {}).get("natIP") or "").strip()
 
-if not new_id or new_id == old_id:
-    raise SystemExit("INSTANCE_ID_NOT_REPLACED")
+err = ""
 if not new_boot or new_boot in (old_boot, data_disk):
-    raise SystemExit("BOOT_DISK_NOT_FRESH")
-if not data_attached:
-    raise SystemExit("DATA_DISK_NOT_ATTACHED_ON_NEW_VM")
-if got_ip != want_ip:
-    raise SystemExit(f"STATIC_IP_MISMATCH:{got_ip}!={want_ip}")
+    err = "BOOT_DISK_NOT_FRESH"
+elif not new_id or new_id == old_id:
+    err = "INSTANCE_ID_NOT_REPLACED"
+elif not data_attached:
+    err = "DATA_DISK_NOT_ATTACHED_ON_NEW_VM"
+elif got_ip != want_ip:
+    err = f"STATIC_IP_MISMATCH:{got_ip}!={want_ip}"
 
 print(f"NEW_INSTANCE_ID={shlex.quote(new_id)}")
 print(f"NEW_MACHINE_TYPE={shlex.quote(new_mt)}")
-print(f"NEW_BOOT_DISK={shlex.quote(new_boot)}")
+print(f"NEW_BOOT_DISK={shlex.quote(new_boot if new_boot not in (old_boot, data_disk) else '')}")
+print(f"NEW_IDENTITY_ERR={shlex.quote(err)}")
 PY
 )" || rollback_to_old_boot_disk "verify_new_vm_identity" "replacement VM identity check failed (${NEW_VM_VARS:-invalid})"
 eval "$NEW_VM_VARS"
+[[ -z "${NEW_IDENTITY_ERR:-}" ]] || rollback_to_old_boot_disk "verify_new_vm_identity" "replacement VM identity check failed (${NEW_IDENTITY_ERR})"
 
 NEW_VCPUS="$("$GCLOUD" compute machine-types describe "$NEW_MACHINE_TYPE" \
   --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --format='value(guestCpus)' 2>/dev/null | tr -d '[:space:]')"

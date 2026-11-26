@@ -4060,6 +4060,9 @@ PY
     rm -f "$S/disks/$disk"
     echo "deleted_disk $disk" >> "$S/disks_deleted.log"
     exit 0 ;;
+  "compute instances stop "*)
+    echo "stopped $4" >> "$S/vm_lifecycle.log"
+    exit 0 ;;
   "compute instances delete "*)
     [[ "${FAKE_REPLACE_FAIL:-}" == "delete_incumbent_vm" ]] && exit 1
     [[ -f "$S/vm.json" ]] || exit 1
@@ -4343,6 +4346,7 @@ class ReplaceVmHarness(RealControllerBase):
             "PROD_FSTAB_PATH": str(self.fstab),
             "PROD_SSH_WAIT_TRIES": "2",
             "PROD_SSH_WAIT_INTERVAL": "0",
+            "PROD_INCUMBENT_SSH_INTERVAL": "0",
             "CLOUDSDK_CORE_PROJECT": PROD_ENV["PROD_GCP_PROJECT_ID"],
         }
         defaults.update(extra)
@@ -4498,14 +4502,15 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(out["rto_budget_seconds"], 1800)
 
     def test_replace_vm_rolls_back_to_old_boot_disk_when_replacement_or_restore_fails(self):
-        for fail_mode, expected_stage, expect_orphan_cleaned in (
-            ("create_new_vm", "create_new_vm", False),
-            ("ssh_new_vm", "wait_for_ssh", True),
-            ("restore_active_release", "restore_active_release", True),
+        for fail_mode, expected_stage, expect_orphan_cleaned, extra_kw in (
+            ("create_new_vm", "create_new_vm", False, {}),
+            ("verify_new_vm_identity", "verify_new_vm_identity", True, {"FAKE_NEW_INSTANCE_ID": "1111111111111111111"}),
+            ("ssh_new_vm", "wait_for_ssh", True, {}),
+            ("restore_active_release", "restore_active_release", True, {}),
         ):
             with self.subTest(fail_mode=fail_mode):
                 self.setUp()
-                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode)
+                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode, **extra_kw)
                 self.assertEqual(r.returncode, 3, f"{fail_mode}: stdout={r.stdout}\nstderr={r.stderr}")
                 out = json.loads(r.stdout.strip().splitlines()[-1])
                 self.assertEqual(out["status"], "replace_vm_rolled_back", out)
@@ -4654,19 +4659,37 @@ class ReplaceVmHarness(RealControllerBase):
                 self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
 
     def test_replace_vm_offline_boot_disk_release_mismatch_rolls_back_and_cleans_up_orphaned_new_boot_disk(self):
-        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
-        r = self._run_replace_vm(release_id=self.baseline_release_id)
-        self.assertEqual(r.returncode, 3, f"stdout={r.stdout}\nstderr={r.stderr}")
-        out = json.loads(r.stdout.strip().splitlines()[-1])
-        self.assertEqual(out["status"], "replace_vm_rolled_back", out)
-        self.assertEqual(out["failed_stage"], "offline_boot_disk_migrate")
-        self.assertEqual(out["migration_mode"], "offline_boot_disk")
-        self.assertEqual(out["old_vm_status"], "TERMINATED")
-        self.assertTrue(out["rolled_back_to_old_boot_disk"])
-        self.assertTrue(out["orphaned_new_boot_disk_deleted"])
-        self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
-        self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
-        self.assertIn("meta=serial-port-enable=FALSE", (self.state / "vm_lifecycle.log").read_text())
+        for case_name, pre_g77 in (
+            ("already_migrated_terminated_incumbent", False),
+            ("pre_g77_unmigrated_terminated_incumbent", True),
+        ):
+            with self.subTest(case=case_name):
+                self.setUp()
+                if pre_g77:
+                    self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+                else:
+                    vm_doc = json.loads((self.state / "vm.json").read_text())
+                    vm_doc["status"] = "TERMINATED"
+                    vm_doc["metadata"] = {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+                    (self.state / "vm.json").write_text(json.dumps(vm_doc))
+                self.assertTrue((self.data_mount / "fe" / "releases" / self.baseline_release_id).is_dir() or pre_g77)
+                r = self._run_replace_vm(release_id=self.baseline_release_id)
+                self.assertEqual(r.returncode, 3, f"{case_name}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "replace_vm_rolled_back", out)
+                self.assertEqual(out["failed_stage"], "offline_boot_disk_migrate")
+                self.assertEqual(out["migration_mode"], "offline_boot_disk")
+                self.assertEqual(out["old_vm_status"], "TERMINATED")
+                self.assertTrue(out["rolled_back_to_old_boot_disk"])
+                self.assertTrue(out["orphaned_new_boot_disk_deleted"])
+                self.assertEqual(
+                    os.readlink(self.data_mount / "fe" / "current"),
+                    f"{self.root}/fe/releases/{self.active_release_id}",
+                )
+                self.assertFalse((self.data_mount / "proxy" / "caddy-image.txt").exists())
+                self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
+                self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+                self.assertIn("meta=serial-port-enable=FALSE", (self.state / "vm_lifecycle.log").read_text())
 
 
 if __name__ == "__main__":
