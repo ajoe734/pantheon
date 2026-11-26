@@ -49,6 +49,11 @@
           "file": "services/persona/test_pool_autonomy_cycle.py",
           "change": "Fixture pins() now writes joined_at on each pin by default (and live_pool uses the same JOINED constant). No assertion changed.",
           "justification": "pins() stands for a publish record; records written by the publisher since 6cc27c784 carry joined_at. Without it every existing publish test would also see envelope_member_admission_missing, which is the pre-release case now covered by explicit new tests (joined=None)."
+        },
+        {
+          "file": "scripts/test_dev_acceptance_stage.py",
+          "change": "test_replay_root_44247825979_daily_probe_failure_does_not_fail_release: added 'probe:persona-member-book-admission' to the expected discovered release-probe inventory (sorted position). No entry removed; the skip/verdict assertions are unchanged.",
+          "justification": "The test pins every probe discovered in acceptance/probes; this task ships a new release probe (acceptance 5), so the inventory gains one id. Without viewer credentials the new probe skips like the other feature probes and the verdict stays passed. Fixes PR #7907 CI Test sweep (shard 11)."
         }
       ],
       "deleted_tests": []
@@ -68,9 +73,10 @@
     "interpreter": ".venv-pantheon/bin/python3 (scripts/dev/provision_python_distribution.py)",
     "commands": [
       "pytest -q services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/control-plane/persona/test_pool_policy.py services/control-plane/bff/test_persona_pool_publisher.py services/execution/lean_runtime/test_portfolio_target_positions.py services/persona/test_pool_autonomy_cycle.py services/control-plane/persona/test_persona_strategy_pool.py acceptance/test_persona_member_book_admission.py acceptance/test_persona_pool_member_rules.py services/control-plane/bff/tests/test_persona_pool_publish_route.py",
-      "pytest -q services/persona/test_pool_publish_port.py"
+      "pytest -q services/persona/test_pool_publish_port.py",
+      "pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_persona_member_book_admission.py"
     ],
-    "results": ["230 passed, 13 subtests passed", "5 passed"],
+    "results": ["230 passed, 13 subtests passed", "5 passed", "39 passed"],
     "run_at": "2026-11-26"
   }
 }
