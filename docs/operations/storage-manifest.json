@@ -6272,7 +6272,7 @@
   },
   {
    "name": "registry.entries expression index entries_artifact_type_idx ((payload ->> 'artifact_type'))",
-   "owner": "registry-svc schema (services/registry/pg_store.py PostgresRegistryStore._ensure_artifact_catalog_indexes; built by whichever registry store bootstraps first: registry-svc or research-orchestrator-svc)",
+   "owner": "registry-svc schema (services/registry/pg_store.py PostgresRegistryStore._ensure_artifact_type_index; built by whichever registry store bootstraps first: registry-svc or research-orchestrator-svc)",
    "writer": "CREATE INDEX IF NOT EXISTS at store bootstrap, once per table; every later bootstrap is a catalog no-op (0.7 ms measured); Postgres maintains the index on entry writes",
    "task": "ALPHA-TEMPLATE-READ-FAST-20261126",
    "register_class": "RC2",

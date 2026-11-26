@@ -189,6 +189,7 @@ class PostgresRegistryStore:
         )
         if bootstrap:
             self._ensure_artifact_catalog_indexes()
+            self._ensure_artifact_type_index()
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: list[str] = []
 
@@ -970,8 +971,6 @@ class PostgresRegistryStore:
             f"WHERE {_ARTIFACT_CATALOG_PRED_SQL}",
             f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_legacy_str_payload_idx')} "
             f"ON {table} ((jsonb_typeof(payload))) WHERE jsonb_typeof(payload) = 'string'",
-            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + ARTIFACT_TYPE_INDEX_SUFFIX)} "
-            f"ON {table} ({ARTIFACT_TYPE_INDEX_SQL})",
         )
         with self._entries._connect() as conn:
             for stmt in stmts:
@@ -982,6 +981,29 @@ class PostgresRegistryStore:
                         raise
                     if hasattr(conn, "rollback"):
                         conn.rollback()
+
+    def _ensure_artifact_type_index(self) -> None:
+        """Forward-only, additive expression index for ``list_by_artifact_type``.
+
+        Same pattern as ``_ensure_artifact_catalog_indexes``: ``CREATE INDEX IF
+        NOT EXISTS`` changes no row, column or constraint, runs once per table
+        (later bootstraps are a catalog no-op) and the previous release never
+        reads it.
+        """
+        table = self._entries.table
+        base = self._entries.table_name.split(".")[-1][:40]
+        stmt = (
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + ARTIFACT_TYPE_INDEX_SUFFIX)} "
+            f"ON {table} ({ARTIFACT_TYPE_INDEX_SQL})"
+        )
+        with self._entries._connect() as conn:
+            try:
+                conn.execute(stmt)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
 
     def list_strategy_artifact_page(
         self,

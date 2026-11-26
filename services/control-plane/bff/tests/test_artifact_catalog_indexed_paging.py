@@ -487,7 +487,7 @@ def test_index_migration_is_additive_and_forward_only():
     store = pg_store.PostgresRegistryStore.__new__(pg_store.PostgresRegistryStore)
     store._entries = SimpleNamespace(table='"registry"."entries"', table_name="registry.entries", _connect=lambda: _Conn())
     store._ensure_artifact_catalog_indexes()
-    assert len(executed) == 3  # + ALPHA-TEMPLATE-READ-FAST-20261126 artifact_type expression index
+    assert len(executed) == 2
     for sql in executed:
         upper = sql.upper()
         assert upper.startswith("CREATE INDEX IF NOT EXISTS")

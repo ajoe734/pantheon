@@ -34,8 +34,9 @@ def test_artifact_type_index_is_additive_forward_only():
 
     store = pg_store.PostgresRegistryStore.__new__(pg_store.PostgresRegistryStore)
     store._entries = SimpleNamespace(table='"registry"."entries"', table_name="registry.entries", _connect=lambda: _Conn())
-    store._ensure_artifact_catalog_indexes()
+    store._ensure_artifact_type_index()
     type_idx = [s for s in executed if "entries_artifact_type_idx" in s]
+    assert len(executed) == 1
     assert len(type_idx) == 1
     stmt = type_idx[0]
     assert stmt.upper().startswith("CREATE INDEX IF NOT EXISTS")

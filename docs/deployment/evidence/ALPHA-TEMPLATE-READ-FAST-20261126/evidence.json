@@ -16,7 +16,7 @@
   "ensure_once": "services/registry/alpha_template.py: ensure_builtin_alpha_templates_once (synchronous, no-op once ok for the same registry store object and library digest; failure recorded then raised), schedule_builtin_alpha_templates_ensure (daemon thread, never blocks the caller; failed attempts retried after BUILTIN_ENSURE_RETRY_SECONDS=60), builtin_alpha_template_status, alpha_template_library_digest (sha256 of the checked-in library files, re-hashed only when a file's mtime/size changes)",
   "research_routes": "services/research/main.py: startup hook ensure_builtin_alpha_templates_off_request_path starts the once-ensure on a daemon thread; list and detail routes call only schedule_builtin_alpha_templates_ensure and return builtin_library {status ok|pending|running|failed|not_started, error, library_digest, template_count, attempts, duration_ms}; detail answers 503 builtin_alpha_template_library_not_ready (with builtin_library) instead of 404 when a template is missing while the library is not ensured",
   "evaluate_path": "services/research/alpha_templates/evaluator.py run_alpha_template_evaluation uses ensure_builtin_alpha_templates_once (still raises on a collision)",
-  "type_index": "services/registry/pg_store.py: CREATE INDEX IF NOT EXISTS <table>_artifact_type_idx ON registry.entries ((payload ->> 'artifact_type')) added to _ensure_artifact_catalog_indexes (forward-only, additive, no row/column/constraint change); list_by_artifact_type runs artifact_type_select_sql: object rows by the indexed expression UNION ALL legacy JSON-string rows through the existing partial legacy-string index, ordered by updated_at, same result as before",
+  "type_index": "services/registry/pg_store.py: CREATE INDEX IF NOT EXISTS <table>_artifact_type_idx ON registry.entries ((payload ->> 'artifact_type')) in PostgresRegistryStore._ensure_artifact_type_index, called at bootstrap right after _ensure_artifact_catalog_indexes (same pattern) (forward-only, additive, no row/column/constraint change); list_by_artifact_type runs artifact_type_select_sql: object rows by the indexed expression UNION ALL legacy JSON-string rows through the existing partial legacy-string index, ordered by updated_at, same result as before",
   "bff_timeout": "unchanged (not touched)"
  },
  "previous_release_compatibility": "the previous release's list_all_selected type-filtered query still returns the same rows on the indexed table (test_real_pg_previous_release_read_and_rebootstrap_keep_working); the index is never required by old code and may be dropped at any time",
@@ -193,7 +193,7 @@
  },
  "tests": {
   "focused_command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55437/pantheon pytest -q services/research/tests/test_alpha_template_evaluation.py services/registry/test_pg_store_artifact_type_index.py services/control-plane/bff/tests/test_artifact_catalog_indexed_paging.py services/registry/test_alpha_template.py services/registry/test_alpha_template_seed_postgres.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py services/foundation/tests/test_postgres_json_store_unique_fields.py",
-  "focused_result": "116 passed in 59.31s (real Postgres 16.2)",
+  "focused_result": "116 passed (real Postgres 16.2), re-run after moving the index into _ensure_artifact_type_index",
   "also_run": {
    "services/research/tests/test_alpha_template_schedule.py": "12 passed",
    "services/research/tests/test_candidate_registration.py": "4 passed",
@@ -201,7 +201,8 @@
    "services/research/tests/test_alpha_template_snapshot_loader.py": "7 passed, 9 skipped",
    "services/registry/test_regime_evaluate_memory_bound.py": "4 passed, 1 skipped",
    "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py": "8 passed, 1 error (pre-existing on a499d632e: needs PANTHEON_TAIWAN_EVAL_DATA_DIR)",
-   "scripts/check_storage_manifest.py": "passed"
+   "scripts/check_storage_manifest.py": "passed",
+   "other PostgresRegistryStore suites (foundation/test_registry_owner_transaction, registry/test_discovery_spec_page, test_strategy_summary_page_bounded, test_regime_evaluate_memory_bound, bff overlay_retirement x2)": "123 passed, 2 failed; both failures (test_strategy_summary_page_cpu_reduction_over_3400_real_shape_strategy_families, test_jobs_router_reads_strictly_canonical_read_store) fail identically on dev baseline a499d632e"
   },
   "new_tests": [
    "test_read_routes_never_reregister_builtin_library_per_request (ensure called once across 1+5 list and 5 detail requests; again only for a new store)",
@@ -213,7 +214,7 @@
    "test_real_pg_type_filtered_read_uses_index_and_returns_only_that_type (EXPLAIN: entries_artifact_type_idx, no Seq Scan, 2,000 wide rows + legacy string row)",
    "test_real_pg_previous_release_read_and_rebootstrap_keep_working"
   ],
-  "changed_existing_test": "services/control-plane/bff/tests/test_artifact_catalog_indexed_paging.py::test_index_migration_is_additive_and_forward_only now expects 3 additive CREATE INDEX statements (was 2)"
+  "existing_tests_changed": "none"
  },
  "hosted_proof": {
   "status": "pending_after_deploy",
@@ -226,6 +227,7 @@
  "residual_findings": [
   "services/research/alpha_templates/schedule.py TemplateEvaluationScheduler._templates still calls ensure_builtin_alpha_templates each cycle (background worker, weekly; not on a request path; outside this task's artifacts)",
   "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py::test_alpha_factory_returns_templates_with_evaluation_metrics errors on dev baseline a499d632e too (needs PANTHEON_TAIWAN_EVAL_DATA_DIR); not caused by this change",
-  "registry-svc lifespan still runs the non-cached ensure_builtin_alpha_templates once at its own start (fine: once per process)"
+  "registry-svc lifespan still runs the non-cached ensure_builtin_alpha_templates once at its own start (fine: once per process)",
+  "pre-existing failures on dev a499d632e in this environment: services/registry/test_strategy_summary_page_bounded.py::test_strategy_summary_page_cpu_reduction_over_3400_real_shape_strategy_families and services/control-plane/bff/tests/test_overlay_retirement.py::test_jobs_router_reads_strictly_canonical_read_store"
  ]
 }
