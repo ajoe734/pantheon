@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +28,10 @@ CONNECTOR_ID = "tw-twse-tpex-official-market"
 PROJECTOR = "source-ingest-market-data"
 DEFAULT_STALE_THRESHOLD_SECONDS = 86_400
 SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 300
+# Bounded owner read of this connector's source records (owner page cap 1000).
+DEFAULT_SOURCE_RECORD_PAGE_SIZE = 1000
+SOURCE_RECORD_PAGE_SIZE_MAX = 1000
+DEFAULT_SOURCE_RECORD_MAX_RECORDS = 10_000
 
 
 def _fetch_source_ingest_json(url: str) -> Any:
@@ -57,12 +62,51 @@ def _fetch_source_ingest_json(url: str) -> Any:
         raise
 
 
-def _get_source_records(base_url: str) -> list[dict[str, Any]]:
-    payload = _fetch_source_ingest_json(f"{base_url.rstrip('/')}/api/source-ingest/source-records")
-    records = payload.get("source_records") if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        raise ValueError("source-ingest response has no source_records list")
-    return [record for record in records if isinstance(record, dict)]
+def _get_source_records(
+    base_url: str,
+    *,
+    page_size: int | None = None,
+    max_records: int | None = None,
+) -> list[dict[str, Any]]:
+    """Read only this projector's connector records, newest first, in bounded pages.
+
+    Each request is one owner page of ``CONNECTOR_ID`` (``page_size`` rows, owner
+    cap 1000) served by the connector page index; never the tenant-wide list.
+    Reading stops on the last page or after ``max_records`` rows. Rows past the
+    cap are older appends than every row read, so the latest row per symbol of
+    every symbol written within the cap is unchanged.
+    """
+    size = max(1, min(SOURCE_RECORD_PAGE_SIZE_MAX, int(page_size or _env_int("AGORA_MARKET_SOURCE_PAGE_SIZE", DEFAULT_SOURCE_RECORD_PAGE_SIZE))))
+    cap = max(size, int(max_records or _env_int("AGORA_MARKET_SOURCE_MAX_RECORDS", DEFAULT_SOURCE_RECORD_MAX_RECORDS)))
+    base = f"{base_url.rstrip('/')}/api/source-ingest/source-records"
+    collected: list[dict[str, Any]] = []
+    token: str | None = None
+    while True:
+        query = {"connector_id": CONNECTOR_ID, "page_size": str(min(size, cap - len(collected)))}
+        if token:
+            query["page_token"] = token
+        payload = _fetch_source_ingest_json(f"{base}?{urllib.parse.urlencode(query)}")
+        records = payload.get("source_records") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            raise ValueError("source-ingest response has no source_records list")
+        collected.extend(record for record in records if isinstance(record, dict))
+        token = payload.get("next_page_token") if isinstance(payload, dict) else None
+        if not token or not records:
+            return collected
+        if len(collected) >= cap:
+            print(
+                f"source-records read stopped at the {cap}-row cap for {CONNECTOR_ID}; older appends not projected",
+                file=sys.stderr,
+            )
+            return collected
+        token = str(token)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.getenv(name) or "").strip() or default)
+    except ValueError:
+        return default
 
 
 def _get_connector_readback(base_url: str) -> dict[str, Any]:
