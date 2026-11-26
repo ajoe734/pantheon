@@ -1,0 +1,68 @@
+{
+  "schema": "pantheon.task-evidence.v1",
+  "task_id": "EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104",
+  "recorded_at": "2026-11-26T03:05:00Z",
+  "recorded_by": "Claude2",
+  "verdict": "not_accepted",
+  "verdict_reason": "The accepted Dev Root pair passed its release probes for these pages. The ID and count recount against owner data needs authenticated hosted reads, and this worker has no credentials for them. AC5 needs a human approval and a real research run, which a read-only check cannot provide. Nothing here proves AC1 to AC6.",
+  "accepted_release": {
+    "controller_run": "https://github.com/ajoe734/pantheon/actions/runs/45684275970",
+    "controller_run_id": "45684275970",
+    "outcome": "accepted",
+    "completed_at": "2026-11-25T20:35:54.790037Z",
+    "backend_bff_sha": "b3f93d448f44aa426f3a4848c93df3e5a1ae8aa3",
+    "frontend_sha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "candidate_profile": "operator-live",
+    "fe_integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/45690103912",
+    "fe_deploy_run": "https://github.com/ajoe734/execute-plans/actions/runs/45693392534",
+    "artifact_sha256": {
+      "dev-acceptance-verdict-45684275970-1/acceptance-verdict.json": "2c0816df7c9c7850d0b9044569c6bbc7142fc012e09673aaf14d5f3d8ce933db",
+      "pantheon-cross-repo-release-45684275970-1/release-controller-accepted.json": "2d0d95f44e977dfb7b7018a3b80a6c4f475fc22dc7746735a35badb4d2783b16"
+    }
+  },
+  "served_now": {
+    "observed_at": "2026-11-26T02:55:00Z",
+    "bff_version_url": "https://api.dev.mvl-cap.tw/bff/version",
+    "bff_source_commit_sha": "8e67d240e034f4f133ffa926383b584536bc2e35",
+    "bff_image_digest": "sha256:e4514fd22b65e5540ae34ab5c82b8c1ac0ce462571d852052e8ff09eee06ab9a",
+    "bff_build_time": "2026-11-26T02:22:04Z",
+    "auth_mode": "strict",
+    "auth_stub": false,
+    "in_flight_release_run": "https://github.com/ajoe734/pantheon/actions/runs/45740904149",
+    "in_flight_release_title": "Dev release 8e67d240e034f4f133ffa926383b584536bc2e35 + 38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+    "in_flight_release_status": "in_progress",
+    "note": "The served BFF is the in-flight candidate 8e67d240, not the accepted b3f93d4. Any hosted read taken now is of an unaccepted transitional pair. Re-measure after 45740904149 reaches a terminal accepted or compensated state."
+  },
+  "release_probe_results_45684275970": {
+    "acceptance": "passed",
+    "generated_at": "2026-11-25T20:47:46Z",
+    "probe:mgmt-evolution-pages-readable": {"status": "passed", "journal_rows": 71, "pool_version_rows": 21, "failed": []},
+    "probe:mgmt-strategy-meeting-research-readable": {"status": "passed", "research_rows": 2, "strategy_rows": 14, "meeting_rows": 0, "failed": []},
+    "scope_note": "These probes check readability and internal consistency only: journal history view, auto_proposal_counts parts sum to total, mutation_review_count, and qualification member_baselines. They do not compare task IDs, replication records or qualification counts with the owner stores."
+  },
+  "fe_gate_45690103912": {
+    "overall": "ADVISORY-FAIL",
+    "fe_base_url": "http://127.0.0.1:4173",
+    "gate8_management_hosted_acceptance": "failure (advisory on pull_request; markdown evidence missing; needs genuine short-lived auth)",
+    "note": "The FE gate crawled a local candidate build, not the public hosted FE. Its management-hosted-acceptance step failed. It produced no per-route data for experiments, alpha-factory, evolution-journal or evolution."
+  },
+  "acceptance_criteria": [
+    {"id": "AC1", "criterion": "experiments lists orchestrator task ids; each row opens runs", "status": "not_proven", "blocker": "needs authenticated hosted read of /bff/research-tasks plus the orchestrator owner list for the tenant. Release probe saw research_rows=2 but did no ID comparison."},
+    {"id": "AC2", "criterion": "alpha-factory shows only real replication records", "status": "not_proven", "blocker": "needs authenticated hosted read and owner replication records. No release probe covers alpha-factory replication."},
+    {"id": "AC3", "criterion": "evolution-journal defaults to history; auto proposal counts match owner recount", "status": "partially_observed", "observed": "release probe: view=history readable, 71 rows, auto_proposal_counts parts sum to total", "blocker": "no recount of the counts against Evolution owner data"},
+    {"id": "AC4", "criterion": "evolution qualification counts match owner report; manual program reads back draft after reload", "status": "not_proven", "blocker": "needs an authenticated owner-report recount. Creating a manual program is a shared-store mutation, which this read-only task excludes. A Nov-14 observation of an existing manual draft (rev2) is historical and was not rechecked on this pair."},
+    {"id": "AC5", "criterion": "isolated stimulus passes six criteria -> under_review; human approval yields real research run", "status": "blocked", "blocker": "This needs an isolated stimulus decision write, a human approval and a real research run. None of these can be done read-only, and a worker cannot provide human approval. Human/Ops must do it on an isolated test target."},
+    {"id": "AC6", "criterion": "zero programs linked to unqualified / incident_followup_required / severity1_incident_count decisions", "status": "not_proven", "blocker": "needs an authenticated owner recount on the current pair. Nov-14 recount PASS (17 evaluated / 0 qualified / 0 drafted) is historical only."},
+    {"id": "AC7", "criterion": "evidence records FE/BFF exact SHAs and workflow run; no broker order/capital/runtime binding change", "status": "recorded", "observed": "accepted pair and run recorded above. This task made only GET /health, GET /bff/version, one unauthenticated GET that returned 401, and GitHub artifact downloads. It placed no orders, made no capital or runtime-binding writes, ran no forced sweeps and did not dispatch a release."}
+  ],
+  "blockers": [
+    "ACCEPTANCE_VIEWER_CLIENT_ID/SECRET and the dev-login client secrets exist only in protected GitHub workflow environments. The worker VM has no approved read-only hosted credential, and secrets were not extracted.",
+    "Release 45740904149 is in flight and is serving candidate BFF 8e67d240, so the accepted pair b3f93d4 + 38e5337 is no longer what the site serves.",
+    "AC5 and the manual-draft part of AC4 need human-authorized writes on an isolated target."
+  ],
+  "next_steps": [
+    "After 45740904149 is terminal, Human/Ops with approved viewer credentials recounts experiments, alpha-factory, evolution-journal and evolution against the owner stores on the accepted pair.",
+    "Human/Ops runs the AC5 isolated stimulus, approval and research-run journey, and the AC4 manual draft create-and-reload."
+  ],
+  "private_local_evidence": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-evidence/EVOLUTION-RESEARCH-HOSTED-ACCEPT-20261104/"
+}
