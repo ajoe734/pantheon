@@ -70,11 +70,17 @@ if vcpus_raw.strip():
     prod_preflight.check_control_vm_vcpus(vcpus_raw.strip())
 PY
 
+check_docker_compose() {
+  command -v "$DOCKER" >/dev/null 2>&1 || return 1
+  "$DOCKER" compose version >/dev/null 2>&1 || run_priv "$DOCKER" compose version >/dev/null 2>&1
+}
+
 check_runtime_binaries() {
   local b
   for b in "$DOCKER" "$CURL" "$MOUNTPOINT" python3; do
     command -v "$b" >/dev/null 2>&1 || return 1
   done
+  "$DOCKER" compose version >/dev/null 2>&1 || run_priv "$DOCKER" compose version >/dev/null 2>&1 || return 1
   return 0
 }
 
@@ -83,11 +89,47 @@ if ! check_runtime_binaries; then
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 \
       || fail APT_UPDATE_FAILED "apt-get update failed on bare Debian host"
     run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      ca-certificates curl gnupg caddy docker.io docker-compose-plugin util-linux python3 >&2 \
+      ca-certificates curl gnupg util-linux python3 >&2 \
       || fail APT_INSTALL_FAILED "apt-get install of bare-Debian runtime packages failed"
+    hash -r 2>/dev/null || true
+    if ! check_docker_compose; then
+      DOCKER_GPG_URL="${PROD_DOCKER_GPG_URL:-https://download.docker.com/linux/debian/gpg}"
+      DOCKER_APT_REPO_URL="${PROD_DOCKER_APT_REPO_URL:-https://download.docker.com/linux/debian}"
+      DOCKER_GPG_KEYRING="${PROD_DOCKER_GPG_KEYRING:-/etc/apt/keyrings/docker.gpg}"
+      DOCKER_APT_LIST="${PROD_DOCKER_APT_LIST:-/etc/apt/sources.list.d/docker.list}"
+      OS_RELEASE_FILE="${PROD_OS_RELEASE_FILE:-/etc/os-release}"
+      DEB_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+      DEB_CODENAME="$(
+        if [[ -f "$OS_RELEASE_FILE" ]]; then
+          . "$OS_RELEASE_FILE" 2>/dev/null || true
+          if [[ "${ID:-debian}" == "debian" && -n "${VERSION_CODENAME:-}" ]]; then
+            printf '%s' "$VERSION_CODENAME"
+          fi
+        fi
+      )"
+      [[ -n "$DEB_CODENAME" ]] || DEB_CODENAME="bookworm"
+      run_priv install -m 0755 -d "$(dirname "$DOCKER_GPG_KEYRING")" "$(dirname "$DOCKER_APT_LIST")" \
+        || fail DOCKER_REPO_KEY_FAILED "cannot create apt keyrings/sources directories"
+      "$CURL" -fsSL "$DOCKER_GPG_URL" | run_priv gpg --dearmor --yes -o "$DOCKER_GPG_KEYRING" \
+        || fail DOCKER_REPO_KEY_FAILED "failed to fetch or dearmor official Docker apt repository GPG key"
+      run_priv chmod a+r "$DOCKER_GPG_KEYRING" \
+        || fail DOCKER_REPO_KEY_FAILED "cannot set read permissions on ${DOCKER_GPG_KEYRING}"
+      printf 'deb [arch=%s signed-by=%s] %s %s stable\n' "$DEB_ARCH" "$DOCKER_GPG_KEYRING" "$DOCKER_APT_REPO_URL" "$DEB_CODENAME" \
+        | run_priv tee "$DOCKER_APT_LIST" >/dev/null \
+        || fail DOCKER_REPO_CONFIG_FAILED "cannot write Docker apt repository list ${DOCKER_APT_LIST}"
+      run_priv env DEBIAN_FRONTEND=noninteractive apt-get update -y >&2 \
+        || fail APT_UPDATE_FAILED "apt-get update failed after adding official Docker repository"
+      run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        docker-ce docker-ce-cli containerd.io docker-compose-plugin >&2 \
+        || fail APT_DOCKER_INSTALL_FAILED "apt-get install of docker-ce and docker-compose-plugin failed"
+      hash -r 2>/dev/null || true
+      if command -v systemctl >/dev/null 2>&1; then
+        run_priv systemctl enable --now docker >/dev/null 2>&1 || true
+      fi
+    fi
   fi
 fi
-check_runtime_binaries || fail RUNTIME_BINARY_MISSING "required runtime binaries (docker, curl, mountpoint, python3) are missing"
+check_runtime_binaries || fail RUNTIME_BINARY_MISSING "required runtime binaries (docker, docker compose, curl, mountpoint, python3) are missing"
 
 run_priv "$MOUNTPOINT" -q "$PROD_DATA_MOUNT" \
   || fail DATA_DISK_NOT_MOUNTED "${PROD_DATA_MOUNT} is not a mounted data disk; bootstrap never formats or attaches disks"

@@ -121,6 +121,7 @@ PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-rea
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
+    export FAKE_IN_SUDO=1
     preserve_env=false; target_home=false
     while [[ "${1:-}" == -* ]]; do
       case "$1" in
@@ -136,10 +137,80 @@ case "$tool" in
     if [[ "$preserve_env" == true ]]; then exec "$@"; fi
     if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
       # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
-      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" HOME="${HOME:-/}" "$@"
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" FAKE_IN_SUDO=1 HOME="${HOME:-/}" "$@"
     fi
     exec "$@"
     ;;
+  install|chmod|tee)
+    mapped=()
+    for a in "$@"; do
+      if [[ "$a" == /etc/apt/* || "$a" == /etc/apt ]]; then
+        mapped+=("${FAKE_STATE}${a}")
+      else
+        mapped+=("$a")
+      fi
+    done
+    exec "/usr/bin/$tool" "${mapped[@]}" ;;
+  dpkg)
+    if [[ "${1:-}" == "--print-architecture" ]]; then
+      printf '%s\n' "${FAKE_DPKG_ARCH:-amd64}"
+      exit 0
+    fi
+    exec /usr/bin/dpkg "$@" ;;
+  gpg)
+    [[ "${FAKE_GPG_FAIL:-}" == "true" ]] && exit 1
+    out=""
+    prev=""
+    for a in "$@"; do
+      if [[ "$prev" == "-o" || "$prev" == "--output" ]]; then
+        out="$a"
+      fi
+      prev="$a"
+    done
+    if [[ "$out" == /etc/apt/* ]]; then
+      out="${FAKE_STATE}${out}"
+    fi
+    data="$(cat)"
+    [[ -n "$data" && -n "$out" ]] || exit 1
+    mkdir -p "$(dirname "$out")"
+    printf 'DEARMOURED:%s\n' "$data" > "$out"
+    exit 0 ;;
+  apt-get)
+    echo "apt-get $*" >> "$FAKE_STATE/apt.log"
+    if [[ "$*" == *"update"* ]]; then
+      [[ "${FAKE_APT_FAIL:-}" == "update" ]] && exit 100
+      count=$(( $(cat "$FAKE_STATE/apt_update_count" 2>/dev/null || echo 0) + 1 ))
+      printf '%s' "$count" > "$FAKE_STATE/apt_update_count"
+      if [[ "${FAKE_APT_FAIL:-}" == "update_docker_repo" && "$count" -ge 2 ]]; then
+        exit 100
+      fi
+      exit 0
+    fi
+    if [[ "$*" == *"install"* ]]; then
+      if [[ "$*" == *"docker-compose-plugin"* ]]; then
+        [[ "${FAKE_APT_FAIL:-}" == "install_docker" ]] && exit 100
+        keyring_check="${PROD_DOCKER_GPG_KEYRING:-${FAKE_STATE}/etc/apt/keyrings/docker.gpg}"
+        [[ "$keyring_check" == /etc/apt/* ]] && keyring_check="${FAKE_STATE}${keyring_check}"
+        list_check="${PROD_DOCKER_APT_LIST:-${FAKE_STATE}/etc/apt/sources.list.d/docker.list}"
+        [[ "$list_check" == /etc/apt/* ]] && list_check="${FAKE_STATE}${list_check}"
+        if [[ ! -s "$keyring_check" || ! -s "$list_check" ]]; then
+          echo "E: Unable to locate package docker-compose-plugin" >&2
+          exit 100
+        fi
+        if [[ "${FAKE_APT_KEEP_NO_COMPOSE:-}" != "true" ]]; then
+          printf 'installed\n' > "$FAKE_STATE/docker_compose_installed"
+          printf 'installed\n' > "$FAKE_STATE/docker_ce_installed"
+        fi
+        exit 0
+      fi
+      [[ "${FAKE_APT_FAIL:-}" == "install_base" || "${FAKE_APT_FAIL:-}" == "install" ]] && exit 100
+      if [[ " $* " == *" caddy "* ]]; then
+        printf 'active' > "$FAKE_STATE/host_systemd_caddy"
+      fi
+      printf 'installed\n' > "$FAKE_STATE/base_packages_installed"
+      exit 0
+    fi
+    exit 0 ;;
   mountpoint)
     if [[ -f "$FAKE_STATE/mounted_state" ]]; then
       [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
@@ -189,6 +260,22 @@ case "$tool" in
   mkfs|mkfs.*) echo "FORBIDDEN_MKFS $*" >> "$FAKE_STATE/mkfs_called"; exit 99 ;;
   docker)
     args="$*"
+    if [[ "$args" == "compose version"* ]]; then
+      if [[ "${FAKE_DOCKER_FAIL:-}" == *"compose_version"* ]]; then
+        echo "docker: 'compose' is not a docker command." >&2
+        exit 1
+      fi
+      if [[ ( "${FAKE_DOCKER_NO_COMPOSE:-}" == "true" || -f "$FAKE_STATE/docker_no_compose" ) && ! -f "$FAKE_STATE/docker_compose_installed" ]]; then
+        echo "docker: 'compose' is not a docker command." >&2
+        exit 1
+      fi
+      if [[ "${FAKE_COMPOSE_NEEDS_SUDO:-}" == "true" && "${FAKE_IN_SUDO:-0}" != "1" ]]; then
+        echo "permission denied without sudo" >&2
+        exit 1
+      fi
+      echo "Docker Compose version v2.29.7"
+      exit 0
+    fi
     if [[ "$args" == "cp "*":/data/."* ]]; then
       dst="${@: -1}"
       [[ -d "$FAKE_STATE/incumbent_caddy_data" ]] && cp -a "$FAKE_STATE/incumbent_caddy_data/." "$dst/"
@@ -376,6 +463,11 @@ PY
       printf '{"access_token":"ya29.fake-prod-runtime-token"}'
       exit 0
     fi
+    if [[ "$url" == *download.docker.com*/gpg* || "$url" == */docker.gpg* ]]; then
+      [[ "${FAKE_DOCKER_GPG_FAIL:-}" == "true" ]] && exit 22
+      printf 'FAKE-DOCKER-GPG-PUBLIC-KEY-BLOCK\n'
+      exit 0
+    fi
     if [[ "$url" == */runtime-config.js ]]; then
       [[ "${FAKE_RC_FETCH_FAIL:-}" == "true" ]] && exit 22
       if [[ -n "$out" && "$out" != /dev/null ]]; then
@@ -504,7 +596,10 @@ class OpsHarness(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount", "systemctl", "mkfs", "mkfs.ext4"):
+        for tool in (
+            "docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount",
+            "systemctl", "mkfs", "mkfs.ext4", "apt-get", "gpg", "dpkg", "install", "chmod", "tee",
+        ):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
         self.state = self.tmp / "fake_state"
@@ -1400,6 +1495,68 @@ class BootstrapTests(OpsHarness):
         self.assertTrue((data_mount / "secrets" / "prod.secrets.env").is_file())
         self.assertTrue((data_mount / "secrets" / "postgres_password").is_file())
         self.assertTrue((data_mount / "config" / "compose.env").is_file())
+
+    def test_bootstrap_requires_docker_compose_v2_and_installs_official_docker_debian_apt_repo(self):
+        # 1. When docker compose v2 is missing and PROD_ALLOW_APT_INSTALL is false, fail closed with RUNTIME_BINARY_MISSING.
+        r_missing = self._run(FAKE_DOCKER_NO_COMPOSE="true", PROD_ALLOW_APT_INSTALL="false")
+        self.assertNotEqual(r_missing.returncode, 0)
+        self.assertIn("RUNTIME_BINARY_MISSING", r_missing.stderr)
+        self.assertFalse((self.state / "apt.log").exists())
+
+        # 2. When unprivileged 'docker compose version' fails under OS Login non-root mode, run_priv fallback succeeds.
+        r_priv = self._run(FAKE_OSLOGIN_NONROOT="true", FAKE_COMPOSE_NEEDS_SUDO="true")
+        self.assertEqual(r_priv.returncode, 0, r_priv.stderr)
+
+        # 3. Bare Debian 12 Bookworm host with PROD_ALLOW_APT_INSTALL=true: installs base packages (omitting host 'caddy'),
+        # configures official Docker Debian apt repo (/etc/apt/keyrings/docker.gpg + /etc/apt/sources.list.d/docker.list),
+        # installs docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin, enables docker.service, and succeeds.
+        self.setUp()
+        os_rel = self.tmp / "os-release"
+        os_rel.write_text('ID=debian\nVERSION_CODENAME=bookworm\n', encoding="utf-8")
+        r_apt = self._run(
+            FAKE_DOCKER_NO_COMPOSE="true",
+            FAKE_OSLOGIN_NONROOT="true",
+            PROD_ALLOW_APT_INSTALL="true",
+            PROD_OS_RELEASE_FILE=str(os_rel),
+        )
+        self.assertEqual(r_apt.returncode, 0, f"stdout={r_apt.stdout}\nstderr={r_apt.stderr}")
+        apt_log = (self.state / "apt.log").read_text()
+        self.assertIn("apt-get install -y ca-certificates curl gnupg util-linux python3", apt_log)
+        self.assertNotIn(" caddy", apt_log)
+        self.assertNotIn("docker.io", apt_log)
+        self.assertFalse((self.state / "host_systemd_caddy").exists())
+        self.assertIn("apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin", apt_log)
+        self.assertEqual((self.state / "apt_update_count").read_text(), "2")
+        keyring = self.state / "etc" / "apt" / "keyrings" / "docker.gpg"
+        apt_list = self.state / "etc" / "apt" / "sources.list.d" / "docker.list"
+        self.assertTrue(keyring.is_file())
+        self.assertIn("DEARMOURED:FAKE-DOCKER-GPG-PUBLIC-KEY-BLOCK", keyring.read_text())
+        self.assertTrue(bool(keyring.stat().st_mode & 0o004))
+        self.assertEqual(
+            apt_list.read_text().strip(),
+            "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable",
+        )
+        self.assertIn("systemctl enable --now docker", (self.state / "systemctl.log").read_text())
+
+        # 4. Negative gates: apt-get update/install or GPG key failures fail closed with distinct error codes.
+        for extra_env, expected_code in (
+            ({"FAKE_APT_FAIL": "update"}, "APT_UPDATE_FAILED"),
+            ({"FAKE_APT_FAIL": "install_base"}, "APT_INSTALL_FAILED"),
+            ({"FAKE_DOCKER_GPG_FAIL": "true"}, "DOCKER_REPO_KEY_FAILED"),
+            ({"FAKE_GPG_FAIL": "true"}, "DOCKER_REPO_KEY_FAILED"),
+            ({"FAKE_APT_FAIL": "update_docker_repo"}, "APT_UPDATE_FAILED"),
+            ({"FAKE_APT_FAIL": "install_docker"}, "APT_DOCKER_INSTALL_FAILED"),
+            ({"FAKE_APT_KEEP_NO_COMPOSE": "true"}, "RUNTIME_BINARY_MISSING"),
+        ):
+            with self.subTest(expected_code=expected_code, extra_env=extra_env):
+                self.setUp()
+                r_fail = self._run(
+                    FAKE_DOCKER_NO_COMPOSE="true",
+                    PROD_ALLOW_APT_INSTALL="true",
+                    **extra_env,
+                )
+                self.assertNotEqual(r_fail.returncode, 0)
+                self.assertIn(expected_code, r_fail.stderr)
 
 
 PROD_ENV = {
@@ -4657,6 +4814,33 @@ class ReplaceVmHarness(RealControllerBase):
                 )
                 self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
                 self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
+
+    def test_replace_vm_bare_debian_installs_docker_compose_plugin_and_enforces_ssh_wait_defaults(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"', script_text)
+        self.assertIn('PROD_INCUMBENT_SSH_TRIES="${PROD_INCUMBENT_SSH_TRIES:-4}"', script_text)
+        self.assertIn('PROD_INCUMBENT_SSH_INTERVAL="${PROD_INCUMBENT_SSH_INTERVAL:-3}"', script_text)
+
+        # Simulate TERMINATED incumbent replaced by a fresh bare Debian 12 VM where docker compose v2 is absent until
+        # bootstrap.sh configures the official Docker Debian apt repository and installs docker-compose-plugin.
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        (self.state / "docker_no_compose").write_text("true\n", encoding="utf-8")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8",
+            GITHUB_RUN_ID="45886746072",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["migration_mode"], "offline_boot_disk")
+        self.assertTrue((self.state / "docker_compose_installed").is_file())
+        apt_log = (self.state / "apt.log").read_text()
+        self.assertIn("apt-get install -y ca-certificates curl gnupg util-linux python3", apt_log)
+        self.assertNotIn(" caddy", apt_log)
+        self.assertIn("apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin", apt_log)
+        self.assertTrue((self.state / "etc" / "apt" / "keyrings" / "docker.gpg").is_file())
+        self.assertTrue((self.state / "etc" / "apt" / "sources.list.d" / "docker.list").is_file())
 
     def test_replace_vm_offline_boot_disk_release_mismatch_rolls_back_and_cleans_up_orphaned_new_boot_disk(self):
         for case_name, pre_g77 in (
