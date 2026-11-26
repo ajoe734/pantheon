@@ -1482,3 +1482,38 @@ def test_outbox_exact_source_version_lookup_uses_index(tmp_path):
         )
     assert "SCAN" not in plan.replace("SEARCH", "")
     assert "distillation_outbox_source_version_idx" in plan
+
+
+def test_metrics_count_every_planned_deferral_reason_and_not_delivery_retries(tmp_path) -> None:
+    """L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126: ``extraction_tick_budget``
+    is released without ``deferred_since`` and was not counted as deferred, so
+    the controller failed every tick on registry_sync."""
+    from services.source_ingestion.distillation_worker import (
+        DEFERRAL_EXTRACTION_TICK_BUDGET, PLANNED_DEFERRAL_REASONS,
+    )
+
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+    for index in range(4):
+        queue.enqueue_source_record(_normalized_source(f"src-{index}", tenant_id="test"))
+    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=4, tenant_id="test")
+    assert len(jobs) == 4
+    for job in jobs:
+        queue.begin_job(job, lease_seconds=30)
+    future = 4_000_000_000.0
+    queue.defer_budget(jobs[0], now=future, reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False)
+    queue.defer_budget(jobs[1], now=future, reason="budget_exhausted")
+    queue.defer_budget(jobs[2], now=future, reason="attempts_deferred")
+    queue.mark_retry_or_dead_letter(jobs[3], error="registry_sync_failed: timed out", base_delay_seconds=60)
+    metrics = queue.metrics()
+    assert metrics["retry_wait"] == 4
+    assert metrics["deferred"] == 3
+    assert {"budget_exhausted", "attempts_deferred", "extraction_tick_budget"} == PLANNED_DEFERRAL_REASONS
+
+
+def test_defer_budget_refuses_an_unplanned_reason(tmp_path) -> None:
+    queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+    queue.enqueue_source_record(_normalized_source("src-x", tenant_id="test"))
+    job = queue.claim_due(worker_id="w", lease_seconds=30, limit=1, tenant_id="test")[0]
+    queue.begin_job(job, lease_seconds=30)
+    with pytest.raises(ValueError, match="unplanned"):
+        queue.defer_budget(job, now=4_000_000_000.0, reason="registry_down")
