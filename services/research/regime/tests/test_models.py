@@ -165,3 +165,33 @@ def test_library_loads_when_the_research_directory_shadows_statsmodels():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd="/", timeout=120)
     assert out.returncode == 0, out.stderr[-1500:]
     assert out.stdout.startswith("statsmodels 0.15.0 high")
+
+
+# --- Cadence units (REGIME-MEDIUM-CADENCE-UNIT-FIX-20261126) -------------------------------------
+
+@pytest.mark.parametrize("sessions, cadence, rows", [
+    (2450, 5, 490), (122, 5, 25), (1, 5, 1), (60, 5, 12), (10, 5, 2), (0, 5, 0),
+    (2450, 1, 2450), (122, 1, 122), (1, 1, 1),
+])
+def test_sessions_to_rows_rounds_up_so_windows_are_never_shortened(sessions, cadence, rows):
+    assert M.sessions_to_rows(sessions, cadence) == rows
+    assert M.rows_to_sessions(rows, cadence) >= sessions
+
+
+def test_rows_to_sessions_converts_multi_session_rows():
+    assert M.rows_to_sessions(727, 5) == 3635.0
+    assert M.rows_to_sessions(49, 5) == 245.0 and M.rows_to_sessions(49, 1) == 49.0
+    assert M.rows_to_sessions(14.5, 5) == 72.5
+    with pytest.raises(M.RegimeModelError, match="cadence_sessions_invalid"):
+        M.rows_to_sessions(1, 0)
+    with pytest.raises(M.RegimeModelError, match="cadence_sessions_invalid"):
+        M.sessions_to_rows(1, -5)
+
+
+def test_volatility_inputs_declare_their_row_cadence():
+    obs, _, _ = synthetic_observations(800, seed=2, with_breadth=False, with_chip=False, with_macro=False)
+    config = small_config()
+    short = F.build_volatility_inputs(obs, decision_time=DECISION_TIME, horizon="short", config=config)
+    medium = F.build_volatility_inputs(obs, decision_time=DECISION_TIME, horizon="medium", config=config)
+    assert short.cadence_sessions == 1 and len(short.frame) == 799
+    assert medium.cadence_sessions == 5 and len(medium.frame) == 799 // 5

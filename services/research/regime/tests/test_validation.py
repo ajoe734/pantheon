@@ -94,3 +94,104 @@ def test_fit_and_validate_fits_candidate_model_when_history_is_short_but_never_p
     inputs = _vol_inputs()
     model, report = V.fit_and_validate(inputs, small_config(min_training_years=30.0))
     assert model is not None and report.status == "insufficient_history" and not report.passed
+
+
+# --- Cadence units (REGIME-MEDIUM-CADENCE-UNIT-FIX-20261126) -------------------------------------
+
+HOSTED_DECISION_TIME = "2035-01-01T00:00:00Z"
+
+
+def test_hosted_shaped_medium_taiex_series_is_not_reported_history_short():
+    """3,640 closes -> 3,639 daily returns -> 727 five-session rows (the hosted TAIEX shape).
+
+    R11 asks for 2,450 sessions of training plus a 122-session refit: 490 + 25 five-session rows,
+    not 2,572 rows (which would be 12,860 sessions, i.e. 52.49 years).
+    """
+    config = F.RegimeConfig()
+    obs, _, _ = synthetic_observations(3640, seed=11, with_breadth=False, with_chip=False, with_macro=False)
+    inputs = F.build_volatility_inputs(obs, decision_time=HOSTED_DECISION_TIME, horizon="medium", config=config)
+    assert inputs.available and inputs.cadence_sessions == 5 and len(inputs.frame) == 727
+    report = V.walk_forward_validate(inputs, V.make_fit_fn("volatility", "medium", config, cadence_sessions=5), config)
+    assert report.status in ("validated", "failed"), report.reason
+    assert not report.reason.startswith("history_short")
+    p = report.protocol
+    assert (p["cadence_sessions"], p["min_training_rows"], p["refit_rows"], p["signal_delay_rows"]) == (5, 490, 25, 1)
+    assert (p["min_training_sessions"], p["refit_sessions"], p["signal_delay_sessions"]) == (2450, 122, 1)
+    assert p["inference"] == "filtered_online_only"
+    assert report.gates["history"] == {"value": 3635.0, "threshold": 2450.0, "passed": True}
+    # Folds: 490-row expanding start, 25-row (125-session) refits; the last fold may be shorter.
+    folds = report.folds
+    assert folds[0]["train_rows"] == 490 and folds[0]["train_sessions"] == 2450
+    assert all(f["test_rows"] == 25 and f["test_sessions"] == 125 for f in folds[:-1])
+    assert sum(f["test_rows"] for f in folds) == 727 - 490 and len(folds) == 10
+    m = report.metrics
+    assert m["oos_rows"] == 727 - 490 - 1 and m["oos_sessions"] == (727 - 490 - 1) * 5
+    assert m["switches_per_year"] == pytest.approx(m["switches"] / ((727 - 490 - 1) * 5 / 245))
+
+
+def test_short_cadence_daily_series_still_requires_daily_session_history():
+    config = F.RegimeConfig()
+    inputs = F.build_volatility_inputs(OBS, decision_time=DECISION_TIME, horizon="short", config=config)
+    assert inputs.cadence_sessions == 1
+    report = V.walk_forward_validate(inputs, V.make_fit_fn("volatility", "short", config), config)
+    assert report.status == "insufficient_history" and report.reason == f"history_short:{len(inputs.frame)}<2572"
+    assert report.protocol["min_training_rows"] == 2450 and report.protocol["refit_rows"] == 122
+
+
+class _ScriptedModel:
+    """Deterministic stand-in: labels come from a fixed script, so rates/durations are exact."""
+
+    method = "scripted"
+
+    def __init__(self, script):
+        self.script = script
+
+    def infer(self, frame):
+        return [_session(i % 28, self.script[i]) for i in range(len(frame))]
+
+    def fingerprint(self):
+        return "scripted"
+
+    def expected_durations(self):
+        return {"a": 4.0, "b": 2.0}
+
+
+# 50 training rows, then 50 out-of-sample rows; after the one-row delay 49 labels remain with
+# three switches and runs a=[10,10], b=[10,19].
+_SCRIPT = list("a" * 50 + "a" * 10 + "b" * 10 + "a" * 10 + "b" * 19 + "b")
+
+
+@pytest.mark.parametrize("cadence, training_sessions, refit_sessions, per_year, durations", [
+    # 49 five-session rows = 245 sessions = one year: 3 switches -> 3.0 per year.
+    (5, 250, 122, 3.0, {"a": 50.0, "b": 72.5}),
+    # The same 49 rows at one session each = 0.2 years: 3 switches -> 15.0 per year.
+    (1, 50, 25, 15.0, {"a": 10.0, "b": 14.5}),
+])
+def test_switch_rate_and_run_lengths_are_in_market_sessions(cadence, training_sessions, refit_sessions, per_year,
+                                                            durations):
+    config = F.RegimeConfig(min_training_years=training_sessions / 245, refit_sessions=refit_sessions,
+                            max_switches_per_year=6.0, min_refits=2)
+    assert config.min_training_sessions == training_sessions
+    index = pd.bdate_range("2020-01-01", periods=100)
+    frame = pd.DataFrame({"return_pct": np.random.default_rng(0).normal(0, 1, 100)}, index=index)
+    inputs = F.AxisInputs("volatility", "medium", True, frame=frame, returns=frame["return_pct"],
+                          sessions=100, cadence_sessions=cadence)
+    model = _ScriptedModel(_SCRIPT)
+    report = V.walk_forward_validate(inputs, lambda train, returns: model, config)
+    assert report.protocol["min_training_rows"] == 50 and report.protocol["refit_rows"] == 25
+    m = report.metrics
+    assert m["switches"] == 3 and m["oos_rows"] == 49 and m["oos_sessions"] == 49 * cadence
+    assert m["switches_per_year"] == pytest.approx(per_year)
+    assert m["expected_durations_sessions"] == pytest.approx(durations)
+    assert m["mean_run_length_sessions"] == pytest.approx(np.mean(list(durations.values())))
+    assert report.gates["switches_per_year"]["passed"] is (per_year <= 6.0)
+    assert report.gates["expected_duration_sessions"]["value"] == pytest.approx(min(durations.values()))
+    assert report.folds[0]["model_expected_durations_sessions"] == {"a": 4.0 * cadence, "b": 2.0 * cadence}
+    assert m["label_stability"] == 1.0 and m["refits"] == 2
+
+
+def test_invalid_cadence_is_an_error_report():
+    inputs = _vol_inputs()
+    inputs.cadence_sessions = 0
+    report = V.walk_forward_validate(inputs, V.make_fit_fn("volatility", "short", CONFIG), CONFIG)
+    assert report.status == "error" and not report.passed and report.reason.startswith("cadence_invalid:")
