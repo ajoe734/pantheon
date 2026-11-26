@@ -152,6 +152,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
     assert [r["id"] for r in results] == [
         "check:deployed-pair-identity",
         "probe:daily-bars-volume",
+        "probe:discovery-pipeline",
         "probe:meeting-action-followthrough",
         "probe:meeting-review-disposition",
         "probe:mgmt-evolution-pages-readable",
