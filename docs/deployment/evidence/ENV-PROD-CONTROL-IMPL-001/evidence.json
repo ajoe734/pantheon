@@ -703,5 +703,32 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_ops_sudo_env_and_120gb_boot_disk_repair_20261126": {
+    "task_generation": 81,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45897091923 (job 140173674161) installed Docker Compose v2 and migrated offline boot-disk state onto replacement e2-standard-8 VM, then failed at two defects: (1) prod_ops.sh compose() called run_priv (sudo without -E) instead of run_priv_env (sudo -E), stripping exported PANTHEON_* release/image variables during restore_active_release and rollback; (2) 50GB boot disk on replacement VM had low free root space while pre-pulling all 25+ release plus rollback baseline images",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_ops.sh adds run_priv_env() ('if [[ \"${PROD_USE_SUDO:-false}\" == \"true\" || \"${FAKE_OSLOGIN_NONROOT:-false}\" == \"true\" ]]; then \"$SUDO\" -E \"$@\"; else \"$@\"; fi') matching deploy/production/bootstrap.sh and updates compose() to use run_priv_env \"$DOCKER\" compose ... so sudo never strips exported PANTHEON_* release/image variables during restore_active_release or rollback",
+      "scripts/deploy/prod_replace_vm.sh adds PROD_MIN_BOOT_DISK_GB=\"${PROD_MIN_BOOT_DISK_GB:-120}\", computes TARGET_BOOT_SIZE_GB as max(int(OLD_BOOT_SIZE_GB), int(PROD_MIN_BOOT_DISK_GB)), bumps PROD_DEFAULT_TEMPLATE_NAME default to pantheon-prod-control-template-e2s8-v3, passes --boot-disk-size=\"${TARGET_BOOT_SIZE_GB}GB\" when creating the instance template, and in template_is_compatible() requires boot disk initializeParams.diskSizeGb >= PROD_MIN_BOOT_DISK_GB whenever initializeParams.diskSizeGb is present in template JSON (preserving minimal mock templates that omit disks), plus passes PROD_BASELINE_READY_TRIES=\"${PROD_BASELINE_READY_TRIES:-60}\" to restore_active_release in both RESTORE_OUT and rollback_to_old_boot_disk, waits up to 15s for Caddy /deployment.json readiness after starting pantheon-caddy, and captures rollback stderr into rollback_error in rollback JSON output if rollback_to_old_boot_disk fails",
+      "deploy/production/bootstrap.sh extracts docker_registry_login() helper and retries docker pull up to PROD_IMAGE_PULL_TRIES=\"${PROD_IMAGE_PULL_TRIES:-3}\" (sleeping PROD_IMAGE_PULL_RETRY_DELAY default 3 and re-running docker_registry_login on retry when PROD_REGISTRY_AUTH=true), including sanitized pull error and df -Pm / free_mb in fail IMAGE_PULL_FAILED",
+      "docs/deployment/production-control-runbook.md documents run_priv_env in prod_ops.sh, >= 120 GB boot disk on pantheon-prod-control-template-e2s8-v3, and bootstrap image pull retry within the <= 180-line runbook contract",
+      "tests/deployment/test_production_release.py adds test_bootstrap_retries_transient_docker_pull_failures_and_reports_disk_diagnostics in BootstrapTests and test_replace_vm_preserves_sudo_compose_env_and_upgrades_50gb_boot_disk_template_to_v3_120gb in ReplaceVmHarness covering prod_ops.sh restore_active_release and rollback under PROD_USE_SUDO=true + FAKE_SUDO_RESET_ENV=true, >= 120GB boot disk template upgrade from 50GB v2 to 120GB v3, rollback_error capture when rollback fails, and bootstrap.sh docker pull retry"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g80: no new recurring job, emitter, or background daemon; replacement control VM boot disk size minimum increased from 50 GB to 120 GB pd-balanced on pantheon-prod-control-template-e2s8-v3 to hold Docker CE packages and 25+ release plus rollback baseline container images without root filesystem exhaustion"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "42 tests passed, terminal exit 0",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "145 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }
