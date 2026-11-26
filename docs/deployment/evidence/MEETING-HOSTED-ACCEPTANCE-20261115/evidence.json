@@ -50,8 +50,8 @@
     "gh run download 45747260884 --repo ajoe734/execute-plans -n pantheon-integration-evidence-attempt-1 (pre-switch gate crawl log)"
   ],
   "observation_tool": {
-    "script": "acceptance/meeting_hosted_day.py",
-    "workflow_step": ".github/workflows/persona-day-acceptance.yml: 'Natural persona meetings observed (GET only; viewer identity)'",
+    "script": "acceptance/meeting_hosted_day.py at commit aa45084aeca8c8615fc97a64f5e55a4b20e5d88b (branch history only)",
+    "workflow_step": ".github/workflows/persona-day-acceptance.yml at aa45084ae: 'Natural persona meetings observed (GET only; viewer identity)'",
     "identity": "read-only viewer via POST /bff/auth/dev-login; token kept in memory; never printed",
     "requests": [
       "GET /bff/management/meetings?page_size=200&include_failed=true",
@@ -66,7 +66,8 @@
     "run_head_sha": "aa45084aeca8c8615fc97a64f5e55a4b20e5d88b",
     "step_result": "success; observation verdict pending (no violation)",
     "first_attempt": "run 45745083130 at 2026-11-26T02:50Z: dev-login returned HTTP 502 while release 45740904149 was deploying; not counted",
-    "other_steps_not_owned": "persona_day.py and pool_risk_snapshot_day.py steps failed in the same run, as they did on dev in scheduled run 45698597707; existing daily-state verdicts, unchanged by this task"
+    "other_steps_not_owned": "persona_day.py and pool_risk_snapshot_day.py steps failed in the same run, as they did on dev in scheduled run 45698597707; existing daily-state verdicts, unchanged by this task",
+    "not_merged": "The task artifact contract allows only this evidence.json, so the script, its test (8 cases) and the workflow step are not in this PR's net diff. Run 45746533291 executed them at aa45084ae. Recommended follow-up: land them as a daily state probe under a task whose contract declares those files."
   },
   "hosted_meetings": {
     "listed": 20,
@@ -268,17 +269,13 @@
     "root_45684275970": "its acceptance stage predates the crawl check, so no crawl exists for that release"
   },
   "files_changed": [
-    "acceptance/meeting_hosted_day.py",
-    "acceptance/test_meeting_hosted_day.py",
-    ".github/workflows/persona-day-acceptance.yml",
     "docs/deployment/evidence/MEETING-HOSTED-ACCEPTANCE-20261115/evidence.json"
   ],
   "tests": [
-    "python3 -m pytest -q acceptance/test_meeting_hosted_day.py scripts/test_acceptance_workflows_truthful.py -> 13 passed"
+    "at aa45084ae: python3 -m pytest -q acceptance/test_meeting_hosted_day.py scripts/test_acceptance_workflows_truthful.py -> 13 passed (not in the net diff)"
   ],
   "runtime_budget": {
-    "added_per_day": "one extra step in the existing weekday persona-day-acceptance run: about 30 GETs (1 list, <=60 details, proposals, <=10 persona memories, agora list, <=10 persona filters), bounded by timeout 240 s; observed 2026-11-26 well under that",
-    "artifact": "meeting-hosted-day.json about 18 KB per run, 30-day retention, in the existing persona-day-acceptance artifact",
+    "added": "none in the net diff (no workflow or probe merged); the observation was one manual workflow_dispatch of about 30 GETs",
     "hosted_writes": "none"
   },
   "residuals": [
