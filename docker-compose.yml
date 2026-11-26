@@ -590,7 +590,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
-    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-512m}
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-768m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -637,6 +637,14 @@ services:
       RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
       # Card gate dataset: the governed whole-market dataset read from the stored daily bars (DailyBarsReader).
       GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Scheduled AlphaTemplate evaluation (ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125): time_series templates on the
+      # governed dataset, at most weekly after a new stored trading day; results go to the Registry store.
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
+      ALPHA_TEMPLATE_EVAL_ENABLED: ${ALPHA_TEMPLATE_EVAL_ENABLED:-1}
+      # State file of the cycle in progress; each cycle's research run records sit beside it under cycles/ (last 3 kept).
+      ALPHA_TEMPLATE_EVAL_STATE_PATH: /data/research-orchestrator/alpha-replication/template-evaluation/schedule_state.json
+      ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS: ${ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS:-60}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
@@ -1002,6 +1010,9 @@ services:
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
+      # GET /api/research/alpha-templates/evaluations reads the Registry store (same Postgres owner as registry).
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       # Keep HTTP admission and the supervised alpha worker on one durable
       # volume so accepted research specs survive a service restart.
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication

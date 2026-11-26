@@ -2728,6 +2728,24 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "for stale in old[:-self.config.keep_cycles]",
+    "file": "services/research/alpha_templates/schedule.py"
+   },
+   "bound_status": "bounded",
+   "cap": "state file is overwritten in place (2.4 KB at the end of a cycle, 9.7 KB while one runs: 60 symbols and 18 batches listed); the per-cycle research stores beside it (cycles/<window_end>-<snapshot>/research_*.json and research_events.jsonl) are 21.6 MB for one full cycle of 171 templates over 60 symbols x 800 days (evidence.json measurement.script, real daily_bars store of 300 symbols); at most keep_cycles (ALPHA_TEMPLATE_EVAL_KEEP_CYCLES, default 3) cycle directories are kept, so about 65 MB in total. Registry metadata of each template is overwritten in place (one evaluation per template, no history)",
+   "cleanup": "TemplateEvaluationScheduler._finish removes the oldest cycle directories beyond keep_cycles when a cycle completes; every cycle calls it (test_cycle_directories_beyond_keep_are_removed)",
+   "growth_driver": "one evaluation cycle at most once a week, after the governed store has a new trading day; each cycle writes 19 batch runs",
+   "growth_per_day": "about 3.1 MB averaged (21.6 MB per weekly cycle); steady state is capped at about 65 MB",
+   "kind": "compose_path",
+   "name": "/data/research-orchestrator/alpha-replication/template-evaluation/schedule_state.json",
+   "owner": "compose:alpha-replication-worker",
+   "readers": [
+    "docker-compose.yml"
+   ],
+   "task": "ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",

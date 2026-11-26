@@ -5697,11 +5697,9 @@ def list_alpha_template_evaluations_endpoint(
 ) -> Dict[str, Any]:
     registry_service = RegistryService(get_registry_store())
     ensure_builtin_alpha_templates(registry_service)
-    entries = [
-        v
-        for v in registry_service.list_all_entries()
-        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
-    ]
+    from services.research.alpha_templates import list_alpha_template_views
+
+    entries = list_alpha_template_views(registry_service)
     items: List[Dict[str, Any]] = []
     for view in entries:
         meta = view.entry.metadata or {}

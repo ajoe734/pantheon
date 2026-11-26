@@ -49,6 +49,20 @@ from services.registry.factor_rule import (  # noqa: E402
 from services.registry.models import ArtifactType  # noqa: E402
 from services.registry.split_api import RegistryService  # noqa: E402
 
+
+def list_alpha_template_views(registry_service: RegistryService) -> list[Any]:
+    """AlphaTemplate entries through the owner store's type-filtered read.
+
+    Never lists the whole registry: hosted ``registry.entries`` holds ~10k rows (strategy_spec JSON, tens of MB,
+    growing ~300 rows a day) while the 182 templates are ~450 kB. A store without ``list_by_artifact_type`` fails
+    loudly instead of falling back to a whole-table scan.
+    """
+    store = registry_service.store
+    reader = getattr(store, "list_by_artifact_type", None)
+    if reader is None:
+        raise RuntimeError("registry store has no type-filtered read; refusing a whole-registry scan")
+    return [registry_service._to_view(e) for e in reader(ArtifactType.ALPHA_TEMPLATE)]
+
 EVALUATION_HORIZONS: tuple[int, ...] = (1, 5, 20)
 HORIZON_KEYS: tuple[str, ...] = ("1d", "5d", "20d")
 # SD_INTRADAY_MINUTE_BARS §7 (K5): intraday templates add bar horizons next to (never instead of) the daily set.
@@ -1822,6 +1836,7 @@ def run_alpha_template_evaluation(
     strict_stepwise: bool = False,
     redundancy_threshold: float = REDUNDANCY_CORRELATION_THRESHOLD,
     actor: dict[str, Any] | None = None,
+    evaluation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run Taiwan point-in-time evaluation, persist a research run, and link ``evaluation_ref``.
 
@@ -1838,11 +1853,7 @@ def run_alpha_template_evaluation(
     """
     if registry_service is not None and templates is None:
         ensure_builtin_alpha_templates(registry_service)
-        entries = [
-            v
-            for v in registry_service.list_all_entries()
-            if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
-        ]
+        entries = list_alpha_template_views(registry_service)
         all_registry_templates: list[dict[str, Any]] = []
         for view in entries:
             meta_tmpl = (view.entry.metadata or {}).get(ALPHA_TEMPLATE_METADATA_KEY)
@@ -1888,6 +1899,15 @@ def run_alpha_template_evaluation(
     }
     for ev in target_evaluations.values():
         ev["evaluation_ref"] = resolved_run_id
+        if evaluation_context is not None:
+            # Scope of the measurement: snapshot, symbols, history and the horizons that did not reach
+            # MIN_IC_OBSERVATIONS (listed, never estimated). Evaluation never sets active/approval state.
+            ev["evaluation_context"] = {
+                **copy.deepcopy(dict(evaluation_context)),
+                "horizons_without_enough_observations": sorted(
+                    k for k, short in (ev.get("insufficient_by_horizon") or {}).items() if short
+                ),
+            }
 
     # Update Registry entries so template.evaluation_ref points to resolved_run_id
     updated_registry_ids: dict[str, str] = {}
