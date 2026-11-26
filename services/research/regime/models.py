@@ -56,6 +56,29 @@ class AxisSession:
                 "sessions_in_state": self.sessions_in_state, "last_switch_session": self.last_switch_session}
 
 
+def sessions_to_rows(sessions: float, cadence_sessions: int) -> int:
+    """Rows of a ``cadence_sessions``-per-row series needed to cover ``sessions`` market sessions.
+
+    Rounded up, so a window or delay declared in market sessions is never shortened when the
+    series is sampled at a multi-session cadence (e.g. 2,450 sessions -> 490 five-session rows,
+    122 -> 25, a one-session delay -> one row).
+    """
+    cadence = _cadence(cadence_sessions)
+    return int(math.ceil(float(sessions) / cadence)) if sessions > 0 else 0
+
+
+def rows_to_sessions(rows: float, cadence_sessions: int) -> float:
+    """Market sessions spanned by ``rows`` rows of a ``cadence_sessions``-per-row series."""
+    return float(rows) * _cadence(cadence_sessions)
+
+
+def _cadence(cadence_sessions: int) -> int:
+    cadence = int(cadence_sessions)
+    if cadence < 1:
+        raise RegimeModelError(f"cadence_sessions_invalid:{cadence_sessions}")
+    return cadence
+
+
 def _expected_durations(matrix: np.ndarray, labels: Sequence[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for i, label in enumerate(labels):
