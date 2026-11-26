@@ -1,0 +1,164 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task_id": "MEETING-HOSTED-ACCEPTANCE-20261115",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "kind": "hosted read-only acceptance observation",
+  "observed_at": "2026-11-26T03:08:13Z",
+  "verdict": "partial",
+  "verdict_summary": "AC1, AC5, AC6 met on hosted dev. AC2 partially (writebacks per participant and zero private items recorded; own-memory readback denied to the read-only viewer). AC3 not observed: no natural Agora-advisor meeting and no workshop-convened meeting exist on hosted dev; recorded with reason, nothing synthesised. AC4: see management_browser.",
+  "release_identity": {
+    "accepted_release_of_record": {
+      "root_run": "45684275970",
+      "root_run_url": "https://github.com/ajoe734/pantheon/actions/runs/45684275970",
+      "backend_sha": "b3f93d448f44aa426f3a4848c93df3e5a1ae8aa3",
+      "frontend_sha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+      "acceptance": "passed",
+      "verdict_generated_at": "2026-11-25T20:47:46Z",
+      "meeting_probes_in_verdict": {
+        "probe:meeting-review-disposition": "passed (meetings_read 20; mtg-2c016da5651a0dc4 pending_review)",
+        "probe:meeting-action-followthrough": "skipped 77, pending: second_meeting_or_human_input_not_yet_observed",
+        "probe:mgmt-strategy-meeting-research-readable": "passed"
+      }
+    },
+    "served_at_observation": {
+      "bff_version_commit": "8e67d240e034f4f133ffa926383b584536bc2e35",
+      "frontend_sha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+      "release_run": "45740904149",
+      "note": "Release 45740904149 had deployed BFF 8e67d240 and was still in its admit/switch job when the observation ran; it is not yet an accepted release. Meetings, proposals and writebacks are persisted owner data written between 2026-11-18 and 2026-11-25, i.e. under releases up to and including 45684275970; the newer BFF only served the read."
+    }
+  },
+  "read_only_commands": [
+    "gh run download 45684275970 --repo ajoe734/pantheon -n dev-acceptance-verdict-45684275970-1",
+    "curl -s https://api.dev.mvl-cap.tw/bff/version (unauthenticated GET)",
+    "gh workflow run persona-day-acceptance.yml --repo ajoe734/pantheon --ref task/MEETING-HOSTED-ACCEPTANCE-20261115 (read-only daily workflow; contents: read; viewer identity via existing secret)",
+    "gh run download 45746533291 --repo ajoe734/pantheon -n persona-day-acceptance (meeting-hosted-day.json)"
+  ],
+  "observation_tool": {
+    "script": "acceptance/meeting_hosted_day.py",
+    "workflow_step": ".github/workflows/persona-day-acceptance.yml: 'Natural persona meetings observed (GET only; viewer identity)'",
+    "identity": "read-only viewer via POST /bff/auth/dev-login; token kept in memory; never printed",
+    "requests": [
+      "GET /bff/management/meetings?page_size=200&include_failed=true",
+      "GET /bff/management/meetings/{meeting_id} (every closed meeting, 13)",
+      "GET /bff/management/meetings/proposals",
+      "GET /bff/personas/{persona_id}/memory (each persona participant)",
+      "GET /bff/agora/committee/meetings",
+      "GET /bff/management/meetings?persona_id={chair} (persona meetings tab data)"
+    ],
+    "run": "45746533291",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/45746533291",
+    "run_head_sha": "aa45084aeca8c8615fc97a64f5e55a4b20e5d88b",
+    "step_result": "success; observation verdict pending (no violation)",
+    "first_attempt": "run 45745083130 at 2026-11-26T02:50Z: dev-login returned HTTP 502 while release 45740904149 was deploying; not counted",
+    "other_steps_not_owned": "persona_day.py and pool_risk_snapshot_day.py steps failed in the same run, as they did on dev in scheduled run 45698597707; existing daily-state verdicts, unchanged by this task"
+  },
+  "hosted_meetings": {
+    "listed": 20,
+    "list_limit_note": "the list returned 20 rows and no next_cursor; oldest listed meeting 2026-11-18",
+    "by_type_status": {"MT-1:closed": 9, "MT-1:convened": 1, "MT-1:refused": 4, "MT-2:closed": 4, "MT-3:refused": 2},
+    "closed_details_read": 13,
+    "proposals_entry_point_rows": 4,
+    "agora_committee_rows": 20
+  },
+  "acceptance": {
+    "AC1_natural_meeting_two_rounds_proposals_at_entry_point": {
+      "status": "met",
+      "natural_meetings": [
+        {
+          "meeting_id": "mtg-34ee6bcfe9cf8d22",
+          "meeting_type": "MT-1",
+          "convened_by_kind": "persona",
+          "created_at": "2026-11-24T10:03:29Z",
+          "closed_at": "2026-11-24T10:12:45Z",
+          "rounds": 2,
+          "outcome": "proposals_issued",
+          "participants": ["persona-ee7112a829d38b9135ac", "persona-risk-officer"],
+          "proposals": [{"proposal_id": "research-mtg-34ee6bcfe9cf8d22-paper-health", "kind": "research_demand",
+                         "entry_point": "GET /bff/management/meetings/proposals (listed)",
+                         "downstream": {"target": "/api/research/persona-demands", "id": "rd-975bb89106f1c696a680", "status": "open"}}]
+        },
+        {
+          "meeting_id": "mtg-e585f6a827ede4d4",
+          "meeting_type": "MT-2",
+          "convened_by_kind": "persona",
+          "created_at": "2026-11-24T10:02:19Z",
+          "closed_at": "2026-11-24T10:08:37Z",
+          "rounds": 2,
+          "outcome": "proposals_issued",
+          "participants": ["persona-6507750312870d03a241", "persona-risk-officer"],
+          "proposals": [{"proposal_id": "mtg-e585f6a827ede4d4-baseline-health-note", "kind": "research_demand",
+                         "entry_point": "GET /bff/management/meetings/proposals (listed)",
+                         "downstream": {"target": "/api/research/persona-demands", "id": "rd-796e24e24bf2055d3c42", "status": "open"}}]
+        }
+      ],
+      "also_observed_not_counted_as_natural": [
+        {"meeting_id": "mtg-72ee4d6606ed5712", "meeting_type": "MT-1", "created_at": "2026-11-22T20:50:43Z", "rounds": 2,
+         "proposal_downstream": "rd-975bb89106f1c696a680 open",
+         "reason": "convened outside the 10:00Z daily cycle during meeting repair work; not claimed as natural"},
+        {"meeting_id": "mtg-ce73f5966e7f23be", "meeting_type": "MT-1", "created_at": "2026-11-22T13:31:03Z", "rounds": 2,
+         "proposal_downstream": "rd-975bb89106f1c696a680 open",
+         "reason": "prior evidence (MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122) records a manual provider timeout override; not claimed as natural"}
+      ],
+      "latest_daily_cycle": "2026-11-25: mtg-9857b34f04dac356 MT-1 closed, 2 rounds, outcome actions_adopted (no proposal)"
+    },
+    "AC2_outcome_in_own_memory_no_private_memory_in_rounds": {
+      "status": "partially_met",
+      "writebacks_recorded": {
+        "mtg-34ee6bcfe9cf8d22": {"persona-ee7112a829d38b9135ac": "pmem-707603c9-b1ad-5529-ba0e-83582b5c584e",
+                                  "persona-risk-officer": "pmem-1f0ef1d5-4bfc-5e26-bad2-51ca8a5b9816"},
+        "mtg-e585f6a827ede4d4": {"persona-6507750312870d03a241": "pmem-eff5e8a9-5bf9-5463-b032-b047640b977c",
+                                  "persona-risk-officer": "pmem-e98684dd-2f1c-5b22-90df-088e6f761ee6"}
+      },
+      "writeback_coverage": "every persona participant of all 13 closed meetings has one writeback entry id naming that participant",
+      "own_memory_readback": "not observable with the read-only viewer: GET /bff/personas/{id}/memory returned meta.memory_source.reason=memory_plane_access_denied for every participant",
+      "private_memory_in_rounds": "none observed: private_items_withheld=0 on all 13 closed meeting details and no round position or case-file item carries a private memory marker; the cross-check against participants' private memory ids could not run because memory reads were denied",
+      "remaining": "an identity authorised for the persona memory read (operator), or a memory-plane grant for the viewer, is needed to prove entry ids pmem-* are present in each persona's own memory"
+    },
+    "AC3_agora_advisor_and_foreign_servant_refusal": {
+      "status": "not_observed",
+      "agora_advisor": "missing: no listed meeting has a participant with origin agora_advisor (all participants are institutional)",
+      "foreign_servant_refusal": "missing: no meeting was refused with private_servant_not_allowed; no workshop-convened meeting exists on hosted dev",
+      "reason": "Agora advisors and workshop-convened meetings are only created by a user action in an Agora workshop; none happened on hosted dev. Creating one would be a synthetic, state-mutating write and is out of scope for this read-only acceptance.",
+      "agora_read_surface": "GET /bff/agora/committee/meetings returned 20 rows (data for /agora/committee)"
+    },
+    "AC4_management_pages_in_real_browser_and_crawl": {
+      "status": "pending_crawl",
+      "persona_meetings_tab_data": "GET /bff/management/meetings?persona_id={chair} listed every closed meeting of its chair (0 missing)",
+      "management_browser": "see management_browser"
+    },
+    "AC5_missing_natural_events_recorded_not_synthesised": {
+      "status": "met",
+      "missing": [
+        {"event": "MT-3 new strategy ideation with enrolled personas", "observed": "mtg-492d824b116f9ace (2026-11-18) and mtg-fd08f490b178e756 (2026-11-23) refused insufficient_participants", "reason": "the MT-3 roster fix (MEETING-CROSS-PERSONA-ENROLLED-ROSTER-20261123) has had no MT-3 trigger since; no MT-3 meeting listed after 2026-11-23"},
+        {"event": "MT-4 post-mortem on a real incident", "observed": "no MT-4 listed", "reason": "no qualifying real event has triggered MT-4 on hosted dev"},
+        {"event": "Agora advisor attendance and foreign servant refusal", "observed": "none", "reason": "see AC3"},
+        {"event": "second same-series meeting for the action loop", "observed": "probe:meeting-action-followthrough pending", "reason": "owned by MEETING-ACTION-TWO-MEETING-PROOF-20261123; natural second meeting not yet observed"}
+      ],
+      "synthesised": "nothing: no meeting was convened, no Agora workshop or servant created, no memory written by this task"
+    },
+    "AC6_release_identity_and_read_only_commands_no_credential": {
+      "status": "met",
+      "credential_check": "this file holds no token, secret, client secret or Authorization header; the viewer secret stayed in the GitHub dev environment"
+    }
+  },
+  "management_browser": {
+    "crawl": "pending: release 45740904149 acceptance stage (check:management-crawl, scripts/accept-management-hosted-production.mjs) not finished at write time",
+    "crawl_routes_covering_this_task": ["/management/meetings (nav)", "/management/meetings/{live meeting id} (live-id detail)", "/management/personas/{live persona id} (live-id detail)"],
+    "not_in_management_crawl": "/agora/committee (Agora surface)"
+  },
+  "files_changed": [
+    "acceptance/meeting_hosted_day.py",
+    "acceptance/test_meeting_hosted_day.py",
+    ".github/workflows/persona-day-acceptance.yml",
+    "docs/deployment/evidence/MEETING-HOSTED-ACCEPTANCE-20261115/evidence.json"
+  ],
+  "tests": [
+    "python3 -m pytest -q acceptance/test_meeting_hosted_day.py scripts/test_acceptance_workflows_truthful.py -> 13 passed"
+  ],
+  "runtime_budget": {
+    "added_per_day": "one extra step in the existing weekday persona-day-acceptance run: about 30 GETs (1 list, <=60 details, proposals, <=10 persona memories, agora list, <=10 persona filters), bounded by timeout 240 s; observed 2026-11-26 well under that",
+    "artifact": "meeting-hosted-day.json about 18 KB per run, 30-day retention, in the existing persona-day-acceptance artifact",
+    "hosted_writes": "none"
+  }
+}
