@@ -6,7 +6,7 @@
   "kind": "hosted read-only acceptance observation",
   "observed_at": "2026-11-26T03:08:13Z",
   "verdict": "partial",
-  "verdict_summary": "AC1, AC5, AC6 met on hosted dev. AC2 partially (writebacks per participant and zero private items recorded; own-memory readback denied to the read-only viewer). AC3 not observed: no natural Agora-advisor meeting and no workshop-convened meeting exist on hosted dev; recorded with reason, nothing synthesised. AC4: see management_browser.",
+  "verdict_summary": "AC1, AC5, AC6 met on hosted dev. AC2 partial: every participant has a writeback entry id and no private item appears in any round, but own-memory readback is denied to the read-only viewer. AC3 not observed: no natural Agora-advisor meeting and no workshop-convened meeting exist on hosted dev; recorded with reason, nothing synthesised. AC4 partial: the Management hosted acceptance crawl (release 45740904149) passed /management/meetings, a live meeting detail and live persona detail in headless Chromium, but the crawl as a whole failed on 14 routes outside this task and the persona meetings tab is not a crawled route.",
   "release_identity": {
     "accepted_release_of_record": {
       "root_run": "45684275970",
@@ -25,14 +25,29 @@
       "bff_version_commit": "8e67d240e034f4f133ffa926383b584536bc2e35",
       "frontend_sha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
       "release_run": "45740904149",
-      "note": "Release 45740904149 had deployed BFF 8e67d240 and was still in its admit/switch job when the observation ran; it is not yet an accepted release. Meetings, proposals and writebacks are persisted owner data written between 2026-11-18 and 2026-11-25, i.e. under releases up to and including 45684275970; the newer BFF only served the read."
+      "note": "Release 45740904149 had deployed BFF 8e67d240 and was still in its admit/switch job when the observation ran; its verdict later came back failed (not an accepted release). Meetings, proposals and writebacks are persisted owner data written between 2026-11-18 and 2026-11-25, i.e. under releases up to and including 45684275970; the newer BFF only served the read.",
+      "release_acceptance": {
+        "verdict": "failed",
+        "generated_at": "2026-11-26T04:28:49Z",
+        "failed": [
+          "probe:trading-pulse-operator",
+          "check:management-crawl"
+        ],
+        "meeting_probes": {
+          "probe:meeting-review-disposition": "passed",
+          "probe:meeting-action-followthrough": "skipped 77 pending",
+          "probe:mgmt-strategy-meeting-research-readable": "passed"
+        }
+      }
     }
   },
   "read_only_commands": [
     "gh run download 45684275970 --repo ajoe734/pantheon -n dev-acceptance-verdict-45684275970-1",
     "curl -s https://api.dev.mvl-cap.tw/bff/version (unauthenticated GET)",
     "gh workflow run persona-day-acceptance.yml --repo ajoe734/pantheon --ref task/MEETING-HOSTED-ACCEPTANCE-20261115 (read-only daily workflow; contents: read; viewer identity via existing secret)",
-    "gh run download 45746533291 --repo ajoe734/pantheon -n persona-day-acceptance (meeting-hosted-day.json)"
+    "gh run download 45746533291 --repo ajoe734/pantheon -n persona-day-acceptance (meeting-hosted-day.json)",
+    "gh run download 45740904149 --repo ajoe734/pantheon -n dev-acceptance-verdict-45740904149-1 (acceptance-verdict.json, acceptance-crawl.json)",
+    "gh run download 45747260884 --repo ajoe734/execute-plans -n pantheon-integration-evidence-attempt-1 (pre-switch gate crawl log)"
   ],
   "observation_tool": {
     "script": "acceptance/meeting_hosted_day.py",
@@ -56,7 +71,13 @@
   "hosted_meetings": {
     "listed": 20,
     "list_limit_note": "the list returned 20 rows and no next_cursor; oldest listed meeting 2026-11-18",
-    "by_type_status": {"MT-1:closed": 9, "MT-1:convened": 1, "MT-1:refused": 4, "MT-2:closed": 4, "MT-3:refused": 2},
+    "by_type_status": {
+      "MT-1:closed": 9,
+      "MT-1:convened": 1,
+      "MT-1:refused": 4,
+      "MT-2:closed": 4,
+      "MT-3:refused": 2
+    },
     "closed_details_read": 13,
     "proposals_entry_point_rows": 4,
     "agora_committee_rows": 20
@@ -73,10 +94,22 @@
           "closed_at": "2026-11-24T10:12:45Z",
           "rounds": 2,
           "outcome": "proposals_issued",
-          "participants": ["persona-ee7112a829d38b9135ac", "persona-risk-officer"],
-          "proposals": [{"proposal_id": "research-mtg-34ee6bcfe9cf8d22-paper-health", "kind": "research_demand",
-                         "entry_point": "GET /bff/management/meetings/proposals (listed)",
-                         "downstream": {"target": "/api/research/persona-demands", "id": "rd-975bb89106f1c696a680", "status": "open"}}]
+          "participants": [
+            "persona-ee7112a829d38b9135ac",
+            "persona-risk-officer"
+          ],
+          "proposals": [
+            {
+              "proposal_id": "research-mtg-34ee6bcfe9cf8d22-paper-health",
+              "kind": "research_demand",
+              "entry_point": "GET /bff/management/meetings/proposals (listed)",
+              "downstream": {
+                "target": "/api/research/persona-demands",
+                "id": "rd-975bb89106f1c696a680",
+                "status": "open"
+              }
+            }
+          ]
         },
         {
           "meeting_id": "mtg-e585f6a827ede4d4",
@@ -86,29 +119,55 @@
           "closed_at": "2026-11-24T10:08:37Z",
           "rounds": 2,
           "outcome": "proposals_issued",
-          "participants": ["persona-6507750312870d03a241", "persona-risk-officer"],
-          "proposals": [{"proposal_id": "mtg-e585f6a827ede4d4-baseline-health-note", "kind": "research_demand",
-                         "entry_point": "GET /bff/management/meetings/proposals (listed)",
-                         "downstream": {"target": "/api/research/persona-demands", "id": "rd-796e24e24bf2055d3c42", "status": "open"}}]
+          "participants": [
+            "persona-6507750312870d03a241",
+            "persona-risk-officer"
+          ],
+          "proposals": [
+            {
+              "proposal_id": "mtg-e585f6a827ede4d4-baseline-health-note",
+              "kind": "research_demand",
+              "entry_point": "GET /bff/management/meetings/proposals (listed)",
+              "downstream": {
+                "target": "/api/research/persona-demands",
+                "id": "rd-796e24e24bf2055d3c42",
+                "status": "open"
+              }
+            }
+          ]
         }
       ],
       "also_observed_not_counted_as_natural": [
-        {"meeting_id": "mtg-72ee4d6606ed5712", "meeting_type": "MT-1", "created_at": "2026-11-22T20:50:43Z", "rounds": 2,
-         "proposal_downstream": "rd-975bb89106f1c696a680 open",
-         "reason": "convened outside the 10:00Z daily cycle during meeting repair work; not claimed as natural"},
-        {"meeting_id": "mtg-ce73f5966e7f23be", "meeting_type": "MT-1", "created_at": "2026-11-22T13:31:03Z", "rounds": 2,
-         "proposal_downstream": "rd-975bb89106f1c696a680 open",
-         "reason": "prior evidence (MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122) records a manual provider timeout override; not claimed as natural"}
+        {
+          "meeting_id": "mtg-72ee4d6606ed5712",
+          "meeting_type": "MT-1",
+          "created_at": "2026-11-22T20:50:43Z",
+          "rounds": 2,
+          "proposal_downstream": "rd-975bb89106f1c696a680 open",
+          "reason": "convened outside the 10:00Z daily cycle during meeting repair work; not claimed as natural"
+        },
+        {
+          "meeting_id": "mtg-ce73f5966e7f23be",
+          "meeting_type": "MT-1",
+          "created_at": "2026-11-22T13:31:03Z",
+          "rounds": 2,
+          "proposal_downstream": "rd-975bb89106f1c696a680 open",
+          "reason": "prior evidence (MEETING-WORKFLOW-TIMEOUT-AND-MEMORY-20261122) records a manual provider timeout override; not claimed as natural"
+        }
       ],
       "latest_daily_cycle": "2026-11-25: mtg-9857b34f04dac356 MT-1 closed, 2 rounds, outcome actions_adopted (no proposal)"
     },
     "AC2_outcome_in_own_memory_no_private_memory_in_rounds": {
       "status": "partially_met",
       "writebacks_recorded": {
-        "mtg-34ee6bcfe9cf8d22": {"persona-ee7112a829d38b9135ac": "pmem-707603c9-b1ad-5529-ba0e-83582b5c584e",
-                                  "persona-risk-officer": "pmem-1f0ef1d5-4bfc-5e26-bad2-51ca8a5b9816"},
-        "mtg-e585f6a827ede4d4": {"persona-6507750312870d03a241": "pmem-eff5e8a9-5bf9-5463-b032-b047640b977c",
-                                  "persona-risk-officer": "pmem-e98684dd-2f1c-5b22-90df-088e6f761ee6"}
+        "mtg-34ee6bcfe9cf8d22": {
+          "persona-ee7112a829d38b9135ac": "pmem-707603c9-b1ad-5529-ba0e-83582b5c584e",
+          "persona-risk-officer": "pmem-1f0ef1d5-4bfc-5e26-bad2-51ca8a5b9816"
+        },
+        "mtg-e585f6a827ede4d4": {
+          "persona-6507750312870d03a241": "pmem-eff5e8a9-5bf9-5463-b032-b047640b977c",
+          "persona-risk-officer": "pmem-e98684dd-2f1c-5b22-90df-088e6f761ee6"
+        }
       },
       "writeback_coverage": "every persona participant of all 13 closed meetings has one writeback entry id naming that participant",
       "own_memory_readback": "not observable with the read-only viewer: GET /bff/personas/{id}/memory returned meta.memory_source.reason=memory_plane_access_denied for every participant",
@@ -123,17 +182,67 @@
       "agora_read_surface": "GET /bff/agora/committee/meetings returned 20 rows (data for /agora/committee)"
     },
     "AC4_management_pages_in_real_browser_and_crawl": {
-      "status": "pending_crawl",
-      "persona_meetings_tab_data": "GET /bff/management/meetings?persona_id={chair} listed every closed meeting of its chair (0 missing)",
-      "management_browser": "see management_browser"
+      "status": "partially_met",
+      "crawl_routes_for_this_task": [
+        {
+          "path": "/management/meetings",
+          "kind": "nav",
+          "status": "ok",
+          "dataPass": true
+        },
+        {
+          "path": "/management/meetings/mtg-492d824b116f9ace",
+          "kind": "live-id-detail",
+          "status": "ok",
+          "dataPass": true
+        },
+        {
+          "path": "/management/meetings/mtg_001",
+          "kind": "fixture-id detail",
+          "status": "ok",
+          "dataPass": true
+        },
+        {
+          "path": "/management/personas",
+          "kind": "nav",
+          "status": "ok",
+          "dataPass": true
+        },
+        {
+          "path": "/management/personas/persona-d57f6d76254c20418a9e",
+          "kind": "live-id-detail",
+          "status": "ok",
+          "dataPass": true
+        }
+      ],
+      "crawl_overall": "failed: 14 of 110 routes, none of them a meetings or persona route (/management/runtimes, /management/risk, /management/approvals, /management/governance, a human-inbox readiness item, fixture strategy/rebalance/evolution/deployment/governance details, one live strategy, one capital pool, one evolution proposal)",
+      "persona_meetings_tab": "data half observed (GET /bff/management/meetings?persona_id={chair} listed every closed meeting of its chair); the tab itself is not a route in scripts/lib/management-routes.mjs, so the crawl does not render it",
+      "agora_committee": "/agora/committee is not in the Management crawl; its BFF read returned 20 rows",
+      "real_browser": "the crawl is headless Chromium as the read-only viewer; no interactive operator browser session was available to this worker"
     },
     "AC5_missing_natural_events_recorded_not_synthesised": {
       "status": "met",
       "missing": [
-        {"event": "MT-3 new strategy ideation with enrolled personas", "observed": "mtg-492d824b116f9ace (2026-11-18) and mtg-fd08f490b178e756 (2026-11-23) refused insufficient_participants", "reason": "the MT-3 roster fix (MEETING-CROSS-PERSONA-ENROLLED-ROSTER-20261123) has had no MT-3 trigger since; no MT-3 meeting listed after 2026-11-23"},
-        {"event": "MT-4 post-mortem on a real incident", "observed": "no MT-4 listed", "reason": "no qualifying real event has triggered MT-4 on hosted dev"},
-        {"event": "Agora advisor attendance and foreign servant refusal", "observed": "none", "reason": "see AC3"},
-        {"event": "second same-series meeting for the action loop", "observed": "probe:meeting-action-followthrough pending", "reason": "owned by MEETING-ACTION-TWO-MEETING-PROOF-20261123; natural second meeting not yet observed"}
+        {
+          "event": "MT-3 new strategy ideation with enrolled personas",
+          "observed": "mtg-492d824b116f9ace (2026-11-18) and mtg-fd08f490b178e756 (2026-11-23) refused insufficient_participants",
+          "reason": "the MT-3 roster fix (MEETING-CROSS-PERSONA-ENROLLED-ROSTER-20261123) has had no MT-3 trigger since; no MT-3 meeting listed after 2026-11-23"
+        },
+        {
+          "event": "MT-4 post-mortem on a real incident",
+          "observed": "no MT-4 listed",
+          "reason": "no qualifying real event has triggered MT-4 on hosted dev"
+        },
+        {
+          "event": "Agora advisor attendance and foreign servant refusal",
+          "observed": "none",
+          "reason": "see AC3"
+        },
+        {
+          "event": "second same-series meeting for the action loop",
+          "observed": "probe:meeting-action-followthrough pending",
+          "reason": "owned by MEETING-ACTION-TWO-MEETING-PROOF-20261123; natural second meeting not yet observed"
+        }
       ],
       "synthesised": "nothing: no meeting was convened, no Agora workshop or servant created, no memory written by this task"
     },
@@ -143,9 +252,20 @@
     }
   },
   "management_browser": {
-    "crawl": "pending: release 45740904149 acceptance stage (check:management-crawl, scripts/accept-management-hosted-production.mjs) not finished at write time",
-    "crawl_routes_covering_this_task": ["/management/meetings (nav)", "/management/meetings/{live meeting id} (live-id detail)", "/management/personas/{live persona id} (live-id detail)"],
-    "not_in_management_crawl": "/agora/committee (Agora surface)"
+    "post_switch_crawl": {
+      "release_run": "45740904149",
+      "job": "139687776343",
+      "script": "scripts/accept-management-hosted-production.mjs @ execute-plans 38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+      "identity": "viewer",
+      "read_only": true,
+      "non_get_requests": [],
+      "route_count": 110,
+      "failed_route_count": 14,
+      "seconds": 649.58,
+      "generated_at": "2026-11-26T04:17:59Z"
+    },
+    "pre_switch_gate_crawl": "execute-plans gate run 45747260884: did not run ('A short-lived BFF_AUTH_TOKEN is required'; credential mint step skipped), the known gap recorded by ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126",
+    "root_45684275970": "its acceptance stage predates the crawl check, so no crawl exists for that release"
   },
   "files_changed": [
     "acceptance/meeting_hosted_day.py",
@@ -160,5 +280,27 @@
     "added_per_day": "one extra step in the existing weekday persona-day-acceptance run: about 30 GETs (1 list, <=60 details, proposals, <=10 persona memories, agora list, <=10 persona filters), bounded by timeout 240 s; observed 2026-11-26 well under that",
     "artifact": "meeting-hosted-day.json about 18 KB per run, 30-day retention, in the existing persona-day-acceptance artifact",
     "hosted_writes": "none"
-  }
+  },
+  "residuals": [
+    {
+      "item": "AC2 own-memory readback",
+      "owner_hint": "memory plane authz / operator read",
+      "detail": "viewer gets memory_plane_access_denied on GET /bff/personas/{id}/memory"
+    },
+    {
+      "item": "AC3 Agora advisor + foreign servant refusal",
+      "owner_hint": "natural event",
+      "detail": "needs a real Agora workshop meeting; not synthesised"
+    },
+    {
+      "item": "AC4 crawl overall",
+      "owner_hint": "owners of the 14 failing Management routes",
+      "detail": "meeting/persona routes pass; crawl verdict failed elsewhere"
+    },
+    {
+      "item": "MT-3 / MT-4 natural meetings",
+      "owner_hint": "natural event",
+      "detail": "no MT-3 after the roster fix; no MT-4 trigger"
+    }
+  ]
 }
