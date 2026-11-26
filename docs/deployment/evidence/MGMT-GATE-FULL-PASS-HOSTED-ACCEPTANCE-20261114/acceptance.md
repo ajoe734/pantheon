@@ -1,22 +1,36 @@
 # MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114 — Hosted Management Per-Request Timing Crawl & Acceptance Evidence
 
-## 1. Executive Summary & Deployed Pair Identity
+## 1. Executive Summary & Single-Deploy Full-Pass Identity (Acceptance 1)
 
-- **Crawl A — Hosted Dev Root [`45684275970`](https://github.com/ajoe734/pantheon/actions/runs/45684275970) (FE Gate [`45690103912`](https://github.com/ajoe734/execute-plans/actions/runs/45690103912))**:
-  - **Deployed Pair**: BFF `b3f93d448f44aa426f3a4848c93df3e5a1ae8aa3` + FE `38e5337d1f832a8582ce4eaac63cb5febbfb943e` (`pairId=4ee2000dceee2403c4e9b4297374c19e276ce6ebcc4a8060026faced28954d61`, stable before and after crawl)
-  - **Window (UTC)**: `2026-11-26T02:37:36.306Z` → `2026-11-26T02:46:06.976Z` (`readOnly=true`, `PANTHEON_ACCEPT_CLICK_WRITE_CTAS=0`, `ROUTE_TIMEOUT_MS=45000`, `SETTLE_TIMEOUT_MS=20000`)
-  - **Outcome**: **`109/111` routes passed** (`11/11` live entity IDs resolved with `0` discovery failures; `pinnedTransport.pass=true` with `0` transport errors; `sessionRbac=pass`; `loadGate=pass`).
-  - **Raw Report Digests**: JSON `747225` bytes (SHA-256 `eccd11bbde7b20bcb74f74dbd427059b6bebfb580a05d095dcf22e93c6940380`), Markdown `100001` bytes (SHA-256 `44a7cd449a7fc4cb2e6350196ddec7919cf40cc7923d2884fcf8a6407cee2cf9`).
-- **Crawl B — Post-Switch Follow-Up on Root [`45740904149`](https://github.com/ajoe734/pantheon/actions/runs/45740904149) (with `#7877` `BFF-EVO-JOURNAL-VERSION-STRING-20261126`)**:
-  - **Deployed Pair**: BFF `8e67d240e034f4f133ffa926383b584536bc2e35` + FE `38e5337d1f832a8582ce4eaac63cb5febbfb943e` (stable before and after crawl)
-  - **Window (UTC)**: `2026-11-26T03:05:37.460Z` → `2026-11-26T03:15:04.667Z`
-  - **Outcome**: **`107/111` routes passed**, `0` route crashes, `0` render-crash console errors, `0` CORS errors, `pinnedTransport.pass=true`, `11/11` live entity IDs resolved. Both routes that failed in Crawl A (`/management/evolution-journal` -> `status=ok`, `GET /bff/management/evolution-journal` HTTP `200` in `1295 ms`; `/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` -> `status=ok`, HTTP `404` honest not-found in `2006 ms`) **passed in Crawl B**.
-  - **Combined Route Verification**: **`111/111` distinct management routes verified passing (`status=ok`, `dataPass=true`, `0` render crashes) across the paired crawls**.
-  - **Raw Report Digests**: JSON `749098` bytes (SHA-256 `0bd54d177271de07e69953e378387c62295c2bf71b029959646efecb071667e7`), Markdown `100560` bytes (SHA-256 `64833091f63d2ef831ec6264516b8e61ab7f554db6a8621825c86503b72ca226`).
+- **Accepted Single-Deploy Full Pass — Hosted Dev Root [`45740904149`](https://github.com/ajoe734/pantheon/actions/runs/45740904149) (FE Gate [`45747260884`](https://github.com/ajoe734/execute-plans/actions/runs/45747260884), FE Switch [`45749895220`](https://github.com/ajoe734/execute-plans/actions/runs/45749895220))**:
+  - **Deployed Pair**: BFF `8e67d240e034f4f133ffa926383b584536bc2e35` + FE `38e5337d1f832a8582ce4eaac63cb5febbfb943e` (`releaseCandidateId=923c2a3131e475fcf404e6f5ab4c11db4476eace48885a0648a6fd706c403b19`, `pairId=4ee2000dceee2403c4e9b4297374c19e276ce6ebcc4a8060026faced28954d61`, `deploymentState=accepted`, stable before and after crawl)
+  - **Workflow Conclusions**: Root `45740904149` `completed` (`conclusion=success`); FE Integration Gate `45747260884` `completed` (`conclusion=success`); FE Deploy `45749895220` `completed` (`conclusion=success`)
+  - **Full-Pass Crawl Window (UTC)**: `2026-11-26T03:45:15.379Z` → `2026-11-26T03:52:47.238Z` (`readOnly=true`, `PANTHEON_ACCEPT_CLICK_WRITE_CTAS=0`, `ROUTE_TIMEOUT_MS=45000`, `SETTLE_TIMEOUT_MS=20000`, unloaded Dev VM load average `~0.86–1.42`)
+  - **Single-Crawl Outcome**: **`111/111` routes passed (`0` failing routes)** in a single crawl (`result.pass=true`, `result.failures=[]`, `0` route crashes/blanks/navfails, `0` route or discovery data failures, `0` alias direct-render failures, `0` detail-honesty violations, `0` strict-live seed fallback claims, `0` mock/demo success claims, `0` CORS console errors, `0` render-crash console errors, `11/11` live entity IDs resolved, `pinnedTransport.pass=true`, `sessionRbac=pass`, `loadGate=pass`).
+  - **Raw Report Digests**: JSON `745531` bytes (SHA-256 `ce70124a8d9a6b2129a7a04514d5846fe567f967589e998029f0a6ece3c45aae`), Markdown `99087` bytes (SHA-256 `7b9a61bfce55710af785e1cc55626f111e303a149eefdf14ef71793704b5c2cb`).
+- **Historical Pre-Fix / Load-Contention Context (Retained for Acceptance 3 Traceability)**:
+  - **Historical Crawl A — Root [`45684275970`](https://github.com/ajoe734/pantheon/actions/runs/45684275970) (`BFF b3f93d448f44 + FE 38e5337d1f83`)**: `109/111` passed (`2026-11-26T02:37:36.306Z` → `02:46:06.976Z`). Surfaced `/management/evolution-journal` integer `target.version` crash (fixed by `#7877` `BFF-EVO-JOURNAL-VERSION-STRING-20261126` in `8e67d240e034`) and transient `503` on `/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` during concurrent Docker build.
+  - **Historical Crawl B — Initial Crawl on `8e67d240e034 + 38e5337d1f83` during Concurrent Runner Saturation (`03:05:37.460Z` → `03:15:04.667Z`)**: `107/111` passed while `45747260884` and concurrent worker activity saturated the Dev VM (`load average 12.99` at `03:13Z–03:15Z`), causing settle timeouts on 4 late detail routes (`67`, `101`, `102`, `103`). Rerunning the complete 111-route crawl on the unloaded Dev VM against the same Root `45740904149` pair (`8e67d240e034 + 38e5337d1f83`, which includes `#7858` `BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125` and `#7877` `BFF-EVO-JOURNAL-VERSION-STRING-20261126`) passed **`111/111` routes (`0` failures)** in one single run.
 
-## 2. Prerequisite & Blocker Fix Inclusion in Deployed Pair
+## 2. Gate Checks on Accepted Single-Deploy Full Pass (`8e67d240e034 + 38e5337d1f83`)
 
-| Task ID | Repo | PR | Merge Commit | In `b3f93d448f44` + `38e5337d1f83` | In `8e67d240e034` + `38e5337d1f83` |
+| Status | Gate Check | Note |
+|---|---|---|
+| `pass` | No route crashes, is blank, or fails to navigate. | `count:0` |
+| `pass` | Every route and detail resolves auth/loading and completes its data checks. | `routes:0; discovery:0` |
+| `pass` | No known alias direct-renders instead of redirecting to its canonical path. | `count:0` |
+| `pass` | No detail route shows raw undefined/NaN/Invalid Date. | `count:0` |
+| `pass` | No route claims seed fallback armed in strict-live mode. | `count:0` |
+| `pass` | No route shows a mock/demo success claim as production truth. | `count:0` |
+| `pass` | No CORS console errors on the hosted origin. | `count:0` |
+| `pass` | No render-crash console errors. | `count:0` |
+| `pass` | Session/RBAC: invalid session cannot read privileged management data. | `Authenticated /bff/me returns operator identity.:pass; Invalid/no-role token is rejected by /bff/me (401/403).:pass; Privileged management read is not served under an invalid session (fails closed).:pass` |
+| `pass` | MGMT-LOAD-006/007 release-load-gate manifest reports result.pass=true. | `result.pass:true overall:pass failures:0 missing:0` |
+| `warn` | Write-CTA source scan: toast.success() calls are backed by a governed/receipt signal (soft gate). | `ungoverned:25/39 (strict:false)` |
+
+## 3. Prerequisite & Blocker Fix Inclusion in Deployed Pair
+
+| Task ID | Repo | PR | Merge Commit | In `b3f93d448f44` + `38e5337d1f83` | In `8e67d240e034` + `38e5337d1f83` (Root `45740904149`) |
 |---|---|---:|---|---|---|
 | `BFF-QUARTERLY-RANKING-READ-LATENCY-20261114` | `ajoe734/pantheon` | #7331 | `d7141eb45a60` | yes | yes |
 | `BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114` | `ajoe734/pantheon` | #7336 | `a9284b68c115` | yes | yes |
@@ -28,11 +42,12 @@
 | `FE-CRAWL-OPAQUE-DETAIL-ID-20261114` | `ajoe734/execute-plans` | #1015 | `25eb22021027` | yes | yes |
 | `FE-MGMT-CRAWL-SHADOW-AND-TRANSPORT-20261125` | `ajoe734/execute-plans` | #1084 | `535556719a11` | yes | yes |
 | `BFF-STRATEGIES-DEFAULT-PAGE-BOUNDED-READ-20261125` | `ajoe734/pantheon` | #7816 | `4fbb666ea29a` | yes | yes |
-| `BFF-EVO-JOURNAL-VERSION-STRING-20261126` | `ajoe734/pantheon` | #7877 | `8d7ec076e22c` | no | yes |
+| `BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125` | `ajoe734/pantheon` | #7858 | `4d88a04b9bc7` | yes | yes |
+| `BFF-EVO-JOURNAL-VERSION-STRING-20261126` | `ajoe734/pantheon` | #7877 | `8d7ec076e7d7` | no | yes |
 
-## 3. Live Entity Discovery (11/11 Resolved on Both Pairs)
+## 4. Live Entity Discovery (11/11 Resolved on Accepted Full-Pass Crawl)
 
-| Entity | Discovery Endpoint | HTTP | Live ID (Crawl A) | Detail Route |
+| Entity | Discovery Endpoint | HTTP | Live ID | Detail Route |
 |---|---|---:|---|---|
 | `strategies` | `/bff/strategies` | 200 | `strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462` | `/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462` |
 | `personas` | `/bff/personas` | 200 | `persona-d57f6d76254c20418a9e` | `/management/personas/persona-d57f6d76254c20418a9e` |
@@ -44,134 +59,136 @@
 | `experiments` | `/bff/research-tasks` | 200 | `rtask-20261125-014` | `/management/experiments/rtask-20261125-014` |
 | `artifacts` | `/bff/artifacts` | 200 | `artifact-persona-pool-039ad01f8bcd2b4aa466-v2` | `/management/artifacts/artifact-persona-pool-039ad01f8bcd2b4aa466-v2` |
 | `deployments` | `/bff/deployments` | 200 | `plan-persona-pool-039ad01f8bcd2b4aa466-v2` | `/management/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` |
-| `incidents` | `/bff/incidents` | 200 | `agent-af7e6d72ed59-0006` | `/management/incidents/agent-af7e6d72ed59-0006` |
+| `incidents` | `/bff/incidents` | 200 | `agent-c0be28c2c638-0056` | `/management/incidents/agent-c0be28c2c638-0056` |
 | `tools` | `/bff/tools` | 200 | `(none)` | `(none)` |
 | `mcp` | `/bff/mcp-servers` | 200 | `(none)` | `(none)` |
 | `mcp-tools` | `/bff/mcp-tools` | 200 | `(none)` | `(none)` |
 | `skills` | `/bff/skills` | 200 | `(none)` | `(none)` |
 | `channels` | `/bff/channels` | 200 | `approval` | `/management/channels/approval` |
 
-## 4. Named Route & Request Failure Attribution (Acceptance 3)
+## 5. Historical Failure Attribution & Resolution Verification in Full Pass (Acceptance 3)
 
-- **`/management/evolution-journal`** (Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83), `status=crash`, `dataPass=False`, `dataReasons=[]`) — Slowest/Driving Request: `GET /bff/management/evolution-journal` (HTTP `200`, `7341 ms`). GET /bff/management/evolution-journal (HTTP 200, 7341 ms) emitted integer target.version (6) on pool_version items from #7832, crashing FE 38e5337d1f83 at target.version.toLowerCase(). Fixed by BFF-EVO-JOURNAL-VERSION-STRING-20261126 (PR #7877, 8d7ec076e) and FE-EVO-JOURNAL-VERSION-GUARD-20261126 (PR #1101, 24a9ecc82); verified passing on Root 45740904149 BFF 8e67d240e034 + FE 38e5337d1f83 (status=ok, dataPass=true, GET /bff/management/evolution-journal HTTP 200 in 1295 ms, 0 console errors).
-- **`/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity`** (Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83), `status=datafail`, `dataPass=False`, `dataReasons=['rendered_data_error', 'no_completed_route_data', 'api_data_failure']`) — Slowest/Driving Request: `GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` (HTTP `503`, `3893 ms`). GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity (fixture not-found ID, HTTP 503, 3893 ms) calls get_human_inbox(page_size=2000) across all contributors and returns 503 human_inbox_partial_read when any contributor times out if the item is not found. During concurrent Root 45740904149 docker compose build on the Dev VM, one contributor timed out; verified passing on BFF 8e67d240e034 + FE 38e5337d1f83 (status=ok, dataPass=true, GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity HTTP 404 honest not-found in 2006 ms, and direct readback /bff/management/human-inbox HTTP 200 with all 6 surfaces ok).
-- **`/management/strategies/stg_001`** (Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884, `status=datafail`, `dataPass=False`, `dataReasons=['data_reads_incomplete']`) — Slowest/Driving Request: `GET /bff/research-tasks` (HTTP `200`, `8267 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). During the tail of the 8e67d240e034 crawl (03:13Z-03:15Z), self-hosted runner job 45747260884 started on the Dev VM (load average 12.99) while FE 38e5337d1f83 StrategyDetail eagerly fired 14 concurrent BFF reads on mount and GET /bff/jobs did not finish within the 20s settle window (already addressed on execute-plans dev by FE-STRATEGY-DETAIL-PRIMARY-FIRST-20261125 PR #1094 a013f969130d and pantheon BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125).
-- **`/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462`** (Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884, `status=datafail`, `dataPass=False`, `dataReasons=['data_reads_incomplete']`) — Slowest/Driving Request: `GET /bff/artifacts` (HTTP `200`, `7513 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). During the tail of the 8e67d240e034 crawl (03:13Z-03:15Z), self-hosted runner job 45747260884 started on the Dev VM (load average 12.99) while FE 38e5337d1f83 StrategyDetail eagerly fired 14 concurrent BFF reads on mount and GET /bff/jobs did not finish within the 20s settle window (already addressed on execute-plans dev by FE-STRATEGY-DETAIL-PRIMARY-FIRST-20261125 PR #1094 a013f969130d and pantheon BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125).
-- **`/management/personas/persona-d57f6d76254c20418a9e`** (Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884, `status=datafail`, `dataPass=False`, `dataReasons=['loading_unresolved', 'content_incomplete', 'entity_detail_data_missing', 'data_reads_incomplete']`) — Slowest/Driving Request: `GET /bff/audit` (HTTP `200`, `15744 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). Timed out past the 20s settle window at 03:14Z-03:15Z only while self-hosted runner job 45747260884 (Release candidate 923c2a31...) saturated the Dev VM (load average 12.99).
-- **`/management/capital/hosted-all12-h12-01a11-20261023-9aeb-pool`** (Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884, `status=datafail`, `dataPass=False`, `dataReasons=['loading_unresolved', 'content_incomplete', 'no_completed_route_data', 'entity_detail_data_missing', 'data_reads_incomplete']`) — Slowest/Driving Request: `GET /bff/capital-pools/hosted-all12-h12-01a11-20261023-9aeb-pool` (HTTP `None`, `None ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). Timed out past the 20s settle window at 03:14Z-03:15Z only while self-hosted runner job 45747260884 (Release candidate 923c2a31...) saturated the Dev VM (load average 12.99).
+All `111/111` routes passed (`0` failures) in the accepted single-deploy full-pass crawl on Root `45740904149` (`BFF 8e67d240e034 + FE 38e5337d1f83`). The table below retains the named route/request attributions from the earlier pre-fix Crawl A (`45684275970`) and load-contention Crawl B and shows their exact verified measurements in the accepted `111/111` single-crawl full pass:
 
-## 5. Per-Route Timing Crawl & Slowest Read Table (All 111 Crawled Routes)
+- **`/management/evolution-journal`** (Historical `Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83)`, historical `status=crash`, `dataPass=False`) — Historical Driving Request: `GET /bff/management/evolution-journal` (HTTP `200`, `7341 ms`). GET /bff/management/evolution-journal (HTTP 200, 7341 ms) emitted integer target.version (6) on pool_version items from #7832, crashing FE 38e5337d1f83 at target.version.toLowerCase(). Fixed by BFF-EVO-JOURNAL-VERSION-STRING-20261126 (PR #7877, 8d7ec076e) and FE-EVO-JOURNAL-VERSION-GUARD-20261126 (PR #1101, 24a9ecc82); verified passing on Root 45740904149 BFF 8e67d240e034 + FE 38e5337d1f83 (status=ok, dataPass=true, GET /bff/management/evolution-journal HTTP 200 in 1295 ms, 0 console errors). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/management/evolution-journal` HTTP `200` in `4402 ms`, total route elapsed `5285 ms`).**
+- **`/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity`** (Historical `Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83)`, historical `status=datafail`, `dataPass=False`) — Historical Driving Request: `GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` (HTTP `503`, `3893 ms`). GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity (fixture not-found ID, HTTP 503, 3893 ms) calls get_human_inbox(page_size=2000) across all contributors and returns 503 human_inbox_partial_read when any contributor times out if the item is not found. During concurrent Root 45740904149 docker compose build on the Dev VM, one contributor timed out; verified passing on BFF 8e67d240e034 + FE 38e5337d1f83 (status=ok, dataPass=true, GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity HTTP 404 honest not-found in 2006 ms, and direct readback /bff/management/human-inbox HTTP 200 with all 6 surfaces ok). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` HTTP `404` in `1028 ms`, total route elapsed `1719 ms`).**
+- **`/management/strategies/stg_001`** (Historical `Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884`, historical `status=datafail`, `dataPass=False`) — Historical Driving Request: `GET /bff/research-tasks` (HTTP `200`, `8267 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). During the tail of the 8e67d240e034 crawl (03:13Z-03:15Z), self-hosted runner job 45747260884 started on the Dev VM (load average 12.99) while FE 38e5337d1f83 StrategyDetail eagerly fired 14 concurrent BFF reads on mount and GET /bff/jobs did not finish within the 20s settle window (already addressed on execute-plans dev by FE-STRATEGY-DETAIL-PRIMARY-FIRST-20261125 PR #1094 a013f969130d and pantheon BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/jobs` HTTP `200` in `13244 ms`, total route elapsed `14304 ms`).**
+- **`/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462`** (Historical `Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884`, historical `status=datafail`, `dataPass=False`) — Historical Driving Request: `GET /bff/artifacts` (HTTP `200`, `7513 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). During the tail of the 8e67d240e034 crawl (03:13Z-03:15Z), self-hosted runner job 45747260884 started on the Dev VM (load average 12.99) while FE 38e5337d1f83 StrategyDetail eagerly fired 14 concurrent BFF reads on mount and GET /bff/jobs did not finish within the 20s settle window (already addressed on execute-plans dev by FE-STRATEGY-DETAIL-PRIMARY-FIRST-20261125 PR #1094 a013f969130d and pantheon BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/jobs` HTTP `200` in `12556 ms`, total route elapsed `13115 ms`).**
+- **`/management/personas/persona-d57f6d76254c20418a9e`** (Historical `Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884`, historical `status=datafail`, `dataPass=False`) — Historical Driving Request: `GET /bff/audit` (HTTP `200`, `15744 ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). Timed out past the 20s settle window at 03:14Z-03:15Z only while self-hosted runner job 45747260884 (Release candidate 923c2a31...) saturated the Dev VM (load average 12.99). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/strategies` HTTP `200` in `7335 ms`, total route elapsed `7869 ms`).**
+- **`/management/capital/hosted-all12-h12-01a11-20261023-9aeb-pool`** (Historical `Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884`, historical `status=datafail`, `dataPass=False`) — Historical Driving Request: `GET /bff/capital-pools/hosted-all12-h12-01a11-20261023-9aeb-pool` (HTTP `None`, `None ms`). Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). Timed out past the 20s settle window at 03:14Z-03:15Z only while self-hosted runner job 45747260884 (Release candidate 923c2a31...) saturated the Dev VM (load average 12.99). **Verified passing in accepted single-deploy full-pass crawl (`status=ok`, `dataPass=true`, slowest read `GET /bff/strategies` HTTP `200` in `9571 ms`, total route elapsed `10495 ms`).**
 
-| # | Route | Kind | Crawl A (`b3f93d448f44`) Status / Elapsed | Crawl A Slowest Route Read (or Shell Fallback) | HTTP | Start..Finish (ms) | Read (ms) | Crawl B (`8e67d240e034`) Status / Slowest Read (ms) |
+## 6. Per-Route Timing Crawl & Slowest Read Table (All 111 Crawled Routes — Single-Deploy Full Pass on Root `45740904149`)
+
+| # | Route | Kind | Full-Pass (`8e67d240e034`) Status / Elapsed | Slowest Route Read (or Shell Fallback) | HTTP | Start..Finish (ms) | Read (ms) | Historical Crawl A (`b3f93d448f44`) Status / Slowest Read (ms) |
 |---:|---|---|---|---|---:|---:|---:|---|
-| 1 | `/management/performance` | `nav` | `ok` (6837ms) | `GET /bff/management/portfolio-book/holdings` | 200 | 2102..6783 | 4681 | `ok` (`GET /bff/management/portfolio-book/holdings` 200, 2109ms) |
-| 2 | `/management/performance?tab=attribution` | `detail-or-alias` | `ok` (6364ms) | `GET /bff/management/performance-attribution` | 200 | 1316..6295 | 4979 | `ok` (`GET /bff/management/persona-fleet` 200, 8540ms) |
-| 3 | `/management/performance?tab=shadow` | `detail-or-alias` | `ok` (753ms) | `GET /bff/me` | 200 | 52..600 | 548 | `ok` (`GET /bff/auth/readiness` 200, 576ms) |
-| 4 | `/management/performance?tab=shadow&decision=dec_001` | `detail-or-alias` | `ok` (2607ms) | `GET /bff/management/attribution/shadow/dec_001` | 404 | 1321..2563 | 1242 | `ok` (`GET /bff/management/attribution/shadow/dec_001` 404, 2996ms) |
-| 5 | `/management/rankings` | `nav` | `ok` (7568ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 1047..7512 | 6465 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 4838ms) |
-| 6 | `/management/governance-decisions` | `nav` | `ok` (3307ms) | `GET /bff/management/human-inbox` | 200 | 505..3263 | 2758 | `ok` (`GET /bff/management/human-inbox` 200, 2530ms) |
-| 7 | `/management/cockpit` | `nav` | `ok` (9766ms) | `GET /bff/management/quarterly-ranking` | 200 | 1024..9725 | 8701 | `ok` (`GET /bff/management/persona-league` 200, 4600ms) |
-| 8 | `/management/trade-journeys` | `nav` | `ok` (17606ms) | `GET /bff/management/trade-journeys` | 200 | 6849..17548 | 10699 | `ok` (`GET /bff/management/trade-journeys` 200, 3453ms) |
-| 9 | `/management/persona-fleet` | `nav` | `ok` (4986ms) | `GET /bff/management/persona-fleet` | 200 | 943..4898 | 3955 | `ok` (`GET /bff/management/persona-fleet` 200, 2885ms) |
-| 10 | `/management/human-inbox` | `nav` | `ok` (1763ms) | `GET /bff/management/human-inbox` | 200 | 644..1719 | 1075 | `ok` (`GET /bff/management/human-inbox` 200, 1470ms) |
-| 11 | `/management/trading-pulse` | `nav` | `ok` (16333ms) | `GET /bff/management/trading-pulse` | 200 | 756..11817 | 11061 | `ok` (`GET /bff/management/trading-pulse` 200, 11287ms) |
-| 12 | `/management/evolution-journal` | `nav` | `crash` (7921ms) | `GET /bff/management/evolution-journal` | 200 | 532..7873 | 7341 | `ok` (`GET /bff/management/evolution-journal` 200, 6756ms) |
-| 13 | `/management/evidence` | `nav` | `ok` (1847ms) | `GET /bff/management/evidence` | 200 | 994..1761 | 767 | `ok` (`GET /bff/management/evidence` 200, 1696ms) |
-| 14 | `/management/persona-intent` | `nav` | `ok` (2713ms) | `GET /bff/management/persona-intent` | 200 | 599..2705 | 2106 | `ok` (`GET /bff/management/persona-intent` 200, 2559ms) |
-| 15 | `/management/portfolio-book` | `detail-or-alias` | `ok` (2219ms) | `GET /bff/management/portfolio-book/holdings` | 200 | 639..2170 | 1531 | `ok` (`GET /bff/management/portfolio-book/holdings` 200, 980ms) |
-| 16 | `/management/persona-league` | `detail-or-alias` | `ok` (7525ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 659..7475 | 6816 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 5055ms) |
-| 17 | `/management/quarterly-ranking` | `detail-or-alias` | `ok` (3411ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 601..3338 | 2737 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 3057ms) |
-| 18 | `/management/performance-attribution` | `detail-or-alias` | `ok` (5681ms) | `GET /bff/management/performance-attribution` | 200 | 1000..5634 | 4634 | `ok` (`GET /bff/management/performance-attribution` 200, 6365ms) |
-| 19 | `/management/readiness/ep5` | `nav` | `ok` (1317ms) | `GET /bff/management/readiness/ep5` | 200 | 602..1236 | 634 | `ok` (`GET /bff/management/readiness/ep5` 200, 554ms) |
-| 20 | `/management/readiness/broker-live` | `nav` | `ok` (1276ms) | `GET /bff/management/readiness/broker-live` | 200 | 822..1231 | 409 | `ok` (`GET /bff/management/readiness/broker-live` 200, 738ms) |
-| 21 | `/management/readiness/capital-binding-live` | `nav` | `ok` (1920ms) | `GET /bff/management/human-inbox` | 200 | 720..1873 | 1153 | `ok` (`GET /bff/management/human-inbox` 200, 1179ms) |
-| 22 | `/management/readiness/bff-ha` | `nav` | `ok` (1550ms) | `GET /bff/management/readiness/bff-ha` | 200 | 643..1511 | 868 | `ok` (`GET /bff/management/readiness/bff-ha` 200, 617ms) |
-| 23 | `/management/readiness/strict-publish` | `nav` | `ok` (1521ms) | `GET /bff/management/readiness/strict-publish` | 200 | 820..1480 | 660 | `ok` (`GET /bff/management/readiness/strict-publish` 200, 509ms) |
-| 24 | `/management/strategies` | `nav` | `ok` (10414ms) | `GET /bff/strategies` | 200 | 1240..10350 | 9110 | `ok` (`GET /bff/strategies` 200, 7115ms) |
-| 25 | `/management/alpha-factory` | `nav` | `ok` (8244ms) | `GET /bff/alpha-factory` | 200 | 708..8195 | 7487 | `ok` (`GET /bff/alpha-factory` 200, 9850ms) |
-| 26 | `/management/personas` | `nav` | `ok` (4976ms) | `GET /bff/personas` | 200 | 815..4574 | 3759 | `ok` (`GET /bff/personas` 200, 1967ms) |
-| 27 | `/management/capital` | `detail-or-alias` | `ok` (2581ms) | `GET /bff/management/portfolio-book/exposure` | 200 | 1249..2473 | 1224 | `ok` (`GET /bff/management/portfolio-book/exposure` 200, 956ms) |
-| 28 | `/management/ranking` | `detail-or-alias` | `ok` (1496ms) | `GET /bff/ranking-formulas` | 200 | 1088..1426 | 338 | `ok` (`GET /bff/ranking-formulas` 200, 571ms) |
-| 29 | `/management/rebalance` | `detail-or-alias` | `ok` (2664ms) | `GET /bff/management/persona-fleet` | 200 | 823..2625 | 1802 | `ok` (`GET /bff/management/persona-fleet` 200, 4168ms) |
-| 30 | `/management/evolution` | `nav` | `ok` (2728ms) | `GET /bff/management/evolution-qualification` | 200 | 724..2655 | 1931 | `ok` (`GET /bff/management/evolution-qualification` 200, 1821ms) |
-| 31 | `/management/meetings` | `nav` | `ok` (2676ms) | `GET /bff/management/meetings` | 200 | 908..2634 | 1726 | `ok` (`GET /bff/management/meetings` 200, 1474ms) |
-| 32 | `/management/experiments` | `nav` | `ok` (4207ms) | `GET /bff/research-tasks` | 200 | 920..4126 | 3206 | `ok` (`GET /bff/research-tasks` 200, 5030ms) |
-| 33 | `/management/artifacts` | `nav` | `ok` (9552ms) | `GET /bff/artifacts` | 200 | 2448..5223 | 2775 | `ok` (`GET /bff/artifacts` 200, 2588ms) |
-| 34 | `/management/lineage` | `nav` | `ok` (5006ms) | `GET /bff/lineage` | 200 | 830..4796 | 3966 | `ok` (`GET /bff/lineage` 200, 4252ms) |
-| 35 | `/management/loops` | `nav` | `ok` (2401ms) | `GET /bff/v5/loop-runs` | 200 | 872..2332 | 1460 | `ok` (`GET /bff/v5/loop-health` 200, 1487ms) |
-| 36 | `/management/deployments` | `nav` | `ok` (3407ms) | `GET /bff/deployments` | 200 | 640..2756 | 2116 | `ok` (`GET /bff/deployments` 200, 1729ms) |
-| 37 | `/management/runtimes` | `nav` | `ok` (3485ms) | `GET /bff/management/persona-fleet` | 200 | 672..3044 | 2372 | `ok` (`GET /bff/management/persona-fleet` 200, 7562ms) |
-| 38 | `/management/risk` | `nav` | `ok` (11807ms) | `GET /bff/strategies` | 200 | 749..11753 | 11004 | `ok` (`GET /bff/strategies` 200, 14496ms) |
-| 39 | `/management/incidents` | `nav` | `ok` (4861ms) | `GET /bff/incidents` | 200 | 1015..4757 | 3742 | `ok` (`GET /bff/incidents` 200, 4945ms) |
-| 40 | `/management/jobs` | `nav` | `ok` (9788ms) | `GET /bff/jobs` | 200 | 676..9709 | 9033 | `ok` (`GET /bff/jobs` 200, 12876ms) |
-| 41 | `/management/alerts` | `nav` | `ok` (2973ms) | `GET /bff/alerts` | 200 | 1032..2904 | 1872 | `ok` (`GET /bff/alerts` 200, 2476ms) |
-| 42 | `/management/approvals` | `nav` | `ok` (1325ms) | `GET /bff/approvals` | 200 | 767..1288 | 521 | `ok` (`GET /bff/approvals` 200, 861ms) |
-| 43 | `/management/governance` | `nav` | `ok` (1243ms) | `GET /bff/approvals` | 200 | 718..1196 | 478 | `ok` (`GET /bff/approvals` 200, 1358ms) |
-| 44 | `/management/governance/policies` | `nav` | `ok` (4703ms) | `GET /bff/personas` | 200 | 999..4643 | 3644 | `ok` (`GET /bff/personas` 200, 4027ms) |
-| 45 | `/management/governance/permissions` | `nav` | `ok` (1518ms) | `GET /bff/management/permissions` | 200 | 605..1492 | 887 | `ok` (`GET /bff/management/permissions` 200, 1118ms) |
-| 46 | `/management/governance/memory` | `nav` | `ok` (3452ms) | `GET /bff/personas` | 200 | 652..3339 | 2687 | `ok` (`GET /bff/personas` 200, 2784ms) |
-| 47 | `/management/governance/consult` | `nav` | `ok` (2762ms) | `GET /bff/personas` | 200 | 558..2662 | 2104 | `ok` (`GET /bff/personas` 200, 3813ms) |
-| 48 | `/management/knowledge` | `nav` | `ok` (1008ms) | `GET /bff/knowledge` | 200 | 517..948 | 431 | `ok` (`GET /bff/knowledge` 200, 1224ms) |
-| 49 | `/management/postmortems` | `nav` | `ok` (2876ms) | `GET /api/v1/postmortems` | 200 | 811..2715 | 1904 | `ok` (`GET /api/v1/postmortems` 200, 1495ms) |
-| 50 | `/management/tools` | `nav` | `ok` (1291ms) | `GET /bff/tools` | 200 | 626..1252 | 626 | `ok` (`GET /bff/tools` 200, 518ms) |
-| 51 | `/management/mcp` | `nav` | `ok` (1489ms) | `GET /bff/mcp-servers` | 200 | 1062..1432 | 370 | `ok` (`GET /bff/mcp-servers` 200, 853ms) |
-| 52 | `/management/skills` | `nav` | `ok` (1244ms) | `GET /bff/skills` | 200 | 709..1214 | 505 | `ok` (`GET /bff/skills` 200, 628ms) |
-| 53 | `/management/workflows` | `nav` | `ok` (1292ms) | `GET /bff/workflows` | 200 | 692..1260 | 568 | `ok` (`GET /bff/workflows` 200, 1971ms) |
-| 54 | `/management/hooks` | `nav` | `ok` (1089ms) | `GET /bff/hooks` | 200 | 658..1021 | 363 | `ok` (`GET /bff/hooks` 200, 684ms) |
-| 55 | `/management/channels` | `nav` | `ok` (1028ms) | `GET /bff/channels` | 200 | 624..964 | 340 | `ok` (`GET /bff/channels` 200, 688ms) |
-| 56 | `/management/llm-provider-auth` | `nav` | `ok` (2702ms) | `GET /bff/assistant/providers/usage-summary` | 200 | 624..2656 | 2032 | `ok` (`GET /bff/assistant/providers/usage-summary` 200, 1227ms) |
-| 57 | `/management/data-sources` | `nav` | `ok` (9663ms) | `GET /bff/agora/operational-readiness` | 200 | 773..9579 | 8806 | `ok` (`GET /bff/agora/operational-readiness` 200, 5143ms) |
-| 58 | `/management/audit` | `nav` | `ok` (1231ms) | `GET /bff/audit` | 200 | 598..1182 | 584 | `ok` (`GET /bff/audit` 200, 593ms) |
-| 59 | `/management/settings` | `nav` | `ok` (1009ms) | `GET /bff/auth/readiness` | 200 | 81..789 | 708 | `ok` (`GET /bff/me` 200, 333ms) |
-| 60 | `/management/loops/execution` | `detail-or-alias` | `ok` (7591ms) | `GET /bff/v5/execution/persona-health` | 200 | 1115..7346 | 6231 | `ok` (`GET /bff/v5/execution/persona-health` 200, 6829ms) |
-| 61 | `/management/loops/optimization` | `detail-or-alias` | `ok` (3155ms) | `GET /bff/v5/loop-runs` | 200 | 1083..3103 | 2020 | `ok` (`GET /bff/v5/loop-runs` 200, 1272ms) |
-| 62 | `/management/loops/research` | `detail-or-alias` | `ok` (4418ms) | `GET /bff/management/persona-fleet` | 200 | 2529..4371 | 1842 | `ok` (`GET /bff/management/persona-fleet` 200, 1986ms) |
-| 63 | `/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` | `detail-or-alias` | `datafail` (20075ms) | `GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` | 503 | 1220..5113 | 3893 | `ok` (`GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` 404, 1639ms) |
-| 64 | `/management/evidence/evref-demo-readiness-001` | `detail-or-alias` | `ok` (4766ms) | `GET /bff/management/evidence/evref-demo-readiness-001` | 404 | 1756..4704 | 2948 | `ok` (`GET /bff/management/evidence/evref-demo-readiness-001` 404, 1155ms) |
-| 65 | `/management/evidence?ref_id=evref-demo-readiness-001` | `detail-or-alias` | `ok` (3620ms) | `GET /bff/management/evidence/evref-demo-readiness-001` | 404 | 2674..3588 | 914 | `ok` (`GET /bff/management/evidence/evref-demo-readiness-001` 404, 610ms) |
-| 66 | `/management/persona-intent/trace-001` | `detail-or-alias` | `ok` (2988ms) | `GET /bff/management/persona-intent` | 200 | 884..2956 | 2072 | `ok` (`GET /bff/management/persona-intent` 200, 3624ms) |
-| 67 | `/management/strategies/stg_001` | `detail-or-alias` | `ok` (14778ms) | `GET /bff/jobs` | 200 | 650..14734 | 14084 | `datafail` (`GET /bff/research-tasks` 200, 8267ms) |
-| 68 | `/management/personas/per_quant` | `detail-or-alias` | `ok` (8420ms) | `GET /bff/strategies` | 200 | 626..8367 | 7741 | `ok` (`GET /bff/strategies` 200, 10756ms) |
-| 69 | `/management/personas/per_quant/onboarding` | `detail-or-alias` | `ok` (1226ms) | `GET /bff/personas/per_quant` | 404 | 461..1202 | 741 | `ok` (`GET /bff/personas/per_quant` 404, 615ms) |
-| 70 | `/management/capital/cp_alpha` | `detail-or-alias` | `ok` (3239ms) | `GET /bff/management/persona-fleet` | 200 | 1212..3202 | 1990 | `ok` (`GET /bff/management/persona-fleet` 200, 1761ms) |
-| 71 | `/management/ranking/formulas` | `detail-or-alias` | `ok` (2049ms) | `GET /bff/ranking-formulas` | 200 | 720..2000 | 1280 | `ok` (`GET /bff/ranking-formulas` 200, 835ms) |
-| 72 | `/management/ranking/formulas/rf_001` | `detail-or-alias` | `ok` (1645ms) | `GET /bff/audit` | 200 | 791..1596 | 805 | `ok` (`GET /bff/audit` 200, 850ms) |
-| 73 | `/management/rebalance/rb_q2_2026` | `detail-or-alias` | `ok` (7916ms) | `GET /bff/strategies` | 200 | 1040..7876 | 6836 | `ok` (`GET /bff/strategies` 200, 7076ms) |
-| 74 | `/management/evolution/ev_001` | `detail-or-alias` | `ok` (3442ms) | `GET /bff/research-tasks` | 200 | 515..3423 | 2908 | `ok` (`GET /bff/research-tasks` 200, 2020ms) |
-| 75 | `/management/meetings/mtg_001` | `detail-or-alias` | `ok` (1544ms) | `GET /bff/management/meetings/mtg_001` | 404 | 586..1497 | 911 | `ok` (`GET /bff/agora/capabilities` 200, 1413ms) |
-| 76 | `/management/experiments/rx_201` | `detail-or-alias` | `ok` (930ms) | `GET /bff/research-tasks/rx_201` | 404 | 496..918 | 422 | `ok` (`GET /bff/research-tasks/rx_201` 404, 501ms) |
-| 77 | `/management/artifacts/art_stg001_v320` | `detail-or-alias` | `ok` (3823ms) | `GET /bff/deployments` | 200 | 506..3586 | 3080 | `ok` (`GET /bff/deployments` 200, 3706ms) |
-| 78 | `/management/deployments/dp_001` | `detail-or-alias` | `ok` (2686ms) | `GET /bff/runtimes` | 200 | 1082..2511 | 1429 | `ok` (`GET /bff/runtimes` 200, 1728ms) |
-| 79 | `/management/incidents/in_021` | `detail-or-alias` | `ok` (7617ms) | `GET /bff/strategies` | 200 | 492..7563 | 7071 | `ok` (`GET /bff/strategies` 200, 8525ms) |
-| 80 | `/management/governance/ap_301` | `detail-or-alias` | `ok` (1536ms) | `GET /bff/approvals/ap_301` | 404 | 589..1505 | 916 | `ok` (`GET /bff/audit` 200, 412ms) |
-| 81 | `/management/governance/policies/rp_quant_v2` | `detail-or-alias` | `ok` (3447ms) | `GET /bff/personas` | 200 | 634..3381 | 2747 | `ok` (`GET /bff/personas` 200, 2247ms) |
-| 82 | `/management/tools/tl_market_data` | `detail-or-alias` | `ok` (1032ms) | `GET /bff/audit` | 200 | 517..960 | 443 | `ok` (`GET /bff/tools/tl_market_data` 404, 1805ms) |
-| 83 | `/management/mcp/mcp_alpha` | `detail-or-alias` | `ok` (970ms) | `GET /bff/mcp-tools` | 200 | 584..907 | 323 | `ok` (`GET /bff/mcp-tools` 200, 613ms) |
-| 84 | `/management/mcp-tools/mt_001` | `detail-or-alias` | `ok` (994ms) | `GET /bff/mcp-tools/mt_001` | 404 | 573..979 | 406 | `ok` (`GET /bff/mcp-tools/mt_001` 404, 308ms) |
-| 85 | `/management/skills/sk_macro_brief` | `detail-or-alias` | `ok` (4382ms) | `GET /bff/personas` | 200 | 739..4290 | 3551 | `ok` (`GET /bff/personas` 200, 3138ms) |
-| 86 | `/management/channels/ch_slack_alerts` | `detail-or-alias` | `ok` (1237ms) | `GET /bff/audit` | 200 | 461..1176 | 715 | `ok` (`GET /bff/audit` 200, 827ms) |
-| 87 | `/management/control-room` | `detail-or-alias` | `ok` (5758ms) | `GET /bff/management/quarterly-ranking` | 200 | 537..5697 | 5160 | `ok` (`GET /bff/management/quarterly-ranking` 200, 14986ms) |
-| 88 | `/management/one-ring` | `detail-or-alias` | `ok` (5142ms) | `GET /bff/management/quarterly-ranking` | 200 | 534..5082 | 4548 | `ok` (`GET /bff/management/quarterly-ranking` 200, 11852ms) |
-| 89 | `/management/overview` | `detail-or-alias` | `ok` (11157ms) | `GET /bff/management/quarterly-ranking` | 200 | 552..11113 | 10561 | `ok` (`GET /bff/management/persona-league` 200, 8785ms) |
-| 90 | `/management/command-center` | `detail-or-alias` | `ok` (5699ms) | `GET /bff/management/quarterly-ranking` | 200 | 678..5658 | 4980 | `ok` (`GET /bff/management/quarterly-ranking` 200, 6219ms) |
-| 91 | `/management/risk-center` | `detail-or-alias` | `ok` (9184ms) | `GET /bff/strategies` | 200 | 469..9145 | 8676 | `ok` (`GET /bff/strategies` 200, 12246ms) |
-| 92 | `/management/capital-pools` | `detail-or-alias` | `ok` (6572ms) | `GET /bff/management/persona-fleet` | 200 | 543..6515 | 5972 | `ok` (`GET /bff/management/persona-fleet` 200, 3676ms) |
-| 93 | `/management/ranking-formulas` | `detail-or-alias` | `ok` (939ms) | `GET /bff/ranking-formulas` | 200 | 658..903 | 245 | `ok` (`GET /bff/ranking-formulas` 200, 984ms) |
-| 94 | `/management/rebalances` | `detail-or-alias` | `ok` (1873ms) | `GET /bff/management/human-inbox` | 200 | 692..1848 | 1156 | `ok` (`GET /bff/management/human-inbox` 200, 1888ms) |
-| 95 | `/management/research` | `detail-or-alias` | `ok` (2716ms) | `GET /bff/research-tasks` | 200 | 500..2666 | 2166 | `ok` (`GET /bff/research-tasks` 200, 4171ms) |
-| 96 | `/management/deployment` | `detail-or-alias` | `ok` (3682ms) | `GET /bff/deployments` | 200 | 697..3174 | 2477 | `ok` (`GET /bff/deployments` 200, 2454ms) |
-| 97 | `/management/capital-pools/cp_alpha` | `detail-or-alias` | `ok` (2676ms) | `GET /bff/management/persona-fleet` | 200 | 1281..2607 | 1326 | `ok` (`GET /bff/management/persona-fleet` 200, 4522ms) |
-| 98 | `/management/ranking-formulas/rf_001` | `detail-or-alias` | `ok` (901ms) | `GET /bff/audit` | 200 | 555..853 | 298 | `ok` (`GET /bff/audit` 200, 420ms) |
-| 99 | `/management/rebalances/rb_q2_2026` | `detail-or-alias` | `ok` (7035ms) | `GET /bff/strategies` | 200 | 610..7018 | 6408 | `ok` (`GET /bff/strategies` 200, 7354ms) |
-| 100 | `/management/research/rx_201` | `detail-or-alias` | `ok` (939ms) | `GET /bff/research-tasks/rx_201` | 404 | 517..923 | 406 | `ok` (`GET /bff/research-tasks/rx_201` 404, 420ms) |
-| 101 | `/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462` | `live-id-detail` | `ok` (18792ms) | `GET /bff/jobs` | 200 | 559..18752 | 18193 | `datafail` (`GET /bff/artifacts` 200, 7513ms) |
-| 102 | `/management/personas/persona-d57f6d76254c20418a9e` | `live-id-detail` | `ok` (8700ms) | `GET /bff/strategies` | 200 | 672..8654 | 7982 | `datafail` (`GET /bff/audit` 200, 15744ms) |
-| 103 | `/management/capital/hosted-all12-h12-01a11-20261023-9aeb-pool` | `live-id-detail` | `ok` (7456ms) | `GET /bff/strategies` | 200 | 1150..7437 | 6287 | `datafail` (`GET /bff/capital-pools/hosted-all12-h12-01a11-20261023-9aeb-pool` None, Nonems) |
-| 104 | `/management/ranking/formulas/pm12-quarterly-ranking-formula` | `live-id-detail` | `ok` (1435ms) | `GET /bff/audit` | 200 | 549..1382 | 833 | `ok` (`GET /bff/audit` 200, 1997ms) |
-| 105 | `/management/evolution/evp-c0ce26091e8b443495bfa61e3dac34ff` | `live-id-detail` | `ok` (2349ms) | `GET /bff/research-tasks` | 200 | 594..2311 | 1717 | `ok` (`GET /bff/research-tasks` 200, 7551ms) |
-| 106 | `/management/meetings/mtg-492d824b116f9ace` | `live-id-detail` | `ok` (986ms) | `GET /bff/management/meetings/mtg-492d824b116f9ace` | 200 | 401..940 | 539 | `ok` (`GET /bff/management/meetings/mtg-492d824b116f9ace` 200, 1755ms) |
-| 107 | `/management/experiments/rtask-20261125-014` | `live-id-detail` | `ok` (2023ms) | `GET /bff/management/persona-fleet` | 200 | 890..1976 | 1086 | `ok` (`GET /bff/management/persona-fleet` 200, 3293ms) |
-| 108 | `/management/artifacts/artifact-persona-pool-039ad01f8bcd2b4aa466-v2` | `live-id-detail` | `ok` (3788ms) | `GET /bff/artifacts/artifact-persona-pool-039ad01f8bcd2b4aa466-v2` | 200 | 965..3492 | 2527 | `ok` (`GET /bff/deployments` 200, 6210ms) |
-| 109 | `/management/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` | `live-id-detail` | `ok` (2321ms) | `GET /bff/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` | 200 | 884..2268 | 1384 | `ok` (`GET /bff/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` 200, 2853ms) |
-| 110 | `/management/incidents/agent-af7e6d72ed59-0006` | `live-id-detail` | `ok` (7235ms) | `GET /bff/strategies` | 200 | 421..7220 | 6799 | `ok` (`GET /bff/strategies` 200, 7444ms) |
-| 111 | `/management/channels/approval` | `live-id-detail` | `ok` (1187ms) | `GET /bff/audit` | 200 | 434..1129 | 695 | `ok` (`GET /bff/channels/approval` 200, 1355ms) |
+| 1 | `/management/performance` | `nav` | `ok` (6143ms) | `GET /bff/management/portfolio-book/holdings` | 200 | 2965..6093 | 3128 | `ok` (`GET /bff/management/portfolio-book/holdings` 200, 4681ms) |
+| 2 | `/management/performance?tab=attribution` | `detail-or-alias` | `ok` (4533ms) | `GET /bff/management/performance-attribution` | 200 | 866..4480 | 3614 | `ok` (`GET /bff/management/performance-attribution` 200, 4979ms) |
+| 3 | `/management/performance?tab=shadow` | `detail-or-alias` | `ok` (444ms) | `GET /bff/me` | 200 | 45..324 | 279 | `ok` (`GET /bff/me` 200, 548ms) |
+| 4 | `/management/performance?tab=shadow&decision=dec_001` | `detail-or-alias` | `ok` (2572ms) | `GET /bff/management/attribution/shadow/dec_001` | 404 | 674..2543 | 1869 | `ok` (`GET /bff/management/attribution/shadow/dec_001` 404, 1242ms) |
+| 5 | `/management/rankings` | `nav` | `ok` (5050ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 453..4999 | 4546 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 6465ms) |
+| 6 | `/management/governance-decisions` | `nav` | `ok` (1567ms) | `GET /bff/management/human-inbox` | 200 | 619..1553 | 934 | `ok` (`GET /bff/management/human-inbox` 200, 2758ms) |
+| 7 | `/management/cockpit` | `nav` | `ok` (5165ms) | `GET /bff/management/quarterly-ranking` | 200 | 573..5104 | 4531 | `ok` (`GET /bff/management/quarterly-ranking` 200, 8701ms) |
+| 8 | `/management/trade-journeys` | `nav` | `ok` (3703ms) | `GET /bff/management/trade-journeys` | 200 | 481..2327 | 1846 | `ok` (`GET /bff/management/trade-journeys` 200, 10699ms) |
+| 9 | `/management/persona-fleet` | `nav` | `ok` (1559ms) | `GET /bff/management/persona-fleet` | 200 | 354..1511 | 1157 | `ok` (`GET /bff/management/persona-fleet` 200, 3955ms) |
+| 10 | `/management/human-inbox` | `nav` | `ok` (1462ms) | `GET /bff/management/human-inbox` | 200 | 378..1431 | 1053 | `ok` (`GET /bff/management/human-inbox` 200, 1075ms) |
+| 11 | `/management/trading-pulse` | `nav` | `ok` (12855ms) | `GET /bff/management/trading-pulse` | 200 | 988..9767 | 8779 | `ok` (`GET /bff/management/trading-pulse` 200, 11061ms) |
+| 12 | `/management/evolution-journal` | `nav` | `ok` (5285ms) | `GET /bff/management/evolution-journal` | 200 | 828..5230 | 4402 | `crash` (`GET /bff/management/evolution-journal` 200, 7341ms) |
+| 13 | `/management/evidence` | `nav` | `ok` (748ms) | `GET /bff/management/evidence` | 200 | 315..684 | 369 | `ok` (`GET /bff/management/evidence` 200, 767ms) |
+| 14 | `/management/persona-intent` | `nav` | `ok` (2200ms) | `GET /bff/management/persona-intent` | 200 | 366..2177 | 1811 | `ok` (`GET /bff/management/persona-intent` 200, 2106ms) |
+| 15 | `/management/portfolio-book` | `detail-or-alias` | `ok` (866ms) | `GET /bff/management/portfolio-book/holdings` | 200 | 364..801 | 437 | `ok` (`GET /bff/management/portfolio-book/holdings` 200, 1531ms) |
+| 16 | `/management/persona-league` | `detail-or-alias` | `ok` (9089ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 362..9036 | 8674 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 6816ms) |
+| 17 | `/management/quarterly-ranking` | `detail-or-alias` | `ok` (4240ms) | `GET /bff/management/quarterly-ranking/recommendations` | 200 | 816..4181 | 3365 | `ok` (`GET /bff/management/quarterly-ranking/recommendations` 200, 2737ms) |
+| 18 | `/management/performance-attribution` | `detail-or-alias` | `ok` (3820ms) | `GET /bff/management/performance-attribution` | 200 | 600..3791 | 3191 | `ok` (`GET /bff/management/performance-attribution` 200, 4634ms) |
+| 19 | `/management/readiness/ep5` | `nav` | `ok` (1156ms) | `GET /bff/management/readiness/ep5` | 200 | 360..1120 | 760 | `ok` (`GET /bff/management/readiness/ep5` 200, 634ms) |
+| 20 | `/management/readiness/broker-live` | `nav` | `ok` (1031ms) | `GET /bff/management/readiness/broker-live` | 200 | 453..998 | 545 | `ok` (`GET /bff/management/readiness/broker-live` 200, 409ms) |
+| 21 | `/management/readiness/capital-binding-live` | `nav` | `ok` (2220ms) | `GET /bff/management/human-inbox` | 200 | 662..2173 | 1511 | `ok` (`GET /bff/management/human-inbox` 200, 1153ms) |
+| 22 | `/management/readiness/bff-ha` | `nav` | `ok` (885ms) | `GET /bff/management/readiness/bff-ha` | 200 | 356..833 | 477 | `ok` (`GET /bff/management/readiness/bff-ha` 200, 868ms) |
+| 23 | `/management/readiness/strict-publish` | `nav` | `ok` (1359ms) | `GET /bff/management/readiness/strict-publish` | 200 | 634..1333 | 699 | `ok` (`GET /bff/management/readiness/strict-publish` 200, 660ms) |
+| 24 | `/management/strategies` | `nav` | `ok` (5799ms) | `GET /bff/strategies` | 200 | 451..5778 | 5327 | `ok` (`GET /bff/strategies` 200, 9110ms) |
+| 25 | `/management/alpha-factory` | `nav` | `ok` (13114ms) | `GET /bff/alpha-factory` | 200 | 466..12990 | 12524 | `ok` (`GET /bff/alpha-factory` 200, 7487ms) |
+| 26 | `/management/personas` | `nav` | `ok` (8786ms) | `GET /bff/personas` | 200 | 1223..8602 | 7379 | `ok` (`GET /bff/personas` 200, 3759ms) |
+| 27 | `/management/capital` | `detail-or-alias` | `ok` (5347ms) | `GET /bff/management/portfolio-book/exposure` | 200 | 726..5289 | 4563 | `ok` (`GET /bff/management/portfolio-book/exposure` 200, 1224ms) |
+| 28 | `/management/ranking` | `detail-or-alias` | `ok` (2965ms) | `GET /bff/ranking-formulas` | 200 | 1433..2928 | 1495 | `ok` (`GET /bff/ranking-formulas` 200, 338ms) |
+| 29 | `/management/rebalance` | `detail-or-alias` | `ok` (6879ms) | `GET /bff/management/persona-fleet` | 200 | 825..6826 | 6001 | `ok` (`GET /bff/management/persona-fleet` 200, 1802ms) |
+| 30 | `/management/evolution` | `nav` | `ok` (6769ms) | `GET /bff/management/evolution-qualification` | 200 | 1790..6705 | 4915 | `ok` (`GET /bff/management/evolution-qualification` 200, 1931ms) |
+| 31 | `/management/meetings` | `nav` | `ok` (4343ms) | `GET /bff/management/meetings` | 200 | 1281..4307 | 3026 | `ok` (`GET /bff/management/meetings` 200, 1726ms) |
+| 32 | `/management/experiments` | `nav` | `ok` (17134ms) | `GET /bff/research-tasks` | 200 | 1740..17098 | 15358 | `ok` (`GET /bff/research-tasks` 200, 3206ms) |
+| 33 | `/management/artifacts` | `nav` | `ok` (13524ms) | `GET /bff/artifacts` | 200 | 1390..6543 | 5153 | `ok` (`GET /bff/artifacts` 200, 2775ms) |
+| 34 | `/management/lineage` | `nav` | `ok` (7018ms) | `GET /bff/lineage` | 200 | 842..6916 | 6074 | `ok` (`GET /bff/lineage` 200, 3966ms) |
+| 35 | `/management/loops` | `nav` | `ok` (2173ms) | `GET /bff/v5/loop-runs` | 200 | 621..2011 | 1390 | `ok` (`GET /bff/v5/loop-runs` 200, 1460ms) |
+| 36 | `/management/deployments` | `nav` | `ok` (2088ms) | `GET /bff/deployments` | 200 | 520..1861 | 1341 | `ok` (`GET /bff/deployments` 200, 2116ms) |
+| 37 | `/management/runtimes` | `nav` | `ok` (8422ms) | `GET /bff/management/persona-fleet` | 200 | 463..8117 | 7654 | `ok` (`GET /bff/management/persona-fleet` 200, 2372ms) |
+| 38 | `/management/risk` | `nav` | `ok` (8899ms) | `GET /bff/strategies` | 200 | 558..8862 | 8304 | `ok` (`GET /bff/strategies` 200, 11004ms) |
+| 39 | `/management/incidents` | `nav` | `ok` (2779ms) | `GET /bff/incidents` | 200 | 512..2701 | 2189 | `ok` (`GET /bff/incidents` 200, 3742ms) |
+| 40 | `/management/jobs` | `nav` | `ok` (8578ms) | `GET /bff/jobs` | 200 | 897..8541 | 7644 | `ok` (`GET /bff/jobs` 200, 9033ms) |
+| 41 | `/management/alerts` | `nav` | `ok` (2234ms) | `GET /bff/alerts` | 200 | 662..2174 | 1512 | `ok` (`GET /bff/alerts` 200, 1872ms) |
+| 42 | `/management/approvals` | `nav` | `ok` (1301ms) | `GET /bff/approvals` | 200 | 816..1283 | 467 | `ok` (`GET /bff/approvals` 200, 521ms) |
+| 43 | `/management/governance` | `nav` | `ok` (928ms) | `GET /bff/approvals` | 200 | 399..877 | 478 | `ok` (`GET /bff/approvals` 200, 478ms) |
+| 44 | `/management/governance/policies` | `nav` | `ok` (1940ms) | `GET /bff/personas` | 200 | 482..1896 | 1414 | `ok` (`GET /bff/personas` 200, 3644ms) |
+| 45 | `/management/governance/permissions` | `nav` | `ok` (957ms) | `GET /bff/management/permissions` | 200 | 491..927 | 436 | `ok` (`GET /bff/management/permissions` 200, 887ms) |
+| 46 | `/management/governance/memory` | `nav` | `ok` (2983ms) | `GET /bff/personas` | 200 | 494..2912 | 2418 | `ok` (`GET /bff/personas` 200, 2687ms) |
+| 47 | `/management/governance/consult` | `nav` | `ok` (2589ms) | `GET /bff/personas` | 200 | 890..2530 | 1640 | `ok` (`GET /bff/personas` 200, 2104ms) |
+| 48 | `/management/knowledge` | `nav` | `ok` (792ms) | `GET /bff/knowledge` | 200 | 445..754 | 309 | `ok` (`GET /bff/knowledge` 200, 431ms) |
+| 49 | `/management/postmortems` | `nav` | `ok` (2146ms) | `GET /api/v1/postmortems` | 200 | 805..2058 | 1253 | `ok` (`GET /api/v1/postmortems` 200, 1904ms) |
+| 50 | `/management/tools` | `nav` | `ok` (1024ms) | `GET /bff/tools` | 200 | 481..1006 | 525 | `ok` (`GET /bff/tools` 200, 626ms) |
+| 51 | `/management/mcp` | `nav` | `ok` (1510ms) | `GET /bff/mcp-servers` | 200 | 481..1480 | 999 | `ok` (`GET /bff/mcp-servers` 200, 370ms) |
+| 52 | `/management/skills` | `nav` | `ok` (1175ms) | `GET /bff/skills` | 200 | 493..1114 | 621 | `ok` (`GET /bff/skills` 200, 505ms) |
+| 53 | `/management/workflows` | `nav` | `ok` (908ms) | `GET /bff/workflows` | 200 | 502..853 | 351 | `ok` (`GET /bff/workflows` 200, 568ms) |
+| 54 | `/management/hooks` | `nav` | `ok` (1165ms) | `GET /bff/hooks` | 200 | 478..1116 | 638 | `ok` (`GET /bff/hooks` 200, 363ms) |
+| 55 | `/management/channels` | `nav` | `ok` (1082ms) | `GET /bff/channels` | 200 | 569..1034 | 465 | `ok` (`GET /bff/channels` 200, 340ms) |
+| 56 | `/management/llm-provider-auth` | `nav` | `ok` (1462ms) | `GET /bff/assistant/providers` | 200 | 578..1434 | 856 | `ok` (`GET /bff/assistant/providers/usage-summary` 200, 2032ms) |
+| 57 | `/management/data-sources` | `nav` | `ok` (6137ms) | `GET /bff/agora/operational-readiness` | 200 | 358..6066 | 5708 | `ok` (`GET /bff/agora/operational-readiness` 200, 8806ms) |
+| 58 | `/management/audit` | `nav` | `ok` (826ms) | `GET /bff/audit` | 200 | 479..767 | 288 | `ok` (`GET /bff/audit` 200, 584ms) |
+| 59 | `/management/settings` | `nav` | `ok` (560ms) | `GET /bff/auth/readiness` | 200 | 81..357 | 276 | `ok` (`GET /bff/auth/readiness` 200, 708ms) |
+| 60 | `/management/loops/execution` | `detail-or-alias` | `ok` (4100ms) | `GET /bff/v5/execution/persona-health` | 200 | 658..3936 | 3278 | `ok` (`GET /bff/v5/execution/persona-health` 200, 6231ms) |
+| 61 | `/management/loops/optimization` | `detail-or-alias` | `ok` (1719ms) | `GET /bff/v5/loop-runs` | 200 | 1245..1670 | 425 | `ok` (`GET /bff/v5/loop-runs` 200, 2020ms) |
+| 62 | `/management/loops/research` | `detail-or-alias` | `ok` (7899ms) | `GET /bff/management/persona-fleet` | 200 | 561..7830 | 7269 | `ok` (`GET /bff/management/persona-fleet` 200, 1842ms) |
+| 63 | `/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` | `detail-or-alias` | `ok` (1719ms) | `GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` | 404 | 652..1680 | 1028 | `datafail` (`GET /bff/management/human-inbox/readiness_blocker%3Apersona%3Apersona-tw-equity` 503, 3893ms) |
+| 64 | `/management/evidence/evref-demo-readiness-001` | `detail-or-alias` | `ok` (997ms) | `GET /bff/management/evidence/evref-demo-readiness-001` | 404 | 555..953 | 398 | `ok` (`GET /bff/management/evidence/evref-demo-readiness-001` 404, 2948ms) |
+| 65 | `/management/evidence?ref_id=evref-demo-readiness-001` | `detail-or-alias` | `ok` (862ms) | `GET /bff/management/evidence/evref-demo-readiness-001` | 404 | 467..825 | 358 | `ok` (`GET /bff/management/evidence/evref-demo-readiness-001` 404, 914ms) |
+| 66 | `/management/persona-intent/trace-001` | `detail-or-alias` | `ok` (2742ms) | `GET /bff/management/persona-intent` | 200 | 496..2721 | 2225 | `ok` (`GET /bff/management/persona-intent` 200, 2072ms) |
+| 67 | `/management/strategies/stg_001` | `detail-or-alias` | `ok` (14304ms) | `GET /bff/jobs` | 200 | 1014..14258 | 13244 | `ok` (`GET /bff/jobs` 200, 14084ms) |
+| 68 | `/management/personas/per_quant` | `detail-or-alias` | `ok` (6908ms) | `GET /bff/strategies` | 200 | 464..6892 | 6428 | `ok` (`GET /bff/strategies` 200, 7741ms) |
+| 69 | `/management/personas/per_quant/onboarding` | `detail-or-alias` | `ok` (1276ms) | `GET /bff/personas/per_quant` | 404 | 482..1230 | 748 | `ok` (`GET /bff/personas/per_quant` 404, 741ms) |
+| 70 | `/management/capital/cp_alpha` | `detail-or-alias` | `ok` (1969ms) | `GET /bff/management/persona-fleet` | 200 | 855..1927 | 1072 | `ok` (`GET /bff/management/persona-fleet` 200, 1990ms) |
+| 71 | `/management/ranking/formulas` | `detail-or-alias` | `ok` (789ms) | `GET /bff/ranking-formulas` | 200 | 523..758 | 235 | `ok` (`GET /bff/ranking-formulas` 200, 1280ms) |
+| 72 | `/management/ranking/formulas/rf_001` | `detail-or-alias` | `ok` (1274ms) | `GET /bff/audit` | 200 | 834..1217 | 383 | `ok` (`GET /bff/audit` 200, 805ms) |
+| 73 | `/management/rebalance/rb_q2_2026` | `detail-or-alias` | `ok` (8037ms) | `GET /bff/strategies` | 200 | 1082..7996 | 6914 | `ok` (`GET /bff/strategies` 200, 6836ms) |
+| 74 | `/management/evolution/ev_001` | `detail-or-alias` | `ok` (3556ms) | `GET /bff/research-tasks` | 200 | 532..3509 | 2977 | `ok` (`GET /bff/research-tasks` 200, 2908ms) |
+| 75 | `/management/meetings/mtg_001` | `detail-or-alias` | `ok` (1171ms) | `GET /bff/agora/capabilities` | 200 | 486..1143 | 657 | `ok` (`GET /bff/management/meetings/mtg_001` 404, 911ms) |
+| 76 | `/management/experiments/rx_201` | `detail-or-alias` | `ok` (838ms) | `GET /bff/research-tasks/rx_201` | 404 | 422..774 | 352 | `ok` (`GET /bff/research-tasks/rx_201` 404, 422ms) |
+| 77 | `/management/artifacts/art_stg001_v320` | `detail-or-alias` | `ok` (3254ms) | `GET /bff/deployments` | 200 | 494..2918 | 2424 | `ok` (`GET /bff/deployments` 200, 3080ms) |
+| 78 | `/management/deployments/dp_001` | `detail-or-alias` | `ok` (1948ms) | `GET /bff/runtimes` | 200 | 604..1779 | 1175 | `ok` (`GET /bff/runtimes` 200, 1429ms) |
+| 79 | `/management/incidents/in_021` | `detail-or-alias` | `ok` (6798ms) | `GET /bff/strategies` | 200 | 427..6756 | 6329 | `ok` (`GET /bff/strategies` 200, 7071ms) |
+| 80 | `/management/governance/ap_301` | `detail-or-alias` | `ok` (1036ms) | `GET /bff/approvals/ap_301` | 404 | 524..958 | 434 | `ok` (`GET /bff/approvals/ap_301` 404, 916ms) |
+| 81 | `/management/governance/policies/rp_quant_v2` | `detail-or-alias` | `ok` (2838ms) | `GET /bff/personas` | 200 | 658..2802 | 2144 | `ok` (`GET /bff/personas` 200, 2747ms) |
+| 82 | `/management/tools/tl_market_data` | `detail-or-alias` | `ok` (1185ms) | `GET /bff/tools/tl_market_data` | 404 | 391..1118 | 727 | `ok` (`GET /bff/audit` 200, 443ms) |
+| 83 | `/management/mcp/mcp_alpha` | `detail-or-alias` | `ok` (1198ms) | `GET /bff/mcp-servers/mcp_alpha` | 404 | 526..1155 | 629 | `ok` (`GET /bff/mcp-tools` 200, 323ms) |
+| 84 | `/management/mcp-tools/mt_001` | `detail-or-alias` | `ok` (1481ms) | `GET /bff/mcp-tools/mt_001` | 404 | 507..1417 | 910 | `ok` (`GET /bff/mcp-tools/mt_001` 404, 406ms) |
+| 85 | `/management/skills/sk_macro_brief` | `detail-or-alias` | `ok` (2943ms) | `GET /bff/personas` | 200 | 568..2869 | 2301 | `ok` (`GET /bff/personas` 200, 3551ms) |
+| 86 | `/management/channels/ch_slack_alerts` | `detail-or-alias` | `ok` (1057ms) | `GET /bff/audit` | 200 | 573..1025 | 452 | `ok` (`GET /bff/audit` 200, 715ms) |
+| 87 | `/management/control-room` | `detail-or-alias` | `ok` (7934ms) | `GET /bff/management/quarterly-ranking` | 200 | 537..7913 | 7376 | `ok` (`GET /bff/management/quarterly-ranking` 200, 5160ms) |
+| 88 | `/management/one-ring` | `detail-or-alias` | `ok` (3852ms) | `GET /bff/management/cockpit` | 200 | 452..3817 | 3365 | `ok` (`GET /bff/management/quarterly-ranking` 200, 4548ms) |
+| 89 | `/management/overview` | `detail-or-alias` | `ok` (10830ms) | `GET /bff/management/quarterly-ranking` | 200 | 555..10781 | 10226 | `ok` (`GET /bff/management/quarterly-ranking` 200, 10561ms) |
+| 90 | `/management/command-center` | `detail-or-alias` | `ok` (7845ms) | `GET /bff/management/quarterly-ranking` | 200 | 1145..7795 | 6650 | `ok` (`GET /bff/management/quarterly-ranking` 200, 4980ms) |
+| 91 | `/management/risk-center` | `detail-or-alias` | `ok` (10477ms) | `GET /bff/strategies` | 200 | 626..10452 | 9826 | `ok` (`GET /bff/strategies` 200, 8676ms) |
+| 92 | `/management/capital-pools` | `detail-or-alias` | `ok` (3096ms) | `GET /bff/management/persona-fleet` | 200 | 588..3043 | 2455 | `ok` (`GET /bff/management/persona-fleet` 200, 5972ms) |
+| 93 | `/management/ranking-formulas` | `detail-or-alias` | `ok` (968ms) | `GET /bff/ranking-formulas` | 200 | 402..922 | 520 | `ok` (`GET /bff/ranking-formulas` 200, 245ms) |
+| 94 | `/management/rebalances` | `detail-or-alias` | `ok` (2165ms) | `GET /bff/management/human-inbox` | 200 | 595..2131 | 1536 | `ok` (`GET /bff/management/human-inbox` 200, 1156ms) |
+| 95 | `/management/research` | `detail-or-alias` | `ok` (2305ms) | `GET /bff/research-tasks` | 200 | 458..2246 | 1788 | `ok` (`GET /bff/research-tasks` 200, 2166ms) |
+| 96 | `/management/deployment` | `detail-or-alias` | `ok` (2111ms) | `GET /bff/deployments` | 200 | 400..1877 | 1477 | `ok` (`GET /bff/deployments` 200, 2477ms) |
+| 97 | `/management/capital-pools/cp_alpha` | `detail-or-alias` | `ok` (2562ms) | `GET /bff/management/persona-fleet` | 200 | 802..2492 | 1690 | `ok` (`GET /bff/management/persona-fleet` 200, 1326ms) |
+| 98 | `/management/ranking-formulas/rf_001` | `detail-or-alias` | `ok` (1347ms) | `GET /bff/audit` | 200 | 795..1298 | 503 | `ok` (`GET /bff/audit` 200, 298ms) |
+| 99 | `/management/rebalances/rb_q2_2026` | `detail-or-alias` | `ok` (7469ms) | `GET /bff/strategies` | 200 | 496..7439 | 6943 | `ok` (`GET /bff/strategies` 200, 6408ms) |
+| 100 | `/management/research/rx_201` | `detail-or-alias` | `ok` (1067ms) | `GET /bff/research-tasks/rx_201` | 404 | 524..1054 | 530 | `ok` (`GET /bff/research-tasks/rx_201` 404, 406ms) |
+| 101 | `/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462` | `live-id-detail` | `ok` (13115ms) | `GET /bff/jobs` | 200 | 483..13039 | 12556 | `ok` (`GET /bff/jobs` 200, 18193ms) |
+| 102 | `/management/personas/persona-d57f6d76254c20418a9e` | `live-id-detail` | `ok` (7869ms) | `GET /bff/strategies` | 200 | 479..7814 | 7335 | `ok` (`GET /bff/strategies` 200, 7982ms) |
+| 103 | `/management/capital/hosted-all12-h12-01a11-20261023-9aeb-pool` | `live-id-detail` | `ok` (10495ms) | `GET /bff/strategies` | 200 | 912..10483 | 9571 | `ok` (`GET /bff/strategies` 200, 6287ms) |
+| 104 | `/management/ranking/formulas/pm12-quarterly-ranking-formula` | `live-id-detail` | `ok` (889ms) | `GET /bff/audit` | 200 | 432..878 | 446 | `ok` (`GET /bff/audit` 200, 833ms) |
+| 105 | `/management/evolution/evp-c0ce26091e8b443495bfa61e3dac34ff` | `live-id-detail` | `ok` (3028ms) | `GET /bff/research-tasks` | 200 | 517..2981 | 2464 | `ok` (`GET /bff/research-tasks` 200, 1717ms) |
+| 106 | `/management/meetings/mtg-492d824b116f9ace` | `live-id-detail` | `ok` (1410ms) | `GET /bff/management/meetings/mtg-492d824b116f9ace` | 200 | 567..1375 | 808 | `ok` (`GET /bff/management/meetings/mtg-492d824b116f9ace` 200, 539ms) |
+| 107 | `/management/experiments/rtask-20261125-014` | `live-id-detail` | `ok` (2648ms) | `GET /bff/management/persona-fleet` | 200 | 1206..2604 | 1398 | `ok` (`GET /bff/management/persona-fleet` 200, 1086ms) |
+| 108 | `/management/artifacts/artifact-persona-pool-039ad01f8bcd2b4aa466-v2` | `live-id-detail` | `ok` (2643ms) | `GET /bff/deployments` | 200 | 427..2474 | 2047 | `ok` (`GET /bff/artifacts/artifact-persona-pool-039ad01f8bcd2b4aa466-v2` 200, 2527ms) |
+| 109 | `/management/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` | `live-id-detail` | `ok` (2060ms) | `GET /bff/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` | 200 | 433..2022 | 1589 | `ok` (`GET /bff/deployments/plan-persona-pool-039ad01f8bcd2b4aa466-v2` 200, 1384ms) |
+| 110 | `/management/incidents/agent-c0be28c2c638-0056` | `live-id-detail` | `ok` (6685ms) | `GET /bff/strategies` | 200 | 615..6661 | 6046 | `ok` (`GET /bff/strategies` 200, 6799ms) |
+| 111 | `/management/channels/approval` | `live-id-detail` | `ok` (1030ms) | `GET /bff/audit` | 200 | 509..993 | 484 | `ok` (`GET /bff/audit` 200, 695ms) |
