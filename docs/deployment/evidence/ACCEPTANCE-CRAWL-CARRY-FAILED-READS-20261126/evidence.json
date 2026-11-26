@@ -1,0 +1,41 @@
+{
+  "task": "ACCEPTANCE-CRAWL-CARRY-FAILED-READS-20261126",
+  "class": "RC1 WP1.2",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem": "summarize_crawl in scripts/dev_acceptance_stage.py kept only route and reason flags, so acceptance-crawl.json and the check:management-crawl detail dropped routes[].failedReads that execute-plans #1108 (FE-CRAWL-FAILED-READ-DETAIL-20261126, 9d540804) records; a failed route did not say which read failed.",
+  "solution": {
+    "summary": "Each failed route in summarize_crawl now carries failedReads (allowlisted copy) and failedReadsOmitted when the crawl manifest has them; ok routes and pre-#1108 manifests are summarized exactly as before. The failed check detail names the first counted failed read per route.",
+    "fields_kept": ["method", "path (pathname only: scheme, host, query keys and values, fragment removed)", "status (int) or error (first token of the error text, query removed, e.g. net::ERR_CONNECTION_RESET; else the allowlisted reason; else request_failed)", "counted", "reason (only one of the six upstream reason codes)", "elapsedMs (int)"],
+    "fields_dropped": "everything else in a read entry, including pending, honestNotFound, streamRule and any header, cookie, url or body field; the whole summary is still passed through the existing redact() with the minted token and environment",
+    "caps": {"per_failed_route": 12, "per_run": 100, "order": "counted reads first, then the rest in manifest order", "omitted": "failedReadsOmitted = reads dropped by these caps + upstream failedReadsOmitted"},
+    "upstream_caps": "execute-plans keeps 12 per route and 300 per run; this artifact is the release record, so the run cap is lower"
+  },
+  "verification": {
+    "command": "pantheon-ci-deploy/runtime/worker-test-python/045268d29bbfad84/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+    "result": "34 passed in 5.02s (31 existing + 3 new)",
+    "new_tests": [
+      "test_failed_reads_are_carried_bounded_per_route_and_run: 12 failed routes x 21 reads -> 12 per route, 100 per run, omitted counts, ok route carries nothing, detail names first counted read",
+      "test_failed_reads_strip_query_values_and_header_like_fields: query values, fragment, host, headers, cookie, body, url, free-text error tail and streamRule never reach check or artifact; bool status and string elapsed are not trusted",
+      "test_manifest_without_failed_reads_summarizes_as_before: the 45684275970 replay manifest (no failedReads) yields the same failedRoutes as before"
+    ]
+  },
+  "runtime_budget": {
+    "acceptance_crawl_json_bytes_per_release": {
+      "method": "synthetic manifests through summarize_crawl, serialized as in crawl_check (routes, failedRoutes, nonGetRequests, counts)",
+      "all_ok_104_routes": {"before": 8779, "after": 8779},
+      "typical_104_routes_8_failed_2_reads_each": {"before": 9961, "after": 12505},
+      "worst_case_300_routes_all_failed_20_reads_each": {"before": 69445, "after": 96735}
+    },
+    "verdict_detail": "unchanged bound: check detail is still clipped by DETAIL_LIMIT (2000 chars); failedRoutes on the check stays capped at MAX_FAILED_ROUTES (50)",
+    "recurring_jobs": 0,
+    "hosted_writers": 0,
+    "notes": "no new process, request or file; the crawl runs once per release as before"
+  },
+  "hosted_proof": "not run in this task: the next release whose crawl has a failed route will show failedReads in acceptance-crawl.json and the first failed read in check:management-crawl",
+  "residual_findings": [
+    "Registered in docs/operations/problem-register.md: RC1 WP1.2 row for 503s under crawl load (persona-fleet, human-inbox readiness_blocker detail), keeping both sides: execute-plans #1108 evidence says load, the existing RC6 row says the human-inbox detail fans out across all five contributors.",
+    "Registered in docs/operations/problem-register.md: RC4 row for GET /bff/events/stream 409 replay_unavailable x35 in a 17-minute crawl (reconnect storm), keeping both sides: the crawl excuses the 409 as handled, the evidence calls the rate a defect.",
+    "The error name for a network failure is the first token of upstream free text; if a browser ever formats it differently the field falls back to the reason code, never to the full message."
+  ]
+}
