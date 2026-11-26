@@ -1,0 +1,49 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-BFF-PM12-HOLDINGS-SERVING-BINDING-20261125-PR-LOOKUP-FAILED-7F274500240D",
+  "title": "Unblock integration for BFF-PM12-HOLDINGS-SERVING-BINDING-20261125: pr-lookup-failed",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "checked_at": "2026-11-25T09:42:30Z",
+  "source_task": {
+    "task_id": "BFF-PM12-HOLDINGS-SERVING-BINDING-20261125",
+    "generation": 1,
+    "status": "review_approved",
+    "pr": 7840,
+    "pr_url": "https://github.com/ajoe734/pantheon/pull/7840",
+    "head_branch": "task/BFF-PM12-HOLDINGS-SERVING-BINDING-20261125",
+    "head_sha": "9d07b36f9dd0b6de9850ef01b26afd87c4b0e6b6",
+    "base_branch": "dev",
+    "unblock_request_sha256": "f661e4338cb71775c65044f1c477faa38bcfc58d0cf31dac3a6f5bc8bedd819a"
+  },
+  "root_cause": {
+    "reason": "pr-lookup-failed",
+    "summary": "During the scheduled auto-integrator cron run immediately before 2026-11-25T09:36:10Z, fetch_pr_for_task executed `gh pr list --head task/BFF-PM12-HOLDINGS-SERVING-BINDING-20261125 --base dev --state open --json number --limit 10` and received a transient upstream GitHub GraphQL error (`HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)`).",
+    "impact": "integrate_candidate caught CommandFailure from fetch_pr_for_task and published unblock request f661e4338cb71775c65044f1c477faa38bcfc58d0cf31dac3a6f5bc8bedd819a (reason: pr-lookup-failed), which the supervisor materialized into this repair task while keeping BFF-PM12-HOLDINGS-SERVING-BINDING-20261125 in review_approved with its exact-head approval intact."
+  },
+  "resolution": {
+    "code_change": "none; scripts/git/auto_integrator.py unchanged",
+    "source_pr_status": "PR #7840 is open, discoverable, and no longer blocked by pr-lookup-failed. On the very next scheduled auto-integrator cron run (recorded in .orchestrator/logs/auto-integrator-cron.log), fetch_pr_for_task succeeded and evaluated PR #7840 normally (`- BFF-PM12-HOLDINGS-SERVING-BINDING-20261125: waiting PR #7840 - PR #7840 checks are pending; not merging.`). Once in-flight CI checks complete, auto-integrator will merge PR #7840 on its approved head 9d07b36f9dd0b6de9850ef01b26afd87c4b0e6b6.",
+    "tombstone_receipt": ".orchestrator/auto-integrator-unblock-receipts/processed/f661e4338cb71775c65044f1c477faa38bcfc58d0cf31dac3a6f5bc8bedd819a.json is recorded as a terminal processed tombstone at 2026-11-25T09:36:10Z.",
+    "runtime_budget": "Docs/evidence-only delivery; adds 0 recurring jobs, 0 emitters, and 0 persistent writers."
+  },
+  "residual_findings": [
+    "scripts/git/auto_integrator.py currently treats a single transient GitHub GraphQL/REST 5xx response (such as HTTP 502 Bad Gateway) during fetch_pr_for_task as a blocking pr-lookup-failed event that publishes an unblock request for pantheon tasks instead of retrying or returning a transient waiting status (scripts/git/test_auto_integrator.py is outside this task's artifact contract)."
+  ],
+  "validation": [
+    {
+      "command": "gh pr list --head task/BFF-PM12-HOLDINGS-SERVING-BINDING-20261125 --base dev --state open --json number --limit 10",
+      "exit_status": 0,
+      "result": "[{\"number\":7840}]"
+    },
+    {
+      "command": "gh pr view 7840 --json number,state,mergeStateStatus,headRefName,headRefOid,baseRefName",
+      "exit_status": 0,
+      "result": "state=OPEN, headRefName=task/BFF-PM12-HOLDINGS-SERVING-BINDING-20261125, headRefOid=9d07b36f9dd0b6de9850ef01b26afd87c4b0e6b6, baseRefName=dev, Pantheon canonical review gate=SUCCESS"
+    },
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_status": 0,
+      "result": "Ran 183 tests in 2.591s, OK"
+    }
+  ]
+}
