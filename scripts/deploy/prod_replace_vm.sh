@@ -44,13 +44,17 @@ REGION="${PROD_GCP_ZONE%-*}"
 PROD_CADDY_CONTAINER="${PROD_CADDY_CONTAINER:-pantheon-caddy}"
 PROD_CADDY_DEFAULT_IMAGE="${PROD_CADDY_DEFAULT_IMAGE:-caddy:2.8.4@sha256:63c1eabfc22aae3fb9b8fbcefd7be7be9ec4eb9a409cb02821922e4f161dc697}"
 PROD_TARGET_MACHINE_TYPE="${PROD_TARGET_MACHINE_TYPE:-e2-standard-8}"
-PROD_DEFAULT_TEMPLATE_NAME="${PROD_DEFAULT_TEMPLATE_NAME:-pantheon-prod-control-template-e2s8-v2}"
+PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-120}"
+PROD_DEFAULT_TEMPLATE_NAME="${PROD_DEFAULT_TEMPLATE_NAME:-pantheon-prod-control-template-e2s8-v3}"
 PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"
 PROD_SSH_WAIT_INTERVAL="${PROD_SSH_WAIT_INTERVAL:-5}"
 REMOTE_TMP_BASE="${PROD_REMOTE_TMP_BASE:-/tmp}"
 REMOTE_STAGE_DIR="${REMOTE_TMP_BASE}/pantheon-replace-vm-${RELEASE_ID}"
 FSTAB_PATH="${PROD_FSTAB_PATH:-/etc/fstab}"
 OLD_BOOT_RO_DEVICE="pantheon-old-boot-ro"
+
+[[ "$PROD_MIN_BOOT_DISK_GB" =~ ^[0-9]+$ ]] && (( PROD_MIN_BOOT_DISK_GB > 0 )) \
+  || refuse INVALID_BOOT_DISK_SIZE "PROD_MIN_BOOT_DISK_GB must be a positive integer"
 
 python3 -I "${SCRIPT_DIR}/prod_preflight.py" vm-size --machine-type "$PROD_TARGET_MACHINE_TYPE" >/dev/null 2>&1 \
   || refuse TARGET_VM_SIZE_BELOW_GATE "target machine type ${PROD_TARGET_MACHINE_TYPE} is below e2-standard-8"
@@ -154,6 +158,8 @@ for k, v in out.items():
 PY
 )" || refuse VM_INSPECT_FAILED "incumbent VM inspection failed (${INSPECT_VARS:-invalid JSON})"
 eval "$INSPECT_VARS"
+TARGET_BOOT_SIZE_GB="$(python3 -I -c 'import sys;print(max(int(sys.argv[1]), int(sys.argv[2])))' "$OLD_BOOT_SIZE_GB" "$PROD_MIN_BOOT_DISK_GB" 2>/dev/null)" \
+  || TARGET_BOOT_SIZE_GB="$PROD_MIN_BOOT_DISK_GB"
 
 ADDR_JSON="${WORK_DIR}/addresses.json"
 "$GCLOUD" compute addresses list \
@@ -398,7 +404,10 @@ PY
            VITE_BFF_REAL_WRITES WORKFLOW_INITIATOR PROD_CADDY_CONTAINER \
            PROD_CADDY_DEFAULT_IMAGE FSTAB_PATH DOCKER_BIN CURL_BIN MOUNTPOINT_BIN \
            SUDO_BIN GCLOUD_BIN FAKE_STATE BIN_LOG FAKE_READY_PORTS \
-           FAKE_OSLOGIN_NONROOT PROD_BASELINE_READY_TRIES PROD_BASELINE_READY_INTERVAL \
+           FAKE_OSLOGIN_NONROOT FAKE_SUDO_RESET_ENV FAKE_COMPOSE_REQUIRED \
+           PROD_FE_BASE_URL PROD_BFF_BASE_URL \
+           PROD_IMAGE_PULL_TRIES PROD_IMAGE_PULL_RETRY_DELAY \
+           PROD_BASELINE_READY_TRIES PROD_BASELINE_READY_INTERVAL \
            PROD_WORKER_CRED_TRIES PROD_WORKER_CRED_INTERVAL PROD_WORKER_HEALTH_WAIT_SECONDS \
            PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE; do
     if [[ -n "${!v+x}" ]]; then
@@ -498,17 +507,18 @@ PY
   fi
 fi
 
-# 4. Ensure >= e2-standard-8 Debian 12 instance template matching incumbent metadata
-#    (use PROD_DEFAULT_TEMPLATE_NAME=pantheon-prod-control-template-e2s8-v2 if an existing template mismatches metadata or <8 vCPUs).
+# 4. Ensure >= e2-standard-8 Debian 12 instance template matching incumbent metadata and >= PROD_MIN_BOOT_DISK_GB boot disk
+#    (use PROD_DEFAULT_TEMPLATE_NAME=pantheon-prod-control-template-e2s8-v3 if an existing template mismatches metadata, boot disk size, or <8 vCPUs).
 template_is_compatible() {
   local tpl_file="$1"
   python3 -I "${SCRIPT_DIR}/prod_preflight.py" vm-size --instance-template "$tpl_file" >/dev/null 2>&1 || return 1
-  python3 -I - "$tpl_file" "$VM_METADATA" <<'PY' >/dev/null 2>&1 || return 1
+  python3 -I - "$tpl_file" "$VM_METADATA" "$PROD_MIN_BOOT_DISK_GB" <<'PY' >/dev/null 2>&1 || return 1
 import json, sys
 from pathlib import Path
 
 tpl = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 want_meta_str = sys.argv[2]
+min_boot_gb = int(sys.argv[3])
 tracked = ("enable-oslogin", "block-project-ssh-keys", "serial-port-enable")
 
 def parse_meta(s: str) -> dict[str, str]:
@@ -534,6 +544,23 @@ for item in (meta_obj.get("items") or []):
 got.setdefault("serial-port-enable", "FALSE")
 if got != parse_meta(want_meta_str):
     raise SystemExit(1)
+
+disks = props.get("disks")
+if isinstance(disks, list):
+    for d in disks:
+        if not isinstance(d, dict):
+            continue
+        if d.get("boot") is False:
+            continue
+        init_params = d.get("initializeParams")
+        if isinstance(init_params, dict) and init_params.get("diskSizeGb") is not None:
+            raw_size = str(init_params.get("diskSizeGb")).strip()
+            if raw_size:
+                try:
+                    if int(raw_size) < min_boot_gb:
+                        raise SystemExit(1)
+                except ValueError:
+                    raise SystemExit(1)
 PY
 }
 
@@ -577,7 +604,7 @@ if [[ "$TEMPLATE_READY" != "true" ]]; then
       --scopes "$RUNTIME_SCOPES" \
       --image-family=debian-12 \
       --image-project=debian-cloud \
-      --boot-disk-size="${OLD_BOOT_SIZE_GB}GB" \
+      --boot-disk-size="${TARGET_BOOT_SIZE_GB}GB" \
       --boot-disk-type=pd-balanced \
       --boot-disk-auto-delete \
       --shielded-vtpm \
@@ -640,7 +667,7 @@ wait_for_ssh() {
 }
 
 rollback_to_old_boot_disk() {
-  local failed_stage="$1" reason="$2" rb_ok=false new_boot_cleaned=false
+  local failed_stage="$1" reason="$2" rb_ok=false new_boot_cleaned=false rb_err="" rb_create_err="" rb_ssh_out=""
   if "$GCLOUD" compute instances describe "$PROD_VM_NAME" \
       --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --format='value(name)' >/dev/null 2>&1; then
     "$GCLOUD" compute instances set-disk-auto-delete "$PROD_VM_NAME" \
@@ -655,7 +682,7 @@ rollback_to_old_boot_disk() {
   fi
   local subnet_args=()
   [[ -n "$VM_SUBNETWORK" ]] && subnet_args=(--subnet "$VM_SUBNETWORK")
-  if "$GCLOUD" compute instances create "$PROD_VM_NAME" \
+  if rb_create_err="$("$GCLOUD" compute instances create "$PROD_VM_NAME" \
       --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" \
       --machine-type "$OLD_MACHINE_TYPE" \
       --network "$VM_NETWORK" "${subnet_args[@]}" \
@@ -664,19 +691,24 @@ rollback_to_old_boot_disk() {
       --tags "$VM_TAGS" \
       --metadata "$VM_METADATA" \
       --disk "name=${OLD_BOOT_DISK},boot=yes,mode=rw,auto-delete=no" \
-      --disk "name=${PROD_DATA_DISK},device-name=${DATA_DEVICE_NAME},mode=rw,boot=no,auto-delete=no" >/dev/null 2>&1; then
+      --disk "name=${PROD_DATA_DISK},device-name=${DATA_DEVICE_NAME},mode=rw,boot=no,auto-delete=no" 2>&1 >/dev/null)"; then
     if [[ -n "${NEW_BOOT_DISK:-}" && "$NEW_BOOT_DISK" != "$OLD_BOOT_DISK" && "$NEW_BOOT_DISK" != "$PROD_DATA_DISK" ]]; then
       if "$GCLOUD" compute disks delete "$NEW_BOOT_DISK" \
           --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --quiet >/dev/null 2>&1; then
         new_boot_cleaned=true
       fi
     fi
-    if wait_for_ssh && upload_bundle_to_vm; then
-      if "$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
+    if ! wait_for_ssh; then
+      rb_err="rollback wait_for_ssh failed"
+    elif ! upload_bundle_to_vm; then
+      rb_err="rollback upload_bundle_to_vm failed"
+    else
+      if rb_ssh_out="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
           --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --command "set -euo pipefail
           B=${REMOTE_STAGE_DIR}/bundle
           source \"\$B/remote.env\"
           DOCKER=\"\${DOCKER_BIN:-docker}\"
+          CURL=\"\${CURL_BIN:-curl}\"
           MOUNTPOINT=\"\${MOUNTPOINT_BIN:-mountpoint}\"
           sudo mkdir -p \"\$PROD_DATA_MOUNT\"
           if ! sudo \"\$MOUNTPOINT\" -q \"\$PROD_DATA_MOUNT\"; then
@@ -711,22 +743,31 @@ rollback_to_old_boot_disk() {
             -v \"\$PROD_DATA_MOUNT/proxy/caddy-data:/data\" \
             -v \"\$PROD_DATA_MOUNT/proxy/caddy-config:/config\" \
             \"${CADDY_IMAGE}\" >/dev/null
+          for _ in \$(seq 1 15); do
+            \"\$CURL\" -fsS -m 5 -o /dev/null \"\${PROD_FE_BASE_URL:-https://\${PROD_FE_HOST}}/deployment.json\" >/dev/null 2>&1 && break
+            sleep 1
+          done
           rb_rel=\"\$(sudo python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get(\"release_id\",\"\"))' \"\$PROD_DATA_MOUNT/state/active_manifest.json\" 2>/dev/null | tr -d '[:space:]' || true)\"
           [[ -n \"\$rb_rel\" ]] || rb_rel=\"\$RELEASE_ID\"
           sudo -H -E env PROD_USE_SUDO=true \
+            PROD_BASELINE_READY_TRIES=\"\${PROD_BASELINE_READY_TRIES:-60}\" \
             PROD_COMPOSE_FILE=\"\$PROD_ROOT/bin/docker-compose.prod-control.yml\" \
             PROD_COMPOSE_ENV_FILE=\"\$PROD_DATA_MOUNT/config/compose.env\" \
             RELEASE_MANIFEST_PATH=\"\$PROD_DATA_MOUNT/state/active_manifest.json\" \
             \"\$PROD_ROOT/bin/prod_ops.sh\" restore_active_release \"\$rb_rel\" >/dev/null
-        " >/dev/null 2>&1; then
+        " 2>&1)"; then
         rb_ok=true
+      else
+        rb_err="$(tr '\n\r' '  ' <<<"$rb_ssh_out")"
       fi
     fi
+  else
+    rb_err="create_old_vm_failed: $(tr '\n\r' '  ' <<<"$rb_create_err")"
   fi
   python3 -I - "$failed_stage" "$reason" "$rb_ok" "$OLD_BOOT_DISK" "$PROD_DATA_DISK" "$STATIC_IP" \
-    "$MIGRATION_MODE" "$OLD_STATUS" "${NEW_BOOT_DISK:-}" "$new_boot_cleaned" <<'PY'
+    "$MIGRATION_MODE" "$OLD_STATUS" "${NEW_BOOT_DISK:-}" "$new_boot_cleaned" "$rb_err" <<'PY'
 import json, sys
-stage, reason, rb_ok, old_boot, data_disk, ip, mig_mode, old_st, new_boot, cleaned = sys.argv[1:11]
+stage, reason, rb_ok, old_boot, data_disk, ip, mig_mode, old_st, new_boot, cleaned, rb_err = sys.argv[1:12]
 status = "replace_vm_rolled_back" if rb_ok == "true" else "replace_vm_rollback_failed"
 print(json.dumps({
     "status": status,
@@ -735,6 +776,7 @@ print(json.dumps({
     "migration_mode": mig_mode,
     "old_vm_status": old_st,
     "rolled_back_to_old_boot_disk": rb_ok == "true",
+    "rollback_error": (rb_err.strip() or None) if rb_ok != "true" else None,
     "old_boot_disk": old_boot,
     "orphaned_new_boot_disk": new_boot or None,
     "orphaned_new_boot_disk_deleted": cleaned == "true",
@@ -945,6 +987,7 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
   B=${REMOTE_STAGE_DIR}/bundle
   source \"\$B/remote.env\"
   DOCKER=\"\${DOCKER_BIN:-docker}\"
+  CURL=\"\${CURL_BIN:-curl}\"
   MOUNTPOINT=\"\${MOUNTPOINT_BIN:-mountpoint}\"
   FSTAB=\"\${FSTAB_PATH:-/etc/fstab}\"
   sudo mkdir -p \"\$PROD_DATA_MOUNT\" \"\$(dirname \"\$FSTAB\")\"
@@ -983,7 +1026,12 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
     -v \"\$PROD_DATA_MOUNT/proxy/caddy-data:/data\" \
     -v \"\$PROD_DATA_MOUNT/proxy/caddy-config:/config\" \
     \"\$caddy_img\" >/dev/null
+  for _ in \$(seq 1 15); do
+    \"\$CURL\" -fsS -m 5 -o /dev/null \"\${PROD_FE_BASE_URL:-https://\${PROD_FE_HOST}}/deployment.json\" >/dev/null 2>&1 && break
+    sleep 1
+  done
   sudo -H -E env PROD_USE_SUDO=true \
+    PROD_BASELINE_READY_TRIES=\"\${PROD_BASELINE_READY_TRIES:-60}\" \
     PROD_COMPOSE_FILE=\"\$PROD_ROOT/bin/docker-compose.prod-control.yml\" \
     PROD_COMPOSE_ENV_FILE=\"\$PROD_DATA_MOUNT/config/compose.env\" \
     RELEASE_MANIFEST_PATH=\"\$PROD_DATA_MOUNT/state/active_manifest.json\" \
