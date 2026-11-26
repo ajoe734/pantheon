@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,8 +71,21 @@ def _dataset() -> dict[str, Any]:
     return json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"]
 
 
+# The recorded official bars end 2026-10-30; a card distilled on 2026-11-02 binds the snapshot ending 2026-10-30.
+BINDING_AS_OF = datetime(2026, 11, 2, 6, 0, tzinfo=timezone.utc)
+
+
+def governed_store(root: Path) -> Path:
+    """The source-owned daily_bars store holding the recorded official bars (the governed market's only input)."""
+    from services.research.tests.test_governed_market_dataset import store_from_records
+
+    if not (root / "daily_bars" / "_manifest").is_dir():
+        store_from_records(root, _dataset()["records"])
+    return root
+
+
 def _distill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, source=None, bind=True,
-             predictions=False) -> list[dict]:
+             predictions=False, store=True) -> list[dict]:
     """Run the controller tick on a stored text record; return registry payloads it synced."""
     recording = _prediction_recording() if predictions else _screen_entry_recording()
     # Predictions card (recorded extraction) is compiled to a plain price rule the
@@ -92,14 +106,19 @@ def _distill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, source=None, bi
 
     monkeypatch.setattr(sec, "SemanticExtractionClient", Client)
     monkeypatch.setenv(ENABLED, "1")
+    # HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: the binding is the governed whole-market dataset read from the
+    # stored daily bars (here: the recorded official bars written as a daily_bars store); no symbol list is set.
+    for legacy in ("PANTHEON_L2_CARD_SYMBOLS", "PANTHEON_L2_CARD_SOURCE_DATASET_REFS", "PERSONA_POOL_SOURCE_DATASET_ID"):
+        monkeypatch.delenv(legacy, raising=False)
+    monkeypatch.setattr(dc, "_binding_now", lambda: BINDING_AS_OF)
+    monkeypatch.setattr(dc, "_job_time", lambda job: BINDING_AS_OF)
+    monkeypatch.setattr(dc, "_BINDING_CACHE", {})
     if bind:
-        ds = _dataset()
-        monkeypatch.setenv("PANTHEON_L2_CARD_DATASET_ID", ds["dataset_id"])
-        monkeypatch.setenv("PANTHEON_L2_CARD_SYMBOLS", "2330.TW")
-        monkeypatch.setenv("PANTHEON_L2_CARD_SOURCE_DATASET_REFS", ",".join(ds["source_dataset_refs"][:2]))
+        monkeypatch.setenv("PANTHEON_L2_CARD_DATASET_ID", "governed-market:tw-daily")
+        root = governed_store(tmp_path / "market_data_store") if store else tmp_path / "absent-store"
+        monkeypatch.setenv("GOVERNED_MARKET_STORE_ROOT", str(root))
     else:
         monkeypatch.delenv("PANTHEON_L2_CARD_DATASET_ID", raising=False)
-        monkeypatch.delenv("PERSONA_POOL_SOURCE_DATASET_ID", raising=False)
 
     record = source or _source("src-1")
     if source is None:
@@ -138,6 +157,7 @@ def _distill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, source=None, bi
 
 
 def test_compiled_card_reaches_registry_spec_with_artifact_and_dataset_binding(tmp_path, monkeypatch):
+    """Acceptance 1: the compiled rule is bound to the governed whole-market snapshot; no symbol list is read."""
     (payload,) = _distill(tmp_path, monkeypatch)
     meta = payload["strategy_spec"]["metadata"]
     assert meta["card_wiring"]["status"] == "gate_ready"
@@ -145,14 +165,22 @@ def test_compiled_card_reaches_registry_spec_with_artifact_and_dataset_binding(t
     assert "factor_rule_v1" not in meta["hypothesis_card"]
     artifact = meta["strategy_artifact"]
     assert artifact["strategy_logic"]["kind"] == "factor_rule_v1"
+    assert "screen" in artifact["strategy_logic"]  # the compiled screen (or the declared default) selects
     assert artifact["strategy_id"] == payload["strategy_spec"]["strategy_id"]
-    assert artifact["parameters"]["symbols"] == ["2330.TW"]  # governed binding owns the universe
-    assert meta["backtest_dataset"] == {
-        "dataset_id": _dataset()["dataset_id"],
-        "source_dataset_refs": _dataset()["source_dataset_refs"][:2],
-        "binding": "governed_reference",
-    }
-    assert {"ref": _dataset()["dataset_id"], "kind": "dataset"} in payload["strategy_spec"]["data_dependencies"]
+    # The governed boundary of the stored bars owns the universe: every stored symbol that passes it.
+    assert artifact["parameters"]["symbols"] == ["0050.TW", "2330.TW"]
+    snapshot = meta["backtest_dataset"]["dataset_id"]
+    assert snapshot.startswith("gmd-2026-10-30-") and artifact["parameters"]["data_source"] == snapshot
+    assert meta["backtest_dataset"] == {"dataset_id": snapshot, "source_dataset_refs": [f"daily_bars:{snapshot}"],
+                                        "binding": "governed_reference"}
+    assert payload["strategy_spec"]["data_dependencies"][0] == {"ref": snapshot, "kind": "dataset"}
+    # The pinned snapshot re-derives from the same store (what the alpha replication worker does at gate time).
+    from services.research import governed_market_dataset as gmd
+
+    assert gmd.verify_snapshot(snapshot, tmp_path / "market_data_store")
+    summary = _controller_state(tmp_path)["reconcile"]["summary"]
+    assert summary["card_binding_status"] == "bound" and summary["card_binding_dataset_id"] == snapshot
+    assert summary["card_binding_bound_symbols"] == 2 and summary["card_binding_reason"] is None
 
 
 def test_card_without_governed_dataset_stays_research_only_draft_with_reason(tmp_path, monkeypatch):
@@ -162,6 +190,26 @@ def test_card_without_governed_dataset_stays_research_only_draft_with_reason(tmp
                                    "reason": "governed_dataset_binding_unavailable"}
     assert "strategy_artifact" not in meta and "backtest_dataset" not in meta
     assert meta["research_only"] is True
+    # Acceptance 1: the unconfigured binding is readable in the controller state.
+    summary = _controller_state(tmp_path)["reconcile"]["summary"]
+    assert summary["card_binding_status"] == "unconfigured" and summary["card_binding_dataset_id"] is None
+    assert summary["card_binding_reason"] == "card_binding_unconfigured:PANTHEON_L2_CARD_DATASET_ID is not set"
+
+
+def test_missing_governed_store_keeps_the_rule_a_draft_with_the_store_reason(tmp_path, monkeypatch):
+    """Configured binding, absent daily_bars store: fail closed, the store's reason on the draft and the state."""
+    (missing,) = _distill(tmp_path, monkeypatch, store=False)
+    wiring = missing["strategy_spec"]["metadata"]["card_wiring"]
+    assert wiring == {"status": "research_only_draft", "reason": "governed_dataset_binding_unavailable"}, wiring
+    assert "strategy_artifact" not in missing["strategy_spec"]["metadata"]
+    summary = _controller_state(tmp_path)["reconcile"]["summary"]
+    assert summary["card_binding_status"] == "unavailable", summary
+    assert "daily_bars_store_missing" in summary["card_binding_reason"], summary
+
+
+def _controller_state(tmp_path: Path) -> dict[str, Any]:
+    """The persisted distillation controller state (what the worker health and loop pages read)."""
+    return ControllerStateStore(tmp_path / "state.json").load().to_dict()
 
 
 def test_market_source_still_produces_no_draft(tmp_path, monkeypatch):
@@ -262,7 +310,8 @@ def test_stored_text_to_registered_candidate_end_to_end(tmp_path, monkeypatch):
         The screened candidate beats the whole-boundary control (``-entry-only``)
         out of sample, so the screen-contribution comparison passes on its merits.
         """
-        ev = _governed_passing_evaluation_for_artifact(kw["strategy_artifact"], dataset, run_id=kw["run_id"])
+        bound = {**dataset, "dataset_id": spec["metadata"]["backtest_dataset"]["dataset_id"]}
+        ev = _governed_passing_evaluation_for_artifact(kw["strategy_artifact"], bound, run_id=kw["run_id"])
         if kw["run_id"].endswith("-entry-only"):
             ev["out_of_sample"] = {**ev["out_of_sample"],
                                    "sharpe_ratio": ev["out_of_sample"]["sharpe_ratio"] - 1.0}
@@ -280,7 +329,8 @@ def test_stored_text_to_registered_candidate_end_to_end(tmp_path, monkeypatch):
     resolved: list[dict] = []
     worker = AlphaRevalidationWorker(
         queue, env.data_dir, authority=FakeAuthority(), registry_url="http://registry.test",
-        dataset_resolver=lambda binding: resolved.append(binding) or {**dataset, "candidate_pool_market": _attested_market()})
+        dataset_resolver=lambda binding: resolved.append(binding) or {
+            **dataset, "dataset_id": binding["dataset_id"], "candidate_pool_market": _attested_market()})
     monkeypatch.setattr(worker, "_fetch_strategy_spec_entry", lambda _id: approved)
     seen_requests: list[Any] = []
     from services.research.replication.gate import ReplicationGate
@@ -288,7 +338,8 @@ def test_stored_text_to_registered_candidate_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(ReplicationGate, "evaluate_candidate",
                         lambda self, req: seen_requests.append(req) or real_eval(self, req))
     worker.run_once(tenant_id=TENANT)
-    assert resolved and resolved[0]["dataset_id"] == dataset["dataset_id"]
+    assert resolved and resolved[0]["dataset_id"] == spec["metadata"]["backtest_dataset"]["dataset_id"]
+    assert resolved[0]["binding"] == "governed_reference" and resolved[0]["symbols"] == artifact["parameters"]["symbols"]
     runs = worker.list_runs(tenant_id=TENANT, strategy_spec_id=registry_id)
     assert len(runs) == 1
     meta = runs[0]["metadata"]
