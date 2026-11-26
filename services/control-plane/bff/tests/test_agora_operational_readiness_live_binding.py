@@ -326,3 +326,48 @@ def test_environment_provider_binds_runtime_source_and_canonical_consumption_rec
     assert envelope.data.signal_producer.consumed_snapshot_id == SNAPSHOT_ID
     assert envelope.data.signal_producer.reason == "canonical_signal_generation_receipt"
     assert store.mutation_calls == 0
+
+
+def test_environment_provider_short_circuits_when_caller_has_no_ready_workshop_strategy() -> None:
+    from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
+
+    def raising_read_store() -> Any:
+        raise AssertionError("read store must not be called without a ready workshop strategy")
+
+    def raising_http_get(url: str, _headers: Mapping[str, str], _timeout: float) -> dict[str, Any]:
+        raise AssertionError(f"unexpected authority HTTP GET {url}")
+
+    def raising_telemetry() -> list[dict[str, Any]]:
+        raise AssertionError("telemetry reader must not be called without a ready workshop strategy")
+
+    provider = EnvironmentAgoraOperationalReadinessProvider(
+        raising_read_store,
+        runtime_manager_url="http://runtime-manager:8081",
+        source_ingest_url="http://source-ingest:8097",
+        runtime_manager_token="runtime-token",
+        http_get_json=raising_http_get,
+        telemetry_reader=raising_telemetry,
+    )
+    scope = SimpleNamespace(tenant_id="tenant-a", user_id="user-a")
+    empty_workshop = MemoryWorkshopStore()
+
+    envelope = AgoraOperationalReadinessService(
+        read_provider=provider,
+        producer_sla_seconds=300,
+        workshop_store=empty_workshop,
+    ).compose_readiness(scope=scope, now_iso=NOW)
+
+    assert envelope.data.status == "not_configured"
+    assert envelope.data.source.freshness == "not_configured"
+    assert envelope.data.source.last_failure is None
+    assert envelope.data.signal_producer.status == "not_configured"
+    assert envelope.data.signal_producer.reason == "no_workshop_strategies"
+    assert envelope.data.signal_producer.active_binding is None
+    assert envelope.data.signal_producer.consumed_snapshot_id is None
+    assert envelope.data.signal_producer.last_success_at is None
+    for name in SURFACES:
+        surface = envelope.data.surfaces[name]
+        assert surface.status == "not_configured"
+        assert surface.reason == "no_workshop_strategies"
+        assert surface.count == 0
+        assert surface.cursor is None

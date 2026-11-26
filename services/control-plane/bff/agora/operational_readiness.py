@@ -931,6 +931,7 @@ class AgoraOperationalReadinessService:
         source_provider: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         producer_provider: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         surfaces_provider: Optional[Callable[[], Optional[Dict[str, Dict[str, Any]]]]] = None,
+        workshop_store: Optional[Any] = None,
     ) -> None:
         self.default_sla_seconds = default_sla_seconds
         self.producer_sla_seconds = producer_sla_seconds
@@ -939,6 +940,7 @@ class AgoraOperationalReadinessService:
         self._source_provider = source_provider
         self._producer_provider = producer_provider
         self._surfaces_provider = surfaces_provider
+        self._workshop_store = workshop_store
 
         # In-memory overrides / state for testing and simulation
         self._custom_source_snapshot: Optional[Dict[str, Any]] = None
@@ -989,15 +991,136 @@ class AgoraOperationalReadinessService:
                     surfaces[k] = v
         return surfaces
 
+    @staticmethod
+    def _build_deployment_readiness() -> AgoraDeploymentReadiness:
+        commit_sha = (
+            os.environ.get("PANTHEON_DEPLOYMENT_COMMIT")
+            or os.environ.get("BFF_COMMIT")
+            or os.environ.get("GIT_SHA")
+            or os.environ.get("PANTHEON_DEPLOY_SHA")
+            or os.environ.get("GIT_COMMIT_SHA")
+            or os.environ.get("SOURCE_COMMIT_SHA")
+        )
+        return AgoraDeploymentReadiness(
+            service="pantheon-bff",
+            environment=os.environ.get("PANTHEON_ENV", "dev"),
+            source_commit_sha=commit_sha,
+            bundle_version=os.environ.get("PANTHEON_BUNDLE_VERSION", "v1.13"),
+        )
+
+    @staticmethod
+    def _has_ready_workshop_strategy(
+        *,
+        workshop_store: Any,
+        scope: Optional[AgoraCapabilityScope],
+        assessed_at: str,
+    ) -> bool:
+        if scope is None:
+            return False
+        tenant_id = _clean_text(getattr(scope, "tenant_id", None))
+        user_id = _clean_text(getattr(scope, "user_id", None))
+        if not tenant_id or not user_id:
+            return False
+        from .trading_room.routes.common import _list_ready_strategy_projections
+
+        try:
+            projections = _list_ready_strategy_projections(
+                workshop_store=workshop_store,
+                scope={"tenant_id": tenant_id, "user_id": user_id},
+                events=[],
+                assessed_at=assessed_at,
+            )
+        except Exception:
+            return False
+        return bool(projections)
+
+    def _compose_no_workshop_strategies_readiness(
+        self,
+        *,
+        scope: Optional[AgoraCapabilityScope],
+        current_iso: str,
+    ) -> AgoraOperationalReadinessEnvelope:
+        source_readiness = AgoraSourceReadiness(
+            snapshot_id=None,
+            source_instance_id=None,
+            source_timestamp=None,
+            age_seconds=None,
+            sla_seconds=self.default_sla_seconds,
+            freshness="not_configured",
+            desired_state="not_configured",
+            observed_state="not_configured",
+            last_failure=None,
+        )
+        producer_readiness = AgoraSignalProducerReadiness(
+            status="not_configured",
+            producer_id="paper-signal-producer",
+            active_binding=None,
+            consumed_snapshot_id=None,
+            last_success_at=None,
+            enqueued=0,
+            reason="no_workshop_strategies",
+        )
+        surface_keys = (
+            "decision_events",
+            "journal",
+            "candidates",
+            "interactions",
+            "performance",
+        )
+        surfaces_readiness = {
+            key: AgoraSurfaceReadiness(
+                status="not_configured",
+                count=0,
+                reason="no_workshop_strategies",
+                freshness="not_configured",
+                cursor=None,
+            )
+            for key in surface_keys
+        }
+        data = AgoraOperationalReadinessData(
+            status="not_configured",
+            source=source_readiness,
+            signal_producer=producer_readiness,
+            surfaces=surfaces_readiness,
+            deployment=self._build_deployment_readiness(),
+        )
+        audience = (
+            f"tenant:{scope.tenant_id}:user:{scope.user_id}"
+            if scope
+            else "public:read_only"
+        )
+        meta = AgoraOperationalReadinessMeta(
+            snapshot_at=current_iso,
+            capability="agora.operational_readiness.v1",
+            requiredForAuthentication=False,
+            no_order_route_proof="agora_operational_readiness_read_only",
+            audience=audience,
+        )
+        return AgoraOperationalReadinessEnvelope(data=data, meta=meta)
+
     def compose_readiness(
         self,
         *,
         scope: Optional[AgoraCapabilityScope] = None,
         now_dt: Optional[datetime] = None,
         now_iso: Optional[str] = None,
+        workshop_store: Optional[Any] = None,
     ) -> AgoraOperationalReadinessEnvelope:
         current_dt = now_dt or (_parse_iso_utc(now_iso) if now_iso else None) or datetime.now(timezone.utc)
         current_iso = now_iso or _format_utc(current_dt)
+
+        effective_workshop_store = (
+            workshop_store if workshop_store is not None else self._workshop_store
+        )
+        if effective_workshop_store is not None and not self._has_ready_workshop_strategy(
+            workshop_store=effective_workshop_store,
+            scope=scope,
+            assessed_at=current_iso,
+        ):
+            return self._compose_no_workshop_strategies_readiness(
+                scope=scope,
+                current_iso=current_iso,
+            )
 
         provider_errors: Dict[str, str] = {}
         if self._read_provider is not None:
@@ -1051,20 +1174,7 @@ class AgoraOperationalReadinessService:
         )
 
         # 5. Deployment Identity
-        commit_sha = (
-            os.environ.get("PANTHEON_DEPLOYMENT_COMMIT")
-            or os.environ.get("BFF_COMMIT")
-            or os.environ.get("GIT_SHA")
-            or os.environ.get("PANTHEON_DEPLOY_SHA")
-            or os.environ.get("GIT_COMMIT_SHA")
-            or os.environ.get("SOURCE_COMMIT_SHA")
-        )
-        deployment = AgoraDeploymentReadiness(
-            service="pantheon-bff",
-            environment=os.environ.get("PANTHEON_ENV", "dev"),
-            source_commit_sha=commit_sha,
-            bundle_version=os.environ.get("PANTHEON_BUNDLE_VERSION", "v1.13"),
-        )
+        deployment = self._build_deployment_readiness()
 
         data = AgoraOperationalReadinessData(
             status=overall_status,
@@ -1536,13 +1646,17 @@ def create_operational_readiness_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     read_provider: Optional[AgoraOperationalReadinessReadProvider] = None,
     surfaces_reader: Optional[Callable[[Optional[AgoraCapabilityScope]], Any]] = None,
+    workshop_store: Optional[Any] = None,
 ) -> APIRouter:
     """Create the Agora Operational Readiness router."""
     router = APIRouter(tags=["agora-operational-readiness"])
     if service is not None:
         readiness_svc = service
     elif read_provider is not None:
-        readiness_svc = AgoraOperationalReadinessService(read_provider=read_provider)
+        readiness_svc = AgoraOperationalReadinessService(
+            read_provider=read_provider,
+            workshop_store=workshop_store,
+        )
     elif get_read_store is not None:
         environment_provider = EnvironmentAgoraOperationalReadinessProvider(
             get_read_store,
@@ -1556,7 +1670,12 @@ def create_operational_readiness_router(
                 surfaces_reader=surfaces_reader,
             )
         )
-        readiness_svc = AgoraOperationalReadinessService(read_provider=provider)
+        readiness_svc = AgoraOperationalReadinessService(
+            read_provider=provider,
+            workshop_store=workshop_store,
+        )
+    elif workshop_store is not None:
+        readiness_svc = AgoraOperationalReadinessService(workshop_store=workshop_store)
     else:
         readiness_svc = _DEFAULT_SERVICE
 
@@ -1572,7 +1691,7 @@ def create_operational_readiness_router(
         (requiredForAuthentication=False). It is never called by /bff/auth/readiness.
         """
         scope: Optional[AgoraCapabilityScope] = None
-        if authorization and extract_identity:
+        if extract_identity and (authorization or workshop_store is not None):
             try:
                 identity = extract_identity(authorization)
                 if require_read_role:
@@ -1589,6 +1708,7 @@ def create_operational_readiness_router(
         envelope = readiness_svc.compose_readiness(
             scope=scope,
             now_iso=utc_now(),
+            workshop_store=workshop_store,
         )
         return envelope.model_dump()
 

@@ -376,9 +376,40 @@ class AgoraOperationalReadinessVerifier:
             "surface_status": unavail_surface_status,
         }
 
-        # Invariant check: All three must be distinct
-        distinct_statuses = {stale_freshness, empty_freshness, unavail_freshness}
-        if len(distinct_statuses) != 3:
+        # 4. Not-configured state (trader with no ready Strategy Workshop StrategySpec)
+        from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
+
+        empty_workshop_store = MemoryWorkshopStore()
+        payload_not_cfg = svc.compose_readiness(
+            now_dt=now_dt,
+            workshop_store=empty_workshop_store,
+        ).model_dump()
+        not_cfg_freshness = payload_not_cfg["data"]["source"]["freshness"]
+        not_cfg_status = payload_not_cfg["data"]["status"]
+        not_cfg_producer_reason = payload_not_cfg["data"]["signal_producer"]["reason"]
+        not_cfg_surface_status = payload_not_cfg["data"]["surfaces"]["journal"]["status"]
+        not_cfg_surface_reason = payload_not_cfg["data"]["surfaces"]["journal"]["reason"]
+
+        if not_cfg_status != "not_configured" or not_cfg_freshness != "not_configured":
+            raise AgoraOperationalReadinessVerificationError(
+                "distinct_freshness_states",
+                f"Expected status/freshness 'not_configured' for trader with no workshop strategy, got '{not_cfg_status}'/'{not_cfg_freshness}'",
+            )
+        if not_cfg_producer_reason != "no_workshop_strategies" or not_cfg_surface_reason != "no_workshop_strategies":
+            raise AgoraOperationalReadinessVerificationError(
+                "distinct_freshness_states",
+                f"Expected reason 'no_workshop_strategies', got producer='{not_cfg_producer_reason}', surface='{not_cfg_surface_reason}'",
+            )
+        results["not_configured"] = {
+            "source_freshness": not_cfg_freshness,
+            "producer_reason": not_cfg_producer_reason,
+            "surface_status": not_cfg_surface_status,
+            "surface_reason": not_cfg_surface_reason,
+        }
+
+        # Invariant check: All four must be distinct
+        distinct_statuses = {stale_freshness, empty_freshness, unavail_freshness, not_cfg_freshness}
+        if len(distinct_statuses) != 4:
             raise AgoraOperationalReadinessVerificationError(
                 "distinct_freshness_states",
                 f"Freshness states conflated! Observed: {distinct_statuses}",
@@ -423,21 +454,25 @@ class AgoraOperationalReadinessVerifier:
                     )
         recovery_steps.append("2. Validated secret reference (ref://vault/...); zero inline raw secrets exposed")
 
-        # 3. Run bounded read-only refresh simulation
-        now_dt = datetime.now(timezone.utc)
-        now_iso = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        fresh_event_time = (now_dt - timedelta(minutes=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        # 3. Run bounded read-only refresh simulation (deterministic Friday post-close UTC)
+        now_dt = datetime(2026, 8, 28, 6, 0, 0, tzinfo=timezone.utc)
+        now_iso = "2026-08-28T06:00:00Z"
+        fresh_event_time = "2026-08-28T05:30:00Z"
+        observed_at_iso = "2026-08-28T05:45:00Z"
 
         simulated_snapshot = {
             "snapshot_id": f"mss-{demo_source_instance_id}-{int(now_dt.timestamp())}",
             "symbol": "2330.TW",
             "event_time": fresh_event_time,
+            "observed_at": observed_at_iso,
             "closes": [1020.0, 1025.0, 1030.0],
             "source_ref": f"source://{demo_source_instance_id}/{connector_id}",
             "lineage": {
                 "source_instance_id": demo_source_instance_id,
                 "connector_id": connector_id,
-                "refreshed_at": now_iso,
+                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+                "refreshed_at": observed_at_iso,
             },
         }
         recovery_steps.append("3. Executed bounded read-only refresh")
@@ -466,7 +501,10 @@ class AgoraOperationalReadinessVerifier:
         svc.set_source_snapshot({
             "snapshot_id": simulated_snapshot["snapshot_id"],
             "source_instance_id": demo_source_instance_id,
+            "symbol": "2330.TW",
             "event_time": fresh_event_time,
+            "observed_at": observed_at_iso,
+            "lineage": simulated_snapshot["lineage"],
             "sla_seconds": 86400,
         })
         svc.set_signal_producer({

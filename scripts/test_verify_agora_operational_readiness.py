@@ -132,18 +132,23 @@ def test_verifier_fails_on_order_authority_claim() -> None:
 
 
 def test_verifier_distinguishes_empty_fresh_and_unavailable() -> None:
-    """Verifier proves that empty_fresh and unavailable are distinct."""
+    """Verifier proves that empty_fresh, unavailable, and not_configured are distinct."""
     verifier = AgoraOperationalReadinessVerifier(mode="in-process", strict=True)
     res = verifier.verify_distinct_freshness_states()
 
     assert "stale" in res
     assert "empty_fresh" in res
     assert "unavailable" in res
+    assert "not_configured" in res
 
     assert res["stale"]["source_freshness"] == "stale"
     assert res["empty_fresh"]["source_freshness"] == "empty_fresh"
     assert res["unavailable"]["source_freshness"] == "unavailable"
+    assert res["not_configured"]["source_freshness"] == "not_configured"
+    assert res["not_configured"]["producer_reason"] == "no_workshop_strategies"
 
-    # Surface statuses must also distinguish empty_fresh from unavailable
+    # Surface statuses must also distinguish empty_fresh, unavailable, and not_configured
     assert res["empty_fresh"]["surface_status"] == "empty_fresh"
     assert res["unavailable"]["surface_status"] == "unavailable"
+    assert res["not_configured"]["surface_status"] == "not_configured"
+    assert res["not_configured"]["surface_reason"] == "no_workshop_strategies"

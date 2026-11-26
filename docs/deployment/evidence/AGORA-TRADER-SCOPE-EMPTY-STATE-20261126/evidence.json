@@ -1,0 +1,200 @@
+{
+  "task": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
+  "task_id": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "root_cause_class": "RC6 WP6.1 / WP6.3 / WP6.4 & RC3 WP3.4",
+  "register_instance": "RC6 (docs/operations/problem-register.md, WP6.1 / WP6.3 / WP6.4 Agora trader-scoped readiness and performance attribution empty state)",
+  "defect": "Hosted dev (2026-11-26 15:04Z, BFF b0eb2c259) as admintest (0 Strategy Workshop sessions) showed two scope and empty-state defects across the five Agora pages: (1) GET /bff/agora/operational-readiness resolved the tenant's newest active paper binding (rb-paper-persona-6507750312870d03a241-df3d085ff647, an institutional trading persona) and reported data.status='degraded' with signal_producer.reason='binding_execution_failing', source.last_failure.reason='upstream_error:HTTP 400: Bad Request', and every surface reason='binding_execution_failing', making the four Agora trader pages show an institutional persona runtime's internal failure to a trader with zero Strategy Workshop strategies; (2) GET /bff/agora/trading-room/performance-attribution/by-strategy took 28.4 s (over the frontend 15 s timeout, leaving 'Failed to load performance data' on /agora/performance) because project_agora_performance_attribution_by_strategy called projection_reader.scan_owner_journeys(tenant_id, owner_user_id, limit=100) unfiltered even when the caller had 0 workshop sessions and further populated user_strategies from journey strategy_ids (user_strategies.setdefault(j_strat, ...)), allowing institutional persona journeys sharing the operator's user_id to scan the 158k-row journey projection and leak into a trader's personal Agora performance table.",
+  "pre_deploy_hosted_evidence": {
+    "captured_at": "2026-11-26T15:04:00Z",
+    "hosted_bff_commit": "b0eb2c259",
+    "caller": {
+      "actor": "admintest",
+      "tenant_id": "default",
+      "workshop_sessions_count": 0,
+      "auth_token": "[REDACTED]"
+    },
+    "endpoints": {
+      "GET /bff/agora/operational-readiness": {
+        "http_status": 200,
+        "response_excerpt": {
+          "data": {
+            "status": "degraded",
+            "source": {
+              "freshness": "stale",
+              "last_failure": {
+                "stage": "ingest",
+                "reason": "upstream_error:HTTP 400: Bad Request"
+              }
+            },
+            "signal_producer": {
+              "status": "degraded",
+              "reason": "binding_execution_failing",
+              "active_binding": "rb-paper-persona-6507750312870d03a241-df3d085ff647"
+            },
+            "surfaces": {
+              "trading_room": {
+                "status": "degraded",
+                "reason": "binding_execution_failing"
+              },
+              "watchlist": {
+                "status": "degraded",
+                "reason": "binding_execution_failing"
+              },
+              "recommendations": {
+                "status": "degraded",
+                "reason": "binding_execution_failing"
+              },
+              "action_center": {
+                "status": "degraded",
+                "reason": "binding_execution_failing"
+              }
+            }
+          }
+        }
+      },
+      "GET /bff/agora/trading-room/performance-attribution/by-strategy": {
+        "http_status": 200,
+        "elapsed_ms": 28400,
+        "frontend_timeout_ms": 15000,
+        "observed_ui_state": "Timed out in browser at 15 s and rendered 'Failed to load performance data' on /agora/performance while backend unfiltered scan_owner_journeys ran for 28.4 s across ~158k trade journey rows."
+      }
+    }
+  },
+  "fix": {
+    "operational_readiness_trader_scope": "Wire workshop_store into create_operational_readiness_router and AgoraOperationalReadinessService. Before touching runtime-manager, source-ingest, or telemetry, _has_ready_workshop_strategy checks _list_ready_strategy_projections(workshop_store=..., user_id=..., tenant_id=...). When the caller has no ready Strategy Workshop StrategySpec, compose_readiness short-circuits via _compose_no_workshop_strategies_readiness and returns data.status='not_configured', source.freshness='not_configured', source.last_failure=None, signal_producer.status='not_configured', signal_producer.reason='no_workshop_strategies', signal_producer.active_binding=None, signal_producer.consumed_snapshot_id=None, signal_producer.last_success_at=None, and all four surfaces with status='not_configured', reason='no_workshop_strategies', freshness='not_configured', count=0, cursor=None, with zero upstream authority calls.",
+    "performance_attribution_workshop_scope": "In project_agora_performance_attribution_by_strategy (services/control-plane/bff/agora/performance/attribution.py) and TradingRoomPerformanceService (services/control-plane/bff/agora/performance/service.py), build user_strategies exclusively from the caller's Strategy Workshop sessions (workshop_store.list_sessions(user_id=owner_user_id, tenant_id=tenant_id, status=None, limit=100)). Remove user_strategies.setdefault(j_strat, ...) so trade journey projections never invent Agora strategy rows. Pass projection_reader lazily and, when target_strategy_ids is empty (caller has no workshop strategies or strategy_id filter is not in caller's workshop sessions), set meta.surfaces.strategy_directory.reason='no_workshop_strategies' and return zero rows without calling or instantiating projection_reader. When target_strategy_ids is non-empty, call projection_reader.scan_owner_journeys(..., strategy_id=s_id) per caller workshop strategy id and discard any journey whose strategy_id is outside user_strategies.",
+    "verify_script": "Updated scripts/verify_agora_operational_readiness.py (verify_distinct_freshness_states and verify_bounded_recovery_sequence) and scripts/test_verify_agora_operational_readiness.py to verify the trader-scoped not_configured / no_workshop_strategies readiness contract when a caller has an empty workshop store alongside configured-trader states."
+  },
+  "post_change_verification": {
+    "in_process_caller_with_no_workshop_strategies": {
+      "GET /bff/agora/operational-readiness": {
+        "http_status": 200,
+        "elapsed_ms": 1.8,
+        "upstream_calls": {
+          "runtime_manager": 0,
+          "source_ingest": 0,
+          "telemetry": 0
+        },
+        "response": {
+          "data": {
+            "status": "not_configured",
+            "source": {
+              "freshness": "not_configured",
+              "active_snapshot_id": null,
+              "active_as_of": null,
+              "last_ingest_run_id": null,
+              "last_ingest_status": null,
+              "last_ingest_completed_at": null,
+              "last_failure": null
+            },
+            "signal_producer": {
+              "status": "not_configured",
+              "reason": "no_workshop_strategies",
+              "active_binding": null,
+              "consumed_snapshot_id": null,
+              "last_run_at": null,
+              "last_success_at": null
+            },
+            "surfaces": {
+              "trading_room": {
+                "status": "not_configured",
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "as_of": null,
+                "count": 0,
+                "cursor": null
+              },
+              "watchlist": {
+                "status": "not_configured",
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "as_of": null,
+                "count": 0,
+                "cursor": null
+              },
+              "recommendations": {
+                "status": "not_configured",
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "as_of": null,
+                "count": 0,
+                "cursor": null
+              },
+              "action_center": {
+                "status": "not_configured",
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "as_of": null,
+                "count": 0,
+                "cursor": null
+              }
+            }
+          }
+        }
+      },
+      "GET /bff/agora/trading-room/performance-attribution/by-strategy": {
+        "http_status": 200,
+        "elapsed_ms": 1.4,
+        "journey_projection_reader_calls": 0,
+        "response_excerpt": {
+          "data": {
+            "items": [],
+            "summary": {
+              "strategy_count": 0,
+              "journey_count": 0,
+              "active_count": 0,
+              "closed_count": 0
+            }
+          },
+          "meta": {
+            "surfaces": {
+              "strategy_directory": {
+                "status": "fresh",
+                "reason": "no_workshop_strategies"
+              }
+            }
+          }
+        }
+      }
+    },
+    "hosted_post_deploy_proof": {
+      "status": "pending_deploy",
+      "reason": "Auto worker does not hold the protected hosted admintest login secret and this branch is not yet deployed to hosted dev. Post-deploy hosted verification as admintest (GET /bff/agora/trading-room/performance-attribution/by-strategy < 2 s with 0 rows and reason='no_workshop_strategies'; GET /bff/agora/operational-readiness reporting status='not_configured' with reason='no_workshop_strategies' and active_binding=null) will be recorded after the release carrying this PR is deployed."
+    }
+  },
+  "runtime_budget": {
+    "path_type": "read_path_only",
+    "recurring_jobs": 0,
+    "emitters": 0,
+    "persistent_writers": 0,
+    "read_cost_change": "For a caller with 0 ready Strategy Workshop strategies, GET /bff/agora/operational-readiness drops from 4+ upstream HTTP reads (runtime-manager bindings, source-ingest snapshots/runs/schedules, telemetry summaries) to 0 upstream HTTP reads (1 local workshop session list read), and GET /bff/agora/trading-room/performance-attribution/by-strategy drops from a tenant+user scan across 158k trade_journey_projection rows (28.4 s on hosted dev) to 0 trade_journey_projection reads."
+  },
+  "review_independence": {
+    "owner": "Antigravity",
+    "owner_family": "Antigravity",
+    "reviewer": "Claude",
+    "reviewer_family": "Claude",
+    "independent": true
+  },
+  "tests": {
+    "services/control-plane/bff/agora/test_operational_readiness.py": "Added unit and router tests proving that a caller with no ready Strategy Workshop StrategySpec receives not_configured / no_workshop_strategies with null binding/snapshot/failure fields and zero runtime-manager, source-ingest, or telemetry calls (using raising authority readers), while a caller with a ready workshop StrategySpec preserves full upstream evaluation.",
+    "services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py": "Added router integration test proving create_agora_router wires workshop_store into both operational-readiness and performance-attribution/by-strategy.",
+    "services/control-plane/bff/agora/performance/test_performance.py": "Added unit and router tests proving performance-attribution/by-strategy returns 200 with 0 rows and meta.surfaces.strategy_directory.reason='no_workshop_strategies' without calling a raising projection_reader when the caller has no workshop sessions, and that journeys belonging to institutional persona strategies owned by the same user_id never create or feed attribution rows.",
+    "scripts/test_verify_agora_operational_readiness.py": "Updated and verified all 7 stages of scripts/verify_agora_operational_readiness.py including distinct freshness states with trader-scoped no_workshop_strategies verification."
+  },
+  "verification": [
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/performance/test_performance.py services/control-plane/bff/agora/test_operational_readiness.py services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py scripts/test_verify_agora_operational_readiness.py",
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_tenant_fallback_audit.py -k 'readiness or performance or receipt or suggestion'",
+    ".venv-pantheon/bin/python3 scripts/verify_agora_operational_readiness.py --mode in-process",
+    "git diff --check"
+  ],
+  "residual_findings": [
+    {
+      "finding": "In services/control-plane/bff/agora/trading_room/service.py (TradingRoomService.get_trading_room_aggregate), risk_summary is hard-coded to RiskSummary(overall_status='normal', active_constraints=[], circuit_breaker_state='armed', updated_at=_now_iso()) and position_summaries is hard-coded to [] even when the trader has no Strategy Workshop strategies or active trading room positions.",
+      "location": "services/control-plane/bff/agora/trading_room/service.py",
+      "disposition": "Recorded as residual finding per task scope constraint ('Do not change TradingRoomAggregate or RiskSummary schemas in this task; record the hard-coded risk_summary: normal and empty position_summaries in trading_room/service.py as a residual finding in the handoff and register row')."
+    }
+  ]
+}
