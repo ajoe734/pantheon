@@ -398,9 +398,11 @@ class CommitteeOwnerClient:
             raise unavailable("consultation", "meeting_tenant_mismatch")
         return dict(response)
 
-    def memos(self, session_id: str) -> list:
-        meeting_detail: Optional[dict] = None
-        if str(session_id).startswith("mtg-"):
+    def memos(self, session_id: str, *, meeting_detail: Optional[dict] = None) -> list:
+        is_panel = False
+        if meeting_detail is not None:
+            pass
+        elif str(session_id).startswith("mtg-"):
             meeting_detail = self.meeting(session_id)
             is_panel = False
         else:
@@ -574,7 +576,12 @@ class CommitteeOwnerClient:
             raise
         if not trader_owns_meeting(raw, self.user_id):
             raise trader_meeting_not_found()
-        projected = self._project_trader_meeting(raw, raw, self._display_names())
+        try:
+            projected = self._project_trader_meeting(raw, raw, self._display_names())
+        except HTTPException as exc:
+            if exc.status_code == 404:  # e.g. tenant mismatch: same answer as a missing meeting
+                raise trader_meeting_not_found() from exc
+            raise
         if projected is None:
             raise trader_meeting_not_found()
         return projected
@@ -597,8 +604,7 @@ class CommitteeOwnerClient:
         return [p for p in items if str(p.get("meeting_id") or "") in owned_ids]
 
     def trader_memos(self, session_id: str) -> list:
-        self.trader_meeting(session_id)
-        return self.memos(session_id)
+        return self.memos(session_id, meeting_detail=self.trader_meeting(session_id))
 
     def trader_publish(self, session_id: str, memo_id: str) -> dict:
         self.trader_meeting(session_id)

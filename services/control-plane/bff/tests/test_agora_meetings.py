@@ -903,34 +903,51 @@ def test_workshop_meeting_convening_refuses_another_users_servant_and_invalid_re
     assert "insufficient_participants" in empty_roster.text
 
 
-def test_committee_reads_list_gate_panels_and_deliberative_meetings_with_rounds_and_keep_no_store(
+def test_committee_reads_list_only_the_traders_meetings_with_rounds_and_keep_no_store(
     agora_meetings_stack,
 ) -> None:
     client, _, owner_state, _, _ = agora_meetings_stack
 
-    # 1. Unified committee sessions list returns both gate panels and deliberative meetings with rounds
+    # The tenant also holds an institutional persona meeting; neither it nor the
+    # gate panel (panel-gate-1) is an Agora committee session (decision 2026-11-26).
+    owner_state["meetings"]["mtg-institutional-1"] = {
+        **owner_state["meetings"]["mtg-delib-1"],
+        "meeting_id": "mtg-institutional-1",
+        "convened_by": {"kind": "persona", "id": "persona-inst-1"},
+        "participants": [{"persona_id": "persona-inst-1", "role": "chair", "origin": "institutional"}],
+        "created_at": "2026-11-17T10:00:00Z",
+    }
+
+    # 1. Committee sessions list returns only alice's own deliberative meeting with rounds
     sessions_resp = client.get(
         "/bff/agora/committee/sessions",
         headers=_auth_headers("alice"),
     )
     assert sessions_resp.status_code == 200, sessions_resp.text
     sessions = {item["session_id"]: item for item in sessions_resp.json()["data"]}
-    assert set(sessions) == {"panel-gate-1", "mtg-delib-1"}
-
-    gate = sessions["panel-gate-1"]
-    assert gate["session_class"] == "gate_panel"
-    assert gate["consultation_type"] == "persona_panel"
-    assert len(gate["rounds"]) == 1
-    assert gate["rounds"][0]["mode"] == "independent"
+    assert set(sessions) == {"mtg-delib-1"}
 
     delib = sessions["mtg-delib-1"]
     assert delib["session_class"] == "deliberative_meeting"
     assert delib["consultation_type"] == "persona_meeting"
+    assert delib["created_at"] == "2026-11-16T10:00:00Z"
+    assert delib["closed_at"] == "2026-11-16T10:06:00Z"
     assert [r["round"] for r in delib["rounds"]] == [1, 2]
     assert delib["rounds"][1]["positions"][2]["changed"] is True
+    assert delib["rounds"][1]["positions"][2]["display_name"] == "Your servant"
     assert delib["private_items_withheld"] == 2
     assert "SECRET_PRIVATE_MEMORY_NEVER_RETURN" not in sessions_resp.text
     assert "SECRET_SERVANT_PRIVATE_INTERPRETATION" not in sessions_resp.text
+
+    with_panels = client.get(
+        "/bff/agora/committee/meetings?include_panels=true",
+        headers=_auth_headers("alice"),
+    )
+    assert [m["meeting_id"] for m in with_panels.json()["data"]] == ["mtg-delib-1"]
+    for hidden in ("panel-gate-1", "mtg-institutional-1"):
+        assert client.get(
+            f"/bff/agora/committee/sessions/{hidden}", headers=_auth_headers("alice")
+        ).status_code == 404
 
     # 2. Meeting detail route returns full rounds, synthesis, writebacks, and usage
     detail_resp = client.get(
@@ -972,7 +989,7 @@ def test_committee_reads_list_gate_panels_and_deliberative_meetings_with_rounds_
     )
     assert after_remove.status_code == 200, after_remove.text
     assert after_remove.json()["data"] == []
-    assert after_remove.json()["reason"] == "no_persona_meetings"
+    assert after_remove.json()["reason"] == "no_trader_meetings"
     assert client.get(
         "/bff/agora/committee/meetings/mtg-delib-1",
         headers=_auth_headers("alice"),
@@ -1432,16 +1449,11 @@ def test_deliberative_meeting_memos_and_detail_project_case_file_view_and_preser
         ("GET", "/api/consult/meetings/mtg-foreign-1"),
     ]
 
-    # 4. Gate panel (persona_panel) memo read still uses GET /api/consult/requests/{id}/transcript (project_panel).
+    # 4. A gate panel is not an Agora committee session: its memos answer 404 before any memo read.
     calls.clear()
     panel_memos = client.get(
         "/bff/agora/committee/sessions/panel-gate-1/memos",
         headers=_auth_headers("alice"),
     )
-    assert panel_memos.status_code == 200, panel_memos.text
-    assert [(c["method"], c["path"]) for c in calls] == [
-        ("GET", "/api/consult/requests/panel-gate-1"),
-        ("GET", "/api/consult/memos"),
-        ("GET", "/api/consult/requests/panel-gate-1/transcript"),
-    ]
-
+    assert panel_memos.status_code == 404, panel_memos.text
+    assert not any(c["path"] == "/api/consult/memos" for c in calls)
