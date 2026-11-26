@@ -622,5 +622,31 @@
     "hosted_acceptance": "external_wait: live VM replacement, template recreation in GCP, and production workflow dispatch remain operator-gated",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_protected_replace_vm_operation_20261126": {
+    "task_generation": 78,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      ".github/workflows/production-release.yml adds protected operation=replace_vm (inputs.operation options=[release, rollback, replace_vm]); preflight job requires manifest/staging_evidence/frontend_artifact_uri/write_posture only when inputs.operation == 'release'; deploy job (environment: production) exports PROD_INSTANCE_TEMPLATE, PROD_RUNTIME_SERVICE_ACCOUNT, PROD_SUBNETWORK, sets PROD_BOOTSTRAP_FIRST_RELEASE='false' whenever operation != 'release', runs prod_preflight.py replace-vm before WIF auth, skips pre-switch Control VM size gate and release steps when operation == 'replace_vm', and executes scripts/deploy/prod_replace_vm.sh",
+      "scripts/deploy/prod_preflight.py adds replace-vm CLI subcommand validating explicit production configuration and genuine protected production Environment approval before any cloud authentication",
+      "scripts/deploy/prod_replace_vm.sh implements end-to-end fresh-boot control VM replacement: inspects incumbent PROD_VM_NAME and verifies reserved EXTERNAL static natIP via gcloud compute addresses list; takes READY pre-replacement snapshots of both PROD_DATA_DISK and incumbent boot disk (<= 62 chars lowercase); uploads bundle via IAP to incumbent VM and runs bootstrap.sh (PROD_BOOTSTRAP_SKIP_STATEFUL=true PROD_PREPULL_IMAGES=false) + prod_preflight.py boot-disk to migrate any boot-disk secrets/state/manifests/fe/config/proxy onto PROD_DATA_MOUNT; verifies active_manifest.json and baseline.json match RELEASE_ID and captures data filesystem UUID plus pantheon-caddy image digest, /data (ACME certificates), and /config onto PROD_DATA_MOUNT/proxy/{caddy-image.txt,caddy-data,caddy-config}; ensures >= e2-standard-8 Debian 12 instance template (creating pantheon-prod-control-template-e2s8 when PROD_INSTANCE_TEMPLATE is missing or < 8 vCPUs, verified via prod_preflight.py vm-size --instance-template); sets --no-auto-delete on both old boot disk and PROD_DATA_DISK, deletes incumbent VM with --keep-disks=all (with automatic rollback trap recreating PROD_VM_NAME from old_boot_disk + PROD_DATA_DISK + static_ip on failure), creates replacement PROD_VM_NAME from >= e2-standard-8 template with fresh boot disk + PROD_DATA_DISK + reserved static_ip, verifies new_instance_id != old_instance_id, new_boot_disk != old_boot_disk, and prod_preflight.py vm-size; mounts UUID=<data_uuid> at PROD_DATA_MOUNT in /etc/fstab (never mkfs), runs bootstrap.sh, disables host systemd caddy.service, recreates pantheon-caddy, runs prod_preflight.py boot-disk + prod_ops.sh restore_active_release + prod_ops.sh snapshot_schedule check, enforces rto_seconds <= PROD_RTO_SECONDS, and emits one secret-free JSON line status=prod_vm_replaced",
+      "docs/deployment/production-control-runbook.md documents scripts/deploy/prod_replace_vm.sh and operation=replace_vm within the <= 180-line runbook contract",
+      "tests/deployment/test_production_release.py adds ReplaceVmHarness covering replace-vm preflight, happy-path VM replacement with e2-standard-2 -> e2-standard-8 template upgrade + pre-g77 boot-disk migration + Caddy/ACME preservation + post-replacement protected rollback, unreserved static IP / release mismatch pre-deletion refusals, RTO budget refusal (exit 6), and automatic rollback to old_boot_disk on create/SSH/restore failures (exit 3)"
+    ],
+    "runtime_budget": {
+      "change": "no new recurring job or background daemon; on-demand operation=replace_vm takes 2 pre-replacement disk snapshots (1 data disk + 1 boot disk) per drill invocation, writes 1 snapshot record state/snapshots/vm-replace-<release_id>.json (< 1 KB), state/data_disk_uuid (< 64 B), and proxy/caddy-image.txt + proxy/{caddy-data,caddy-config} (~50 KB ACME cert/config state) on PROD_DATA_MOUNT, and preserves 1 detached incumbent boot disk (--no-auto-delete) until operator cleanup after drill verification"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "23 tests passed, terminal exit 0",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "139 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }
