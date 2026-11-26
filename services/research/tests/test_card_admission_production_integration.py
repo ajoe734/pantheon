@@ -6,8 +6,10 @@ issued principals (``scripts/issue_dev_paper_principals``), the real Registry ap
 application (open persona demands) and the real Persona owner application (the demand's persona for the
 existing discovery scorer). Neighbours are reached over their real HTTP routes through one in-process
 transport; only the Governance decision store is the in-memory mirror of ``execute_command`` that the
-existing operator tests use (no database in the sandbox) and the gate's backtest protocol is the recorded
-governed evaluation the other card tests use. No owner is replaced by a hand-written fake.
+existing operator tests use (no database in the sandbox). The pass-path tests replay the recorded governed
+evaluation as the gate's backtest protocol; the paper-record end-to-end
+(HYPOTHESIS-CARD-GOVERNED-BINDING-20261125) runs the real protocol on the governed bars. No owner is replaced by a
+hand-written fake.
 """
 from __future__ import annotations
 
@@ -119,7 +121,8 @@ class World:
     """The deployed environment of the alpha replication worker, with every neighbour a real application."""
 
     def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, dataset: dict[str, Any],
-                 persona_metadata: dict[str, Any] | None = None) -> None:
+                 persona_metadata: dict[str, Any] | None = None,
+                 persona_fields: dict[str, Any] | None = None) -> None:
         self.tmp, self.mp = tmp_path, monkeypatch
         self.owners = OwnerEnvironment(tmp_path, monkeypatch)  # real Research + Registry applications
         self.transport = Transport()
@@ -156,7 +159,7 @@ class World:
         self.persona = TestClient(create_persona_app(persona_owner))
         created = self.persona.post(
             "/api/personas", json=_persona_create_payload(persona_id=PERSONA, tenant_id=TENANT, mandate="TW equity",
-                                    metadata=dict(persona_metadata or FITTING_PERSONA)),
+                                    metadata=dict(persona_metadata or FITTING_PERSONA), **(persona_fields or {})),
             headers=_persona_headers("operator-persona", "persona.admin"))
         assert created.status_code == 201, created.text
 
@@ -224,10 +227,10 @@ def _dataset() -> dict[str, Any]:
     return {**json.loads(BARS_FIXTURE.read_text(encoding="utf-8"))["dataset"], "dataset_id": GOVERNED_MARKET_DATASET_ID}
 
 
-def _store_card_spec(world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+def _store_card_spec(world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, source: Any = None) -> str:
     """The card -> StrategySpec the distillation controller produced, stored in the real Registry."""
     (tmp_path / "d").mkdir()
-    (payload,) = _distill(tmp_path / "d", monkeypatch, predictions=True)
+    (payload,) = _distill(tmp_path / "d", monkeypatch, predictions=True, source=source)
     payload["metadata"]["tenant_id"] = TENANT
     posted = world.owners.registry_client.post("/api/registry/strategy-specs", json=payload,
                                                headers=world.owners.registry_headers(TENANT))
@@ -237,7 +240,9 @@ def _store_card_spec(world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 def _record_passing_protocol(monkeypatch: pytest.MonkeyPatch, dataset: dict[str, Any]) -> None:
     def recorded_protocol(**kw: Any) -> dict[str, Any]:
-        evaluation = _governed_passing_evaluation_for_artifact(kw["strategy_artifact"], dataset, run_id=kw["run_id"])
+        # bound to the dataset the gate supplies (the pinned governed snapshot the card was bound to)
+        bound = {**dataset, "dataset_id": kw["dataset"]["dataset_id"]}
+        evaluation = _governed_passing_evaluation_for_artifact(kw["strategy_artifact"], bound, run_id=kw["run_id"])
         if kw["run_id"].endswith("-entry-only"):
             evaluation["out_of_sample"] = {**evaluation["out_of_sample"],
                                            "sharpe_ratio": evaluation["out_of_sample"]["sharpe_ratio"] - 1.0}
@@ -284,30 +289,113 @@ def _admitted_spec(world: World, registry_id: str, demand: dict[str, Any], state
     return entry
 
 
-def test_matched_spec_is_admitted_and_gated_but_a_screened_spec_is_refused_without_the_governed_market(
-        tmp_path, monkeypatch):
-    """Criteria 5 and 6 with the production resolver: the governed dataset authority supplies daily bars only."""
+# The stored shape of the three trading personas: the route policy is referenced by id, never inline.
+TRADING_POLICY_ID = "rp-trading-momentum"
+TRADING_PERSONA_FIELDS = {"route_policy_id": TRADING_POLICY_ID, "consult_policy_id": "control-plane.default",
+                          "tool_profile_id": "persona-default"}
+
+
+def _paper_record() -> Any:
+    """A stored paper record (normalized SourceRecord of type paper) carrying the recorded paper text."""
+    from services.source_ingestion.tests.test_hypothesis_extraction import _prediction_recording, _source
+
+    recording = _prediction_recording()
+    record = _source(recording["source_record_id"], "paper")  # the recorded card cites this stored record
+    record.metadata["body"] = recording["stored_text"]
+    return record
+
+
+def _route_policy_catalog(monkeypatch: pytest.MonkeyPatch, *policies: dict[str, Any]) -> None:
+    """The route policy owner catalog the persona daily cycle reads, holding ``policies`` (real port class)."""
+    from services.control_plane.bff.ports.operations_consultation import DomainWorkflowCatalogPort
+    from services.research.alpha_replication import card_production_wiring as wiring
+
+    monkeypatch.setattr(wiring, "route_policy_catalog",
+                        lambda: DomainWorkflowCatalogPort(datasets={"route_policies": list(policies)}))
+
+
+def test_paper_record_to_gated_admission_on_the_governed_market_end_to_end(tmp_path, monkeypatch):
+    """HYPOTHESIS-CARD-GOVERNED-BINDING-20261125 acceptance 4, real owners' code paths; only the model answer is
+    recorded (and, as in every test here, the Governance decision store is its in-memory mirror: no database).
+
+    stored paper record -> hypothesis card -> compiled screened rule bound to the governed market snapshot ->
+    admission (trading persona with a referenced route policy, resolved from its owner) -> the real gate on the
+    governed bars with the unattested pool market -> ``survivorship_limited`` (a correct refusal) -> the state the
+    alpha factory page (research owner entries) and the controller health probes read.
+    """
     dataset = _dataset()
-    world = World(tmp_path, monkeypatch, dataset=dataset)
-    registry_id = _store_card_spec(world, tmp_path, monkeypatch)
+    world = World(tmp_path, monkeypatch, dataset=dataset, persona_fields=TRADING_PERSONA_FIELDS)
+    _route_policy_catalog(monkeypatch, {"policy_id": TRADING_POLICY_ID, "blocked_backends": ["qlib"]})
+    registry_id = _store_card_spec(world, tmp_path, monkeypatch, source=_paper_record())
     demand = world.open_demand()
-    _record_passing_protocol(monkeypatch, dataset)
     gate = _gate_outcomes(monkeypatch)
+
+    # 1. card -> compiled screened rule bound to the governed market (distillation controller state says so)
+    stored = world.owners.registry_client.get(f"/api/registry/strategy-specs/{registry_id}",
+                                              headers=world.owners.registry_headers(TENANT)).json()["entry"]
+    spec_meta = stored["metadata"]["strategy_spec"]["metadata"]
+    assert spec_meta["hypothesis_card"]["claim"] and spec_meta["card_wiring"]["status"] == "gate_ready"
+    artifact = spec_meta["strategy_artifact"]
+    assert "screen" in artifact["strategy_logic"]
+    snapshot = spec_meta["backtest_dataset"]["dataset_id"]
+    assert snapshot.startswith("gmd-2026-10-30-") and spec_meta["backtest_dataset"]["binding"] == "governed_reference"
+    assert artifact["parameters"]["symbols"] == ["0050.TW", "2330.TW"]  # the governed boundary, no symbol list
+    from services.source_ingestion.controller_state import ControllerStateStore
+
+    distill_summary = ControllerStateStore(tmp_path / "d" / "state.json").load().to_dict()["reconcile"]["summary"]
+    assert distill_summary["card_binding_status"] == "bound" and distill_summary["card_binding_dataset_id"] == snapshot
+
+    # 2. the deployed worker: admission through the referenced route policy, then the real gate
+    state = world.run_worker_entry_point()
+    entry = _admitted_spec(world, registry_id, demand, state)
+    assert entry["artifact_state"] == "approved"
+    (response,) = gate
+    failed = {r.criterion_id: r for r in response.results if not r.passed}
+    # The real backtest protocol on the governed bars refuses the screened rule: the unattested pool market does
+    # not cover delisted/suspended symbols. The two dependent criteria fail for the same missing backtest.
+    assert set(failed) == {"real_backtest_validation", "confidence_score", "implementation_ready"}, failed
+    refusal = failed["real_backtest_validation"].details
+    assert refusal["status"] == "survivorship_limited" and refusal["survivorship_limited"] is True, refusal
+    assert refusal["source_dataset_refs"] == [f"daily_bars:{snapshot}"]
+    assert failed["implementation_ready"].details == {"readiness_status": "missing_backtest_run"}
+    assert state["reconcile"]["card_registrations"] == []
+
+    # 3. what the alpha factory page reads (research owner entries) and what the worker health probe reads
+    rows = world.owners.research_client.get("/api/research-orchestrator/alpha-replication/entries",
+                                            headers=world.owners.registry_headers(TENANT))
+    assert rows.status_code == 200, rows.text
+    (row,) = [r for r in rows.json() if r["strategy_spec_id"] == registry_id]
+    assert row["demand_ref"] == demand["demand_id"] and row["persona_id"] == PERSONA
+    assert state["reconcile"]["card_path"] == {"enabled": True, "reason": None, "missing": [], "error": None}
+    # the worker health file records the refusal as an acknowledged gate failure of this spec
+    (refused,) = state["reconcile"]["errors"]
+    assert state["reconcile"]["processed"] == 1 and refused["strategy_spec_id"] == registry_id
+    assert refused["failure_acknowledged"] is True and "real_backtest_validation" in refused["error"]
+    # the gate run the worker recorded for the spec carries the refusal (what the run list / board shows)
+    from services.research.alpha_replication.revalidation_worker import AlphaRevalidationWorker
+    from services.research.alpha_replication.queue import AlphaReplicationQueue
+
+    worker = AlphaRevalidationWorker(AlphaReplicationQueue(world.owners.data_dir), world.owners.data_dir)
+    (run,) = worker.list_runs(tenant_id=TENANT, strategy_spec_id=registry_id)
+    assert run["metadata"]["replication_gate"]["admission_status"] != "admitted"
+    assert any(r["criterion_id"] == "real_backtest_validation" and "survivorship_limited" in r["evidence"]
+               for r in run["metadata"]["replication_gate"]["results"])
+
+
+def test_a_referenced_route_policy_its_owner_does_not_hold_fails_the_match_closed(tmp_path, monkeypatch):
+    """Production today: the owner catalog holds no route policy, so the trading persona is never scored
+    unconstrained; the admission attempt records ``route_policy_unavailable:<id>`` and nothing is admitted."""
+    dataset = _dataset()
+    world = World(tmp_path, monkeypatch, dataset=dataset, persona_fields=TRADING_PERSONA_FIELDS)
+    registry_id = _store_card_spec(world, tmp_path, monkeypatch)
+    world.open_demand()
 
     state = world.run_worker_entry_point()
 
-    entry = _admitted_spec(world, registry_id, demand, state)
-    failed = [r for response in gate for r in response.results if not r.passed]
-    assert [r.criterion_id for r in failed] == ["real_backtest_validation"], failed
-    # The resolver cannot attest delisted/suspended coverage: the dataset it returns carries no
-    # candidate_pool_market, so the screened spec is refused (named input, never a guessed pass).
-    assert failed[0].details["status"] == "screen_contribution_unavailable"
-    assert failed[0].details["reason"] == "screen_contribution_inputs_missing"
-    assert state["reconcile"]["card_registrations"] == []
-    artifact_id = entry["metadata"]["strategy_spec"]["metadata"]["strategy_artifact"]["artifact_id"]
-    pooled = world.owners.registry_client.get(f"/api/registry/strategy-artifacts/{artifact_id}",
-                                              headers=world.owners.registry_headers(TENANT))
-    assert pooled.status_code == 404 or pooled.json()["entry"]["artifact_state"] != "approved"
+    (result,) = state["reconcile"]["card_admissions"]
+    assert result["status"] == "error" and result["registry_id"] == registry_id
+    assert f"route_policy_unavailable:{TRADING_POLICY_ID}" in result["reason"], result
+    assert ReplicationAdmissionStore(world.owners.data_dir).list_admissions() == [] and world.store.rows == {}
 
 
 def test_a_pass_registers_the_pool_candidate_when_the_governed_market_attests_survivorship(tmp_path, monkeypatch):

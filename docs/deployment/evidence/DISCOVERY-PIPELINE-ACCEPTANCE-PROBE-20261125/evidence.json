@@ -1,0 +1,33 @@
+{
+  "task": "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125",
+  "root_cause_class": "RC2",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27 10:03Z, so the reviewer may be from the owner's family; recorded here and in the task handoff.",
+  "status": "source + focused tests; no hosted run claimed",
+  "probe": "acceptance/probes/discovery-pipeline (logic: acceptance/discovery_pipeline_day.py)",
+  "reads": ["POST /bff/auth/dev-login (existing viewer identity, token in memory only)", "GET /bff/alpha-factory?page_size=1", "GET /bff/v5/loop-health/strategy_distillation"],
+  "stages": ["external_records", "hypothesis_cards", "no_fallback_drafts", "governed_market_dataset", "template_search", "templates_evaluated", "gate_attempts", "distillation_dead_letters"],
+  "contract": {
+    "unreadable": "a failed route, an owner surface unavailable, a count with status unavailable or an invalid payload fails every stage it feeds with the reason; never skipped or passed",
+    "refusals": "survivorship_limited and below_threshold are working gate output; the report prints 'no strategy passed' when counts.passes is 0",
+    "registration": "placed in acceptance/probes like the existing release probes; exit 77 without credentials; scripts/test_dev_acceptance_stage.py expected probe list gains probe:discovery-pipeline; no rollback, no writer, no storage",
+    "release_vs_daily": "the probe judges daily system state, so releases stay failed while discovery produces nothing (task requirement 3 and operator intent); recorded in acceptance/README.md"
+  },
+  "fixture": {
+    "file": "acceptance/fixtures/hosted_discovery_pipeline_20261125.json",
+    "honesty": "Reconstructed from the coordinator's recorded read-only hosted facts of 2026-11-25 06:20Z-06:40Z (task source packet). The worker had no hosted access and made no hosted read; values the packet does not state are served as unavailable with a reason, not as 0.",
+    "result": "fails all eight stages (test_hosted_2026_11_25_fixture_fails_naming_every_broken_stage)"
+  },
+  "tests": {
+    "command": "pytest acceptance/test_discovery_pipeline_day.py scripts/test_dev_acceptance_stage.py scripts/test_acceptance_workflows_truthful.py",
+    "result": "69 passed"
+  },
+  "residual_findings": [
+    "Hosted proof pending: the first real run must be read by the coordinator; thresholds (24 h cards, 48 h search, 7 d gate, 10 d snapshot, 6 h controller tick) are owner cadences chosen from the task evidence files and may need tuning after the first hosted run.",
+    "governed_market_dataset is read from the evaluation_context of evaluated templates; no BFF route exposes the dataset boundary or the card binding status (reconcile.card_binding) directly, so a dataset that exists but was never used by an evaluation reads as not recorded.",
+    "distillation_dead_letters parses the owner-written downstream summary text ('N unresolved dead letters'); a structured count in the loop-health projection would be sturdier (distillation controller / BFF loop health owners).",
+    "no_fallback_drafts and hypothesis_cards see only the owner's newest-50 card sample; a day with more than 50 drafts is judged on that sample.",
+    "GET /bff/alpha-factory reads gate results from the newest 200 tenant runs (BFF-ALPHA-FACTORY-PIPELINE-TRUTH-20261125 residual); an older gate result is not seen."
+  ]
+}

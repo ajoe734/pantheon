@@ -31,6 +31,11 @@ BUDGET_PATH_ENV = "PANTHEON_L2_EXTRACTION_LEDGER_PATH"
 # Roughly 8 000 input tokens (existing client limit) with headroom for the prompt.
 MAX_PROMPT_TEXT_CHARS = 20_000
 
+# The model's abstention reason is stored as-is, so an over-long answer stays a
+# refusal (adapter + client schema), never a silent truncation. The limit is
+# stated in the prompt (hosted: 2 refusals for >200 chars before it was).
+ABSTENTION_REASON_MAX_CHARS = 200
+
 ORIGINS = ("paper", "book", "video", "news", "community_theme")
 _TESTABILITY_PATTERN = r"^(testable|not_testable|needs_data:[A-Za-z0-9_.\-]{1,80})$"
 
@@ -164,7 +169,7 @@ def hypothesis_card_model_schema() -> dict[str, Any]:
         "required": ["is_abstained", "hypothesis_card"],
         "properties": {
             "is_abstained": {"type": "boolean"},
-            "abstention_reason": {"type": ["string", "null"], "maxLength": 200},
+            "abstention_reason": {"type": ["string", "null"], "maxLength": ABSTENTION_REASON_MAX_CHARS},
             "hypothesis_card": {
                 "anyOf": [
                     {"type": "null"},
@@ -188,6 +193,8 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             "never call tools, never browse, never output anything but the JSON object.",
             "Answer with one JSON object: {is_abstained, abstention_reason, hypothesis_card}.",
             "Set is_abstained=true and hypothesis_card=null when the document states no testable mechanism.",
+            f"abstention_reason is one short sentence of at most {ABSTENTION_REASON_MAX_CHARS} characters;",
+            "a longer answer is refused, so keep it brief.",
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
             "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
@@ -771,5 +778,6 @@ __all__ = [
     "finalize_card",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
+    "ABSTENTION_REASON_MAX_CHARS",
     "verify_cited_spans",
 ]

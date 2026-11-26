@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 import copy
 from dataclasses import replace
@@ -470,6 +471,62 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
     assert res["status"] == "success"
     assert res["actual"]["synced_count"] == 0
     assert res["actual"]["skipped_immutable_count"] == 1
+
+
+def test_distillation_does_not_revive_or_rewrite_retired_fallback_draft(tmp_path, monkeypatch) -> None:
+    """STRATEGY-FALLBACK-DRAFT-RETIRE-20261125: a retired entry is immutable to distillation.
+
+    The versioned Registry id of a source is stable, so a retired fallback draft is read back as
+    ``retired``; distillation neither re-registers nor revives it and no lineage conflict is raised.
+    """
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    state_path = tmp_path / "controller_state.json"
+    record = _normalized_source("src-note-test-003", tenant_id="test")
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "controller_alive",
+        job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    state_store = ControllerStateStore(state_path)
+    state_store.save(state)
+
+    def mock_get_registry_entry(url: str, registry_id: str) -> dict | None:
+        # Retired by the maintenance path: content differs from a fresh projection (last_actor, state).
+        return {"entry": {
+            "registry_id": registry_id,
+            "artifact_state": "retired",
+            "last_actor": {"actor_id": "registry-maintenance:fallback-draft-retire"},
+            "metadata": {"distillation": {"source_id": "other"}},
+        }}
+
+    def mock_register_strategy_spec(url: str, payload: dict) -> dict:
+        pytest.fail("Must not re-register or revive a retired fallback draft!")
+
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
+
+    res = run_controller_tick(config=config, state=state, store=state_store, writer=DummyLoopWriter())
+
+    assert res["status"] == "success"
+    assert res["actual"]["synced_count"] == 0
+    assert res["actual"]["skipped_immutable_count"] == 1
+    assert res["actual"]["sync_failures_count"] == 0
 
 
 def test_distillation_registry_http_client_authorization_and_rotation(tmp_path, monkeypatch) -> None:
@@ -1428,15 +1485,76 @@ def test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row
 
 
 def test_card_dataset_binding_from_env_is_reference_only_and_fail_closed() -> None:
-    from services.source_ingestion.distillation_controller import card_dataset_binding_from_env
+    """HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: an unconfigured or non-governed binding fails closed with a
+    readable reason; a fixed symbol list is neither required nor read."""
+    from services.source_ingestion.distillation_controller import card_binding_status, card_dataset_binding_from_env
 
     assert card_dataset_binding_from_env({}) is None
-    assert card_dataset_binding_from_env({"PANTHEON_L2_CARD_DATASET_ID": "dataset:x"}) is None  # no symbols
-    binding = card_dataset_binding_from_env(
-        {"PERSONA_POOL_SOURCE_DATASET_ID": "dataset:x", "PANTHEON_L2_CARD_SYMBOLS": "2330.TW, 2317.TW"})
-    assert binding == {"dataset_id": "dataset:x", "source_dataset_refs": ["dataset:x"],
-                       "symbols": ["2330.TW", "2317.TW"], "bar_frequency": "1d"}
-    assert "records" not in binding
+    assert card_binding_status({}) == {
+        "status": "unconfigured", "dataset_id": None,
+        "reason": "card_binding_unconfigured:PANTHEON_L2_CARD_DATASET_ID is not set"}
+    # The old persona-dataset fallback and symbol list no longer bind anything.
+    legacy = {"PERSONA_POOL_SOURCE_DATASET_ID": "dataset:x", "PANTHEON_L2_CARD_SYMBOLS": "2330.TW, 2317.TW"}
+    assert card_dataset_binding_from_env(legacy) is None
+    refused = card_binding_status({"PANTHEON_L2_CARD_DATASET_ID": "dataset:x"})
+    assert refused["status"] == "unconfigured"
+    assert refused["reason"].startswith("card_binding_not_governed_market:PANTHEON_L2_CARD_DATASET_ID='dataset:x'")
+    for governed in ("governed-market:tw-daily", "tw_price_daily", "gmd-2026-10-30-" + "a" * 40):
+        assert card_binding_status({"PANTHEON_L2_CARD_DATASET_ID": governed})["status"] == "bound"
+
+
+def test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_closed_without_store(tmp_path) -> None:
+    pytest.importorskip("pyarrow")
+    from datetime import date, timedelta
+
+    from services.research.tests.test_governed_market_dataset import row
+    from services.source_ingestion import distillation_controller as controller
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    as_of = datetime(2026, 11, 25, 6, 0, tzinfo=timezone.utc)
+    store = DailyBarsStore(tmp_path / "store")
+    days, day = [], date(2026, 11, 24)
+    while len(days) < 70:
+        if day.weekday() < 5:
+            days.append(day.isoformat())
+        day -= timedelta(days=1)
+    for i, d in enumerate(sorted(days)):
+        # 2412 is illiquid (excluded by the boundary); 2330 and 2317 pass.
+        store.write_day(d, [row(s, d, 100.0 + i, traded_value=(100.0 if s == "2412.TW" else 9_000_000.0))
+                            for s in ("2330.TW", "2317.TW", "2412.TW")], ingest_run_id=f"r-{d}")
+    env = {"PANTHEON_L2_CARD_DATASET_ID": "governed-market:tw-daily", "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "store")}
+    controller._BINDING_CACHE.clear()
+    binding = controller.card_dataset_binding_from_env(env, as_of=as_of)
+    assert binding["symbols"] == ["2317.TW", "2330.TW"] and binding["scope"] == "all_governed_tw"
+    assert binding["dataset_id"].startswith("gmd-2026-11-24-") and "records" not in binding
+    assert binding["source_dataset_refs"] == [f"daily_bars:{binding['dataset_id']}"]
+    # Same job time -> same snapshot (replay-stable); today's late bars are never part of an earlier binding.
+    store.write_day("2026-11-25", [row(s, "2026-11-25", 200.0) for s in ("2330.TW", "2317.TW")], ingest_run_id="late")
+    controller._BINDING_CACHE.clear()
+    assert controller.card_dataset_binding_from_env(env, as_of=as_of) == binding
+    # A pinned snapshot is reproduced exactly.
+    pinned = {**env, "PANTHEON_L2_CARD_DATASET_ID": binding["dataset_id"]}
+    assert controller.card_dataset_binding_from_env(pinned, as_of=as_of)["dataset_id"] == binding["dataset_id"]
+    # Stale store relative to the job, and a missing store: fail closed with the store's reason; an unavailable
+    # result is kept only for the retry window, so a recovered store binds on the next attempt after it.
+    stale = controller.resolve_card_dataset_binding(as_of=as_of + timedelta(days=30), env=env)
+    assert stale["status"] == "unavailable" and "daily_bars_store_stale" in stale["reason"]
+    missing = controller.resolve_card_dataset_binding(
+        as_of=as_of, env={**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")})
+    assert missing["status"] == "unavailable" and "daily_bars_store_missing" in missing["reason"]
+    assert controller.card_dataset_binding_from_env(
+        {**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")}, as_of=as_of) is None
+    assert len(controller._BINDING_CACHE) <= controller._BINDING_CACHE_ENTRIES
+    recovered_root = tmp_path / "absent"
+    import shutil
+
+    shutil.copytree(tmp_path / "store", recovered_root)
+    absent_env = {**env, "GOVERNED_MARKET_STORE_ROOT": str(recovered_root)}
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "unavailable"  # window
+    for value in controller._BINDING_CACHE.values():  # the retry window passes
+        if "_retry_after" in value:
+            value["_retry_after"] = 0.0
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "bound"
 
 
 AUTH_401_REASON = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"
@@ -1714,3 +1832,60 @@ def test_lease_expired_dead_letters_wait_for_normal_work_and_status_is_truthful(
     import sqlite3
     with sqlite3.connect(config.job_queue_path) as conn:
         assert conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("delivery_failure", [False, True])
+def test_tick_with_only_extraction_tick_budget_deferrals_is_working(
+    tmp_path, monkeypatch, delivery_failure
+) -> None:
+    """L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126: planned
+    ``extraction_tick_budget`` deferrals are not Registry delivery retries;
+    a real delivery retry_wait still fails the tick on registry_sync."""
+    from services.source_ingestion import distillation_controller as ctl
+    from services.source_ingestion.distillation_worker import DEFERRAL_EXTRACTION_TICK_BUDGET
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.sqlite3",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+    for index in range(3):
+        queue.enqueue_source_record(_normalized_source(f"src-tick-{index}", tenant_id="test"))
+    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=3, tenant_id="test")
+    future = 4_000_000_000.0  # not due during this tick
+    for job in jobs:
+        queue.begin_job(job, lease_seconds=30)
+    for job in jobs[:2]:
+        queue.defer_budget(job, now=future, reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False)
+    if delivery_failure:
+        queue.mark_retry_or_dead_letter(
+            jobs[2], error="registry_sync_failed: RuntimeError: timed out",
+            base_delay_seconds=10_000_000_000, permanent=False,
+        )
+    else:
+        queue.defer_budget(jobs[2], now=future, reason=DEFERRAL_EXTRACTION_TICK_BUDGET, next_window=False)
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+
+    if delivery_failure:
+        with pytest.raises(DistillationControllerError) as failure:
+            run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+        assert failure.value.stage == "registry_sync"
+        return
+    result = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+    assert result["status"] == "success"
+    assert result["controller_status"] == "working"
+    assert queue.metrics()["deferred"] == queue.metrics()["retry_wait"] == 3
+    assert state.consecutive_failures == 0 and state.last_failure_stage is None

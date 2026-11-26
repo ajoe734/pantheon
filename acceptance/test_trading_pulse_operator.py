@@ -349,3 +349,112 @@ def test_time_budget_stops_retries_without_sleeping():
     fetch = heartbeat_fetcher(world, 100)
     with pytest.raises(probe.Unverifiable, match="time_budget"):
         probe.check(fetch, "tenant-a", clock=lambda: next(ticks), budget=240)
+
+
+# Hosted shape seen on dev 2026-11-26 (BFF 8e67d240e, after #7872): raw
+# telemetry pnl_currency is null; the ledger's positions, fills and marks are
+# all TWD; paper runtimes emit pnl only on fills, so two runtimes have
+# different pnl_at (two groups); one runtime has no PnL at all.
+PNL3_AT = "2026-11-23T23:34:52Z"
+TWD_FACTS = {"positions": [{"symbol": "2330.TW", "quantity": 1000, "currency": "TWD"}],
+             "last_fill": {"symbol": "2330.TW", "currency": "TWD"}, "_currency_by_symbol": {"2330.TW": "TWD"}}
+
+
+def ranking_blocks(rows):
+    blocks = []
+    for metric in ("pnl", "drawdown", "fill_rate", "sharpe_ratio"):
+        items = [{"runtime_id": r["runtime_id"], "runtime_binding_id": r["runtime_binding_id"], "persona_name": r["persona_name"],
+                  "links": r["links"], "ranking_metric_value": r["telemetry_summary"]["metrics"][metric]}
+                 for r in rows if r["telemetry_summary"]["metrics"].get(metric) is not None]
+        blocks.append({"metric": metric, "items": items, "eligible_item_count": len(items), "missing_metric_count": len(rows) - len(items)})
+    return blocks
+
+
+def hosted_fixture():
+    world = fixture()
+    person = {"id": "p3", "name": "遠山", "tenant_id": "tenant-a"}
+    world["people"].insert(2, person)
+    world["bindings"].append({"runtime_id": "r-p3", "binding_id": "b-p3", "persona_id": "p3",
+                              "metadata": {"tenant_id": "tenant-a"}, "deployment_stage": "paper", "status": "active"})
+    world["raw"]["r-p3"] = {**copy.deepcopy(world["raw"]["r-p1"]), "runtime_id": "r-p3", "binding_id": "b-p3",
+                            "pnl_at": PNL3_AT, "pnl": 25.5, "drawdown_at": PNL3_AT, "ledger_fill_count": 2}
+    for rid in ("r-p1", "r-p3"):
+        world["raw"][rid].update(pnl_currency=None, **copy.deepcopy(TWD_FACTS))
+    world["raw"]["r-p2"]["pnl_currency"] = None
+    rows = world["pulse"]["runtime_rows"]
+    r = world["raw"]["r-p3"]
+    rows.append({**copy.deepcopy(rows[0]), "runtime_id": "r-p3", "runtime_binding_id": "b-p3", "persona_id": "p3", "persona_name": "遠山",
+                 "links": {"persona": "/management/personas/p3"}})
+    rows[2]["performance_context"]["pnl_at"] = PNL3_AT
+    rows[2]["telemetry_summary"]["metrics"].update(pnl=25.5, total_trades=2)
+    summary = world["pulse"]["summary"]
+    summary["operator_scope"].update(persona_count=3, runtime_count=3, by_stage={"paper": {"persona_count": 3, "runtime_count": 3}})
+    summary.update(runtime_count=3, total_trades=3)
+    first = summary["pnl_groups"][0]
+    first["eligible_persona_count"] = 3
+    summary["pnl_groups"].append({**first, "period_end_at": PNL3_AT, "as_of": PNL3_AT, "value": 25.5})
+    world["rankings"] = {"summary": {"operator_scope": copy.deepcopy(summary["operator_scope"])}, "items": ranking_blocks(rows)}
+    return world
+
+
+def test_hosted_shape_resolves_currency_from_ledger_not_raw_claim():
+    world = hosted_fixture()
+    assert probe.check(fetcher(world), "tenant-a") == {"passed": True, "failed": [], "runtime_count": 3, "persona_count": 3}
+
+
+@pytest.mark.parametrize("mutation,failure", [
+    ("group_currency", "pnl_group_scope_mismatch"),
+    ("value_off_by_one", "pnl_group_value_mismatch"),
+    ("covered", "pnl_group_denominator_mismatch"),
+    ("eligible", "pnl_group_denominator_mismatch"),
+    ("raw_claim_disagrees", "raw_pnl_currency_ledger_mismatch"),
+])
+def test_hosted_shape_still_rejects_wrong_groups(mutation, failure):
+    world = hosted_fixture()
+    group = world["pulse"]["summary"]["pnl_groups"][1]
+    if mutation == "group_currency":
+        group["currency"] = "USD"
+    elif mutation == "value_off_by_one":
+        group["value"] = 26.5
+    elif mutation == "covered":
+        group["covered_persona_count"] = 2
+    elif mutation == "eligible":
+        group["eligible_persona_count"] = 2
+    elif mutation == "raw_claim_disagrees":
+        world["raw"]["r-p3"]["pnl_currency"] = "USD"
+    report = probe.check(fetcher(world), "tenant-a")
+    assert not report["passed"] and failure in report["failed"]
+
+
+@pytest.mark.parametrize("facts", [
+    {"positions": [{"symbol": "2330.TW", "quantity": 1000, "currency": "TWD"}, {"symbol": "AAPL", "quantity": 5, "currency": "USD"}]},
+    {"positions": [{"symbol": "2330.TW", "quantity": 1000}], "last_fill": None, "_currency_by_symbol": {}},
+    {"ledgers": [{"pnl_currency_status": "mixed"}]},
+], ids=["mixed", "unknown_active_position", "mixed_constituent_ledger"])
+def test_mixed_or_unknown_currency_stays_out_of_expected_groups(facts):
+    world = hosted_fixture()
+    world["raw"]["r-p3"].update(copy.deepcopy(facts))
+    report = probe.check(fetcher(world), "tenant-a")
+    assert not report["passed"] and "pnl_group_scope_mismatch" in report["failed"]
+    # #7872 keeps pnl_currency null there: no group and no pnl ranking for it.
+    world["pulse"]["summary"]["pnl_groups"].pop()
+    pnl = world["rankings"]["items"][0]
+    pnl["items"] = [i for i in pnl["items"] if i["runtime_id"] != "r-p3"]
+    pnl.update(eligible_item_count=1, missing_metric_count=2)
+    assert probe.check(fetcher(world), "tenant-a")["passed"]
+
+
+def test_raw_claim_agreeing_with_ledger_passes():
+    world = hosted_fixture()
+    for rid in ("r-p1", "r-p3"):
+        world["raw"][rid]["pnl_currency"] = "twd"
+    assert probe.check(fetcher(world), "tenant-a")["passed"]
+
+
+def test_currency_needs_no_extra_request():
+    world = hosted_fixture()
+    calls = []
+    fetch = fetcher(world)
+    probe.check(lambda path: calls.append(path) or fetch(path), "tenant-a")
+    assert sum(1 for c in calls if c.startswith("/api/v1/telemetry/")) == 3
+    assert not any("position" in c or "ledger" in c for c in calls)

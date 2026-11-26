@@ -1,0 +1,113 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-SHADOW-ATTRIBUTION-HOSTED-ACCEPTANCE-20261116",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "observed_at_window": "2026-11-26T02:47Z..2026-11-26T03:35Z",
+  "overall_result": "partial_no_natural_events",
+  "overall_summary": "Hosted read-only verification ran in a real Chromium browser and against the BFF. The Management outliers (attribution tab) and shadow tabs and their crawl routes render honest empty/prompt states with 0 page errors; Agora system suggestions return hosted institutional facts via the BFF. The natural events required by AC1-AC4 (a Trading Room decision lock, Agora platform-source records, a weekly-run attribution record, an MT-4 review) do not exist on hosted dev and were NOT synthesised. The full Management crawl did NOT pass in either of two runs (see crawl).",
+  "release_identity": {
+    "accepted_pair": {
+      "dev_release_root_run": "45684275970",
+      "dev_release_root_run_url": "https://github.com/ajoe734/pantheon/actions/runs/45684275970",
+      "bff_commit": "b3f93d448f44aa426f3a4848c93df3e5a1ae8aa3",
+      "frontend_commit": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+      "frontend_release_name": "20261125T203211Z-38e5337d1f83-gate-45690103912-45693392534-1-2750269",
+      "deployment_state": "accepted",
+      "integration_gate_run": "45690103912",
+      "release_candidate_id": "220692bc6162c59c5eb82fdaef7e400eefb4b863e093d20b90a3e5cc4e098104",
+      "dev_acceptance_verdict": "passed (artifact dev-acceptance-verdict-45684275970-1); none of its probes covers shadow/attribution/Agora platform-source"
+    },
+    "frontend_pair_unchanged_throughout": true,
+    "bff_changed_during_window": {
+      "note": "A newer Dev release run 45740904149 (BFF 8e67d240e034f4f133ffa926383b584536bc2e35 + same FE 38e5337) deployed during the window (deploy job 02:13Z-03:03Z, admit/switch still in progress at 03:10Z). /bff/version reported b3f93d44 at 02:47Z and 8e67d240 (build_time 2026-11-26T02:22:04Z) from the end-of-run check at 03:15Z; /deployment.json still reports the accepted b3f93d44 pair. The exact swap moment was not observed.",
+      "consequence": "The first probe and the crawls straddle the swap. A second lightweight probe stamped version-before/after both as 8e67d240e034 gave identical results for every surface in this evidence, so no conclusion below depends on which BFF commit served.",
+      "second_probe_bff_commit": "8e67d240e034f4f133ffa926383b584536bc2e35"
+    }
+  },
+  "read_only_method": {
+    "principal": "Dev Management operator account via the FE /auth dev login form (roles include admin, operator, reviewer); tenant tenant-dev. Credential read from the operator's local memory file in process RAM only.",
+    "write_guard": "Playwright context route aborts every non-GET/HEAD/OPTIONS request except POST /bff/auth/*; blocked non-GET count = 0 in both probe runs. Crawl ran without --click-write-ctas.",
+    "commands": [
+      "curl -sS https://app.dev.mvl-cap.tw/deployment.json ; curl -sS https://api.dev.mvl-cap.tw/bff/version (start and end)",
+      "gh run view / gh run download 45684275970 (pantheon) and 45690103912 (execute-plans): read release identity, dev-acceptance-verdict, integration-gate evidence",
+      "node probe.mjs (Playwright Chromium): browser login, then GET /bff/me, /bff/agora/trading-room/decision-events, per-event /decision-lock, /system-suggestions and /bff/management/attribution/shadow/{id} (loop was empty), /bff/agora/trading-room/system-suggestions, /bff/agora/platform-source/records, /bff/agora/servant/institutional-knowledge, /bff/management/attribution/records and /outliers, /bff/management/meetings and /catalogue, /bff/research-tasks?view=research, /bff/personas/{3 enrolled}; then browser pages /management/performance?tab=attribution, ?tab=shadow, /agora/trading-room",
+      "POST /bff/auth/dev-login (mint a 1800s token in RAM for the crawl; auth only)",
+      "node scripts/accept-management-hosted-production.mjs --out-dir <scratch> in an execute-plans checkout at 38e5337d1f83 with npm ci (default read-only mode), run twice"
+    ],
+    "not_available": "No Docker/DB/SSH access to hosted dev from the worker (docker daemon in the worker namespace shows only one unrelated container), and no Agora trader/service-token principal; internal owner routes (/api/attribution/*, /internal/agora/platform-source) were not read."
+  },
+  "acceptance": {
+    "AC1_decision_lock_and_settlement_source": {
+      "result": "not_observed_no_natural_event",
+      "observed": "GET /bff/agora/trading-room/decision-events -> 200, items=[], page_size 0 (sha256 1df93f21...). No event id exists, so no decision-lock, no arms/unavailable_arms reason and no settlement source label could be read. GET /bff/management/attribution/shadow/{id} not callable without an id.",
+      "reason": "No real Agora Trading Room decision exists that is visible to the operator principal. The Trading Room page itself reports 'decision events: unavailable (0) upstream_unavailable' and 'No StrategySpec workspace is currently available'. Visibility is principal-scoped, so decisions owned by an Agora trader identity the probe does not hold cannot be excluded.",
+      "needed": "A real human Trading Room decision on hosted dev (Agora trader), then re-read decision-lock and Management shadow for that decision id."
+    },
+    "AC2_platform_source_and_knowledge": {
+      "result": "not_observed_no_natural_event_knowledge_surface_present",
+      "platform_source": "GET /bff/agora/platform-source/records -> 200 status ok, count 0, total 0, decision_locks/settled_arms/decision_journal_entries/servant_insights all empty (sha256 501355b9...); governance facts_only true, environment_ceiling paper, audience scoped to the operator user.",
+      "knowledge": "GET /bff/agora/servant/institutional-knowledge -> 200, 4 validated_strategy_facts, 0 validated_attribution_findings, 0 endorsed_lessons, excluded_unvalidated 13 (sha256 63cb8b37...). None of them is an Agora platform-source record.",
+      "attribution_input": "no Agora record reached attribution (attribution records = 0).",
+      "reason": "No Agora decision locks or journal rows exist to be sourced; same root cause as AC1."
+    },
+    "AC3_weekly_outlier_attribution": {
+      "result": "no_records_reason_partially_known",
+      "observed": "GET /bff/management/attribution/records and /outliers -> 200 status empty, owner attribution, meta.status ok, items 0 (sha256 85327d2d...). Owner reachable and returning an honest empty set; no decomposition or luck interval exists to inspect.",
+      "reason_known": "The weekly outlier run is requested by the MT-3 first-enrolled-persona trigger. Both hosted MT-3 meetings (mtg-492d824b116f9ace 2026-W47, mtg-fd08f490b178e756 2026-W48) were refused with outcome insufficient_participants. The Management Performance attribution tab for the period shows 'no outlier records for this period'. Whether a run was requested at all and what the owner computed is not exposed by any BFF read; the persona detail snapshots (3 enrolled personas) carry no weekly_outlier_run / not_fired fields.",
+      "reason_unknown": "Whether /api/attribution/runs was ever called, and its result, could not be read without owner/DB access."
+    },
+    "AC4_MT4_review_and_research_demands": {
+      "result": "not_observed_no_natural_event",
+      "observed": "GET /bff/management/meetings (20 total, window 2026-11-18..2026-11-25): MT-1 14 (9 closed, 4 refused, 1 convened), MT-2 4 closed, MT-3 2 refused; zero MT-4 and none carries attribution_record_id. Catalogue lists MT-4 performance_attribution_review as enabled (cadence weekly_and_event). Research demands: 2 open demands (rd-975bb89106f1c696a680, rd-796e24e24bf2055d3c42) with mandate meeting_research_demand created 2026-11-22/24 from earlier meetings, not from MT-4.",
+      "reason": "MT-4 is opened per attribution record; there are 0 attribution records, so the trigger had nothing to fire on (design: not_fired reason no_new_attribution_record). no_testable_hypothesis could not be recorded by a review because no review ran.",
+      "needed": "An attribution record from AC3, then MT-4 and its red-team hypotheses routed to research demands."
+    },
+    "AC5_management_tabs_system_suggestions_and_crawl": {
+      "result": "partial_pages_render_crawl_not_passing",
+      "management_outliers_tab": "Real browser /management/performance?tab=attribution rendered the attribution tables with hosted rows (instrument breakdown, learning decisions) and the outliers section reads GET /bff/management/attribution/outliers?limit=50 -> 200 and shows the empty state '此期間沒有異常紀錄' (data-testid outliers-empty). Console errors 0.",
+      "management_shadow_tab": "/management/performance?tab=shadow renders data-testid shadow-comparison and shadow-prompt ('輸入決定編號以並排比較四個版本'); no decision id exists to submit, so no four-arm data could be shown. Console errors 0.",
+      "agora_system_suggestions": "GET /bff/agora/trading-room/system-suggestions -> 200 status ok, advice_only, execution_authority none, count 4 validated_strategy_fact items (sha256 1a3198d2...). The in-page SystemSuggestionsPanel did NOT render on /agora/trading-room because the page has no active decision event or StrategySpec workspace (readiness UNAVAILABLE; GET /bff/agora/servant -> 404 for the operator). So system suggestions are proven at the BFF, not in the browser panel.",
+      "screenshots_sha256": {
+        "mgmt-performance-attribution.png": "826199003be089a43645dfe25bde0183e9ff905521100de8d3a0f071871a2608",
+        "mgmt-performance-shadow.png": "4a39c43973deb1cf13a07137e8942842825a40bb9d0b466ef82eed97dcc501c4",
+        "agora-trading-room.png": "c2fd65316a6e83b48dabbe457d1c57a6db4447c161492098bd7b9d9447b1bf2b"
+      },
+      "crawl": {
+        "harness": "execute-plans scripts/accept-management-hosted-production.mjs at 38e5337d1f83 (contains #1084 shadow-prompt zero-read rule and preflight credential omission)",
+        "note_on_gate": "The FE integration gate run 45690103912 did not run this crawl with auth (Gate 8 ADVISORY-FAIL: short-lived BFF_AUTH_TOKEN missing), so there is no prior crawl on this exact pair.",
+        "run_1": {"report_sha256": "d64037f9f6f55b72b5b941782e9ac5abe0e856a0095e95575de39d004d38804a", "routes_crawled": 111, "overall": "fail", "failed_gates": ["Pinned BFF transport (net::ERR_FAILED on /bff/me, /bff/auth/readiness, /bff/events/stream, POST /bff/auth/refresh; terminated_before_send invalid_interception_id)", "route data checks: 6 routes", "CORS console errors: 6"], "failed_routes": ["/management/quarterly-ranking", "/management/performance-attribution", "/management/strategies/stg_001", "/management/personas/per_quant", "/management/risk-center", "/management/capital-pools"]},
+        "run_2": {"report_sha256": "176b645e0e39514c11a2da0ee691ee35e4b0f4eb15759394717dc54dce2cc2ad", "routes_crawled": 111, "overall": "fail", "failed_gates": ["route data checks: 5 routes (pinned transport passed)"], "failed_routes": ["/management/jobs", "/management/strategies/stg_001", "/management/strategies/strat-collector:collector-news-rss:news-cna-202611250274-aspx:bb683a5750b5-9ef1eb2f8462", "/management/personas/persona-d57f6d76254c20418a9e", "/management/capital/hosted-all12-h12-01a11-20261023-9aeb-pool"]},
+        "target_routes_in_both_runs": "/management/performance, ?tab=attribution, ?tab=shadow (noDataReadReason: shadow prompt awaiting decision id), ?tab=shadow&decision=dec_001 all data-check pass; no render-crash, no undefined/NaN, no mock-success findings, session/RBAC fail-closed checks pass.",
+        "interpretation": "The set of failing routes differs between runs and run 1 shows transport/CORS aborts, consistent with the BFF swap during the window, but the failures are not proven to be caused by it. The crawl is therefore NOT a pass; it must be re-run on a settled accepted pair. Failing routes are outside the outliers/shadow/Agora scope."
+      }
+    }
+  },
+  "missing_natural_events": [
+    {"event": "Real Trading Room decision with decision lock", "reason": "decision-events list empty for the operator principal; Trading Room has no StrategySpec workspace/decision events available"},
+    {"event": "Settlement with A4 source label", "reason": "depends on a decision lock; none exists"},
+    {"event": "Agora platform-source records", "reason": "platform-source returns 0 records in all four kinds"},
+    {"event": "Weekly outlier attribution record (decomposition, luck interval)", "reason": "attribution owner returns empty; the MT-3 trigger meetings that request the weekly run were refused (insufficient_participants) in W47 and W48; whether a run was requested is not observable via BFF"},
+    {"event": "MT-4 review with red team and hypotheses routed to research demands, or no_testable_hypothesis", "reason": "no attribution record exists to review; 0 MT-4 meetings"},
+    {"event": "In-browser Agora system suggestions panel", "reason": "no active decision event/workspace on /agora/trading-room; BFF endpoint itself returns 4 facts"}
+  ],
+  "nothing_synthesised": true,
+  "no_writes": {"non_get_requests_blocked": 0, "product_writes": 0, "crawl_click_write_ctas": false},
+  "credentials_included": false,
+  "raw_artifact_digests_sha256": {
+    "decision-events": "1df93f214b0aafba1ae3b8d521bb542f386e5702595684e57d1ae26c2b67f658",
+    "platform-source": "501355b97ad93b0b532ff28a11ed35df8a4071492251104ba87cff446d6257bc",
+    "attribution-records-and-outliers": "85327d2ddc5294bed2e9e28ad6d21cf3874843393bf35a6af869340243dd69eb",
+    "system-suggestions": "1a3198d22e2d68579a9cf81cb105253c238f29fe29c3f73bcaadf05a2367cb97",
+    "institutional-knowledge": "63cb8b37422c5cc8df138926e0e763ee5dbcc797294c7346222a9f94ec1e4657",
+    "meetings": "30a14335525a896a75721eb8df90b6ceef35872912f00440d358252d1a55ee19",
+    "meetings-catalogue": "ab5317b5d7330338b5f54cc85f0434e0a7fb682d75d04bc7aaa168e8ee95e9a0",
+    "research-tasks": "abc18666d79a666c16dfd489784b8846aa0d3e745de4d4fe51c040048cf4cec1"
+  },
+  "follow_ups": [
+    "Obtain a real Agora Trading Room decision on hosted dev (needs an Agora trader/human action), then re-run AC1/AC2 reads and the shadow tab with ?decision=<id>.",
+    "Make the weekly-outlier-run request observable (BFF read of persona_cycle.meetings.weekly_outlier_run or attribution runs) so AC3 can distinguish 'not requested' from 'ran with no outliers'.",
+    "Re-run the Management crawl on a settled accepted pair; investigate stable failures on detail routes (/management/strategies/stg_001, personas, capital pool) once the BFF is not mid-swap.",
+    "Add an authenticated Gate 8 token to the FE integration gate so the crawl runs per release."
+  ]
+}
