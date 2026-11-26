@@ -473,6 +473,62 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
     assert res["actual"]["skipped_immutable_count"] == 1
 
 
+def test_distillation_does_not_revive_or_rewrite_retired_fallback_draft(tmp_path, monkeypatch) -> None:
+    """STRATEGY-FALLBACK-DRAFT-RETIRE-20261125: a retired entry is immutable to distillation.
+
+    The versioned Registry id of a source is stable, so a retired fallback draft is read back as
+    ``retired``; distillation neither re-registers nor revives it and no lineage conflict is raised.
+    """
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    state_path = tmp_path / "controller_state.json"
+    record = _normalized_source("src-note-test-003", tenant_id="test")
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "controller_alive",
+        job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    state_store = ControllerStateStore(state_path)
+    state_store.save(state)
+
+    def mock_get_registry_entry(url: str, registry_id: str) -> dict | None:
+        # Retired by the maintenance path: content differs from a fresh projection (last_actor, state).
+        return {"entry": {
+            "registry_id": registry_id,
+            "artifact_state": "retired",
+            "last_actor": {"actor_id": "registry-maintenance:fallback-draft-retire"},
+            "metadata": {"distillation": {"source_id": "other"}},
+        }}
+
+    def mock_register_strategy_spec(url: str, payload: dict) -> dict:
+        pytest.fail("Must not re-register or revive a retired fallback draft!")
+
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
+
+    res = run_controller_tick(config=config, state=state, store=state_store, writer=DummyLoopWriter())
+
+    assert res["status"] == "success"
+    assert res["actual"]["synced_count"] == 0
+    assert res["actual"]["skipped_immutable_count"] == 1
+    assert res["actual"]["sync_failures_count"] == 0
+
+
 def test_distillation_registry_http_client_authorization_and_rotation(tmp_path, monkeypatch) -> None:
     from services.source_ingestion.distillation_controller import (
         _get_registry_entry,

@@ -1,0 +1,53 @@
+{
+  "task": "STRATEGY-FALLBACK-DRAFT-RETIRE-20261125",
+  "class": "RC2",
+  "operator_decision": "operator-decision:2026-11-25:conversation-2dc972b7:retire-fallback-drafts-keep-record (dialog 2026-11-25 and chat 2026-11-25: retire the old drafts as recommended, do not delete)",
+  "hosted_apply": "NOT made by this task. Source + focused tests only; the coordinator applies after re-checking the dry run.",
+  "implementation": {
+    "module": "services/registry/fallback_draft_retire.py (CLI: python -m services.registry.fallback_draft_retire plan|apply|restore)",
+    "off_by_default": "every command is refused unless PANTHEON_REGISTRY_FALLBACK_DRAFT_RETIRE_ENABLED=true is set for that one invocation; no route, job or timer is added, not set in compose",
+    "selection": "strategy_spec, artifact_state draft (or already retired by this decision), metadata.distillation.source_id present, metadata.strategy_spec.hypothesis starts with 'Evidence suggests: ', created_at >= 2026-11-12T00:00:00Z, no hypothesis card / compiled rule / card wiring / strategy artifact / backtest binding / persona or capital-pool binding / admission / gate verdict / replication proof / approval / deployment summary, only the metadata and evaluation_summary keys the distillation path writes, no other Registry entry carrying its registry_id or strategy_id anywhere (lineage parents, execution bundles, candidates, pools, personas recorded in Registry), and not in the optional --external-references file (ids referenced by research demand, persona runtime bindings, capital pools, deployments outside Registry)",
+    "retire_write": "RegistryService.advance_artifact_state(..., RETIRED) per entry: CAS on the read snapshot (expected state/version/updated_at), idempotent command receipt key fallback-draft-retire:<decision ref>:<registry_id>; last_actor and the receipt carry actor_id registry-maintenance:fallback-draft-retire, reason, operator_decision_ref, selection_digest and batch_id. metadata, strategy_spec and lineage are not modified (the distillation lineage comparator keeps matching).",
+    "nothing_deleted": "no delete call exists; a retired entry stays readable by id (GET /api/registry/entries/{id}) and is excluded from draft lists/counts by the existing readers",
+    "idempotent_and_digest_stable": "entries already retired by this decision stay in the selection set, so a partly applied run keeps the same digest and a re-run retires 0",
+    "stop_rule": "before each entry the current row is re-read; a state or content change since the plan, a missing entry, or a refused transition stops the run with {registry_id, batch_id, reason}; exit code 3",
+    "undo": "restore --batch-id <id> puts only entries retired by this decision under that batch id back to draft (owner-only CAS outside the normal transition table, because retired is terminal there); last_actor then records restored_from_batch and the reason"
+  },
+  "readers_checked_with_a_list": {
+    "strategy_list": "strategy_spec_summary_page (exclude_state=retired and state=draft) - retired entry absent from both (test_readers_do_not_list_or_count_retired_drafts); resolved lifecycle is artifact_state retired even though the inner spec lifecycle_state stays draft",
+    "discovery_counts": "discovery_candidate_page excludes retired (DISCOVERY_EXCLUDED_STATES); test asserts absence",
+    "card_admission_drafts": "list_card_admission_drafts lists drafts only; test asserts absence",
+    "trading_persona_views": "persona_binding_counts skips a retired current version (storage.py); control-plane BFF persona views read these rows through the Registry owner reads (list_persona_binding_rows / count_persona_bindings); the retired drafts carry no persona binding by selection rule",
+    "distillation_reconciliation": "distillation_controller._make_registry_sync returns status 'immutable' for a retired existing entry without writing or comparing content; test_distillation_does_not_revive_or_rewrite_retired_fallback_draft; reconciliation reads its own outbox, not Registry draft counts, so counts are unchanged. New external text creates no fallback draft (L2-FINANCE-RELEVANCE-AND-NO-FALLBACK-20261125), so nothing re-creates one"
+  },
+  "tests": {
+    "focused": "services/registry/test_fallback_draft_retire.py (10 tests) + services/source_ingestion/tests/test_distillation_controller.py: 54 passed, 1 skipped in 16.9 s"
+  },
+  "scale_measurement": {
+    "what": "in-memory owner store, 4,204 fallback drafts + 5,112 pre-cutoff drafts (9,316 entries, hosted count)",
+    "plan_seconds": 0.42,
+    "apply_seconds_4204": 0.73,
+    "note": "memory store only; the Postgres per-entry cost (read, CAS update, receipt in one transaction) was NOT measured here. Expected order of 5-20 ms per entry, so 4,204 entries about 20-90 s and batches of 200 about 1-4 s each; the plan reads all 9,316 owner rows (about 50 MB at 5.6 kB per row). The coordinator measures the first batch with --max-batches 1 before continuing."
+  },
+  "coordinator_steps": [
+    "1. Confirm the hosted build contains this task's merge commit. Inside the Registry container (compose service 'registry'), set PANTHEON_REGISTRY_FALLBACK_DRAFT_RETIRE_ENABLED=true for the command only (docker compose exec -e PANTHEON_REGISTRY_FALLBACK_DRAFT_RETIRE_ENABLED=true registry ...); do not put it in compose.",
+    "2. Build the external reference file (JSON list of registry ids/strategy ids referenced outside Registry: research demand registration registry_id, persona runtime bindings, capital pools, deployments); read-only; empty list if none. Pass --external-references <file>.",
+    "3. Dry run: python -m services.registry.fallback_draft_retire plan --list-ids [--external-references file]. Expect selected_count 4204 (to_retire_count 4204, already_retired_count 0), by_source dominated by news (about 3,565 from collector-news-rss per the hosted evidence), excluded_by_reason showing created_before_cutoff for the market-seed drafts, scanned about 9316, selection_digest sha256:... Re-check the listed ids against the 4,204 reported on 2026-11-25. If selected_count differs, stop and investigate which reason bucket moved.",
+    "4. Record the dry-run output (count, by_source, excluded_by_reason, selection_digest) in the coordinator note. The dry run changes nothing and can be repeated; the digest must be identical across repeats.",
+    "5. First batch: python -m services.registry.fallback_draft_retire apply --digest <selection_digest> --batch-size 200 --max-batches 1 [--external-references file]. Expect retired 200, stopped.reason max_batches_reached, exit 3; record batches[0].seconds. Verify one id: GET /api/registry/entries/<id> shows artifact_state retired, last_actor.operator_decision_ref, batch_id and selection_digest, metadata unchanged.",
+    "6. Remainder: same command without --max-batches. Expect complete true, retired 4004, skipped_already_retired 200, exit 0. On any stopped.reason the run halts at the first unexpected entry; fix or exclude and re-run plan (digest changes only if the selection changes).",
+    "7. Verify: strategy list draft count falls by 4,204; discovery page and persona counts unchanged for non-draft entries; a second apply with the same digest retires 0.",
+    "8. Undo one batch if needed: python -m services.registry.fallback_draft_retire restore --batch-id fdr-<first 12 hex of digest>-<index, 4 digits> (the batch ids are printed in apply output); only that batch's entries return to draft."
+  ],
+  "expected_fields": {
+    "plan": ["selected_count", "to_retire_count", "already_retired_count", "by_source", "excluded_by_reason", "external_reference_count", "selection_digest", "batch_size", "batch_count", "first_id", "last_id"],
+    "apply": ["retired", "skipped_already_retired", "batches[].batch_id/retired/seconds", "stopped (null when complete)", "complete"]
+  },
+  "runtime_budget": "no recurring job, writer, cache or file; the only writes are Registry owner rows already governed by the Registry store; no storage-manifest entry needed",
+  "residual_findings": [
+    "Registry cannot see references held by other owners (research demand registration, persona runtime bindings, capital pools, deployments); the coordinator supplies them through --external-references. A referrer created between plan and apply is not detected beyond the per-entry content check.",
+    "Retired is terminal in ALLOWED_ARTIFACT_TRANSITIONS; the batch undo is an owner-only maintenance exception implemented in this module, not a general transition.",
+    "Postgres apply timing is unmeasured (memory store only).",
+    "Pre-2026-11-12 market-seed drafts are untouched; no decision covers them."
+  ]
+}
