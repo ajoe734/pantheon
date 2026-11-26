@@ -345,3 +345,40 @@ class DeploymentView:
     deployment_plan_id: Optional[str] = None
     runtime_binding_id: Optional[str] = None
     last_transition_at: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# CAS snapshot comparison (REGISTRY-CAS-LEGACY-ROW-NORMALIZE-20261126)
+# ---------------------------------------------------------------------------
+
+def normalize_entry_payload_for_cas(payload: Optional[dict]) -> Optional[dict]:
+    """Return ``payload`` with every top-level key the entry model would add
+    on a ``from_dict``/``to_dict`` round trip filled in with that model value.
+
+    Rows written before a field existed (e.g. ``replication_success`` /
+    ``replication_proof``) are stored without the key, while a caller's
+    ``to_dict()`` snapshot always carries it with the model default. Only
+    *absent* keys are filled; a key that is present keeps its stored value,
+    so any real difference in a present field still compares unequal.
+    A payload the model cannot parse is returned unchanged (fail closed:
+    it will then only equal an identical raw payload).
+    """
+    if not isinstance(payload, dict):
+        return payload
+    try:
+        modeled = RegistryEntry.from_dict(payload).to_dict()
+    except Exception:  # noqa: BLE001 - malformed legacy row: compare raw
+        return payload
+    missing = {k: v for k, v in modeled.items() if k not in payload}
+    if not missing:
+        return payload
+    return {**payload, **missing}
+
+
+def entry_payloads_cas_equal(current: Optional[dict], expected: Optional[dict]) -> bool:
+    """The single CAS equality rule for registry entries, shared by the
+    in-memory store and the Postgres store: equal once absent keys are read
+    as their model default (see :func:`normalize_entry_payload_for_cas`)."""
+    if current is None or expected is None:
+        return current is expected
+    return normalize_entry_payload_for_cas(current) == normalize_entry_payload_for_cas(expected)
