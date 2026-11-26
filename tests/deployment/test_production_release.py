@@ -140,9 +140,46 @@ case "$tool" in
     fi
     exec "$@"
     ;;
-  mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
+  mountpoint)
+    if [[ -f "$FAKE_STATE/mounted_state" ]]; then
+      [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
+    fi
+    [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
+  findmnt|blkid) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  mount) echo "mount $*" >> "$FAKE_STATE/mount.log"; printf 'yes' > "$FAKE_STATE/mounted_state"; exit 0 ;;
+  umount) echo "umount $*" >> "$FAKE_STATE/mount.log"; printf 'no' > "$FAKE_STATE/mounted_state"; exit 0 ;;
+  systemctl)
+    echo "systemctl $*" >> "$FAKE_STATE/systemctl.log"
+    if [[ "$*" == *"disable"*"caddy.service"* || "$*" == *"stop"*"caddy.service"* ]]; then
+      printf 'inactive' > "$FAKE_STATE/host_systemd_caddy"
+    fi
+    exit 0 ;;
+  mkfs|mkfs.*) echo "FORBIDDEN_MKFS $*" >> "$FAKE_STATE/mkfs_called"; exit 99 ;;
   docker)
     args="$*"
+    if [[ "$args" == "cp "*":/data/."* ]]; then
+      dst="${@: -1}"
+      [[ -d "$FAKE_STATE/incumbent_caddy_data" ]] && cp -a "$FAKE_STATE/incumbent_caddy_data/." "$dst/"
+      exit 0
+    fi
+    if [[ "$args" == "cp "*":/config/."* ]]; then
+      dst="${@: -1}"
+      [[ -d "$FAKE_STATE/incumbent_caddy_config" ]] && cp -a "$FAKE_STATE/incumbent_caddy_config/." "$dst/"
+      exit 0
+    fi
+    if [[ "$args" == "run -d --name "* ]]; then
+      if [[ "$(cat "$FAKE_STATE/host_systemd_caddy" 2>/dev/null)" == "active" ]]; then
+        echo "port 80/443 in use by host systemd caddy.service" >&2
+        exit 1
+      fi
+      echo "$args" >> "$FAKE_STATE/caddy_runs.log"
+      img="${@: -1}"
+      printf '%s' "$img" > "$FAKE_STATE/image_${PROD_CADDY_CONTAINER:-pantheon-caddy}"
+      exit 0
+    fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-* && "${FAKE_REPLACE_FAIL:-}" == "restore_active_release" && "$(cat "$FAKE_STATE/vm_generation" 2>/dev/null)" == "new" ]]; then
+      exit 1
+    fi
     if [[ "$args" == "login "* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"login"* ]] && exit 1
       cat >/dev/null
@@ -435,7 +472,7 @@ class OpsHarness(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("docker", "curl", "mountpoint", "sudo"):
+        for tool in ("docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount", "systemctl", "mkfs", "mkfs.ext4"):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
         self.state = self.tmp / "fake_state"
@@ -2051,9 +2088,8 @@ class SwitchTests(SwitchHarness):
         self.assertIn("PORT_COLLISION", r.stderr)
 
 
-class RealControllerAndOpsIntegrationTests(OpsHarness):
-    """Executes the REAL bootstrap.sh, prod_atomic_switch.sh, prod_rollback.sh, and prod_ops.sh
-    together under constrained host binaries (no FAKE_OPS shortcut)."""
+class RealControllerBase(OpsHarness):
+    """Shared real controller helper base (no test_* methods so subclasses do not duplicate the suite)."""
 
     def _prepare_release(self, *, release_id: str, fe_marker: str, fe_commit: str, bff_commit: str,
                          digest_char: str, bootstrap: bool = False, rollback_baseline: dict | None = None):
@@ -2121,6 +2157,46 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             **extra_env,
         )
         return subprocess.run([str(SWITCH)], env=env, capture_output=True, text=True, timeout=60)
+
+    def _two_successful_releases(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        rb = {
+            "previous_release_id": "pantheon-20261025-001",
+            "frontend_commit": m1["frontend"]["commit"],
+            "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"],
+            "backend_commit": m1["backend"]["commit"],
+            "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+            "backend_images": m1["backend"]["images"],
+            "config_schema_version": m1["config_schema_version"],
+        }
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="4" * 40, digest_char="2", bootstrap=False, rollback_baseline=rb)
+        return (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2)
+
+    def _rollback_mode(self, release_id: str, mpath: Path | None = None, **extra):
+        env = self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID=release_id, FAKE_READY_PORTS="8001 8002", **extra)
+        if mpath is not None:
+            env["RELEASE_MANIFEST_PATH"] = str(mpath)
+        else:
+            env.pop("RELEASE_MANIFEST_PATH", None)  # default: the retained ${PROD_ROOT}/manifests/<release_id>.json
+        return subprocess.run([str(ROLLBACK), "--protected", release_id], capture_output=True, text=True, timeout=60, env=env)
+
+    def _switch_second_release(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        return m1, m2
+
+
+class RealControllerAndOpsIntegrationTests(RealControllerBase):
+    """Executes the REAL bootstrap.sh, prod_atomic_switch.sh, prod_rollback.sh, and prod_ops.sh
+    together under constrained host binaries (no FAKE_OPS shortcut)."""
 
     def test_real_first_release_bootstrap_and_switch_with_only_green_ready(self):
         m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
@@ -3304,7 +3380,8 @@ class StaticContractTests(unittest.TestCase):
             reg_runtime_env = {**rendered_kv, **{k: str(v) for k, v in reg_env.items()}, "PANTHEON_ENV": "production"}
             with mock.patch.dict(os.environ, reg_runtime_env, clear=True), \
                  mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
-                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None):
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_type_index", return_value=None):
                 owner_reg = build_registry_store()
                 self.assertIsInstance(owner_reg, PostgresRegistryStore)
 
@@ -3338,6 +3415,7 @@ class StaticContractTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, runtime_env, clear=True), \
                      mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
                      mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
+                     mock.patch.object(PostgresRegistryStore, "_ensure_artifact_type_index", return_value=None), \
                      mock.patch.object(PostgresSourceManagementStore, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresActionLedger, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresTradingRoomStore, "_bootstrap", return_value=None), \
@@ -3438,20 +3516,43 @@ class StaticContractTests(unittest.TestCase):
         inputs = wf[True]["workflow_dispatch"]["inputs"]
         self.assertLessEqual(len(inputs), 25)
         op = inputs["operation"]
-        self.assertEqual((op["type"], op["default"], op["options"]), ("choice", "release", ["release", "rollback"]))
+        self.assertEqual(
+            (op["type"], op["default"], op["options"]),
+            ("choice", "release", ["release", "rollback", "replace_vm"]),
+        )
         text = WORKFLOW.read_text()
         self.assertIn("prod_rollback.sh\\\" --protected", text)
+        self.assertIn("scripts/deploy/prod_replace_vm.sh", text)
         self.assertIn("PRODUCTION_RELEASE_ENABLED", text)
         self.assertEqual(wf["jobs"]["deploy"]["environment"], "production")
+        deploy_env = wf["jobs"]["deploy"]["env"]
+        self.assertEqual(
+            deploy_env["PROD_BOOTSTRAP_FIRST_RELEASE"],
+            "${{ inputs.operation != 'release' && 'false' || inputs.bootstrap_first_release }}",
+        )
+        for key in ("PROD_INSTANCE_TEMPLATE", "PROD_RUNTIME_SERVICE_ACCOUNT", "PROD_SUBNETWORK"):
+            self.assertIn(key, deploy_env)
+        pre_steps = {st["name"]: st for st in wf["jobs"]["preflight"]["steps"] if "name" in st}
+        for name, st in pre_steps.items():
+            if name.startswith(("Require the release inputs", "Validate manifest checksum", "Validate public write posture")):
+                self.assertEqual(st["if"], "${{ inputs.operation == 'release' }}", name)
         steps = {st["name"]: st for st in wf["jobs"]["deploy"]["steps"] if "name" in st}
         for name, st in steps.items():
             if name.startswith(("Retrieve immutable FE", "Transport immutable", "Run atomic switch", "Full production preflight")):
-                self.assertEqual(st["if"], "${{ inputs.operation != 'rollback' }}", name)
+                self.assertEqual(st["if"], "${{ inputs.operation == 'release' }}", name)
+        vm_gate = next(st for n, st in steps.items() if n.startswith("Control VM size gate"))
+        self.assertEqual(vm_gate["if"], "${{ inputs.operation != 'replace_vm' }}")
         rb = next(st for n, st in steps.items() if n.startswith("Run protected rollback"))
         self.assertEqual(rb["if"], "${{ inputs.operation == 'rollback' }}")
         for forbidden in ("bootstrap.sh", "prepull_images", " migrate ", "snapshot"):
             self.assertNotIn(forbidden, rb["run"].replace("snapshot.json", ""))
-        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for both operations
+        rvm_pre = next(st for n, st in steps.items() if n.startswith("Replace-VM preflight"))
+        self.assertEqual(rvm_pre["if"], "${{ inputs.operation == 'replace_vm' }}")
+        self.assertIn("prod_preflight.py replace-vm", rvm_pre["run"])
+        rvm = next(st for n, st in steps.items() if n.startswith("Run protected fresh-boot VM replacement"))
+        self.assertEqual(rvm["if"], "${{ inputs.operation == 'replace_vm' }}")
+        self.assertIn("scripts/deploy/prod_replace_vm.sh", rvm["run"])
+        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for all operations
         self.assertIn("prod_preflight.py rollback", text)
 
     def test_prod_rollback_rto_fast_stop_and_healthcheck_parity(self) -> None:
@@ -3777,6 +3878,555 @@ class SnapshotDrillHarness(unittest.TestCase):
         r = self.run_script(self.DRILL, FAKE_PROJECT="other-proj")
         self.assertEqual(r.returncode, 1)
         self.assertNotIn("disks create", self.calls())
+
+
+FAKE_REPLACE_GCLOUD = r"""#!/usr/bin/env bash
+set -uo pipefail
+S="$FAKE_STATE"
+mkdir -p "$S/disks" "$S/templates" "$S/snapshots"
+echo "gcloud $*" >> "$S/gcloud_calls.log"
+all="$*"
+
+arg_val() {
+  local want="$1"; shift
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$want" ]]; then echo "${2:-}"; return 0; fi
+    if [[ "$1" == "${want}="* ]]; then echo "${1#*=}"; return 0; fi
+    shift
+  done
+}
+
+case "$all" in
+  "config get-value project")
+    echo "${FAKE_GCLOUD_PROJECT:-${PROD_GCP_PROJECT_ID:-acme-trading-prod-01}}"
+    exit 0 ;;
+  "compute instances describe "*)
+    [[ -f "$S/vm.json" ]] || exit 1
+    fmt="$(arg_val --format "$@")"
+    if [[ "$fmt" == "value(name)" ]]; then
+      python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$S/vm.json"
+    else
+      cat "$S/vm.json"
+    fi
+    exit 0 ;;
+  "compute addresses list "*)
+    cat "$S/addresses.json"
+    exit 0 ;;
+  "compute disks snapshot "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot" ]] && exit 1
+    disk="$4"
+    snap="$(arg_val --snapshot-names "$@")"
+    [[ -n "$snap" && -e "$S/disks/$disk" ]] || exit 1
+    echo "${disk}:${snap}" >> "$S/snapshots_taken.log"
+    printf '%s' "${FAKE_SNAPSHOT_STATUS:-READY}" > "$S/snapshots/$snap"
+    exit 0 ;;
+  "compute snapshots describe "*)
+    snap="$4"
+    [[ -f "$S/snapshots/$snap" ]] || exit 1
+    cat "$S/snapshots/$snap"
+    exit 0 ;;
+  "compute snapshots list "*)
+    [[ -f "$S/auto_snapshot_line" ]] && cat "$S/auto_snapshot_line"
+    exit 0 ;;
+  "compute resource-policies describe "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot_schedule_check" ]] && exit 1
+    echo '{"snapshotSchedulePolicy":{"schedule":{"hourlySchedule":{"hoursInCycle":1}},"retentionPolicy":{"maxRetentionDays":3}}}'
+    exit 0 ;;
+  "compute disks describe "*)
+    disk="$4"
+    [[ -e "$S/disks/$disk" ]] || exit 1
+    fmt="$(arg_val --format "$@")"
+    if [[ "$fmt" == "value(resourcePolicies)" ]]; then
+      if [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot_schedule_check" ]]; then
+        echo ""
+      else
+        echo "https://www.googleapis.com/compute/v1/projects/p/regions/asia-east1/resourcePolicies/pantheon-prod-data-hourly"
+      fi
+    else
+      echo "$disk"
+    fi
+    exit 0 ;;
+  "compute instance-templates describe "*)
+    tpl="$4"
+    [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+    cat "$S/templates/${tpl}.json"
+    exit 0 ;;
+  "compute instance-templates create "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "template_create" ]] && exit 1
+    tpl="$4"
+    mt="$(arg_val --machine-type "$@")"
+    net="$(arg_val --network "$@")"
+    sub="$(arg_val --subnet "$@")"
+    sa="$(arg_val --service-account "$@")"
+    tags="$(arg_val --tags "$@")"
+    echo "$all" >> "$S/template_creates.log"
+    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" > "$S/templates/${tpl}.json" <<'PY'
+import json, sys
+tpl, mt, net, sub, sa, tags = sys.argv[1:7]
+print(json.dumps({
+    "name": tpl,
+    "properties": {
+        "machineType": mt or "e2-standard-8",
+        "scheduling": {
+            "automaticRestart": True,
+            "onHostMaintenance": "MIGRATE",
+            "preemptible": False,
+            "provisioningModel": "STANDARD",
+        },
+        "disks": [{
+            "boot": True,
+            "autoDelete": True,
+            "mode": "READ_WRITE",
+            "type": "PERSISTENT",
+            "initializeParams": {
+                "diskSizeGb": "50",
+                "diskType": "pd-balanced",
+                "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+            },
+        }],
+        "networkInterfaces": [{"network": net, "subnetwork": sub}],
+        "serviceAccounts": [{"email": sa, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+        "tags": {"items": [t for t in tags.split(",") if t]},
+        "metadata": {
+            "items": [
+                {"key": "enable-oslogin", "value": "TRUE"},
+                {"key": "block-project-ssh-keys", "value": "TRUE"},
+                {"key": "serial-port-enable", "value": "FALSE"},
+            ]
+        },
+    },
+}, sort_keys=True))
+PY
+    exit 0 ;;
+  "compute instances set-disk-auto-delete "*)
+    disk="$(arg_val --disk "$@")"
+    echo "$4 $disk no-auto-delete" >> "$S/auto_delete.log"
+    exit 0 ;;
+  "compute instances delete "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "delete_incumbent_vm" ]] && exit 1
+    [[ -f "$S/vm.json" ]] || exit 1
+    cur_boot="$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print([x["source"].rsplit("/",1)[-1] for x in d["disks"] if x.get("boot")][0])' "$S/vm.json")"
+    if [[ "$all" != *"--keep-disks=all"* ]]; then
+      rm -f "$S/disks/$cur_boot" "$S/disks/${PROD_DATA_DISK:-}"
+    fi
+    rm -rf "$S/saved_boot_${cur_boot}"
+    if [[ -d "${PROD_ROOT:-}" ]]; then
+      cp -a "${PROD_ROOT}" "$S/saved_boot_${cur_boot}"
+      rm -rf "${PROD_ROOT}"
+    fi
+    rm -f "$S/vm.json" "$S/singleton_up" "$S"/image_cid-* "$S/image_${PROD_CADDY_CONTAINER:-pantheon-caddy}"
+    echo "deleted $4 keep=$([[ "$all" == *"--keep-disks=all"* ]] && echo all || echo none)" >> "$S/vm_lifecycle.log"
+    exit 0 ;;
+  "compute instances create "*)
+    vm="$4"
+    tpl="$(arg_val --source-instance-template "$@")"
+    mt="$(arg_val --machine-type "$@")"
+    ip="$(arg_val --address "$@")"
+    if [[ -n "$tpl" ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
+      [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+      if [[ -z "$mt" ]]; then
+        mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
+      fi
+      new_id="${FAKE_NEW_INSTANCE_ID:-2222222222222222222}"
+      new_boot="${FAKE_NEW_BOOT_DISK:-${vm}-boot-fresh-e2s8}"
+      touch "$S/disks/$new_boot"
+      rm -rf "${PROD_ROOT:-}"
+      printf 'no' > "$S/mounted_state"
+      printf 'active' > "$S/host_systemd_caddy"
+      printf 'new' > "$S/vm_generation"
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" > "$S/vm.json" <<'PY'
+import json, sys
+vm, new_id, mt, boot_disk, data_disk, ip = sys.argv[1:7]
+print(json.dumps({
+    "id": new_id,
+    "name": vm,
+    "machineType": f"zones/asia-east1-b/machineTypes/{mt}",
+    "status": "RUNNING",
+    "disks": [
+        {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": "50"},
+        {"boot": False, "autoDelete": False, "deviceName": "pantheon-prod-data", "source": f"zones/asia-east1-b/disks/{data_disk}", "diskSizeGb": "200"},
+    ],
+    "networkInterfaces": [{
+        "network": "global/networks/pantheon-prod-net",
+        "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+        "accessConfigs": [{"name": "External NAT", "natIP": ip, "type": "ONE_TO_ONE_NAT"}],
+    }],
+    "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+    "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+}, sort_keys=True))
+PY
+      echo "created_from_template $vm tpl=$tpl mt=$mt boot=$new_boot ip=$ip" >> "$S/vm_lifecycle.log"
+      exit 0
+    else
+      # Rollback VM creation from preserved old_boot_disk + data_disk + static_ip
+      boot_spec=""
+      for a in "$@"; do
+        if [[ "$a" == *boot=yes* ]]; then
+          boot_spec="$a"
+        fi
+      done
+      old_boot="$(sed -n 's/.*name=\([^,]*\).*/\1/p' <<<"$boot_spec")"
+      [[ -n "$old_boot" && -e "$S/disks/$old_boot" ]] || exit 1
+      rm -rf "${PROD_ROOT:-}"
+      if [[ -d "$S/saved_boot_${old_boot}" ]]; then
+        cp -a "$S/saved_boot_${old_boot}" "${PROD_ROOT}"
+      fi
+      printf 'yes' > "$S/mounted_state"
+      printf 'inactive' > "$S/host_systemd_caddy"
+      printf 'rolled_back' > "$S/vm_generation"
+      python3 -I - "$vm" "1111111111111111111" "$mt" "$old_boot" "${PROD_DATA_DISK}" "$ip" > "$S/vm.json" <<'PY'
+import json, sys
+vm, old_id, mt, boot_disk, data_disk, ip = sys.argv[1:7]
+print(json.dumps({
+    "id": old_id,
+    "name": vm,
+    "machineType": f"zones/asia-east1-b/machineTypes/{mt}",
+    "status": "RUNNING",
+    "disks": [
+        {"boot": True, "autoDelete": False, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": "50"},
+        {"boot": False, "autoDelete": False, "deviceName": "pantheon-prod-data", "source": f"zones/asia-east1-b/disks/{data_disk}", "diskSizeGb": "200"},
+    ],
+    "networkInterfaces": [{
+        "network": "global/networks/pantheon-prod-net",
+        "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+        "accessConfigs": [{"name": "External NAT", "natIP": ip, "type": "ONE_TO_ONE_NAT"}],
+    }],
+    "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+    "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+}, sort_keys=True))
+PY
+      echo "recreated_from_old_boot $vm mt=$mt boot=$old_boot ip=$ip" >> "$S/vm_lifecycle.log"
+      exit 0
+    fi ;;
+  "compute machine-types describe "*)
+    mt="$4"
+    python3 -I - "$mt" <<'PY'
+import re, sys
+m = re.search(r"-([0-9]+)$", sys.argv[1])
+print(m.group(1) if m else "2")
+PY
+    exit 0 ;;
+  "compute scp "*)
+    src="${@: -2:1}"
+    dst_spec="${@: -1}"
+    dst="${dst_spec#*:}"
+    mkdir -p "$dst"
+    cp -a "$src" "$dst/"
+    exit 0 ;;
+  "compute ssh "*)
+    if [[ "${FAKE_REPLACE_FAIL:-}" == "ssh_new_vm" && "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
+      exit 255
+    fi
+    cmd="$(arg_val --command "$@")"
+    bash -c "$cmd"
+    exit $? ;;
+  *)
+    echo "unexpected fake gcloud call: $all" >&2
+    exit 99 ;;
+esac
+"""
+
+
+class ReplaceVmHarness(RealControllerBase):
+    """Exercises scripts/deploy/prod_replace_vm.sh and prod_preflight.py replace-vm against a fake
+    gcloud/IAP-SSH/Docker/systemd/fstab harness and the real bootstrap.sh, prod_ops.sh, and prod_rollback.sh."""
+
+    REPLACE_VM = REPO_ROOT / "scripts" / "deploy" / "prod_replace_vm.sh"
+
+    def setUp(self):
+        super().setUp()
+        (self.bin / "gcloud").write_text(FAKE_REPLACE_GCLOUD)
+        (self.bin / "gcloud").chmod(0o755)
+        self.m1, self.m2 = self._switch_second_release()
+        self.active_release_id = self.m2["release_id"]
+        self.baseline_release_id = self.m1["release_id"]
+        self.data_mount = self.tmp / "data"
+        self.fstab = self.tmp / "etc" / "fstab"
+        self.remote_tmp = self.tmp / "remote-tmp"
+        self.remote_tmp.mkdir(parents=True, exist_ok=True)
+
+        # Populate full production secrets closure on PROD_DATA_MOUNT for PROD_REQUIRE_FULL_SECRET_KEYS=true.
+        prod_dsn = "postgresql://pantheon_prod:prod-db-pw@127.0.0.1:5432/pantheon_production"
+        full_secrets = [
+            "PANTHEON_BFF_JWT_SECRET=prod-bff-jwt-secret-0123456789abcdef",
+            "PANTHEON_RUNTIME_JWT_SECRET=prod-runtime-jwt-secret-0123456789abcdef",
+            f"PANTHEON_DATABASE_URL={prod_dsn}",
+            f"DATABASE_URL={prod_dsn}",
+            f"TELEMETRY_DB_DSN={prod_dsn}",
+            f"LIFECYCLE_PROJECTOR_PROJECTION_DSN={prod_dsn}",
+            f"PERSONA_STORE_DSN={prod_dsn}",
+            f"PERSONA_CAPABILITY_STORE_DSN={prod_dsn}",
+            f"AGORA_WORKSHOP_STORE_DSN={prod_dsn}",
+            f"AGORA_DATASET_STORE_DSN={prod_dsn}",
+            f"AGORA_GOVERNANCE_STORE_DSN={prod_dsn}",
+            f"AGORA_RESEARCH_STORE_DSN={prod_dsn}",
+            f"RECONCILER_LOOP_CONTROLLER_DSN={prod_dsn}",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN=prod-rm-token-0123456789abcdef",
+            "CONSULTATION_SERVICE_TOKEN=prod-consult-token-0123456789abcdef",
+            "CONSULTATION_HANDOFF_TOKEN=prod-handoff-token-0123456789abcdef",
+            "PANTHEON_TELEMETRY_SERVICE_TOKEN=prod-telem-token-0123456789abcdef",
+            "EVOLUTION_AUTH_TOKEN=prod-evol-token-0123456789abcdef",
+            "RECONCILIATION_DRIFT_AUTH_TOKEN=prod-drift-token-0123456789abcdef",
+            "POLICY_LEARNING_SERVICE_TOKEN=prod-policy-token-0123456789abcdef",
+            "PANTHEON_PERSONA_SERVICE_TOKEN=prod-persona-token-0123456789abcdef",
+            "PANTHEON_RESEARCH_JWT_SECRET=prod-research-jwt-0123456789abcdef",
+            "PANTHEON_REGISTRY_JWT_SECRET=prod-registry-jwt-0123456789abcdef",
+            "PANTHEON_TELEMETRY_JWT_SECRET=prod-telemetry-jwt-0123456789abcdef",
+            "PERSONA_JWT_SECRET=prod-persona-jwt-0123456789abcdef",
+            "TRAINING_SESSION_JWT_SECRET=prod-training-jwt-0123456789abcdef",
+            "CAPITAL_JWT_SECRET=prod-capital-jwt-0123456789abcdef",
+            "PANTHEON_CAPITAL_JWT_SECRET=prod-pcapital-jwt-0123456789abcdef",
+            "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=prod-openclaw-token-0123456789abcdef",
+        ]
+        secrets_file = self.data_mount / "secrets" / "prod.secrets.env"
+        secrets_file.write_text("\n".join(full_secrets) + "\n", encoding="utf-8")
+        secrets_file.chmod(0o600)
+        (self.tmp / "secrets.env").write_text("\n".join(full_secrets) + "\n", encoding="utf-8")
+        (self.tmp / "secrets.env").chmod(0o600)
+
+        # Seed incumbent Caddy container + ACME certificate/config state to prove preservation across replacement.
+        self.caddy_image = "caddy:2.8.4@sha256:" + "e" * 64
+        (self.state / "image_pantheon-caddy").write_text(self.caddy_image)
+        caddy_data = self.state / "incumbent_caddy_data" / "caddy" / "certificates"
+        caddy_cfg = self.state / "incumbent_caddy_config" / "caddy"
+        caddy_data.mkdir(parents=True)
+        caddy_cfg.mkdir(parents=True)
+        (caddy_data / "acme-prod.crt").write_text("-----BEGIN CERTIFICATE-----\nFAKE-PROD-ACME-CERT\n-----END CERTIFICATE-----\n")
+        (caddy_cfg / "autosave.json").write_text('{"apps":{"http":{"servers":{}}}}')
+
+        # Seed incumbent GCP VM state (starts as undersized e2-standard-2 with old boot disk and old template).
+        self.old_boot_disk = "pantheon-prod-control-boot-old"
+        self.static_ip = "35.220.10.20"
+        for d in (self.old_boot_disk, PROD_ENV["PROD_DATA_DISK"]):
+            (self.state / "disks").mkdir(parents=True, exist_ok=True)
+            (self.state / "disks" / d).write_text("disk")
+        (self.state / "templates").mkdir(parents=True, exist_ok=True)
+        (self.state / "templates" / "pantheon-prod-control-template-old-e2s2.json").write_text(
+            json.dumps({"name": "pantheon-prod-control-template-old-e2s2", "properties": {"machineType": "e2-standard-2"}})
+        )
+        (self.state / "addresses.json").write_text(
+            json.dumps([{"name": "pantheon-prod-ip", "address": self.static_ip, "addressType": "EXTERNAL", "status": "IN_USE"}])
+        )
+        import datetime as dt
+        snap_ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=120)).isoformat()
+        (self.state / "auto_snapshot_line").write_text(f"auto-snap-hourly-1\t{snap_ts}\n")
+        (self.state / "mounted_state").write_text("yes")
+        (self.state / "vm_generation").write_text("incumbent")
+        (self.state / "vm.json").write_text(
+            json.dumps({
+                "id": "1111111111111111111",
+                "name": "pantheon-prod-control",
+                "machineType": "zones/asia-east1-b/machineTypes/e2-standard-2",
+                "status": "RUNNING",
+                "disks": [
+                    {
+                        "boot": True,
+                        "autoDelete": True,
+                        "deviceName": self.old_boot_disk,
+                        "source": f"zones/asia-east1-b/disks/{self.old_boot_disk}",
+                        "diskSizeGb": "50",
+                    },
+                    {
+                        "boot": False,
+                        "autoDelete": False,
+                        "deviceName": "pantheon-prod-data",
+                        "source": f"zones/asia-east1-b/disks/{PROD_ENV['PROD_DATA_DISK']}",
+                        "diskSizeGb": "200",
+                    },
+                ],
+                "networkInterfaces": [{
+                    "network": "global/networks/pantheon-prod-net",
+                    "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+                    "accessConfigs": [{"name": "External NAT", "natIP": self.static_ip, "type": "ONE_TO_ONE_NAT"}],
+                }],
+                "serviceAccounts": [{
+                    "email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
+                    "scopes": ["https://www.googleapis.com/auth/cloud-platform"],
+                }],
+                "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+            })
+        )
+
+    def _run_replace_vm(self, release_id: str | None = None, **extra):
+        env = self.env(
+            GCLOUD_BIN=str(self.bin / "gcloud"),
+            PROD_VM_NAME="pantheon-prod-control",
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-old-e2s2",
+            PROD_RUNTIME_SERVICE_ACCOUNT="pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
+            PROD_SUBNETWORK="pantheon-prod-subnet",
+            PROD_REMOTE_TMP_BASE=str(self.remote_tmp),
+            PROD_REMOTE_PATH_PREFIX=str(self.bin),
+            PROD_FSTAB_PATH=str(self.fstab),
+            PROD_SSH_WAIT_TRIES="2",
+            PROD_SSH_WAIT_INTERVAL="0",
+            CLOUDSDK_CORE_PROJECT=PROD_ENV["PROD_GCP_PROJECT_ID"],
+            **extra,
+        )
+        return subprocess.run(
+            ["bash", str(self.REPLACE_VM), release_id or self.active_release_id],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def test_replace_vm_preflight_requires_config_and_environment_approval(self):
+        apath = self.tmp / "approvals.json"
+        apath.write_text(json.dumps(APPROVALS))
+        p_ok = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                "replace-vm",
+                "--approvals",
+                str(apath),
+                "--initiator",
+                "initiator-a",
+            ],
+            env={**os.environ, **PROD_ENV},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(p_ok.returncode, 0, p_ok.stderr)
+        self.assertEqual(json.loads(p_ok.stdout)["status"], "replace_vm_preflight_passed")
+        p_self = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                "replace-vm",
+                "--approvals",
+                str(apath),
+                "--initiator",
+                "reviewer-b",
+            ],
+            env={**os.environ, **PROD_ENV},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(p_self.returncode, 0)
+
+    def test_replace_vm_happy_path_template_upgrade_boot_disk_migration_and_caddy_acme_preservation(self):
+        # Simulate pre-g77 incumbent VM where state/ and proxy/ were still real directories on the boot disk.
+        for d in ("state", "proxy"):
+            link = self.root / d
+            target = self.data_mount / d
+            if link.is_symlink():
+                link.unlink()
+                shutil.copytree(target, link, symlinks=True)
+                shutil.rmtree(target)
+
+        r = self._run_replace_vm(GITHUB_RUN_ID="45000000001", GITHUB_RUN_ATTEMPT="1")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["release_id"], self.active_release_id)
+        self.assertEqual(out["old_instance_id"], "1111111111111111111")
+        self.assertEqual(out["new_instance_id"], "2222222222222222222")
+        self.assertNotEqual(out["old_instance_id"], out["new_instance_id"])
+        self.assertEqual(out["old_machine_type"], "e2-standard-2")
+        self.assertEqual(out["machine_type"], "e2-standard-8")
+        self.assertEqual(out["vcpus"], 8)
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8")
+        self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
+        self.assertTrue(out["old_boot_disk_preserved"])
+        self.assertNotEqual(out["new_boot_disk"], self.old_boot_disk)
+        self.assertEqual(out["static_ip"], self.static_ip)
+        self.assertEqual(out["data_disk_uuid"], "d4a7a000-1111-2222-3333-444455556666")
+        self.assertTrue(out["boot_disk_decoupled"])
+        self.assertTrue(out["caddy_restored"])
+        self.assertEqual(out["caddy_image"], self.caddy_image)
+        self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+        self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+        self.assertTrue(out["snapshot_schedule"]["policy_present"] and out["snapshot_schedule"]["attached"])
+
+        # Both data and boot pre-replacement snapshots were taken with <= 62 char lowercase names.
+        for snap_key in ("data_snapshot", "boot_snapshot"):
+            self.assertLessEqual(len(out[snap_key]), 62)
+            self.assertRegex(out[snap_key], r"^[a-z]([-a-z0-9]{0,60}[a-z0-9])?$")
+        snaps_taken = (self.state / "snapshots_taken.log").read_text()
+        self.assertIn(f"{PROD_ENV['PROD_DATA_DISK']}:{out['data_snapshot']}", snaps_taken)
+        self.assertIn(f"{self.old_boot_disk}:{out['boot_snapshot']}", snaps_taken)
+
+        # Old boot disk and data disk were both protected with --no-auto-delete and preserved via --keep-disks=all.
+        auto_del = (self.state / "auto_delete.log").read_text()
+        self.assertIn(f"pantheon-prod-control {self.old_boot_disk} no-auto-delete", auto_del)
+        self.assertIn(f"pantheon-prod-control {PROD_ENV['PROD_DATA_DISK']} no-auto-delete", auto_del)
+        self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+        self.assertTrue((self.state / "disks" / PROD_ENV["PROD_DATA_DISK"]).exists())
+
+        # /etc/fstab entry written by UUID and mkfs was NEVER called.
+        self.assertFalse((self.state / "mkfs_called").exists())
+        self.assertIn(
+            f"UUID=d4a7a000-1111-2222-3333-444455556666 {self.data_mount} ext4 defaults,nofail 0 2",
+            self.fstab.read_text(),
+        )
+
+        # Host systemd caddy.service was disabled and pantheon-caddy container was recreated with preserved ACME certs.
+        self.assertIn("disable --now caddy.service", (self.state / "systemctl.log").read_text())
+        self.assertEqual((self.state / "host_systemd_caddy").read_text(), "inactive")
+        self.assertIn("FAKE-PROD-ACME-CERT", (self.data_mount / "proxy" / "caddy-data" / "caddy" / "certificates" / "acme-prod.crt").read_text())
+        self.assertTrue((self.data_mount / "proxy" / "caddy-config" / "caddy" / "autosave.json").is_file())
+        self.assertIn("--network host", (self.state / "caddy_runs.log").read_text())
+
+        # Protected rollback after VM replacement succeeds using retained data-disk journal and baseline.
+        rb = self._rollback_mode(
+            self.active_release_id,
+            PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+        )
+        self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+        rb_out = json.loads(rb.stdout.strip().splitlines()[-1])
+        self.assertEqual(rb_out["status"], "rolled_back")
+        self.assertEqual(rb_out["from_release"], self.active_release_id)
+        self.assertEqual(rb_out["to_release"], self.baseline_release_id)
+
+    def test_replace_vm_refuses_unreserved_static_ip_or_release_mismatch_before_deleting_vm(self):
+        # Unreserved static IP -> refuses before VM delete.
+        (self.state / "addresses.json").write_text("[]")
+        r_ip = self._run_replace_vm()
+        self.assertEqual(r_ip.returncode, 1)
+        self.assertIn("STATIC_IP_NOT_RESERVED", r_ip.stderr)
+        self.assertFalse((self.state / "vm_lifecycle.log").exists())
+
+        # Restore reserved static IP; pass non-active release_id -> refuses before VM delete.
+        (self.state / "addresses.json").write_text(
+            json.dumps([{"name": "pantheon-prod-ip", "address": self.static_ip, "addressType": "EXTERNAL", "status": "IN_USE"}])
+        )
+        r_rel = self._run_replace_vm(release_id=self.baseline_release_id)
+        self.assertEqual(r_rel.returncode, 1)
+        self.assertIn("PRE_REPLACE_MIGRATE_FAILED", r_rel.stderr)
+        self.assertFalse((self.state / "vm_lifecycle.log").exists())
+
+    def test_replace_vm_rto_over_budget_exits_6(self):
+        r = self._run_replace_vm(PROD_REPLACE_RTO_ELAPSED_SECONDS="1801", PROD_RTO_SECONDS="1800")
+        self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "replace_vm_over_budget")
+        self.assertEqual(out["rto_seconds"], 1801)
+        self.assertEqual(out["rto_budget_seconds"], 1800)
+
+    def test_replace_vm_rolls_back_to_old_boot_disk_when_replacement_or_restore_fails(self):
+        for fail_mode, expected_stage in (
+            ("create_new_vm", "create_new_vm"),
+            ("ssh_new_vm", "wait_for_ssh"),
+            ("restore_active_release", "restore_active_release"),
+        ):
+            with self.subTest(fail_mode=fail_mode):
+                self.setUp()
+                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode)
+                self.assertEqual(r.returncode, 3, f"{fail_mode}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "replace_vm_rolled_back", out)
+                self.assertEqual(out["failed_stage"], expected_stage)
+                self.assertTrue(out["rolled_back_to_old_boot_disk"])
+                self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
+                self.assertEqual(out["static_ip"], self.static_ip)
+                lifecycle = (self.state / "vm_lifecycle.log").read_text()
+                self.assertIn(f"recreated_from_old_boot pantheon-prod-control mt=e2-standard-2 boot={self.old_boot_disk}", lifecycle)
+                vm_now = json.loads((self.state / "vm.json").read_text())
+                self.assertEqual(vm_now["id"], "1111111111111111111")
 
 
 if __name__ == "__main__":
