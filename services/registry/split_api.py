@@ -39,9 +39,12 @@ from .storage import (
     build_lineage_graph,
     persona_binding_counts,
     project_strategy_spec_summary_page,
+    regime_evaluate_model_row,
+    regime_evaluate_strategy_row,
     RegistryConcurrentUpdateError,
     RegistryStore,
     RegistryUniqueViolationError,
+    select_latest_regime_strategy_rows,
 )
 
 # ``register_if_absent`` is called from two kinds of places: real API routes
@@ -485,6 +488,40 @@ class RegistryService:
         return self.store.get_strategy_spec_summary_rows_by_ids(
             registry_ids, visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
+
+    def list_regime_strategy_spec_rows(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        """Projected non-retired visible StrategySpec rows for regime evaluation without full entry decode."""
+        if hasattr(self.store, "list_regime_strategy_spec_rows"):
+            return self.store.list_regime_strategy_spec_rows(visible_tenants=visible_tenants)
+        return [
+            regime_evaluate_strategy_row(e)
+            for e in self.store.list_by_artifact_type("strategy_spec")
+            if getattr(e.artifact_state, "value", e.artifact_state) != "retired"
+            and (visible_tenants is None or e.owner_tenant in visible_tenants)
+        ]
+
+    def list_regime_evaluation_strategies(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        """Select the latest non-retired visible StrategySpec row per strategy_id via owner projection."""
+        rows = self.list_regime_strategy_spec_rows(visible_tenants=visible_tenants)
+        return select_latest_regime_strategy_rows(rows, visible_tenants=visible_tenants)
+
+    def list_regime_model_artifact_rows(self) -> list[dict]:
+        """Projected non-retired ModelArtifact rows for regime evaluation without full entry decode."""
+        if hasattr(self.store, "list_regime_model_artifact_rows"):
+            return self.store.list_regime_model_artifact_rows()
+        return [
+            regime_evaluate_model_row(e)
+            for e in self.store.list_by_artifact_type("model_artifact")
+            if getattr(e.artifact_state, "value", e.artifact_state) != "retired"
+        ]
 
     def strategy_spec_summary_page(
         self,

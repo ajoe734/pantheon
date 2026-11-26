@@ -42,6 +42,12 @@ from .storage import (
     PERSONA_BINDING_META_KEYS,
     PERSONA_BINDING_ROW_KEYS,
     PERSONA_BINDING_SPEC_KEYS,
+    REGIME_EVAL_MODEL_META_KEYS,
+    REGIME_EVAL_MODEL_ROW_KEYS,
+    REGIME_EVAL_STRATEGY_INNER_META_KEYS,
+    REGIME_EVAL_STRATEGY_META_KEYS,
+    REGIME_EVAL_STRATEGY_ROW_KEYS,
+    REGIME_EVAL_STRATEGY_SPEC_KEYS,
     STRATEGY_ARTIFACT_EVAL_KEYS,
     STRATEGY_ARTIFACT_ROW_KEYS,
     STRATEGY_SUMMARY_EXEC_KEYS,
@@ -1272,6 +1278,65 @@ class PostgresRegistryStore:
         self.full_summary_row_ids_extracted = tuple(rid for rid in target_ids if rid in out)
         return out
 
+    def list_regime_strategy_spec_rows(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+    ) -> list[dict]:
+        """Projected non-retired visible StrategySpec rows for POST /api/registry/regime/evaluate.
+
+        Filters ``artifact_type = 'strategy_spec'``, ``artifact_state <> 'retired'``,
+        and ``visible_tenants`` in SQL (unwrapping legacy JSON-string payloads),
+        and projects only the top-level identity/version/tenant fields plus the
+        metadata leaves inspected by ``services.registry.regime.profiles.profile_for``.
+        """
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(
+            visible_tenants, "strategy_spec",
+        )
+        pred_sql = f"({visible_sql}) AND COALESCE(payload ->> 'artifact_state', '') <> 'retired'"
+        if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
+            sql = _regime_strategy_spec_single_pass_sql(self._entries.table, pred_sql)
+            sql_params = params + params
+            with self._entries._use_conn(None) as conn:
+                cursor = conn.execute(sql, sql_params) if sql_params else conn.execute(sql)
+                raw_rows = [
+                    tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                    for r in cursor.fetchall()
+                ]
+            return regime_strategy_spec_rows_from_columns(raw_rows)
+        return regime_strategy_spec_rows_from_columns(
+            self._entries.list_all_selected(
+                regime_strategy_spec_select_sql(),
+                visible_sql=pred_sql,
+                keep_params=params,
+            )
+        )
+
+    def list_regime_model_artifact_rows(self) -> list[dict]:
+        """Projected non-retired ModelArtifact rows for POST /api/registry/regime/evaluate."""
+        pred_sql = (
+            "payload ->> 'artifact_type' = %s "
+            "AND COALESCE(payload ->> 'artifact_state', '') <> 'retired'"
+        )
+        params = ("model_artifact",)
+        if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
+            sql = _regime_model_artifact_single_pass_sql(self._entries.table, pred_sql)
+            sql_params = params + params
+            with self._entries._use_conn(None) as conn:
+                cursor = conn.execute(sql, sql_params)
+                raw_rows = [
+                    tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                    for r in cursor.fetchall()
+                ]
+            return regime_model_artifact_rows_from_columns(raw_rows)
+        return regime_model_artifact_rows_from_columns(
+            self._entries.list_all_selected(
+                regime_model_artifact_select_sql(),
+                visible_sql=pred_sql,
+                keep_params=params,
+            )
+        )
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]
@@ -1813,6 +1878,211 @@ def strategy_spec_summary_index_rows_from_columns(
         if c6 is not None:
             row["updated_at"] = _dec(c6)
         append(row)
+    return out
+
+
+_REGIME_STRATEGY_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
+    ("metadata", "strategy_spec"),
+    ("metadata", "strategy_spec", "metadata"),
+)
+
+
+def _regime_strategy_spec_leaf_paths() -> list[tuple[str, ...]]:
+    """Leaf paths read for a StrategySpec regime-evaluation row."""
+    meta = ("metadata",)
+    spec = ("metadata", "strategy_spec")
+    spec_meta = spec + ("metadata",)
+    return (
+        [(k,) for k in REGIME_EVAL_STRATEGY_ROW_KEYS]
+        + [meta + (k,) for k in REGIME_EVAL_STRATEGY_META_KEYS]
+        + [spec + (k,) for k in REGIME_EVAL_STRATEGY_SPEC_KEYS]
+        + [spec_meta + (k,) for k in REGIME_EVAL_STRATEGY_INNER_META_KEYS]
+    )
+
+
+def regime_strategy_spec_select_sql() -> str:
+    """Plain column list over ``payload`` for StrategySpec regime-evaluation rows."""
+    cols = ", ".join(f"({_sql_node(p)})::text" for p in _regime_strategy_spec_leaf_paths())
+    shapes = ", ".join(f"jsonb_typeof({_sql_node(p)})" for p in _REGIME_STRATEGY_CONTAINER_PATHS)
+    return f"{cols}, {shapes}"
+
+
+def _regime_strategy_spec_single_pass_sql(table: str, pred_sql: str) -> str:
+    """Single-pass Postgres query that filters ``strategy_spec``, non-retired
+    ``artifact_state``, and ``visible_tenants`` in SQL (unwrapping legacy
+    JSON-string payloads), detoasts ``payload`` once per kept row, and projects
+    only the regime-evaluation fields."""
+    cols_expr = (
+        [f"(payload -> '{k}')::text AS c{i}" for i, k in enumerate(REGIME_EVAL_STRATEGY_ROW_KEYS)]
+        + [f"(m -> '{k}')::text AS m{i}" for i, k in enumerate(REGIME_EVAL_STRATEGY_META_KEYS)]
+        + [f"(s -> '{k}')::text AS s{i}" for i, k in enumerate(REGIME_EVAL_STRATEGY_SPEC_KEYS)]
+        + [f"(sm -> '{k}')::text AS sm{i}" for i, k in enumerate(REGIME_EVAL_STRATEGY_INNER_META_KEYS)]
+        + [
+            "jsonb_typeof(s) AS t0",
+            "jsonb_typeof(sm) AS t1",
+        ]
+    )
+    outer_cols = (
+        [f"c{i}" for i in range(len(REGIME_EVAL_STRATEGY_ROW_KEYS))]
+        + [f"m{i}" for i in range(len(REGIME_EVAL_STRATEGY_META_KEYS))]
+        + [f"s{i}" for i in range(len(REGIME_EVAL_STRATEGY_SPEC_KEYS))]
+        + [f"sm{i}" for i in range(len(REGIME_EVAL_STRATEGY_INNER_META_KEYS))]
+        + ["t0", "t1"]
+    )
+    return (
+        f"SELECT {', '.join(outer_cols)} FROM ("
+        f"SELECT updated_at, {', '.join(cols_expr)} FROM ("
+        "SELECT updated_at, payload, m, s, s -> 'metadata' AS sm FROM ("
+        "SELECT updated_at, payload, payload -> 'metadata' AS m, "
+        "(payload -> 'metadata') -> 'strategy_spec' AS s FROM ("
+        "SELECT updated_at, CASE WHEN jsonb_typeof(u) = 'array' THEN "
+        "(CASE WHEN jsonb_typeof(payload) = 'string' "
+        "THEN (payload #>> '{}')::jsonb ELSE u END) ELSE u END AS payload "
+        f"FROM (SELECT updated_at, payload, payload || '{{}}'::jsonb AS u "
+        f"FROM {table} WHERE jsonb_typeof(payload) <> 'object' OR ({pred_sql}) "
+        "OFFSET 0) AS raw OFFSET 0"
+        f") AS r1 WHERE jsonb_typeof(payload) = 'object' AND ({pred_sql}) OFFSET 0"
+        ") AS r2 OFFSET 0"
+        ") AS r3 OFFSET 0"
+        ") AS r4 ORDER BY updated_at ASC"
+    )
+
+
+def regime_strategy_spec_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``regime_evaluate_strategy_row``-shaped dicts from the select columns."""
+    loads = json.loads
+
+    def _dec(raw: str):
+        if raw == "null":
+            return None
+        if raw == "[]":
+            return []
+        if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+            return raw[1:-1] if "\\" not in raw else loads(raw)
+        return loads(raw)
+
+    out: list[dict] = []
+    append = out.append
+    for (
+        c0, c1, c2, c3, c4,
+        m0, m1, m2, m3, m4,
+        s0, s1, s2, s3,
+        sm0,
+        t0, t1,
+    ) in rows:
+        meta: dict[str, Any] = {}
+        if m0 is not None:
+            meta["regime"] = _dec(m0)
+        if m1 is not None:
+            meta["holding_horizon_sessions"] = _dec(m1)
+        if m2 is not None:
+            meta["family"] = _dec(m2)
+        if m3 is not None:
+            meta["strategy_family"] = _dec(m3)
+        if m4 is not None:
+            meta["applicable_regimes"] = _dec(m4)
+        if t0 == "object":
+            spec: dict[str, Any] = {}
+            if s0 is not None:
+                spec["regime"] = _dec(s0)
+            if s1 is not None:
+                spec["holding_horizon_sessions"] = _dec(s1)
+            if s2 is not None:
+                spec["family"] = _dec(s2)
+            if s3 is not None:
+                spec["applicable_regimes"] = _dec(s3)
+            if t1 == "object" and sm0 is not None:
+                spec["metadata"] = {"regime": _dec(sm0)}
+            if spec:
+                meta["strategy_spec"] = spec
+        append({
+            "registry_id": _dec(c0) if c0 is not None else None,
+            "strategy_id": _dec(c1) if c1 is not None else None,
+            "version": _dec(c2) if c2 is not None else None,
+            "artifact_state": _dec(c3) if c3 is not None else None,
+            "owner_tenant": _dec(c4) if c4 is not None else None,
+            "metadata": meta,
+        })
+    return out
+
+
+def _regime_model_artifact_leaf_paths() -> list[tuple[str, ...]]:
+    """Leaf paths read for a ModelArtifact regime-evaluation row."""
+    meta = ("metadata",)
+    return (
+        [(k,) for k in REGIME_EVAL_MODEL_ROW_KEYS]
+        + [meta + (k,) for k in REGIME_EVAL_MODEL_META_KEYS]
+    )
+
+
+def regime_model_artifact_select_sql() -> str:
+    """Plain column list over ``payload`` for ModelArtifact regime-evaluation rows."""
+    cols = ", ".join(f"({_sql_node(p)})::text" for p in _regime_model_artifact_leaf_paths())
+    return f"{cols}, jsonb_typeof({_sql_node(('metadata',))})"
+
+
+def _regime_model_artifact_single_pass_sql(table: str, pred_sql: str) -> str:
+    """Single-pass Postgres query for ModelArtifact regime-evaluation rows."""
+    cols_expr = (
+        [f"(payload -> '{k}')::text AS c{i}" for i, k in enumerate(REGIME_EVAL_MODEL_ROW_KEYS)]
+        + [f"(m -> '{k}')::text AS m{i}" for i, k in enumerate(REGIME_EVAL_MODEL_META_KEYS)]
+        + ["jsonb_typeof(m) AS t0"]
+    )
+    outer_cols = (
+        [f"c{i}" for i in range(len(REGIME_EVAL_MODEL_ROW_KEYS))]
+        + [f"m{i}" for i in range(len(REGIME_EVAL_MODEL_META_KEYS))]
+        + ["t0"]
+    )
+    return (
+        f"SELECT {', '.join(outer_cols)} FROM ("
+        f"SELECT updated_at, {', '.join(cols_expr)} FROM ("
+        "SELECT updated_at, payload, payload -> 'metadata' AS m FROM ("
+        "SELECT updated_at, CASE WHEN jsonb_typeof(u) = 'array' THEN "
+        "(CASE WHEN jsonb_typeof(payload) = 'string' "
+        "THEN (payload #>> '{}')::jsonb ELSE u END) ELSE u END AS payload "
+        f"FROM (SELECT updated_at, payload, payload || '{{}}'::jsonb AS u "
+        f"FROM {table} WHERE jsonb_typeof(payload) <> 'object' OR ({pred_sql}) "
+        "OFFSET 0) AS raw OFFSET 0"
+        f") AS r1 WHERE jsonb_typeof(payload) = 'object' AND ({pred_sql}) OFFSET 0"
+        ") AS r2 OFFSET 0"
+        ") AS r3 ORDER BY updated_at ASC"
+    )
+
+
+def regime_model_artifact_rows_from_columns(rows) -> list[dict]:
+    """Assemble ``regime_evaluate_model_row``-shaped dicts from the select columns."""
+    loads = json.loads
+
+    def _dec(raw: str):
+        if raw == "null":
+            return None
+        if raw == "[]":
+            return []
+        if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+            return raw[1:-1] if "\\" not in raw else loads(raw)
+        return loads(raw)
+
+    out: list[dict] = []
+    append = out.append
+    for (
+        c0, c1, c2,
+        m0, m1, m2, m3, m4, m5, m6, m7, m8,
+        t0,
+    ) in rows:
+        meta: dict[str, Any] = {}
+        if t0 == "object":
+            for key, raw in zip(
+                REGIME_EVAL_MODEL_META_KEYS,
+                (m0, m1, m2, m3, m4, m5, m6, m7, m8),
+            ):
+                if raw is not None:
+                    meta[key] = _dec(raw)
+        append({
+            "registry_id": _dec(c0) if c0 is not None else None,
+            "artifact_state": _dec(c1) if c1 is not None else None,
+            "created_at": _dec(c2) if c2 is not None else None,
+            "metadata": meta,
+        })
     return out
 
 

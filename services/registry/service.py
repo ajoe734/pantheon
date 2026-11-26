@@ -1678,6 +1678,21 @@ def list_views_by_artifact_type(artifact_type: ArtifactType) -> list[RegistryEnt
     return [registry._to_view(e) for e in registry.store.list_by_artifact_type(artifact_type)]
 
 
+def list_regime_evaluation_strategies(
+    ctx: AuthContext, header_tenant: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Latest non-retired caller-visible StrategySpec per strategy_id via owner store projection."""
+    visible_tenants = _persona_binding_visible_tenants(ctx, header_tenant)
+    return get_registry_service().list_regime_evaluation_strategies(
+        visible_tenants=visible_tenants,
+    )
+
+
+def list_regime_evaluation_models() -> list[dict[str, Any]]:
+    """Projected non-retired ModelArtifact rows via owner store projection (no RegistryEntryView rebuild)."""
+    return get_registry_service().list_regime_model_artifact_rows()
+
+
 def _filter_strategy_spec_views(
     strategy_id: Optional[str],
     authorization: Optional[str],
