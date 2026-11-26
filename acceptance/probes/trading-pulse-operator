@@ -5,6 +5,8 @@
 Uses the stage's BFF URL and viewer client ID/secret, verifies its tenant via
 /bff/me. No files written; at most 200 runtimes, 5 MiB/response, 30s/request.
 Daily storage growth zero; the stage owns its existing bounded stdout verdict.
+PnL currency comes from each runtime's ledger/position facts in the raw telemetry
+summary (the #7872 rule), never from the pulse; it adds no request.
 """
 from __future__ import annotations
 
@@ -53,6 +55,86 @@ def source(fetch, path):
         if isinstance(state, dict) and state.get("status") in {"unavailable", "degraded"}:
             raise Unverifiable("independent_source_unavailable")
     return body.get("data")
+
+
+_NOT_A_CURRENCY = {"NULL", "NONE", "UNKNOWN", "MIXED", "NA", "N/A", "UNAVAILABLE", "UNSET"}
+
+
+def iso(value):
+    code = value.strip().upper() if isinstance(value, str) else ""
+    return code if code.isalpha() and 3 <= len(code) <= 5 and code not in _NOT_A_CURRENCY else None
+
+
+def ledger_currency(raw, binding_id):
+    """PnL currency from the runtime's own ledger/position facts (#7872 rule).
+
+    Read from the raw telemetry summary, never from the pulse. Returns
+    (currency, raw_claim_conflicts): currency is None for mixed or unknown,
+    exactly where #7872 keeps pnl_currency null. raw_claim_conflicts is True
+    when raw pnl_currency is present but the ledger facts disagree with it.
+    """
+    def first(*values):
+        return next((v for v in values if v), None)
+    def own(record):
+        bid = str(record.get("binding_id") or "").strip()
+        return not (binding_id and bid and bid != str(binding_id))
+    metrics = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {}
+    account = raw.get("account_facts") if isinstance(raw.get("account_facts"), dict) else {}
+    claim = iso(first(raw.get("pnl_currency"), metrics.get("pnl_currency")))
+    declared = iso(first(raw.get("currency"), raw.get("ledger_currency"), account.get("currency")))
+    facts, by_symbol, mixed, unlabelled_position = set(), {}, False, False
+    for symbol, value in (raw.get("_currency_by_symbol") or {}).items():
+        if iso(value):
+            facts.add(iso(value))
+            by_symbol[str(symbol).strip()] = iso(value)
+    for symbol, mark in (raw.get("_marks_by_symbol") or {}).items():
+        if isinstance(mark, dict) and own(mark) and iso(first(mark.get("quote_currency"), mark.get("currency"))):
+            facts.add(iso(first(mark.get("quote_currency"), mark.get("currency"))))
+            by_symbol.setdefault(str(symbol).strip(), iso(first(mark.get("quote_currency"), mark.get("currency"))))
+    for position in raw.get("positions") or []:
+        if not isinstance(position, dict):
+            continue
+        quantity = number(position.get("quantity"))
+        code = iso(first(position.get("currency"), position.get("pnl_currency"), position.get("quote_currency"))) or by_symbol.get(
+            str(first(position.get("instrument_id"), position.get("symbol")) or "").strip()) or by_symbol.get(str(position.get("symbol") or "").strip())
+        if code:
+            facts.add(code)
+        elif quantity is None or abs(quantity) > 1e-12:
+            unlabelled_position = True
+    for group in (raw.get("positions_by_underlying") or {}).values():
+        for instrument in (group.get("instruments") or []) if isinstance(group, dict) else []:
+            if isinstance(instrument, dict) and iso(first(instrument.get("currency"), instrument.get("quote_currency"))):
+                facts.add(iso(first(instrument.get("currency"), instrument.get("quote_currency"))))
+    for key in ("ledgers", "constituent_ledgers", "member_virtual_books"):
+        for ledger in raw.get(key) or []:
+            if not isinstance(ledger, dict):
+                continue
+            mixed = mixed or str(ledger.get("pnl_currency_status") or "").strip().lower() == "mixed"
+            if iso(first(ledger.get("pnl_currency"), ledger.get("currency"), ledger.get("quote_currency"))):
+                facts.add(iso(first(ledger.get("pnl_currency"), ledger.get("currency"), ledger.get("quote_currency"))))
+    refs = list(raw.get("mark_refs") or [])
+    for observation in raw.get("quarter_equity_observations") or []:
+        if not isinstance(observation, dict) or observation.get("status") != "known" or not own(observation):
+            continue
+        if raw.get("pnl_at") and observation.get("as_of") and observation.get("as_of") != raw.get("pnl_at"):
+            continue
+        if iso(first(observation.get("currency"), observation.get("pnl_currency"))):
+            facts.add(iso(first(observation.get("currency"), observation.get("pnl_currency"))))
+        refs += observation.get("mark_refs") or []
+    for ref in refs:
+        if isinstance(ref, dict) and iso(first(ref.get("quote_currency"), ref.get("currency"))):
+            facts.add(iso(first(ref.get("quote_currency"), ref.get("currency"))))
+    if isinstance(raw.get("last_fill"), dict) and iso(raw["last_fill"].get("currency")):
+        facts.add(iso(raw["last_fill"].get("currency")))
+    if declared:
+        facts.add(declared)
+    conflict = bool(claim and (mixed or facts - {claim}))
+    every = facts | ({claim} if claim else set())
+    if mixed or len(every) != 1 or str(raw.get("pnl_currency_status") or "").strip().lower() == "mixed":
+        return None, conflict
+    if unlabelled_position and not (claim or declared):
+        return None, conflict
+    return next(iter(every)), conflict
 
 
 MAX_READ_ATTEMPTS = 6
@@ -153,6 +235,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
         if any(item.get("runtime_id") not in expected_ids for item in collection):
             failures.append("aggregate_collection_outside_scope")
     raw_by_key = {}
+    currency = {}  # runtime key -> ledger/position PnL currency (None: mixed/unknown)
     for key, binding in expected.items():
         row = by_key.get(key)
         if row is None:
@@ -163,6 +246,9 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
             raise Unverifiable("independent_telemetry_scope_changed")
         ctx = row.get("performance_context") or {}
         raw_by_key[key] = raw
+        currency[key], conflict = ledger_currency(raw, key[1])
+        if conflict:
+            failures.append("raw_pnl_currency_ledger_mismatch")
         metrics = (row.get("telemetry_summary") or {}).get("metrics") or {}
         if row.get("persona_name") != directory[binding["persona_id"]].get("name"):
             failures.append("persona_name_mismatch")
@@ -242,7 +328,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
         return None
     expected_groups = set()
     for key, raw in raw_by_key.items():
-        parts = ((expected[key].get("deployment_stage") or expected[key].get("deployment_mode")), raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))
+        parts = ((expected[key].get("deployment_stage") or expected[key].get("deployment_mode")), currency[key], raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))
         stale = raw.get("staleness") or {}
         if all(parts) and not raw.get("_valuation_failure") and not (stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))):
             expected_groups.add(parts)
@@ -252,7 +338,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
     for group in summary.get("pnl_groups") or []:
         matches = [(key, raw) for key, raw in raw_by_key.items() if
             (expected[key].get("deployment_stage") or expected[key].get("deployment_mode")) == group.get("stage")
-            and raw.get("pnl_currency") == group.get("currency")
+            and currency[key] == group.get("currency")
             and raw.get("pnl_period_start_at") == group.get("period_start_at") and raw.get("pnl_at") == group.get("period_end_at")]
         values = [number(raw.get("pnl")) for _, raw in matches if number(raw.get("pnl")) is not None]
         if not same(group.get("value"), sum(values) if values else None):
@@ -281,7 +367,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
             value = ((by_key.get(key, {}).get("telemetry_summary") or {}).get("metrics") or {}).get(metric)
             stale = raw.get("staleness") or {}
             stale_source = raw.get("_valuation_failure") or stale.get("is_stale") or stale.get("status") == "stale" or stale.get("age_seconds", 0) > stale.get("threshold_seconds", float("inf"))
-            comparable = all((raw.get("pnl_currency"), raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))) if metric == "pnl" else bool(raw.get(metric + "_at") and (raw.get("window") or raw.get(metric + "_period_start_at") or (raw.get("pnl_period_start_at") if metric == "drawdown" else None)))
+            comparable = all((currency[key], raw.get("pnl_period_start_at"), raw.get("pnl_at"), definition(raw))) if metric == "pnl" else bool(raw.get(metric + "_at") and (raw.get("window") or raw.get(metric + "_period_start_at") or (raw.get("pnl_period_start_at") if metric == "drawdown" else None)))
             if metric == "fill_rate":
                 window = (raw.get("fill_rate_details") or {}).get("window") or {}
                 comparable = comparable or bool(window.get("start_at") and window.get("end_exclusive_at"))

@@ -1,0 +1,64 @@
+{
+  "task_id": "TRADING-PULSE-PROBE-CURRENCY-SOURCE-20261126",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "root_cause_class": "RC6 WP6.5",
+  "problem_register_ref": "docs/operations/problem-register.md (WP6.1–6.5 Trading Pulse row)",
+  "composes_with": [
+    "BFF-PULSE-CURRENCY-AND-RISK-RADAR-BOUNDED-20261125 (#7872)",
+    "TRADING-PULSE-PROBE-CONSISTENT-READ-20261125",
+    "TRADING-PULSE-HOSTED-ACCEPTANCE-20261122"
+  ],
+  "defect": "#7872 resolves each runtime's pnl_currency from its single unambiguous ledger/position currency; probe:trading-pulse-operator still built expected PnL groups from raw telemetry pnl_currency, which is null on hosted, so every release failed five PnL checks.",
+  "reproduction": "The old probe (dev f0a0eb79f) run on the new hosted-shape fixture returns exactly the five failures: pnl_group_denominator_mismatch, pnl_group_scope_mismatch, pnl_group_value_mismatch, ranking_denominator_mismatch:pnl, ranking_observation_coverage_mismatch:pnl. The changed probe passes the same fixture.",
+  "fix": {
+    "file": "acceptance/probes/trading-pulse-operator",
+    "currency_source": "ledger_currency(raw, binding_id) reads the raw GET /api/v1/telemetry/{runtime_id}/summary record the probe already fetches. That route returns the same unprojected summary record that ManagementService.get_trading_pulse passes to _resolve_ledger_pnl_currency (store.get_telemetry_summary and list_telemetry_summaries share one DomainTelemetryPort source). The facts read are positions[].currency/pnl_currency/quote_currency (else the per-symbol map), _currency_by_symbol, binding-matched _marks_by_symbol quote currency, positions_by_underlying instruments, ledgers/constituent_ledgers/member_virtual_books, mark_refs, known binding-matched quarter_equity_observations at pnl_at (and their mark_refs), last_fill.currency, and declared currency/ledger_currency/account_facts.currency. The code is written independently in the probe; it does not import the BFF and never reads /bff/management/trading-pulse.",
+    "single_mixed_unknown": "One currency gives that currency. More than one currency, raw or ledger pnl_currency_status mixed, or an active position without a currency and no declared currency gives None, so the runtime stays out of expected pnl_groups and pnl ranking eligibility, as #7872 keeps pnl_currency null.",
+    "raw_claim_rule": "If raw pnl_currency (or metrics.pnl_currency) is present and any ledger/position fact names another currency, or a constituent ledger is mixed, the probe records the named failure raw_pnl_currency_ledger_mismatch. Case is normalised before comparing ('twd' agrees with 'TWD').",
+    "uses_replaced": "The expected group tuple, the group value/covered match and pnl ranking comparability now use the ledger currency instead of raw.get('pnl_currency'). No existing failure name, threshold or case was removed or loosened."
+  },
+  "tests": {
+    "file": "acceptance/test_trading_pulse_operator.py",
+    "hosted_shape": "hosted_fixture(): three paper operators, raw pnl_currency null on all; two have TWD positions, last_fill and _currency_by_symbol with pnl_at 2026-11-22T12:00:00Z and 2026-11-23T23:34:52Z (two groups); one has no PnL and an empty ledger. Asserts pass with runtime_count 3 and persona_count 3.",
+    "still_fail": [
+      "group currency USD versus the TWD ledger fact -> pnl_group_scope_mismatch",
+      "group value 26.5 instead of 25.5 (one unit) -> pnl_group_value_mismatch",
+      "covered_persona_count 2 instead of 1 -> pnl_group_denominator_mismatch",
+      "eligible_persona_count 2 instead of 3 -> pnl_group_denominator_mismatch",
+      "raw pnl_currency USD with TWD positions -> raw_pnl_currency_ledger_mismatch"
+    ],
+    "mixed_or_unknown": "TWD+USD positions, an active position with no currency, and a mixed constituent ledger each fail with pnl_group_scope_mismatch while the pulse still shows a group for that runtime, and pass once the group and pnl ranking item are dropped (the #7872 null behaviour).",
+    "budget": "test_currency_needs_no_extra_request: still exactly one telemetry summary GET per runtime, no position or ledger endpoint.",
+    "commands": [
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q acceptance/test_trading_pulse_operator.py",
+        "exit_code": 0,
+        "result": "50 passed (39 existing + 11 new)"
+      }
+    ]
+  },
+  "hosted_run": {
+    "status": "not_run_by_owner",
+    "reason": "Auto workers hold no dev-login viewer secret (it lives only in the protected GitHub secret DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET), and the worker's gcloud credentials need interactive reauthentication, so the probe could not be run against hosted dev from this worker. No hosted JSON output is claimed.",
+    "how_it_is_proven": "The Dev release acceptance stage already runs probe:trading-pulse-operator read-only with the viewer identity and records its JSON verdict. The hosted acceptance for this task is the first Dev release after merge (BFF 8e67d240e or later) with probe:trading-pulse-operator passed; that JSON output should be appended here or to TRADING-PULSE-HOSTED-ACCEPTANCE-20261122."
+  },
+  "paper_pnl_emission": {
+    "question": "Do paper runtimes emit pnl only on fills (pnl_at 2026-11-23T23:34:52Z versus latest_report_at 2026-11-26T05:17Z)?",
+    "answer_from_code": "Not only on fills. services/execution/lean_runtime/paper_runtime.py _maybe_emit_performance_snapshots runs on every poll, values the portfolio with this cycle's marks (max mark age PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS, default 172800 s), and emits pnl_snapshot only when the valuation sample changes (new mark as_of or new fill). If marks are older than the limit or missing, valuation.sample is None and nothing is emitted; if the sample is unchanged it reports performance_sample_unchanged. Heartbeats keep latest_report_at moving, so pnl_at can lag it by days.",
+    "hosted_measurement": "not measured (no hosted access, see hosted_run). The 2.2-day gap is consistent with marks older than 48 h or unchanged marks; which one applies needs the hosted performance_telemetry status."
+  },
+  "residual_findings": [
+    {
+      "finding": "Possible stale PnL shown as current: the pulse groups a runtime whose pnl_at is days behind latest_report_at unless the raw summary marks it stale (staleness.is_stale/status/age_seconds). The probe applies the same rule, so it cannot show whether the page labels a 2-day-old PnL as current. Needs the hosted row (performance_context.pnl_at, staleness) to confirm.",
+      "disposition": "Recorded as a residual on the RC6 WP6.5 Trading Pulse row; no task created by this worker."
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "Read-only stage probe, once per Dev release.",
+    "extra_requests_per_runtime_per_release": 0,
+    "recurring_jobs_added_or_changed": 0,
+    "persistent_writers_added_or_changed": 0,
+    "persistent_growth_bytes_per_day_outside_releases": 0
+  }
+}
