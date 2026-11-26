@@ -6269,6 +6269,28 @@
     "file": "scripts/issue_dev_paper_principals.py",
     "contains": "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN"
    }
+  },
+  {
+   "name": "registry.entries expression index entries_artifact_type_idx ((payload ->> 'artifact_type'))",
+   "owner": "registry-svc schema (services/registry/pg_store.py PostgresRegistryStore._ensure_artifact_type_index; built by whichever registry store bootstraps first: registry-svc or research-orchestrator-svc)",
+   "writer": "CREATE INDEX IF NOT EXISTS at store bootstrap, once per table; every later bootstrap is a catalog no-op (0.7 ms measured); Postgres maintains the index on entry writes",
+   "task": "ALPHA-TEMPLATE-READ-FAST-20261126",
+   "register_class": "RC2",
+   "cadence": "built once; one index tuple added or updated per registry.entries row write (hosted ~300 rows a day)",
+   "count_at_hosted_scale": "one index entry per registry.entries row: 9,940 hosted rows (2026-11-25), measured fixture 10,182 rows",
+   "size": "88 KB (90,112 B) measured at 10,182 rows on Postgres 16; the key is the short artifact_type text, so about 9 B per row independent of payload size",
+   "size_per_day": "about 300 rows a day x ~9 B = about 2.7 KB a day",
+   "growth_per_day": "about 2.7 KB a day, linear in registry.entries rows",
+   "growth": "about 1 MB a year at the current row growth; build cost measured 68 ms once at 10,182 rows / 86 MB (non-concurrent CREATE INDEX holds a SHARE lock on registry.entries for that build only; hosted 56 MB table, expected well under a few seconds even with cold reads)",
+   "cap": "bounded by registry.entries rows (one entry per row); no separate data",
+   "cleanup": "follows registry.entries rows (deleted rows leave the index with vacuum); dropping the index is safe at any time, the previous release never reads it",
+   "readers": [
+    "services/registry/pg_store.py"
+   ],
+   "bound_proof": {
+    "file": "services/registry/pg_store.py",
+    "contains": "ARTIFACT_TYPE_INDEX_SQL = \"(payload ->> 'artifact_type')\""
+   }
   }
  ]
 }
