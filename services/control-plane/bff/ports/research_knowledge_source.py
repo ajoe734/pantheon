@@ -485,6 +485,20 @@ def _is_valid_health_usage_envelope(payload: Any) -> bool:
     return True
 
 
+def _registry_entry_identity(entry: Mapping[str, Any], requested_id: str) -> Dict[str, Any]:
+    """Identity fields of one Registry entry (no payload, no lineage)."""
+    out: Dict[str, Any] = {
+        "registry_id": str(entry.get("registry_id") or entry.get("artifact_id") or entry.get("id") or "").strip()
+        or requested_id,
+        "artifact_type": entry.get("artifact_type"),
+        "strategy_id": str(entry.get("strategy_id") or "").strip() or None,
+    }
+    for key in ("tenant_id", "owner_tenant"):
+        if entry.get(key) is not None:
+            out[key] = entry.get(key)
+    return out
+
+
 class ResearchKnowledgeSourcePort:
     """Typed domain port interface for Research, Knowledge, Memory, Search, and Source reads."""
 
@@ -732,6 +746,11 @@ class ResearchKnowledgeSourcePort:
 
     def read_registry_strategy_artifact_detail(
         self, artifact_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        raise NotImplementedError
+
+    def read_registry_entry_strategy(
+        self, entry_id: Optional[str]
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         raise NotImplementedError
 
@@ -4506,6 +4525,46 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if not isinstance(entry, Mapping) or entry.get("artifact_type") not in (None, "execution_bundle"):
             return None, "ok"
         return project_registry_catalog_detail(entry), "ok"
+
+    def read_registry_entry_strategy(
+        self, entry_id: Optional[str]
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        """The strategy id the Registry records for one entry of any artifact type.
+
+        One bounded owner read (``GET /api/registry/entries/{id}`` with the
+        caller's token and tenant header). Unlike
+        ``read_registry_strategy_artifact_detail`` it does not filter on
+        ``artifact_type`` (a ``strategy_spec`` entry answers too) and it only
+        projects the identity fields: ``registry_id``, ``artifact_type``,
+        ``strategy_id``, ``tenant_id`` and ``owner_tenant``. ``(None, "ok")``
+        means the owner has no such entry; any other status is a failed read.
+        """
+        clean_id = str(entry_id or "").strip()
+        if not clean_id:
+            return None, "ok"
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            row = self._registry_strategy_artifacts.get(clean_id)
+            if not isinstance(row, Mapping):
+                return None, "ok"
+            entry = row.get("entry") if isinstance(row.get("entry"), Mapping) else row
+            return _registry_entry_identity(entry, clean_id), "ok"
+        if not base_url:
+            return None, "unconfigured"
+        from urllib.parse import quote
+
+        status_code, payload = self._registry_http_get(
+            base_url,
+            f"/api/registry/entries/{quote(clean_id, safe='')}",
+        )
+        if status_code in (404, 403):
+            return None, "ok"
+        if status_code != 200 or not isinstance(payload, dict):
+            return None, "failed"
+        entry = payload.get("entry") if isinstance(payload.get("entry"), Mapping) else payload
+        if not isinstance(entry, Mapping):
+            return None, "failed"
+        return _registry_entry_identity(entry, clean_id), "ok"
 
     def read_registry_strategy_artifacts_for_strategy(
         self, strategy_id: Optional[str]

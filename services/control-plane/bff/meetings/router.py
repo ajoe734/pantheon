@@ -14,11 +14,15 @@ from services.control_plane.bff.models import ErrorCode, utc_now as default_utc_
 from services.control_plane.bff.core.display_names import DisplayNameResolver, current_resolver
 
 from .client import (
+    GATE_PANEL_SESSION_CLASS,
     MEETING_OPERATOR_REVIEW_NOTE_MAX_CHARS,
     MeetingsOwnerClient,
     MeetingsOwnerNotFoundError,
     MeetingsOwnerUnavailableError,
     MeetingsOwnerValidationError,
+    gate_panel_matches,
+    shape_gate_panel_detail,
+    shape_gate_panel_item,
     shape_meeting_catalogue,
     shape_meeting_detail,
     shape_meeting_list,
@@ -166,6 +170,39 @@ def _annotate_meeting_envelope(payload: Any) -> Any:
     return payload
 
 
+_GATE_PANEL_CLOSED = frozenset({"published", "completed", "closed"})
+
+
+def _merge_gate_panels(envelope: Dict[str, Any], panels: List[Dict[str, Any]], surface: Dict[str, Any]) -> Dict[str, Any]:
+    """Add persona gate panels to a shaped meetings list; every row newest first."""
+    if not isinstance(envelope, dict) or envelope.get("status") != "ok":
+        return envelope
+    rows = [r for r in envelope.get("items") or [] if isinstance(r, dict)] + panels
+    rows.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("meeting_id") or "")), reverse=True)
+    envelope["items"] = rows
+    envelope["empty"] = not rows
+    data = envelope.get("data") if isinstance(envelope.get("data"), dict) else None
+    if data is not None:
+        data["items"] = rows
+        data["empty"] = not rows
+        summary = data.get("summary") if isinstance(data.get("summary"), dict) else None
+        if summary is not None:
+            summary["total_items"] = int(summary.get("total_items") or 0) + len(panels)
+            summary["returned_items"] = len(rows)
+            summary["gate_panel_count"] = len(panels)
+            closed = sum(1 for p in panels if str(p.get("status") or "").lower() in _GATE_PANEL_CLOSED)
+            summary["closed_count"] = int(summary.get("closed_count") or 0) + closed
+            summary["open_count"] = int(summary.get("open_count") or 0) + len(panels) - closed
+    page_info = envelope.get("page_info") if isinstance(envelope.get("page_info"), dict) else None
+    if page_info is not None:
+        page_info["total"] = int(page_info.get("total") or 0) + len(panels)
+        page_info["returned"] = len(rows)
+    meta = envelope.get("meta") if isinstance(envelope.get("meta"), dict) else None
+    if meta is not None and isinstance(meta.get("surfaces"), dict):
+        meta["surfaces"]["gate_panels"] = surface
+    return envelope
+
+
 def create_meetings_router(
     *,
     extract_identity: Callable[..., Any],
@@ -220,13 +257,52 @@ def create_meetings_router(
             )
         except MeetingsOwnerUnavailableError as exc:
             return unavailable_meetings_envelope("meetings", exc.reason, snapshot_at=snap)
-        return _annotate_meeting_envelope(shape_meeting_list(
+        shaped = shape_meeting_list(
             owner_payload,
             is_operator=is_operator,
             caller_user_id=caller_user_id,
             snapshot_at=snap,
             limit=eff_limit,
-        ))
+        )
+        # Persona gate panels (moved out of the Agora committee on 2026-11-26) are
+        # listed on the first page beside deliberative meetings.
+        panels: List[Dict[str, Any]] = []
+        surface: Dict[str, Any] = {"status": "ok", "source": "consultation", "snapshot_at": snap}
+        panel_client = make_client(tenant_id, actor_id) if not eff_cursor else None
+        if panel_client is not None and not hasattr(panel_client, "list_gate_panels"):
+            # An injected owner adapter without gate-panel reads: say so, never guess.
+            surface = {"status": "unavailable", "source": "consultation", "snapshot_at": snap,
+                       "reason": "gate_panel_reader_unavailable"}
+        elif panel_client is not None:
+            try:
+                panels = _read_gate_panels(
+                    panel_client,
+                    status=status,
+                    meeting_type=eff_type,
+                    persona_id=eff_persona,
+                )
+            except (MeetingsOwnerUnavailableError, MeetingsOwnerNotFoundError) as exc:
+                surface = {"status": "unavailable", "source": "consultation", "snapshot_at": snap,
+                           "reason": getattr(exc, "reason", "consultation_owner_unavailable")}
+        return _annotate_meeting_envelope(_merge_gate_panels(shaped, panels, surface))
+
+    def _read_gate_panels(
+        client: MeetingsOwnerClient,
+        *,
+        status: Optional[str],
+        meeting_type: Optional[str],
+        persona_id: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        if meeting_type and meeting_type.strip().lower() not in {GATE_PANEL_SESSION_CLASS, "persona_panel"}:
+            return []
+        names = current_resolver()
+        rows: List[Dict[str, Any]] = []
+        for request_row in client.list_gate_panels():
+            transcript = client.get_gate_panel_transcript(str(request_row["request_id"]))
+            item = shape_gate_panel_item(request_row, transcript, names=names)
+            if gate_panel_matches(item, status=status, meeting_type=meeting_type, persona_id=persona_id):
+                rows.append(item)
+        return rows
 
     def _handle_list_proposals(
         request: Request,
@@ -293,9 +369,17 @@ def create_meetings_router(
         )
         snap = now_fn()
         actor_id = getattr(identity, "operator_id", None) or caller_user_id or "viewer"
+        owner_client = make_client(tenant_id, actor_id)
         try:
-            raw_detail = make_client(tenant_id, actor_id).get_meeting(meeting_id)
+            raw_detail = owner_client.get_meeting(meeting_id)
         except MeetingsOwnerNotFoundError as exc:
+            # Not a deliberative meeting: a persona gate panel is served here too.
+            try:
+                return _annotate_meeting_envelope(_gate_panel_detail(owner_client, meeting_id, tenant_id, snap))
+            except MeetingsOwnerNotFoundError:
+                pass
+            except MeetingsOwnerUnavailableError as panel_exc:
+                return unavailable_meetings_envelope("meeting_detail", panel_exc.reason, snapshot_at=snap)
             raise err_fn(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -317,6 +401,18 @@ def create_meetings_router(
             snapshot_at=snap,
             tenant_id=tenant_id,
         ))
+
+    def _gate_panel_detail(
+        client: MeetingsOwnerClient, panel_id: str, tenant_id: str, snap: str
+    ) -> Dict[str, Any]:
+        if not hasattr(client, "get_gate_panel"):
+            raise MeetingsOwnerNotFoundError(panel_id)
+        request_row = client.get_gate_panel(panel_id)
+        transcript = client.get_gate_panel_transcript(panel_id)
+        memos = client.list_gate_panel_memos(panel_id)
+        return shape_gate_panel_detail(
+            request_row, transcript, memos, tenant_id=tenant_id, snapshot_at=snap, names=current_resolver()
+        )
 
     def _handle_convene_meeting(
         body: OperatorConveneMeetingRequest,

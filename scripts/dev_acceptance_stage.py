@@ -63,6 +63,14 @@ MAX_CRAWL_ROUTES = 300
 MAX_FAILED_ROUTES = 50
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 FAILING_MOCK_FINDINGS = {"seed_fallback_armed", "mock_write_success"}
+# Failed-read detail per failed route (ACCEPTANCE-CRAWL-CARRY-FAILED-READS-20261126). execute-plans
+# #1108 records routes[].failedReads (counted first, capped 12/route and 300/run upstream); the release
+# artifact keeps an allowlisted copy capped at 12 per failed route and 100 per run, so a bad release
+# adds at most ~100 small entries. Ok routes carry nothing extra.
+FAILED_READ_CAP_PER_ROUTE = 12
+FAILED_READ_CAP_PER_RUN = 100
+FAILED_READ_REASONS = {"http_status", "network_error", "pending_response", "pending_body",
+                       "unexpected_status", "invalid_body"}
 
 
 def _now() -> str:
@@ -303,9 +311,59 @@ def _route_error(route: dict) -> str:
     return ", ".join(str(r) for r in reasons)[:240]
 
 
+def _read_path(value) -> str:
+    """Pathname only: scheme, host, query (keys and values) and fragment are dropped."""
+    text = str(value or "")
+    path = urllib.parse.urlsplit(text).path if "://" in text else text.split("?", 1)[0].split("#", 1)[0]
+    return path[:200]
+
+
+def _failed_read(read: dict) -> dict:
+    """Allowlisted copy of one execute-plans failedReads entry; every other field is dropped."""
+    status = read.get("status")
+    entry = {"method": str(read.get("method") or "GET").upper()[:10], "path": _read_path(read.get("path")),
+             "status": status if isinstance(status, int) and not isinstance(status, bool) else None,
+             "counted": read.get("counted") is True}
+    reason = read.get("reason") if read.get("reason") in FAILED_READ_REASONS else None
+    if entry["status"] is None:  # error name only: first token, no query, never the free-text message
+        error = re.sub(r"\s+", " ", str(read.get("error") or "")).strip()
+        entry["error"] = (error.split(" ", 1)[0].split("?", 1)[0] or reason or "request_failed")[:80]
+    if reason:
+        entry["reason"] = reason
+    elapsed = read.get("elapsedMs")
+    if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool):
+        entry["elapsedMs"] = max(0, int(elapsed))
+    return entry
+
+
+def _failed_reads(route: dict, budget: int) -> tuple[list[dict], int]:
+    """(kept reads, omitted count) for one failed route; counted reads first, capped per route and run."""
+    reads = [r for r in route.get("failedReads") or [] if isinstance(r, dict)] \
+        if isinstance(route.get("failedReads"), list) else []
+    reads = [r for r in reads if r.get("counted") is True] + [r for r in reads if r.get("counted") is not True]
+    keep = min(len(reads), FAILED_READ_CAP_PER_ROUTE, max(0, budget))
+    upstream = route.get("failedReadsOmitted")
+    upstream = upstream if isinstance(upstream, int) and not isinstance(upstream, bool) and upstream > 0 else 0
+    return [_failed_read(r) for r in reads[:keep]], len(reads) - keep + upstream
+
+
+def _first_counted_read(route: dict) -> str:
+    read = next((r for r in route.get("failedReads") or [] if r.get("counted")), None)
+    if not read:
+        return ""
+    outcome = read["status"] if read.get("status") is not None else read.get("error", "")
+    elapsed = f" {read['elapsedMs']}ms" if "elapsedMs" in read else ""
+    return f"; first failed read {read['method']} {read['path']} {outcome}{elapsed}"
+
+
 def summarize_crawl(manifest: dict) -> dict:
-    """Routes and statuses only: no token, no response body, no request URL query."""
+    """Routes and statuses only: no token, no response body, no request URL query.
+
+    Failed routes also carry a bounded, allowlisted copy of the crawl's failedReads
+    (method, path, status or error name, counted, elapsedMs) and failedReadsOmitted.
+    """
     routes, failed, non_get = [], [], set()
+    read_budget = FAILED_READ_CAP_PER_RUN
     for route in (manifest.get("routes") or [])[:MAX_CRAWL_ROUTES]:
         if not isinstance(route, dict):
             continue
@@ -315,8 +373,14 @@ def summarize_crawl(manifest: dict) -> dict:
                  "dataPass": bool((route.get("dataCheck") or {}).get("pass"))}
         if problems:
             entry["problems"] = problems
-            failed.append({"path": entry["path"], "status": entry["status"], "problems": problems,
-                           "error": _route_error(route)})
+            failed_route = {"path": entry["path"], "status": entry["status"], "problems": problems,
+                            "error": _route_error(route)}
+            if "failedReads" in route or "failedReadsOmitted" in route:  # absent in pre-#1108 manifests
+                reads, omitted = _failed_reads(route, read_budget)
+                read_budget -= len(reads)
+                failed_route["failedReads"] = reads
+                failed_route["failedReadsOmitted"] = omitted
+            failed.append(failed_route)
         routes.append(entry)
         for request in route.get("bffRequests") or []:
             method = str((request or {}).get("method") or "GET").upper()
@@ -405,7 +469,8 @@ def crawl_check(*, frontend_dir: Path | None, prepared: str, identity: dict, ide
         return _crawl_result("passed", exit_code=code, seconds=seconds, failed_routes=[],
                              detail=f"{summary['routeCount']} routes crawled; overall {summary['overall']}{note}"), artifact
     artifact["status"] = "failed"
-    named = "; ".join(f"{r['path']} ({r['status']}: {r['error']})" for r in summary["failedRoutes"][:10])
+    named = "; ".join(f"{r['path']} ({r['status']}: {r['error']}{_first_counted_read(r)})"
+                      for r in summary["failedRoutes"][:10])
     detail = (f"failed routes: {named}" if named else "no failing route") + \
         f"; crawl failures: {', '.join(summary['failures']) or 'none'}{note}"
     return _crawl_result("failed", exit_code=code, seconds=seconds, detail=detail,

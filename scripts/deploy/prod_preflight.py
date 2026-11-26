@@ -775,6 +775,10 @@ def _cli() -> int:
     rb.add_argument("--approvals", type=Path, required=True)
     rb.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
     rb.add_argument("--initiator", default="")
+    rvm = sub.add_parser("replace-vm", help="replace_vm operation preflight: production config + genuine Environment approval (no manifest/evidence)")
+    rvm.add_argument("--approvals", type=Path, required=True)
+    rvm.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
+    rvm.add_argument("--initiator", default="")
     vm = sub.add_parser("vm-size", help="read-only: fail closed if the control VM or instance template has fewer than 8 vCPUs")
     vm.add_argument("--vcpus", default=None, help="observed vCPU count (e.g. gcloud machineType guestCpus or nproc)")
     vm.add_argument("--machine-type", default="", help="observed machineType (e.g. e2-standard-8)")
@@ -818,14 +822,15 @@ def _cli() -> int:
             check_config(os.environ)
             print(json.dumps({"status": "config_ok"}))
             return 0
-        if args.command == "rollback":
+        if args.command in ("rollback", "replace-vm"):
             check_config(os.environ)
             try:
                 approvals = json.loads(args.approvals.read_text(encoding="utf-8"))
                 env_policy = json.loads(args.env_policy.read_text(encoding="utf-8")) if args.env_policy else None
             except (OSError, json.JSONDecodeError) as exc:
                 raise PreflightError(f"cannot read approval record or environment policy: {exc}") from exc
-            print(json.dumps({"status": "rollback_preflight_passed",
+            status_name = "rollback_preflight_passed" if args.command == "rollback" else "replace_vm_preflight_passed"
+            print(json.dumps({"status": status_name,
                               "approver": check_approval(approvals, args.initiator, env_policy)}, sort_keys=True))
             return 0
         result = run_all(

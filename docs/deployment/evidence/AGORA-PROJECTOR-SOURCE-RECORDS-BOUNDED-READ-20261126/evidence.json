@@ -1,0 +1,92 @@
+{
+  "task_id": "AGORA-PROJECTOR-SOURCE-RECORDS-BOUNDED-READ-20261126",
+  "class": "RC3",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "cause": "scripts/project_market_data_to_bff_agora_surfaces.py called GET /api/source-ingest/source-records with no filter; the route returns every source record of the tenant (hosted source_evidence 422 MB, ~128k rows) through PostgresSourceEvidenceRepository._read_many (whole tenant payload scan, ORDER BY append_id ASC). The projector keeps only connector tw-twse-tpex-official-market rows, but the read exceeded its 30 s urllib timeout, failing the market and FinMind valuation steps of every Taiwan refresh.",
+  "change": {
+    "pg_store": {
+      "index": "source_evidence_source_connector_page_idx ON source_evidence (evidence_tenant_id, (payload->>'connector_id'), append_id DESC) WHERE record_type = 'source_record'; added to _CONCURRENT_LOOKUP_INDEX_SPECS so it is built with CREATE INDEX CONCURRENTLY at service start (writers not blocked) and repaired if left invalid; the validity probe now checks every spec via relname = ANY(%s) instead of a fixed pair",
+      "method": "PostgresSourceEvidenceRepository.list_source_records_page(tenant_id, connector_id=, limit=, before_append_id=) -> (records, next_cursor): one tenant, one connector, newest append first, LIMIT page+1 keyset on append_id; page clamped to SOURCE_RECORD_PAGE_MAX = 1000; rejects empty/wildcard tenant and empty connector; re-checks tenant and connector of every decoded row",
+      "backend_neutral_helper": "read_source_records_page(repository, tenant, connector_id=, limit=, cursor=): Postgres owner uses the index method; in-memory/JSONL owners (local/test) return the same newest-first contract with an offset cursor"
+    },
+    "route": {
+      "path": "GET /api/source-ingest/source-records",
+      "unfiltered": "unchanged contract: without connector_id it still returns {source_records: [...]} for the whole tenant",
+      "paged_mode": "connector_id (1..200 chars) selects one bounded page: page_size default 200, max 1000 (422 above), page_token opaque integer cursor (400 if invalid); response {source_records, connector_id, page_size, next_page_token|null}; page_size/page_token without connector_id -> 400 so a caller can never believe it got a bounded page while receiving the whole tenant list; owner errors -> 503 as before",
+      "auth": "same _source_read_tenant strict JWT + explicit tenant admission as the unfiltered list"
+    },
+    "projector": "_get_source_records pages connector_id=tw-twse-tpex-official-market newest first, page_size 1000 (AGORA_MARKET_SOURCE_PAGE_SIZE, clamped to 1000), stops on next_page_token=null or after 10,000 rows (AGORA_MARKET_SOURCE_MAX_RECORDS) with a stderr note; rows past the cap are older appends than every row read. project() and write_projection() are unchanged."
+  },
+  "other_callers_of_unfiltered_list": [
+    {
+      "caller": "services/control-plane/bff/console_gap/alpha_factory.py",
+      "path": "never requests it: listed in FORBIDDEN_UNBOUNDED_PATHS and asserted by services/control-plane/bff/tests/test_bff_alpha_factory_contract.py"
+    },
+    {
+      "caller": "scripts/deploy_nonprod_vm.sh fetch_finmind_source_records (FinMind coverage gate)",
+      "path": "bounded per-run bundle + per-id /api/source-ingest/source-records/{source_id} read; scripts/test_deploy_nonprod_vm.py asserts the unfiltered list is not requested"
+    },
+    {
+      "caller": "scripts/run_source_search_live_connector_smoke.py, scripts/smoke_source_search_bounded.py, scripts/smoke_honest_stack.py",
+      "path": "single-record /api/source-ingest/source-records/{source_id} only"
+    },
+    {
+      "caller": "tests only: services/source_ingestion/test_service.py, test_src001_source_record_contract.py, tests/e2e/test_source_to_strategy_spec.py",
+      "path": "unfiltered list against small in-memory fixtures; contract unchanged and still passing"
+    },
+    {
+      "caller": "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "path": "moved to the connector-scoped paged mode by this task"
+    }
+  ],
+  "verification": {
+    "environment": "local postgres:16-alpine container, psycopg 3, Python 3.12 venv with services/source_ingestion/requirements.txt",
+    "commands": [
+      "SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres AGORA_PROJECTOR_READ_MEASUREMENTS=<scratch> python -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py  -> 32 passed",
+      "python -m pytest -q services/source_ingestion/test_service.py services/source_ingestion/test_src001_source_record_contract.py services/source_ingestion/test_pg_store.py services/source_ingestion/test_postgres_store.py services/source_ingestion/tests/test_evidence_read_cost.py services/source_ingestion/tests/test_pg_connection_reuse.py services/source_ingestion/tests/test_source_registry_read_cost.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py -> 116 passed, 4 skipped"
+    ],
+    "real_pg_volume_test": {
+      "test": "scripts/test_project_market_data_to_bff_agora_surfaces.py::test_real_pg_projector_reads_only_its_connector_bounded_and_projects_identically",
+      "seed": "120,000 source_record rows (~2.9 KB payload each, hosted averages ~3.3 KB) in one table: 6 other connectors interleaved with 12 daily runs of 150 symbols of tw-twse-tpex-official-market for tenant-dev and the same for tenant-other",
+      "asserts": [
+        "projector read returns exactly the 1,800 tenant-dev rows of its connector, newest append first, no other connector, no other tenant",
+        "every request carried connector_id and page_size; the unfiltered list was never requested; 4 requests for 1,800 rows at page 500",
+        "read time < 5.0 s (stated budget; measured 0.231 s)",
+        "project(paged rows) == project(whole tenant list) for the same readback and clock: identical agora_watchlist and agora_signals (150 symbols)",
+        "EXPLAIN of the page query is an Index Scan using source_evidence_source_connector_page_idx with no Seq Scan"
+      ],
+      "measured": {
+        "seeded_rows": 120000,
+        "table_total_bytes": 155992064,
+        "before_rows_read_per_refresh": 118200,
+        "before_payload_bytes_per_refresh": 66994140,
+        "after_rows_read_per_refresh": 1800,
+        "after_payload_bytes_per_refresh": 1049572,
+        "after_http_response_bytes": 5847199,
+        "after_requests": 4,
+        "after_read_seconds": 0.231,
+        "page_plan": "Limit -> Index Scan using source_evidence_source_connector_page_idx; Index Cond: evidence_tenant_id = 'tenant-dev' AND payload->>'connector_id' = 'tw-twse-tpex-official-market' AND append_id < cursor"
+      },
+      "other_tests": [
+        "test_real_pg_connector_page_cap_cursor_and_tenant_scope: page_size 1001 -> 422, paging without connector_id -> 400, bad token -> 400, two 7-row pages equal the 14 newest connector rows, unknown connector -> empty page with null token",
+        "test_in_memory_owner_page_matches_postgres_contract: JSONL/in-memory owners page newest-first by connector and tenant, wildcard tenant rejected",
+        "test_projector_pages_until_last_token_and_stops_at_cap: follows next_page_token to the end and stops at max_records"
+      ]
+    },
+    "existing_test_file": "All 28 pre-existing tests pass and no assertion was removed or loosened. test_projector_wrong_role_fails_closed already failed on dev a499d632e because 721eedcfa (EVALUATOR-EXISTING-OWNER-READ-CONTRACT-20261012) admitted 'viewer' as a source-ingest reader; its token role changed from 'viewer' to 'guest' (outside _SOURCE_INGEST_READ_ROLES) so the same 403 fail-closed assertion is exercised again."
+  },
+  "runtime_budget": {
+    "before_hosted": "every refresh: all ~128k tenant source_evidence source_record rows, ~422 MB of payload, decoded and serialized in one response; > 30 s (client timeout)",
+    "after_hosted": "every refresh: only tw-twse-tpex-official-market rows of the tenant, at most 10,000 rows in at most 10 index-range pages of 1000; at ~3.3 KB/row at most ~33 MB payload, typically the connector's own row count when below the cap",
+    "growth_per_day_of_projected_connector": "one new source_record per symbol per changed daily row (source_id carries the row hash) on each trading day: bounded by the connector max_records per venue run (default 100, full-market profile up to the listed TWSE/TPEx universe, ~1,900 symbols); the read is capped at 10,000 rows regardless of growth, i.e. about five full-market sessions, while the projection only needs the newest row per symbol. Exact hosted count to be recorded at hosted acceptance with: SELECT COUNT(*), SUM(pg_column_size(payload)) FROM source_ingest.source_evidence WHERE record_type='source_record' AND evidence_tenant_id=<tenant> AND payload->>'connector_id'='tw-twse-tpex-official-market' AND created_at >= now() - interval '1 day'",
+    "cap": "owner page cap 1000 rows (SOURCE_RECORD_PAGE_MAX); projector total cap 10,000 rows (AGORA_MARKET_SOURCE_MAX_RECORDS)",
+    "index_cost": "one partial btree on source_record rows only (tenant text, connector text, bigint); built CONCURRENTLY at source-ingest start, maintained on source_record inserts",
+    "new_writers": "none: no new table, file or writer; the projector still writes the same two BFF JSON stores (agora_watchlist, agora_signals) in place"
+  },
+  "hosted_acceptance": {
+    "status": "pending deploy",
+    "criterion": "the next Dev Taiwan Market Daily Refresh after deploy shows the market step (and FinMind valuation step) without the projector source-records timeout"
+  },
+  "review_independence": "Owner Claude (Anthropic family); assigned reviewer Antigravity (different model family)."
+}

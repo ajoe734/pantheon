@@ -1,0 +1,327 @@
+{
+ "task": "DAILY-BARS-COMPLETION-RESUMABLE-INDEX-20261126",
+ "class": "RC2",
+ "follows": "DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125 (#7848)",
+ "hosted_facts_before_fix": {
+  "source": "read-only, pantheon-dev-deploy container pantheon-source-ingest-1, 2026-11-26 ~14:40Z",
+  "state_file_bytes": 71098,
+  "indexed_partitions": 10,
+  "files_by_date_trade_dates": 10,
+  "files_by_date_paths": 1009,
+  "days": {
+   "complete": [
+    "2026-11-16",
+    "2026-11-26"
+   ],
+   "source_has_no_values": "2026-11-17 to 2026-11-25 (2 to 6 traded rows each left null by value_unit_mismatch; the rest filled)"
+  },
+  "last_run": {
+   "stopped": "seconds",
+   "elapsed_seconds": 20.808,
+   "completed_days": 0,
+   "indexed_partitions": 0,
+   "baseline_rss_mb": 3326.5,
+   "peak_rss_mb": 3848.7
+  },
+  "root_cause": "trade date 2026-11-13 is eligible (all partitions >= it indexed) and files_by_date holds 201 files (346 MB) for it; _complete_day read them all in one call and returned nothing when the 20 s budget hit (522 MB RSS growth with the whole day of records in memory), so no call ever progressed; the next unindexed partitions (2026-11-12 120 MB, 11-11 143 MB) would hit the same wall in _index_partition, which read a whole partition with no check inside",
+  "run_files": {
+   "partitions": 497,
+   "files": 8813,
+   "bytes": 13600607087,
+   "max_file_bytes": 4016900,
+   "gz_files": 0,
+   "oldest_partition": "date=2024-11-11"
+  },
+  "container": {
+   "memory_limit_bytes": 6442450944,
+   "rss_kb_pid1": 3338040,
+   "nproc": 12
+  },
+  "read_rates_read_only": {
+   "index_whole_partition_2026-11-13": {
+    "files": 201,
+    "bytes": 361182377,
+    "rows": 97271,
+    "seconds": 31.5,
+    "mb_per_s": 11.5,
+    "trade_dates": [
+     "2026-11-13"
+    ]
+   },
+   "index_partition_2025-06-10": {
+    "files": 11,
+    "bytes": 22517102,
+    "seconds": 1.18,
+    "mb_per_s": 19.0
+   },
+   "newest_40_files_of_2026-11-13": {
+    "bytes": 136582985,
+    "rows": 36657,
+    "index_mb_per_s": 24.4,
+    "extract_rows_stage_mb_per_s": 9.8
+   },
+   "how": "python3 in the running container under nice -n 10, reading only (DailyBarsStore pointed at a nonexistent root, extract_rows only); peak RSS of the measuring process 66 MB"
+  }
+ },
+ "fix": {
+  "unit_of_progress": "one run file (at most 4 MB on hosted); no byte offset needed",
+  "index": "state['indexing'][partition] = {files, dates} for a partition read part way; saved when the call stops inside it; finished partitions move to state['indexed'] with dates and files counts; v1 state files without 'indexing' load unchanged (hosted keeps its 10 indexed partitions)",
+  "day": "daily_bars_completion_stage/<trade date>.json holds done file paths, compact bars {market|symbol|date: [open, high, low, close, volume, traded_value]}, conflicted keys and rejection counts; applied once with DailyBarsStore.complete_day_values when every indexed file of the day is staged, then deleted; stages of days no longer stored are deleted at the end of a call",
+  "merge_rule": "per file extract_rows, then DailyBarsStore._merge_copies across files (larger volume wins, tie later); a price disagreement inside a file (re-extracted per record to find the key) or across files refuses the key as conflicting_duplicate, counted once, exactly as one extract_rows pass over all files",
+  "progress_guarantee": "out_of_budget checks memory first always, seconds only after report['progress'] > 0, so a call stopped on seconds has always saved at least one file; a memory stop with no progress stays a visible failure (failed=true)",
+  "writer_loop": "MarketDataStorageWriter continues while a call stopped on days/seconds/partitions and report['progress'] > 0 (5 s apart, at most 400 calls)",
+  "no_reread": "a day whose retained files were all staged gets 'complete' or 'source_has_no_values' (filled_rows recorded); the old 'partial' status re-read the whole day on the next call to fill nothing",
+  "unchanged_guarantees": [
+   "only null values filled, a non-null value never overwritten",
+   "disagreeing source refused and counted (conflicts)",
+   "unretained days listed",
+   "one new manifest generation and digest per filled day",
+   "memory guards growth 768 MB and ceiling 5120 MB against the 6 GiB limit"
+  ]
+ },
+ "measurement_hosted_shape": {
+  "fixture": "real hosted run files of partitions date=2026-11-13 (201 files, 345 MB) and date=2026-11-12 (44 files, 120 MB) and the real stored days 2026-11-12 (7,718 traded rows) and 2026-11-13 (7,467), all null volume/value, copied read-only into a local scratch root",
+  "local_vs_hosted_speed": "local index 81-83 MB/s vs hosted 11.5-24.4 MB/s; local extract 26.8 MB/s vs hosted 9.8 MB/s (factor 2.7 to 7)",
+  "budget_20s_local": {
+   "calls": [
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 20.284,
+     "growth_mb": 27.4,
+     "indexed_files": 201,
+     "indexed_partitions": 1,
+     "staged_files": 89,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 290,
+     "state_bytes": 14587,
+     "stage_bytes": 507796
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 20.24,
+     "growth_mb": 74.3,
+     "indexed_files": 44,
+     "indexed_partitions": 1,
+     "staged_files": 140,
+     "completed_days": [
+      "2026-11-13"
+     ],
+     "unchanged_days": [],
+     "filled_rows": 7463,
+     "rejected": {
+      "bad_close": 6,
+      "value_unit_mismatch": 52
+     },
+     "progress": 185,
+     "state_bytes": 17979,
+     "stage_bytes": 520843
+    },
+    {
+     "stopped": null,
+     "elapsed_seconds": 3.456,
+     "growth_mb": 25.5,
+     "indexed_files": 0,
+     "indexed_partitions": 0,
+     "staged_files": 16,
+     "completed_days": [
+      "2026-11-12"
+     ],
+     "unchanged_days": [],
+     "filled_rows": 7717,
+     "rejected": {
+      "bad_close": 20,
+      "value_unit_mismatch": 5
+     },
+     "progress": 17,
+     "state_bytes": 18223,
+     "stage_bytes": 0
+    }
+   ],
+   "total_wall_s": 44.0
+  },
+  "budget_6s_emulating_hosted": {
+   "calls": [
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 6.03,
+     "growth_mb": 1.7,
+     "indexed_files": 163,
+     "indexed_partitions": 0,
+     "staged_files": 0,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 163,
+     "state_bytes": 16499,
+     "stage_bytes": 0
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 6.073,
+     "growth_mb": 23.2,
+     "indexed_files": 38,
+     "indexed_partitions": 1,
+     "staged_files": 26,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 64,
+     "state_bytes": 14584,
+     "stage_bytes": 407762
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 6.197,
+     "growth_mb": 0.8,
+     "indexed_files": 0,
+     "indexed_partitions": 0,
+     "staged_files": 48,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 48,
+     "state_bytes": 14584,
+     "stage_bytes": 506745
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 6.19,
+     "growth_mb": 0.1,
+     "indexed_files": 0,
+     "indexed_partitions": 0,
+     "staged_files": 61,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 61,
+     "state_bytes": 14583,
+     "stage_bytes": 511016
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 7.033,
+     "growth_mb": 77.4,
+     "indexed_files": 0,
+     "indexed_partitions": 0,
+     "staged_files": 66,
+     "completed_days": [
+      "2026-11-13"
+     ],
+     "unchanged_days": [],
+     "filled_rows": 7463,
+     "rejected": {
+      "bad_close": 6,
+      "value_unit_mismatch": 52
+     },
+     "progress": 67,
+     "state_bytes": 14880,
+     "stage_bytes": 0
+    },
+    {
+     "stopped": "seconds",
+     "elapsed_seconds": 6.133,
+     "growth_mb": 0.0,
+     "indexed_files": 44,
+     "indexed_partitions": 1,
+     "staged_files": 15,
+     "completed_days": [],
+     "unchanged_days": [],
+     "filled_rows": 0,
+     "rejected": {},
+     "progress": 59,
+     "state_bytes": 17974,
+     "stage_bytes": 410015
+    },
+    {
+     "stopped": null,
+     "elapsed_seconds": 5.598,
+     "growth_mb": 16.0,
+     "indexed_files": 0,
+     "indexed_partitions": 0,
+     "staged_files": 29,
+     "completed_days": [
+      "2026-11-12"
+     ],
+     "unchanged_days": [],
+     "filled_rows": 7717,
+     "rejected": {
+      "value_unit_mismatch": 5,
+      "bad_close": 20
+     },
+     "progress": 30,
+     "state_bytes": 18225,
+     "stage_bytes": 0
+    }
+   ],
+   "total_wall_s": 43.3,
+   "max_call_seconds": 7.033,
+   "max_rss_growth_mb": 77.4
+  },
+  "result": {
+   "2026-11-13": {
+    "filled_rows": 7463,
+    "left_null": 4,
+    "digest_after": "1beba552f57f4c67c7363666e2a42a58dc5890cfc4f1800e97043f56dad57e67"
+   },
+   "2026-11-12": {
+    "filled_rows": 7717,
+    "left_null": 1,
+    "digest_after": "713459511bc2befe30d512ee52802d3ed2a8efd51da89d18f45b56cf022c70d9"
+   },
+   "same_digests_in_all_three_runs": true,
+   "note": "the left-null rows are value_unit_mismatch / bad_close rejections, not lost work"
+  }
+ },
+ "backlog_estimate_hosted": {
+  "bytes_to_read": "13.6 GB indexed once plus about 13.6 GB staged (one trade date per partition on hosted)",
+  "conservative_rates": "index 11.5 MB/s, stage 4.6 MB/s (9.8 x 11.5/24.4): 1,183 s + 2,957 s = 4,140 s = 207 calls of 20 s",
+  "emulation_scaling": "7 calls for 0.465 GB at hosted pace: 205 calls for 13.6 GB",
+  "day_bound": "484 days at 3 a call needs at least 162 calls (overlaps the read work on the small old partitions)",
+  "calls": "about 205 to 260",
+  "wall_time": "about 1.5 to 2 h of the completion thread (20 s calls + 5 s pauses) after the first daily bars write that follows deploy; under COMPLETION_MAX_CALLS 400, so one trigger finishes the backlog; if a slower host needs more, the next daily write continues from the saved state (2 days worst case)",
+  "memory": "hosted baseline 3326 MB + growth bound 768 = 4094 MB < ceiling 5120 MB < limit 6144 MB; measured per-call growth <= 77 MB (one file's records in memory instead of a whole day: old hosted call grew 522 MB)"
+ },
+ "runtime_budget": {
+  "state_file_at_full_backlog": "files_by_date ~8,813 paths x ~67 B = ~590 KB, days 484 x ~300 B = ~145 KB, indexed 497 x ~45 B = ~22 KB, indexing <= ~5 KB: about 0.76 MB (bounded at 0.9 MB in the manifest); hosted today 71,098 B",
+  "stage_files": "one per day in progress, 0.41 to 0.52 MB measured on a hosted day, deleted when applied",
+  "storage_manifest": "docs/operations/storage-manifest.json runtime_budgets 'daily_bars completion state' updated (stage directory, sizes, cadence); scripts/check_storage_manifest.py passed"
+ },
+ "tests": {
+  "file": "services/source_ingestion/tests/test_daily_bars_completion.py",
+  "new": [
+   "test_a_partition_and_a_day_larger_than_one_call_resume_file_by_file_and_never_end_without_progress",
+   "test_the_index_state_records_the_files_read_inside_a_partition",
+   "test_a_staged_day_matches_one_pass_over_all_files_including_cross_file_conflicts",
+   "test_a_conflict_inside_one_file_is_refused_even_when_another_file_agrees",
+   "test_the_writer_thread_continues_while_calls_progress_file_by_file",
+   "test_a_v1_state_without_indexing_loads_and_keeps_its_indexed_partitions",
+   "test_a_day_whose_files_were_all_staged_is_not_read_again_for_rows_the_source_cannot_fill"
+  ],
+  "runs": [
+   "test_daily_bars_completion.py: 18 passed",
+   "test_daily_bars_store.py + test_market_data_storage.py + acceptance/test_daily_bars_volume.py: 44 passed",
+   "scripts/check_storage_manifest.py: passed"
+  ],
+  "interpreter": "a python with pyarrow (the worker test interpreter has none, so test_daily_bars_completion.py skips there)"
+ },
+ "hosted_proof_after_deploy": {
+  "status": "pending (needs deploy and the next daily bars write)",
+  "read_only_checks": [
+   "daily_bars_completion_state.json: len(indexed) and count of days grow across last_run snapshots; last_run.progress > 0 on every seconds stop",
+   "newest 20 trade dates: traded_value present on traded rows (days status complete or source_has_no_values with no_value <= 5 %)"
+  ],
+  "residual_for": "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125"
+ },
+ "residual_findings": [
+  "The newest write-date partition is indexed while it is still being written; files added later the same day are never indexed (pre-existing; harmless today because the day is completed from the first file, but a later run file for that day is not read).",
+  "A day that reached complete/source_has_no_values is only revisited when its manifest digest changes; run files for an old trade date written later (backfill) are indexed but do not re-open that day (pre-existing).",
+  "The test interpreter provided to workers (PANTHEON_DEPENDENCY_PYTHON) has no pyarrow, so the daily bars tests skip there; CI must run them in an interpreter with pyarrow."
+ ]
+}
