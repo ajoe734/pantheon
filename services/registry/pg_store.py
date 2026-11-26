@@ -29,6 +29,7 @@ from .models import (
     DeploymentSummary,
     RegistryEntry,
     RegistryEntryCreate,
+    entry_payloads_cas_equal,
     utc_now_iso,
 )
 from .storage import (
@@ -304,6 +305,39 @@ class PostgresRegistryStore:
         registration at startup, never a caller-facing mutation path."""
         self._entries.put(entry.registry_id, entry.to_dict())
 
+    def _cas_entry(
+        self,
+        registry_id: str,
+        expected: Optional[dict[str, Any]],
+        new_payload: dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ) -> tuple[bool, Optional[dict[str, Any]]]:
+        """CAS one entry row under the shared registry equality rule.
+
+        The JSONB ``payload = expected`` predicate compares raw stored JSON,
+        so a legacy row that lacks keys the model now defaults (e.g.
+        ``replication_success``/``replication_proof``) never equals the
+        caller's ``to_dict()`` snapshot (REGISTRY-CAS-LEGACY-ROW-NORMALIZE-
+        20261126). On a miss, ``compare_and_set`` hands back the row it
+        actually saw; if that row equals ``expected`` under
+        :func:`entry_payloads_cas_equal` (absent key == model default, every
+        present value identical) the CAS is retried once against that exact
+        raw row. The retry is itself an atomic JSONB-equality CAS, so a
+        writer that changed the row in between still makes it fail, and any
+        real field difference never reaches the retry.
+        """
+        ok, canonical = self._entries.compare_and_set(
+            registry_id, expected, new_payload, conn=conn,
+        )
+        if ok or expected is None or canonical is None or canonical == expected:
+            return ok, canonical
+        if not entry_payloads_cas_equal(canonical, expected):
+            return ok, canonical
+        return self._entries.compare_and_set(
+            registry_id, canonical, new_payload, conn=conn,
+        )
+
     def update(
         self,
         entry: RegistryEntry,
@@ -324,7 +358,7 @@ class PostgresRegistryStore:
         if actor is not None:
             entry.last_actor = actor
         new_payload = entry.to_dict()
-        ok, canonical = self._entries.compare_and_set(entry.registry_id, expected, new_payload)
+        ok, canonical = self._cas_entry(entry.registry_id, expected, new_payload)
         if not ok:
             if expected is None:
                 # No guard was requested but the row does not exist at all.
@@ -510,7 +544,7 @@ class PostgresRegistryStore:
             if validate is not None:
                 validate(RegistryEntry.from_dict(base_snapshot))
 
-            ok, canonical = self._entries.compare_and_set(
+            ok, canonical = self._cas_entry(
                 registry_id, base_snapshot, new_payload, conn=conn,
             )
             if not ok:
@@ -662,7 +696,7 @@ class PostgresRegistryStore:
                 entry.last_actor = actor
             new_payload = entry.to_dict()
 
-            ok, canonical = self._entries.compare_and_set(
+            ok, canonical = self._cas_entry(
                 registry_id, base_snapshot, new_payload, conn=conn,
             )
             if not ok:
