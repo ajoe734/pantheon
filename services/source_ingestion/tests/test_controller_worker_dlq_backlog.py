@@ -167,11 +167,10 @@ def test_bounded_refresh_passes_over_old_backlog_and_reports_it(
     assert _call(writer, "success")["kwargs"]["dlq_count"] == 5
     assert [e.entry_id for e in runtime.dead_letter_queue.entries()][:4] == old_ids
     assert runtime.DLQ_STORE_PATH.read_bytes() == before
-    # Readback added per run: one small object per selected connector with a backlog, kept in the
-    # bounded controller-state summary that the refresh result returns.
+    # Readback added per run: one small object per selected connector with a backlog, also returned
+    # at the top level of the tick result that the bounded refresh prints.
     assert len(json.dumps(backlog, sort_keys=True)) < 256
-    assert result["actual_readback"]["pre_existing_unresolved_dlq_backlog"] == backlog
-    assert state.actual_readback["pre_existing_unresolved_dlq_backlog"] == backlog
+    assert result["pre_existing_unresolved_dlq_backlog"] == backlog
 
 
 def test_bounded_refresh_fails_on_one_entry_added_in_this_run(

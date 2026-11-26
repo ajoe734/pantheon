@@ -2467,6 +2467,12 @@ def run_controller_tick(
             continuation_pending = bool(select_collector_pull_connectors(continuation_actual, reconcile))
         return {
             "status": "ok",
+            # Older unresolved dead letters of the selected scope: reported, not fatal (bounded per scope).
+            **(
+                {"pre_existing_unresolved_dlq_backlog": accepted_actual["pre_existing_unresolved_dlq_backlog"]}
+                if "pre_existing_unresolved_dlq_backlog" in accepted_actual
+                else {}
+            ),
             "continuation_pending": continuation_pending,
             "controller_mode": config.mode,
             "provider_egress_attempted": provider_egress_attempted,

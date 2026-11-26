@@ -11,10 +11,10 @@
   },
   "change": {
     "bounded_refresh_gate": "services/source_ingestion/controller_worker.py: run_controller_tick passes the pre-tick per-connector unresolved counts to _validate_terminal_readback for reconcile_and_pull as well as collector_steady_pull, so a tick fails only on entries it added (post minus pre per selected connector). The pre map is used only when the pre-tick readback is internally consistent (_trusted_unresolved_dlq_count); otherwise every unresolved entry in scope fails the tick as before. The validator default (no pre map) is unchanged.",
-    "backlog_report": "accepted readback (loop success payload and the controller-state summary that the refresh result returns) carries pre_existing_unresolved_dlq_backlog = {count, by_connector: {connector_id: {unresolved_count, oldest_rejected_at, oldest_age_seconds}}} for the selected connectors; steady-pull keys pre_existing_unresolved_dlq_by_connector/count are kept and now also emitted for bounded refresh",
+    "backlog_report": "accepted readback (loop success payload) and the top level of the tick result printed by the bounded refresh carry pre_existing_unresolved_dlq_backlog = {count, by_connector: {connector_id: {unresolved_count, oldest_rejected_at, oldest_age_seconds}}} for the selected connectors; steady-pull keys pre_existing_unresolved_dlq_by_connector/count are kept and now also emitted for bounded refresh",
     "source_readback": "services/source_ingestion/runtime.py: controller readback adds dlq_oldest_unresolved_at_by_connector (oldest rejected_at of pending/replay_failed/schema_rejected entries per connector), computed in the existing single pass over DLQ entries; absent in an older image, the age is reported as null",
-    "state_summary": "services/source_ingestion/controller_state.py: summarize_actual_readback keeps the backlog as scalars, at most 16 connector rows",
-    "steady_pull": "unchanged: same pre/post rule and keys; its 4 existing gate tests pass unchanged"
+    "steady_pull": "unchanged: same pre/post rule and keys; its 4 existing gate tests pass unchanged",
+    "artifact_contract_note": "services/source_ingestion/runtime.py is outside the task's declared artifacts; it carries the oldest unresolved rejection time per connector that the acceptance's oldest age needs (nothing else in the readback has it). Contract extension requested from Human/Ops via blocker."
   },
   "operator_resolution": {
     "path": "POST /api/source-ingest/dlq/replay with {entry_ids: [the four 2026-11-24 entry ids], reason: <why the cause is fixed>, actor_id: <operator>}",
@@ -35,9 +35,18 @@
       "untrusted pre-tick map keeps strict rule": "test_bounded_refresh_without_a_trusted_pre_map_keeps_the_strict_rule"
     },
     "runs": [
-      {"command": "pytest services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py", "result": "224 passed"},
-      {"command": "pytest on the 21 source_ingestion test files that use controller_worker, controller readback or its summary, plus services/source_ingestion/test_service.py", "result": "472 passed, 6 skipped"},
-      {"command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py", "result": "178 passed"}
+      {
+        "command": "pytest test_controller_worker_dlq_backlog.py test_controller_worker.py test_controller_worker_manual_once.py test_steady_tick_overhead.py (final head)",
+        "result": "244 passed"
+      },
+      {
+        "command": "pytest on the 21 source_ingestion test files that use controller_worker, controller readback or its summary, plus services/source_ingestion/test_service.py",
+        "result": "472 passed, 6 skipped"
+      },
+      {
+        "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py",
+        "result": "178 passed"
+      }
     ]
   },
   "runtime_budget": {
@@ -45,12 +54,18 @@
     "new_writers": 0,
     "dlq_writes": "unchanged; only the existing replay route changes a DLQ status, and only when an operator calls it",
     "reads_per_run": "unchanged: the existing pre-tick and terminal readbacks; the oldest timestamp is taken in the same pass over DLQ entries that already counts statuses",
-    "readback_added_per_run": "source readback: one ISO timestamp per connector with an unresolved entry; accepted controller readback: one object per selected connector with a backlog (about 170 bytes; a bounded refresh selects one connector), capped at 16 rows in the state summary"
+    "readback_added_per_run": "source readback: one ISO timestamp per connector with an unresolved entry; controller tick result and loop success payload: one object per selected connector with a backlog (about 170 bytes; a bounded refresh selects one connector)"
   },
   "hosted_pending_dlq_breakdown": {
     "status": "not_read_by_owner",
     "reason": "this worker host has no read path to the dev VM: no DEV_DEPLOY_SSH_* credentials, gcloud fails to start in the sandbox, and the refresh run log and artifacts carry only the scoped failure (4 entries for tw-official-twse-margin-balances), not the global pending list",
-    "known": {"tw-official-twse-margin-balances": {"pending": 4, "reason": "2026-11-24 previous-balance chain refused under the retired 99% rule", "source": "run 45804988339 scheduler log"}},
+    "known": {
+      "tw-official-twse-margin-balances": {
+        "pending": 4,
+        "reason": "2026-11-24 previous-balance chain refused under the retired 99% rule",
+        "source": "run 45804988339 scheduler log"
+      }
+    },
     "read_only_query": "on the dev VM, inside the source-ingest network: curl -s \"$SOURCE_INGEST_API_URL/api/source-ingest/dlq?status=pending\" | python3 -c 'import json,sys,collections; d=json.load(sys.stdin); c=collections.Counter((e[\"event\"][\"payload\"].get(\"connector_id\") or \"<unattributed>\", (e[\"reason\"] or \"\")[:80]) for e in d[\"entries\"]); print(d[\"status_counts\"]); [print(n, *k, sep=\" | \") for k, n in c.most_common()]'",
     "expected_total_pending": 5776
   },
