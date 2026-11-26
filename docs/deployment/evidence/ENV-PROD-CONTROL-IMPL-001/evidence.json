@@ -648,5 +648,33 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_replace_vm_offline_boot_disk_and_metadata_repair_20261126": {
+    "task_generation": 79,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45867118448 (job 140081415183) passed preflight, Environment approval, WIF auth, and READY snapshots of pantheon-prod-control-data and OLD_BOOT_DISK, then refused at IAP_UPLOAD_FAILED (Error 4003 failed to connect to port 22) because incumbent pantheon-prod-control is TERMINATED (unreachable over SSH)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh INSPECT_VARS captures OLD_STATUS=inst['status'] and incumbent metadata items for enable-oslogin, block-project-ssh-keys, and serial-port-enable, preserving the incumbent VM's exact metadata keys on TARGET_TEMPLATE and rollback VM create instead of forcing enable-oslogin=TRUE,block-project-ssh-keys=TRUE when absent on incumbent, and defaults PROD_DEFAULT_TEMPLATE_NAME to pantheon-prod-control-template-e2s8-v2 when an existing template mismatches metadata or is < 8 vCPUs",
+      "scripts/deploy/prod_replace_vm.sh implements dual migration mode: online_ssh when OLD_STATUS == RUNNING and IAP SSH succeeds (still refusing on explicit active release mismatch), and offline_boot_disk when OLD_STATUS != RUNNING (e.g. TERMINATED/STOPPED) or incumbent SSH/SCP fails for connectivity",
+      "In offline_boot_disk mode, scripts/deploy/prod_replace_vm.sh skips incumbent SSH stop (or runs gcloud compute instances stop first when OLD_STATUS == RUNNING after PROD_INCUMBENT_SSH_TRIES retries), protects both OLD_BOOT_DISK and PROD_DATA_DISK (--no-auto-delete), deletes incumbent VM (--keep-disks=all), creates replacement >= e2-standard-8 VM with PROD_DATA_DISK, verifies NEW_VM_VARS (always recording NEW_BOOT_DISK before checking NEW_IDENTITY_ERR), attaches OLD_BOOT_DISK read-only (--device-name=pantheon-old-boot-ro --mode=ro + --no-auto-delete), waits for SSH (PROD_SSH_WAIT_TRIES default 36), uploads bundle, mounts PROD_DATA_MOUNT by discovering UUID from /dev/disk/by-id/google-DATA_DEVICE_NAME (fallback blkid/lsblk/findmnt, never mkfs), mounts the root partition of /dev/disk/by-id/google-pantheon-old-boot-ro read-only (-o ro,noload fallback -o ro) at /mnt/pantheon-old-boot-ro, migrates unmigrated real boot-disk /mnt/pantheon-old-boot-ro/opt/pantheon-production/{secrets,state,manifests,fe,config,proxy} with boot-disk-wins parity, verifies active_manifest.json & baseline.json match RELEASE_ID & healthy==True BEFORE any write to fe/current, proxy/caddy-image.txt, pre_replace_snapshot.json, or data_disk_uuid, creates fe/current symlink only when absent (parity with online_ssh), migrates Caddy /data and /config from /mnt/pantheon-old-boot-ro/var/lib/docker/containers/*/config.v2.json MountPoints onto PROD_DATA_MOUNT, writes pre_replace_snapshot.json & data_disk_uuid, unmounts /mnt/pantheon-old-boot-ro, detaches OLD_BOOT_DISK (--quiet), and proceeds with bootstrap.sh + boot-disk preflight + pantheon-caddy + restore_active_release + snapshot_schedule check + RTO gate, emitting migration_mode and old_vm_status in the JSON output",
+      "Addresses PR #7913 and PR #7919 review items: honors PROD_REPLACE_RTO_ELAPSED_SECONDS only when FAKE_STATE is non-empty; verifies active_manifest/baseline release_id+healthy before any write to fe/current or caddy-image.txt in offline_migrate.py and only creates fe/current when absent; retries incumbent SSH/SCP and gracefully stops a RUNNING SSH-unreachable incumbent before delete; uses boot-disk-wins for unmigrated real boot-disk dirs; populates and deletes orphaned NEW_BOOT_DISK on verify_new_vm_identity failure and rollback",
+      "docs/deployment/production-control-runbook.md documents dual migration mode (online_ssh and offline_boot_disk), metadata preservation on pantheon-prod-control-template-e2s8-v2, and orphaned new_boot_disk rollback cleanup within the <= 180-line runbook contract",
+      "tests/deployment/test_production_release.py updates ReplaceVmHarness and adds unit tests covering TERMINATED and SSH-unreachable RUNNING incumbent replacement via offline_boot_disk migration (including Docker config.v2.json MountPoints Caddy ACME recovery, template metadata mismatch detection, read-only attach/mount/umount/detach, and post-replacement protected rollback) plus release mismatch rollback on both an already-migrated TERMINATED incumbent (verifying fe/current is left unchanged and caddy-image.txt is not written) and a pre-g77 unmigrated TERMINATED incumbent, and orphaned NEW_BOOT_DISK cleanup on verify_new_vm_identity and subsequent rollback stages"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g78: no new recurring job or background daemon; on-demand operation=replace_vm temporarily attaches and detaches OLD_BOOT_DISK read-only during offline_boot_disk migration (zero retained extra disk attachment after completion) and deletes orphaned NEW_BOOT_DISK on rollback so failed replacements leave zero leaked boot disks"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "25 tests passed, terminal exit 0",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "141 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

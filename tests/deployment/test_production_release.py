@@ -145,9 +145,41 @@ case "$tool" in
       [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
     fi
     [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
-  findmnt|blkid) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
-  mount) echo "mount $*" >> "$FAKE_STATE/mount.log"; printf 'yes' > "$FAKE_STATE/mounted_state"; exit 0 ;;
-  umount) echo "umount $*" >> "$FAKE_STATE/mount.log"; printf 'no' > "$FAKE_STATE/mounted_state"; exit 0 ;;
+  findmnt|blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  mount)
+    echo "mount $*" >> "$FAKE_STATE/mount.log"
+    if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "mount_old_boot_ro" ]] && exit 1
+      target="${@: -1}"
+      mkdir -p "$target"
+      old_boot="$(cat "$FAKE_STATE/attached_ro_pantheon-old-boot-ro" 2>/dev/null || true)"
+      if [[ -n "$old_boot" && -d "$FAKE_STATE/saved_boot_${old_boot}" ]]; then
+        if [[ -n "${PROD_ROOT:-}" ]]; then
+          mkdir -p "${target}${PROD_ROOT}"
+          cp -a "$FAKE_STATE/saved_boot_${old_boot}/." "${target}${PROD_ROOT}/"
+        fi
+        mkdir -p "${target}/opt/pantheon-production"
+        cp -a "$FAKE_STATE/saved_boot_${old_boot}/." "${target}/opt/pantheon-production/"
+      fi
+      if [[ -d "$FAKE_STATE/old_boot_var_lib_docker" ]]; then
+        mkdir -p "${target}/var/lib/docker"
+        cp -a "$FAKE_STATE/old_boot_var_lib_docker/." "${target}/var/lib/docker/"
+      fi
+      printf 'yes' > "$FAKE_STATE/old_boot_mounted_state"
+      exit 0
+    fi
+    printf 'yes' > "$FAKE_STATE/mounted_state"
+    exit 0 ;;
+  umount)
+    echo "umount $*" >> "$FAKE_STATE/mount.log"
+    if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
+      target="${@: -1}"
+      rm -rf "$target" 2>/dev/null || true
+      printf 'no' > "$FAKE_STATE/old_boot_mounted_state"
+      exit 0
+    fi
+    printf 'no' > "$FAKE_STATE/mounted_state"
+    exit 0 ;;
   systemctl)
     echo "systemctl $*" >> "$FAKE_STATE/systemctl.log"
     if [[ "$*" == *"disable"*"caddy.service"* || "$*" == *"stop"*"caddy.service"* ]]; then
@@ -3951,6 +3983,11 @@ case "$all" in
     [[ -f "$S/templates/${tpl}.json" ]] || exit 1
     cat "$S/templates/${tpl}.json"
     exit 0 ;;
+  "compute instance-templates delete "*)
+    tpl="$4"
+    rm -f "$S/templates/${tpl}.json"
+    echo "deleted_template $tpl" >> "$S/template_deletes.log"
+    exit 0 ;;
   "compute instance-templates create "*)
     [[ "${FAKE_REPLACE_FAIL:-}" == "template_create" ]] && exit 1
     tpl="$4"
@@ -3959,10 +3996,17 @@ case "$all" in
     sub="$(arg_val --subnet "$@")"
     sa="$(arg_val --service-account "$@")"
     tags="$(arg_val --tags "$@")"
+    meta="$(arg_val --metadata "$@")"
     echo "$all" >> "$S/template_creates.log"
-    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" > "$S/templates/${tpl}.json" <<'PY'
+    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" "$meta" > "$S/templates/${tpl}.json" <<'PY'
 import json, sys
-tpl, mt, net, sub, sa, tags = sys.argv[1:7]
+tpl, mt, net, sub, sa, tags, meta = sys.argv[1:8]
+meta_items = []
+for pair in (meta or "serial-port-enable=FALSE").split(","):
+    if "=" in pair:
+        k, v = pair.split("=", 1)
+        if k.strip() and v.strip():
+            meta_items.append({"key": k.strip(), "value": v.strip()})
 print(json.dumps({
     "name": tpl,
     "properties": {
@@ -3987,13 +4031,7 @@ print(json.dumps({
         "networkInterfaces": [{"network": net, "subnetwork": sub}],
         "serviceAccounts": [{"email": sa, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
         "tags": {"items": [t for t in tags.split(",") if t]},
-        "metadata": {
-            "items": [
-                {"key": "enable-oslogin", "value": "TRUE"},
-                {"key": "block-project-ssh-keys", "value": "TRUE"},
-                {"key": "serial-port-enable", "value": "FALSE"},
-            ]
-        },
+        "metadata": {"items": meta_items},
     },
 }, sort_keys=True))
 PY
@@ -4001,6 +4039,29 @@ PY
   "compute instances set-disk-auto-delete "*)
     disk="$(arg_val --disk "$@")"
     echo "$4 $disk no-auto-delete" >> "$S/auto_delete.log"
+    exit 0 ;;
+  "compute instances attach-disk "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
+    disk="$(arg_val --disk "$@")"
+    dev="$(arg_val --device-name "$@")"
+    mode="$(arg_val --mode "$@")"
+    [[ -n "$disk" && -e "$S/disks/$disk" ]] || exit 1
+    echo "attach-disk $4 disk=$disk device-name=$dev mode=$mode" >> "$S/disk_attach.log"
+    printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    exit 0 ;;
+  "compute instances detach-disk "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "detach_old_boot_disk_ro" ]] && exit 1
+    disk="$(arg_val --disk "$@")"
+    echo "detach-disk $4 disk=$disk" >> "$S/disk_attach.log"
+    rm -f "$S"/attached_ro_*
+    exit 0 ;;
+  "compute disks delete "*)
+    disk="$4"
+    rm -f "$S/disks/$disk"
+    echo "deleted_disk $disk" >> "$S/disks_deleted.log"
+    exit 0 ;;
+  "compute instances stop "*)
+    echo "stopped $4" >> "$S/vm_lifecycle.log"
     exit 0 ;;
   "compute instances delete "*)
     [[ "${FAKE_REPLACE_FAIL:-}" == "delete_incumbent_vm" ]] && exit 1
@@ -4022,6 +4083,7 @@ PY
     tpl="$(arg_val --source-instance-template "$@")"
     mt="$(arg_val --machine-type "$@")"
     ip="$(arg_val --address "$@")"
+    meta="$(arg_val --metadata "$@")"
     if [[ -n "$tpl" ]]; then
       [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
       [[ -f "$S/templates/${tpl}.json" ]] || exit 1
@@ -4035,9 +4097,11 @@ PY
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
-      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" "$S/templates/${tpl}.json" > "$S/vm.json" <<'PY'
 import json, sys
-vm, new_id, mt, boot_disk, data_disk, ip = sys.argv[1:7]
+vm, new_id, mt, boot_disk, data_disk, ip, tpl_path = sys.argv[1:8]
+tpl = json.load(open(tpl_path))
+meta_obj = (tpl.get("properties") or {}).get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
 print(json.dumps({
     "id": new_id,
     "name": vm,
@@ -4054,6 +4118,7 @@ print(json.dumps({
     }],
     "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
     "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+    "metadata": meta_obj,
 }, sort_keys=True))
 PY
       echo "created_from_template $vm tpl=$tpl mt=$mt boot=$new_boot ip=$ip" >> "$S/vm_lifecycle.log"
@@ -4075,9 +4140,15 @@ PY
       printf 'yes' > "$S/mounted_state"
       printf 'inactive' > "$S/host_systemd_caddy"
       printf 'rolled_back' > "$S/vm_generation"
-      python3 -I - "$vm" "1111111111111111111" "$mt" "$old_boot" "${PROD_DATA_DISK}" "$ip" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "1111111111111111111" "$mt" "$old_boot" "${PROD_DATA_DISK}" "$ip" "$meta" > "$S/vm.json" <<'PY'
 import json, sys
-vm, old_id, mt, boot_disk, data_disk, ip = sys.argv[1:7]
+vm, old_id, mt, boot_disk, data_disk, ip, meta = sys.argv[1:8]
+meta_items = []
+for pair in (meta or "serial-port-enable=FALSE").split(","):
+    if "=" in pair:
+        k, v = pair.split("=", 1)
+        if k.strip() and v.strip():
+            meta_items.append({"key": k.strip(), "value": v.strip()})
 print(json.dumps({
     "id": old_id,
     "name": vm,
@@ -4094,9 +4165,10 @@ print(json.dumps({
     }],
     "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
     "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+    "metadata": {"items": meta_items},
 }, sort_keys=True))
 PY
-      echo "recreated_from_old_boot $vm mt=$mt boot=$old_boot ip=$ip" >> "$S/vm_lifecycle.log"
+      echo "recreated_from_old_boot $vm mt=$mt boot=$old_boot ip=$ip meta=$meta" >> "$S/vm_lifecycle.log"
       exit 0
     fi ;;
   "compute machine-types describe "*)
@@ -4108,6 +4180,13 @@ print(m.group(1) if m else "2")
 PY
     exit 0 ;;
   "compute scp "*)
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "incumbent" ]]; then
+      vm_st="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status","RUNNING"))' "$S/vm.json" 2>/dev/null || echo RUNNING)"
+      if [[ "$vm_st" != "RUNNING" || "${FAKE_INCUMBENT_SSH_FAIL:-}" == "true" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     src="${@: -2:1}"
     dst_spec="${@: -1}"
     dst="${dst_spec#*:}"
@@ -4115,6 +4194,13 @@ PY
     cp -a "$src" "$dst/"
     exit 0 ;;
   "compute ssh "*)
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "incumbent" ]]; then
+      vm_st="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status","RUNNING"))' "$S/vm.json" 2>/dev/null || echo RUNNING)"
+      if [[ "$vm_st" != "RUNNING" || "${FAKE_INCUMBENT_SSH_FAIL:-}" == "true" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     if [[ "${FAKE_REPLACE_FAIL:-}" == "ssh_new_vm" && "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
       exit 255
     fi
@@ -4249,20 +4335,22 @@ class ReplaceVmHarness(RealControllerBase):
         )
 
     def _run_replace_vm(self, release_id: str | None = None, **extra):
-        env = self.env(
-            GCLOUD_BIN=str(self.bin / "gcloud"),
-            PROD_VM_NAME="pantheon-prod-control",
-            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-old-e2s2",
-            PROD_RUNTIME_SERVICE_ACCOUNT="pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
-            PROD_SUBNETWORK="pantheon-prod-subnet",
-            PROD_REMOTE_TMP_BASE=str(self.remote_tmp),
-            PROD_REMOTE_PATH_PREFIX=str(self.bin),
-            PROD_FSTAB_PATH=str(self.fstab),
-            PROD_SSH_WAIT_TRIES="2",
-            PROD_SSH_WAIT_INTERVAL="0",
-            CLOUDSDK_CORE_PROJECT=PROD_ENV["PROD_GCP_PROJECT_ID"],
-            **extra,
-        )
+        defaults = {
+            "GCLOUD_BIN": str(self.bin / "gcloud"),
+            "PROD_VM_NAME": "pantheon-prod-control",
+            "PROD_INSTANCE_TEMPLATE": "pantheon-prod-control-template-old-e2s2",
+            "PROD_RUNTIME_SERVICE_ACCOUNT": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
+            "PROD_SUBNETWORK": "pantheon-prod-subnet",
+            "PROD_REMOTE_TMP_BASE": str(self.remote_tmp),
+            "PROD_REMOTE_PATH_PREFIX": str(self.bin),
+            "PROD_FSTAB_PATH": str(self.fstab),
+            "PROD_SSH_WAIT_TRIES": "2",
+            "PROD_SSH_WAIT_INTERVAL": "0",
+            "PROD_INCUMBENT_SSH_INTERVAL": "0",
+            "CLOUDSDK_CORE_PROJECT": PROD_ENV["PROD_GCP_PROJECT_ID"],
+        }
+        defaults.update(extra)
+        env = self.env(**defaults)
         return subprocess.run(
             ["bash", str(self.REPLACE_VM), release_id or self.active_release_id],
             env=env,
@@ -4327,9 +4415,11 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(out["new_instance_id"], "2222222222222222222")
         self.assertNotEqual(out["old_instance_id"], out["new_instance_id"])
         self.assertEqual(out["old_machine_type"], "e2-standard-2")
+        self.assertEqual(out["old_vm_status"], "RUNNING")
+        self.assertEqual(out["migration_mode"], "online_ssh")
         self.assertEqual(out["machine_type"], "e2-standard-8")
         self.assertEqual(out["vcpus"], 8)
-        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v2")
         self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
         self.assertTrue(out["old_boot_disk_preserved"])
         self.assertNotEqual(out["new_boot_disk"], self.old_boot_disk)
@@ -4400,6 +4490,10 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertFalse((self.state / "vm_lifecycle.log").exists())
 
     def test_replace_vm_rto_over_budget_exits_6(self):
+        self.assertIn(
+            'if [[ -n "${FAKE_STATE:-}" && -n "${PROD_REPLACE_RTO_ELAPSED_SECONDS:-}" ]]; then',
+            self.REPLACE_VM.read_text(encoding="utf-8"),
+        )
         r = self._run_replace_vm(PROD_REPLACE_RTO_ELAPSED_SECONDS="1801", PROD_RTO_SECONDS="1800")
         self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
         out = json.loads(r.stdout.strip().splitlines()[-1])
@@ -4408,14 +4502,15 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(out["rto_budget_seconds"], 1800)
 
     def test_replace_vm_rolls_back_to_old_boot_disk_when_replacement_or_restore_fails(self):
-        for fail_mode, expected_stage in (
-            ("create_new_vm", "create_new_vm"),
-            ("ssh_new_vm", "wait_for_ssh"),
-            ("restore_active_release", "restore_active_release"),
+        for fail_mode, expected_stage, expect_orphan_cleaned, extra_kw in (
+            ("create_new_vm", "create_new_vm", False, {}),
+            ("verify_new_vm_identity", "verify_new_vm_identity", True, {"FAKE_NEW_INSTANCE_ID": "1111111111111111111"}),
+            ("ssh_new_vm", "wait_for_ssh", True, {}),
+            ("restore_active_release", "restore_active_release", True, {}),
         ):
             with self.subTest(fail_mode=fail_mode):
                 self.setUp()
-                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode)
+                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode, **extra_kw)
                 self.assertEqual(r.returncode, 3, f"{fail_mode}: stdout={r.stdout}\nstderr={r.stderr}")
                 out = json.loads(r.stdout.strip().splitlines()[-1])
                 self.assertEqual(out["status"], "replace_vm_rolled_back", out)
@@ -4423,10 +4518,178 @@ class ReplaceVmHarness(RealControllerBase):
                 self.assertTrue(out["rolled_back_to_old_boot_disk"])
                 self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
                 self.assertEqual(out["static_ip"], self.static_ip)
+                self.assertEqual(out["orphaned_new_boot_disk_deleted"], expect_orphan_cleaned)
+                if expect_orphan_cleaned:
+                    self.assertEqual(out["orphaned_new_boot_disk"], "pantheon-prod-control-boot-fresh-e2s8")
+                    self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
+                    self.assertIn("deleted_disk pantheon-prod-control-boot-fresh-e2s8", (self.state / "disks_deleted.log").read_text())
+                self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+                self.assertTrue((self.state / "disks" / PROD_ENV["PROD_DATA_DISK"]).exists())
                 lifecycle = (self.state / "vm_lifecycle.log").read_text()
                 self.assertIn(f"recreated_from_old_boot pantheon-prod-control mt=e2-standard-2 boot={self.old_boot_disk}", lifecycle)
                 vm_now = json.loads((self.state / "vm.json").read_text())
                 self.assertEqual(vm_now["id"], "1111111111111111111")
+
+    def _seed_pre_g77_offline_boot_disk_incumbent(self, vm_status: str = "TERMINATED"):
+        # Move all 6 durable control directories back onto the incumbent boot disk (PROD_ROOT) and remove from data_mount
+        # to simulate an unmigrated pre-g77 incumbent VM that is TERMINATED or unreachable over IAP SSH.
+        for d in ("secrets", "state", "manifests", "fe", "config", "proxy"):
+            link = self.root / d
+            target = self.data_mount / d
+            if link.is_symlink():
+                link.unlink()
+                shutil.copytree(target, link, symlinks=True)
+                shutil.rmtree(target)
+        # Seed Docker container config.v2.json + volume MountPoints for pantheon-caddy on the old boot disk.
+        vol_data = self.state / "old_boot_var_lib_docker" / "volumes" / "caddy_data_vol" / "_data"
+        vol_cfg = self.state / "old_boot_var_lib_docker" / "volumes" / "caddy_cfg_vol" / "_data"
+        (vol_data / "caddy" / "certificates").mkdir(parents=True, exist_ok=True)
+        (vol_cfg / "caddy").mkdir(parents=True, exist_ok=True)
+        (vol_data / "caddy" / "certificates" / "acme-prod.crt").write_text(
+            "-----BEGIN CERTIFICATE-----\nOFFLINE-BOOT-DISK-ACME-CERT\n-----END CERTIFICATE-----\n"
+        )
+        (vol_cfg / "caddy" / "autosave.json").write_text('{"apps":{"http":{"servers":{"offline":true}}}}')
+        cid_dir = self.state / "old_boot_var_lib_docker" / "containers" / ("c" * 64)
+        cid_dir.mkdir(parents=True, exist_ok=True)
+        (cid_dir / "config.v2.json").write_text(
+            json.dumps({
+                "Name": "/pantheon-caddy",
+                "Config": {"Image": self.caddy_image},
+                "MountPoints": {
+                    "/data": {
+                        "Destination": "/data",
+                        "Source": "/var/lib/docker/volumes/caddy_data_vol/_data",
+                    },
+                    "/config": {
+                        "Destination": "/config",
+                        "Source": "/var/lib/docker/volumes/caddy_cfg_vol/_data",
+                    },
+                },
+            })
+        )
+        # Seed a pre-existing template with forced enable-oslogin=TRUE,block-project-ssh-keys=TRUE while the incumbent
+        # VM has NO enable-oslogin or block-project-ssh-keys metadata items -> must reject mismatched template and create
+        # pantheon-prod-control-template-e2s8-v2 preserving incumbent metadata (serial-port-enable=FALSE only).
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "metadata": {
+                        "items": [
+                            {"key": "enable-oslogin", "value": "TRUE"},
+                            {"key": "block-project-ssh-keys", "value": "TRUE"},
+                            {"key": "serial-port-enable", "value": "FALSE"},
+                        ]
+                    },
+                },
+            })
+        )
+        vm_doc = json.loads((self.state / "vm.json").read_text())
+        vm_doc["status"] = vm_status
+        vm_doc["metadata"] = {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+        (self.state / "vm.json").write_text(json.dumps(vm_doc))
+
+    def test_replace_vm_offline_boot_disk_mode_recovers_terminated_or_unreachable_incumbent_and_preserves_metadata(self):
+        for case_name, vm_status, extra_env in (
+            ("terminated_incumbent", "TERMINATED", {}),
+            ("running_ssh_unreachable", "RUNNING", {"FAKE_INCUMBENT_SSH_FAIL": "true"}),
+        ):
+            with self.subTest(case=case_name):
+                self.setUp()
+                self._seed_pre_g77_offline_boot_disk_incumbent(vm_status=vm_status)
+                r = self._run_replace_vm(
+                    PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8",
+                    GITHUB_RUN_ID="45867118448",
+                    GITHUB_RUN_ATTEMPT="1",
+                    **extra_env,
+                )
+                self.assertEqual(r.returncode, 0, f"{case_name}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "prod_vm_replaced")
+                self.assertEqual(out["migration_mode"], "offline_boot_disk")
+                self.assertEqual(out["old_vm_status"], vm_status)
+                self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v2")
+                self.assertEqual(out["machine_type"], "e2-standard-8")
+                self.assertEqual(out["vcpus"], 8)
+                self.assertEqual(out["caddy_image"], self.caddy_image)
+                self.assertTrue(out["boot_disk_decoupled"])
+                self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+                self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+
+                # Verify template metadata preserved incumbent keys without forcing enable-oslogin/block-project-ssh-keys.
+                created_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v2.json").read_text())
+                tpl_meta_keys = {i["key"]: i["value"] for i in created_tpl["properties"]["metadata"]["items"]}
+                self.assertEqual(tpl_meta_keys, {"serial-port-enable": "FALSE"})
+                self.assertNotIn("enable-oslogin", tpl_meta_keys)
+                self.assertNotIn("block-project-ssh-keys", tpl_meta_keys)
+
+                # Verify old boot disk was attached read-only, mounted ro,noload, unmounted, and detached.
+                attach_log = (self.state / "disk_attach.log").read_text()
+                self.assertIn(
+                    f"attach-disk pantheon-prod-control disk={self.old_boot_disk} device-name=pantheon-old-boot-ro mode=ro",
+                    attach_log,
+                )
+                self.assertIn(f"detach-disk pantheon-prod-control disk={self.old_boot_disk}", attach_log)
+                mount_log = (self.state / "mount.log").read_text()
+                self.assertIn("mount -o ro,noload /dev/disk/by-id/google-pantheon-old-boot-ro-part1", mount_log)
+                self.assertIn("umount ", mount_log)
+                self.assertEqual((self.state / "old_boot_mounted_state").read_text(), "no")
+
+                # Verify Caddy ACME certificates & config were migrated from Docker config.v2.json MountPoints.
+                self.assertIn(
+                    "OFFLINE-BOOT-DISK-ACME-CERT",
+                    (self.data_mount / "proxy" / "caddy-data" / "caddy" / "certificates" / "acme-prod.crt").read_text(),
+                )
+                self.assertIn(
+                    '"offline":true',
+                    (self.data_mount / "proxy" / "caddy-config" / "caddy" / "autosave.json").read_text(),
+                )
+                self.assertTrue((self.data_mount / "state" / "snapshots" / f"vm-replace-{self.active_release_id}.json").is_file())
+                self.assertEqual((self.data_mount / "state" / "data_disk_uuid").read_text().strip(), "d4a7a000-1111-2222-3333-444455556666")
+                self.assertEqual(os.readlink(self.data_mount / "fe" / "current"), f"{self.root}/fe/releases/{self.active_release_id}")
+
+                # Protected rollback after offline_boot_disk VM replacement succeeds.
+                rb = self._rollback_mode(
+                    self.active_release_id,
+                    PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                )
+                self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+                self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
+
+    def test_replace_vm_offline_boot_disk_release_mismatch_rolls_back_and_cleans_up_orphaned_new_boot_disk(self):
+        for case_name, pre_g77 in (
+            ("already_migrated_terminated_incumbent", False),
+            ("pre_g77_unmigrated_terminated_incumbent", True),
+        ):
+            with self.subTest(case=case_name):
+                self.setUp()
+                if pre_g77:
+                    self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+                else:
+                    vm_doc = json.loads((self.state / "vm.json").read_text())
+                    vm_doc["status"] = "TERMINATED"
+                    vm_doc["metadata"] = {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+                    (self.state / "vm.json").write_text(json.dumps(vm_doc))
+                self.assertTrue((self.data_mount / "fe" / "releases" / self.baseline_release_id).is_dir() or pre_g77)
+                r = self._run_replace_vm(release_id=self.baseline_release_id)
+                self.assertEqual(r.returncode, 3, f"{case_name}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "replace_vm_rolled_back", out)
+                self.assertEqual(out["failed_stage"], "offline_boot_disk_migrate")
+                self.assertEqual(out["migration_mode"], "offline_boot_disk")
+                self.assertEqual(out["old_vm_status"], "TERMINATED")
+                self.assertTrue(out["rolled_back_to_old_boot_disk"])
+                self.assertTrue(out["orphaned_new_boot_disk_deleted"])
+                self.assertEqual(
+                    os.readlink(self.data_mount / "fe" / "current"),
+                    f"{self.root}/fe/releases/{self.active_release_id}",
+                )
+                self.assertFalse((self.data_mount / "proxy" / "caddy-image.txt").exists())
+                self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
+                self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+                self.assertIn("meta=serial-port-enable=FALSE", (self.state / "vm_lifecycle.log").read_text())
 
 
 if __name__ == "__main__":
