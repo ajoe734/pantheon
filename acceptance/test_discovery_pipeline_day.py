@@ -1,0 +1,410 @@
+"""Discovery pipeline acceptance (acceptance/discovery_pipeline_day.py, probe acceptance/probes/discovery-pipeline).
+
+The 2026-11-25 fixture is reconstructed from the coordinator's recorded hosted facts (see its
+``provenance``); the passing world and the per-stage failures are synthetic and say so.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import os
+import stat
+import subprocess
+import sys
+import threading
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+import pytest
+
+from acceptance import discovery_pipeline_day as dpd
+
+ROOT = Path(__file__).resolve().parent
+PROBE = ROOT / "probes" / "discovery-pipeline"
+FIXTURE = json.loads((ROOT / "fixtures" / "hosted_discovery_pipeline_20261125.json").read_text())
+NOW = datetime(2026, 11, 28, 12, 0, tzinfo=timezone.utc)
+
+
+def ok(source="x"):
+    return {"status": "ok", "source": source}
+
+
+def good_board():
+    """Synthetic world in which every stage works; one gate refusal and no strategy passed."""
+    return {
+        "data": {
+            "discovered": [
+                {"kind": "hypothesis_card", "source_id": "s1", "title": "TSMC supply chain", "claim": "c",
+                 "claim_status": "ok", "since": "2026-11-28T08:00:00Z"},
+                {"kind": "research_demand", "demand_id": "rd-1", "since": "2026-11-20T00:00:00Z"},
+            ],
+            "scaffolded": [
+                {"kind": "template_search", "demand_id": "rd-1", "attempt_count": 2,
+                 "latest_at": "2026-11-28T10:03:00Z", "outcome": "completed",
+                 "reason_code": "survivorship_limited", "reason": "survivorship_limited: no attestation"},
+            ],
+            "replicated": [],
+            "document_checked": [],
+            "counts": {
+                "collected_text_records": {"value": 120, "status": "ok"},
+                "hypothesis_cards_today": {"value": 3, "status": "ok"},
+                "llm_calls_today": {"value": 40, "status": "ok", "cap": 400},
+                "templates_registered": {"value": 182, "status": "ok"},
+                "templates_evaluated": {"value": 171, "status": "ok"},
+                "passes": {"value": 0, "status": "ok"},
+            },
+            "templates": [{"template_id": "t1", "evaluation": {"evaluation_context": {
+                "governed_snapshot_id": "gmd-abc123", "window_end": "2026-11-27"}}}],
+            "discovery_summary": {"collected_by_source_family": {"news": 120}, "closed_last_24h": {"by_reason": {}}},
+        },
+        "meta": {"surfaces": {k: ok() for k in (
+            "alpha_factory", "alpha_factory_templates", "alpha_factory_demands", "alpha_factory_runs",
+            "alpha_factory_hypothesis_cards", "alpha_factory_source_records", "alpha_factory_llm_calls")}},
+    }
+
+
+def good_health():
+    return {"data": {"last_success": {"at": "2026-11-28T11:30:00Z"}, "last_failure": None,
+                     "downstream_actual_state": {"status": "ready", "authoritative": True,
+                                                 "checked_at": "2026-11-28T11:30:00Z",
+                                                 "summary": "4204 terminal drafts; 0 dead letters"}}}
+
+
+def run(board=None, health=None):
+    board = good_board() if board is None else board
+    health = good_health() if health is None else health
+    return dpd.judge(board, health, NOW)
+
+
+def stage(report, name):
+    return next(s for s in report["stages"] if s["stage"] == name)
+
+
+def count(board, key, **entry):
+    board["data"]["counts"][key] = entry
+
+
+def test_every_stage_is_reported_once_in_order():
+    report = run()
+    assert [s["stage"] for s in report["stages"]] == list(dpd.STAGES)
+
+
+def test_working_pipeline_passes_and_says_no_strategy_passed():
+    report = run()
+    assert report["verdict"] == "passed" and report["failed_stages"] == []
+    assert report["strategy_verdict"] == "no strategy passed" and report["strategies_passed"] == 0
+    gate = stage(report, "gate_attempts")
+    assert gate["status"] == "passed" and gate["values"]["by_reason"] == {"survivorship_limited": 1}
+    assert stage(report, "governed_market_dataset")["values"] == {"snapshot_id": "gmd-abc123", "day": "2026-11-27"}
+    assert stage(report, "hypothesis_cards")["values"]["cap"] == 400
+
+
+def test_hosted_2026_11_25_fixture_fails_naming_every_broken_stage():
+    now = datetime.fromisoformat(FIXTURE["now"].replace("Z", "+00:00"))
+    report = dpd.judge(FIXTURE["board"], FIXTURE["health"], now)
+    assert report["verdict"] == "failed"
+    assert report["failed_stages"] == list(dpd.STAGES)
+    reasons = {s["stage"]: s["reason"] for s in report["stages"]}
+    assert reasons["template_search"] == "last_search_unavailable:mandate_universe_missing"
+    assert reasons["templates_evaluated"] == "no_template_evaluated"
+    assert reasons["governed_market_dataset"] == "no_governed_snapshot_recorded"
+    assert reasons["gate_attempts"] == "gate_attempts_without_result"  # the one search attempt was unavailable
+    assert reasons["distillation_dead_letters"] == "distillation_state_stale"
+    assert reasons["external_records"].startswith("unreadable:collected_text_records")
+    assert reasons["hypothesis_cards"].startswith("unreadable:")
+    assert reasons["no_fallback_drafts"].startswith("unreadable:alpha_factory_hypothesis_cards")
+    assert report["strategy_verdict"] == "no strategy passed"
+
+
+def test_the_fixture_makes_the_probe_exit_one_naming_the_stages():
+    out = dpd.render(dpd.judge(FIXTURE["board"], FIXTURE["health"],
+                               datetime.fromisoformat(FIXTURE["now"].replace("Z", "+00:00"))))
+    assert "VERDICT failed" in out and "template_search" in out.splitlines()[-1]
+
+
+# ---- one failing case per stage
+
+def test_no_external_records_fails():
+    board = good_board()
+    count(board, "collected_text_records", value=0, status="ok")
+    assert stage(run(board), "external_records")["reason"] == "no_external_records_last_24h"
+
+
+def test_cards_over_cap_fails():
+    board = good_board()
+    board["data"]["counts"]["llm_calls_today"]["value"] = 401
+    assert stage(run(board), "hypothesis_cards")["reason"] == "llm_calls_over_cap"
+
+
+def test_no_verified_card_names_disabled_extraction():
+    board = good_board()
+    board["data"]["discovered"] = []
+    board["data"]["discovery_summary"]["closed_last_24h"] = {"by_reason": {"l2_extraction_disabled": 90}}
+    reason = stage(run(board), "hypothesis_cards")["reason"]
+    assert reason == "no_verified_hypothesis_card_last_24h:l2_extraction_disabled=90"
+
+
+def test_old_card_does_not_count_as_new():
+    board = good_board()
+    board["data"]["discovered"][0]["since"] = "2026-11-20T08:00:00Z"
+    assert stage(run(board), "hypothesis_cards")["status"] == "failed"
+    assert stage(run(board), "no_fallback_drafts")["status"] == "passed"  # zero NEW drafts
+
+
+@pytest.mark.parametrize("card", [
+    {"title": "Evidence suggests: a lottery", "claim_status": "ok"},
+    {"title": "A drink-driving report", "claim_status": "card_not_in_ledger"},
+    {"title": "A report", "claim": "Evidence suggests: x", "claim_status": "ok"},
+])
+def test_fallback_draft_fails(card):
+    board = good_board()
+    board["data"]["discovered"].append({"kind": "hypothesis_card", "source_id": "s2",
+                                        "since": "2026-11-28T09:00:00Z", **card})
+    result = stage(run(board), "no_fallback_drafts")
+    assert result["status"] == "failed" and result["reason"] == "external_text_drafts_without_verified_card"
+    assert result["values"]["count"] == 1
+
+
+def test_draft_with_unavailable_ledger_is_not_verifiable():
+    board = good_board()
+    board["data"]["discovered"][0]["claim_status"] = "ledger_unavailable"
+    assert stage(run(board), "no_fallback_drafts")["reason"] == "drafts_not_verifiable:ledger_unavailable"
+
+
+def test_governed_dataset_missing_stale_or_not_governed():
+    board = good_board()
+    board["data"]["templates"] = [{"template_id": "t1", "evaluation": None}]
+    assert stage(run(board), "governed_market_dataset")["reason"] == "no_governed_snapshot_recorded"
+    board = good_board()
+    board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = "2026-11-01"
+    assert stage(run(board), "governed_market_dataset")["reason"] == "governed_snapshot_stale"
+    board = good_board()
+    board["data"]["templates"][0]["evaluation"]["evaluation_context"]["governed_snapshot_id"] = "persona-pool-1"
+    assert stage(run(board), "governed_market_dataset")["reason"] == "snapshot_not_governed_market"
+
+
+def test_template_search_unavailable_fails_but_refusals_pass():
+    board = good_board()
+    board["data"]["scaffolded"][0].update(outcome="failed", reason_code="mandate_universe_missing",
+                                          reason="template_search_unavailable:ValueError:mandate_universe_missing")
+    assert stage(run(board), "template_search")["status"] == "failed"
+    for code in ("survivorship_limited", "below_threshold"):
+        board = good_board()
+        board["data"]["scaffolded"][0].update(reason_code=code, reason=code)
+        assert stage(run(board), "template_search")["status"] == "passed"
+
+
+def test_template_search_stale_not_due_and_never_searched():
+    board = good_board()
+    board["data"]["scaffolded"][0]["latest_at"] = "2026-11-20T10:00:00Z"
+    assert stage(run(board), "template_search")["reason"] == "last_search_stale"
+    board = good_board()
+    board["data"]["scaffolded"] = []
+    assert stage(run(board), "template_search")["reason"] == "open_demands_never_searched"
+    board["data"]["discovered"][1]["since"] = "2026-11-28T06:00:00Z"
+    assert stage(run(board), "template_search")["status"] == "not_due"
+    board["data"]["discovered"] = [board["data"]["discovered"][0]]
+    assert stage(run(board), "template_search") == dpd._stage("template_search", "not_due", "no_open_demand")
+
+
+def test_no_template_evaluated_and_stale_evaluation_fail():
+    board = good_board()
+    count(board, "templates_evaluated", value=0, status="ok")
+    assert stage(run(board), "templates_evaluated")["reason"] == "no_template_evaluated"
+    board = good_board()
+    board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = "2026-11-01"
+    assert stage(run(board), "templates_evaluated")["reason"] == "evaluation_stale"
+
+
+def test_gate_counts_by_reason_and_passes():
+    board = good_board()
+    recent = "2026-11-27T01:00:00Z"
+    board["data"]["replicated"] = [{"id": "a", "created_at": recent}]
+    board["data"]["document_checked"] = [{"id": "b", "document_check_reason": "no_passing_gate_result", "created_at": recent},
+                                         {"id": "c", "document_check_reason": "retired", "created_at": recent},
+                                         {"id": "old", "document_check_reason": "retired", "created_at": "2026-10-01T00:00:00Z"}]
+    count(board, "passes", value=1, status="ok")
+    gate = stage(run(board), "gate_attempts")
+    assert gate["status"] == "passed"
+    assert gate["values"]["by_reason"] == {"passed": 1, "no_passing_gate_result": 1, "retired": 1, "survivorship_limited": 1}
+    assert gate["reason"] == "gate_answered:1_strategy(ies)_passed"
+
+
+def test_gate_with_only_errors_or_nothing_fails():
+    board = good_board()
+    board["data"]["scaffolded"][0].update(outcome="failed", reason_code="mandate_universe_missing", reason="unavailable")
+    gate = stage(run(board), "gate_attempts")
+    assert gate["status"] == "failed" and gate["reason"] == "gate_attempts_without_result"
+    board["data"]["scaffolded"] = []
+    assert stage(run(board), "gate_attempts")["reason"] == "no_gate_result_in_window"
+
+
+def test_dead_letters_unresolved_stale_unobserved_and_unparseable_fail():
+    health = good_health()
+    health["data"]["downstream_actual_state"]["summary"] = "4204 terminal drafts; 142 unresolved dead letters (working_with_unresolved_dead_letters)"
+    result = stage(run(health=health), "distillation_dead_letters")
+    assert result["reason"] == "unresolved_dead_letters" and result["values"]["unresolved"] == 142
+    health = good_health()
+    health["data"]["downstream_actual_state"]["checked_at"] = "2026-11-27T00:00:00Z"
+    assert stage(run(health=health), "distillation_dead_letters")["reason"] == "distillation_state_stale"
+    health = good_health()
+    health["data"]["downstream_actual_state"]["authoritative"] = False
+    assert stage(run(health=health), "distillation_dead_letters")["reason"] == "distillation_state_unobserved"
+    health = good_health()
+    health["data"]["downstream_actual_state"]["summary"] = "something else"
+    assert stage(run(health=health), "distillation_dead_letters")["reason"] == "dead_letter_count_not_reported"
+
+
+# ---- a stage that cannot be read is failed with its reason, never skipped or passed
+
+def test_unreadable_routes_fail_every_stage_they_feed():
+    report = dpd.judge(dpd.ReadFailed("http_503"), dpd.ReadFailed("http_403"), NOW)
+    assert report["failed_stages"] == list(dpd.STAGES)
+    assert all(s["status"] == "failed" for s in report["stages"])
+    assert stage(report, "template_search")["reason"] == "unreadable:alpha_factory:http_503"
+    assert stage(report, "distillation_dead_letters")["reason"] == "unreadable:loop_health:http_403"
+
+
+@pytest.mark.parametrize("surface", ["alpha_factory", "alpha_factory_runs", "alpha_factory_templates",
+                                     "alpha_factory_hypothesis_cards", "alpha_factory_demands"])
+def test_unavailable_surface_never_passes_the_stages_that_need_it(surface):
+    board = good_board()
+    board["meta"]["surfaces"][surface] = {"status": "unavailable", "reason": "owner_read_failed"}
+    report = run(board)
+    needing = {"alpha_factory": set(dpd.STAGES) - {"distillation_dead_letters"},
+               "alpha_factory_runs": {"template_search", "gate_attempts"},
+               "alpha_factory_templates": {"governed_market_dataset"},
+               "alpha_factory_hypothesis_cards": {"hypothesis_cards", "no_fallback_drafts"},
+               "alpha_factory_demands": {"template_search"}}[surface]
+    assert needing <= set(report["failed_stages"])
+    assert all("unreadable" in stage(report, n)["reason"] or stage(report, n)["reason"].startswith("unreadable") for n in needing)
+
+
+def test_unavailable_count_is_failed_not_zero():
+    board = good_board()
+    count(board, "templates_evaluated", value=None, status="unavailable", reason="templates_read_failed")
+    assert stage(run(board), "templates_evaluated")["reason"] == "unreadable:templates_evaluated:templates_read_failed"
+    assert stage(run(dict(board, data=None)), "external_records")["status"] == "failed"
+
+
+def test_invalid_payloads_fail():
+    assert run(board=[], health=[])["verdict"] == "failed"
+    assert stage(run(health={"data": {}}), "distillation_dead_letters")["reason"] == "loop_health_payload_invalid"
+
+
+def test_check_reads_exactly_two_routes_with_get_only():
+    seen = []
+
+    def fetch(path):
+        seen.append(path)
+        if "alpha-factory" in path:
+            raise dpd.ReadFailed("http_500")
+        return good_health()
+
+    report = dpd.check(fetch, NOW)
+    assert seen == [dpd.ALPHA_FACTORY, dpd.DISTILLATION_HEALTH]
+    assert report["failed_stages"] == list(dpd.STAGES)[:-1]
+
+
+# ---- the executable probe against a local server
+
+class Handler(BaseHTTPRequestHandler):
+    board = good_board()
+    health = good_health()
+    methods = []
+
+    def log_message(self, *args):
+        pass
+
+    def _send(self, status, body):
+        raw = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_POST(self):
+        Handler.methods.append(("POST", self.path))
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self._send(200, {"access_token": "tok-SECRET-VALUE"}) if self.path == "/bff/auth/dev-login" else self._send(404, {})
+
+    def do_GET(self):
+        Handler.methods.append(("GET", self.path))
+        assert self.headers.get("Authorization") == "Bearer tok-SECRET-VALUE"
+        if self.path.startswith("/bff/alpha-factory"):
+            self._send(200, Handler.board)
+        elif self.path.startswith("/bff/v5/loop-health/strategy_distillation"):
+            self._send(200, Handler.health)
+        else:
+            self._send(404, {})
+
+
+@pytest.fixture()
+def server():
+    Handler.board, Handler.health, Handler.methods = good_board(), good_health(), []
+    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+def exec_probe(url, **extra):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")}
+    env.update({"ACCEPTANCE_BFF_URL": url, "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+                "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE"}, **extra)
+    return subprocess.run([sys.executable, str(PROBE)], env=env, capture_output=True, text=True, timeout=60)
+
+
+def test_probe_is_an_executable_release_probe_with_an_owner():
+    assert PROBE.stat().st_mode & stat.S_IXUSR
+    assert "# acceptance-owner: DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125" in PROBE.read_text().splitlines()[:20][1]
+
+
+def test_probe_skips_naming_missing_variables():
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")}
+    done = subprocess.run([sys.executable, str(PROBE)], env=env, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 77 and "ACCEPTANCE_BFF_URL" in done.stdout
+
+
+def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
+    done = exec_probe(server)  # the synthetic world is from 2026-11-28; the wall clock is later
+    out = done.stdout + done.stderr
+    assert done.returncode == 1 and "VERDICT failed" in out
+    assert "tok-SECRET-VALUE" not in out and "client-SECRET-VALUE" not in out
+    assert [m for m in Handler.methods if m[0] == "POST"] == [("POST", "/bff/auth/dev-login")]
+    assert [m[1] for m in Handler.methods if m[0] == "GET"] == [dpd.ALPHA_FACTORY, dpd.DISTILLATION_HEALTH]
+
+
+def test_probe_main_passes_a_working_world(server, monkeypatch, capsys):
+    for key, value in {"ACCEPTANCE_BFF_URL": server, "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+                       "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE"}.items():
+        monkeypatch.setenv(key, value)
+    assert dpd.main(now=NOW) == 0
+    out = capsys.readouterr().out
+    assert "VERDICT passed" in out and "STRATEGIES no strategy passed" in out
+
+
+def test_probe_login_and_read_failures_exit_one(server, monkeypatch, capsys):
+    monkeypatch.setenv("ACCEPTANCE_BFF_URL", server)
+    monkeypatch.setenv("ACCEPTANCE_VIEWER_CLIENT_ID", "viewer")
+    monkeypatch.setenv("ACCEPTANCE_VIEWER_CLIENT_SECRET", "client-SECRET-VALUE")
+    Handler.board = None
+    Handler.health = None
+    assert dpd.main(now=NOW) == 1
+    monkeypatch.setenv("ACCEPTANCE_BFF_URL", "http://127.0.0.1:1")
+    assert dpd.main(now=NOW) == 1
+    assert "auth_failed:request_failed" in capsys.readouterr().out
+
+
+def test_both_routes_the_probe_reads_are_get_routes_of_the_real_bff_application():
+    os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+    os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.test_normalized_route_uniqueness import scan_fastapi_routes
+
+    registered = {e.raw_path for e in scan_fastapi_routes(bff_main.app) if e.method == "GET"}
+    assert dpd.ALPHA_FACTORY.split("?")[0] in registered
+    assert dpd.DISTILLATION_HEALTH.rsplit("/", 1)[0] + "/{loop_id}" in registered
