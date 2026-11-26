@@ -53,10 +53,14 @@ LISTING = {"data": [{"id": PID, "lifecycle_state": "paper_running"},
                     {"id": "persona-retired", "lifecycle_state": "retired"}]}
 
 
-def detail(*, admitted=None, as_of="2026-11-24T05:30:00+00:00", joined=JOINED):
+def detail(*, admitted=None, as_of="2026-11-24T05:30:00+00:00", joined=JOINED, since_inception=False,
+           reason=None):
     out = copy.deepcopy(HOSTED_DETAIL)
     book = out["data"]["strategyPool"]["memberVirtualBooks"][0]["book"]
     book["admitted_at"], book["as_of"] = admitted, as_of
+    book["since_inception"] = since_inception
+    if reason:
+        book["since_inception_reason"] = reason
     book["underlyings"][0]["as_of"] = as_of
     out["data"]["strategyPool"]["current"]["members"][0]["joined_at"] = joined
     return out
@@ -91,7 +95,10 @@ def test_hosted_shape_today_is_skipped_because_no_book_was_marked_after_the_buil
 def test_book_marked_after_the_build_without_admission_fails():
     report = run("2026-11-26T10:00:00Z", detail(as_of="2026-11-27T05:30:00+00:00"))
     assert report["passed"] is False and report["skipped"] is False and report["books_checked"] == 1
-    assert report["failed"][PID] == [f"admitted_at_not_joined_at:{REF}:admitted_at=None:joined_at={JOINED}"]
+    # Changed assertion (MEMBER-BOOK-ADMISSION-GAP-FILL-20261126): the same book also has since_inception
+    # false in the hosted fixture, which the probe now reports after the admission failure.
+    assert report["failed"][PID] == [f"admitted_at_not_joined_at:{REF}:admitted_at=None:joined_at={JOINED}",
+                                     f"book_not_since_inception:{REF}:reason=None"]
 
 
 def test_book_marked_after_the_build_with_another_admission_fails():
@@ -100,8 +107,23 @@ def test_book_marked_after_the_build_with_another_admission_fails():
 
 
 def test_book_marked_after_the_build_with_the_member_joined_at_passes():
-    report = run("2026-11-26T10:00:00Z", detail(admitted=JOINED, as_of="2026-11-27T05:30:00+00:00"))
+    # MEMBER-BOOK-ADMISSION-GAP-FILL-20261126: the book must also be since_inception; this passing case
+    # now carries since_inception true (it was false in the hosted fixture, which the probe now fails).
+    report = run("2026-11-26T10:00:00Z",
+                 detail(admitted=JOINED, as_of="2026-11-27T05:30:00+00:00", since_inception=True))
     assert report["passed"] is True and report["results"] == {PID: "ok"} and report["failed"] == {}
+
+
+def test_book_marked_after_the_build_with_the_admission_but_not_since_inception_fails():
+    reason = "admission_gap_unfilled:admission_replay_unavailable:daily_bars_reader_unavailable"
+    report = run("2026-11-26T10:00:00Z", detail(admitted=JOINED, as_of="2026-11-27T05:30:00+00:00", reason=reason))
+    assert report["passed"] is False and report["skipped"] is False and report["books_checked"] == 1
+    assert report["failed"][PID] == [f"book_not_since_inception:{REF}:reason={reason}"]
+
+
+def test_book_not_since_inception_with_a_mark_not_newer_than_the_build_is_not_judged():
+    report = run("2026-11-26T10:00:00Z", detail(admitted=JOINED, as_of="2026-11-24T05:30:00+00:00"))
+    assert report["skipped"] is True and report["books_checked"] == 0
 
 
 def test_unavailable_book_row_and_unknown_build_time_are_not_passes():
