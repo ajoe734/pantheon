@@ -1,0 +1,46 @@
+{
+  "task_id": "AGORA-COMMITTEE-TRADER-MEETINGS-20261126",
+  "class": "RC6",
+  "owner": "Claude2",
+  "reviewer": "Antigravity2",
+  "pr": 7915,
+  "decision": "Operator decision 2026-11-26 (coordinator session 70b5f70f): Agora is for human traders; the Agora committee lists only meetings the trader convened plus MT-4 reviews whose subject is the trader; persona gate panels and institutional persona meetings are viewed in the Management meetings center. Supersedes M10 of docs/04/pantheon_persona_meetings_2026-11-15/SD_PERSONA_MEETINGS_2026-11-15.md; amendment A2 stays.",
+  "cause": "Hosted 2026-11-26 15:06Z (BFF b0eb2c259): GET /bff/agora/committee/sessions returned 28 tenant-wide items (7 consult-envelope-publication gate panels first, then 21 deliberative meetings oldest first), none convened by an agora_user. CommitteeOwnerClient.sessions merged every persona_panel request with every owner meeting; only project_meeting hid other users' agora_user meetings. GET /bff/management/meetings listed deliberative meetings only.",
+  "change": {
+    "agora_committee": {
+      "scope": "trader_owns_meeting(): convened_by kind agora_user with id == caller, or MT-4 (meeting_code/meeting_type/meeting_slug in MT-4, performance_attribution_review) whose subject (subject_ref trader:/agora_user:/user:<id>, or attribution_record agora_user_id/trader_id/user_id/subject) is the caller; gate panels never qualify",
+      "routes": "sessions, meetings (include_panels accepted, ignored), proposals and meetings/proposals use CommitteeOwnerClient.trader_meetings/trader_proposals; sessions/{id}, meetings/{id}, memos, meetings/{id}/proposals and publish use trader_meeting(), which answers unavailable(consultation, meeting_not_found, 404) for a missing, foreign-tenant, other-owner, institutional or gate-panel id alike",
+      "list_shape": "newest first by created_at; created_at and closed_at; chair_display_name, participants[].display_name, rounds[].positions[].display_name from the persona directory resolver (falls back to id with *_name_missing); caller's private servant labelled 'Your servant' with is_caller_servant=true; empty list reason no_trader_meetings",
+      "owner_reads": "owner meeting list paged in full (limit 500, max 20 pages); ownership decided on list rows before any detail read; MT-4 rows without a trader subject in the list read one detail to check the attribution record; memos reuse the scoped meeting detail (1 meeting read + 1 memo read)",
+      "unchanged": "CommitteeOwnerClient.meeting/proposals/sessions/memos keep their behaviour for candidate-decision and persona-cycle callers"
+    },
+    "management_meetings": {
+      "list": "GET /bff/management/meetings (and /bff/meetings) adds persona_panel requests on the first page as session_class gate_panel with created_at, completed_at, closed_at, conclusion {gate_decision, operator_decision_required, vetoed_by, reasons, reviewers[{persona_id, persona_display_name, role, recommendation}]}, title '<persona display name> pool v<N> envelope publication: <reviewer> <recommendation>, ... -> <gate decision>'; all rows newest first; status/type/persona filters apply; a non-panel type skips panel reads; panel read failure keeps deliberative rows and sets meta.surfaces.gate_panels unavailable",
+      "detail": "GET /bff/management/meetings/{id} falls back to the gate panel when the owner has no such meeting: positions (round 1), memo (committee_summary) and memos, case_file_view via the existing project_panel projection, conclusion and title"
+    },
+    "contracts": "agora_v1_14.openapi.yaml committee session route descriptions document the trader scope, no_trader_meetings and the non-enumerating 404; bundle_index.v1_14.json openapi sha256 051da07a...5197 -> 381cab2e...82ed; capability_manifest_v1_14.json and backend_routes_manifest.json unchanged (no route added or removed)"
+  },
+  "verification": {
+    "focused": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q <13 test files touching agora/committee or management/meetings> services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py services/control-plane/bff/test_cw03_committee_board_contract.py",
+      "result": "487 passed"
+    },
+    "contracts": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/tests/agora/test_agora_isolation_matrix.py scripts/test_agora_compat_manifest.py",
+      "result": "83 passed"
+    },
+    "known_unrelated_failure": "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface: baseline drift lists only GET/POST /bff/agora/persona-lab/* routes; this PR adds or removes no route",
+    "tenant_with_both_kinds": "test_agora_committee_memory_owners.py::test_committee_sessions_list_only_the_callers_meetings_newest_first seeds a gate panel, an institutional meeting, another trader's meeting, the caller's meeting and an MT-4 of the caller; only the last two are listed, newest first; every other id answers the same 404 body on all four detail routes"
+  },
+  "runtime_budget": {
+    "recurring_jobs": 0,
+    "new_writers": 0,
+    "agora_sessions_owner_reads": "ceil(meetings/500) list reads + 1 detail read per listed own meeting (previously 1 panel list + 1 meeting list + 1 detail per meeting in the tenant)",
+    "management_list_owner_reads": "1 meeting list + 1 panel list + 1 transcript per gate panel on the first page (hosted: 7 panels -> 9 reads); none of the panel reads when type names a deliberative meeting type or a cursor is given"
+  },
+  "hosted_acceptance": {
+    "status": "pending_deploy",
+    "plan": "As admintest operator after deploy: GET /bff/agora/committee/sessions returns 0 items with reason no_trader_meetings; GET /bff/management/meetings lists the seven consult-envelope-publication gate panels and the deliberative meetings newest first; record responses with secrets redacted here"
+  },
+  "review_independence": "Owner Claude2 (Anthropic Claude); reviewer Antigravity2 (different model family)"
+}

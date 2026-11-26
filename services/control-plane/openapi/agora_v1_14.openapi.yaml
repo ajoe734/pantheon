@@ -41,7 +41,7 @@
           }
         },
         "x-business-owner": "consultation",
-        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Trader scope (AGORA-COMMITTEE-TRADER-MEETINGS-20261126): returns only deliberative meetings convened by the caller (convened_by kind agora_user, id = caller) plus MT-4 reviews whose subject is the caller, newest first by created_at, each with created_at, closed_at and persona display names (chair_display_name, participants[].display_name; the caller's private servant is labelled as the caller's servant). Persona gate panels and institutional persona meetings are served by GET /bff/management/meetings. An empty list carries reason no_trader_meetings."
       }
     },
     "/bff/agora/committee/sessions/{session_id}": {
@@ -100,7 +100,7 @@
           }
         },
         "x-business-owner": "consultation",
-        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Trader scope (AGORA-COMMITTEE-TRADER-MEETINGS-20261126): a session outside the caller's meetings answers the same non-enumerating 404 (reason meeting_not_found) as a missing one."
       }
     },
     "/bff/agora/committee/sessions/{session_id}/memos": {
@@ -159,7 +159,7 @@
           }
         },
         "x-business-owner": "consultation",
-        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Trader scope (AGORA-COMMITTEE-TRADER-MEETINGS-20261126): a session outside the caller's meetings answers the same non-enumerating 404 (reason meeting_not_found) before any memo read."
       }
     },
     "/bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish": {
@@ -227,7 +227,7 @@
           }
         },
         "x-business-owner": "consultation",
-        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Trader scope (AGORA-COMMITTEE-TRADER-MEETINGS-20261126): keeps its write-role authorization and also refuses, with the same non-enumerating 404, a session outside the caller's meetings."
       }
     },
     "/bff/agora/memory": {

@@ -39,6 +39,8 @@ from services.knowledge import case_file as cf
 from services.persona.cron_ooda_closure import append_ooda_packet
 
 TENANT = "tenant-a"
+# Persona gate panels are served by the Management meetings center (decision 2026-11-26).
+MGMT = "/bff/management/meetings"
 
 EVIDENCE_PERSONA_PACKETS = (
     (
@@ -445,10 +447,13 @@ def test_panel_and_memo_show_case_file_citations_and_rejections(seeded):
                                       {"claim": "stray", "evidence_refs": ["lessons:ghost"]}],
                  rejected={"persona_id": "persona-b", "contribution_id": "c-2", "reason": "claim_uncited"})
     calls_before = len(seeded[1])
-    panel = client.get(PANEL + "/panel-a", headers=headers())
-    memos = client.get(PANEL + "/panel-a/memos", headers=headers())
-    assert panel.status_code == memos.status_code == 200, (panel.text, memos.text)
-    for view in (panel.json()["data"]["case_file_view"], memos.json()["data"][0]["case_file_view"]):
+    panel = client.get(MGMT + "/panel-a", headers=headers())
+    assert panel.status_code == 200, panel.text
+    data = panel.json()["data"]
+    assert data["session_class"] == "gate_panel"
+    assert data["memo"]["memo_id"] == "memo-panel-a"
+    assert client.get(PANEL + "/panel-a", headers=headers()).status_code == 404
+    for view in (data["case_file_view"],):
         assert view["status"] == "ok"
         assert view["case_file"]["case_file_id"] == case["case_file_id"]
         got = {i["item_id"]: i for g in view["case_file"]["groups"].values() for i in g["items"]}
@@ -463,13 +468,13 @@ def test_panel_and_memo_show_case_file_citations_and_rejections(seeded):
 
 def test_panel_without_case_file_and_foreign_tenant_case_file(stack):
     client, _, _, _, _, store = stack
-    body = client.get(PANEL + "/panel-a", headers=headers()).json()["data"]
+    body = client.get(MGMT + "/panel-a", headers=headers()).json()["data"]
     assert body["case_file_view"]["reason"] == "no_case_file_recorded"
     assert body["case_file_view"]["case_file"] is None
     foreign = copy.deepcopy(compose(""))
     foreign["subject"]["tenant_id"] = "tenant-other"
     record_panel(store, foreign, claims=[])
-    view = client.get(PANEL + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
+    view = client.get(MGMT + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
     assert view == {"status": "unavailable", "reason": "case_file_invalid", "case_file": None}
 
 
@@ -479,17 +484,17 @@ def test_panel_private_item_is_withheld(seeded):
     private = {i["item_id"] for i in items(case) if i.get("relevance_scope") == "persona_private"}
     assert private
     record_panel(store, case, claims=[])
-    view = client.get(PANEL + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
+    view = client.get(MGMT + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
     shown = {i["item_id"] for g in view["case_file"]["groups"].values() for i in g["items"]}
     assert not (shown & private)
 
 
 def test_consultation_outage_is_recorded_not_guessed(stack):
     client, _, control, *_ = stack
-    resp = client.get(PANEL + "/panel-a", headers=headers())
+    resp = client.get(MGMT + "/panel-a", headers=headers())
     assert resp.status_code == 200
     control["response"][("consultation.test", "/api/consult/requests/panel-a/transcript")] = {"request_id": "x"}
-    view = client.get(PANEL + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
+    view = client.get(MGMT + "/panel-a", headers=headers()).json()["data"]["case_file_view"]
     assert view["reason"] == "invalid_transcript_response" and view["case_file"] is None
 
 
@@ -519,7 +524,8 @@ def record_meeting(
         "status": "closed",
         "outcome": "proposals_issued",
         "chair_persona_id": "persona-a",
-        "convened_by": convened_by or {"kind": "persona", "id": "persona-a"},
+        # The Agora committee serves only the caller's own meetings (decision 2026-11-26).
+        "convened_by": convened_by or {"kind": "agora_user", "id": "alice"},
         "participants": eff_participants,
         "round": len(eff_rounds),
         "rounds": eff_rounds,
