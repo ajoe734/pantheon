@@ -879,6 +879,9 @@ class ReadSurfacePorts:
     def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
         return self.research_knowledge_source.read_registry_strategy_artifact_detail(artifact_id)
 
+    def read_registry_entry_strategy(self, entry_id: Optional[str]) -> Any:
+        return self.research_knowledge_source.read_registry_entry_strategy(entry_id)
+
     def read_registry_strategy_artifacts_for_strategy(self, strategy_id: Optional[str]) -> Any:
         return self.research_knowledge_source.read_registry_strategy_artifacts_for_strategy(strategy_id)
 
