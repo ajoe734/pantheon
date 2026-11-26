@@ -160,6 +160,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:mgmt-strategy-meeting-research-readable",
         "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
+        "probe:persona-member-book-admission",
         "probe:persona-pool-member-rules",
         "probe:persona-risk-profile-change",
         "probe:trade-journey-readable",
@@ -417,3 +418,66 @@ def test_without_crawl_flag_the_release_probe_stage_is_unchanged(tmp_path, monke
     verdict = json.loads(out.read_text())
     assert verdict["acceptance"] == "passed"
     assert [c["id"] for c in verdict["checks"]] == ["check:deployed-pair-identity"]
+
+
+# --- failed-read detail (ACCEPTANCE-CRAWL-CARRY-FAILED-READS-20261126) ----------------------------
+
+def _read(path, status=503, counted=True, **extra):
+    return {"method": "GET", "path": path, "status": status, "error": None, "elapsedMs": 812.4,
+            "pending": False, "reason": "http_status", "honestNotFound": False, "streamRule": None,
+            "counted": counted, **extra}
+
+
+def _data_fail(path, reads, omitted=0):
+    return _route(path, status="data_fail", failedReads=reads, failedReadsOmitted=omitted)
+
+
+def test_failed_reads_are_carried_bounded_per_route_and_run(tmp_path):
+    many = [_read(f"/bff/management/r{i}?page=1", counted=False) for i in range(20)] + \
+        [_read("/bff/management/jobs/summary?cursor=abc", status=503)]
+    routes = [_route("/management/cockpit", failedReads=[], failedReadsOmitted=0)] + \
+        [_data_fail(f"/management/p{i}", many, omitted=3) for i in range(12)]
+    check, artifact = _crawl(tmp_path, runner=_writer(_manifest(routes, False)))
+    failed = artifact["failedRoutes"]
+    assert [r["path"] for r in failed] == [f"/management/p{i}" for i in range(12)]  # ok route carries nothing
+    assert "failedReads" not in artifact["routes"][0]
+    first = failed[0]
+    assert len(first["failedReads"]) == stage.FAILED_READ_CAP_PER_ROUTE == 12
+    assert first["failedReads"][0] == {"method": "GET", "path": "/bff/management/jobs/summary", "status": 503,
+                                       "counted": True, "reason": "http_status", "elapsedMs": 812}
+    assert first["failedReadsOmitted"] == 21 - 12 + 3
+    assert sum(len(r["failedReads"]) for r in failed) == stage.FAILED_READ_CAP_PER_RUN == 100
+    assert failed[-1]["failedReads"] == [] and failed[-1]["failedReadsOmitted"] == 21 + 3
+    # the verdict check names the first counted failed read per route
+    assert "first failed read GET /bff/management/jobs/summary 503 812ms" in check["detail"]
+
+
+def test_failed_reads_strip_query_values_and_header_like_fields(tmp_path):
+    reads = [_read("/bff/events/stream?token=QUERYSECRET&since=9", status=409, counted=False,
+                   streamRule="stream_reconnect", headers={"authorization": "Bearer HDRSECRET"},
+                   cookie="sid=COOKIESECRET", body="BODYSECRET", url="https://api/x?k=URLSECRET"),
+             _read("https://api.dev.mvl-cap.tw/bff/management/pools?q=QSECRET#frag", status=None,
+                   error="net::ERR_CONNECTION_RESET at https://api/x?k=ERRSECRET", reason="network_error"),
+             _read("/bff/management/x", status=True, elapsedMs="12", reason="made_up")]
+    check, artifact = _crawl(tmp_path, runner=_writer(_manifest([_data_fail("/management/pools", reads)], False)))
+    text = json.dumps([check, artifact])
+    for secret in ("QUERYSECRET", "HDRSECRET", "COOKIESECRET", "BODYSECRET", "URLSECRET", "QSECRET", "ERRSECRET",
+                   "since=", "frag", "streamRule", "authorization"):
+        assert secret not in text
+    kept = artifact["failedRoutes"][0]["failedReads"]
+    assert kept[0] == {"method": "GET", "path": "/bff/management/pools", "status": None, "counted": True,
+                       "error": "net::ERR_CONNECTION_RESET", "reason": "network_error", "elapsedMs": 812}
+    assert kept[2]["path"] == "/bff/events/stream" and kept[2]["counted"] is False  # counted reads first
+    assert kept[1] == {"method": "GET", "path": "/bff/management/x", "status": None, "counted": True,
+                       "error": "request_failed"}
+    for read in kept:
+        assert set(read) <= {"method", "path", "status", "error", "counted", "reason", "elapsedMs"}
+    assert "first failed read GET /bff/management/pools net::ERR_CONNECTION_RESET 812ms" in check["detail"]
+
+
+def test_manifest_without_failed_reads_summarizes_as_before():
+    summary = stage.summarize_crawl(REPLAY_45684275970)
+    assert summary["failedRoutes"] == [{"path": "/management/evolution-journal", "status": "crash",
+                                        "problems": ["crash", "render_crash_console"],
+                                        "error": "TypeError: L.target.version.toLowerCase is not a function"}]
+    assert all("failedReads" not in r for r in summary["routes"])

@@ -546,3 +546,264 @@ def test_operational_readiness_healthy_retained_surfaces_only(
     assert set(data.surfaces) == set(retained)
     assert all(s.status == "ok" for s in data.surfaces.values())
     assert data.status == "ok"
+
+
+def _make_ready_workshop_store(
+    *,
+    tenant_id: str = "tenant-test",
+    user_id: str = "trader-001",
+    ready: bool = True,
+) -> Any:
+    from .strategy_workshop.store import MemoryWorkshopStore
+
+    store = MemoryWorkshopStore()
+    workshop_id = "ws-001"
+    strategy_id = "strat-001"
+    version_id = "wv-001"
+    store.create_session({
+        "workshop_id": workshop_id,
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "strategy_id": strategy_id,
+        "active_strategy_spec_registry_id": strategy_id,
+        "selected_version_id": version_id,
+        "status": "open",
+    })
+    store.create_readiness_assessment({
+        "assessment_id": "assess-001",
+        "workshop_id": workshop_id,
+        "strategy_id": strategy_id,
+        "workshop_version_id": version_id,
+        "strategy_spec_registry_id": strategy_id,
+        "assessment_version": 1,
+        "highest_ready_gate": "trading_room" if ready else "full_validation",
+        "gates": [
+            {"gate": "preliminary_research", "state": "ready", "requirements": []},
+            {"gate": "full_validation", "state": "ready", "requirements": []},
+            {"gate": "trading_room", "state": "ready" if ready else "blocked", "requirements": []},
+        ],
+        "assessed_at": "2026-08-29T11:55:00Z",
+    })
+    return store
+
+
+def test_operational_readiness_no_ready_workshop_strategy_returns_not_configured_without_reads() -> None:
+    """A caller with no ready Strategy Workshop StrategySpec returns not_configured and makes no authority reads."""
+    from .operational_readiness import EnvironmentAgoraOperationalReadinessProvider
+    from .strategy_workshop.store import MemoryWorkshopStore
+
+    def _forbid_read_store() -> Any:
+        raise AssertionError("read_store must not be called when caller has no ready workshop strategy")
+
+    def _forbid_http(url: str, _headers: Dict[str, str], _timeout: float) -> Dict[str, Any]:
+        raise AssertionError(f"runtime-manager / source-ingest must not be called: {url}")
+
+    def _forbid_telemetry() -> list[Dict[str, Any]]:
+        raise AssertionError("telemetry reader must not be called when caller has no ready workshop strategy")
+
+    def _forbid_surfaces(_scope: Any) -> Dict[str, Any]:
+        raise AssertionError("surfaces reader must not be called when caller has no ready workshop strategy")
+
+    provider = EnvironmentAgoraOperationalReadinessProvider(
+        _forbid_read_store,
+        runtime_manager_url="http://runtime-manager:8081",
+        source_ingest_url="http://source-ingest:8097",
+        http_get_json=_forbid_http,
+        telemetry_reader=_forbid_telemetry,
+        surfaces_reader=_forbid_surfaces,
+    )
+
+    for workshop_store in (
+        MemoryWorkshopStore(),
+        _make_ready_workshop_store(tenant_id="tenant-test", user_id="trader-001", ready=False),
+    ):
+        app = FastAPI()
+        app.include_router(
+            create_operational_readiness_router(
+                utc_now=lambda: "2026-08-29T12:00:00Z",
+                extract_identity=lambda _auth: {
+                    "user_id": "trader-001",
+                    "tenant_id": "tenant-test",
+                    "roles": ["operator"],
+                },
+                require_read_role=lambda _id: None,
+                read_provider=provider,
+                workshop_store=workshop_store,
+            )
+        )
+        resp = TestClient(app).get(
+            "/bff/agora/operational-readiness",
+            headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        data = body["data"]
+        assert data["status"] == "not_configured"
+        assert data["source"]["freshness"] == "not_configured"
+        assert data["source"]["last_failure"] is None
+        assert data["signal_producer"]["status"] == "not_configured"
+        assert data["signal_producer"]["reason"] == "no_workshop_strategies"
+        assert data["signal_producer"]["active_binding"] is None
+        assert data["signal_producer"]["consumed_snapshot_id"] is None
+        assert data["signal_producer"]["last_success_at"] is None
+        for surface in data["surfaces"].values():
+            assert surface["status"] == "not_configured"
+            assert surface["reason"] == "no_workshop_strategies"
+            assert surface["count"] == 0
+            assert surface["cursor"] is None
+        assert body["meta"]["audience"] == "tenant:tenant-test:user:trader-001"
+
+
+def test_operational_readiness_with_ready_workshop_strategy_evaluates_authorities(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """A caller with at least one ready workshop StrategySpec keeps normal source/producer/surface evaluation."""
+    now_iso = "2026-08-29T12:00:00Z"
+    source_ts = "2026-08-29T11:30:00Z"
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-ready-001",
+        "source_instance_id": "src-demo-tw-stock",
+        "event_time": source_ts,
+        "sla_seconds": 86400,
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "active_binding": "rb-trader-001",
+        "consumed_snapshot_id": "mss-ready-001",
+        "last_success_at": now_iso,
+        "enqueued": 4,
+        "reason": "healthy",
+    })
+    readiness_service.set_surface_data("journal", {"status": "ok", "count": 4, "cursor": "j-4"})
+
+    workshop_store = _make_ready_workshop_store(
+        tenant_id="tenant-test",
+        user_id="trader-001",
+        ready=True,
+    )
+    app = FastAPI()
+    app.include_router(
+        create_operational_readiness_router(
+            utc_now=lambda: now_iso,
+            extract_identity=lambda _auth: {
+                "user_id": "trader-001",
+                "tenant_id": "tenant-test",
+                "roles": ["operator"],
+            },
+            require_read_role=lambda _id: None,
+            service=readiness_service,
+            workshop_store=workshop_store,
+        )
+    )
+    resp = TestClient(app).get(
+        "/bff/agora/operational-readiness",
+        headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["status"] == "ok"
+    assert data["source"]["freshness"] == "fresh"
+    assert data["signal_producer"]["active_binding"] == "rb-trader-001"
+    assert data["signal_producer"]["consumed_snapshot_id"] == "mss-ready-001"
+    assert data["surfaces"]["journal"]["status"] == "ok"
+    assert data["surfaces"]["journal"]["count"] == 4
+
+
+def test_agora_router_wires_workshop_store_into_operational_readiness_and_performance_attribution() -> None:
+    """create_agora_router passes workshop_store into operational readiness and performance attribution."""
+    from fastapi import HTTPException
+    from .router import create_agora_router
+
+    def _forbid_read_store() -> Any:
+        raise AssertionError("get_read_store must not be called for trader with no workshop strategy")
+
+    def _forbid_journey_store() -> Any:
+        raise AssertionError("get_trade_journey_store must not be called for trader with no workshop strategy")
+
+    app = FastAPI()
+    agora_router = create_agora_router(
+        extract_identity=lambda _auth, **_kw: {
+            "user_id": "trader-empty",
+            "tenant_id": "tenant-test",
+            "roles": ["operator"],
+        },
+        require_read_role=lambda _id: None,
+        require_write_role=lambda _id: None,
+        bff_error=lambda status, _code, msg, _reason, **_kw: HTTPException(status, detail=msg),
+        utc_now=lambda: "2026-11-26T15:00:00Z",
+        get_read_store=_forbid_read_store,
+        get_trade_journey_store=_forbid_journey_store,
+        sync_servant_agent=lambda _p: {},
+        decision_lock_owner=None,
+    )
+    app.include_router(agora_router)
+    client = TestClient(app)
+
+    readiness_resp = client.get(
+        "/bff/agora/operational-readiness",
+        headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+    )
+    assert readiness_resp.status_code == 200
+    r_data = readiness_resp.json()["data"]
+    assert r_data["status"] == "not_configured"
+    assert r_data["source"]["freshness"] == "not_configured"
+    assert r_data["source"]["last_failure"] is None
+    assert r_data["signal_producer"]["reason"] == "no_workshop_strategies"
+    assert r_data["signal_producer"]["active_binding"] is None
+    assert r_data["signal_producer"]["consumed_snapshot_id"] is None
+    assert r_data["signal_producer"]["last_success_at"] is None
+    for surface in r_data["surfaces"].values():
+        assert surface["reason"] == "no_workshop_strategies"
+
+    perf_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+    )
+    assert perf_resp.status_code == 200
+    p_body = perf_resp.json()
+    assert p_body["data"]["items"] == []
+    assert p_body["meta"]["surfaces"]["strategy_directory"]["reason"] == "no_workshop_strategies"
+
+
+def test_operational_readiness_workshop_store_exception_reports_unavailable() -> None:
+    """When workshop_store raises, readiness reports unavailable with workshop_store_unavailable instead of not_configured."""
+
+    class _RaisingWorkshopStore:
+        def list_sessions(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("workshop database connection failed")
+
+    def _forbid_read_store() -> Any:
+        raise AssertionError("get_read_store must not be called when workshop_store raises")
+
+    app = FastAPI()
+    app.include_router(
+        create_operational_readiness_router(
+            utc_now=lambda: "2026-11-26T15:00:00Z",
+            extract_identity=lambda _auth: {
+                "user_id": "trader-001",
+                "tenant_id": "tenant-test",
+                "roles": ["operator"],
+            },
+            require_read_role=lambda _id: None,
+            get_read_store=_forbid_read_store,
+            workshop_store=_RaisingWorkshopStore(),
+        )
+    )
+    resp = TestClient(app).get(
+        "/bff/agora/operational-readiness",
+        headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["status"] == "unavailable"
+    assert data["source"]["freshness"] == "unavailable"
+    assert data["source"]["last_failure"] == "workshop_store_unavailable"
+    assert data["signal_producer"]["status"] == "unavailable"
+    assert data["signal_producer"]["reason"] == "workshop_store_unavailable"
+    assert data["signal_producer"]["active_binding"] is None
+    for surface in data["surfaces"].values():
+        assert surface["status"] == "unavailable"
+        assert surface["reason"] == "workshop_store_unavailable"
+        assert surface["freshness"] == "unavailable"
+        assert surface["count"] == 0
+        assert surface["cursor"] is None

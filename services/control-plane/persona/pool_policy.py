@@ -169,6 +169,15 @@ def member_statistics(member, book, policy):
             "sharpe": sharpe(values, policy.periods_per_year), "drawdown": max(0, 1 - equity / peak)}
 
 
+ADMISSION_MISSING = "envelope_member_admission_missing"
+
+
+def admission_only(change: Mapping[str, Any]) -> bool:
+    """True when the only reason to publish is carrying member joined_at into the running envelope."""
+    reasons = change.get("reasons") or []
+    return bool(reasons) and all(r.startswith(ADMISSION_MISSING + ":") for r in reasons)
+
+
 def trial_publication(member: Mapping[str, Any], trial_risk_cap: float) -> tuple[float, bool]:
     """(risk_weight, virtual_only) a pool member is published with.
 
@@ -195,9 +204,16 @@ def publication_change(published: Mapping[str, Any] | None, pool: Mapping[str, A
     Changed means: a different set of live members (membership), a member whose stage differs,
     or an effective published weight that moved by more than ``publish_weight_tolerance``.
     No publish record at all counts as a membership change (nothing proves what runs).
+
+    Also changed: a running pinned member whose ``joined_at`` is missing or differs from the pool
+    version member (``envelope_member_admission_missing:<ref>``). Envelopes published before
+    joined_at was carried pin no admission time, so the member virtual book never learns
+    admitted_at. Republishing the same membership, stages and weights carries it once; after
+    that the pin has it and this reason no longer fires. It is never a membership change.
     """
-    now = {m["artifact_ref"]: (m["stage"], *trial_publication(m, policy.trial_risk_cap))
-           for m in pool.get("members", []) if m["stage"] != "removed"}
+    live = [m for m in pool.get("members", []) if m["stage"] != "removed"]
+    now = {m["artifact_ref"]: (m["stage"], *trial_publication(m, policy.trial_risk_cap)) for m in live}
+    joined = {m["artifact_ref"]: m.get("joined_at") for m in live}
     if published is None:
         return {"changed": True, "membership_changed": True, "reasons": ["no_publication_record"]}
     before = {p["artifact_ref"]: p for p in published.get("members") or []}
@@ -212,6 +228,8 @@ def publication_change(published: Mapping[str, Any] | None, pool: Mapping[str, A
             reasons.append(f"stage_changed:{ref}")
         if bool(pin.get("virtual_only")) != virtual or abs(float(pin["risk_weight"]) - float(weight)) > policy.publish_weight_tolerance + 1e-12:
             reasons.append(f"weight_changed:{ref}")
+        if joined[ref] and pin.get("joined_at") != joined[ref]:
+            reasons.append(f"{ADMISSION_MISSING}:{ref}")
     return {"changed": bool(reasons), "membership_changed": "live_membership_changed" in reasons,
             "reasons": reasons, "published_pool_version": published.get("pool_version")}
 

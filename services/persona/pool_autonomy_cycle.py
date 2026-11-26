@@ -228,7 +228,8 @@ class PoolAutonomyCycle:
         if not hasattr(ports, "publish_pool") or not hasattr(ports, "publication_state"):
             return {"status": "not_attempted", "reason": "publish_port_unconfigured"}
         try:
-            from services.control_plane.persona.pool_policy import last_published, load_policy, publication_change
+            from services.control_plane.persona.pool_policy import (
+                admission_only, last_published, load_policy, publication_change)
 
             pool = ports.current_pool(persona)
             change = publication_change(last_published(ports.publication_state(persona)), pool, load_policy())
@@ -238,6 +239,15 @@ class PoolAutonomyCycle:
         if not change["changed"]:
             return {**base, "status": "unchanged"}
         try:
+            if admission_only(change) and pool["pool_version"] <= int(change.get("published_pool_version") or 0):
+                # The running envelope lacks member joined_at and nothing else changed. The publisher
+                # only moves to a newer pool version, so the owner appends one version with identical
+                # members (an envelope republish, not a reweight). Once published, the pins carry
+                # joined_at and this branch never fires again for the persona.
+                if not hasattr(ports, "republish_pool_version"):
+                    return {**base, "status": "not_attempted", "reason": "republish_port_unconfigured"}
+                pool = ports.republish_pool_version(persona, pool, change["reasons"])
+                base = {**base, "pool_version": pool["pool_version"], "republished_version": pool["pool_version"]}
             if change["membership_changed"]:
                 consult = ports.envelope_publication_consultation(persona, pool, packet_id)
                 if consult["state"] != "verified":
@@ -907,6 +917,12 @@ class HttpPoolCyclePorts(PoolPublishPort):
                 raise
             return {"decision_id": decision_id, "status": "already_queued"}
         return {"decision_id": decision_id, "status": "queued"}
+
+    def republish_pool_version(self, persona, pool, reasons):
+        """Owner append of one version identical to ``pool`` for an envelope republish (joined_at carry)."""
+        return self.pool_store.append_envelope_republish(
+            persona["persona_id"], persona["tenant_id"], expected_version=pool["pool_version"],
+            reasons=list(reasons), actor_id="persona-pool-cycle")
 
     def decide_pool(self, persona, body):
         import copy

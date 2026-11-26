@@ -1529,6 +1529,57 @@ class MeetingsOwnerClient:
             raise MeetingsOwnerNotFoundError(clean_id)
         return dict(raw)
 
+    # ---- Persona gate panels (operator decision 2026-11-26) -------------------
+    # Gate panels moved out of the Agora committee; the Management meetings center
+    # lists them beside deliberative meetings. Reads only.
+
+    def list_gate_panels(self) -> List[Dict[str, Any]]:
+        raw = self._call("GET", "/api/consult/requests")
+        if not isinstance(raw, list):
+            raise MeetingsOwnerUnavailableError("invalid_gate_panel_list_response")
+        out: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, Mapping) or not item.get("request_id"):
+                raise MeetingsOwnerUnavailableError("invalid_gate_panel_list_response")
+            if self.tenant_id and str(item.get("tenant_id") or "") != self.tenant_id:
+                raise MeetingsOwnerUnavailableError("gate_panel_tenant_mismatch")
+            if item.get("consultation_type") == "persona_panel":
+                out.append(dict(item))
+        return out
+
+    def get_gate_panel(self, request_id: str) -> Dict[str, Any]:
+        clean_id = str(request_id or "").strip()
+        if not clean_id:
+            raise MeetingsOwnerNotFoundError("")
+        raw = self._call("GET", f"/api/consult/requests/{quote(clean_id, safe='')}")
+        if not isinstance(raw, Mapping) or str(raw.get("request_id") or "") != clean_id:
+            raise MeetingsOwnerUnavailableError("invalid_gate_panel_response")
+        if self.tenant_id and str(raw.get("tenant_id") or "") != self.tenant_id:
+            raise MeetingsOwnerNotFoundError(clean_id)
+        if raw.get("consultation_type") != "persona_panel":
+            raise MeetingsOwnerNotFoundError(clean_id)
+        return dict(raw)
+
+    def get_gate_panel_transcript(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """Transcript of one panel; ``None`` when the owner has none recorded."""
+        try:
+            raw = self._call("GET", f"/api/consult/requests/{quote(request_id, safe='')}/transcript")
+        except MeetingsOwnerNotFoundError:
+            return None
+        if not isinstance(raw, Mapping):
+            raise MeetingsOwnerUnavailableError("invalid_gate_panel_transcript_response")
+        return dict(raw)
+
+    def list_gate_panel_memos(self, request_id: str) -> List[Dict[str, Any]]:
+        raw = self._call(
+            "GET", ConsultationServiceClient._with_query("/api/consult/memos", {"request_id": request_id})
+        )
+        if not isinstance(raw, list) or any(
+            not isinstance(m, Mapping) or not m.get("memo_id") or m.get("request_id") != request_id for m in raw
+        ):
+            raise MeetingsOwnerUnavailableError("invalid_gate_panel_memo_list_response")
+        return [dict(m) for m in raw]
+
     def list_proposals(
         self,
         *,
@@ -2143,3 +2194,228 @@ def read_human_inbox_meeting_items(
     states = [s["status"] for s in surfaces.values()]
     return items, {"status": "ok" if all(s == "ok" for s in states) else "degraded" if any(s in {"ok", "degraded"} for s in states) else "unavailable",
                    "source": "bff_composed", "snapshot_at": snapshot_at, "surfaces": surfaces}
+
+
+# ---- Persona gate panels in the Management meetings center -------------------------
+
+GATE_PANEL_SESSION_CLASS = "gate_panel"
+_GATE_PANEL_TERMINAL_STATUSES = frozenset({
+    "published", "completed", "closed", "cancelled", "canceled", "rejected",
+    "dead_lettered", "failed", "expired",
+})
+
+
+def _text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _gate_panel_meta(request: Mapping[str, Any]) -> Dict[str, Any]:
+    metadata = request.get("metadata") if isinstance(request.get("metadata"), Mapping) else {}
+    panel = metadata.get("panel") if isinstance(metadata.get("panel"), Mapping) else {}
+    return dict(panel)
+
+
+def gate_panel_conclusion(
+    request: Mapping[str, Any],
+    transcript: Optional[Mapping[str, Any]],
+    *,
+    names: Any = None,
+) -> Dict[str, Any]:
+    """Each reviewer's recommendation and the gate decision, from the owner transcript."""
+    panel = _gate_panel_meta(request)
+    roles = {
+        _text(p.get("persona_id")): _text(p.get("role"))
+        for p in panel.get("participants") or []
+        if isinstance(p, Mapping) and _text(p.get("persona_id"))
+    }
+    reviewers: Dict[str, Dict[str, Any]] = {}
+    gate: Dict[str, Any] = {}
+    events = transcript.get("events") if isinstance(transcript, Mapping) else None
+    for event in events or []:
+        if not isinstance(event, Mapping):
+            continue
+        actor = event.get("actor") if isinstance(event.get("actor"), Mapping) else {}
+        content = event.get("content") if isinstance(event.get("content"), Mapping) else {}
+        if event.get("event_type") == "panel_synthesis" and isinstance(content.get("gate"), Mapping):
+            gate = dict(content["gate"])
+            continue
+        if actor.get("actor_type") == "persona" and event.get("event_type") != "panel_contribution_rejected":
+            pid = _text(actor.get("actor_id") or content.get("persona_id"))
+            if pid and content.get("recommendation") is not None:
+                reviewers[pid] = {
+                    "persona_id": pid,
+                    "role": _text(content.get("role")) or roles.get(pid) or None,
+                    "recommendation": content.get("recommendation"),
+                }
+    for pid, role in roles.items():
+        reviewers.setdefault(pid, {"persona_id": pid, "role": role or None, "recommendation": None})
+    rows = list(reviewers.values())
+    for row in rows:
+        if names is not None:
+            name, missing = names.persona(row["persona_id"])
+            row["persona_display_name"] = name
+            if missing:
+                row["persona_name_missing"] = True
+    gate_decision = _text(gate.get("outcome")) or None
+    return {
+        "gate_decision": gate_decision,
+        "operator_decision_required": bool(gate.get("operator_decision_required"))
+        if gate else None,
+        "vetoed_by": gate.get("vetoed_by") if gate else None,
+        "reasons": [r for r in gate.get("reasons") or [] if isinstance(r, str)] if gate else [],
+        "reviewers": rows,
+        "status": "ok" if gate_decision else "pending",
+        "reason": None if gate_decision else (
+            "no_panel_transcript" if transcript is None else "gate_decision_not_recorded"
+        ),
+    }
+
+
+def gate_panel_title(request: Mapping[str, Any], conclusion: Mapping[str, Any], *, names: Any = None) -> str:
+    """``<persona> pool v<version>: <reviewer recommendations> -> <gate decision>``."""
+    panel = _gate_panel_meta(request)
+    gated = panel.get("gated_decision") if isinstance(panel.get("gated_decision"), Mapping) else {}
+    persona_id = _text(request.get("from_persona_id") or panel.get("initiator_persona_id"))
+    persona = persona_id
+    if names is not None and persona_id:
+        persona = names.persona(persona_id)[0]
+    decision_type = _text(gated.get("type") or request.get("target_type")).replace("_", " ")
+    version = _text(gated.get("target_version"))
+    target = " ".join(x for x in (persona, f"pool v{version}" if version else "", decision_type) if x)
+    recommendations = ", ".join(
+        f"{_text(r.get('persona_display_name') or r.get('persona_id'))} {r['recommendation']}"
+        for r in conclusion.get("reviewers") or []
+        if r.get("recommendation") is not None
+    )
+    outcome = _text(conclusion.get("gate_decision")) or "pending"
+    return f"{target}: {recommendations} -> {outcome}" if recommendations else f"{target}: {outcome}"
+
+
+def shape_gate_panel_item(
+    request: Mapping[str, Any],
+    transcript: Optional[Mapping[str, Any]],
+    *,
+    names: Any = None,
+) -> Dict[str, Any]:
+    """One persona gate panel as a Management meetings list row."""
+    from services.control_plane.bff.agora.committee.owner import project_panel_rounds
+
+    request_id = _text(request.get("request_id"))
+    panel = _gate_panel_meta(request)
+    gated = panel.get("gated_decision") if isinstance(panel.get("gated_decision"), Mapping) else {}
+    conclusion = gate_panel_conclusion(request, transcript, names=names)
+    rounds = project_panel_rounds(transcript)
+    participants = [
+        {"persona_id": r["persona_id"], "role": r.get("role"), "origin": "institutional"}
+        for r in conclusion["reviewers"]
+    ]
+    status = _text(request.get("status")) or "submitted"
+    completed_at = request.get("completed_at")
+    return {
+        "id": request_id,
+        "meeting_id": request_id,
+        "session_id": request_id,
+        "request_id": request_id,
+        "session_class": GATE_PANEL_SESSION_CLASS,
+        "consultation_type": "persona_panel",
+        "meeting_type": GATE_PANEL_SESSION_CLASS,
+        "title": gate_panel_title(request, conclusion, names=names),
+        "topic": request.get("task"),
+        "status": status,
+        "effective_status": status,
+        "outcome": conclusion["gate_decision"],
+        "conclusion": conclusion,
+        "gated_decision": {
+            "type": gated.get("type") or request.get("target_type"),
+            "id": gated.get("id") or request.get("target_id"),
+            "target_version": gated.get("target_version"),
+        },
+        "policy_id": panel.get("policy_id") or request.get("policy_id"),
+        "subject_persona_id": request.get("from_persona_id") or panel.get("initiator_persona_id"),
+        "chair_persona_id": None,
+        "participants": participants,
+        "participant_count": len(participants),
+        "has_agora_participants": False,
+        "has_private_servant": False,
+        "round": 1,
+        "rounds": rounds,
+        "evidence_refs": [r for r in request.get("evidence_refs") or [] if isinstance(r, str)],
+        "created_at": request.get("created_at"),
+        "completed_at": completed_at,
+        "closed_at": completed_at,
+        "href": f"/management/meetings/{quote(request_id, safe='')}" if request_id else None,
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+    }
+
+
+def gate_panel_matches(
+    item: Mapping[str, Any],
+    *,
+    status: Optional[str],
+    meeting_type: Optional[str],
+    persona_id: Optional[str],
+) -> bool:
+    if meeting_type and _text(meeting_type).lower() not in {"gate_panel", "persona_panel"}:
+        return False
+    if persona_id and persona_id != item.get("subject_persona_id") and not any(
+        p.get("persona_id") == persona_id for p in item.get("participants") or []
+    ):
+        return False
+    if status:
+        st = _text(status).lower()
+        current = _text(item.get("status")).lower()
+        if st in {"open", "upcoming"}:
+            return current not in _GATE_PANEL_TERMINAL_STATUSES
+        if st in {"closed", "completed", "history"}:
+            return current in _GATE_PANEL_TERMINAL_STATUSES or bool(item.get("completed_at"))
+        return st in {current, _text(item.get("outcome")).lower()}
+    return True
+
+
+def shape_gate_panel_detail(
+    request: Mapping[str, Any],
+    transcript: Optional[Mapping[str, Any]],
+    memos: Sequence[Mapping[str, Any]],
+    *,
+    tenant_id: str,
+    snapshot_at: str,
+    names: Any = None,
+) -> Dict[str, Any]:
+    """One persona gate panel with its positions, memo and the existing case-file view."""
+    from services.control_plane.bff.agora.committee.owner import project_panel, project_panel_rounds, unavailable_case
+
+    request_id = _text(request.get("request_id"))
+    item = shape_gate_panel_item(request, transcript, names=names)
+    case_file_view = (
+        project_panel(transcript, request_id=request_id, tenant_id=tenant_id)
+        if transcript is not None
+        else unavailable_case("no_panel_transcript")
+    )
+    rounds = project_panel_rounds(transcript, case_file_view=case_file_view)
+    memo_rows = [_strip_private_fields(dict(m)) or {} for m in memos]
+    summary = next((m for m in memo_rows if m.get("memo_type") == "committee_summary"), None)
+    detail = {
+        **item,
+        "rounds": rounds,
+        "positions": rounds[0]["positions"] if rounds else [],
+        "memo": summary or (memo_rows[0] if memo_rows else None),
+        "memos": memo_rows,
+        "case_file_view": case_file_view,
+    }
+    return {
+        "status": "ok",
+        "owner": "consultation",
+        "reason": None,
+        "fallback_used": False,
+        **detail,
+        "data": {"status": "ok", "source": "consultation", **detail},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "status": "ok",
+            "source": "consultation",
+            "surfaces": {
+                "meeting_detail": {"status": "ok", "source": "consultation", "snapshot_at": snapshot_at},
+            },
+        },
+    }

@@ -1217,6 +1217,8 @@ class CurrentArtifactStrategy:
                     **{key: member[key] for key in (
                         "artifact_id", "version", "checksum", "risk_weight", "virtual_only"
                     )},
+                    # Pool admission time pinned in the envelope (absent on older envelopes).
+                    **({"joined_at": member["joined_at"]} if member.get("joined_at") else {}),
                     "view": portfolio_result["member_views"][member["member_id"]],
                     "underlying_count": len(member["artifact"]["parameters"]["symbols"]),
                 }

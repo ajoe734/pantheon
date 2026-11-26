@@ -542,3 +542,108 @@ def project_meeting(
         "environment_ceiling": "paper",
         "execution_authority": "none",
     }
+
+
+# ---- Trader scope (operator decision 2026-11-26) ---------------------------------
+# The Agora committee lists only meetings the calling trader convened plus MT-4
+# reviews whose subject is that trader (amended rule A2). Persona gate panels and
+# institutional persona meetings belong to the Management meetings center.
+
+TRADER_MEETING_NOT_FOUND = "meeting_not_found"
+_MT4_TYPES = frozenset({"mt-4", "mt4", "performance_attribution_review"})
+_TRADER_PREFIXES = ("trader:", "agora_user:", "user:")
+
+
+def _clean(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _subject_trader_id(item: Mapping[str, Any]) -> str:
+    attribution = item.get("attribution_record")
+    if isinstance(attribution, Mapping):
+        for key in ("agora_user_id", "trader_id", "user_id"):
+            value = _clean(attribution.get(key))
+            if value:
+                return value.removeprefix("trader:").removeprefix("agora_user:")
+        subject = attribution.get("subject")
+        if isinstance(subject, Mapping) and _clean(subject.get("kind")).lower() in {"trader", "agora_user", "user"}:
+            value = _clean(subject.get("id") or subject.get("agora_user_id"))
+            if value:
+                return value
+        ref = _clean(attribution.get("subject_ref"))
+        if ref.startswith(_TRADER_PREFIXES):
+            return ref.split(":", 1)[1].strip()
+    ref = _clean(item.get("subject_ref"))
+    if ref.startswith(_TRADER_PREFIXES):
+        return ref.split(":", 1)[1].strip()
+    return ref
+
+
+def trader_owns_meeting(item: Any, user_id: Optional[str]) -> bool:
+    """True only for a deliberative meeting the caller convened, or an MT-4 review of the caller."""
+    uid = _clean(user_id)
+    if not uid or not isinstance(item, Mapping):
+        return False
+    if _clean(item.get("session_class")) == "gate_panel" or _clean(item.get("consultation_type")) == "persona_panel":
+        return False
+    convened_by = item.get("convened_by") if isinstance(item.get("convened_by"), Mapping) else {}
+    if _clean(convened_by.get("kind")) == "agora_user" and _clean(convened_by.get("id")) == uid:
+        return True
+    kinds = {_clean(item.get(k)).lower() for k in ("meeting_code", "meeting_type", "meeting_slug")}
+    return bool(kinds & _MT4_TYPES) and _subject_trader_id(item) == uid
+
+
+def trader_meeting_not_found() -> HTTPException:
+    """Same answer for a missing meeting and one outside the caller's set (non-enumerating)."""
+    return unavailable("consultation", TRADER_MEETING_NOT_FOUND, 404)
+
+
+def newest_first(items: list) -> list:
+    return sorted(
+        items,
+        key=lambda m: (_clean(m.get("created_at")), _clean(m.get("meeting_id") or m.get("session_id"))),
+        reverse=True,
+    )
+
+
+CALLER_SERVANT_LABEL = "Your servant"
+
+
+def annotate_trader_meeting_names(item: dict, *, user_id: Optional[str], names: Any) -> dict:
+    """Add persona display names to the chair, participants and round positions, in place."""
+    uid = _clean(user_id)
+    servants = {
+        _clean(p.get("persona_id"))
+        for p in item.get("participants") or []
+        if isinstance(p, Mapping)
+        and (_clean(p.get("origin")) == "private_servant" or _clean(p.get("agora_user_id")))
+        and _clean(p.get("agora_user_id") or uid) == uid
+    }
+
+    def label(persona_id: Any) -> tuple[str, bool]:
+        pid = _clean(persona_id)
+        if pid in servants:
+            return CALLER_SERVANT_LABEL, False
+        if names is None:
+            return pid, True
+        return names.persona(pid)
+
+    def put(row: dict, key: str, out_key: str) -> None:
+        if not _clean(row.get(key)):
+            return
+        name, missing = label(row.get(key))
+        row[out_key] = name
+        if missing:
+            row[out_key.removesuffix("display_name") + "name_missing"] = True
+
+    put(item, "chair_persona_id", "chair_display_name")
+    for participant in item.get("participants") or []:
+        if isinstance(participant, dict):
+            put(participant, "persona_id", "display_name")
+            if _clean(participant.get("persona_id")) in servants:
+                participant["is_caller_servant"] = True
+    for rnd in item.get("rounds") or []:
+        for position in (rnd.get("positions") or []) if isinstance(rnd, Mapping) else []:
+            if isinstance(position, dict):
+                put(position, "persona_id", "display_name")
+    return item

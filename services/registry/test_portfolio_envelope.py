@@ -31,6 +31,21 @@ def envelope(members=None, **limits):
 
 
 class PortfolioEnvelopeTests(unittest.TestCase):
+    def test_pool_admission_time_is_pinned_and_optional(self):
+        joined = "2026-11-08T18:10:02Z"
+        pinned = envelope([{"member_id": "long", "artifact": member_artifact(), "risk_weight": 1,
+                            "joined_at": joined}])
+        self.assertEqual(pinned["strategy_logic"]["members"][0]["joined_at"], joined)
+        validate_strategy_artifact(pinned)
+        legacy = envelope()  # published before the carry: no joined_at, still valid
+        self.assertNotIn("joined_at", legacy["strategy_logic"]["members"][0])
+        validate_strategy_artifact(legacy)
+        self.assertNotEqual(strategy_artifact_checksum(pinned), strategy_artifact_checksum(legacy))
+        broken = copy.deepcopy(pinned)
+        broken["strategy_logic"]["members"][0]["joined_at"] = 7
+        with self.assertRaises(StrategyArtifactValidationError):
+            validate_strategy_artifact(broken)
+
     def test_last_member_removal_publishes_a_pinned_flat_envelope(self):
         from services.registry.portfolio_envelope import required_portfolio_history
         previous = envelope()
