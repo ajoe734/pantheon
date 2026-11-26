@@ -34,7 +34,8 @@ from services.registry.alpha_template import (
     ALPHA_TEMPLATE_METADATA_KEY,
     AlphaTemplateValidationError,
     alpha_template_registry_id,
-    ensure_builtin_alpha_templates,
+    ensure_builtin_alpha_templates_once,
+    schedule_builtin_alpha_templates_ensure,
 )
 from services.registry.models import ArtifactType
 from services.registry.split_api import RegistryService
@@ -3617,6 +3618,24 @@ def record_persona_research_demand_discovery(
 
 
 @app.on_event("startup")
+def ensure_builtin_alpha_templates_off_request_path() -> None:
+    """Ensure the checked-in AlphaTemplate library once per process, on a daemon thread.
+
+    The read routes only report the state (``builtin_library``); a failure is retried after a backoff when a
+    read route sees it, and is visible in their answers instead of being silent.
+    """
+    import threading
+
+    def _run() -> None:
+        try:
+            ensure_builtin_alpha_templates_once(RegistryService(get_registry_store()))
+        except Exception:
+            logger.exception("built-in AlphaTemplate library ensure failed at startup")
+
+    threading.Thread(target=_run, name="alpha-template-builtin-ensure-startup", daemon=True).start()
+
+
+@app.on_event("startup")
 def resume_retrain_runs() -> None:
     """Resume in place every retrain run a restart left queued or running.
 
@@ -5696,7 +5715,8 @@ def list_alpha_template_evaluations_endpoint(
     status: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     registry_service = RegistryService(get_registry_store())
-    ensure_builtin_alpha_templates(registry_service)
+    # Off the request path: a no-op once the built-in library is ensured for this store and library digest.
+    builtin_library = schedule_builtin_alpha_templates_ensure(registry_service)
     from services.research.alpha_templates import list_alpha_template_views
 
     entries = list_alpha_template_views(registry_service)
@@ -5724,17 +5744,23 @@ def list_alpha_template_evaluations_endpoint(
                 "evaluation": eval_meta,
             }
         )
-    return {"count": len(items), "items": items}
+    return {"count": len(items), "items": items, "builtin_library": builtin_library}
 
 
 @app.get("/api/research-orchestrator/alpha-templates/evaluations/{template_id:path}")
 @app.get("/api/research/alpha-templates/evaluations/{template_id:path}")
 def get_alpha_template_evaluation_endpoint(template_id: str) -> Dict[str, Any]:
     registry_service = RegistryService(get_registry_store())
-    ensure_builtin_alpha_templates(registry_service)
+    builtin_library = schedule_builtin_alpha_templates_ensure(registry_service)
     reg_id = alpha_template_registry_id(template_id)
     entry = registry_service.store.get(reg_id)
     if entry is None:
+        if builtin_library.get("status") != "ok":
+            # Not found while the built-in library is not ensured yet (or failed) is not a definite 404.
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "builtin_alpha_template_library_not_ready", "builtin_library": builtin_library},
+            )
         raise HTTPException(status_code=404, detail=f"AlphaTemplate '{template_id}' not found")
     meta = entry.metadata or {}
     tmpl = meta.get(ALPHA_TEMPLATE_METADATA_KEY) or {}
@@ -5749,4 +5775,5 @@ def get_alpha_template_evaluation_endpoint(template_id: str) -> Dict[str, Any]:
         "template": tmpl,
         "evaluation": meta.get("alpha_template_evaluation"),
         "research_run": run_record,
+        "builtin_library": builtin_library,
     }

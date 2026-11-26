@@ -138,6 +138,32 @@ _DISCOVERY_SELECT_SQL = (
 )
 
 
+# ALPHA-TEMPLATE-READ-FAST-20261126: type-filtered reads go through an expression
+# index on the artifact type, so rows of other artifact types (hosted: ~10k wide
+# strategy_spec payloads) are neither read nor detoasted. Forward-only and additive.
+ARTIFACT_TYPE_INDEX_SUFFIX = "_artifact_type_idx"
+ARTIFACT_TYPE_INDEX_SQL = "(payload ->> 'artifact_type')"
+
+
+def artifact_type_select_sql(table: str) -> str:
+    """Rows of one artifact type, ``updated_at`` ascending, as JSON text.
+
+    Object payloads match ``ARTIFACT_TYPE_INDEX_SQL`` exactly (index scan);
+    legacy JSON-string payloads are reached through the partial
+    ``_legacy_str_payload_idx`` and unwrapped. Two ``%s`` params: the type, twice.
+    """
+    return (
+        "SELECT p FROM ("
+        f"SELECT updated_at, (payload)::text AS p FROM {table} "
+        f"WHERE {ARTIFACT_TYPE_INDEX_SQL} = %s "
+        "UNION ALL "
+        f"SELECT updated_at, (payload #>> '{{}}') AS p FROM {table} "
+        "WHERE jsonb_typeof(payload) = 'string' "
+        "AND ((payload #>> '{}')::jsonb ->> 'artifact_type') = %s"
+        ") AS rows ORDER BY updated_at ASC"
+    )
+
+
 class PostgresRegistryStore:
     """Durable RegistryEntry owner store with the same call surface as the
     in-memory ``RegistryStore`` test double, so ``RegistryService`` (split_api.py)
@@ -873,13 +899,16 @@ class PostgresRegistryStore:
 
     def list_by_artifact_type(self, artifact_type: str) -> list[RegistryEntry]:
         """Type-filtered read in SQL: other artifact types are never fetched or decoded."""
-        wanted = getattr(artifact_type, "value", artifact_type)
-        rows = self._entries.list_all_selected(
-            "(payload)::text",
-            visible_sql="payload ->> 'artifact_type' = %s",
-            keep_params=(str(wanted),),
-        )
-        return [RegistryEntry.from_dict(json.loads(r[0])) for r in rows if r and r[0] is not None]
+        wanted = str(getattr(artifact_type, "value", artifact_type))
+        with self._entries._connect() as conn:
+            cursor = conn.execute(artifact_type_select_sql(self._entries.table), (wanted, wanted))
+            rows = cursor.fetchall()
+        out: list[RegistryEntry] = []
+        for row in rows:
+            raw = row[0] if isinstance(row, (tuple, list)) else next(iter(row.values()))
+            if raw is not None:
+                out.append(RegistryEntry.from_dict(json.loads(raw)))
+        return out
 
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
@@ -941,6 +970,8 @@ class PostgresRegistryStore:
             f"WHERE {_ARTIFACT_CATALOG_PRED_SQL}",
             f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_legacy_str_payload_idx')} "
             f"ON {table} ((jsonb_typeof(payload))) WHERE jsonb_typeof(payload) = 'string'",
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + ARTIFACT_TYPE_INDEX_SUFFIX)} "
+            f"ON {table} ({ARTIFACT_TYPE_INDEX_SQL})",
         )
         with self._entries._connect() as conn:
             for stmt in stmts:
