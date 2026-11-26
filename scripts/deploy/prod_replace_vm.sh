@@ -48,6 +48,12 @@ PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-120}"
 PROD_DEFAULT_TEMPLATE_NAME="${PROD_DEFAULT_TEMPLATE_NAME:-pantheon-prod-control-template-e2s8-v3}"
 PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"
 PROD_SSH_WAIT_INTERVAL="${PROD_SSH_WAIT_INTERVAL:-5}"
+if [[ -n "${FAKE_STATE:-}" ]]; then
+  PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-0}"
+fi
+PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-5}"
+PROD_UPLOAD_BUNDLE_TRIES="${PROD_UPLOAD_BUNDLE_TRIES:-6}"
+PROD_UPLOAD_BUNDLE_INTERVAL="${PROD_UPLOAD_BUNDLE_INTERVAL:-5}"
 REMOTE_TMP_BASE="${PROD_REMOTE_TMP_BASE:-/tmp}"
 REMOTE_STAGE_DIR="${REMOTE_TMP_BASE}/pantheon-replace-vm-${RELEASE_ID}"
 FSTAB_PATH="${PROD_FSTAB_PATH:-/etc/fstab}"
@@ -426,6 +432,17 @@ upload_bundle_to_vm() {
       "$BUNDLE_DIR" "${PROD_VM_NAME}:${REMOTE_STAGE_DIR}"
 }
 
+retry_upload_bundle_to_vm() {
+  local attempt
+  for attempt in $(seq 1 "$PROD_UPLOAD_BUNDLE_TRIES"); do
+    if upload_bundle_to_vm >/dev/null 2>&1; then
+      return 0
+    fi
+    (( attempt < PROD_UPLOAD_BUNDLE_TRIES )) && sleep "$PROD_UPLOAD_BUNDLE_INTERVAL"
+  done
+  return 1
+}
+
 MIGRATION_MODE="offline_boot_disk"
 DATA_UUID=""
 CADDY_IMAGE="$PROD_CADDY_DEFAULT_IMAGE"
@@ -553,14 +570,20 @@ if isinstance(disks, list):
         if d.get("boot") is False:
             continue
         init_params = d.get("initializeParams")
-        if isinstance(init_params, dict) and init_params.get("diskSizeGb") is not None:
-            raw_size = str(init_params.get("diskSizeGb")).strip()
-            if raw_size:
-                try:
-                    if int(raw_size) < min_boot_gb:
+        if isinstance(init_params, dict):
+            raw_size = init_params.get("diskSizeGb")
+            if raw_size is None and "sourceImage" in init_params:
+                raw_size = 10
+            if raw_size is not None:
+                raw_size_str = str(raw_size).strip()
+                if not raw_size_str and "sourceImage" in init_params:
+                    raw_size_str = "10"
+                if raw_size_str:
+                    try:
+                        if int(raw_size_str) < min_boot_gb:
+                            raise SystemExit(1)
+                    except ValueError:
                         raise SystemExit(1)
-                except ValueError:
-                    raise SystemExit(1)
 PY
 }
 
@@ -659,7 +682,15 @@ wait_for_ssh() {
   for i in $(seq 1 "$PROD_SSH_WAIT_TRIES"); do
     if "$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
         --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --command "true" >/dev/null 2>&1; then
-      return 0
+      if (( PROD_SSH_STABILITY_DELAY > 0 )); then
+        sleep "$PROD_SSH_STABILITY_DELAY"
+        if "$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
+            --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --command "true" >/dev/null 2>&1; then
+          return 0
+        fi
+      else
+        return 0
+      fi
     fi
     (( i < PROD_SSH_WAIT_TRIES )) && sleep "$PROD_SSH_WAIT_INTERVAL"
   done
@@ -700,7 +731,7 @@ rollback_to_old_boot_disk() {
     fi
     if ! wait_for_ssh; then
       rb_err="rollback wait_for_ssh failed"
-    elif ! upload_bundle_to_vm; then
+    elif ! retry_upload_bundle_to_vm; then
       rb_err="rollback upload_bundle_to_vm failed"
     else
       if rb_ssh_out="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
@@ -886,7 +917,7 @@ fi
 #    and Caddy /data + /config from Docker config.v2.json MountPoints onto PROD_DATA_MOUNT, verify release/baseline,
 #    unmount and detach OLD_BOOT_DISK; then run bootstrap.sh, recreate pantheon-caddy, and restore_active_release.
 wait_for_ssh || rollback_to_old_boot_disk "wait_for_ssh" "IAP SSH did not become ready on replacement VM"
-upload_bundle_to_vm || rollback_to_old_boot_disk "upload_bundle_new_vm" "cannot upload bundle to replacement VM over IAP"
+retry_upload_bundle_to_vm || rollback_to_old_boot_disk "upload_bundle_new_vm" "cannot upload bundle to replacement VM over IAP"
 
 if [[ "$MIGRATION_MODE" == "offline_boot_disk" ]]; then
   OFFLINE_MIGRATE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quiet \
