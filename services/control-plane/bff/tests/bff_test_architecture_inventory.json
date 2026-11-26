@@ -2930,6 +2930,13 @@
       "rationale": "BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125 proves GET /bff/strategies/{id} starts the spec, Persona directory, runtime bindings, ranking and rules owner reads together (gate opens only after all started; no clock), one owner call each, tenant reaching the overlapped read, degraded secondary reads keep 200, 404 and spec failure unchanged; never imports main"
     },
     {
+      "file": "tests/test_strategy_list_overlap_reads.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-LIST-OVERLAP-READS-20261126 proves GET /bff/strategies starts the Persona directory, ranking snapshot and runtime-truth reads together with the prefetched Registry page (start barrier, 5 s fail-safe, no clock), that the same barrier rejects the pre-change route, answers and per-owner call counts equal to the route at the base commit for default/state/exclude_state/persona_id views, and failed or late reads keep their truthful unavailable/unknown outcome; never imports main"
+    },
+    {
       "file": "tests/test_strategy_rules_pool_envelope.py",
       "layer": "application",
       "imports_main": false,
