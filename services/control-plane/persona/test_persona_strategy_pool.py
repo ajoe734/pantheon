@@ -1015,3 +1015,25 @@ def test_whole_market_candidate_failing_the_admission_backtest_and_deflated_thre
     client, reg, common = _fresh_world(env, buy=False)  # the recorded momentum rule does not clear the bar
     out = _reasons(client, common)
     assert "candidate_oos_sharpe_below_persona_trial_threshold" in out[0]
+
+
+def test_envelope_republish_appends_one_identical_version_and_is_never_a_reweight(env):
+    # POOL-MEMBER-JOINED-AT-CARRY-20261126: the cycle's only owner write for carrying joined_at.
+    from persona_strategy_pool import PoolVersionConflict
+    client, reg, _ = env
+    reg.add("art-1")
+    reg.add("art-2")
+    _post(client, [_member("art-1", risk_weight=.6), _member("art-2", stage="trial", risk_weight=0)], 0)
+    store = sys.modules["persona_main_pool_test_module"].POOL_STORE
+    before = store.current("persona-1", "tenant-a")
+    after = store.append_envelope_republish("persona-1", "tenant-a", expected_version=1,
+                                            reasons=["envelope_member_admission_missing:art-1"], actor_id="persona-pool-cycle")
+    assert after["pool_version"] == 2 and after["members"] == before["members"]
+    assert after["decision"]["action"] == "envelope_republish" and after["decision"]["status"] == "republished"
+    assert "envelope republish" in after["change_reason"] and "reweight" not in after["change_reason"]
+    assert "persona_trial_count" not in after["decision"]  # trial budget untouched
+    with pytest.raises(PoolVersionConflict):  # a stale read never appends a second version
+        store.append_envelope_republish("persona-1", "tenant-a", expected_version=1, reasons=[], actor_id="persona-pool-cycle")
+    assert len(store.versions("persona-1", "tenant-a")) == 2
+    read = client.get("/api/personas/persona-1/strategy-pool", headers=_auth(READ))
+    assert read.status_code == 200

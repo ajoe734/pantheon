@@ -160,6 +160,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:mgmt-strategy-meeting-research-readable",
         "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
+        "probe:persona-member-book-admission",
         "probe:persona-pool-member-rules",
         "probe:persona-risk-profile-change",
         "probe:trade-journey-readable",

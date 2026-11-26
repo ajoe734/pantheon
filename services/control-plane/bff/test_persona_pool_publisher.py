@@ -327,3 +327,79 @@ def test_screened_member_admitted_by_governed_boundary_is_enveloped_and_publishe
     assert live[0]["runtime_id"] == runtime_before["runtime_id"] and live[0]["deployment_mode"] == "paper"
     assert live[0]["capital_pool_id"] == runtime_before["capital_pool_id"]
     assert world.runtime.positions == positions and world.runtime.ledger == ledger
+
+
+# ---------------------------------------------------------------------------
+# POOL-MEMBER-JOINED-AT-CARRY-20261126: an envelope running without joined_at gets it through one
+# automatic republish. Real: pool store, cycle publish step, cycle HTTP ports, BFF publish route,
+# publisher, coordinator, governance and deployment fakes of the World, the producer and the book.
+# ---------------------------------------------------------------------------
+def test_running_envelope_without_joined_at_is_republished_once_and_reaches_the_book(world, monkeypatch, tmp_path):
+    from services.control_plane.bff import persona_pool_publisher as publisher_module
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import H, PERSONA, TENANT, _client, _live
+    from services.control_plane.persona.test_pool_policy import _producer_books
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+
+    client = _client(world, monkeypatch, tmp_path)
+    world.append([world.member("artifact-a", 1.0)], 0)
+    joined = world.pool.current(PERSONA, TENANT)["members"][0]["joined_at"]
+
+    # 1. The envelope running on hosted today: published before the carry (no joined_at in envelope or pins).
+    carry = publisher_module.PersonaPoolPublisher._build_envelope
+
+    def before_the_carry(self, tenant_id, ids, pool, *rest):
+        # The dev publisher before 6cc27c784 wrote neither envelope members nor pins with joined_at.
+        bare = {**pool, "members": [{k: v for k, v in m.items() if k != "joined_at"} for m in pool["members"]]}
+        envelope, pins = carry(self, tenant_id, ids, bare, *rest)
+        return envelope, [{k: v for k, v in pin.items() if k != "joined_at"} for pin in pins]
+
+    monkeypatch.setattr(publisher_module.PersonaPoolPublisher, "_build_envelope", before_the_carry)
+    assert client.post(f"/bff/personas/{PERSONA}/strategy-pool/publish", json={}, headers=H).status_code == 200
+    monkeypatch.setattr(publisher_module.PersonaPoolPublisher, "_build_envelope", carry)
+    old = _live(world)[0]
+    assert "joined_at" not in _envelope_body(world, old["artifact_id"])["strategy_logic"]["members"][0]
+
+    # 2. The cycle's publish step through the real HTTP ports (BFF calls go to the real route).
+    def transport(method, service, path, tenant, body=None):
+        assert service == "bff" and tenant == TENANT
+        response = client.request(method, path, json=body, headers=H)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    persona = {"persona_id": PERSONA, "tenant_id": TENANT}
+    ports = HttpPoolCyclePorts(transport, pool_store=world.pool, consultation_factory=lambda *a: pytest.fail("no consultation"))
+    cycle = PoolAutonomyCycle(ports)
+    first = cycle._publish(persona, "pk-1")
+    assert first["status"] == "published", first
+    assert first["reasons"] == ["envelope_member_admission_missing:artifact-a"] and first["republished_version"] == 2
+    versions = world.pool.versions(PERSONA, TENANT)
+    assert len(versions) == 2 and versions[1]["members"] == versions[0]["members"]
+    assert versions[1]["decision"]["action"] == "envelope_republish"
+
+    # 3. The new running envelope carries joined_at; same runtime, paper, automated governance approval.
+    new = _live(world)[0]
+    assert new["runtime_id"] == old["runtime_id"] and new["artifact_id"] == first["envelope_artifact_id"]
+    envelope = _envelope_body(world, new["artifact_id"])
+    [pinned] = envelope["strategy_logic"]["members"]
+    assert pinned["joined_at"] == joined and pinned["risk_weight"] == 1.0
+    approval = world.transport.objects[("governance", f"/api/governance/approvals/{_approval_id(client, 2)}")]
+    assert approval["decision"] == "approved" and approval["actor_role"] == "automated_gate"
+
+    # 4. The producer's member views carry it into the book's admitted_at.
+    _, [book] = _producer_books(envelope, first_day=joined[:10], sessions=3)
+    assert book["admitted_at"] == joined
+
+    # 5. Once per persona: the next cycle publishes nothing and appends nothing.
+    second = cycle._publish(persona, "pk-2")
+    assert second["status"] == "unchanged" and second["reasons"] == []
+    assert len(world.pool.versions(PERSONA, TENANT)) == 2 and _live(world)[0]["artifact_id"] == new["artifact_id"]
+
+
+def _envelope_body(world, artifact_id):
+    return world.transport.objects[("registry", f"/api/registry/strategy-artifacts/{artifact_id}")]["entry"]["metadata"]["strategy_artifact"]
+
+
+def _approval_id(client, pool_version):
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import H, PERSONA
+    history = client.get(f"/bff/personas/{PERSONA}/strategy-pool/publish-history", headers=H).json()["data"]
+    return history["published"][str(pool_version)]["approval_decision_id"]

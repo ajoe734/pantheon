@@ -1,0 +1,82 @@
+{
+  "task_id": "POOL-MEMBER-JOINED-AT-CARRY-20261126",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "register": {"class": "RC2", "row": "Every pool reweight is refused with virtual_book_high_water_history_missing", "pr": 7894},
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27T10:03Z, so the reviewer (Claude2) is from the owner's model family. Recorded per the task brief.",
+  "summary": "Pool member joined_at is carried from the pool version through persona_pool_publisher, build_portfolio_envelope (optional, checksummed, schema-validated), paper_signal_producer portfolio_member_views into MemberVirtualBooks admitted_at (recorded once, never rewritten). Envelopes already running without joined_at are reached by one automatic paper republish per persona on the existing governed path (operator path A, 2026-11-26).",
+  "acceptance": {
+    "1_carry": {
+      "status": "met",
+      "anchor": "6cc27c784",
+      "path": "pool version member.joined_at -> PersonaPoolPublisher._build_envelope (envelope member joined_at + publish-record pin joined_at) -> build_portfolio_envelope (inside checksummed strategy_logic.members) -> strategy_artifact.schema.json (joined_at optional date-time, additionalProperties false kept) -> paper_signal_producer portfolio_member_views -> MemberVirtualBooks.observe admitted_at",
+      "back_compat": "An envelope without joined_at still validates (test_envelope_published_before_the_carry_stays_valid_and_records_no_admission, test_portfolio_envelope)."
+    },
+    "2_book_records_once": {
+      "status": "met",
+      "detail": "A book with admitted_at null records the first carried joined_at once; a recorded admitted_at is never changed; since_inception keeps ADMISSION_FIRST_MARK_GRACE_DAYS (test_member_virtual_book)."
+    },
+    "3_running_envelopes": {
+      "status": "met_in_code_pending_release",
+      "path_used": "Path A (operator decision 2026-11-26): one automatic paper republish per persona through the existing cycle -> BFF publish route -> PersonaPoolPublisher -> coordinator -> Governance (automated paper gate) -> DeploymentPlan -> RuntimeBinding replace. Path B (runtime reading the persona owner) was not built: no new principal, secret, compose change or runtime read.",
+      "why_it_reaches_running_bindings": "The publish record pins of every envelope published before this release have no joined_at. pool_policy.publication_change now reports envelope_member_admission_missing:<ref> when a running pin lacks joined_at or differs from the pool member, never as a membership change. The daily pool cycle (_publish) therefore publishes the persona's current pool version through the unchanged publisher, whose new envelope carries joined_at; the RuntimeBinding moves to it by the existing replace saga, so the runtime's next member views carry joined_at into the book. No manual hosted write.",
+      "newer_than_running_rule": "The publisher still refuses a pool version that is not newer than the running envelope. When the current pool version is not newer than the last confirmed publication and the only reasons are envelope_member_admission_missing, the cycle asks the owner (PersonaStrategyPoolStore.append_envelope_republish) to append exactly one version whose members are identical to the current one, decision.action=envelope_republish, status=republished, change_reason 'envelope republish of pool vN membership unchanged; carries member joined_at into the running envelope'. It is appended without policy authorization, so membership/weight validation is the strictest record path; it is not a reweight and carries no persona_trial_count. On hosted the refused reweights of 2026-11-25 already appended pool version 7, so if the running envelopes pin an older pool version the cycle publishes v7 and appends nothing.",
+      "once_per_persona": "After the republish the record pins carry joined_at, so the trigger is false on the next cycle (test_running_envelope_without_joined_at_republishes_once_with_one_new_version: two cycles, one republish, one new version; chain test step 5). A failed publish is retried without a second version (test_failed_republish_is_retried_without_a_second_version).",
+      "membership_stage_weights": "Unchanged. No reweight and no admission happen through this path; no envelope_publication consultation is opened because membership does not change."
+    },
+    "4_chain_test": {
+      "status": "met",
+      "tests": [
+        "services/control-plane/persona/test_pool_policy.py::test_pool_joined_at_reaches_the_book_and_the_reweight_through_real_segments (fails on dev with virtual_book_high_water_history_missing)",
+        "services/control-plane/bff/test_persona_pool_publisher.py::test_running_envelope_without_joined_at_is_republished_once_and_reaches_the_book (running envelope without joined_at -> cycle publish step via HttpPoolCyclePorts -> real BFF route -> publisher -> coordinator -> new envelope with joined_at -> producer member views -> book admitted_at; second cycle unchanged). Verified to fail with status unchanged when publication_change lacks the admission reason."
+      ]
+    },
+    "5_release_probe": {
+      "status": "met",
+      "probe": "acceptance/probes/persona-member-book-admission",
+      "test": "acceptance/test_persona_member_book_admission.py",
+      "behaviour": "Viewer dev-login like persona-pool-member-rules; reads /bff/version build_time and every live persona detail (paged). Fails when a current member book whose newest mark (book.as_of / underlyings[].as_of) is later than the BFF build time has admitted_at different from the member's joined_at; exits 77 with no_member_book_marked_after_bff_build when no such book exists; an unknown build_time fails with bff_build_time_unknown. Test uses the hosted detail shape of 2026-11-26 (persona-ee7112a829d38b9135ac, joined_at 2026-11-08T18:10:02Z, admitted_at null, marks 2026-11-19..2026-11-24).",
+      "hosted_build_time_source": "scripts/deploy_nonprod_vm.sh exports BUILD_TIME; app_factory /bff/version returns it as build_time."
+    },
+    "6_runtime_budget": {
+      "status": "met",
+      "detail": "No new writer. At most one extra pool version and one envelope per trading persona in total (3 on hosted), then none. Each member book gains one admitted_at value. Observations stay one row per member per trading session (MemberVirtualBooks.observe unchanged apart from the admitted_at fill)."
+    },
+    "7_no_weakened_tests": {
+      "status": "met",
+      "changed_assertions": [
+        {
+          "file": "services/persona/test_pool_autonomy_cycle.py",
+          "change": "Fixture pins() now writes joined_at on each pin by default (and live_pool uses the same JOINED constant). No assertion changed.",
+          "justification": "pins() stands for a publish record; records written by the publisher since 6cc27c784 carry joined_at. Without it every existing publish test would also see envelope_member_admission_missing, which is the pre-release case now covered by explicit new tests (joined=None)."
+        },
+        {
+          "file": "scripts/test_dev_acceptance_stage.py",
+          "change": "test_replay_root_44247825979_daily_probe_failure_does_not_fail_release: added 'probe:persona-member-book-admission' to the expected discovered release-probe inventory (sorted position). No entry removed; the skip/verdict assertions are unchanged.",
+          "justification": "The test pins every probe discovered in acceptance/probes; this task ships a new release probe (acceptance 5), so the inventory gains one id. Without viewer credentials the new probe skips like the other feature probes and the verdict stays passed. Fixes PR #7907 CI Test sweep (shard 11)."
+        }
+      ],
+      "deleted_tests": []
+    }
+  },
+  "governance": {
+    "question": "Does the republish need a governance approval on hosted?",
+    "answer": "No new approval. PersonaProvisioningCoordinator.publish_pool_envelope uses the same automated paper-scope Governance decision as admission (actor_role automated_gate, asserted in the chain test). The envelope_publication risk-panel consultation applies only to a live membership change, and this republish never changes membership. Stage is paper only; the publisher refuses any other stage. There is no step the cycle cannot pass on paper, so nothing is bypassed and no blocker is raised.",
+    "evidence": ["services/control-plane/bff/persona_provisioning_coordinator.py publish_pool_envelope docstring", "services/persona/pool_autonomy_cycle.py _publish (consultation only when membership_changed)", "chain test approval assertion"]
+  },
+  "known_limits": [
+    "The three hosted members stay since_inception false after admitted_at is recorded, because their books start 2026-11-19, 11 days after admission; MEMBER-BOOK-ADMISSION-GAP-FILL-20261126 owns that gap.",
+    "Acceptance 3 completes on hosted only after this release is deployed and the next daily pool cycle runs; the probe judges books marked after the BFF build."
+  ],
+  "commits": ["6cc27c784 anchor joined_at carry to book", "f30e7c5ef anchor joined_at republish path"],
+  "verification": {
+    "interpreter": ".venv-pantheon/bin/python3 (scripts/dev/provision_python_distribution.py)",
+    "commands": [
+      "pytest -q services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py services/control-plane/persona/test_pool_policy.py services/control-plane/bff/test_persona_pool_publisher.py services/execution/lean_runtime/test_portfolio_target_positions.py services/persona/test_pool_autonomy_cycle.py services/control-plane/persona/test_persona_strategy_pool.py acceptance/test_persona_member_book_admission.py acceptance/test_persona_pool_member_rules.py services/control-plane/bff/tests/test_persona_pool_publish_route.py",
+      "pytest -q services/persona/test_pool_publish_port.py",
+      "pytest -q scripts/test_dev_acceptance_stage.py acceptance/test_persona_member_book_admission.py"
+    ],
+    "results": ["230 passed, 13 subtests passed", "5 passed", "39 passed"],
+    "run_at": "2026-11-26"
+  }
+}

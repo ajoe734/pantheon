@@ -537,14 +537,20 @@ class PublishPorts(Ports):
         return {"status": "published", "envelope_artifact_id": "env-%d" % version, "deployment_plan_id": "plan-%d" % version}
 
 
-def pins(*items):
-    return {"published": {"2": {"status": "published", "pool_version": 2, "members": [
-        {"artifact_ref": r, "risk_weight": w, "virtual_only": v, "stage": s} for r, w, v, s in items]}}}
+JOINED = "2026-10-01T00:00:00Z"
+
+
+def pins(*items, joined=JOINED, version=2):
+    # A publish record written since the publisher carries joined_at (POOL-MEMBER-JOINED-AT-CARRY-20261126);
+    # joined=None is a record from before, whose pins have no admission time.
+    return {"published": {str(version): {"status": "published", "pool_version": version, "members": [
+        {"artifact_ref": r, "risk_weight": w, "virtual_only": v, "stage": s, **({"joined_at": joined} if joined else {})}
+        for r, w, v, s in items]}}}
 
 
 def live_pool(version, *items):
     return {"persona_id": "p1", "tenant_id": "t1", "pool_version": version, "members": [
-        {"artifact_ref": r, "checksum": "ck", "stage": s, "risk_weight": w, "joined_at": "2026-10-01T00:00:00Z"} for r, w, s in items]}
+        {"artifact_ref": r, "checksum": "ck", "stage": s, "risk_weight": w, "joined_at": JOINED} for r, w, s in items]}
 
 
 def run_publish(ports, p):
@@ -606,6 +612,75 @@ def test_unreadable_publication_state_fails_closed_without_publishing():
     ports.publication_state = lambda persona: (_ for _ in ()).throw(RuntimeError("bff_down"))
     out = run_publish(ports, ports.pool_now)
     assert out["status"] == "failed" and out["step"] == "compare" and ports.published == []
+
+
+class RepublishPorts(PublishPorts):
+    """The owner appends a version (identical members) and the publisher records pins with joined_at."""
+
+    def __init__(self, history, **kw):
+        super().__init__(history, **kw)
+        self.versions, self.republish_calls = [self.pool_now], []
+
+    def current_pool(self, persona): return self.versions[-1]
+
+    def republish_pool_version(self, persona, pool, reasons):
+        self.republish_calls.append((pool["pool_version"], list(reasons)))
+        assert pool is self.versions[-1]
+        self.versions.append({**pool, "pool_version": pool["pool_version"] + 1, "members": [dict(m) for m in pool["members"]]})
+        return self.versions[-1]
+
+    def publish_pool(self, persona, version):
+        receipt = super().publish_pool(persona, version)
+        [published] = [v for v in self.versions if v["pool_version"] == version]
+        self.history["published"][str(version)] = {"status": "published", "pool_version": version, "members": [
+            {"artifact_ref": m["artifact_ref"], "risk_weight": m["risk_weight"], "virtual_only": False,
+             "stage": m["stage"], "joined_at": m.get("joined_at")} for m in published["members"] if m["stage"] != "removed"]}
+        return receipt
+
+
+def test_running_envelope_without_joined_at_republishes_once_with_one_new_version():
+    ports = RepublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(3, ("a", .6, "active"), ("b", .4, "active")))
+    first = run_publish(ports, ports.pool_now)
+    assert first["status"] == "published" and first["republished_version"] == 4 and ports.published == [4]
+    assert first["reasons"] == ["envelope_member_admission_missing:a", "envelope_member_admission_missing:b"]
+    assert ports.consults == []  # never a membership change: no consultation, no admission
+    assert [m for m in ports.versions[-1]["members"]] == ports.versions[0]["members"]  # no reweight
+    second = run_publish(ports, ports.versions[-1])
+    assert second["status"] == "unchanged" and second["reasons"] == []
+    assert len(ports.republish_calls) == 1 and ports.published == [4] and len(ports.versions) == 2
+
+
+def test_newer_pool_version_already_present_publishes_it_without_appending():
+    # Hosted: refused reweights already appended versions newer than the running envelope.
+    ports = RepublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(7, ("a", 1.0, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and ports.published == [7] and ports.republish_calls == []
+    assert "republished_version" not in out and run_publish(ports, ports.pool_now)["status"] == "unchanged"
+
+
+def test_failed_republish_is_retried_without_a_second_version():
+    ports = RepublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(3, ("a", 1.0, "active")))
+    ports.fail = RuntimeError("owner_unavailable")
+    assert run_publish(ports, ports.pool_now)["status"] == "failed" and len(ports.versions) == 2
+    ports.fail = None
+    out = run_publish(ports, ports.versions[-1])
+    assert out["status"] == "published" and ports.published == [4] and len(ports.republish_calls) == 1
+
+
+def test_admission_missing_with_a_real_change_publishes_the_change_only():
+    ports = RepublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active"), joined=None, version=2),
+                           pool_now=live_pool(3, ("a", .8, "active"), ("b", .2, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and ports.published == [3] and ports.republish_calls == []
+
+
+def test_republish_without_owner_port_is_not_attempted():
+    ports = PublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3), pool_now=live_pool(3, ("a", 1.0, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "not_attempted" and out["reason"] == "republish_port_unconfigured" and ports.published == []
 
 
 def test_unconfigured_publish_port_is_recorded_not_guessed():
