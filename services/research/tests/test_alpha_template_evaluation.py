@@ -623,3 +623,108 @@ def test_http_rejects_forged_governed_market_data(monkeypatch, taiwan_universe):
         listed = client.get("/api/research-orchestrator/alpha-templates/evaluations", params={"status": "evaluated"})
         assert listed.json()["count"] == 0
     reset_store()
+
+
+# -- ALPHA-TEMPLATE-READ-FAST-20261126: built-in library ensured once, off the request path --------------------
+
+
+def _wait_builtin(service, statuses=("ok", "failed"), timeout=30.0):
+    import time
+
+    from services.registry.alpha_template import builtin_alpha_template_status
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = builtin_alpha_template_status(service)
+        if state["status"] in statuses:
+            return state
+        time.sleep(0.02)
+    raise AssertionError(f"builtin ensure did not settle: {builtin_alpha_template_status(service)}")
+
+
+def test_read_routes_never_reregister_builtin_library_per_request(monkeypatch):
+    import services.registry.alpha_template as at
+    from services.research.main import app
+
+    reset_store()
+    at.reset_builtin_alpha_template_state()
+    calls = {"n": 0}
+    real = at.ensure_builtin_alpha_templates
+
+    def counting(service):
+        calls["n"] += 1
+        return real(service)
+
+    monkeypatch.setattr(at, "ensure_builtin_alpha_templates", counting)
+    client = TestClient(app)  # no startup hook: the first read schedules the ensure off the request path
+    first = client.get("/api/research-orchestrator/alpha-templates/evaluations")
+    assert first.status_code == 200
+    assert first.json()["builtin_library"]["status"] in {"pending", "running", "ok"}
+    state = _wait_builtin(RegistryService(get_store()))
+    assert state["status"] == "ok" and state["template_count"] == len(load_library_templates())
+    for _ in range(5):
+        body = client.get("/api/research/alpha-templates/evaluations").json()
+        assert body["count"] == len(load_library_templates())
+        assert body["builtin_library"]["status"] == "ok"
+        assert body["builtin_library"]["library_digest"] == at.alpha_template_library_digest()
+        detail = client.get("/api/research/alpha-templates/evaluations/qlib_alpha158:KMID")
+        assert detail.status_code == 200 and detail.json()["builtin_library"]["status"] == "ok"
+    assert calls["n"] == 1
+    # A new store (e.g. another registry) is ensured again; the same store never is.
+    reset_store()
+    client.get("/api/research/alpha-templates/evaluations")
+    _wait_builtin(RegistryService(get_store()))
+    assert calls["n"] == 2
+    at.reset_builtin_alpha_template_state()
+    reset_store()
+
+
+def test_builtin_library_failure_is_visible_not_silent(monkeypatch):
+    import services.registry.alpha_template as at
+    from services.research.main import app
+
+    reset_store()
+    at.reset_builtin_alpha_template_state()
+
+    def broken(service):
+        raise AlphaTemplateValidationError("built-in AlphaTemplate id collision: atpl-test")
+
+    monkeypatch.setattr(at, "ensure_builtin_alpha_templates", broken)
+    client = TestClient(app)
+    client.get("/api/research/alpha-templates/evaluations")
+    _wait_builtin(RegistryService(get_store()))
+    listed = client.get("/api/research/alpha-templates/evaluations").json()
+    assert listed["builtin_library"]["status"] == "failed"
+    assert "id collision" in listed["builtin_library"]["error"]
+    detail = client.get("/api/research/alpha-templates/evaluations/qlib_alpha158:KMID")
+    assert detail.status_code == 503
+    assert detail.json()["detail"]["builtin_library"]["status"] == "failed"
+    # The synchronous evaluate path still raises the failure instead of silently evaluating nothing.
+    with pytest.raises(AlphaTemplateValidationError):
+        at.ensure_builtin_alpha_templates_once(RegistryService(get_store()))
+    at.reset_builtin_alpha_template_state()
+    reset_store()
+
+
+def test_library_digest_change_reensures(monkeypatch):
+    import services.registry.alpha_template as at
+
+    reset_store()
+    at.reset_builtin_alpha_template_state()
+    service = RegistryService(get_store())
+    calls = {"n": 0}
+    real = at.ensure_builtin_alpha_templates
+
+    def counting(svc):
+        calls["n"] += 1
+        return real(svc)
+
+    monkeypatch.setattr(at, "ensure_builtin_alpha_templates", counting)
+    at.ensure_builtin_alpha_templates_once(service)
+    at.ensure_builtin_alpha_templates_once(service)
+    assert calls["n"] == 1
+    monkeypatch.setattr(at, "alpha_template_library_digest", lambda files=at.ALPHA_TEMPLATE_LIBRARY_FILES: "changed")
+    at.ensure_builtin_alpha_templates_once(service)
+    assert calls["n"] == 2
+    at.reset_builtin_alpha_template_state()
+    reset_store()
