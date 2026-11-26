@@ -269,6 +269,10 @@
                   "virtual_only": {
                     "type": "boolean"
                   },
+                  "joined_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
                   "artifact": {
                     "type": "object"
                   }

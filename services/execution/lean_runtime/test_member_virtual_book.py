@@ -301,3 +301,26 @@ class SinceInceptionTests(unittest.TestCase):
             path = Path(directory) / "v.json"
             self._mark(MemberVirtualBooks(path), 2, "2024-10-01T00:00:00+00:00")
             self.assertTrue(MemberVirtualBooks(path).snapshot()[0]["since_inception"])
+
+    def test_book_without_admission_records_the_first_carried_joined_at_once(self):
+        # Hosted 2026-11-26: books created 2026-11-19 by views without joined_at hold admitted_at null.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v.json"
+            self._mark(MemberVirtualBooks(path), 2, None)
+            self.assertIsNone(next(iter(MemberVirtualBooks(path).books.values()))["admitted_at"])
+            book = self._mark(MemberVirtualBooks(path), 3, "2024-10-01T00:00:00+00:00")
+            self.assertEqual(book["admitted_at"], "2024-10-01T00:00:00+00:00")
+            self.assertTrue(book["since_inception"])  # first mark 10-02 is within the grace of 10-01
+            # A different later value never rewrites the recorded admission; a missing one never clears it.
+            book = self._mark(MemberVirtualBooks(path), 4, "2024-09-01T00:00:00+00:00")
+            self.assertEqual(book["admitted_at"], "2024-10-01T00:00:00+00:00")
+            book = self._mark(MemberVirtualBooks(path), 7, None)
+            self.assertEqual(book["admitted_at"], "2024-10-01T00:00:00+00:00")
+            self.assertEqual(len(book["dates"]), 3)  # one observation per session, no extra rows
+
+    def test_recorded_admission_too_far_before_the_first_mark_stays_not_since_inception(self):
+        books = MemberVirtualBooks()
+        self._mark(books, 20, None)
+        book = self._mark(books, 21, "2024-10-01T00:00:00+00:00")
+        self.assertEqual(book["admitted_at"], "2024-10-01T00:00:00+00:00")
+        self.assertFalse(book["since_inception"])
