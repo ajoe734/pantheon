@@ -307,6 +307,35 @@ number of stored days whose traded value is null on more than 5 % of their trade
 payload also counts `unexamined_days` and `unretained_days`) and fails when any such day is newer than the fix date. Older days
 are reported while the completion fills them. Exit 77 when the URL is unset.
 
+## discovery-pipeline probe (`acceptance/probes/discovery-pipeline`)
+
+Task: DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125 (RC2: every discovery stage was merged and reported done while nothing came
+out). Logic in `acceptance/discovery_pipeline_day.py`. Read-only: the viewer login at `/bff/auth/dev-login` (exit 77 naming the
+missing variable), then exactly two GETs: `GET /bff/alpha-factory?page_size=1` and `GET /bff/v5/loop-health/strategy_distillation`.
+Each stage is printed on its own line as `PASSED`, `FAILED` or `NOT_DUE` with `reason=` and `values=`; the last lines are
+`STRATEGIES no strategy passed` (or the count) and `VERDICT`. Exit 0 when no stage failed, 1 otherwise.
+
+| Stage | Reads | Passes when | Fails with |
+|---|---|---|---|
+| `external_records` | `counts.collected_text_records` | records admitted in the last 24 h > 0 | `no_external_records_last_24h`, `unreadable:<count>:<reason>` |
+| `hypothesis_cards` | newest cards (ledger claim), `counts.llm_calls_today` and its cap | at least one card with a recorded claim in 24 h and calls <= cap | `no_verified_hypothesis_card_last_24h[:l2_extraction_disabled=N]`, `llm_calls_over_cap`, unreadable |
+| `no_fallback_drafts` | the same newest cards | no draft in 24 h without a verified card (`Evidence suggests` text, `card_not_in_ledger`, `claim_missing`) | `external_text_drafts_without_verified_card`, `drafts_not_verifiable:<status>` |
+| `governed_market_dataset` | `evaluation_context` of the evaluated templates | a `gmd-` snapshot id and day, newest day within 10 days | `no_governed_snapshot_recorded`, `governed_snapshot_stale` |
+| `template_search` | newest template-search run per demand | last outcome answered (completed, `survivorship_limited`, `below_threshold`) within 48 h; `not_due` without an open demand or while demands are under 24 h old | `last_search_unavailable:<code>`, `last_search_stale`, `open_demands_never_searched` |
+| `templates_evaluated` | `counts.templates_evaluated` | at least one template evaluated and the newest evaluation within 14 days | `no_template_evaluated`, `evaluation_stale` |
+| `gate_attempts` | replicated, document-checked and scaffolded entries and template-search outcomes of the last 7 days | at least one gate result; the result counts by reason are printed | `gate_attempts_without_result`, `no_gate_result_in_window` |
+| `distillation_dead_letters` | loop health `downstream_actual_state` written by the controller | tick within 6 h and 0 unresolved dead letters | `unresolved_dead_letters`, `distillation_state_stale`, `distillation_state_unobserved` |
+
+A stage whose input could not be read (HTTP error, an owner surface `unavailable`, a count with `status: unavailable`, an invalid
+payload) is `failed` with that reason; nothing is skipped or passed. Survivorship or threshold refusals are working gate output and
+the report says `no strategy passed` when `counts.passes` is 0. The windows are owner cadences, not result thresholds.
+
+This probe is registered with the release stage like the others and never rolls anything back. It does judge daily
+system state, so while discovery produces nothing every release verdict stays `failed`; that is the intent of the RC2
+instance (the operator wants the acceptance baseline held until discovery works). Bounds: one POST, two GETs, 30 s and 8 MiB each,
+stdout only. Tests: `acceptance/test_discovery_pipeline_day.py` with `fixtures/hosted_discovery_pipeline_20261125.json`, which is
+**reconstructed** from the coordinator's recorded hosted facts of 2026-11-25 (no hosted read by the task worker) and must fail every stage.
+
 ## Tests that import the BFF app (`acceptance/conftest.py`)
 
 `services.control_plane.bff.main` opens durable state under `BFF_DATA_DIR` when it is
