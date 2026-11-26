@@ -21,9 +21,15 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 )
 
 
-def _replay(prepared, artifact, dates, fills_out=None):
-    """``fills_out`` (optional list) receives every per-session fill of the daily next-open replay."""
-    """Same dated inputs/interpreter/netting as paper, previous-bar exposure only."""
+def _replay(prepared, artifact, dates, fills_out=None, rows_out=None):
+    """Same dated inputs/interpreter/netting as paper, previous-bar exposure only.
+
+    ``fills_out`` (optional list) receives every per-session fill of the daily next-open replay.
+    ``rows_out`` (optional list) receives every per-symbol session row the replay decided from the
+    close (``symbol, date, exposure, direction, open, close``); the member virtual book admission
+    fill reads them so it never runs a second replay.  Target-position artifacts decide portfolio
+    targets, not per-symbol views, and add no row.
+    """
     from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
     from services.registry.portfolio_envelope import uses_target_positions
@@ -56,7 +62,10 @@ def _replay(prepared, artifact, dates, fills_out=None):
                 if calendar[index] in dates:
                     rows.append({"exposure": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction] * strength,
                                  "open": prepared.ohlcv_by_instrument[symbol][index][0],
-                                 "close": prepared.ohlcv_by_instrument[symbol][index][3], "date": calendar[index]})
+                                 "close": prepared.ohlcv_by_instrument[symbol][index][3], "date": calendar[index],
+                                 "direction": {"LONG": 1, "SHORT": -1, "FLAT": 0}[direction]})
+            if rows_out is not None:
+                rows_out.extend({"symbol": symbol, **row} for row in rows)
             values, fills = next_open_net_returns(symbol, rows, liquidate_final=True)
             if fills_out is not None:
                 fills_out.extend({"symbol": symbol, **fill} for fill in fills)
@@ -85,7 +94,10 @@ def _replay(prepared, artifact, dates, fills_out=None):
                                           decision_time=decision_time, symbol=symbol)
             strength = 1.0 if view["strength"] is None else view["strength"]
             exposure = {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]] * strength
-            rows.append({"exposure": exposure, "open": opens[index], "close": prices[index], "date": day})
+            rows.append({"exposure": exposure, "open": opens[index], "close": prices[index], "date": day,
+                         "direction": {"LONG": 1, "SHORT": -1, "FLAT": 0}[view["direction"]]})
+        if rows_out is not None:
+            rows_out.extend({"symbol": symbol, **row} for row in rows)
         # A decision from day D's close fills at day D+1's open; the untouched window's final
         # position is marked out at the last close with its liquidation costs.
         returns, fills = next_open_net_returns(symbol, rows, liquidate_final=True)

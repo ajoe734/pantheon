@@ -1,0 +1,69 @@
+{
+  "task_id": "MEMBER-BOOK-ADMISSION-GAP-FILL-20261126",
+  "owner": "Claude2",
+  "reviewer": "Claude",
+  "register": {"class": "RC2", "row": "Every pool reweight is refused with virtual_book_high_water_history_missing", "pr": 7894},
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27T10:03Z, so the reviewer (Claude) is from the owner's model family. Recorded per the task brief.",
+  "summary": "Member virtual books now live under the persona identity on hosted too (one file per persona, surviving a RuntimeBinding replacement), carry in the exact member's marks recorded under earlier per-binding book files once, and complete from admission to the first live mark with the existing pool_admission replay on governed daily bars. Every filled row names its source; a session no source produces stays a named gap and the book stays since_inception false.",
+  "acceptance": {
+    "1_fill": {
+      "status": "met_in_code",
+      "detail": "MemberVirtualBooks._fill_admission runs for a book whose first mark is later than admitted_at + ADMISSION_FIRST_MARK_GRACE_DAYS. Sessions = governed Taiwan trading days (instrument_candidates.is_trading_day) from the admission date to the day before the first live mark. Recorded views come first: marks of the same member in earlier binding files are carried in as recorded. Everything else comes only from governed_admission_replay_source: registry artifact (same reader the member baselines use, checksum must match), governed_market_dataset.resolve_governed_dataset, and services.research.pool_admission._replay (new optional rows_out argument; no second replay), close of D decided exposure filled at the open of D+1 (FILL_CONVENTION)."
+    },
+    "2_source_ref_and_gaps": {
+      "status": "met",
+      "detail": "Filled rows carry source_ref governed-replay:<dataset snapshot id>:pool_admission._replay. A session with no source stays a gap recorded in book.admission_fill.gaps with its reason (session_not_in_governed_dataset, replay_gave_no_view_for_session, admission_replay_unavailable:<reason>, admission_replay_source_unconfigured, calendar_unavailable:...); the book reports since_inception false and since_inception_reason admission_gap_unfilled:<reasons>. Live rows are inserted-before only, never changed (asserted row for row)."
+    },
+    "3_runtime_path_once_idempotent": {
+      "status": "met_in_code",
+      "detail": "paper_runtime builds MemberVirtualBooks with the governed replay source and legacy paths; the fill runs inside _observe on the signal path, no manual hosted write. admission_fill is stored on the book, carried with it across restart, envelope and binding replacement, so it runs once; a fill that left gaps is retried at most once per process and adds only missing sessions (test_fill_runs_once_and_is_idempotent..., test_gap_from_an_unavailable_source_is_filled_once_the_source_returns...)."
+    },
+    "4_runtime_budget": {
+      "status": "met",
+      "detail": "One-time write of at most one row per member per governed session between admission and the first live mark (8 sessions 2026-11-09..2026-11-18 for each of the 3 hosted members). Afterwards one row per member per session. One book file per persona (member-books/<sha256(tenant, persona)>.json) instead of one per binding; no new file type. Registry read and dataset build once per (member, checksum) per process."
+    },
+    "5_tests": {
+      "status": "met",
+      "detail": "test_hosted_book_is_filled_from_admission_with_the_governed_replay_and_reweight_accepts_it uses the hosted shape (admitted 2026-11-08T18:10:02Z, four marks 2026-11-19..2026-11-24, admitted_at null) and governed-shaped daily bars; pool_policy.reweight accepts the filled book. On current dev MemberVirtualBooks has no history_source and no fill, so the book is since_inception false and reweight raises virtual_book_high_water_history_missing (the pre-existing test_hosted_late_book_records_admission_but_stays_not_since_inception in test_pool_policy.py keeps asserting exactly that for a book without a fill source, unchanged)."
+    },
+    "6_probe": {
+      "status": "met",
+      "detail": "acceptance/probes/persona-member-book-admission also fails (book_not_since_inception:<ref>:reason=<since_inception_reason>) when a current member book with a mark newer than the BFF build time is since_inception false."
+    },
+    "7_assertions": {
+      "status": "met",
+      "changed_assertions": [
+        {"file": "acceptance/test_persona_member_book_admission.py", "test": "test_book_marked_after_the_build_without_admission_fails", "justification": "The same hosted-shape book has since_inception false, which the probe now also reports after the admission failure; the original admitted_at_not_joined_at entry is still asserted, first."},
+        {"file": "acceptance/test_persona_member_book_admission.py", "test": "test_book_marked_after_the_build_with_the_member_joined_at_passes", "justification": "The passing book must now also be since_inception true (new probe rule); the detail helper takes since_inception and this case sets true. A new test covers the same book with since_inception false failing."}
+      ],
+      "deleted_or_weakened": []
+    }
+  },
+  "book_continuity": {
+    "root_cause": "paper_fleet_reconciler sets PANTHEON_PERFORMANCE_STATE_PATH per binding, so paper_runtime put the books at <binding state>.lifecycle-outbox.json.member-books.json and the persona-scoped path was used only when no path was configured, which never happens on hosted.",
+    "change": "paper_runtime uses the persona-scoped member-books/<sha256(tenant, persona)>.json whenever the lifecycle path is not explicitly configured and a persona id exists, including with PANTHEON_PERFORMANCE_STATE_PATH set.",
+    "carry_in": "Earlier per-binding files (*.member-books.json in the same directory) are read once, lazily, when a book key is new and the persona store holds no matching book. Only the exact member (member_id, artifact, version, checksum, symbol, underlying_count) is carried; marks are merged by event time and copied unchanged; admitted_at comes from the current member view, not from the old file. Provenance is written to book.carried_from (file names). Because books carry no persona id, a same-directory book of the identical immutable member would also match; its marks are the same deterministic views of the same artifact and bars, and the admission time never comes from it.",
+    "old_files": "Old binding files (31 rb-*.json bindings and their .lifecycle-outbox.json.member-books.json files under /data/runtime/paper-performance as of 2026-11-26) are read only, never moved, rewritten or deleted by this change (asserted byte for byte in test_runtime_book_survives_a_binding_replacement_with_the_reconcilers_state_path). The names actually carried are recorded per book in carried_from after the release runs; no hosted access was used to list them here.",
+    "reconciler_note": "paper_fleet_reconciler's retired-binding sweep deletes <binding>.member-books.json; it never touches member-books/, so persona books survive binding retirement."
+  },
+  "tests": {
+    "added": [
+      "services/execution/lean_runtime/test_member_virtual_book.py: hosted fill + reweight; replay parity with pool_admission._replay; once/idempotent across restart and envelope replacement; gap stays and since_inception false; unavailable or unconfigured source; late retry; grace not filled; runtime binding replacement with the reconciler's PANTHEON_PERFORMANCE_STATE_PATH; legacy binding files carried once",
+      "acceptance/test_persona_member_book_admission.py: not-since-inception failure; not judged when mark is not newer than the build"
+    ],
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_member_virtual_book.py acceptance/test_persona_member_book_admission.py -> 26 passed + 10 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_member_baseline_read.py services/control-plane/persona/test_pool_policy.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/research/tests/test_daily_next_open_parity.py services/research/tests/test_portfolio_target_parity.py services/research/tests/test_pool_admission.py -> 208 passed, 2 skipped",
+      ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_runtime.py -> 154 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/evaluation/tests/test_outlier_attribution.py services/evolution/test_approved_baselines.py services/evolution/test_pool_evolution_scheduler.py services/control-plane/bff/tests/test_persona_pool_views.py services/execution/lean_runtime/test_expression_replay.py services/knowledge/test_case_file.py -> 105 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_pool_evolution_integration.py services/research/tests/test_persona_cycle_demand_integration.py -> 15 passed"
+    ],
+    "not_covered": "The governed store read itself (pyarrow DailyBarsReader) is not exercised: the worker interpreter has no pyarrow. The fill tests inject the dataset resolver with a dataset of the exact shape governed_market_dataset serves; governed_market_dataset keeps its own store tests."
+  },
+  "known_limits_and_follow_up": [
+    "DEPLOYMENT DEPENDENCY: the runtime workers run in the paper-fleet-reconciler image, whose lock (dependencies/locks/services-paper_fleet_reconciler.txt) has no pyarrow, so governed_market_dataset raises daily_bars_reader_unavailable there. Until the image carries pyarrow (or another governed bar reader is wired), hosted books record named gaps (admission_gap_unfilled:admission_replay_unavailable:daily_bars_reader_unavailable), stay since_inception false and the probe fails honestly; nothing is invented. The lock file is outside this task's declared artifacts, so it is a separate follow-up task. The fill retries once per process, so it completes after the image change without a manual write.",
+    "The runtime worker needs /data/source-ingest mounted read-only at the default GOVERNED_MARKET_STORE_ROOT (/data/source-ingest/market_data_store); the reconciler service already mounts it.",
+    "Members whose artifact uses target positions have no per-symbol replay views; their sessions stay gaps (replay_gave_no_view_for_session or the replay error).",
+    "Hosted proof (reweight accepted after the next marks, probe green) happens after release and is not claimed here."
+  ]
+}

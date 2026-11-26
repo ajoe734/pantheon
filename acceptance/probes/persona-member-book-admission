@@ -6,7 +6,10 @@ Reads GET /bff/version (build_time of the deployed BFF) and every page of GET /b
 (page_size=200, following next_page_token until empty). For every persona that is not retired
 or archived and whose strategy_pool surface is ok, each current (non-removed) member with an ok
 data.strategyPool.memberVirtualBooks row whose newest mark is later than the BFF build time is
-checked: the book's admitted_at must equal that member's joined_at in data.strategyPool.current.
+checked: the book's admitted_at must equal that member's joined_at in data.strategyPool.current,
+and the book must be since_inception (MEMBER-BOOK-ADMISSION-GAP-FILL-20261126: a mark newer than the
+build with since_inception false means the admission fill did not complete; the failure names the
+book's since_inception_reason).
 
 A book whose newest mark is not later than the build time was written before this release and is
 not judged. When no book qualifies yet the probe exits 77 with the reason.
@@ -67,6 +70,8 @@ def check_persona(detail, built):
         admitted = row["book"].get("admitted_at")
         if admitted != joined[ref]:
             failures.append(f"admitted_at_not_joined_at:{ref}:admitted_at={admitted}:joined_at={joined[ref]}")
+        if row["book"].get("since_inception") is not True:
+            failures.append(f"book_not_since_inception:{ref}:reason={row['book'].get('since_inception_reason')}")
     return failures, checked
 
 
