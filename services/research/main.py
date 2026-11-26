@@ -1269,6 +1269,30 @@ def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str,
     return task
 
 
+def _deferred_retry_cadence_seconds() -> int:
+    """One evolution cadence (the scheduler interval; default one day)."""
+    try:
+        return max(1, int(os.getenv("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", "86400")))
+    except ValueError:
+        return 86400
+
+
+def _deferred_retry_due(run: Dict[str, Any]) -> bool:
+    """True when an ``operator_decision_required`` run may be re-executed: one cadence after its last deferral.
+
+    Uses the orchestrator's own clock, never a caller-supplied time. A run deferred before ``deferred_at`` was
+    recorded (or with an unreadable stamp) is due, so the gate can never strand an older deferral."""
+    stamp = str(run.get("deferred_at") or "")
+    if not stamp:
+        return True
+    try:
+        deferred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (now - deferred).total_seconds() >= _deferred_retry_cadence_seconds()
+
+
 @app.post("/api/research-orchestrator/tasks/{task_id}/runs", status_code=201)
 def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     task = store.get_task(task_id)
@@ -1277,6 +1301,11 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     existing = _idempotent_match(store.list_runs(), body.idempotency_key)
     if existing:
         if existing.get("outcome") == "operator_decision_required" and existing.get("status") == "queued":
+            if not _deferred_retry_due(existing):
+                # REQUALIFY-REFUSAL-NOT-CRASH-20261125: a deferred run is re-executed at most once per cadence.
+                # The dispatch worker re-submits on every claim-lease expiry; before the cadence is due the run is
+                # returned unchanged so no attempt, owner read or pool decision version is produced.
+                return existing
             existing["attempt_number"] = int(existing.get("attempt_number") or 1) + 1
             existing["updated_at"] = body.requested_at or utc_now()
             store.put_run(existing)
@@ -2591,6 +2620,66 @@ def _producer_proof_registration(
     }
 
 
+def _unadmitted_requalified_entries(
+    family_entries: List[Dict[str, Any]],
+    *,
+    legacy_ref: str,
+    decision_id: str,
+    tenant_id: str,
+    pool: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Registry entries this decision registered to replace ``legacy_ref`` that the pool never admitted.
+
+    Returns the one entry the next attempt reuses (approved, checksum-bound, never in pool history; the
+    highest version when several exist) and every other such entry as a visible residual for the operator.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    in_pool = {str(m.get("artifact_ref")) for m in pool.get("members") or []}
+    usable: List[Dict[str, Any]] = []
+    residuals: List[Dict[str, Any]] = []
+    for e in family_entries:
+        meta = e.get("metadata") if isinstance(e.get("metadata"), dict) else {}
+        art = meta.get("strategy_artifact") if isinstance(meta.get("strategy_artifact"), dict) else None
+        parents = list(((art or {}).get("lineage") or {}).get("parent_registry_ids") or [])
+        if (
+            str(meta.get("replaces_registry_id") or "") != legacy_ref
+            or str(meta.get("demand_ref") or "") != decision_id
+            or legacy_ref not in parents
+            or str(e.get("registry_id") or "") in in_pool
+        ):
+            continue
+        reason = None
+        if str(e.get("owner_tenant") or meta.get("tenant_id") or "") != tenant_id:
+            reason = "owner_tenant_mismatch"
+        elif e.get("artifact_state") != "approved":
+            reason = "not_approved:" + str(e.get("artifact_state"))
+        else:
+            try:
+                if strategy_artifact_checksum(art) != e.get("checksum"):
+                    reason = "checksum_mismatch"
+            except Exception as exc:  # noqa: BLE001 - an unreadable artifact is a residual, never a reuse
+                reason = "artifact_invalid:" + type(exc).__name__
+        if reason is None:
+            usable.append(e)
+        else:
+            residuals.append({"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": reason})
+
+    def _vkey(e: Dict[str, Any]) -> Tuple[int, ...]:
+        try:
+            return tuple(int(p) for p in str(e.get("version") or "0").split("."))
+        except ValueError:
+            return (0,)
+
+    usable.sort(key=_vkey)
+    chosen = usable.pop() if usable else None
+    residuals.extend(
+        {"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": "superseded_unadmitted_requalified_entry"}
+        for e in usable
+    )
+    return chosen, residuals
+
+
 def _execute_legacy_member_requalification(
     *,
     run_id: str,
@@ -2661,12 +2750,18 @@ def _execute_legacy_member_requalification(
             "read_family_versions",
             f"/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
         )
+        family_entries = [
+            (v or {}).get("entry") or {}
+            for v in (family_views if isinstance(family_views, list) else [])
+            if isinstance((v or {}).get("entry"), dict)
+        ]
         existing_versions = [
             str(((v or {}).get("entry") or {}).get("version") or "")
             for v in (family_views if isinstance(family_views, list) else [])
         ]
     except _OwnerRejection as exc:
         if exc.status == 404:
+            family_entries = []
             existing_versions = []
         else:
             raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
@@ -2679,6 +2774,83 @@ def _execute_legacy_member_requalification(
             dataset = _RETRAIN_DATASET_LOADER(parent, params)
         except Exception as exc:  # noqa: BLE001
             raise executor.RequalifyDeferred("governed_dataset_unavailable", {"detail": str(exc)}) from None
+
+    pending, residuals = _unadmitted_requalified_entries(
+        family_entries, legacy_ref=str(ctx["artifact_ref"]), decision_id=decision_id, tenant_id=tenant_id, pool=pool,
+    )
+    residual_detail = {"requalified_residuals": residuals} if residuals else {}
+
+    def _replace_with_requalified(registration: Dict[str, Any], artifact: Dict[str, Any], verdict: Dict[str, Any]) -> None:
+        """Admit the registered requalified entry; a stated pool refusal defers instead of failing the run."""
+        try:
+            replace_receipt = owner.replace_requalified_member(
+                ctx,
+                new_artifact=artifact,
+                new_checksum=registration["checksum"],
+                dataset=dataset,
+            )
+        except executor.RequalifyDeferred as deferred:
+            # The live member stays; the registered entry is kept for the next cadence to reuse.
+            raise executor.RequalifyDeferred(
+                deferred.reason,
+                {
+                    **deferred.detail,
+                    "pending_replacement": {
+                        "registry_id": str(registration["registry_id"]),
+                        "checksum": registration["checksum"],
+                        "version": artifact.get("version"),
+                        "resume": "next_cadence_reuses_registered_entry",
+                        "verdict": verdict,
+                    },
+                    **residual_detail,
+                },
+            ) from None
+        new_id = str(registration["registry_id"])
+        run = get_store().get_run(run_id) or {}
+        writebacks = list(run.get("registry_writebacks") or [])
+        writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
+        _retrain_record(
+            run_id,
+            operator_decision_required=False,
+            candidate_artifact_id=new_id,
+            registry_writebacks=writebacks,
+            evolution_result={
+                **verdict,
+                "replacement": registration,
+                "pool_replacement_receipt": replace_receipt,
+                **residual_detail,
+            },
+        )
+        raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+
+    if pending is not None:
+        # An earlier attempt of this decision registered and approved the requalified entry but the pool refused
+        # it. Reuse that exact entry: no second registration, version or gate trial for the same decision.
+        from services.research.rebaseline_next_open import is_synthetic_or_fixture_dataset
+
+        dataset_refusal = is_synthetic_or_fixture_dataset(dataset)
+        if dataset_refusal is not None:
+            raise executor.RequalifyDeferred(dataset_refusal, {"reused_registry_id": pending["registry_id"], **residual_detail})
+        prior = ((get_store().get_run(run_id) or {}).get("evolution_result") or {}).get("pending_replacement") or {}
+        verdict = prior.get("verdict") if prior.get("registry_id") == pending["registry_id"] else None
+        reused_artifact = dict(pending["metadata"]["strategy_artifact"])
+        _replace_with_requalified(
+            {
+                "registry_id": pending["registry_id"],
+                "checksum": pending["checksum"],
+                "artifact_state": pending.get("artifact_state"),
+                "reused_unadmitted_entry": True,
+            },
+            reused_artifact,
+            dict(verdict) if isinstance(verdict, dict) else {
+                "passed": True,
+                "legacy_registry_id": str(ctx["artifact_ref"]),
+                "legacy_checksum": ctx.get("checksum"),
+                "requalified_artifact_id": pending["registry_id"],
+                "requalified_checksum": pending["checksum"],
+                "evaluation_summary": pending.get("evaluation_summary"),
+            },
+        )
 
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
@@ -2738,6 +2910,7 @@ def _execute_legacy_member_requalification(
                 **verdict,
                 "pool_removal_receipt": removed_receipt,
                 "memory_writeback": memory_receipt,
+                **residual_detail,
             },
         )
         raise _RetrainFinished("revalidation_failed", "requalification_failed_next_open_fill")
@@ -2808,28 +2981,7 @@ def _execute_legacy_member_requalification(
         gate_response=result["gate_response"],
         backtest_evaluation=result["backtest_evaluation"],
     )
-    replace_receipt = owner.replace_requalified_member(
-        ctx,
-        new_artifact=result["requalified_artifact"],
-        new_checksum=registration["checksum"],
-        dataset=dataset,
-    )
-    new_id = str(registration["registry_id"])
-    run = get_store().get_run(run_id) or {}
-    writebacks = list(run.get("registry_writebacks") or [])
-    writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
-    _retrain_record(
-        run_id,
-        operator_decision_required=False,
-        candidate_artifact_id=new_id,
-        registry_writebacks=writebacks,
-        evolution_result={
-            **verdict,
-            "replacement": registration,
-            "pool_replacement_receipt": replace_receipt,
-        },
-    )
-    raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+    _replace_with_requalified(registration, result["requalified_artifact"], verdict)
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -3052,6 +3204,8 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
                 outcome="operator_decision_required",
                 outcome_reason=deferred.reason,
                 operator_decision_required=True,
+                deferred_at=utc_now(),
+                retry_not_before_seconds=_deferred_retry_cadence_seconds(),
                 evolution_result={
                     "status": "could_not_evaluate",
                     "operator_decision_required": True,
@@ -3477,6 +3631,8 @@ def resume_retrain_runs() -> None:
             continue
         if record.get("cancellation_fence"):
             continue
+        if record.get("outcome") == "operator_decision_required" and status == "queued" and not _deferred_retry_due(record):
+            continue  # a deferred run waits for its cadence; the dispatch worker re-submits it when due
         _trigger_retrain_execution(str(record["run_id"]), params)
 
 

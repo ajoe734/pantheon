@@ -692,6 +692,16 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     evolution_main.receipt_registry["research"] = ResearchPlaneAdapter(api_url="http://research", http_json=http_json)
 
+    # Each "next cadence" is one scheduler interval later on the research orchestrator's clock: a deferred run is
+    # re-executed at most once per cadence (REQUALIFY-REFUSAL-NOT-CRASH-20261125).
+    from datetime import timedelta, timezone
+
+    clock = {"now": datetime.now(timezone.utc).replace(microsecond=0)}
+    monkeypatch.setattr(research, "utc_now", lambda: clock["now"].isoformat().replace("+00:00", "Z"))
+
+    def next_cadence():
+        clock["now"] += timedelta(seconds=86400)
+
     # 1. Synthetic dataset is refused as input -> operator_decision_required, member NOT removed (AC 2, AC 5).
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
@@ -705,6 +715,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     # 2. Short (< 2 years) dataset on next cadence -> insufficient_point_in_time_history, member NOT removed (AC 5).
     state["dataset"] = recorded_dataset()
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
@@ -718,6 +729,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
     # 3. Owner read failure on next cadence -> owner_read_failed:strategy_spec, member NOT removed (AC 5).
     state["dataset"] = dataset_2yr
     state["spec_down"] = True
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
@@ -730,6 +742,7 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
 
     # 4. Next cadence with governed 2-year TWSE exchange dataset succeeds and replaces legacy member in one pool version (AC 3, AC 8).
     state["spec_down"] = False
+    next_cadence()
     runtime.run_consumer_tick(env, transport)
     _poll(dispatch_world)
     run = research.get_store().list_runs()[0]
@@ -792,3 +805,333 @@ def test_legacy_close_fill_member_defers_on_unusable_data_or_owner_error_then_re
         == "baseline_computed_under_decision_close_fill"
     )
 
+
+
+def _governed_boundary(symbols, exclusions=None):
+    """A MarketBoundary row exactly as governed_market_dataset.build_market_boundary returns it."""
+    from services.research.governed_market_dataset import MarketBoundary, MarketPolicy
+
+    return MarketBoundary(
+        snapshot_id="gmd-2026-11-15-0123456789abcdef", as_of="2026-11-16T00:00:00+00:00",
+        window_start="2024-01-02", window_end="2026-11-14", trade_days=700, symbols=tuple(symbols),
+        exclusions=dict(exclusions or {}), policy=MarketPolicy(), store_symbol_count=3,
+        liquidity={s: 9_000_000_000.0 for s in symbols},
+    )
+
+
+@pytest.mark.parametrize("refusal", [
+    "boundary_unavailable", "candidate_outside_boundary", "consultation_memo_missing", "risk_observations_missing",
+])
+def test_refused_requalified_replacement_defers_to_operator_then_reuses_the_registered_entry_next_cadence(
+    dispatch_world, research, monkeypatch, tmp_path, refusal,
+):
+    """REQUALIFY-REFUSAL-NOT-CRASH-20261125: real executor entry and real pool decide route (store.decide)."""
+    import json
+    import services.evolution.auto_consumer_runtime as runtime
+    import services.execution.lean_runtime.member_virtual_book as mvb
+    from services.evolution import main as evolution_main
+    from services.evolution.approved_baselines import resolve_member_baseline
+    from services.evolution.dispatch_receipts import ResearchPlaneAdapter
+    from services.evolution.test_approved_baselines import genuine_entry
+    from services.evolution.test_auto_consumer_dispatch import _poll
+    from services.foundation.reliable_delivery import AtomicJsonRecordStore
+    from services.registry.promotion.gate import PromotionGate
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.alpha_replication.shared_stores import SharedReplicationGate
+    from services.research.governed_market_dataset import GovernedMarketDatasetError
+    from services.research.tests.test_candidate_registration import RealGovernanceApprovalHarness
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "control-plane" / "persona"))
+    pools = importlib.import_module("persona_strategy_pool")
+    tenant, pid = "default", "p1"
+    dataset_2yr = _recorded_2yr_exchange_dataset()
+    passing_art = _passing_2yr_klen_artifact(dataset_2yr)
+    legacy_id = "reg-legacy-klen-close-001"
+    passing_art["artifact_id"] = legacy_id
+    passing_art["version"] = "1.0.0"
+    legacy_checksum = strategy_artifact_checksum(passing_art)
+    legacy_entry = genuine_entry(tenant=tenant)
+    legacy_entry["registry_id"] = legacy_id
+    legacy_entry["version"] = "1.0.0"
+    legacy_entry["checksum"] = legacy_checksum
+    legacy_entry["metadata"] = {"strategy_artifact": passing_art, "persona_id": pid}
+    legacy_entry["replication_proof"]["owner_verified_binding"]["artifact_checksum"] = legacy_checksum
+    del legacy_entry["evaluation_summary"]["fill_convention"]
+    del legacy_entry["replication_proof"]["evaluation_summary"]["fill_convention"]
+    legacy_snapshot = json.dumps(legacy_entry, sort_keys=True)
+
+    # The fault the pool owner refuses on the first cadence; cleared before the second cadence.
+    state = {"fault": refusal}
+    in_boundary = _governed_boundary(("2330.TW", "2317.TW", "0050.TW"))
+
+    def boundary_provider():
+        if state["fault"] == "boundary_unavailable":
+            raise GovernedMarketDatasetError(
+                "daily_bars_store_stale", "newest stored day 2026-11-03 is 13 days before 2026-11-16 (limit 7)")
+        if state["fault"] == "candidate_outside_boundary":
+            return _governed_boundary(("2317.TW", "0050.TW"), {"2330.TW": "illiquid"})
+        return in_boundary
+
+    real_idle_observations = mvb.idle_pool_observations
+
+    def idle_observations(dates, **kw):
+        # The risk-budget observation source produced nothing for the window (e.g. no idle-pool bars yet).
+        return [] if state["fault"] == "risk_observations_missing" else real_idle_observations(dates, **kw)
+
+    monkeypatch.setattr(mvb, "idle_pool_observations", idle_observations)
+
+    entries = {legacy_id: legacy_entry}
+    store = pools.PersonaStrategyPoolStore(
+        AtomicJsonRecordStore(tmp_path / "pool_refusal.json"),
+        registry_reader=lambda ref, _: entries.get(ref, {}),
+        now=lambda: "2026-11-16T00:00:00Z",
+        market_boundary_provider=boundary_provider,
+    )
+    store.append(pid, tenant, pools.AppendPoolVersionRequest(
+        expected_version=0,
+        members=[pools.PoolMember(artifact_ref=legacy_id, checksum=legacy_checksum, stage="active", risk_weight=0.7,
+                                  baseline_ref=legacy_entry["approval_decision_id"], joined_at="2024-08-01T00:00:00Z")],
+        change_reason="seed legacy close-fill klen member"), actor_id="test-owner")
+    seeded_member = copy.deepcopy(store.current(pid, tenant)["members"][0])
+
+    persona = {"persona_id": pid, "tenant_id": tenant, "lifecycle_state": "paper_owner"}
+    published, owner_writes = [], []
+    gov_harness = RealGovernanceApprovalHarness()
+    env = {
+        **__import__("services.evolution.test_auto_consumer_dispatch", fromlist=["ENV"]).ENV,
+        "AUTO_CONSUMER_TELEMETRY_URL": "http://tel", "AUTO_CONSUMER_TELEMETRY_TOKEN": "telemetry-test",
+        "AUTO_CONSUMER_RESEARCH_URL": "http://research", "AUTO_CONSUMER_RESEARCH_TOKEN": "research-test",
+        "AUTO_CONSUMER_BFF_URL": "http://bff", "AUTO_CONSUMER_BFF_TOKEN": "operator-test",
+        "AUTO_CONSUMER_PROPOSER_TOKEN": "tok-evo-proposer", "AUTO_CONSUMER_PROPOSER_ID": "evolution-execute-proposer",
+        "AUTO_CONSUMER_EVIDENCE_PATH": str(tmp_path / "evidence_refusal.jsonl"),
+        "AUTO_CONSUMER_DECAY_LEDGER_PATH": str(tmp_path / "decay_refusal.jsonl"),
+    }
+    original_transport = dispatch_world["transport"]
+
+    def transport(method, url, headers, body):
+        if url == "http://per/api/personas?lifecycle_state=paper_owner":
+            return 200, [persona]
+        if url == "http://per/api/personas/p1":
+            return 200, persona
+        if url == "http://per/api/personas/p1/strategy-pool":
+            return 200, store.current(pid, tenant)
+        if url.endswith("/strategy-pool/decisions"):
+            owner_writes.append(("decide", body["candidate"]["artifact_ref"]))
+            # The route derives actor_id from the caller's token; a persona-cycle token must carry a risk memo.
+            actor = pools.PERSONA_CYCLE_ACTOR if state["fault"] == "consultation_memo_missing" else "pool-owner"
+            return 201, store.decide(pid, tenant, pools.PoolDecisionRequest.model_validate(body), actor_id=actor)
+        if url.endswith("/strategy-pool/versions"):
+            owner_writes.append(("versions", None))
+            return 201, store.append(pid, tenant, pools.AppendPoolVersionRequest.model_validate(body), actor_id="pool-owner")
+        if url.startswith("http://bff/"):
+            published.append(body["pool_version"])
+            return 200, {"data": {"status": "published", "pool_version": body["pool_version"]}}
+        if url.startswith("http://reg/api/registry/strategy-artifacts"):
+            if method == "POST" and url.endswith("/api/registry/strategy-artifacts"):
+                owner_writes.append(("register", body["registry_id"]))
+                art = body["strategy_artifact"]
+                cs = strategy_artifact_checksum(art)
+                verified = PromotionGate.verify_admitted_replication_proof(
+                    body["replication_proof"], body["evaluation_summary"], art["lineage"],
+                    backtest_evaluation=body["backtest_evaluation"], artifact_checksum=cs)
+                verified["owner_verified_binding"]["producer_verified"] = True
+                entries[body["registry_id"]] = {
+                    "registry_id": body["registry_id"], "artifact_type": "execution_bundle", "version": art["version"],
+                    "artifact_state": "candidate", "checksum": cs, "owner_tenant": tenant,
+                    "evaluation_summary": body["evaluation_summary"], "lineage": art["lineage"],
+                    "producer_run_id": body["producer_run_id"], "replication_success": True,
+                    "replication_proof": verified,
+                    "metadata": {**dict(body.get("metadata") or {}), "strategy_artifact": art, "persona_id": pid},
+                }
+                return 201, {"entry": entries[body["registry_id"]]}
+            art_id = url.split("/strategy-artifacts/")[1].split("/")[0]
+            if url.endswith("/advance"):
+                entries[art_id].update(artifact_state="approved", approval_decision_id=body["approval_decision_id"])
+                return 200, {"entry": entries[art_id]}
+            return (200, {"entry": entries[art_id]}) if art_id in entries else (404, {})
+        if url.startswith("http://gov/api/governance/approvals"):
+            path = url[len("http://gov"):]
+            if path.startswith("/api/governance/approvals/apv-tpl-") or (
+                method == "POST" and path == "/api/governance/approvals"
+                and str((body or {}).get("decision_id", "")).startswith("apv-tpl-")
+            ):
+                try:
+                    return 200, gov_harness.handle(method, path, tenant, body)
+                except LookupError:
+                    return 404, {"detail": "not found"}
+        return original_transport(method, url, headers, body)
+
+    def research_call(**kw):
+        url, method = kw["url"], kw["method"]
+        if method == "GET" and url.endswith("/strategy-artifacts/" + legacy_id):
+            return {"entry": entries[legacy_id]}
+        if method == "GET" and "/strategies/" in url and url.endswith("/strategy-artifacts"):
+            return [{"entry": e} for e in entries.values()]
+        if method == "GET" and "/strategy-specs/" in url:
+            raise research._OwnerRejection(404, "not found")
+        raise AssertionError(f"unexpected research call: {method} {url}")
+
+    from services.research.alpha_replication import shared_stores
+
+    gate_evaluations = []
+    real_evaluate = SharedReplicationGate.evaluate_candidate
+
+    def counted_evaluate(self, request):
+        gate_evaluations.append(request.candidate_id)
+        return real_evaluate(self, request)
+
+    monkeypatch.setattr(SharedReplicationGate, "evaluate_candidate", counted_evaluate)
+    monkeypatch.setattr(shared_stores, "SharedReplicationGate", SharedReplicationGate)
+    monkeypatch.setattr(research, "_retrain_call", research_call)
+    monkeypatch.setattr(research, "_pool_owner", lambda _: runtime.PoolOwner(env, transport))
+    monkeypatch.setattr(research, "_RETRAIN_DATASET_LOADER", lambda *_: dataset_2yr)
+    research_client = TestClient(research.app)
+
+    def http_json(method, url, *, payload=None, timeout=20.0):
+        resp = research_client.request(method, url.split("http://research", 1)[1], json=payload)
+        return resp.status_code, resp.json()
+
+    evolution_main.receipt_registry["research"] = ResearchPlaneAdapter(api_url="http://research", http_json=http_json)
+
+    # One clock drives the research orchestrator (deferral stamp and due check) and the dispatch worker's claims.
+    from datetime import timedelta, timezone
+    from services.evolution import dispatch_worker
+
+    clock = {"now": datetime.now(timezone.utc).replace(microsecond=0)}
+    monkeypatch.setattr(research, "utc_now", lambda: clock["now"].isoformat().replace("+00:00", "Z"))
+    cadence = timedelta(seconds=86400)  # EVOLUTION_SCHEDULER_INTERVAL_SECONDS default
+
+    def poll_at(advance):
+        clock["now"] += advance
+        return dispatch_worker.run_poll(api_url="http://evolution.test", outbox=dispatch_world["outbox"],
+                                        registry=evolution_main.receipt_registry,
+                                        compensations=dispatch_world["compensations"],
+                                        timeout_seconds=5.0, now=clock["now"])
+
+    def decides():
+        return len([w for w in owner_writes if w[0] == "decide"])
+
+    # Cadence 1: requalification passes the gate, the entry is registered, the pool owner refuses the replacement.
+    runtime.run_consumer_tick(env, transport)
+    poll_at(timedelta(0))
+    run = research.get_store().list_runs()[0]
+    assert run["status"] == "queued", run
+    assert run["outcome"] == "operator_decision_required"
+    assert run["outcome_reason"] == "pool_admission_refused"
+    assert run["operator_decision_required"] is True
+    assert not run.get("failed_step") and not run.get("rejection")
+    res = run["evolution_result"]
+    assert res["status"] == "could_not_evaluate" and res["reason"] == "pool_admission_refused"
+    expected_reason = {
+        "boundary_unavailable": "governed_market_boundary_unavailable: daily_bars_store_stale: newest stored day",
+        "candidate_outside_boundary": "candidate_outside_governed_market_boundary: 2330 not in boundary",
+        "consultation_memo_missing": "consultation_memo_required",
+        "risk_observations_missing": "risk_budget_observations_missing",
+    }[refusal]
+    assert len(res["pool_decision_reasons"]) == 1 and res["pool_decision_reasons"][0].startswith(expected_reason)
+    pending = res["pending_replacement"]
+    pending_id = pending["registry_id"]
+    assert pending_id != legacy_id and entries[pending_id]["artifact_state"] == "approved"
+    assert pending["resume"] == "next_cadence_reuses_registered_entry" and pending["verdict"]["passed"] is True
+    assert res["candidate_artifact_ref"] == pending_id and res["live_member_ref"] == legacy_id
+    # Live member kept exactly; the owner journals its refusal with unchanged membership; nothing published.
+    refused_pool = store.current(pid, tenant)
+    assert refused_pool["members"] == [seeded_member]
+    assert refused_pool["pool_version"] == 2 and refused_pool["decision"]["status"] == "refused"
+    assert res["pool_decision_record_version"] == 2 and res["pool_version_before_decision"] == 1
+    # The refusal journal version (2) is never published; earlier entries are the tick's own publication of v1.
+    assert ("versions", None) not in owner_writes and 2 not in published
+    assert [w for w in owner_writes if w[0] == "register"] == [("register", pending_id)]
+    assert len(gate_evaluations) == 1
+    assert run["deferred_at"] == research.utc_now() and run["retry_not_before_seconds"] == 86400
+
+    # Within the cadence the dispatch worker re-claims after every claim-lease expiry (60s) and re-submits: the
+    # deferred run is returned unchanged -- no new attempt, no pool decision, no pool version (was ~1200/day).
+    decides_after_first = decides()
+    first_deferred_at = run["deferred_at"]
+    for _ in range(5):
+        poll_at(timedelta(seconds=70))
+    poll_at(cadence - timedelta(seconds=70 * 5 + 1))  # one second before the cadence is due
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 1 and run["status"] == "queued" and run["deferred_at"] == first_deferred_at
+    assert decides() == decides_after_first and store.current(pid, tenant)["pool_version"] == 2
+
+    # Due: exactly one re-execution, one refused decision (the owner's refusal journal, membership unchanged).
+    poll_at(timedelta(seconds=70))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 2 and run["status"] == "queued"
+    assert run["outcome_reason"] == "pool_admission_refused" and run["deferred_at"] == research.utc_now()
+    assert run["evolution_result"]["pending_replacement"]["registry_id"] == pending_id
+    assert decides() == decides_after_first + 1
+    assert store.current(pid, tenant)["pool_version"] == 3 and store.current(pid, tenant)["members"] == [seeded_member]
+    for _ in range(5):
+        poll_at(timedelta(seconds=70))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 2 and decides() == decides_after_first + 1
+    assert store.current(pid, tenant)["pool_version"] == 3
+    assert [w for w in owner_writes if w[0] == "register"] == [("register", pending_id)]
+    assert len(gate_evaluations) == 1 and ("versions", None) not in owner_writes and 3 not in published
+    published_before_retry = list(published)
+
+    # Next cadence: the fault is cleared; the same registered entry is reused and admitted in one pool version.
+    state["fault"] = None
+    clock["now"] += cadence
+    runtime.run_consumer_tick(env, transport)
+    poll_at(timedelta(0))
+    run = research.get_store().list_runs()[0]
+    assert run["attempt_number"] == 3
+    assert run["status"] == "completed", run
+    assert run["outcome"] == "revalidation_passed"
+    assert run["outcome_reason"] == "replaced_by_requalified_entry"
+    assert run["operator_decision_required"] is False
+    assert run["candidate_artifact_id"] == pending_id
+    assert run["evolution_result"]["replacement"]["reused_unadmitted_entry"] is True
+    assert run["evolution_result"]["verdict_ref"] == pending["verdict"]["verdict_ref"]
+    assert "requalified_residuals" not in run["evolution_result"]
+    # No second registration, no second gate trial, exactly one requalified entry in the Registry.
+    assert [w for w in owner_writes if w[0] == "register"] == [("register", pending_id)]
+    assert len(gate_evaluations) == 1
+    assert sorted(entries) == sorted([legacy_id, pending_id])
+    final_pool = store.current(pid, tenant)
+    assert final_pool["pool_version"] == 4 and final_pool["decision"]["status"] == "applied"
+    assert final_pool["decision"]["replaced_artifact_ref"] == legacy_id
+    by_ref = {m["artifact_ref"]: m for m in final_pool["members"]}
+    assert by_ref[legacy_id]["stage"] == "removed"
+    assert by_ref[legacy_id]["removal_reason"] == "replaced_by_requalified_entry"
+    assert by_ref[pending_id]["stage"] == "trial" and by_ref[pending_id]["parent_ref"] == legacy_id
+    # The replacement publishes v4 last (the cadence tick itself republishes the current pool first).
+    assert published[: len(published_before_retry)] == published_before_retry and published[-1] == 4
+    assert json.dumps(legacy_entry, sort_keys=True) == legacy_snapshot
+    assert resolve_member_baseline(tenant_id=tenant, persona_id=pid, artifact_ref=pending_id,
+                                   checksum=entries[pending_id]["checksum"], entry=entries[pending_id])["status"] == "approved"
+
+
+def test_requalify_executor_records_unusable_unadmitted_entries_as_visible_residuals():
+    """A matching entry that cannot be reused (not approved / checksum drift) is reported, never silently left."""
+    from services.research import main as research_main
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    art = _passing_2yr_klen_artifact(_recorded_2yr_exchange_dataset())
+    art["lineage"] = {**art["lineage"], "parent_registry_ids": ["legacy-1"]}
+
+    def entry(rid, version, state="approved", checksum=None):
+        a = {**art, "artifact_id": rid, "version": version}
+        return {"registry_id": rid, "version": version, "artifact_state": state, "owner_tenant": "default",
+                "checksum": checksum or strategy_artifact_checksum(a),
+                "metadata": {"strategy_artifact": a, "replaces_registry_id": "legacy-1", "demand_ref": "dec-1"}}
+
+    rows = [entry("rq-a", "1.0.1"), entry("rq-b", "1.0.2"), entry("rq-c", "1.0.3", state="candidate"),
+            entry("rq-d", "1.0.4", checksum="sha256:drift"), {**entry("rq-e", "1.0.5"), "metadata": {
+                **entry("rq-e", "1.0.5")["metadata"], "demand_ref": "other-decision"}}]
+    pool = {"members": [{"artifact_ref": "legacy-1"}]}
+    chosen, residuals = research_main._unadmitted_requalified_entries(
+        rows, legacy_ref="legacy-1", decision_id="dec-1", tenant_id="default", pool=pool)
+    assert chosen["registry_id"] == "rq-b"
+    assert {r["registry_id"]: r["reason"] for r in residuals} == {
+        "rq-a": "superseded_unadmitted_requalified_entry", "rq-c": "not_approved:candidate",
+        "rq-d": "checksum_mismatch"}
+    # An entry already in pool history is never offered for reuse.
+    chosen, _ = research_main._unadmitted_requalified_entries(
+        rows, legacy_ref="legacy-1", decision_id="dec-1", tenant_id="default",
+        pool={"members": [{"artifact_ref": "legacy-1"}, {"artifact_ref": "rq-b"}]})
+    assert chosen["registry_id"] == "rq-a"
