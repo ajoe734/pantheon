@@ -184,13 +184,14 @@ def virtual_book_metrics(returns, *, periods_per_year=252, basis=GROSS_BASIS):
 
 
 # since_inception rule.  A member book states ``since_inception: true`` only when its history starts at
-# the member's admission to the pool: the member view carried the pool admission time (``joined_at``)
-# when the book was created, and the first recorded mark falls on or after the admission date and
+# the member's admission to the pool: a member view carried the pool admission time (``joined_at``),
+# which the book records once as ``admitted_at``, and the first recorded mark falls on or after the admission date and
 # within ADMISSION_FIRST_MARK_GRACE_DAYS calendar days of it (a weekend/holiday gap to the next
 # session).  The admission time is stored on the book (``admitted_at``) and never rewritten; carried
-# books keep the original one.  A view without ``joined_at``, a first mark before admission or too long
-# after it, and a book written by an earlier runtime version (no ``admitted_at``) are all
-# ``since_inception: false`` -- unknown history is never presented as complete.
+# books keep the original one, and a book without one (no view carried ``joined_at`` yet, or written
+# by an earlier runtime version) records the first carried value.  A book with no ``admitted_at``, a
+# first mark before admission or too long after it are all ``since_inception: false`` -- unknown
+# history is never presented as complete.
 ADMISSION_FIRST_MARK_GRACE_DAYS = 5
 
 
@@ -267,6 +268,10 @@ class MemberVirtualBooks:
                 "checksum": member["checksum"], "virtual_only": member["virtual_only"],
                 "symbol": symbol, "underlying_count": member.get("underlying_count", 1),
                 "admitted_at": member.get("joined_at"), "observations": []})
+            if not book.get("admitted_at") and member.get("joined_at"):
+                # A book created (or carried) before its views carried the admission time records
+                # the first one exactly once; a recorded admitted_at is never rewritten.
+                book["admitted_at"] = member["joined_at"]
             view = member["view"]
             strength = 1.0 if view["strength"] is None else view["strength"]
             if not isinstance(strength, (int, float)) or not math.isfinite(strength) or not 0 <= strength <= 1:

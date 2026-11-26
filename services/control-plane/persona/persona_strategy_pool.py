@@ -175,6 +175,7 @@ class PoolDecisionRequest(BaseModel):
 
 
 PERSONA_CYCLE_ACTOR = "persona-pool-cycle"
+ENVELOPE_REPUBLISH = "envelope_republish"
 
 
 class ConsultationMemoVerifier(Protocol):
@@ -465,6 +466,27 @@ class PersonaStrategyPoolStore:
         else:
             raise PoolVersionConflict("pool changed concurrently; re-read and retry")
         return dict(body)
+
+    def append_envelope_republish(
+        self, persona_id: str, tenant_id: str, *, expected_version: int, reasons: list[str], actor_id: str,
+    ) -> dict[str, Any]:
+        """Append one version identical to the current one so the running envelope can be republished.
+
+        Only for carrying pool member joined_at into an envelope published before it was carried:
+        the publisher refuses a pool version that is not newer than the running envelope. Members,
+        stages and weights are copied unchanged; this is not a reweight and admits nothing.
+        """
+        current = self.current(persona_id, tenant_id)
+        if current["pool_version"] != expected_version:
+            raise PoolVersionConflict("pool changed; re-read before republishing")
+        decision = {"action": ENVELOPE_REPUBLISH, "status": "republished", "reasons": list(reasons),
+                    "execution_context": "paper", "members_unchanged_from": current["pool_version"]}
+        return self.append(persona_id, tenant_id, AppendPoolVersionRequest(
+            expected_version=expected_version,
+            members=[PoolMember.model_validate(m) for m in current["members"]],
+            change_reason=(f"envelope republish of pool v{current['pool_version']} membership unchanged; "
+                           "carries member joined_at into the running envelope; " + "; ".join(reasons))),
+            actor_id=actor_id, decision=decision)
 
     def _validate_membership(
         self, previous: Mapping[str, Any] | None, members: list[PoolMember], tenant_id: str,

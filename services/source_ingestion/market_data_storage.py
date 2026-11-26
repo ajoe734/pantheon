@@ -348,7 +348,9 @@ class MarketDataStorageWriter:
 
     COMPLETION_MIN_INTERVAL_SECONDS = 30.0
     COMPLETION_CALL_PAUSE_SECONDS = 5.0
-    COMPLETION_MAX_CALLS = 400  # 484 days at 3 a call is 162 calls; the index partitions add some
+    # 484 days at 3 a call is 162 calls; hosted read rate 11.5 to 20 MB/s over 13.6 GB read twice (index, then the
+    # day's files) is about 1,400 to 2,400 s, 70 to 120 calls of 20 s; see the task evidence for the measured total.
+    COMPLETION_MAX_CALLS = 400
 
     def _start_daily_bars_completion(self) -> None:
         """DAILY-BARS-COLLECTOR-VOLUME-VALUE-20261125: the source-ingest owner completes stored days from the retained
@@ -379,10 +381,14 @@ class MarketDataStorageWriter:
             # thread keeps calling (one bounded call at a time, ``COMPLETION_CALL_PAUSE_SECONDS`` apart) while a
             # call stopped only because its own day/second/partition budget ran out. A memory stop or a call that
             # made no progress ends the loop (the next dual write re-arms it); ``COMPLETION_MAX_CALLS`` bounds it.
+            # DAILY-BARS-COMPLETION-RESUMABLE-INDEX-20261126: progress is counted per run file (indexed or staged), so
+            # a 350 MB partition or day spread over several calls keeps the loop going; a seconds stop always has
+            # progress (the completer checks time only after its first recorded file or day).
             for _ in range(self.COMPLETION_MAX_CALLS):
                 report = DailyBarsCompleter(self.daily_bars_store, self.root).run()
                 self.last_daily_bars_completion = report
-                progressed = bool(report["completed_days"] or report["unchanged_days"] or report["indexed_partitions"])
+                progressed = bool(report.get("progress") or report["completed_days"] or report["unchanged_days"]
+                                  or report["indexed_partitions"])
                 if report["stopped"] not in ("days", "seconds", "partitions") or not progressed:
                     break
                 time.sleep(self.COMPLETION_CALL_PAUSE_SECONDS)
