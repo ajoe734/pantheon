@@ -1,6 +1,7 @@
 {
   "task": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
   "task_id": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
+  "pr": 7916,
   "owner": "Antigravity",
   "reviewer": "Claude",
   "root_cause_class": "RC6 WP6.1 / WP6.3 / WP6.4 & RC3 WP3.4",
