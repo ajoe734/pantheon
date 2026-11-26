@@ -1,0 +1,54 @@
+{
+ "task": "REGISTRY-CAS-LEGACY-ROW-NORMALIZE-20261126",
+ "class": "RC2",
+ "owner": "Claude",
+ "reviewer": "Antigravity",
+ "problem": {
+  "symptom": "every CAS-guarded Registry mutation of a legacy row raised RegistryConcurrentUpdateError (RegistryConflictError at the API) although nothing else changed the row",
+  "hosted_observation": "fallback_draft_retire apply (digest sha256:bec0209765a259934718f0f350aa4c0f8993af8d6d2e4dcf10261f6e30f5c11b) retired 38 entries, then stopped twice on reg-strategy-spec-collector:collector-news-rss:news-cna-202611110335-aspx:de0db520632b-c89977a36459 with transition_refused:RegistryConflictError (coordinator apply outputs on the dev host); the first alpha-template evaluation write to a legacy alpha_template row failed the same way",
+  "coordinator_scan": "2026-11-26 14:30Z read-only scan of all 9,940 hosted rows: RegistryEntry.from_dict(stored).to_dict() differs from stored on exactly 5,677 rows, only by the added keys replication_success and replication_proof; no other key, value or type difference; no from_dict error",
+  "root_cause": "PostgresJsonOwnerStore.compare_and_set matches with raw JSONB equality (payload = expected::jsonb); callers pass a full to_dict() snapshot that carries replication_success/replication_proof as null, the legacy stored payload has no such keys, so the predicate never matches"
+ },
+ "solution": {
+  "rule": "services/registry/models.py: normalize_entry_payload_for_cas fills only keys absent from the payload with the value the entry model round trip gives; a present key keeps its stored value; an unparseable payload is compared raw. entry_payloads_cas_equal is the one equality rule for both stores",
+  "postgres": "services/registry/pg_store.py: PostgresRegistryStore._cas_entry used by update, commit_metadata_cas and commit_artifact_state_cas. First a normal raw JSONB CAS; on a miss, if the row compare_and_set returned is equal to the caller's snapshot under entry_payloads_cas_equal, one retry is a raw JSONB CAS against that exact returned row. A write landing between miss and retry changes the row, so the retry fails; a real field difference never reaches the retry",
+  "in_memory": "services/registry/storage.py: RegistryStore.update, commit_metadata_cas and commit_artifact_state_cas use entry_payloads_cas_equal instead of !=",
+  "committed_shape": "the written payload is entry.to_dict(), so the next write of a legacy row stores the full current shape",
+  "receipts": "unchanged: a same command_key replay returns the receipt's committed_entry before any entry CAS; request digests unchanged",
+  "backfill": "none. The comparison change alone covers every legacy row seen on hosted (coordinator scan: only the two defaulted keys differ), and rows converge to the full shape on their next write; a hosted bulk write would add risk without being needed",
+  "not_changed": "services/foundation/postgres_json_store.py, split_api.py, service.py, models' to_dict/from_dict"
+ },
+ "verification": {
+  "focused": {
+   "command": "TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:<port>/pantheon .venv-pantheon/bin/python3 -m pytest -q services/registry/test_registry_cas_legacy_rows.py services/registry/test_alpha_template_seed_postgres.py services/registry/test_pg_store_artifact_type_index.py services/registry/test_alpha_template.py services/registry/test_fallback_draft_retire.py",
+   "postgres": "PostgreSQL 16.2 on loopback, throwaway cluster",
+   "result": "42 passed"
+  },
+  "negative_control": {
+   "without_fix_fake_store": "7 of 10 non-real-PG tests in test_registry_cas_legacy_rows.py fail with pg_store.py/storage.py from dev b0eb2c259 (the 3 that pass assert refusals or the helper itself)",
+   "without_fix_real_pg": "test_real_pg_legacy_row_retire_replay_and_concurrent_refusal fails with RegistryConflictError: Registry entry reg-legacy-1 was modified by another writer since it was read (same message as the hosted apply)"
+  },
+  "registry_suite": {
+   "command": ".venv-pantheon/bin/python3 -m pytest -q services/registry",
+   "result": "641 passed, 55 skipped (Postgres-gated, no TEST_DATABASE_URL)"
+  },
+  "acceptance_coverage": {
+   "draft_to_retired_succeeds": "test_pg_draft_to_retired_on_legacy_row_succeeds_and_writes_full_shape, test_real_pg_legacy_row_retire_replay_and_concurrent_refusal",
+   "concurrent_change_still_refused": "test_pg_advance_refuses_legacy_row_changed_by_another_writer, test_pg_retry_still_refuses_a_write_that_lands_between_miss_and_retry, test_pg_present_replication_value_is_a_real_difference, test_pg_update_on_legacy_row_and_stale_refusal, real-PG test",
+   "full_shape_committed": "set(stored) == set(RegistryEntry.to_dict()) asserted in pg and real-PG tests",
+   "receipt_replay_unchanged": "test_pg_advance_replay_returns_original_committed_entry (no entry CAS on replay), test_pg_metadata_cas_on_legacy_row_and_replay, real-PG test",
+   "alpha_template_first_evaluation": "test_first_alpha_template_evaluation_writes_to_legacy_row",
+   "in_memory_same_semantics": "test_memory_store_accepts_legacy_shaped_snapshot_and_refuses_real_change"
+  }
+ },
+ "hosted_proof": {
+  "status": "pending; run by the coordinator after deploy",
+  "checks": [
+   "fallback_draft_retire apply with digest sha256:bec0209765a259934718f0f350aa4c0f8993af8d6d2e4dcf10261f6e30f5c11b continues past the 39th entry",
+   "the template evaluation writes its first evaluation to a legacy alpha_template row"
+  ]
+ },
+ "residual_findings": [
+  "services/registry/alpha_template.py record_alpha_template_evaluation persists the merged evaluation_summary only when registry_service.store._entries is a dict (in-memory store); on PostgresRegistryStore only the metadata write is durable and evaluation_summary is set on the returned view only. Out of scope here; for the alpha-template owner"
+ ]
+}
