@@ -12,14 +12,22 @@ from fastapi import HTTPException
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 
 from .owner import (
+    annotate_trader_meeting_names,
+    newest_first,
     project_meeting,
     project_meeting_case_file,
     project_meeting_proposal,
     project_panel,
     project_panel_rounds,
+    trader_meeting_not_found,
+    trader_owns_meeting,
     unavailable,
     unavailable_case as no_case,
 )
+
+# Owner list pages read when scoping the committee to the caller's meetings.
+_OWNER_PAGE_LIMIT = 500
+_OWNER_MAX_PAGES = 20
 
 
 def _owner_error_reason(exc: ConsultationClientError) -> str:
@@ -424,6 +432,177 @@ class CommitteeOwnerClient:
             view = self.case_file_view(session_id, meeting_detail=meeting_detail)
             return [{**m, "case_file_view": view} for m in items]
         return items
+
+    # ---- Trader-scoped committee reads (operator decision 2026-11-26) -------------
+
+    def _display_names(self) -> Any:
+        try:
+            from ...core.display_names import current_resolver
+
+            return current_resolver()
+        except Exception:  # noqa: BLE001 - names fall back to ids
+            return None
+
+    def _owner_meeting_rows(
+        self,
+        *,
+        status: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> list[Mapping[str, Any]]:
+        """Every owner list row for the tenant, following the owner cursor (bounded)."""
+        rows: list[Mapping[str, Any]] = []
+        cursor: Optional[str] = None
+        for _ in range(_OWNER_MAX_PAGES):
+            query: dict[str, Any] = {"limit": _OWNER_PAGE_LIMIT}
+            if status:
+                query["status"] = status
+            if meeting_type:
+                query["type"] = meeting_type
+            if persona_id:
+                query["persona_id"] = persona_id
+            if cursor:
+                query["cursor"] = cursor
+            try:
+                payload = self.call("GET", "/api/consult/meetings?" + urlencode(query))
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    return rows
+                raise
+            if isinstance(payload, Mapping) and isinstance(payload.get("items"), list):
+                page, cursor = payload["items"], payload.get("next_cursor")
+            elif isinstance(payload, list):
+                page, cursor = payload, None
+            else:
+                raise unavailable("consultation", "invalid_meeting_list_response")
+            for raw in page:
+                if not isinstance(raw, Mapping) or not raw.get("meeting_id"):
+                    raise unavailable("consultation", "invalid_meeting_list_response")
+                if raw.get("tenant_id") is not None and str(raw.get("tenant_id")).strip() != self.tenant_id:
+                    raise unavailable("consultation", "meeting_tenant_mismatch")
+                rows.append(raw)
+            if not cursor:
+                return rows
+        raise unavailable("consultation", "meeting_list_page_budget_exceeded")
+
+    def _raw_meeting(self, meeting_id: str) -> Mapping[str, Any]:
+        item = self.call("GET", f"/api/consult/meetings/{quote(meeting_id, safe='')}")
+        if not isinstance(item, Mapping) or str(item.get("meeting_id") or "") != meeting_id:
+            raise unavailable("consultation", "invalid_meeting_response")
+        return item
+
+    def _trader_raw_rows(self, **filters: Any) -> list[tuple[Mapping[str, Any], Optional[Mapping[str, Any]]]]:
+        """Owner rows the caller owns, with the detail when it was needed to decide."""
+        out: list[tuple[Mapping[str, Any], Optional[Mapping[str, Any]]]] = []
+        for raw in self._owner_meeting_rows(**filters):
+            if trader_owns_meeting(raw, self.user_id):
+                out.append((raw, None))
+                continue
+            # An MT-4 subject may be named only in the attribution record of the detail.
+            kinds = {str(raw.get(k) or "").strip().lower() for k in ("meeting_code", "meeting_type", "meeting_slug")}
+            if kinds & {"mt-4", "mt4", "performance_attribution_review"} and not isinstance(
+                raw.get("attribution_record"), Mapping
+            ):
+                detail = self._raw_meeting(str(raw["meeting_id"]))
+                if trader_owns_meeting({**dict(raw), **dict(detail)}, self.user_id):
+                    out.append((raw, detail))
+        return out
+
+    def _project_trader_meeting(self, raw: Mapping[str, Any], detail: Optional[Mapping[str, Any]], names: Any) -> Optional[dict]:
+        if detail is None and not isinstance(raw.get("rounds"), list):
+            detail = self._raw_meeting(str(raw["meeting_id"]))
+        try:
+            projected = project_meeting(raw, tenant_id=self.tenant_id, user_id=self.user_id, detail=detail)
+        except HTTPException as exc:
+            reason = exc.detail.get("reason") if isinstance(exc.detail, Mapping) else None
+            if exc.status_code == 404 and reason == "meeting_not_found":
+                return None
+            raise
+        if not trader_owns_meeting(projected, self.user_id):
+            return None
+        projected.setdefault("created_at", raw.get("created_at"))
+        projected.setdefault("closed_at", raw.get("closed_at"))
+        return annotate_trader_meeting_names(projected, user_id=self.user_id, names=names)
+
+    def trader_meetings(
+        self,
+        *,
+        status: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[dict]:
+        """Meetings the caller convened plus MT-4 reviews of the caller, newest first."""
+        owned = self._trader_raw_rows(status=status, meeting_type=meeting_type, persona_id=persona_id)
+        owned.sort(
+            key=lambda pair: (str(pair[0].get("created_at") or ""), str(pair[0].get("meeting_id") or "")),
+            reverse=True,
+        )
+        start = 0
+        if cursor:
+            try:
+                start = max(0, int(cursor))
+            except ValueError:
+                ids = [str(raw.get("meeting_id")) for raw, _ in owned]
+                start = ids.index(cursor) + 1 if cursor in ids else len(ids)
+        window = owned[start:start + limit] if limit is not None else owned[start:]
+        names = self._display_names()
+        out: list[dict] = []
+        for raw, detail in window:
+            projected = self._project_trader_meeting(raw, detail, names)
+            if projected is None:
+                continue
+            if persona_id and not (
+                projected.get("chair_persona_id") == persona_id
+                or any(p.get("persona_id") == persona_id for p in (projected.get("participants") or []))
+            ):
+                continue
+            out.append(projected)
+        return newest_first(out)
+
+    def trader_meeting(self, meeting_id: str) -> dict:
+        """One meeting in the caller's set; anything else is the same non-enumerating 404."""
+        mid = str(meeting_id or "").strip()
+        if not mid:
+            raise trader_meeting_not_found()
+        try:
+            raw = self._raw_meeting(mid)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise trader_meeting_not_found() from exc
+            raise
+        if not trader_owns_meeting(raw, self.user_id):
+            raise trader_meeting_not_found()
+        projected = self._project_trader_meeting(raw, raw, self._display_names())
+        if projected is None:
+            raise trader_meeting_not_found()
+        return projected
+
+    def trader_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        meeting_id: Optional[str] = None,
+    ) -> list[dict]:
+        """Proposals of the caller's meetings only."""
+        if meeting_id:
+            owned_ids = {str(self.trader_meeting(meeting_id)["meeting_id"])}
+        else:
+            owned_ids = {str(raw.get("meeting_id")) for raw, _ in self._trader_raw_rows()}
+            if not owned_ids:
+                return []
+        items = self.proposals(status=status, persona_id=persona_id, meeting_id=meeting_id)
+        return [p for p in items if str(p.get("meeting_id") or "") in owned_ids]
+
+    def trader_memos(self, session_id: str) -> list:
+        self.trader_meeting(session_id)
+        return self.memos(session_id)
+
+    def trader_publish(self, session_id: str, memo_id: str) -> dict:
+        self.trader_meeting(session_id)
+        return self.publish(session_id, memo_id)
 
     def publish(self, session_id: str, memo_id: str) -> dict:
         self.panel(session_id)

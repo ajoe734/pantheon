@@ -1,10 +1,19 @@
-"""Restored committee routes: tenant-scoped panel and deliberative meeting reads and owner publishing."""
+"""Agora committee routes: the calling trader's own meetings only.
+
+Operator decision 2026-11-26: Agora is for human traders. The committee lists the
+deliberative meetings the caller convened (convened_by agora_user == caller) plus
+MT-4 reviews whose subject is the caller, newest first. Persona gate panels and
+institutional persona meetings are served by the Management meetings center.
+Any session outside that set answers the same non-enumerating 404.
+"""
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 
 from .client import CommitteeOwnerClient
 from .owner import admit, envelope
+
+NO_TRADER_MEETINGS = "no_trader_meetings"
 
 
 def create_committee_router(*, extract_identity, require_read_role, require_write_role, utc_now):
@@ -26,15 +35,19 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
         limit: Optional[int] = Query(default=None, ge=1, le=200),
         session_class: Optional[str] = Query(default=None),
     ):
-        items = owner(request).sessions(
-            status=status,
-            meeting_type=meeting_type or type,
-            persona_id=persona_id,
-            cursor=cursor,
-            limit=limit,
-            session_class=session_class,
-        )
-        return envelope(items, owner="consultation", empty_reason="no_persona_panels")
+        # session_class is accepted for compatibility; only deliberative meetings are in scope.
+        client = owner(request)
+        if session_class in {"gate_panel", "persona_panel"}:
+            items: list = []
+        else:
+            items = client.trader_meetings(
+                status=status,
+                meeting_type=meeting_type or type,
+                persona_id=persona_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        return envelope(items, owner="consultation", empty_reason=NO_TRADER_MEETINGS)
 
     @router.get("/bff/agora/committee/meetings")
     def meetings(
@@ -47,25 +60,15 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
         limit: Optional[int] = Query(default=None, ge=1, le=200),
         include_panels: bool = Query(default=False),
     ):
-        client = owner(request)
-        if include_panels:
-            items = client.sessions(
-                status=status,
-                meeting_type=meeting_type or type,
-                persona_id=persona_id,
-                cursor=cursor,
-                limit=limit,
-            )
-        else:
-            items = client.meetings(
-                status=status,
-                meeting_type=meeting_type or type,
-                persona_id=persona_id,
-                cursor=cursor,
-                limit=limit,
-                include_rounds=True,
-            )
-        return envelope(items, owner="consultation", empty_reason="no_persona_meetings")
+        # include_panels is accepted for compatibility; gate panels are never returned here.
+        items = owner(request).trader_meetings(
+            status=status,
+            meeting_type=meeting_type or type,
+            persona_id=persona_id,
+            cursor=cursor,
+            limit=limit,
+        )
+        return envelope(items, owner="consultation", empty_reason=NO_TRADER_MEETINGS)
 
     @router.get("/bff/agora/committee/proposals")
     @router.get("/bff/agora/committee/meetings/proposals")
@@ -75,7 +78,7 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
         persona_id: Optional[str] = Query(default=None),
         meeting_id: Optional[str] = Query(default=None),
     ):
-        items = owner(request).proposals(status=status, persona_id=persona_id, meeting_id=meeting_id)
+        items = owner(request).trader_proposals(status=status, persona_id=persona_id, meeting_id=meeting_id)
         return envelope(items, owner="consultation", empty_reason="no_meeting_proposals")
 
     @router.get("/bff/agora/committee/catalogue")
@@ -85,7 +88,7 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
 
     @router.get("/bff/agora/committee/meetings/{meeting_id}")
     def meeting_detail(meeting_id: str, request: Request):
-        return envelope(owner(request).meeting(meeting_id), owner="consultation")
+        return envelope(owner(request).trader_meeting(meeting_id), owner="consultation")
 
     @router.get("/bff/agora/committee/meetings/{meeting_id}/proposals")
     def meeting_proposals(
@@ -94,17 +97,17 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
         status: Optional[str] = Query(default=None),
         persona_id: Optional[str] = Query(default=None),
     ):
-        items = owner(request).proposals(status=status, persona_id=persona_id, meeting_id=meeting_id)
+        items = owner(request).trader_proposals(status=status, persona_id=persona_id, meeting_id=meeting_id)
         return envelope(items, owner="consultation", empty_reason="no_meeting_proposals")
 
     @router.get("/bff/agora/committee/sessions/{session_id}")
     def session(session_id: str, request: Request):
-        return envelope(owner(request).session_detail(session_id), owner="consultation")
+        return envelope(owner(request).trader_meeting(session_id), owner="consultation")
 
     @router.get("/bff/agora/committee/sessions/{session_id}/memos")
     def memos(session_id: str, request: Request):
         client = owner(request)
-        memo_items = client.memos(session_id)
+        memo_items = client.trader_memos(session_id)
         if memo_items and "case_file_view" not in memo_items[0]:
             view = client.case_file_view(session_id)
             memo_items = [{**m, "case_file_view": view} for m in memo_items]
@@ -112,6 +115,6 @@ def create_committee_router(*, extract_identity, require_read_role, require_writ
 
     @router.post("/bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish")
     def publish(session_id: str, memo_id: str, request: Request):
-        return envelope(owner(request, write=True).publish(session_id, memo_id), owner="consultation")
+        return envelope(owner(request, write=True).trader_publish(session_id, memo_id), owner="consultation")
 
     return router
