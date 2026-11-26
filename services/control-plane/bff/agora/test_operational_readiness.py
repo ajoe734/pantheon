@@ -763,3 +763,47 @@ def test_agora_router_wires_workshop_store_into_operational_readiness_and_perfor
     p_body = perf_resp.json()
     assert p_body["data"]["items"] == []
     assert p_body["meta"]["surfaces"]["strategy_directory"]["reason"] == "no_workshop_strategies"
+
+
+def test_operational_readiness_workshop_store_exception_reports_unavailable() -> None:
+    """When workshop_store raises, readiness reports unavailable with workshop_store_unavailable instead of not_configured."""
+
+    class _RaisingWorkshopStore:
+        def list_sessions(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("workshop database connection failed")
+
+    def _forbid_read_store() -> Any:
+        raise AssertionError("get_read_store must not be called when workshop_store raises")
+
+    app = FastAPI()
+    app.include_router(
+        create_operational_readiness_router(
+            utc_now=lambda: "2026-11-26T15:00:00Z",
+            extract_identity=lambda _auth: {
+                "user_id": "trader-001",
+                "tenant_id": "tenant-test",
+                "roles": ["operator"],
+            },
+            require_read_role=lambda _id: None,
+            get_read_store=_forbid_read_store,
+            workshop_store=_RaisingWorkshopStore(),
+        )
+    )
+    resp = TestClient(app).get(
+        "/bff/agora/operational-readiness",
+        headers={"Authorization": "Bearer token", "X-Tenant-Id": "tenant-test"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["status"] == "unavailable"
+    assert data["source"]["freshness"] == "unavailable"
+    assert data["source"]["last_failure"] == "workshop_store_unavailable"
+    assert data["signal_producer"]["status"] == "unavailable"
+    assert data["signal_producer"]["reason"] == "workshop_store_unavailable"
+    assert data["signal_producer"]["active_binding"] is None
+    for surface in data["surfaces"].values():
+        assert surface["status"] == "unavailable"
+        assert surface["reason"] == "workshop_store_unavailable"
+        assert surface["freshness"] == "unavailable"
+        assert surface["count"] == 0
+        assert surface["cursor"] is None

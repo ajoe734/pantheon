@@ -1009,18 +1009,18 @@ class AgoraOperationalReadinessService:
         )
 
     @staticmethod
-    def _has_ready_workshop_strategy(
+    def _check_ready_workshop_strategy(
         *,
         workshop_store: Any,
         scope: Optional[AgoraCapabilityScope],
         assessed_at: str,
-    ) -> bool:
+    ) -> Tuple[bool, Optional[str]]:
         if scope is None:
-            return False
+            return False, None
         tenant_id = _clean_text(getattr(scope, "tenant_id", None))
         user_id = _clean_text(getattr(scope, "user_id", None))
         if not tenant_id or not user_id:
-            return False
+            return False, None
         from .trading_room.routes.common import _list_ready_strategy_projections
 
         try:
@@ -1031,8 +1031,88 @@ class AgoraOperationalReadinessService:
                 assessed_at=assessed_at,
             )
         except Exception:
-            return False
-        return bool(projections)
+            return False, "workshop_store_unavailable"
+        return bool(projections), None
+
+    @classmethod
+    def _has_ready_workshop_strategy(
+        cls,
+        *,
+        workshop_store: Any,
+        scope: Optional[AgoraCapabilityScope],
+        assessed_at: str,
+    ) -> bool:
+        has_ready, _error = cls._check_ready_workshop_strategy(
+            workshop_store=workshop_store,
+            scope=scope,
+            assessed_at=assessed_at,
+        )
+        return has_ready
+
+    def _compose_workshop_store_unavailable_readiness(
+        self,
+        *,
+        scope: Optional[AgoraCapabilityScope],
+        current_iso: str,
+        reason: str = "workshop_store_unavailable",
+    ) -> AgoraOperationalReadinessEnvelope:
+        source_readiness = AgoraSourceReadiness(
+            snapshot_id=None,
+            source_instance_id=None,
+            source_timestamp=None,
+            age_seconds=None,
+            sla_seconds=self.default_sla_seconds,
+            freshness="unavailable",
+            desired_state="unavailable",
+            observed_state="unavailable",
+            last_failure=reason,
+        )
+        producer_readiness = AgoraSignalProducerReadiness(
+            status="unavailable",
+            producer_id="paper-signal-producer",
+            active_binding=None,
+            consumed_snapshot_id=None,
+            last_success_at=None,
+            enqueued=0,
+            reason=reason,
+        )
+        surface_keys = (
+            "decision_events",
+            "journal",
+            "candidates",
+            "interactions",
+            "performance",
+        )
+        surfaces_readiness = {
+            key: AgoraSurfaceReadiness(
+                status="unavailable",
+                count=0,
+                reason=reason,
+                freshness="unavailable",
+                cursor=None,
+            )
+            for key in surface_keys
+        }
+        data = AgoraOperationalReadinessData(
+            status="unavailable",
+            source=source_readiness,
+            signal_producer=producer_readiness,
+            surfaces=surfaces_readiness,
+            deployment=self._build_deployment_readiness(),
+        )
+        audience = (
+            f"tenant:{scope.tenant_id}:user:{scope.user_id}"
+            if scope
+            else "public:read_only"
+        )
+        meta = AgoraOperationalReadinessMeta(
+            snapshot_at=current_iso,
+            capability="agora.operational_readiness.v1",
+            requiredForAuthentication=False,
+            no_order_route_proof="agora_operational_readiness_read_only",
+            audience=audience,
+        )
+        return AgoraOperationalReadinessEnvelope(data=data, meta=meta)
 
     def _compose_no_workshop_strategies_readiness(
         self,
@@ -1112,15 +1192,23 @@ class AgoraOperationalReadinessService:
         effective_workshop_store = (
             workshop_store if workshop_store is not None else self._workshop_store
         )
-        if effective_workshop_store is not None and not self._has_ready_workshop_strategy(
-            workshop_store=effective_workshop_store,
-            scope=scope,
-            assessed_at=current_iso,
-        ):
-            return self._compose_no_workshop_strategies_readiness(
+        if effective_workshop_store is not None:
+            has_ready, workshop_error = self._check_ready_workshop_strategy(
+                workshop_store=effective_workshop_store,
                 scope=scope,
-                current_iso=current_iso,
+                assessed_at=current_iso,
             )
+            if workshop_error is not None:
+                return self._compose_workshop_store_unavailable_readiness(
+                    scope=scope,
+                    current_iso=current_iso,
+                    reason=workshop_error,
+                )
+            if not has_ready:
+                return self._compose_no_workshop_strategies_readiness(
+                    scope=scope,
+                    current_iso=current_iso,
+                )
 
         provider_errors: Dict[str, str] = {}
         if self._read_provider is not None:
