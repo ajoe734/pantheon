@@ -155,6 +155,7 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:meeting-action-followthrough",
         "probe:meeting-review-disposition",
         "probe:mgmt-evolution-pages-readable",
+        "probe:mgmt-registry-pages-readable",
         "probe:mgmt-strategy-meeting-research-readable",
         "probe:paper-risk-journey",
         "probe:paper-risk-policy-binding",
@@ -204,3 +205,214 @@ def test_probe_environment_carries_viewer_identity(tmp_path):
 
 def test_plan_declares_redaction():
     assert stage.plan([], [])["redacts_output"] is True
+
+
+# --- post-switch management crawl (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126) ---------------------
+
+VIEWER_ENV = {"PATH": os.environ.get("PATH", ""), "ACCEPTANCE_VIEWER_CLIENT_ID": "pantheon-dev-viewer-v1",
+              "ACCEPTANCE_VIEWER_CLIENT_SECRET": "viewer-secret-xyz"}
+TOKEN = "hdr.payload-token-123.sig"
+CRAWL_IDENT = {**IDENT, "fe_url": "https://app.dev.mvl-cap.tw", "bff_url": "https://api.dev.mvl-cap.tw"}
+
+
+def _route(path, status="ok", console=(), **extra):
+    return {"path": path, "kind": "nav", "status": status, "navError": "", "alias": None,
+            "dataCheck": {"pass": status == "ok", "reasons": [] if status == "ok" else ["render_error"]},
+            "bffRequests": [{"method": "GET", "url": f"https://api.dev.mvl-cap.tw/bff{path}?page_size=20",
+                             "status": 200}],
+            "consoleErrors": [{"text": t, "kind": k} for t, k in console],
+            "consoleErrorCounts": {k: sum(1 for _, kk in console if kk == k) for _, k in console},
+            "mockFindings": [], "detailHonestyViolations": [], **extra}
+
+
+def _manifest(routes, passed):
+    failures = [] if passed else ["No route crashes, is blank, or fails to navigate.", "No render-crash console errors."]
+    return {"schemaVersion": 1, "taskId": "MGMT-GAP-006", "routes": routes,
+            "result": {"pass": passed, "overall": "pass" if passed else "fail", "failures": failures}}
+
+
+# Root 45684275970 (BFF b3f93d448 + FE 38e5337d1, verdict `passed` with 12 checks and no crawl):
+# /management/evolution-journal rendered the full-page error boundary because #7832 made
+# pool_version target.version a number (18 of the first 50 rows).
+REPLAY_45684275970 = _manifest([
+    _route("/management/cockpit"),
+    _route("/management/evolution-journal", status="crash",
+           console=[("TypeError: L.target.version.toLowerCase is not a function", "render_crash")]),
+    _route("/management/evolution"),
+], passed=False)
+
+
+def _writer(manifest, code=1, record=None):
+    def runner(argv, *, env, cwd, deadline):
+        if record is not None:
+            record.update(argv=argv, env=env, cwd=cwd, deadline=deadline)
+        out = Path(argv[argv.index("--out-dir") + 1])
+        (out / "management-hosted-acceptance-2026-11-25.json").write_text(json.dumps(manifest))
+        return code, f"crawled with {env['BFF_AUTH_TOKEN']}"
+    return runner
+
+
+def _frontend(tmp_path):
+    root = tmp_path / "fe"
+    (root / "scripts").mkdir(parents=True)
+    (root / stage.CRAWL_SCRIPT).write_text("// crawl\n")
+    return root
+
+
+def _crawl(tmp_path, *, runner, prepared="success", identity_passed=True, env=None, minter=None):
+    return stage.crawl_check(frontend_dir=_frontend(tmp_path), prepared=prepared, identity=CRAWL_IDENT,
+                             identity_passed=identity_passed, base_env=VIEWER_ENV if env is None else env,
+                             work_dir=tmp_path / "work", deadline=stage.CRAWL_DEADLINE_SECONDS,
+                             minter=minter or (lambda *a: TOKEN), runner=runner)
+
+
+def _passing_probe_results():
+    return [stage._result({"id": "check:deployed-pair-identity", "kind": "check", "owner": stage.SELF_OWNER},
+                          "passed"),
+            stage._result({"id": "probe:x", "kind": "probe", "owner": "OWN"}, "passed", exit_code=0)]
+
+
+def test_replay_45684275970_journal_error_boundary_makes_verdict_failed(tmp_path):
+    record = {}
+    check, artifact = _crawl(tmp_path, runner=_writer(REPLAY_45684275970, record=record))
+    assert check["id"] == stage.CRAWL_ID and check["status"] == "failed"
+    assert "/management/evolution-journal" in check["detail"]
+    assert "L.target.version.toLowerCase is not a function" in check["detail"]
+    assert [r["path"] for r in check["failedRoutes"]] == ["/management/evolution-journal"]
+    results = _passing_probe_results() + [check]
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=CRAWL_IDENT, run={})
+    assert verdict["acceptance"] == "failed"
+    assert verdict["failed"][0]["id"] == stage.CRAWL_ID
+    assert "/management/evolution-journal" in stage.summary_markdown(verdict, "success")
+    # the existing crawl at the deployed frontend commit, viewer token, write CTAs off, stated deadline
+    assert record["argv"][:2] == ["node", stage.CRAWL_SCRIPT]
+    assert record["env"]["BFF_AUTH_TOKEN"] == TOKEN and record["env"]["PANTHEON_ACCEPT_CLICK_WRITE_CTAS"] == "0"
+    assert record["env"]["PANTHEON_FE_BASE_URL"] == "https://app.dev.mvl-cap.tw"
+    assert "ACCEPTANCE_VIEWER_CLIENT_SECRET" not in record["env"]
+    assert record["deadline"] == stage.CRAWL_DEADLINE_SECONDS == 720
+    assert artifact["status"] == "failed" and artifact["routeCount"] == 3
+
+
+def test_crawl_artifact_and_verdict_carry_no_token_or_body(tmp_path):
+    leaky = _manifest([_route("/management/jobs", status="crash",
+                              console=[(f"TypeError: x is not a function {TOKEN}", "render_crash")],
+                              textSample="SECRET-BODY-TEXT")], passed=False)
+    leaky["routes"][0]["bffRequests"].append({"method": "POST", "url": "https://api.dev.mvl-cap.tw/bff/x?q=1"})
+    check, artifact = _crawl(tmp_path, runner=_writer(leaky))
+    text = json.dumps([check, artifact])
+    assert TOKEN not in text and "viewer-secret-xyz" not in text
+    assert "SECRET-BODY-TEXT" not in text and "page_size=20" not in text  # no body, no request query
+    assert artifact["nonGetRequests"] == ["POST /bff/x"]
+    assert set(artifact["routes"][0]) <= {"path", "kind", "status", "dataPass", "problems"}
+
+
+def test_passed_crawl_keeps_verdict_passed(tmp_path):
+    check, artifact = _crawl(tmp_path, runner=_writer(_manifest([_route("/management/cockpit")], True), code=0))
+    assert check["status"] == "passed" and artifact["status"] == "passed"
+    results = _passing_probe_results() + [check]
+    assert stage.verdict_status(results) == "passed"
+
+
+@pytest.mark.parametrize("kwargs, reason", [
+    ({"prepared": "failure"}, "frontend_not_prepared"),
+    ({"prepared": ""}, "frontend_not_prepared"),
+    ({"identity_passed": False}, "stack_not_verified"),
+    ({"env": {"PATH": "/usr/bin"}}, "viewer_credential_missing"),
+])
+def test_crawl_that_cannot_start_is_skipped_and_never_passed(tmp_path, kwargs, reason):
+    calls = []
+    check, artifact = _crawl(tmp_path, runner=lambda *a, **k: calls.append(1) or (0, ""), **kwargs)
+    assert calls == []  # nothing ran on hosted
+    assert check["status"] == "skipped" and check["reason"] == reason and artifact["reason"] == reason
+    results = _passing_probe_results() + [check]
+    assert stage.verdict_status(results) == "pending"
+
+
+def test_viewer_login_failure_and_no_report_and_deadline_are_skipped(tmp_path):
+    def refuse(*_):
+        raise RuntimeError("http_401")
+    check, _ = _crawl(tmp_path / "a", runner=lambda *a, **k: (0, ""), minter=refuse)
+    assert check["reason"] == "viewer_login_failed" and "http_401" in check["detail"]
+    check, _ = _crawl(tmp_path / "b", runner=lambda *a, **k: (2, "Missing @playwright/test"))
+    assert check["status"] == "skipped" and check["reason"] == "crawl_no_report"
+    check, _ = _crawl(tmp_path / "c", runner=lambda *a, **k: (None, ""))
+    assert check["status"] == "skipped" and check["reason"] == "crawl_deadline"
+    assert stage.verdict_status(_passing_probe_results() + [check]) == "pending"
+
+
+def test_failed_probe_with_skipped_crawl_stays_failed():
+    results = [stage._result({"id": "probe:bad", "kind": "probe", "owner": "OWN"}, "failed", exit_code=1),
+               stage._crawl_result("skipped", reason="crawl_deadline")]
+    assert stage.verdict_status(results) == "failed"
+
+
+def test_deadline_kills_the_whole_crawl_process_group(tmp_path):
+    marker = tmp_path / "child.pid"
+    script = f"sleep 30 & echo $! > {marker}; wait"
+    code, _ = stage.run_crawl_process(["bash", "-c", script], env=dict(os.environ), cwd=tmp_path, deadline=1)
+    assert code is None
+    pid = int(marker.read_text())
+    import time as _time
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        _time.sleep(0.05)
+    else:
+        pytest.fail("crawl child survived the deadline")
+
+
+def _identity_ok(monkeypatch):
+    original = stage.run_stage
+    monkeypatch.setattr(stage, "run_stage", lambda **kw: original(**kw, identity_fn=OK))
+
+
+def _cli_argv(tmp_path, out, extra):
+    return ["run", "--checks", str(tmp_path / "none.json"), "--probes-dir", str(tmp_path / "none"),
+            "--backend-sha", SHA_A, "--frontend-sha", SHA_B, "--fe-url", "https://app.dev.mvl-cap.tw",
+            "--bff-url", "https://api.dev.mvl-cap.tw", "--verdict-out", str(out), *extra]
+
+
+@pytest.mark.parametrize("case, expected", [("passed", "passed"), ("failed", "failed"), ("skipped", "pending")])
+def test_cli_exit_code_is_unchanged_in_all_three_crawl_cases(tmp_path, monkeypatch, case, expected):
+    _identity_ok(monkeypatch)
+    for key, value in VIEWER_ENV.items():
+        monkeypatch.setenv(key, value)
+    manifest = REPLAY_45684275970 if case == "failed" else _manifest([_route("/management/cockpit")], True)
+    original = stage.crawl_check
+    monkeypatch.setattr(stage, "crawl_check", lambda **kw: original(
+        **kw, minter=lambda *a: TOKEN, runner=_writer(manifest, code=0 if case == "passed" else 1)))
+    out, crawl_out = tmp_path / "v.json", tmp_path / "crawl.json"
+    prepared = "failure" if case == "skipped" else "success"
+    argv = _cli_argv(tmp_path, out, ["--crawl-frontend-dir", str(_frontend(tmp_path)),
+                                     "--crawl-prepared", prepared, "--crawl-out", str(crawl_out)])
+    assert stage.main(argv) == 0  # the deploy job result never depends on the crawl
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == expected
+    assert [c["id"] for c in verdict["checks"]][-1] == stage.CRAWL_ID
+    assert json.loads(crawl_out.read_text())["status"] == case
+    assert TOKEN not in out.read_text() + crawl_out.read_text()
+
+
+def test_cli_internal_crawl_error_is_skipped_not_passed(tmp_path, monkeypatch):
+    _identity_ok(monkeypatch)
+
+    def boom(**_):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(stage, "crawl_check", boom)
+    out = tmp_path / "v.json"
+    argv = _cli_argv(tmp_path, out, ["--crawl-frontend-dir", str(tmp_path), "--crawl-prepared", "success",
+                                     "--crawl-out", str(tmp_path / "c.json")])
+    assert stage.main(argv) == 0
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == "pending" and verdict["checks"][-1]["reason"] == "crawl_internal_error"
+
+
+def test_without_crawl_flag_the_release_probe_stage_is_unchanged(tmp_path, monkeypatch):
+    _identity_ok(monkeypatch)
+    out = tmp_path / "v.json"
+    assert stage.main(_cli_argv(tmp_path, out, [])) == 0
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == "passed"
+    assert [c["id"] for c in verdict["checks"]] == ["check:deployed-pair-identity"]

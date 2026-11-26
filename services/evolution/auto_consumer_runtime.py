@@ -349,6 +349,30 @@ class PoolOwner:
                 "dataset": bound_dataset,
             },
         )
+        decision = result.get("decision")
+        if (
+            isinstance(decision, Mapping)
+            and decision.get("status") == "refused"
+            and isinstance(decision.get("reasons"), list)
+            and decision["reasons"]
+        ):
+            # SD_PERSONA_STRATEGY_POOL_AUTONOMY 5.2 / 2026-11-16 decision: a stated pool refusal is not a
+            # run failure. The pool owner kept the live member; the caller defers to the operator and
+            # the next cadence retries with the already-registered requalified entry.
+            from services.research.alpha_replication.evolution_executor import RequalifyDeferred
+
+            raise RequalifyDeferred(
+                "pool_admission_refused",
+                {
+                    "pool_decision_reasons": [str(r) for r in decision["reasons"]],
+                    "pool_decision_action": decision.get("action"),
+                    "pool_decision_record_version": result.get("pool_version"),
+                    "pool_version_before_decision": pool["pool_version"],
+                    "candidate_artifact_ref": new_id,
+                    "candidate_checksum": new_checksum,
+                    "live_member_ref": ctx["artifact_ref"],
+                },
+            )
         if (result.get("decision") or {}).get("status") != "applied":
             raise RuntimeError("requalified replacement admission refused: " + str(result.get("decision")))
         return self.publish(result)

@@ -2104,6 +2104,13 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_cited_evidence_list.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-EVIDENCE-CITED-LIST-20261125 and BFF-EVIDENCE-CITED-NAMES-LINKS-20261125 cover GET /bff/management/evidence?scope=cited over recorded owner shapes with only owner transports replaced: withholding, redaction, per-source status, read bounds, and cited artifacts named through the real Registry entry read (strategy-keyed label directory, one read per distinct artifact in the shared item-read budget, failed/slow/other-tenant reads unnamed) linking to /management/artifacts/{artifact}; never imports main"
+    },
+    {
       "file": "tests/test_command_adapters_router.py",
       "layer": "adapter",
       "imports_main": false,

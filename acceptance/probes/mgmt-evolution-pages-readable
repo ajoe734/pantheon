@@ -10,7 +10,8 @@ memory and is never printed) and checks, with GET only:
     unless include_system=true; summary.hidden_system_counts is present; the auto_proposal_counts parts
     (threshold, incident_followup, incident_severity, other, infrastructure) add up to total and
     postmortem_draft is a separate integer; summary.mutation_review_count equals the decisions that
-    really carry an approval_decision_id.
+    really carry an approval_decision_id; on every entry target.type, target.id and target.version are
+    each a string or null (BFF-EVO-JOURNAL-VERSION-STRING-20261126: the page lower-cases them).
   * GET /bff/management/evolution-qualification: member_baselines is a list whose rows carry
     persona_name, artifact_ref, status and reason, member_baselines_surface is not unavailable, and not
     every row is unavailable or registry_entry_unreadable.
@@ -30,6 +31,7 @@ QUALIFICATION = "/bff/management/evolution-qualification?page_size=1"
 MAX_PAGES = 30
 PARTS = ("threshold", "incident_followup", "incident_severity", "other", "infrastructure")
 SYSTEM_CLASSES = {"infrastructure", "test"}
+TARGET_TEXT_FIELDS = ("type", "id", "version")
 
 
 def _data(body):
@@ -65,6 +67,11 @@ def _journal_failures(first, items):
             bad.append(str(i.get("id")))
     if bad:
         failures.append("refused_pool_version_presented_as_applied:" + ",".join(bad[:5]))
+    untyped = [f"{i.get('id')}.{key}" for i in items for key in TARGET_TEXT_FIELDS
+               if not isinstance(i.get("target"), dict)
+               or not (i["target"].get(key) is None or isinstance(i["target"].get(key), str))]
+    if untyped:
+        failures.append("target_field_not_text_or_null:" + ",".join(untyped[:5]))
     decisions = [i for i in items if i.get("entry_type") == "evolution_decision"]
     if any(not i.get("subject_class") for i in decisions):
         failures.append("decision_subject_class_missing")
