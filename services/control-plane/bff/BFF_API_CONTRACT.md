@@ -302,6 +302,8 @@ The BFF reuses roles defined in the P4-001 control-plane routing contract with r
 | Composed views | `operator` | Pool-scoped | All composed views require operator role |
 | Kill-switch status (IN-05) | `admin` | Global | Safety-critical; restricted access |
 
+Approval records (`GET /bff/approvals`, `GET /bff/approvals/{id}`, `GET /bff/approvals/{id}/evidence`, `GET /bff/management/governance-ledger`; MGMT-VIEWER-APPROVALS-READ-20261126): a `viewer` may not read them. The Governance owner decides (`services/governance/main.py::_approval_reader`: a write-authority role, `approval_reader`, `approval_proposer` or `operator`), the BFF forwards the caller's own token and never widens that rule, and the BFF evidence redaction is capability-based, not a viewer admission. When the owner refuses, these four reads answer `403` with `error.code: "FORBIDDEN"`, `error.details.precondition_failed: "approval_read_role"`, `error.details.permission_state: "no_permission"`, `error.details.surface: "approvals"` and no record content, so a page can show a no-permission state. Decide, batch-decide and the owner review/revoke paths are unchanged.
+
 ### 8.3 RBAC Evaluation
 
 RBAC is evaluated by the **API Gateway Layer** (BFF_HA §4 — auth / RBAC facade) before routing to the composition layer. Requests that fail RBAC return HTTP 403 `FORBIDDEN`.

@@ -244,6 +244,31 @@ def create_governance_router(
         except (urllib.error.URLError, OSError, RuntimeError, AttributeError, ValueError, TypeError):
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Governance approval owner unavailable", "Governance approval owner unreachable")
 
+    async def _forward_read(call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Approval reads: the owner's 403 becomes a typed no-permission error.
+
+        The Governance owner decides who may read approvals
+        (``services/governance/main.py::_approval_reader``); the BFF never widens
+        it. A viewer is read-only on non-sensitive surfaces (BFF_API_CONTRACT.md
+        section 8), so its refusal is answered as ``FORBIDDEN`` with
+        ``precondition_failed=approval_read_role`` for an honest no-permission
+        state instead of an untyped owner message. Write paths keep ``_forward``.
+        """
+        try:
+            return await _forward(call, *args, **kwargs)
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            raise _err(
+                403,
+                "FORBIDDEN",
+                "Approval records are not readable with this role",
+                "The Governance approval owner requires an approval read role",
+                precondition_failed="approval_read_role",
+                suggestion="Sign in with an operator, approver or governance reviewer role to read approvals",
+                details_extra={"surface": "approvals", "owner": "governance", "permission_state": "no_permission"},
+            ) from exc
+
     def _idempotency_key(primary: Optional[str], *, required: bool = False) -> str:
         first = str(primary or "").strip()
         if required and not first:
@@ -910,7 +935,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
-        items = await _forward(approval_owner.list_decisions, authorization, pending_only=True)
+        items = await _forward_read(approval_owner.list_decisions, authorization, pending_only=True)
         redacted_items, total_redacted = _redact_evidence_field_items(identity, items)
         return {
             "items": redacted_items,
@@ -929,7 +954,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        decisions = await _forward(approval_owner.list_decisions, authorization)
+        decisions = await _forward_read(approval_owner.list_decisions, authorization)
         response = _service().governance_ledger(
             approval_records=decisions,
             source_type=source_type,
@@ -1078,7 +1103,7 @@ def create_governance_router(
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         clean_id = approval_id.strip()
-        decision = await _forward(approval_owner.get_decision, authorization, clean_id)
+        decision = await _forward_read(approval_owner.get_decision, authorization, clean_id)
         processed, redacted_count = _safe_redact(identity, list(decision.get("evidence_refs") or []))
         return {
             "approval_id": clean_id,
@@ -1096,7 +1121,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
-        detail = await _forward(approval_owner.get_decision, authorization, approval_id.strip())
+        detail = await _forward_read(approval_owner.get_decision, authorization, approval_id.strip())
         redacted, total_redacted = _redact_evidence_field_items(identity, [detail])
         meta = _snapshot(_now())
         meta["redacted_evidence_count"] = total_redacted
