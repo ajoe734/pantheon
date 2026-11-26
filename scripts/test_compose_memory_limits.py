@@ -9,6 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117/evidence.json"
 PATTERN = re.compile(r"^\$\{([A-Z0-9_]+):-(\d+)([mg])\}$")
+REGISTRY_EVIDENCE = ROOT / "docs/deployment/evidence/REGISTRY-MEMORY-LIMIT-PEAK-SIZED-20261125/evidence.json"
 HOST_MIB = 32086
 
 
@@ -60,6 +61,18 @@ class ComposeMemoryLimits(unittest.TestCase):
         }
         for name, floor in floors.items():
             self.assertGreaterEqual(_mib(self.root[name]["mem_limit"]), floor, name)
+
+    def test_registry_limit_covers_measured_concurrent_peak(self):
+        # A reduction needs a new measurement: the limit is checked against the
+        # recorded peak of eight concurrent strategy summary pages.
+        ev = json.loads(REGISTRY_EVIDENCE.read_text())
+        limit = _mib(self.root["registry"]["mem_limit"])
+        peak = ev["measurement"]["legitimate_peak_mib"]
+        self.assertEqual(peak, ev["limit"]["measured_legitimate_peak_mib"])
+        self.assertGreaterEqual(peak, max(ev["measurement"]["results_mib"]["summary_page_x8_runs"]))
+        self.assertGreaterEqual(limit, ev["limit"]["min_ratio"] * peak)
+        self.assertEqual(ev["limit"]["min_ratio"], 1.5)
+        self.assertEqual(limit, ev["limit"]["limit_mib"])
 
     def test_search_svc_above_measured_peak(self):
         self.assertGreater(_mib(self.root["search-svc"]["mem_limit"]), int(11.5 * 1024))
