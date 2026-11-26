@@ -570,6 +570,9 @@ class DistillationRunResult:
     retried: int = 0
     dead_lettered: int = 0
     deferred: int = 0
+    # Jobs returned to retry_wait because the extraction model/adapter did
+    # not answer (timeout, transport, billing). Not Registry delivery trouble.
+    extraction_retried: int = 0
     lease_lost: tuple[str, ...] = ()
     # Today's L2 extraction spend (ledger summary) when an extractor is wired.
     extraction: Mapping[str, Any] | None = None
@@ -586,6 +589,7 @@ class DistillationRunResult:
             "retried": self.retried,
             "dead_lettered": self.dead_lettered,
             "deferred": self.deferred,
+            "extraction_retried": self.extraction_retried,
             "lease_lost": list(self.lease_lost),
             **({"extraction": dict(self.extraction)} if self.extraction is not None else {}),
         }
@@ -2580,6 +2584,7 @@ class DistillationJobQueue:
             "dead_letter": 0,
             "skipped": 0,
             "deferred": 0,
+            "extraction_retry": 0,
         }
         with self._connect() as connection:
             rows = connection.execute(
@@ -2596,6 +2601,13 @@ class DistillationJobQueue:
                 f"""SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
                    AND last_error IN ({", ".join("?" for _ in reasons)})""",
                 reasons,
+            ).fetchone()[0])
+            # Extraction provider failures waiting for their retry: the model
+            # or adapter did not answer, the Registry was never called.
+            metrics["extraction_retry"] = int(connection.execute(
+                """SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
+                   AND substr(last_error, 1, ?) = ?""",
+                (len(EXTRACTION_UNAVAILABLE_MARKER), EXTRACTION_UNAVAILABLE_MARKER),
             ).fetchone()[0])
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
@@ -2846,6 +2858,9 @@ _EXTERNAL_TEXT_TYPES: frozenset[SourceType] = frozenset(
 IRRELEVANT_REASON = "l2_irrelevant"
 EXTRACTION_DISABLED_REASON = "l2_extraction_disabled"
 EXTRACTION_UNAVAILABLE_MARKER = "hypothesis_extraction_unavailable"
+# ``_distill_one`` outcome for a job sent back to retry_wait because the
+# extraction model/adapter did not answer (never a Registry call).
+EXTRACTION_RETRY_OUTCOME = "extraction_retry"
 
 
 def _with_hypothesis_card(source: SourceRecord, card: Mapping[str, Any]) -> SourceRecord:
@@ -2983,7 +2998,7 @@ class DistillationWorker:
         self._tick_extraction_seconds = 0.0
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
-        deferred = 0
+        deferred = extraction_retried = 0
         lease_lost: list[str] = []
         for claimed_job in claimed:
             try:
@@ -3012,6 +3027,8 @@ class DistillationWorker:
                 failed += 1
             elif outcome == "deferred":
                 deferred += 1
+            elif outcome == EXTRACTION_RETRY_OUTCOME:
+                extraction_retried += 1
             if delivery == "registry_synced":
                 registry_synced += 1
             elif delivery == "retry_wait":
@@ -3028,6 +3045,7 @@ class DistillationWorker:
             retried=retried,
             dead_lettered=dead_lettered,
             deferred=deferred,
+            extraction_retried=extraction_retried,
             lease_lost=tuple(lease_lost),
             extraction=self._extraction_summary(),
         )
@@ -3150,6 +3168,7 @@ class DistillationWorker:
             retried=run_result.retried,
             dead_lettered=run_result.dead_lettered,
             deferred=run_result.deferred,
+            extraction_retried=run_result.extraction_retried,
             lease_lost=run_result.lease_lost,
             extraction=run_result.extraction,
         )
@@ -3181,8 +3200,8 @@ class DistillationWorker:
         """Run distillation for one job. Returns outcome string for accounting.
 
         The first value is one of ``created``, ``refreshed``, ``skipped``,
-        or ``failed``. The second reports Registry delivery state when a
-        terminal Registry sink is configured.
+        ``failed``, ``deferred`` or ``extraction_retry``. The second reports
+        Registry delivery state when a terminal Registry sink is configured.
         """
         if source.status == SourceRecordStatus.REJECTED:
             self._queue.mark_skipped(
@@ -3283,7 +3302,9 @@ class DistillationWorker:
                             base_delay_seconds=self._retry_base_seconds,
                             now=now,
                         )
-                        return "failed", failure_status.value
+                        # Counted apart from ``failed``: the controller reads
+                        # ``failed`` as Registry delivery trouble.
+                        return EXTRACTION_RETRY_OUTCOME, failure_status.value
                     reason = {
                         "rejected": "hypothesis_rejected",
                         "irrelevant": IRRELEVANT_REASON,

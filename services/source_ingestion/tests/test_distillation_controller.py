@@ -1889,3 +1889,95 @@ def test_tick_with_only_extraction_tick_budget_deferrals_is_working(
     assert result["controller_status"] == "working"
     assert queue.metrics()["deferred"] == queue.metrics()["retry_wait"] == 3
     assert state.consecutive_failures == 0 and state.last_failure_stage is None
+
+
+class _UnavailableExtractor:
+    """Extractor whose model call timed out (hosted: OPENCLAW_RESPONSES_TIMEOUT)."""
+
+    call_deadline_seconds = 1.0
+
+    class ledger:  # noqa: N801 - mirrors HypothesisExtractor.ledger
+        @staticmethod
+        def summary() -> dict[str, Any]:
+            return {}
+
+    def extract(self, source, *, digest=""):
+        from services.source_ingestion.hypothesis_card import ExtractionOutcome
+
+        return ExtractionOutcome("unavailable", detail="timeout: OPENCLAW_RESPONSES_TIMEOUT")
+
+
+@pytest.mark.parametrize("registry_failure", [False, True])
+def test_extraction_provider_failure_is_not_registry_sync_failure(
+    tmp_path, monkeypatch, registry_failure
+) -> None:
+    """L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126: an extraction call
+    that did not answer was returned as ``failed`` and counted in
+    ``run_result.failed``, so the tick failed on ``registry_sync`` although the
+    Registry was never called. It is now ``extraction_retried``; a real
+    Registry delivery failure in the same tick shape still fails the tick."""
+    from services.source_ingestion import distillation_controller as ctl
+    from services.source_ingestion.distillation_worker import (
+        EXTRACTION_UNAVAILABLE_MARKER,
+        RegistrySyncRequest,
+    )
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.sqlite3",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+    registry_calls: list[str] = []
+
+    def failing_registry(request: RegistrySyncRequest):
+        registry_calls.append(request.job.job_id)
+        raise RuntimeError("registry timed out")
+
+    if registry_failure:
+        queue.enqueue_source_record(_normalized_source("src-reg-fail", tenant_id="test"))
+    else:
+        queue.enqueue_source_record(_normalized_source("src-news-timeout", source_type="news", tenant_id="test"))
+    original = ctl.make_distillation_worker
+
+    def make_worker(**kwargs):
+        kwargs["hypothesis_extractor"] = _UnavailableExtractor()
+        kwargs["registry_sync"] = failing_registry
+        return original(**kwargs)
+
+    monkeypatch.setattr(ctl, "make_distillation_worker", make_worker)
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+
+    if registry_failure:
+        with pytest.raises(DistillationControllerError) as failure:
+            run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+        assert failure.value.stage == "registry_sync"
+        assert registry_calls  # the Registry really was called and failed
+        assert queue.metrics()["extraction_retry"] == 0
+        return
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue)
+    assert registry_calls == []
+    assert result["status"] == "success"
+    assert result["reconcile"]["failed"] == 0
+    assert result["reconcile"]["extraction_retried"] == 1
+    metrics = queue.metrics()
+    assert metrics["retry_wait"] == metrics["extraction_retry"] == 1
+    assert state.consecutive_failures == 0 and state.last_failure_stage is None
+    with queue._connect() as connection:
+        (last_error,) = connection.execute(
+            "SELECT last_error FROM distillation_outbox WHERE status = 'retry_wait'"
+        ).fetchone()
+    assert last_error.startswith(EXTRACTION_UNAVAILABLE_MARKER)
