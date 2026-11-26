@@ -65,12 +65,14 @@
     "The binding uses the governed dataset's own 60-symbol cap (MAX_DATASET_SYMBOLS, first 60 boundary symbols in symbol order); trading the whole boundary needs a bounded dataset for more symbols in the dataset owner module.",
     "Screened card rules are refused survivorship_limited until the source owner attests delisted and suspended coverage of the governed market (unchanged rule; same as template search).",
     "Hosted: after deploy with L2 extraction on, read reconcile.summary.card_binding_* of the distillation controller state and memory.peak of strategy-distillation-worker during the first daily boundary build.",
-    "The real trading personas' route_policy_id values were not read from hosted in this task (no hosted access); tests use the stored shape (id set, no inline policy)."
+    "The real trading personas' route_policy_id values were not read from hosted in this task (no hosted access); tests use the stored shape (id set, no inline policy).",
+    "CI flake already present before this task, outside scope: Test sweep (shard 5) on head 85eefe1cb failed scripts/test_retire_dev_paper_release_cases.py::test_build_runtime_composes_persona_service_via_app_factory with sqlite3.OperationalError 'database is locked' from services/control-plane/bff/downstream_health_monitor.py _connect (PRAGMA journal_mode = WAL on the shared default state path when bff/main.py is imported by concurrent sweep processes). ACCEPTANCE-BFF-IMPORT-OWN-DATA-DIR-20261125 gave acceptance/ a per-process BFF data dir; scripts/ tests that import bff/main.py still share the path. The file passes 48/48 three times in a row on Python 3.12 locally."
   ],
   "scope_note": "Changes stay inside the declared artifact contract. The first delivery also touched conversion.py, persona main.py, a new services/persona module and the SD amendment; the handoff refused them as outside the contract, so they were reverted and the same behaviour was delivered inside the contract (binding carries dataset_id and symbols, which conversion already accepts; matcher mirrors the daily cycle with a parity test). The SD amendment residual line about PANTHEON_L2_CARD_DATASET_ID is now resolved by the compose default; updating that line is left to the SD owner.",
   "tests_run_final": [
     "services/research/tests/test_card_admission_production_integration.py services/research/tests/test_hypothesis_card_gate_candidate.py: 13 passed",
     "services/research/alpha_replication services/research/strategy_spec services/research/tests/test_governed_market_dataset.py test_template_demand_search.py services/persona/test_persona_demand_discovery.py scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_l2_extraction_deploy_switch_contract.py scripts/test_compose_memory_limits.py: 346 passed",
-    "services/source_ingestion/tests/test_*distill*.py test_hypothesis*.py test_l2*.py: 308 passed"
+    "services/source_ingestion/tests/test_*distill*.py test_hypothesis*.py test_l2*.py: 308 passed",
+    "head after merging dev 92f75e245 (Python 3.12): the six declared test files 96 passed, 13 skipped; scripts/test_retire_dev_paper_release_cases.py 48 passed x3"
   ]
 }
