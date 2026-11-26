@@ -172,6 +172,27 @@ def _summary_terminal_connector(item: Mapping[str, Any]) -> dict[str, Any] | Non
     )
 
 
+def _dlq_backlog_summary(value: Any) -> dict[str, Any] | None:
+    """Pre-existing unresolved dead-letter backlog of a provider tick's selected scope.
+
+    One scalar row per connector (count, oldest rejection, oldest age), capped at
+    MAX_FAILED_CONNECTORS rows; the total count is kept even when rows are capped.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    rows = value.get("by_connector")
+    by_connector = {
+        str(connector_id)[:MAX_SKIPPED_ID_LENGTH]: {
+            "unresolved_count": _bounded_int(row.get("unresolved_count")),
+            "oldest_rejected_at": _bounded_text(row.get("oldest_rejected_at"), limit=64),
+            "oldest_age_seconds": _bounded_int(row.get("oldest_age_seconds")),
+        }
+        for connector_id, row in sorted((rows if isinstance(rows, Mapping) else {}).items())[:MAX_FAILED_CONNECTORS]
+        if isinstance(row, Mapping)
+    }
+    return {"count": _bounded_int(value.get("count")), "by_connector": by_connector}
+
+
 def summarize_actual_readback(actual: Mapping[str, Any] | None) -> dict[str, Any]:
     """Project API readback into a restart-safe, non-recursive state summary.
 
@@ -219,7 +240,9 @@ def summarize_actual_readback(actual: Mapping[str, Any] | None) -> dict[str, Any
     dlq_status_counts = _scalar_summary(
         payload.get("dlq_status_counts") if isinstance(payload.get("dlq_status_counts"), Mapping) else {}
     )
+    backlog = _dlq_backlog_summary(payload.get("pre_existing_unresolved_dlq_backlog"))
     return {
+        **({"pre_existing_unresolved_dlq_backlog": backlog} if backlog is not None else {}),
         "schema_version": "source_ingest_controller_readback_summary.v1",
         "pre_captured_at": _bounded_text(payload.get("pre_captured_at")),
         "captured_at": _bounded_text(payload.get("captured_at")),
