@@ -33,7 +33,7 @@ if str(_REPO_ROOT) not in sys.path:
 from services.registry.alpha_template import (  # noqa: E402
     ALPHA_TEMPLATE_METADATA_KEY,
     AlphaTemplateValidationError,
-    ensure_builtin_alpha_templates,
+    ensure_builtin_alpha_templates_once,
     load_library_templates,
     record_alpha_template_evaluation,
     validate_alpha_template,
@@ -1852,7 +1852,7 @@ def run_alpha_template_evaluation(
        correlation with an ``active`` template exceeds ``0.9``.
     """
     if registry_service is not None and templates is None:
-        ensure_builtin_alpha_templates(registry_service)
+        ensure_builtin_alpha_templates_once(registry_service)
         entries = list_alpha_template_views(registry_service)
         all_registry_templates: list[dict[str, Any]] = []
         for view in entries:
