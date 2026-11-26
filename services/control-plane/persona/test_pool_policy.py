@@ -279,3 +279,19 @@ def test_hosted_late_book_records_admission_but_stays_not_since_inception():
     assert book["admitted_at"] == HOSTED_JOINED_AT and book["since_inception"] is False
     with pytest.raises(ValueError, match="virtual_book_high_water_history_missing"):
         reweight([member], {book["member_id"]: {**book, **book["net_of_costs"]}}, load_policy(), "2026-11-26")
+
+
+def test_publication_change_reports_running_pins_without_or_with_other_joined_at():
+    from pool_policy import admission_only, publication_change
+    pool = {"members": [{"artifact_ref": "a", "stage": "active", "risk_weight": 1.0, "joined_at": HOSTED_JOINED_AT},
+                        {"artifact_ref": "r", "stage": "removed", "risk_weight": 0, "joined_at": HOSTED_JOINED_AT}]}
+    pin = {"artifact_ref": "a", "stage": "active", "risk_weight": 1.0, "virtual_only": False}
+    missing = publication_change({"pool_version": 6, "members": [pin]}, pool, load_policy())
+    assert missing == {"changed": True, "membership_changed": False, "published_pool_version": 6,
+                       "reasons": ["envelope_member_admission_missing:a"]} and admission_only(missing)
+    other = publication_change({"pool_version": 6, "members": [{**pin, "joined_at": "2026-11-09T00:00:00Z"}]}, pool, load_policy())
+    assert other["reasons"] == ["envelope_member_admission_missing:a"]
+    carried = publication_change({"pool_version": 7, "members": [{**pin, "joined_at": HOSTED_JOINED_AT}]}, pool, load_policy())
+    assert carried["changed"] is False and not admission_only(carried)
+    moved = publication_change({"pool_version": 6, "members": [{**pin, "risk_weight": .5}]}, pool, load_policy())
+    assert not admission_only(moved) and moved["reasons"][0] == "weight_changed:a"
